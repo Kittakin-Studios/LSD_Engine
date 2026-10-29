@@ -106,8 +106,10 @@ runtime Details panel generated from reflection (edit live, Save/Load/Reset to `
 Flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`, `-frames=<n>`.
 Vulkan triangle needs the **Vulkan SDK** (DXC with SPIR-V + validation layers); without it the
 Vulkan backend runs but skips the triangle. Editor shell (`lsd_editor.exe`) started early: layout, theme and grid are real; Outliner and
-Content Browser show sample rows until milestones 2-3. Milestone 2 exit test passes (Blender FBX
-imported, found by search, placed). Remaining in milestone 2: thumbnails, rename/move, data assets.
+Content Browser show sample rows until milestones 2-3. **Milestone 2 — done.** Asset registry with GUID .meta sidecars, FBX/glTF import, compiled
+meshes + data compiler, Content Browser (thumbnails, search, import by drop, rename/move/delete,
+folders, drag to place). Data assets moved to milestone 4, texture/audio import to milestone 5.
+Next: milestone 3 (World + levels, gizmos, undo, Play-in-Editor).
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no

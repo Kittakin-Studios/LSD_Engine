@@ -38,13 +38,22 @@ struct EditorState {
     int details_tab = 0;
 
     // Content Browser
-    const asset::AssetRegistry* registry = nullptr;
+    asset::AssetRegistry* registry = nullptr;
     ThumbnailCache* thumbnails = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
     char search[96] = "";
     int type_filter = 0;            // 0 = all types, 1 = meshes
     asset::Guid selected_asset;     // shown in Details when valid
     asset::AssetMeta selected_meta;
+
+    // Rename / delete dialogs (Content Browser)
+    asset::Guid rename_asset;       // valid: renaming this asset
+    char rename_folder[256] = "";   // non-empty: renaming this folder (relative to Content/)
+    char rename_buffer[96] = "";
+    bool open_rename = false;
+    asset::Guid delete_asset;
+    char delete_folder[256] = "";
+    bool open_delete = false;
 
     // Requests for main.cpp, cleared once handled
     bool place_requested = false;

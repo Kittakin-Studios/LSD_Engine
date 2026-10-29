@@ -143,6 +143,79 @@ bool AssetRegistry::scan() {
     return changed;
 }
 
+bool valid_name(const char* name) {
+    if (!name || !*name || std::strcmp(name, ".") == 0 || std::strcmp(name, "..") == 0) return false;
+    for (const char* c = name; *c; ++c) {
+        if (static_cast<unsigned char>(*c) < 0x20 || std::strchr("\\/:*?\"<>|", *c)) return false;
+    }
+    const char last = name[std::strlen(name) - 1];
+    return last != ' ' && last != '.';  // Windows silently strips these
+}
+
+namespace {
+
+// Moves a source file plus its .meta (and a .gltf's .bin) to `to` (path without extension change).
+bool move_with_meta(const fs::path& from, const fs::path& to, char* error, usize error_capacity) {
+    std::error_code ec;
+    if (fs::exists(to, ec)) {
+        std::snprintf(error, error_capacity, "%s already exists", to.filename().string().c_str());
+        return false;
+    }
+    fs::rename(from, to, ec);
+    if (ec) {
+        std::snprintf(error, error_capacity, "%s", ec.message().c_str());
+        return false;
+    }
+    fs::rename(fs::path(from.string() + ".meta"), fs::path(to.string() + ".meta"), ec);
+    if (from.extension() == ".gltf") fs::rename(fs::path(from).replace_extension(".bin"), fs::path(to).replace_extension(".bin"), ec);
+    return true;
+}
+
+} // namespace
+
+bool AssetRegistry::rename_asset(AssetRecord record, const char* new_name, char* error, usize error_capacity) {
+    if (!valid_name(new_name)) {
+        std::snprintf(error, error_capacity, "'%s' is not a valid name", new_name ? new_name : "");
+        return false;
+    }
+    char path[300];
+    source_path(record, path, sizeof path);
+    const fs::path from(path);
+    const fs::path to = from.parent_path() / (std::string(new_name) + from.extension().string());
+    if (!move_with_meta(from, to, error, error_capacity)) return false;
+    scan();
+    return true;
+}
+
+bool AssetRegistry::move_asset(AssetRecord record, const char* folder, char* error, usize error_capacity) {
+    char path[300];
+    source_path(record, path, sizeof path);
+    const fs::path from(path);
+    const fs::path dir = fs::path(content_dir_) / folder;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) {
+        std::snprintf(error, error_capacity, "Folder Content/%s does not exist", folder);
+        return false;
+    }
+    if (!move_with_meta(from, dir / from.filename(), error, error_capacity)) return false;
+    scan();
+    return true;
+}
+
+bool AssetRegistry::delete_asset(AssetRecord record, char* error, usize error_capacity) {
+    char path[300];
+    source_path(record, path, sizeof path);
+    std::error_code ec;
+    if (!fs::remove(path, ec)) {
+        std::snprintf(error, error_capacity, "Could not delete %s: %s", record.path, ec.message().c_str());
+        return false;
+    }
+    fs::remove(std::string(path) + ".meta", ec);
+    if (fs::path(path).extension() == ".gltf") fs::remove(fs::path(path).replace_extension(".bin"), ec);
+    scan();
+    return true;
+}
+
 usize AssetRegistry::search(const char* text, AssetType type, const char* folder, usize* out, usize max) const {
     usize found = 0;
     for (usize i = 0; i < records_.size() && found < max; ++i) {

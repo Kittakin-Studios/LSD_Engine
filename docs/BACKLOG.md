@@ -23,14 +23,14 @@ Exit test: import a Blender FBX and find it by search. **Passes** (automated in 
 
 - [~] Renderer basics: buffers, depth, lit mesh + line pipelines, camera math, built-in cube/sphere/plane, GPU grid done on D3D12 and OpenGL; Vulkan waits for the SDK; next: imported meshes, textures, thumbnails
 - [~] Asset registry: GUIDs in `.meta` sidecars, type, path, folder, search, duplicate-GUID repair done; needs tags, dependency list, background indexing [Asset Registry]
-- [ ] Safe rename / move inside the editor (moves .meta too); Reference Viewer
+- [x] Safe rename / move / delete in the editor (the .meta travels, GUIDs survive); folders: new, rename, delete
+- [ ] Reference Viewer and dependency lists (needs levels referencing assets: milestone 3)
 - [x] Binary serialization for reflected objects (name-hash keyed, versioned) and compiled meshes [cooked data]
 - [x] Data compiler: Content → DerivedData, incremental (source size/time + import settings), editor hot reload of meshes
-- [~] Importers: FBX (ufbx), glTF (cgltf), meshoptimizer done (merged mesh, Z-up metres); needs textures, WAV/OGG audio, materials, multiple meshes per file
-- [ ] Shader pipeline: HLSL → DXIL / SPIR-V (DXC) / GLSL (SPIRV-Cross) as assets; replaces the 3 hand-written test shaders
-- [ ] Thumbnails
-- [~] Content Browser: folder tree, asset grid, search, type filter, drag-drop import from Explorer, drag into viewport done; needs thumbnails, rename/move, folder creation
-- [ ] Data assets, Data tables (CSV import/export), Curves [Data Asset, Data Table, Curve]
+- [x] Mesh importers: FBX (ufbx), glTF (cgltf), meshoptimizer (merged mesh, Z-up metres)
+- [ ] Shader pipeline (moved to milestone 5 with the material graph): HLSL → DXIL / SPIR-V (DXC) / GLSL (SPIRV-Cross) as assets; replaces the 3 hand-written test shaders
+- [x] Thumbnails (render-to-texture, re-rendered when the source changes)
+- [x] Content Browser: folder tree and tiles, thumbnails, search, type filter, import by drop, drag to place, drag onto folders to move, right-click menus
 
 ## Milestone 3 — Editor shell
 
@@ -54,6 +54,7 @@ Exit test: block out a level and play it.
 
 Exit test: a character runs, input wired with no code.
 
+- [ ] Data assets, Data tables (CSV import/export), Curves — instances of game-defined reflected types [Data Asset, Data Table, Curve]
 - [ ] Prefabs with per-instance overrides (bold) and per-property revert [Blueprint instances]
 - [ ] Components added from a list: mesh, light, audio, collision, movement, script [Actor Components]
 - [ ] Exposed properties per instance with ranges and tooltips [EditAnywhere]
@@ -70,6 +71,8 @@ Exit test: a character runs, input wired with no code.
 
 Exit test: the audio worked example works end to end.
 
+- [ ] Texture import (PNG, TGA, EXR; BC compression, mips) and audio import (WAV, OGG)
+- [ ] Multiple meshes and materials per imported file; skeletal meshes
 - [ ] Material graph with live preview; material instances [Material Editor, Material Instance]
 - [ ] Lights: directional, point, spot, rect, disc/sphere, sky, emissive; physical units; IES; light functions; mobility
 - [ ] Shadows: cascaded for the sun, shadow maps for local lights, quality per light

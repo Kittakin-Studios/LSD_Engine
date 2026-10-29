@@ -73,6 +73,20 @@ static void test_blender_fbx(const fs::path& root) {
     fs::remove(content / "Props" / "Ball2.fbx");
     CHECK(again.scan() && again.count() == 1);
 
+    // Rename and move keep the GUID (the .meta travels with the file); bad names are refused.
+    char error[256];
+    CHECK(!asset::valid_name("a/b") && !asset::valid_name("a\\b") && !asset::valid_name("") && !asset::valid_name("..") && !asset::valid_name("x?") && asset::valid_name("Chair 01"));
+    CHECK(!registry.rename_asset(registry.get(0), "bad:name", error, sizeof error) && error[0]);
+    CHECK(registry.rename_asset(registry.get(0), "Orb", error, sizeof error));
+    CHECK(registry.count() == 1 && registry.get(0).guid == guid && std::strcmp(registry.get(0).name, "Orb") == 0);
+    CHECK(!fs::exists(content / "Props" / "Ball.fbx.meta") && fs::exists(content / "Props" / "Orb.fbx.meta"));
+    fs::create_directories(content / "Shapes");
+    CHECK(registry.move_asset(registry.get(0), "Shapes", error, sizeof error));
+    CHECK(registry.count() == 1 && registry.get(0).guid == guid && std::strcmp(registry.get(0).folder, "Shapes") == 0);
+    CHECK(!registry.move_asset(registry.get(0), "Missing", error, sizeof error));
+    CHECK(registry.move_asset(registry.get(0), "Props", error, sizeof error) && registry.rename_asset(registry.get(0), "Ball", error, sizeof error));
+    CHECK(registry.get(0).guid == guid);
+
     // Compile to DerivedData, load it back, check the Blender default UV sphere (radius 1 m).
     char compiled[300];
     CHECK(asset::compile_mesh_asset(registry, ball, data.generic_string().c_str(), heap, compiled, sizeof compiled));
@@ -105,6 +119,10 @@ static void test_blender_fbx(const fs::path& root) {
     CHECK(asset::load_compiled_mesh(compiled, heap, mesh, &bounds));
     CHECK(std::fabs(bounds.max[2] - 2.0f) < 0.1f);
     render::free_mesh(heap, mesh);
+
+    // Delete removes the file and its .meta.
+    CHECK(registry.delete_asset(registry.get(0), error, sizeof error));
+    CHECK(registry.count() == 0 && !fs::exists(content / "Props" / "Ball.fbx") && !fs::exists(content / "Props" / "Ball.fbx.meta"));
 }
 
 // A one-triangle glTF (Y-up) whose top vertex is at +Y must arrive pointing up (+Z).

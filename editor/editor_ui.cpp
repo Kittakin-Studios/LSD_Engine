@@ -4,6 +4,7 @@
 
 #include "lsd/debug_ui/details_panel.h"
 
+#include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_internal.h>  // DockBuilder API
 
@@ -300,6 +301,106 @@ void draw_details_panel(EditorState& s) {
 
 // ---- Content Browser ----
 
+std::string join_folder(const char* parent, const char* child) {
+    return parent[0] ? std::string(parent) + "/" + child : std::string(child);
+}
+
+// Accepts an asset dragged onto the last item (folder tile or tree node) and moves it there.
+void folder_drop_target(EditorState& s, const char* folder) {
+    if (!ImGui::BeginDragDropTarget()) return;
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+        asset::Guid guid;
+        std::memcpy(&guid, payload->Data, sizeof guid);
+        char error[200] = "";
+        if (const asset::AssetRecord* r = s.registry->find(guid)) {
+            if (std::strcmp(r->folder, folder) == 0) {
+                // already there
+            } else if (s.registry->move_asset(*r, folder, error, sizeof error)) {
+                std::snprintf(s.status, sizeof s.status, "Moved to Content/%s", folder);
+            } else {
+                std::snprintf(s.status, sizeof s.status, "Move failed: %s", error);
+            }
+        }
+    }
+    ImGui::EndDragDropTarget();
+}
+
+void show_in_explorer(const char* folder) {
+    std::error_code error;
+    const std::string path = std::filesystem::absolute(std::filesystem::path(kContentDir) / folder, error).generic_string();
+    SDL_OpenURL(("file:///" + path).c_str());
+}
+
+void start_rename(EditorState& s, asset::Guid guid, const char* folder, const char* current) {
+    s.rename_asset = guid;
+    std::snprintf(s.rename_folder, sizeof s.rename_folder, "%s", folder);
+    std::snprintf(s.rename_buffer, sizeof s.rename_buffer, "%s", current);
+    s.open_rename = true;
+}
+
+// Rename and delete confirmation dialogs; actions happen on OK.
+void draw_file_dialogs(EditorState& s) {
+    if (s.open_rename) ImGui::OpenPopup("Rename");
+    if (s.open_delete) ImGui::OpenPopup("Delete");
+    s.open_rename = s.open_delete = false;
+
+    if (ImGui::BeginPopupModal("Rename", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        const bool enter = ImGui::InputText("##name", s.rename_buffer, sizeof s.rename_buffer, ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool ok = asset::valid_name(s.rename_buffer);
+        if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Not a valid name");
+        if ((ImGui::Button("Rename") || enter) && ok) {
+            char error[200] = "";
+            bool done = false;
+            if (const asset::AssetRecord* r = s.rename_asset.valid() ? s.registry->find(s.rename_asset) : nullptr) {
+                done = s.registry->rename_asset(*r, s.rename_buffer, error, sizeof error);
+            } else if (s.rename_folder[0]) {
+                const std::filesystem::path from = std::filesystem::path(kContentDir) / s.rename_folder;
+                const std::filesystem::path to = from.parent_path() / s.rename_buffer;
+                std::error_code ec;
+                if (std::filesystem::exists(to, ec)) std::snprintf(error, sizeof error, "%s already exists", s.rename_buffer);
+                else std::filesystem::rename(from, to, ec);
+                if (ec) std::snprintf(error, sizeof error, "%s", ec.message().c_str());
+                done = !error[0];
+                if (done) {
+                    s.registry->scan();  // assets inside keep their GUIDs: their .meta files moved too
+                    s.content_folder[0] = '\0';
+                }
+            }
+            std::snprintf(s.status, sizeof s.status, done ? "Renamed to %s" : "Rename failed: %s", done ? s.rename_buffer : error);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("Delete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const asset::AssetRecord* r = s.delete_asset.valid() ? s.registry->find(s.delete_asset) : nullptr;
+        if (r) ImGui::Text("Delete Content/%s?\nObjects already placed keep showing until you remove them.", r->path);
+        else ImGui::Text("Delete the empty folder Content/%s?", s.delete_folder);
+        if (ImGui::Button("Delete")) {
+            char error[200] = "";
+            bool done = false;
+            if (r) {
+                const std::string name = r->name;
+                done = s.registry->delete_asset(*r, error, sizeof error);
+                if (done) std::snprintf(error, sizeof error, "%s", name.c_str());
+                if (s.selected_asset == s.delete_asset) s.selected_asset = {};
+            } else {
+                std::error_code ec;
+                done = std::filesystem::remove(std::filesystem::path(kContentDir) / s.delete_folder, ec);  // fails unless empty
+                std::snprintf(error, sizeof error, "%s", done ? s.delete_folder : "folder is not empty");
+            }
+            std::snprintf(s.status, sizeof s.status, done ? "Deleted %s" : "Delete failed: %s", error);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
 // Draws the sub-folders of `dir` as tree nodes; clicking one selects it. Returns false if none.
 // shortcut: reads the disk every frame; move to the registry's index when folders get many.
 bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTreeNodeFlags flags) {
@@ -316,6 +417,7 @@ bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTre
             std::snprintf(s.content_folder, sizeof s.content_folder, "%s", relative.c_str());
             s.search[0] = '\0';
         }
+        folder_drop_target(s, relative.c_str());
         if (open) {
             draw_folder_tree(s, entry.path(), flags);
             ImGui::TreePop();
@@ -353,8 +455,26 @@ void draw_asset_grid(EditorState& s) {
             }
         }
     }
+    // Right-click on empty space: New Folder.
+    if (ImGui::BeginPopupContextWindow("grid_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::MenuItem("New Folder")) {
+            std::error_code error;
+            const std::filesystem::path base = std::filesystem::path(kContentDir) / s.content_folder;
+            std::filesystem::path dir = base / "NewFolder";
+            for (int n = 2; std::filesystem::exists(dir, error); ++n) dir = base / ("NewFolder" + std::to_string(n));
+            std::filesystem::create_directories(dir, error);
+            start_rename(s, {}, join_folder(s.content_folder, dir.filename().string().c_str()).c_str(), dir.filename().string().c_str());
+        }
+        if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(s.content_folder);
+        ImGui::EndPopup();
+    }
+    if (s.selected_asset.valid() && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2)) {
+        if (const asset::AssetRecord* r = s.registry->find(s.selected_asset)) start_rename(s, r->guid, "", r->name);
+    }
+    draw_file_dialogs(s);
+
     if (count == 0 && folder_count == 0) {
-        ImGui::TextDisabled(s.search[0] ? "No assets match." : "No assets here. Drag .fbx, .gltf or .glb files from Explorer onto the editor to import them into this folder.");
+        ImGui::TextDisabled(s.search[0] ? "No assets match." : "No assets here. Drag .fbx, .gltf or .glb files from Explorer onto the editor, or right-click for New Folder.");
         return;
     }
 
@@ -370,10 +490,20 @@ void draw_asset_grid(EditorState& s) {
         ImGui::BeginGroup();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::Selectable("##folder", false, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()));
+        const std::string folder_path = join_folder(s.content_folder, folders[f]);
+        folder_drop_target(s, folder_path.c_str());
+        if (ImGui::BeginPopupContextItem("folder_menu")) {
+            if (ImGui::MenuItem("Rename")) start_rename(s, {}, folder_path.c_str(), folders[f]);
+            if (ImGui::MenuItem("Delete...")) {
+                s.delete_asset = {};
+                std::snprintf(s.delete_folder, sizeof s.delete_folder, "%s", folder_path.c_str());
+                s.open_delete = true;
+            }
+            if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(folder_path.c_str());
+            ImGui::EndPopup();
+        }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            char next[256];
-            std::snprintf(next, sizeof next, "%s%s%s", s.content_folder, s.content_folder[0] ? "/" : "", folders[f]);
-            std::snprintf(s.content_folder, sizeof s.content_folder, "%s", next);
+            std::snprintf(s.content_folder, sizeof s.content_folder, "%s", folder_path.c_str());
         }
         // Folder shape: tab on top of a body, in the tree's folder colours.
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -398,6 +528,15 @@ void draw_asset_grid(EditorState& s) {
             s.selected_meta = asset::AssetMeta{};
             s.registry->load_meta(r, s.selected_meta);
             s.status[0] = '\0';
+        }
+        if (ImGui::BeginPopupContextItem("asset_menu")) {
+            if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
+            if (ImGui::MenuItem("Delete...")) {
+                s.delete_asset = r.guid;
+                s.open_delete = true;
+            }
+            if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(r.folder);
+            ImGui::EndPopup();
         }
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload(kAssetPayload, &r.guid, sizeof r.guid);
@@ -452,6 +591,7 @@ void draw_content_browser(EditorState& s) {
                 s.content_folder[0] = '\0';
                 s.search[0] = '\0';
             }
+            folder_drop_target(s, "");
             ImGui::PopStyleColor();
             ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.folder_tree_text));
             if (root) {

@@ -23,6 +23,9 @@ struct AssetRecord {
     i64 source_time = 0;    // last write time, for the data compiler's up-to-date check
 };
 
+// True for a usable file or folder name: non-empty, not "." / "..", no \ / : * ? \" < > | or control characters.
+bool valid_name(const char* name);
+
 class AssetRegistry {
 public:
     AssetRegistry(Allocator& allocator, const char* content_dir);
@@ -45,6 +48,13 @@ public:
     // Absolute-or-relative path of the source file and its .meta sidecar.
     void source_path(const AssetRecord& record, char* out, usize capacity) const;
     void meta_path(const AssetRecord& record, char* out, usize capacity) const;
+
+    // File operations that keep each asset's .meta (and therefore its GUID) with it, then rescan.
+    // Names are validated (no path separators or characters Windows forbids); `error` says why on failure.
+    // Copy `record` first: the operations rescan, which can move records around.
+    bool rename_asset(AssetRecord record, const char* new_name, char* error, usize error_capacity);
+    bool move_asset(AssetRecord record, const char* folder, char* error, usize error_capacity);
+    bool delete_asset(AssetRecord record, char* error, usize error_capacity);
 
     bool load_meta(const AssetRecord& record, AssetMeta& out) const;
     bool save_meta(const AssetRecord& record, const AssetMeta& meta) const;
