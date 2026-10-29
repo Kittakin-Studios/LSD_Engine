@@ -1,7 +1,9 @@
 #pragma once
 // Editor shell: dock layout (Viewport, Outliner, Details, Content Browser) drawn with Dear ImGui.
-// Panels show sample data until the World (milestone 3) and asset registry (milestone 2) exist.
+// The UI only edits EditorState; main.cpp acts on the requests it leaves there (place, delete).
 #include "editor_theme.h"
+
+#include "lsd/asset/asset_registry.h"
 
 #include "lsd/foundation/math.h"
 
@@ -32,10 +34,25 @@ struct EditorState {
     int row_count = 0;
     int selected_row = -1;
     int details_tab = 0;
+
+    // Content Browser
+    const asset::AssetRegistry* registry = nullptr;
+    char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
+    char search[96] = "";
+    int type_filter = 0;            // 0 = all types, 1 = meshes
+    asset::Guid selected_asset;     // shown in Details when valid
+    asset::AssetMeta selected_meta;
+
+    // Requests for main.cpp, cleared once handled
+    bool place_requested = false;
+    asset::Guid place_asset;
+    Vec3 place_position;
+    int delete_row = -1;
     char status[160] = "";
     f32 viewport_rect[4] = {};  // x, y, width, height in window pixels, set by draw_editor
 };
 
+Vec3 camera_eye(const OrbitCamera& camera);
 Mat4 camera_view(const OrbitCamera& camera);
 Mat4 camera_projection(const OrbitCamera& camera, f32 aspect);
 

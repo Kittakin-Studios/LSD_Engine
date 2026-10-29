@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 
@@ -16,6 +17,7 @@ namespace {
 
 constexpr char kThemePath[] = "Config/editor_theme.json";
 constexpr char kContentDir[] = "Content";
+constexpr char kAssetPayload[] = "LSD_ASSET";  // drag-and-drop payload: an asset::Guid
 constexpr char kOutlinerWindow[] = "Outliner";
 constexpr char kDetailsWindow[] = "Details";
 constexpr char kContentWindow[] = "Content Browser";
@@ -65,13 +67,49 @@ bool themed_tab(const char* label, int index, int& active, const LinearColor& on
 
 // ---- Viewport ----
 
+// Where the mouse ray hits the floor (z = 0); the origin if the ray points at the sky.
+Vec3 floor_point(const OrbitCamera& cam, ImVec2 pos, ImVec2 size, ImVec2 mouse) {
+    const Mat4 view = camera_view(cam);
+    const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};
+    const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
+    const Vec3 back{view.at(2, 0), view.at(2, 1), view.at(2, 2)};
+    const f32 tan_half = std::tan(cam.fov_y * 0.5f);
+    const f32 nx = ((mouse.x - pos.x) / size.x * 2.0f - 1.0f) * tan_half * (size.x / size.y);
+    const f32 ny = (1.0f - (mouse.y - pos.y) / size.y * 2.0f) * tan_half;
+    const Vec3 dir = normalize(right * nx + up * ny - back);
+    const Vec3 eye = camera_eye(cam);
+    if (dir.z > -1e-4f) return {0, 0, 0};
+    return eye + dir * (-eye.z / dir.z);
+}
+
 void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
     if (size.x < 8 || size.y < 8) return;
     const EditorTheme& t = s.theme;
     ImGuiIO& io = ImGui::GetIO();
 
-    // Right-drag orbits, wheel zooms (only when the mouse is over the viewport, not a panel).
-    const bool hovered = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)) && !io.WantCaptureMouse;
+    // Invisible window covering the viewport: owns its mouse input and accepts asset drops.
+    ImGui::SetNextWindowPos(pos);
+    ImGui::SetNextWindowSize(size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::Begin("##ViewportInput", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
+    ImGui::PopStyleVar();
+    ImGui::InvisibleButton("##surface", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) s.selected_row = -1;  // click on empty space deselects (no picking yet)
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+            std::memcpy(&s.place_asset, payload->Data, sizeof s.place_asset);
+            s.place_position = floor_point(s.camera, pos, size, io.MousePos);
+            s.place_requested = true;
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::End();
+
+    // Right-drag orbits, wheel zooms.
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) s.orbiting = true;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) s.orbiting = false;
     if (s.orbiting) {
@@ -134,7 +172,7 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
         if (ImGui::Button("Grid")) s.show_grid = !s.show_grid;
         if (grid_was_on) ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("RMB drag: orbit  |  wheel: zoom");
+        ImGui::TextDisabled("RMB drag: orbit  |  wheel: zoom  |  drag assets in from the Content Browser");
     }
     ImGui::End();
 }
@@ -186,6 +224,7 @@ void draw_outliner(EditorState& s) {
                 if (ImGui::Selectable(row->name, s.selected_row == i, ImGuiSelectableFlags_SpanAvailWidth,
                                       ImVec2(0, row_height - ImGui::GetStyle().ItemSpacing.y))) {
                     s.selected_row = i;
+                    s.selected_asset = {};
                 }
                 ImGui::PopStyleColor();
             }
@@ -208,27 +247,44 @@ void draw_details_panel(EditorState& s) {
     EditorTheme& t = s.theme;
     if (!begin_panel(kDetailsWindow)) { ImGui::End(); return; }
     if (ImGui::BeginTabBar("DetailsTabs")) {
+        const asset::AssetRecord* selected = s.registry && s.selected_asset.valid() ? s.registry->find(s.selected_asset) : nullptr;
         if (themed_tab("Details", 0, s.details_tab, t.details_tab_active, t.details_tab, t.text_on_bright)) {
-            ImGui::TextDisabled("Editor Theme  (%s)", kThemePath);
-            if (ImGui::Button("Save")) {
-                std::snprintf(s.status, sizeof s.status, reflect::save_file(t, kThemePath) ? "Saved %s" : "Could not save %s", kThemePath);
+            if (selected) {
+                ImGui::Text("%s", selected->name);
+                ImGui::TextDisabled("%s  |  Content/%s", asset::to_string(selected->type), selected->path);
+                if (ImGui::Button("Save")) {
+                    // The data compiler sees the new settings and rebuilds; placed copies update live.
+                    std::snprintf(s.status, sizeof s.status, s.registry->save_meta(*selected, s.selected_meta) ? "Saved %s.meta" : "Could not save %s.meta", selected->name);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Revert")) s.registry->load_meta(*selected, s.selected_meta);
+                if (s.status[0]) ImGui::TextDisabled("%s", s.status);
+                ImGui::BeginChild("DetailsRows");
+                const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}};
+                draw_details(reflect::type_of<asset::AssetMeta>(), &s.selected_meta, &style);
+                ImGui::EndChild();
+            } else {
+                ImGui::TextDisabled("Editor Theme  (%s)", kThemePath);
+                if (ImGui::Button("Save")) {
+                    std::snprintf(s.status, sizeof s.status, reflect::save_file(t, kThemePath) ? "Saved %s" : "Could not save %s", kThemePath);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Load")) {
+                    std::snprintf(s.status, sizeof s.status, reflect::load_file(t, kThemePath) ? "Loaded %s" : "Could not load %s", kThemePath);
+                    apply_theme(t);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset")) {
+                    t = EditorTheme{};
+                    apply_theme(t);
+                    std::snprintf(s.status, sizeof s.status, "Reset to defaults (not saved)");
+                }
+                if (s.status[0]) ImGui::TextDisabled("%s", s.status);
+                ImGui::BeginChild("DetailsRows");
+                const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}};
+                if (draw_details(reflect::type_of<EditorTheme>(), &t, &style)) apply_theme(t);
+                ImGui::EndChild();
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Load")) {
-                std::snprintf(s.status, sizeof s.status, reflect::load_file(t, kThemePath) ? "Loaded %s" : "Could not load %s", kThemePath);
-                apply_theme(t);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Reset")) {
-                t = EditorTheme{};
-                apply_theme(t);
-                std::snprintf(s.status, sizeof s.status, "Reset to defaults (not saved)");
-            }
-            if (s.status[0]) ImGui::TextDisabled("%s", s.status);
-            ImGui::BeginChild("DetailsRows");
-            const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}};
-            if (draw_details(reflect::type_of<EditorTheme>(), &t, &style)) apply_theme(t);
-            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (themed_tab("World Partition", 1, s.details_tab, t.details_tab_active, t.details_tab, t.text_on_bright)) {
@@ -242,21 +298,89 @@ void draw_details_panel(EditorState& s) {
 
 // ---- Content Browser ----
 
-// Draws the sub-folders of `dir` as tree nodes. Returns false if there are none.
-// shortcut: reads the disk every frame; the asset registry will index Content/ in the background.
-bool draw_folder_tree(const std::filesystem::path& dir, ImGuiTreeNodeFlags flags) {
+// Draws the sub-folders of `dir` as tree nodes; clicking one selects it. Returns false if none.
+// shortcut: reads the disk every frame; move to the registry's index when folders get many.
+bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTreeNodeFlags flags) {
     std::error_code error;
     bool any = false;
     for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
         if (!entry.is_directory(error)) continue;
         any = true;
         const std::string name = entry.path().filename().string();
-        if (ImGui::TreeNodeEx(name.c_str(), flags)) {
-            draw_folder_tree(entry.path(), flags);
+        const std::string relative = std::filesystem::relative(entry.path(), kContentDir, error).generic_string();
+        const bool selected = relative == s.content_folder;
+        const bool open = ImGui::TreeNodeEx(name.c_str(), flags | (selected ? ImGuiTreeNodeFlags_Selected : 0));
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+            std::snprintf(s.content_folder, sizeof s.content_folder, "%s", relative.c_str());
+            s.search[0] = '\0';
+        }
+        if (open) {
+            draw_folder_tree(s, entry.path(), flags);
             ImGui::TreePop();
         }
     }
     return any;
+}
+
+// Asset tiles for the current folder or search, each draggable into the viewport.
+void draw_asset_grid(EditorState& s) {
+    const EditorTheme& t = s.theme;
+    ImGui::SetNextItemWidth(260.0f);
+    ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0");
+    ImGui::SameLine();
+    ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
+    ImGui::Separator();
+    if (!s.registry) return;
+
+    static usize hits[1024];
+    const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : asset::AssetType::Unknown;
+    const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
+    if (count == 0) {
+        ImGui::TextDisabled(s.search[0] ? "No assets match." : "No assets here. Drag .fbx, .gltf or .glb files from Explorer onto the editor to import them into this folder.");
+        return;
+    }
+
+    constexpr f32 kTile = 96.0f;
+    const f32 spacing = ImGui::GetStyle().ItemSpacing.x;
+    const int columns = static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing)) > 0
+                            ? static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing))
+                            : 1;
+    for (usize n = 0; n < count; ++n) {
+        const asset::AssetRecord& r = s.registry->get(hits[n]);
+        ImGui::PushID(static_cast<int>(hits[n]));
+        if (n % static_cast<usize>(columns) != 0) ImGui::SameLine();
+        ImGui::BeginGroup();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const bool selected = r.guid == s.selected_asset;
+        if (ImGui::Selectable("##tile", selected, 0, ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()))) {
+            s.selected_asset = r.guid;
+            s.selected_row = -1;
+            s.selected_meta = asset::AssetMeta{};
+            s.registry->load_meta(r, s.selected_meta);
+            s.status[0] = '\0';
+        }
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(kAssetPayload, &r.guid, sizeof r.guid);
+            ImGui::Text("Place %s", r.name);
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nContent/%s", r.name, r.path);
+        // shortcut: type badge instead of a rendered thumbnail (next step: render-to-texture thumbnails).
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + kTile - 6, p.y + kTile - 6), u32_color(t.outline_row_b), 4.0f);
+        dl->AddRect(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + kTile - 6, p.y + kTile - 6), u32_color(t.text_mesh), 4.0f, 0, 2.0f);
+        const char* badge = asset::to_string(r.type);
+        const ImVec2 badge_size = ImGui::CalcTextSize(badge);
+        dl->AddText(ImVec2(p.x + (kTile - badge_size.x) * 0.5f, p.y + (kTile - badge_size.y) * 0.5f), u32_color(t.text_mesh), badge);
+        dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
+        dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), r.name);
+        dl->PopClipRect();
+        ImGui::EndGroup();
+        ImGui::PopID();
+    }
 }
 
 void draw_content_browser(EditorState& s) {
@@ -280,11 +404,15 @@ void draw_content_browser(EditorState& s) {
             ImGui::BeginChild("FolderTree", ImVec2(200, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
             const ImGuiTreeNodeFlags node = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
             ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.folder_tree_border));
-            const bool root = ImGui::TreeNodeEx("Content", node);
+            const bool root = ImGui::TreeNodeEx("Content", node | (s.content_folder[0] ? 0 : ImGuiTreeNodeFlags_Selected));
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                s.content_folder[0] = '\0';
+                s.search[0] = '\0';
+            }
             ImGui::PopStyleColor();
             ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.folder_tree_text));
             if (root) {
-                if (!draw_folder_tree(kContentDir, node)) ImGui::TextDisabled("(empty)");
+                if (!draw_folder_tree(s, kContentDir, node)) ImGui::TextDisabled("(no folders)");
                 ImGui::TreePop();
             }
             ImGui::PopStyleColor();
@@ -295,7 +423,7 @@ void draw_content_browser(EditorState& s) {
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_ChildBg, vec4(t.content_area));
             ImGui::BeginChild("Assets", ImVec2(0, 0), ImGuiChildFlags_None);
-            ImGui::TextDisabled("Assets in Content/ appear here once the asset registry and importers land.");
+            draw_asset_grid(s);
             ImGui::EndChild();
             ImGui::PopStyleColor();
             ImGui::EndTabItem();
@@ -339,16 +467,18 @@ void draw_editor(EditorState& s) {
     draw_outliner(s);
     draw_details_panel(s);
     draw_content_browser(s);
+    if (s.selected_row >= 0 && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Delete)) s.delete_row = s.selected_row;
 
     // The central node is left empty and transparent: the 3D viewport shows through it.
     if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace)) draw_viewport(s, central->Pos, central->Size);
 }
 
-Mat4 camera_view(const OrbitCamera& cam) {
+Vec3 camera_eye(const OrbitCamera& cam) {
     const f32 cp = std::cos(cam.pitch);
-    const Vec3 eye = Vec3{cp * std::cos(cam.yaw), cp * std::sin(cam.yaw), std::sin(cam.pitch)} * cam.distance;
-    return look_at(eye, Vec3{0, 0, 0}, Vec3{0, 0, 1});
+    return Vec3{cp * std::cos(cam.yaw), cp * std::sin(cam.yaw), std::sin(cam.pitch)} * cam.distance;
 }
+
+Mat4 camera_view(const OrbitCamera& cam) { return look_at(camera_eye(cam), Vec3{0, 0, 0}, Vec3{0, 0, 1}); }
 
 Mat4 camera_projection(const OrbitCamera& cam, f32 aspect) { return perspective(cam.fov_y, aspect, 0.05f, 1000.0f); }
 

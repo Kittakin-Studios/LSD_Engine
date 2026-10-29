@@ -19,17 +19,17 @@ Source: [engine plan doc](https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW), Fe
 
 ## Milestone 2 — Assets + Content Browser
 
-Exit test: import a Blender FBX and find it by search.
+Exit test: import a Blender FBX and find it by search. **Passes** (automated in `tests/asset_tests.cpp` and in the editor).
 
 - [~] Renderer basics: buffers, depth, lit mesh + line pipelines, camera math, built-in cube/sphere/plane, GPU grid done on D3D12 and OpenGL; Vulkan waits for the SDK; next: imported meshes, textures, thumbnails
-- [ ] Asset registry: GUID, type, path, tags, dependency list, background indexing [Asset Registry]
-- [ ] Safe rename / move with reference fix-up; Reference Viewer
-- [ ] Binary serialization for compiled data [cooked data]
-- [ ] Data compiler: source text → binary blobs, incremental, hot reload of data
-- [ ] Importers: FBX (ufbx), glTF (cgltf), mesh optimisation (meshoptimizer), textures, WAV/OGG audio
+- [~] Asset registry: GUIDs in `.meta` sidecars, type, path, folder, search, duplicate-GUID repair done; needs tags, dependency list, background indexing [Asset Registry]
+- [ ] Safe rename / move inside the editor (moves .meta too); Reference Viewer
+- [x] Binary serialization for reflected objects (name-hash keyed, versioned) and compiled meshes [cooked data]
+- [x] Data compiler: Content → DerivedData, incremental (source size/time + import settings), editor hot reload of meshes
+- [~] Importers: FBX (ufbx), glTF (cgltf), meshoptimizer done (merged mesh, Z-up metres); needs textures, WAV/OGG audio, materials, multiple meshes per file
 - [ ] Shader pipeline: HLSL → DXIL / SPIR-V (DXC) / GLSL (SPIRV-Cross) as assets; replaces the 3 hand-written test shaders
 - [ ] Thumbnails
-- [~] Content Browser: themed shell and real `Content/` folder tree done; needs asset grid, search, filters, drag-drop import
+- [~] Content Browser: folder tree, asset grid, search, type filter, drag-drop import from Explorer, drag into viewport done; needs thumbnails, rename/move, folder creation
 - [ ] Data assets, Data tables (CSV import/export), Curves [Data Asset, Data Table, Curve]
 
 ## Milestone 3 — Editor shell

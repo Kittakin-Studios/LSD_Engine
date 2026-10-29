@@ -75,6 +75,8 @@ engine/core/        job system (worker threads, counters, wait-by-helping)
 engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON save/load,
                     save_file/load_file, LinearColor (Color flag -> colour picker)
 engine/debug_ui/    ImGui Details panel generated from TypeInfo (runtime overlay + editor v1)
+engine/render/      mesh data, built-in shapes, GPU upload, grid lines
+engine/asset/       GUIDs, .meta sidecars, AssetRegistry, FBX/glTF import, .lsdmesh compiled format
 engine/rhi/         RHI interface, adapter scoring/selection, quality presets, create_device();
                     backends/d3d12, backends/vulkan, backends/opengl (each also renders ImGui)
 engine/world, script, render, audio, physics, ui   placeholders
@@ -104,8 +106,8 @@ runtime Details panel generated from reflection (edit live, Save/Load/Reset to `
 Flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`, `-frames=<n>`.
 Vulkan triangle needs the **Vulkan SDK** (DXC with SPIR-V + validation layers); without it the
 Vulkan backend runs but skips the triangle. Editor shell (`lsd_editor.exe`) started early: layout, theme and grid are real; Outliner and
-Content Browser show sample rows until milestones 2-3. Next: milestone 2 (asset registry,
-importers, Content Browser).
+Content Browser show sample rows until milestones 2-3. Milestone 2 exit test passes (Blender FBX
+imported, found by search, placed). Remaining in milestone 2: thumbnails, rename/move, data assets.
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no
