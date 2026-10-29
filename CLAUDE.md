@@ -85,7 +85,7 @@ tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<tar
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
 third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, Vulkan-Headers, volk)
 tests/              framework-free unit tests (CTest)
-docs/               ROADMAP.md, CLEAN_ROOM.md
+docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
 ```
 
 Conventions: namespace `lsd`, snake_case functions, `PascalCase` types, every system takes an
