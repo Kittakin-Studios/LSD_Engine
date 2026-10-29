@@ -96,24 +96,33 @@ Conventions: namespace `lsd`, snake_case functions, `PascalCase` types, every sy
 
 ## Status
 
-**Milestone 0 — done.** Builds clean on MSVC and Clang, tests pass, runtime prints the hardware
-report on Charlize's machine.
+Work is on branch `milestone-1` (not merged to `main` yet). Full checklist: `docs/BACKLOG.md`.
 
-**Milestone 1 — done, pending Charlize's visual check.** Job system; SDL3 window; RHI with
-D3D12, Vulkan 1.3 (volk, dynamic rendering, VK_EXT_memory_budget) and OpenGL 4.6 backends, each
-clearing, drawing the test triangle and rendering Dear ImGui; reflection generator + JSON save/load;
-runtime Details panel generated from reflection (edit live, Save/Load/Reset to `Saved/`).
-Flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`, `-frames=<n>`.
-Vulkan triangle needs the **Vulkan SDK** (DXC with SPIR-V + validation layers); without it the
-Vulkan backend runs but skips the triangle. Editor shell (`lsd_editor.exe`) started early: layout, theme and grid are real; Outliner and
-Content Browser show sample rows until milestones 2-3. **Milestone 2 — done.** Asset registry with GUID .meta sidecars, FBX/glTF import, compiled
-meshes + data compiler, Content Browser (thumbnails, search, import by drop, rename/move/delete,
-folders, drag to place). Data assets moved to milestone 4, texture/audio import to milestone 5.
-Next: milestone 3 (World + levels, gizmos, undo, Play-in-Editor).
+**Milestone 0 — done.** Builds on MSVC; tests pass (Linux/Clang not re-checked since).
+
+**Milestone 1 — done.** Job system; SDL3 window; RHI with D3D12, Vulkan 1.3 (volk, dynamic
+rendering, VK_EXT_memory_budget) and OpenGL 4.6; reflection generator + JSON/binary save/load;
+runtime Details panel from reflection. Vulkan draws only clear + UI until the **Vulkan SDK** is
+installed (its DXC compiles HLSL to SPIR-V; it also brings validation layers).
+
+**Milestone 2 — done.** Renderer basics (buffers, depth, lit-mesh and line pipelines, render
+targets) on D3D12 and OpenGL; asset registry with GUID `.meta` sidecars; FBX/glTF import; compiled
+`.lsdmesh` + data compiler; editor (`lsd_editor.exe`) with themed dock layout, GPU grid viewport,
+Content Browser (thumbnails, search, import by drop, rename/move/delete, folders, drag to place),
+Outliner of placed objects, Details for the selected asset or the theme. Data assets moved to
+milestone 4, texture/audio import to milestone 5.
+
+**Next: milestone 3** — World (entities + components) and levels saved to disk, move/rotate/scale
+gizmos, picking, undo/redo, Play-in-Editor.
+
+Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
+`-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
+`-import=<file>`, `-place=<asset name>`.
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no
-inheritance (composition only); source assets save as JSON text, binary only after the data compiler.
+inheritance (composition only); strings are fixed `char name[N]`; source assets save as JSON text,
+binary only after the data compiler. World is Z-up, right-handed (like Blender), metres.
 
 ## Roadmap (editor-first)
 
