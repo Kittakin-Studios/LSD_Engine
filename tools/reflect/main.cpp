@@ -262,10 +262,27 @@ private:
             ++i_;
         }
         ++i_;  // ';'
-        if (decl.size() < 2 || decl.back().kind != Kind::Ident) { error(line, "could not read the field after LSD_PROPERTY"); return; }
+        if (decl.size() < 2) { error(line, "could not read the field after LSD_PROPERTY"); return; }
+        // `char name[N]` is a fixed-size string; any other array is rejected below.
+        size_t type_end = decl.size() - 1;
+        if (decl.size() >= 5 && decl.back().text == "]" && decl[decl.size() - 3].text == "[" &&
+            decl[decl.size() - 4].kind == Kind::Ident) {
+            type_end = decl.size() - 4;
+            f.name = decl[type_end].text;
+            std::string element;
+            for (size_t k = 0; k < type_end; ++k) element += (element.empty() ? "" : " ") + decl[k].text;
+            if (element != "char") {
+                error(decl[0].line, "field '" + f.name + "': only char arrays (strings) are reflected");
+                return;
+            }
+            f.type = "String";
+            structs_[static_cast<size_t>(current_struct())].fields.push_back(f);
+            return;
+        }
+        if (decl.back().kind != Kind::Ident) { error(line, "could not read the field after LSD_PROPERTY"); return; }
         f.name = decl.back().text;
         std::string type;
-        for (size_t k = 0; k + 1 < decl.size(); ++k) {
+        for (size_t k = 0; k < type_end; ++k) {
             const std::string& part = decl[k].text;
             if (part == "[" || part == "*" || part == "&" || part == "<" || part == "static") {
                 error(decl[k].line, "field '" + f.name + "': arrays, pointers, references, templates and statics are not reflected yet");
@@ -320,7 +337,8 @@ std::string generate(const std::vector<Struct>& structs, const std::string& incl
             o << "    static const ::lsd::reflect::Property properties[] = {\n";
             for (const Field& f : s.fields) {
                 o << "        {\"" << f.name << "\", ::lsd::reflect::FieldType::" << f.type
-                  << ", static_cast<::lsd::u32>(offsetof(Self, " << f.name << ")), " << f.flags << "u, "
+                  << ", static_cast<::lsd::u32>(offsetof(Self, " << f.name << ")), static_cast<::lsd::u32>(sizeof(Self::" << f.name
+                  << ")), " << f.flags << "u, "
                   << f.category << ", " << f.tooltip << ", " << f.units << ", "
                   << f.min << ", " << f.max << ", " << (f.has_min ? "true" : "false") << ", "
                   << (f.has_max ? "true" : "false") << ", "

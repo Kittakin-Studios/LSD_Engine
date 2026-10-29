@@ -31,6 +31,7 @@ struct PointLight {
     LSD_PROPERTY(Visible) u32 light_id = 7;
     LSD_PROPERTY(Save) i64 seed = -42;
     LSD_PROPERTY(Edit, EditorOnly) bool show_radius_gizmo = true;
+    LSD_PROPERTY(Edit) char label[16] = "Lamp";
 
     f32 cached_falloff = 0.0f;  // not reflected, not saved
 

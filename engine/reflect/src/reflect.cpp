@@ -35,6 +35,23 @@ struct Writer {
     }
 };
 
+// JSON string with the escapes JSON requires; control characters become \u00XX.
+void write_string(Writer& w, const char* text, u32 capacity) {
+    w.put("\"");
+    for (u32 i = 0; i < capacity && text[i]; ++i) {
+        const char c = text[i];
+        if (c == '"' || c == '\\') {
+            const char escaped[2] = {'\\', c};
+            w.put(escaped, 2);
+        } else if (static_cast<u8>(c) < 0x20) {
+            w.putf("\\u%04x", static_cast<unsigned>(c));
+        } else {
+            w.put(&c, 1);
+        }
+    }
+    w.put("\"");
+}
+
 void write_object(Writer& w, const TypeInfo& type, const u8* object, u32 depth) {
     w.put("{");
     bool first = true;
@@ -57,6 +74,7 @@ void write_object(Writer& w, const TypeInfo& type, const u8* object, u32 depth) 
             // 9 / 17 significant digits round-trip f32 / f64 exactly.
             case FieldType::F32:  w.putf("%.9g", static_cast<f64>(*reinterpret_cast<const f32*>(field))); break;
             case FieldType::F64:  w.putf("%.17g", *reinterpret_cast<const f64*>(field)); break;
+            case FieldType::String: write_string(w, reinterpret_cast<const char*>(field), p.size); break;
             case FieldType::Struct: write_object(w, *p.struct_type, field, depth + 1); break;
         }
     }
@@ -103,9 +121,19 @@ struct Reader {
         expect('"');
         usize n = 0;
         while (ok && p < end && *p != '"') {
-            if (*p == '\\' && p + 1 < end) ++p;
+            char c = *p;
+            if (c == '\\' && p + 1 < end) {
+                c = *++p;
+                if (c == 'n') c = '\n';
+                else if (c == 't') c = '\t';
+                else if (c == 'u' && p + 4 < end) {  // \u00XX only (we write nothing wider)
+                    char hex[5] = {p[1], p[2], p[3], p[4], 0};
+                    c = static_cast<char>(std::strtol(hex, nullptr, 16));
+                    p += 4;
+                }
+            }
             if (*p == '\n') ++line;
-            if (n + 1 < capacity) out[n++] = *p;
+            if (n + 1 < capacity) out[n++] = c;
             ++p;
         }
         if (capacity) out[n] = '\0';
@@ -170,6 +198,10 @@ void read_property(Reader& r, const Property& prop, u8* field) {
         read_object(r, *prop.struct_type, field);
         return;
     }
+    if (prop.type == FieldType::String) {
+        r.read_string(reinterpret_cast<char*>(field), prop.size);
+        return;
+    }
     char token[64];
     r.read_token(token, sizeof token);
     if (!r.ok) return;
@@ -196,6 +228,7 @@ void read_property(Reader& r, const Property& prop, u8* field) {
             if (valid) *reinterpret_cast<f64*>(field) = v;
             break;
         }
+        case FieldType::String:
         case FieldType::Struct: break;
     }
     if (!valid) {
@@ -220,7 +253,84 @@ void read_object(Reader& r, const TypeInfo& type, u8* object) {
     r.expect('}');
 }
 
+// ---- Binary ----
+
+struct BinaryWriter {
+    u8* out;
+    usize capacity;
+    usize length = 0;
+    void put(const void* data, usize n) {
+        if (length + n <= capacity) std::memcpy(out + length, data, n);
+        length += n;
+    }
+};
+
+// Property record: u64 name hash, u32 payload size, payload. Structs nest the same format.
+void write_binary(BinaryWriter& w, const TypeInfo& type, const u8* object) {
+    const u32 count = type.property_count;
+    w.put(&count, sizeof count);
+    for (u32 i = 0; i < type.property_count; ++i) {
+        const Property& p = type.properties[i];
+        const u64 id = hash64(p.name);
+        w.put(&id, sizeof id);
+        if (p.type == FieldType::Struct) {
+            const usize size_at = w.length;
+            u32 size = 0;
+            w.put(&size, sizeof size);
+            const usize start = w.length;
+            write_binary(w, *p.struct_type, object + p.offset);
+            size = static_cast<u32>(w.length - start);
+            if (size_at + sizeof size <= w.capacity) std::memcpy(w.out + size_at, &size, sizeof size);
+        } else {
+            w.put(&p.size, sizeof p.size);
+            w.put(object + p.offset, p.size);
+        }
+    }
+}
+
+bool read_binary(const TypeInfo& type, u8* object, const u8* data, usize size) {
+    usize at = 0;
+    auto take = [&](void* dst, usize n) {
+        if (at + n > size) return false;
+        std::memcpy(dst, data + at, n);
+        at += n;
+        return true;
+    };
+    u32 count = 0;
+    if (!take(&count, sizeof count)) return false;
+    for (u32 i = 0; i < count; ++i) {
+        u64 id = 0;
+        u32 bytes = 0;
+        if (!take(&id, sizeof id) || !take(&bytes, sizeof bytes) || at + bytes > size) return false;
+        const Property* match = nullptr;
+        for (u32 k = 0; k < type.property_count && !match; ++k) {
+            if (hash64(type.properties[k].name) == id) match = &type.properties[k];
+        }
+        if (match && match->type == FieldType::Struct) {
+            if (!read_binary(*match->struct_type, object + match->offset, data + at, bytes)) return false;
+        } else if (match && match->type == FieldType::String) {
+            const u32 n = bytes < match->size ? bytes : match->size;
+            std::memcpy(object + match->offset, data + at, n);
+            object[match->offset + match->size - 1] = 0;  // keep it terminated if it was truncated
+        } else if (match && bytes == match->size) {
+            std::memcpy(object + match->offset, data + at, bytes);
+        }  // else: removed property or changed type -> keep the default
+        at += bytes;
+    }
+    return true;
+}
+
 } // namespace
+
+usize save_binary(const TypeInfo& type, const void* object, u8* out, usize capacity) {
+    BinaryWriter w{out, capacity};
+    write_binary(w, type, static_cast<const u8*>(object));
+    return w.length;
+}
+
+bool load_binary(const TypeInfo& type, void* object, const u8* data, usize size) {
+    return read_binary(type, static_cast<u8*>(object), data, size);
+}
 
 const Property* find_property(const TypeInfo& type, const char* name) {
     for (u32 i = 0; i < type.property_count; ++i) {

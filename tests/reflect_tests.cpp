@@ -17,7 +17,7 @@ static void test_type_info() {
     CHECK(t.size == sizeof(PointLight));
     CHECK(t.flags & reflect::kComponent);
     CHECK(std::strcmp(t.category, "Lights") == 0);
-    CHECK(t.property_count == 7);  // cached_falloff is not reflected
+    CHECK(t.property_count == 8);  // cached_falloff is not reflected
 
     const reflect::Property* temp = reflect::find_property(t, "temperature");
     CHECK(temp && temp->type == reflect::FieldType::F32);
@@ -41,6 +41,7 @@ static void test_round_trip() {
     a.seed = -9000000000000000000ll;
     a.show_radius_gizmo = false;
     a.cached_falloff = 99.0f;
+    std::strcpy(a.label, "Desk \"A\"\1");
 
     char text[1024];
     const usize length = reflect::save_text(a, text, sizeof text);
@@ -55,6 +56,7 @@ static void test_round_trip() {
     CHECK(b.light_id == a.light_id && b.seed == a.seed);
     CHECK(b.show_radius_gizmo == false);
     CHECK(b.cached_falloff == 0.0f);
+    CHECK(std::strcmp(b.label, a.label) == 0);  // quotes and backslash survive escaping
 
     char small[8];
     CHECK(reflect::save_text(a, small, sizeof small) == length);  // reports the size it needs
@@ -82,10 +84,32 @@ static void test_versioning_and_errors() {
     }
 }
 
+static void test_strings_and_binary() {
+    // A string longer than the field is truncated and stays terminated.
+    const char long_label[] = R"({ "label": "ABCDEFGHIJKLMNOPQRSTUVWXYZ" })";
+    PointLight p;
+    CHECK(reflect::load_text(p, long_label, sizeof long_label - 1));
+    CHECK(std::strlen(p.label) == sizeof p.label - 1);
+
+    PointLight a;
+    a.intensity = 42.0f;
+    a.color.g = 0.125f;
+    a.seed = -7;
+    std::strcpy(a.label, "Bin");
+    lsd::u8 data[512];
+    const lsd::usize size = reflect::save_binary(a, data, sizeof data);
+    CHECK(size > 0 && size <= sizeof data);
+    PointLight b;
+    CHECK(reflect::load_binary(reflect::type_of<PointLight>(), &b, data, size));
+    CHECK(b.intensity == 42.0f && b.color.g == 0.125f && b.seed == -7 && std::strcmp(b.label, "Bin") == 0);
+    CHECK(!reflect::load_binary(reflect::type_of<PointLight>(), &b, data, size / 2));  // truncated data is rejected
+}
+
 int main() {
     test_type_info();
     test_round_trip();
     test_versioning_and_errors();
+    test_strings_and_binary();
     if (g_failures == 0) std::printf("All reflection tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

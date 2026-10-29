@@ -103,6 +103,9 @@ bool draw_property(const reflect::Property& p, u8* object) {
         case reflect::FieldType::U64:  changed = drag<u64>(ImGuiDataType_U64, field, p, u64_format); break;
         case reflect::FieldType::F32:  changed = drag<f32>(ImGuiDataType_Float, field, p, float_format); break;
         case reflect::FieldType::F64:  changed = drag<f64>(ImGuiDataType_Double, field, p, float_format); break;
+        case reflect::FieldType::String:
+            changed = ImGui::InputText("##value", reinterpret_cast<char*>(field), p.size, read_only ? ImGuiInputTextFlags_ReadOnly : 0);
+            break;
         case reflect::FieldType::Struct: break;
     }
     if (read_only) ImGui::EndDisabled();

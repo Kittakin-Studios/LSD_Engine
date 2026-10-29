@@ -1,0 +1,57 @@
+#pragma once
+// Asset registry: every importable file under Content/ with its GUID, type, path and folder.
+// Each source file gets a <file>.meta sidecar (AssetMeta) on first scan; the GUID in it is the
+// asset's permanent identity. Like Unreal's Asset Registry, minus tags/dependencies (later).
+#include "lsd/asset/asset_meta.h"
+#include "lsd/asset/guid.h"
+#include "lsd/foundation/array.h"
+
+namespace lsd::asset {
+
+enum class AssetType : u8 { Unknown, Mesh };
+
+const char* to_string(AssetType type);
+AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh; case-insensitive
+
+struct AssetRecord {
+    Guid guid;
+    AssetType type = AssetType::Unknown;
+    char path[256] = "";    // relative to the content root, '/' separators, e.g. "Props/Chair.fbx"
+    char folder[256] = "";  // "Props" ("" for the root)
+    char name[96] = "";     // file name without extension, e.g. "Chair"
+    u64 source_size = 0;
+    i64 source_time = 0;    // last write time, for the data compiler's up-to-date check
+};
+
+class AssetRegistry {
+public:
+    AssetRegistry(Allocator& allocator, const char* content_dir);
+
+    // Re-reads Content/: adds new files (writing their .meta), drops deleted ones, refreshes
+    // sizes and times. Returns true if anything changed.
+    // shortcut: synchronous full scan; move to a background job with file-change notifications
+    // when projects reach thousands of assets.
+    bool scan();
+
+    usize count() const { return records_.size(); }
+    const AssetRecord& get(usize i) const { return records_[i]; }
+    const AssetRecord* find(Guid guid) const;
+    const char* content_dir() const { return content_dir_; }
+
+    // Indices of assets whose name contains `text` (case-insensitive) and whose type matches
+    // (Unknown = any). With empty text, only assets directly in `folder` match.
+    usize search(const char* text, AssetType type, const char* folder, usize* out, usize max) const;
+
+    // Absolute-or-relative path of the source file and its .meta sidecar.
+    void source_path(const AssetRecord& record, char* out, usize capacity) const;
+    void meta_path(const AssetRecord& record, char* out, usize capacity) const;
+
+    bool load_meta(const AssetRecord& record, AssetMeta& out) const;
+    bool save_meta(const AssetRecord& record, const AssetMeta& meta) const;
+
+private:
+    Array<AssetRecord> records_;
+    char content_dir_[256] = "";
+};
+
+} // namespace lsd::asset

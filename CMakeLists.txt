@@ -29,6 +29,7 @@ add_subdirectory(engine/reflect)
 add_subdirectory(tools/reflect)
 add_subdirectory(engine/rhi)
 add_subdirectory(engine/render)
+add_subdirectory(engine/asset)
 add_subdirectory(engine/debug_ui)
 add_subdirectory(runtime)
 

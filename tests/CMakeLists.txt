@@ -18,3 +18,11 @@ add_executable(lsd_render_tests render_tests.cpp)
 target_link_libraries(lsd_render_tests PRIVATE lsd_render)
 lsd_configure_target(lsd_render_tests)
 add_test(NAME render COMMAND lsd_render_tests)
+
+add_executable(lsd_asset_tests asset_tests.cpp)
+target_link_libraries(lsd_asset_tests PRIVATE lsd_asset)
+target_compile_definitions(lsd_asset_tests PRIVATE
+  LSD_UFBX_DATA_DIR="${LSD_UFBX_DATA_DIR}"
+  LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+lsd_configure_target(lsd_asset_tests)
+add_test(NAME asset COMMAND lsd_asset_tests)

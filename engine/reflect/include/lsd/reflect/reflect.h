@@ -26,7 +26,8 @@
 
 namespace lsd::reflect {
 
-enum class FieldType : u8 { Bool, I32, U32, I64, U64, F32, F64, Struct };
+// String = fixed-size `char name[N]` (always NUL-terminated, truncated to fit).
+enum class FieldType : u8 { Bool, I32, U32, I64, U64, F32, F64, String, Struct };
 
 enum PropertyFlags : u32 {
     kEdit       = 1u << 0,
@@ -46,6 +47,7 @@ struct Property {
     const char* name;
     FieldType type;
     u32 offset;
+    u32 size;  // bytes; for String the capacity including the NUL
     u32 flags;
     const char* category;  // "" when not set
     const char* tooltip;
@@ -92,6 +94,15 @@ bool save_file(const T& object, const char* path) { return save_file(type_of<T>(
 
 template <typename T>
 bool load_file(T& object, const char* path) { return load_file(type_of<T>(), &object, path); }
+
+// Binary format for compiled data: per property its name hash, byte size and bytes, so files
+// still load after properties are added, removed or reordered (unknown or resized ones are skipped).
+// Same capacity contract as save_text.
+usize save_binary(const TypeInfo& type, const void* object, u8* out, usize capacity);
+bool load_binary(const TypeInfo& type, void* object, const u8* data, usize size);
+
+template <typename T>
+usize save_binary(const T& object, u8* out, usize capacity) { return save_binary(type_of<T>(), &object, out, capacity); }
 
 template <typename T>
 usize save_text(const T& object, char* out, usize capacity) { return save_text(type_of<T>(), &object, out, capacity); }

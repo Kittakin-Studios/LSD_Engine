@@ -60,3 +60,30 @@ if(LSD_RHI_VULKAN)
     target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
   endif()
 endif()
+
+# Mesh import (all MIT): ufbx (FBX), cgltf (glTF 2.0), meshoptimizer (indexing, vertex cache order).
+FetchContent_Declare(ufbx
+  GIT_REPOSITORY https://github.com/ufbx/ufbx.git
+  GIT_TAG v0.23.1
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_Declare(cgltf
+  GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
+  GIT_TAG v1.15
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_Declare(meshoptimizer
+  GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+  GIT_TAG v1.3
+  GIT_SHALLOW TRUE
+  SYSTEM
+)
+FetchContent_MakeAvailable(ufbx cgltf meshoptimizer)
+add_library(ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
+target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
+add_library(cgltf INTERFACE)
+target_include_directories(cgltf SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
+# Blender-exported sample files used by the import tests.
+set(LSD_UFBX_DATA_DIR ${ufbx_SOURCE_DIR}/data PARENT_SCOPE)
