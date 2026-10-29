@@ -7,59 +7,21 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <string>
 
 namespace lsd::editor {
 
 namespace {
 
 constexpr char kThemePath[] = "Config/editor_theme.json";
+constexpr char kContentDir[] = "Content";
 constexpr char kOutlinerWindow[] = "Outliner";
 constexpr char kDetailsWindow[] = "Details";
 constexpr char kContentWindow[] = "Content Browser";
 
 ImU32 u32_color(const LinearColor& c) { return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, c.a)); }
 ImVec4 vec4(const LinearColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
-
-// ---- Math for the viewport grid (Z up, like Unreal) ----
-
-struct Vec3 { f32 x, y, z; };
-Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-Vec3 operator*(Vec3 a, f32 s) { return {a.x * s, a.y * s, a.z * s}; }
-Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-f32 dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-Vec3 cross(Vec3 a, Vec3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
-Vec3 normalize(Vec3 a) { const f32 l = std::sqrt(dot(a, a)); return a * (1.0f / l); }
-
-struct View {
-    Vec3 eye, right, up, forward;
-    ImVec2 center;
-    f32 focal;  // pixels per unit at depth 1
-};
-
-View make_view(const OrbitCamera& cam, ImVec2 pos, ImVec2 size) {
-    View v;
-    const f32 cp = std::cos(cam.pitch);
-    v.eye = Vec3{cp * std::cos(cam.yaw), cp * std::sin(cam.yaw), std::sin(cam.pitch)} * cam.distance;
-    v.forward = normalize(Vec3{0, 0, 0} - v.eye);
-    v.right = normalize(cross(v.forward, Vec3{0, 0, 1}));
-    v.up = cross(v.right, v.forward);
-    v.center = ImVec2(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
-    v.focal = size.y * 0.5f / std::tan(cam.fov_y * 0.5f);
-    return v;
-}
-
-// Draws a world-space line, clipped against the near plane so lines behind the camera vanish cleanly.
-void draw_line(ImDrawList* dl, const View& v, Vec3 a, Vec3 b, ImU32 color, f32 thickness) {
-    constexpr f32 kNear = 0.05f;
-    Vec3 va{dot(a - v.eye, v.right), dot(a - v.eye, v.up), dot(a - v.eye, v.forward)};
-    Vec3 vb{dot(b - v.eye, v.right), dot(b - v.eye, v.up), dot(b - v.eye, v.forward)};
-    if (va.z < kNear && vb.z < kNear) return;
-    if (va.z < kNear) va = va + (vb - va) * ((kNear - va.z) / (vb.z - va.z));
-    if (vb.z < kNear) vb = vb + (va - vb) * ((kNear - vb.z) / (va.z - vb.z));
-    const ImVec2 pa(v.center.x + va.x / va.z * v.focal, v.center.y - va.y / va.z * v.focal);
-    const ImVec2 pb(v.center.x + vb.x / vb.z * v.focal, v.center.y - vb.y / vb.z * v.focal);
-    dl->AddLine(pa, pb, color, thickness);
-}
 
 // ---- Layout ----
 
@@ -122,24 +84,17 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
         s.camera.distance = s.camera.distance < 1.0f ? 1.0f : s.camera.distance > 200.0f ? 200.0f : s.camera.distance;
     }
 
-    // shortcut: grid drawn as ImGui lines on the CPU; becomes a GPU grid pass with the renderer (milestone 3).
+    s.viewport_rect[0] = pos.x;
+    s.viewport_rect[1] = pos.y;
+    s.viewport_rect[2] = size.x;
+    s.viewport_rect[3] = size.y;
+
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
-    const View v = make_view(s.camera, pos, size);
-    if (s.show_grid) {
-        constexpr int kHalf = 50;  // grid covers -50..50 units
-        for (int i = -kHalf; i <= kHalf; ++i) {
-            if (i == 0) continue;  // axis lines drawn on top
-            const bool major = i % 5 == 0;
-            const ImU32 color = u32_color(major ? t.grid_major : t.grid_minor);
-            const f32 thickness = major ? 1.5f : 1.0f;
-            const f32 f = static_cast<f32>(i);
-            draw_line(dl, v, Vec3{f, -kHalf, 0}, Vec3{f, kHalf, 0}, color, thickness);
-            draw_line(dl, v, Vec3{-kHalf, f, 0}, Vec3{kHalf, f, 0}, color, thickness);
-        }
-        draw_line(dl, v, Vec3{-kHalf, 0, 0}, Vec3{kHalf, 0, 0}, u32_color(t.axis_x), 2.0f);
-        draw_line(dl, v, Vec3{0, -kHalf, 0}, Vec3{0, kHalf, 0}, u32_color(t.axis_y), 2.0f);
-    }
+    // Camera axes from the view matrix rows: row 0 = right, row 1 = up.
+    const Mat4 view = camera_view(s.camera);
+    const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};
+    const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
 
     // Axis gizmo, bottom-left: world axes as seen from the camera.
     if (s.show_axis_gizmo) {
@@ -147,7 +102,7 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
         const struct { Vec3 dir; const LinearColor* color; const char* label; } axes[3] = {
             {{1, 0, 0}, &t.axis_x, "X"}, {{0, 1, 0}, &t.axis_y, "Y"}, {{0, 0, 1}, &t.axis_z, "Z"}};
         for (const auto& a : axes) {
-            const ImVec2 tip(origin.x + dot(a.dir, v.right) * 32.0f, origin.y - dot(a.dir, v.up) * 32.0f);
+            const ImVec2 tip(origin.x + dot(a.dir, right) * 32.0f, origin.y - dot(a.dir, up) * 32.0f);
             dl->AddLine(origin, tip, u32_color(*a.color), 2.5f);
             dl->AddText(ImVec2(tip.x + 3, tip.y - 8), u32_color(*a.color), a.label);
         }
@@ -186,18 +141,6 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
 
 // ---- Outliner ----
 
-enum class RowKind { Mesh, Component, Blueprint, Folder, Vfx };
-struct OutlineRow { const char* name; RowKind kind; int depth; };
-
-// shortcut: sample rows from the layout mockup; replaced by the World's entities in milestone 3.
-constexpr OutlineRow kSampleRows[] = {
-    {"SM_Cube", RowKind::Mesh, 0},
-    {"Actor Component", RowKind::Component, 0},
-    {"BP_ThirdPersonCharacter", RowKind::Blueprint, 0},
-    {"Folder_01", RowKind::Folder, 0},
-    {"VFX_Fire_01", RowKind::Vfx, 1},
-};
-
 void draw_outliner(EditorState& s) {
     const EditorTheme& t = s.theme;
     static int active_tab = 0;
@@ -206,17 +149,16 @@ void draw_outliner(EditorState& s) {
         if (themed_tab("Outline", 0, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF))) {
             ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, vec4(t.outline_scrollbar));
             ImGui::PushStyleColor(ImGuiCol_ChildBg, vec4(t.outline_row_b));
-            ImGui::BeginChild("OutlineRows", ImVec2(0, -ImGui::GetTextLineHeightWithSpacing()), ImGuiChildFlags_None);
+            ImGui::BeginChild("OutlineRows", ImVec2(0, 0), ImGuiChildFlags_None);
             const f32 row_height = ImGui::GetTextLineHeight() + 10.0f;
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const f32 left = ImGui::GetWindowPos().x;
             const f32 right = left + ImGui::GetWindowWidth();
             int rows = static_cast<int>(ImGui::GetWindowHeight() / row_height) + 1;
-            constexpr int kSampleCount = static_cast<int>(sizeof kSampleRows / sizeof kSampleRows[0]);
-            rows = rows > kSampleCount ? rows : kSampleCount;
+            rows = rows > s.row_count ? rows : s.row_count;
             for (int i = 0; i < rows; ++i) {
                 const ImVec2 p = ImGui::GetCursorScreenPos();
-                const OutlineRow* row = i < kSampleCount ? &kSampleRows[i] : nullptr;
+                const OutlineRow* row = i < s.row_count ? &s.rows[i] : nullptr;
                 dl->AddRectFilled(ImVec2(left, p.y), ImVec2(right, p.y + row_height), u32_color((i & 1) ? t.outline_row_b : t.outline_row_a));
                 if (row && row->kind == RowKind::Folder) dl->AddRectFilled(ImVec2(left, p.y), ImVec2(right, p.y + row_height), u32_color(t.folder_row));
                 if (row && row->kind == RowKind::Vfx) {
@@ -233,11 +175,15 @@ void draw_outliner(EditorState& s) {
                     case RowKind::Folder:    text = &t.text_folder; break;
                     case RowKind::Vfx:       text = &t.text_vfx; break;
                 }
-                char label[96];
-                std::snprintf(label, sizeof label, "%s%s", row->depth ? "\xE2\x86\xB3 " : "", row->name);
+                if (row->depth) {  // child hook drawn as lines: the UI font has no arrow glyph
+                    const f32 hx = p.x + static_cast<f32>(row->depth) * 22.0f - 14.0f;
+                    const f32 mid = p.y + row_height * 0.5f;
+                    dl->AddLine(ImVec2(hx, p.y + 4.0f), ImVec2(hx, mid), u32_color(*text), 1.5f);
+                    dl->AddLine(ImVec2(hx, mid), ImVec2(hx + 9.0f, mid), u32_color(*text), 1.5f);
+                }
                 ImGui::PushStyleColor(ImGuiCol_Text, vec4(*text));
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + static_cast<f32>(row->depth) * 22.0f);
-                if (ImGui::Selectable(label, s.selected_row == i, ImGuiSelectableFlags_SpanAvailWidth,
+                if (ImGui::Selectable(row->name, s.selected_row == i, ImGuiSelectableFlags_SpanAvailWidth,
                                       ImVec2(0, row_height - ImGui::GetStyle().ItemSpacing.y))) {
                     s.selected_row = i;
                 }
@@ -245,7 +191,6 @@ void draw_outliner(EditorState& s) {
             }
             ImGui::EndChild();
             ImGui::PopStyleColor(2);
-            ImGui::TextDisabled("Sample rows: the level's objects appear in milestone 3");
             ImGui::EndTabItem();
         }
         if (themed_tab("Hierarchy", 1, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF))) {
@@ -297,6 +242,23 @@ void draw_details_panel(EditorState& s) {
 
 // ---- Content Browser ----
 
+// Draws the sub-folders of `dir` as tree nodes. Returns false if there are none.
+// shortcut: reads the disk every frame; the asset registry will index Content/ in the background.
+bool draw_folder_tree(const std::filesystem::path& dir, ImGuiTreeNodeFlags flags) {
+    std::error_code error;
+    bool any = false;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
+        if (!entry.is_directory(error)) continue;
+        any = true;
+        const std::string name = entry.path().filename().string();
+        if (ImGui::TreeNodeEx(name.c_str(), flags)) {
+            draw_folder_tree(entry.path(), flags);
+            ImGui::TreePop();
+        }
+    }
+    return any;
+}
+
 void draw_content_browser(EditorState& s) {
     const EditorTheme& t = s.theme;
     static int active_tab = 0;
@@ -322,15 +284,7 @@ void draw_content_browser(EditorState& s) {
             ImGui::PopStyleColor();
             ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.folder_tree_text));
             if (root) {
-                // shortcut: sample folders from the mockup; the asset registry scans Content/ in milestone 2.
-                if (ImGui::TreeNodeEx("Character", node)) {
-                    if (ImGui::TreeNodeEx("Models", node)) {
-                        ImGui::TreeNodeEx("3D", node | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-                        ImGui::TreeNodeEx("2D", node | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-                        ImGui::TreePop();
-                    }
-                    ImGui::TreePop();
-                }
+                if (!draw_folder_tree(kContentDir, node)) ImGui::TextDisabled("(empty)");
                 ImGui::TreePop();
             }
             ImGui::PopStyleColor();
@@ -341,7 +295,7 @@ void draw_content_browser(EditorState& s) {
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_ChildBg, vec4(t.content_area));
             ImGui::BeginChild("Assets", ImVec2(0, 0), ImGuiChildFlags_None);
-            ImGui::TextDisabled("Imported assets appear here once importers land (milestone 2).");
+            ImGui::TextDisabled("Assets in Content/ appear here once the asset registry and importers land.");
             ImGui::EndChild();
             ImGui::PopStyleColor();
             ImGui::EndTabItem();
@@ -389,6 +343,14 @@ void draw_editor(EditorState& s) {
     // The central node is left empty and transparent: the 3D viewport shows through it.
     if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace)) draw_viewport(s, central->Pos, central->Size);
 }
+
+Mat4 camera_view(const OrbitCamera& cam) {
+    const f32 cp = std::cos(cam.pitch);
+    const Vec3 eye = Vec3{cp * std::cos(cam.yaw), cp * std::sin(cam.yaw), std::sin(cam.pitch)} * cam.distance;
+    return look_at(eye, Vec3{0, 0, 0}, Vec3{0, 0, 1});
+}
+
+Mat4 camera_projection(const OrbitCamera& cam, f32 aspect) { return perspective(cam.fov_y, aspect, 0.05f, 1000.0f); }
 
 void load_theme(EditorTheme& theme) { reflect::load_file(theme, kThemePath); }
 

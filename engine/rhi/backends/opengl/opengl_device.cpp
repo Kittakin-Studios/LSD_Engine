@@ -1,4 +1,5 @@
-// OpenGL 4.6 fallback backend: context via SDL, clear, test triangle and ImGui.
+// OpenGL 4.6 fallback backend: context via SDL, depth, immutable buffers, built-in lit-mesh /
+// line / test-triangle programs and ImGui. Uses 4.5 direct state access and 0..1 clip depth.
 // OpenGL cannot choose a GPU; the driver (or the OS graphics settings) decides.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
@@ -8,6 +9,8 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 
+#include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <new>
 
@@ -37,6 +40,48 @@ out vec4 o_color;
 void main() { o_color = vec4(v_color, 1.0); }
 )";
 
+// Built-in lit mesh and line programs; mirror the HLSL in the D3D12 backend.
+constexpr char kMeshVertexShader[] = R"(#version 460 core
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_uv;
+uniform mat4 u_mvp;
+uniform vec4 u_rot[3];
+out vec3 v_normal;
+void main() {
+    gl_Position = u_mvp * vec4(a_pos, 1.0);
+    v_normal = u_rot[0].xyz * a_normal.x + u_rot[1].xyz * a_normal.y + u_rot[2].xyz * a_normal.z;
+}
+)";
+
+constexpr char kMeshFragmentShader[] = R"(#version 460 core
+uniform vec4 u_color;
+in vec3 v_normal;
+out vec4 o_color;
+void main() {
+    vec3 n = normalize(v_normal);
+    vec3 sun = normalize(vec3(-0.5, -0.35, 0.8));
+    float ambient = 0.25 + 0.1 * n.z;
+    o_color = vec4(u_color.rgb * (ambient + 0.85 * clamp(dot(n, sun), 0.0, 1.0)), u_color.a);
+}
+)";
+
+constexpr char kLineVertexShader[] = R"(#version 460 core
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec4 a_color;
+uniform mat4 u_mvp;
+out vec4 v_color;
+void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); v_color = a_color; }
+)";
+
+constexpr char kLineFragmentShader[] = R"(#version 460 core
+in vec4 v_color;
+out vec4 o_color;
+void main() { o_color = v_color; }
+)";
+
+constexpr u32 kMaxBuffers = 4096;
+
 // Constants from GL_NVX_gpu_memory_info and GL_ATI_meminfo (not in core headers).
 constexpr GLenum kGpuMemoryTotalNvx = 0x9048;
 constexpr GLenum kGpuMemoryAvailableNvx = 0x9049;
@@ -63,7 +108,19 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)                  \
     X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays)            \
     X(PFNGLGETSTRINGIPROC, glGetStringi)                            \
-    X(PFNGLDEBUGMESSAGECALLBACKPROC, glDebugMessageCallback)
+    X(PFNGLDEBUGMESSAGECALLBACKPROC, glDebugMessageCallback)    \
+    X(PFNGLCLIPCONTROLPROC, glClipControl)                          \
+    X(PFNGLCREATEBUFFERSPROC, glCreateBuffers)                      \
+    X(PFNGLNAMEDBUFFERSTORAGEPROC, glNamedBufferStorage)            \
+    X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers)                      \
+    X(PFNGLCREATEVERTEXARRAYSPROC, glCreateVertexArrays)            \
+    X(PFNGLENABLEVERTEXARRAYATTRIBPROC, glEnableVertexArrayAttrib)  \
+    X(PFNGLVERTEXARRAYATTRIBFORMATPROC, glVertexArrayAttribFormat)  \
+    X(PFNGLVERTEXARRAYATTRIBBINDINGPROC, glVertexArrayAttribBinding) \
+    X(PFNGLVERTEXARRAYVERTEXBUFFERPROC, glVertexArrayVertexBuffer)  \
+    X(PFNGLVERTEXARRAYELEMENTBUFFERPROC, glVertexArrayElementBuffer) \
+    X(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv)                \
+    X(PFNGLUNIFORM4FVPROC, glUniform4fv)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -106,14 +163,21 @@ public:
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, validation_ ? SDL_GL_CONTEXT_DEBUG_FLAG : 0);
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     }
 
     ~OpenGLDevice() override {
         if (!context_) return;
         if (debug_ui_) ImGui_ImplOpenGL3_Shutdown();
-        if (program_) gl_.glDeleteProgram(program_);
-        if (vao_) gl_.glDeleteVertexArrays(1, &vao_);
+        for (GLuint program : {program_, mesh_program_, line_program_}) {
+            if (program) gl_.glDeleteProgram(program);
+        }
+        for (GLuint vao : {vao_, mesh_vao_, line_vao_}) {
+            if (vao) gl_.glDeleteVertexArrays(1, &vao);
+        }
+        for (Buffer& b : buffers_) {
+            if (b.id) gl_.glDeleteBuffers(1, &b.id);
+        }
         SDL_GL_DestroyContext(context_);
     }
 
@@ -174,9 +238,13 @@ public:
             LSD_LOG_INFO("opengl", "Debug output enabled.");
         }
 
+        // Same clip-space depth range (0..1) as D3D12 and Vulkan, so one projection matrix fits all.
+        gl_.glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+        glDepthFunc(GL_LEQUAL);
+
         width_ = width;
         height_ = height;
-        return create_triangle_program();
+        return create_programs();
     }
 
     void resize_swapchain(u32 width, u32 height) override {
@@ -185,13 +253,75 @@ public:
         height_ = height;
     }
 
+    BufferHandle create_buffer(BufferUsage usage, const void* data, u64 size) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].id) ++slot;
+        if (slot == kMaxBuffers || size == 0 || !data) {
+            LSD_LOG_ERROR("opengl", "create_buffer failed: table full (%u) or empty data.", kMaxBuffers);
+            return {};
+        }
+        Buffer& b = buffers_[slot];
+        gl_.glCreateBuffers(1, &b.id);
+        gl_.glNamedBufferStorage(b.id, static_cast<GLsizeiptr>(size), data, 0);  // immutable
+        b.usage = usage;
+        return BufferHandle::make(slot, b.generation);
+    }
+
+    void destroy_buffer(BufferHandle handle) override {
+        Buffer* b = lookup(handle);
+        if (!b) return;
+        gl_.glDeleteBuffers(1, &b->id);  // GL defers the real release until the GPU is done
+        b->id = 0;
+        ++b->generation;
+    }
+
     void begin_frame(const f32 clear_color[4]) override {
+        glDisable(GL_SCISSOR_TEST);
         glViewport(0, 0, static_cast<GLsizei>(width_), static_cast<GLsizei>(height_));
         glClearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
+
+    void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
+        // GL's window origin is bottom-left; the RHI's is top-left.
+        const GLint gl_y = static_cast<GLint>(static_cast<f32>(height_) - y - height);
+        glViewport(static_cast<GLint>(x), gl_y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        glScissor(static_cast<GLint>(x), gl_y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        glEnable(GL_SCISSOR_TEST);
+    }
+
+    void draw_mesh(const MeshDraw& draw) override {
+        const Buffer* vb = lookup(draw.vertices);
+        const Buffer* ib = lookup(draw.indices);
+        if (!vb || !ib) return;
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        gl_.glUseProgram(mesh_program_);
+        gl_.glUniformMatrix4fv(mesh_mvp_, 1, GL_FALSE, draw.mvp);
+        gl_.glUniform4fv(mesh_rot_, 3, draw.world_rotation);
+        gl_.glUniform4fv(mesh_color_, 1, draw.color);
+        gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
+        gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
+        gl_.glBindVertexArray(mesh_vao_);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
+    }
+
+    void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
+        const Buffer* vb = lookup(vertices);
+        if (!vb) return;
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        gl_.glUseProgram(line_program_);
+        gl_.glUniformMatrix4fv(line_mvp_, 1, GL_FALSE, mvp);
+        gl_.glVertexArrayVertexBuffer(line_vao_, 0, vb->id, 0, sizeof(LineVertex));
+        gl_.glBindVertexArray(line_vao_);
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertex_count));
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
+        glDisable(GL_DEPTH_TEST);
         gl_.glUseProgram(program_);
         gl_.glUniform3f(params_location_, scale, rotation_radians, height_ ? static_cast<f32>(width_) / static_cast<f32>(height_) : 1.0f);
         gl_.glBindVertexArray(vao_);
@@ -199,6 +329,34 @@ public:
     }
 
     void end_frame() override { SDL_GL_SwapWindow(window_); }
+
+    bool capture_frame(const char* bmp_path) override {
+        const u32 row_bytes = (width_ * 3 + 3) & ~3u;  // BMP rows are 4-byte aligned
+        const u32 image_bytes = row_bytes * height_;
+        Allocator& heap = default_allocator();
+        auto* pixels = static_cast<u8*>(heap.allocate(image_bytes, 4));
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadBuffer(GL_BACK);
+        glReadPixels(0, 0, static_cast<GLsizei>(width_), static_cast<GLsizei>(height_), GL_BGR, GL_UNSIGNED_BYTE, pixels);  // bottom-up, as BMP wants
+        u8 header[54] = {'B', 'M'};
+        auto put32 = [&](int at, u32 v) { for (int i = 0; i < 4; ++i) header[at + i] = static_cast<u8>(v >> (8 * i)); };
+        put32(2, 54 + image_bytes);
+        put32(10, 54);
+        put32(14, 40);
+        put32(18, width_);
+        put32(22, height_);
+        header[26] = 1;   // planes
+        header[28] = 24;  // bits per pixel
+        put32(34, image_bytes);
+        bool ok = false;
+        if (FILE* file = std::fopen(bmp_path, "wb")) {
+            ok = std::fwrite(header, 1, sizeof header, file) == sizeof header && std::fwrite(pixels, 1, image_bytes, file) == image_bytes;
+            ok = std::fclose(file) == 0 && ok;
+        }
+        heap.deallocate(pixels);
+        LSD_LOG_INFO("opengl", ok ? "Saved %s" : "Could not write %s", bmp_path);
+        return ok;
+    }
 
     bool init_debug_ui() override {
         debug_ui_ = ImGui_ImplOpenGL3_Init("#version 460");
@@ -224,26 +382,67 @@ private:
         return shader;
     }
 
-    bool create_triangle_program() {
-        const GLuint vs = compile(GL_VERTEX_SHADER, kVertexShader);
-        const GLuint fs = compile(GL_FRAGMENT_SHADER, kFragmentShader);
-        if (!vs || !fs) return false;
-        program_ = gl_.glCreateProgram();
-        gl_.glAttachShader(program_, vs);
-        gl_.glAttachShader(program_, fs);
-        gl_.glLinkProgram(program_);
+    struct Buffer {
+        GLuint id = 0;
+        BufferUsage usage = BufferUsage::Vertex;
+        u32 generation = 0;
+    };
+
+    Buffer* lookup(BufferHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxBuffers) return nullptr;
+        Buffer& b = buffers_[handle.index()];
+        if (!b.id || (b.generation & BufferHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &b;
+    }
+
+    GLuint link(const char* vertex_source, const char* fragment_source) {
+        const GLuint vs = compile(GL_VERTEX_SHADER, vertex_source);
+        const GLuint fs = compile(GL_FRAGMENT_SHADER, fragment_source);
+        if (!vs || !fs) return 0;
+        const GLuint program = gl_.glCreateProgram();
+        gl_.glAttachShader(program, vs);
+        gl_.glAttachShader(program, fs);
+        gl_.glLinkProgram(program);
         gl_.glDeleteShader(vs);
         gl_.glDeleteShader(fs);
         GLint ok = 0;
-        gl_.glGetProgramiv(program_, GL_LINK_STATUS, &ok);
+        gl_.glGetProgramiv(program, GL_LINK_STATUS, &ok);
         if (!ok) {
             char log[1024];
-            gl_.glGetProgramInfoLog(program_, sizeof log, nullptr, log);
+            gl_.glGetProgramInfoLog(program, sizeof log, nullptr, log);
             LSD_LOG_ERROR("opengl", "Program link failed: %s", log);
-            return false;
+            gl_.glDeleteProgram(program);
+            return 0;
         }
+        return program;
+    }
+
+    // Describes one float vertex attribute on binding 0 of a VAO.
+    void attribute(GLuint vao, GLuint location, GLint components, GLuint offset) {
+        gl_.glEnableVertexArrayAttrib(vao, location);
+        gl_.glVertexArrayAttribFormat(vao, location, components, GL_FLOAT, GL_FALSE, offset);
+        gl_.glVertexArrayAttribBinding(vao, location, 0);
+    }
+
+    bool create_programs() {
+        program_ = link(kVertexShader, kFragmentShader);
+        mesh_program_ = link(kMeshVertexShader, kMeshFragmentShader);
+        line_program_ = link(kLineVertexShader, kLineFragmentShader);
+        if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
-        gl_.glGenVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
+        mesh_mvp_ = gl_.glGetUniformLocation(mesh_program_, "u_mvp");
+        mesh_rot_ = gl_.glGetUniformLocation(mesh_program_, "u_rot");
+        mesh_color_ = gl_.glGetUniformLocation(mesh_program_, "u_color");
+        line_mvp_ = gl_.glGetUniformLocation(line_program_, "u_mvp");
+
+        gl_.glCreateVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
+        gl_.glCreateVertexArrays(1, &mesh_vao_);
+        attribute(mesh_vao_, 0, 3, offsetof(MeshVertex, position));
+        attribute(mesh_vao_, 1, 3, offsetof(MeshVertex, normal));
+        attribute(mesh_vao_, 2, 2, offsetof(MeshVertex, uv));
+        gl_.glCreateVertexArrays(1, &line_vao_);
+        attribute(line_vao_, 0, 3, offsetof(LineVertex, position));
+        attribute(line_vao_, 1, 4, offsetof(LineVertex, color));
         return true;
     }
 
@@ -253,6 +452,15 @@ private:
     SDL_GLContext context_ = nullptr;
     GLuint program_ = 0;
     GLuint vao_ = 0;
+    GLuint mesh_program_ = 0;
+    GLuint mesh_vao_ = 0;
+    GLint mesh_mvp_ = -1;
+    GLint mesh_rot_ = -1;
+    GLint mesh_color_ = -1;
+    GLuint line_program_ = 0;
+    GLuint line_vao_ = 0;
+    GLint line_mvp_ = -1;
+    Buffer buffers_[kMaxBuffers];
     GLint params_location_ = -1;
     u32 width_ = 0;
     u32 height_ = 0;

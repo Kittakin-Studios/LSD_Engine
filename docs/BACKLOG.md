@@ -21,6 +21,7 @@ Source: [engine plan doc](https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW), Fe
 
 Exit test: import a Blender FBX and find it by search.
 
+- [~] Renderer basics: buffers, depth, lit mesh + line pipelines, camera math, built-in cube/sphere/plane, GPU grid done on D3D12 and OpenGL; Vulkan waits for the SDK; next: imported meshes, textures, thumbnails
 - [ ] Asset registry: GUID, type, path, tags, dependency list, background indexing [Asset Registry]
 - [ ] Safe rename / move with reference fix-up; Reference Viewer
 - [ ] Binary serialization for compiled data [cooked data]
@@ -28,18 +29,17 @@ Exit test: import a Blender FBX and find it by search.
 - [ ] Importers: FBX (ufbx), glTF (cgltf), mesh optimisation (meshoptimizer), textures, WAV/OGG audio
 - [ ] Shader pipeline: HLSL → DXIL / SPIR-V (DXC) / GLSL (SPIRV-Cross) as assets; replaces the 3 hand-written test shaders
 - [ ] Thumbnails
-- [~] Content Browser: themed shell done; needs real `Content/` folder tree, asset grid, search, filters, drag-drop import
+- [~] Content Browser: themed shell and real `Content/` folder tree done; needs asset grid, search, filters, drag-drop import
 - [ ] Data assets, Data tables (CSV import/export), Curves [Data Asset, Data Table, Curve]
 
 ## Milestone 3 — Editor shell
 
 Exit test: block out a level and play it.
 
-- [ ] Renderer basics: meshes, materials (fixed), camera, depth, GPU grid (replaces the ImGui-line grid)
 - [ ] World: entities as handles, components in SoA managers, transforms + hierarchy
 - [ ] Levels: create / open / save; persistent level + sub-levels
 - [~] Viewport: grid, axes, gizmo, orbit done; needs ortho views, move/rotate/scale gizmos, grid/angle/surface snapping, camera bookmarks, view modes (lit, unlit, wireframe, lighting only, collision)
-- [~] Outliner: themed shell with sample rows; needs real entities, folders, search, hide/lock, parent by drag
+- [~] Outliner: themed, lists the scene's objects, click selects; needs World entities, folders, search, hide/lock, parent by drag
 - [~] Details: reflection-driven; needs multi-edit, reset to default, copy/paste, asset slots with search + drag-drop
 - [ ] Place panel: lights, cameras, volumes, sound emitters, player start
 - [ ] Transactions: undo/redo across all editors, Undo History [Transaction system]

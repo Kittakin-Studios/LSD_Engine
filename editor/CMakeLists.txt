@@ -1,7 +1,7 @@
 add_executable(lsd_editor main.cpp editor_ui.cpp)
 lsd_reflect(lsd_editor editor_theme.h)
 target_include_directories(lsd_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lsd_editor PRIVATE lsd_foundation lsd_core lsd_rhi lsd_debug_ui SDL3::SDL3-static)
+target_link_libraries(lsd_editor PRIVATE lsd_foundation lsd_core lsd_rhi lsd_render lsd_debug_ui SDL3::SDL3-static)
 lsd_configure_target(lsd_editor)
 if(WIN32)
   set_target_properties(lsd_editor PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")

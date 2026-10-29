@@ -190,6 +190,26 @@ public:
         vkCmdSetScissor(f.cmd, 0, 1, &scissor);
     }
 
+    // shortcut: Vulkan meshes and lines wait for SPIR-V from the shader pipeline (Vulkan SDK's DXC);
+    // until then they are skipped with one warning, and the scene shows on D3D12 and OpenGL.
+    BufferHandle create_buffer(BufferUsage, const void*, u64) override {
+        if (!warned_no_meshes_) LSD_LOG_WARN("vulkan", "Mesh and line drawing is not implemented on Vulkan yet; use -rhi=d3d12 or -rhi=opengl.");
+        warned_no_meshes_ = true;
+        return {};
+    }
+    void destroy_buffer(BufferHandle) override {}
+    void draw_mesh(const MeshDraw&) override {}
+    void draw_lines(BufferHandle, u32, const f32*) override {}
+
+    void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
+        if (skip_frame_) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        const VkViewport viewport{x, y + height, width, -height, 0.0f, 1.0f};  // flipped like begin_frame
+        const VkRect2D scissor{{static_cast<i32>(x), static_cast<i32>(y)}, {static_cast<u32>(width), static_cast<u32>(height)}};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+    }
+
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
         if (skip_frame_ || !pipeline_) return;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
@@ -604,6 +624,7 @@ private:
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     bool debug_ui_ = false;
+    bool warned_no_meshes_ = false;
 };
 
 } // namespace

@@ -1,4 +1,5 @@
-// Direct3D 12 backend: adapter enumeration, live memory budget, swapchain and a test triangle.
+// Direct3D 12 backend: adapter enumeration, live memory budget, swapchain, depth buffer,
+// immutable buffers, built-in lit-mesh / line / test-triangle pipelines and ImGui.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -12,6 +13,7 @@
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 
+#include <cstring>
 #include <new>
 
 using Microsoft::WRL::ComPtr;
@@ -24,6 +26,9 @@ constexpr u32 kBackBufferCount = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr u32 kDebugUiDescriptors = 64;  // ImGui font atlas + user textures
+constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
+constexpr u32 kMaxBuffers = 4096;
+constexpr u32 kRootConstants = 32;  // one root-constant block shared by every built-in pipeline
 
 // shortcut: runtime HLSL compile via d3dcompiler_47 (ships with Windows); move to DXC + the data
 // compiler once shaders become assets.
@@ -42,6 +47,33 @@ VsOut vs_main(uint id : SV_VertexID) {
     return o;
 }
 float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
+)";
+
+// Lit mesh: one directional light plus sky/ground ambient. Constants match rhi::MeshDraw.
+constexpr char kMeshHlsl[] = R"(
+cbuffer Draw : register(b0) { float4x4 mvp; float4 rot0; float4 rot1; float4 rot2; float4 color; };
+struct VsIn { float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
+struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; };
+VsOut vs_main(VsIn i) {
+    VsOut o;
+    o.pos = mul(mvp, float4(i.pos, 1));
+    o.normal = rot0.xyz * i.normal.x + rot1.xyz * i.normal.y + rot2.xyz * i.normal.z;
+    return o;
+}
+float4 ps_main(VsOut i) : SV_Target {
+    const float3 n = normalize(i.normal);
+    const float3 sun = normalize(float3(-0.5, -0.35, 0.8));
+    const float ambient = 0.25 + 0.1 * n.z;
+    return float4(color.rgb * (ambient + 0.85 * saturate(dot(n, sun))), color.a);
+}
+)";
+
+constexpr char kLinesHlsl[] = R"(
+cbuffer Draw : register(b0) { float4x4 mvp; };
+struct VsIn { float3 pos : POSITION; float4 color : COLOR; };
+struct VsOut { float4 pos : SV_Position; float4 color : COLOR; };
+VsOut vs_main(VsIn i) { VsOut o; o.pos = mul(mvp, float4(i.pos, 1)); o.color = i.color; return o; }
+float4 ps_main(VsOut i) : SV_Target { return i.color; }
 )";
 
 bool check(HRESULT hr, const char* what) {
@@ -142,7 +174,11 @@ public:
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&rtv_heap_)), "CreateDescriptorHeap")) return false;
         rtv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-        return create_triangle_pipeline();
+        heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        heap_desc.NumDescriptors = 1;
+        if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&dsv_heap_)), "CreateDescriptorHeap (DSV)")) return false;
+
+        return create_pipelines();
     }
 
     Backend backend() const override { return Backend::D3D12; }
@@ -171,7 +207,7 @@ public:
         width_ = width;
         height_ = height;
         create_back_buffer_views();
-        return true;
+        return create_depth_buffer();
     }
 
     void resize_swapchain(u32 width, u32 height) override {
@@ -182,6 +218,88 @@ public:
         width_ = width;
         height_ = height;
         create_back_buffer_views();
+        create_depth_buffer();
+    }
+
+    BufferHandle create_buffer(BufferUsage usage, const void* data, u64 size) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].resource) ++slot;
+        if (slot == kMaxBuffers || size == 0 || !data) {
+            LSD_LOG_ERROR("d3d12", "create_buffer failed: table full (%u) or empty data.", kMaxBuffers);
+            return {};
+        }
+        // shortcut: buffers live in the upload heap (CPU-visible); move static meshes to the default
+        // heap with a copy queue when scenes get large.
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        desc.Width = size;
+        desc.Height = 1;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        Buffer& b = buffers_[slot];
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                    IID_PPV_ARGS(&b.resource)), "CreateCommittedResource (buffer)")) return {};
+        void* mapped = nullptr;
+        const D3D12_RANGE no_read{0, 0};
+        if (!check(b.resource->Map(0, &no_read, &mapped), "Map (buffer)")) {
+            b.resource.Reset();
+            return {};
+        }
+        std::memcpy(mapped, data, size);
+        b.resource->Unmap(0, nullptr);
+        b.size = size;
+        b.usage = usage;
+        return BufferHandle::make(slot, b.generation);
+    }
+
+    void destroy_buffer(BufferHandle handle) override {
+        Buffer* b = lookup(handle);
+        if (!b) return;
+        wait_for_gpu();  // shortcut: stalls; switch to deferred release when buffers churn per frame
+        b->resource.Reset();
+        ++b->generation;
+    }
+
+    void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
+        const D3D12_VIEWPORT viewport{x, y, width, height, 0.0f, 1.0f};
+        const D3D12_RECT scissor{static_cast<LONG>(x), static_cast<LONG>(y), static_cast<LONG>(x + width), static_cast<LONG>(y + height)};
+        list_->RSSetViewports(1, &viewport);
+        list_->RSSetScissorRects(1, &scissor);
+    }
+
+    void draw_mesh(const MeshDraw& draw) override {
+        const Buffer* vb = lookup(draw.vertices);
+        const Buffer* ib = lookup(draw.indices);
+        if (!vb || !ib) return;
+        f32 constants[kRootConstants];
+        std::memcpy(constants, draw.mvp, sizeof draw.mvp);
+        std::memcpy(constants + 16, draw.world_rotation, sizeof draw.world_rotation);
+        std::memcpy(constants + 28, draw.color, sizeof draw.color);
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, kRootConstants, constants, 0);
+        list_->SetPipelineState(mesh_pipeline_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
+        const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
+        list_->IASetVertexBuffers(0, 1, &vbv);
+        list_->IASetIndexBuffer(&ibv);
+        list_->DrawIndexedInstanced(draw.index_count, 1, 0, 0, 0);
+    }
+
+    void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
+        const Buffer* vb = lookup(vertices);
+        if (!vb) return;
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, 16, mvp, 0);
+        list_->SetPipelineState(line_pipeline_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(LineVertex)};
+        list_->IASetVertexBuffers(0, 1, &vbv);
+        list_->DrawInstanced(vertex_count, 1, 0, 0);
     }
 
     void begin_frame(const f32 clear_color[4]) override {
@@ -192,8 +310,10 @@ public:
 
         transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
         const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_handle(frame_);
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
         list_->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
-        list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
         const D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(width_), static_cast<f32>(height_), 0.0f, 1.0f};
         const D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
         list_->RSSetViewports(1, &viewport);
@@ -204,7 +324,7 @@ public:
         const f32 params[3] = {scale, rotation_radians, height_ ? static_cast<f32>(width_) / static_cast<f32>(height_) : 1.0f};
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 3, params, 0);
-        list_->SetPipelineState(pipeline_.Get());
+        list_->SetPipelineState(triangle_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);
     }
@@ -222,7 +342,7 @@ public:
         init.CommandQueue = queue_.Get();
         init.NumFramesInFlight = kBackBufferCount;
         init.RTVFormat = kBackBufferFormat;
-        init.DSVFormat = DXGI_FORMAT_UNKNOWN;
+        init.DSVFormat = kDepthFormat;  // ImGui draws while the depth buffer is bound
         init.UserData = this;
         init.SrvDescriptorHeap = srv_heap_.Get();
         init.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
@@ -316,40 +436,97 @@ private:
         if (slot < kDebugUiDescriptors) srv_used_[slot] = false;
     }
 
-    bool create_triangle_pipeline() {
+    struct Buffer {
+        ComPtr<ID3D12Resource> resource;
+        u64 size = 0;
+        BufferUsage usage = BufferUsage::Vertex;
+        u32 generation = 0;
+    };
+
+    Buffer* lookup(BufferHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxBuffers) return nullptr;
+        Buffer& b = buffers_[handle.index()];
+        if (!b.resource || (b.generation & BufferHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &b;
+    }
+
+    bool create_depth_buffer() {
+        depth_.Reset();
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = width_;
+        desc.Height = height_;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = kDepthFormat;
+        desc.SampleDesc.Count = 1;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = kDepthFormat;
+        clear.DepthStencil.Depth = 1.0f;
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
+                                                    IID_PPV_ARGS(&depth_)), "CreateCommittedResource (depth)")) return false;
+        device_->CreateDepthStencilView(depth_.Get(), nullptr, dsv_heap_->GetCPUDescriptorHandleForHeapStart());
+        return true;
+    }
+
+    bool create_pipelines() {
         D3D12_ROOT_PARAMETER param{};
         param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        param.Constants.Num32BitValues = 3;  // scale, angle, aspect
-        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+        param.Constants.Num32BitValues = kRootConstants;
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
         rs_desc.NumParameters = 1;
         rs_desc.pParameters = &param;
+        rs_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> rs_blob, error;
         if (!check(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &error), "D3D12SerializeRootSignature")) return false;
         if (!check(device_->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(), IID_PPV_ARGS(&root_signature_)), "CreateRootSignature")) return false;
 
-        ComPtr<ID3DBlob> vs, ps;
-        if (!compile("vs_main", "vs_5_0", vs) || !compile("ps_main", "ps_5_0", ps)) return false;
+        static const D3D12_INPUT_ELEMENT_DESC mesh_layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        static const D3D12_INPUT_ELEMENT_DESC line_layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
+               create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_);
+    }
 
+    bool create_pipeline(const char* source, usize source_size, D3D12_INPUT_LAYOUT_DESC layout, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
+                         bool depth_test, ComPtr<ID3D12PipelineState>& out) {
+        ComPtr<ID3DBlob> vs, ps;
+        if (!compile(source, source_size - 1, "vs_main", "vs_5_0", vs) || !compile(source, source_size - 1, "ps_main", "ps_5_0", ps)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
         pso.pRootSignature = root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
         pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso.InputLayout = layout;
         pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         pso.SampleMask = UINT_MAX;
         pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  // shortcut: no culling until imported winding is verified
         pso.RasterizerState.DepthClipEnable = TRUE;
-        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso.DepthStencilState.DepthEnable = depth_test;
+        pso.DepthStencilState.DepthWriteMask = depth_test ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pso.DSVFormat = kDepthFormat;
+        pso.PrimitiveTopologyType = topology;
         pso.NumRenderTargets = 1;
         pso.RTVFormats[0] = kBackBufferFormat;
         pso.SampleDesc.Count = 1;
-        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&pipeline_)), "CreateGraphicsPipelineState");
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState");
     }
 
-    static bool compile(const char* entry, const char* target, ComPtr<ID3DBlob>& out) {
+    static bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out) {
         ComPtr<ID3DBlob> errors;
-        const HRESULT hr = D3DCompile(kTriangleHlsl, sizeof kTriangleHlsl - 1, "triangle.hlsl", nullptr, nullptr, entry, target, 0, 0, &out, &errors);
+        const HRESULT hr = D3DCompile(source, length, "builtin.hlsl", nullptr, nullptr, entry, target, 0, 0, &out, &errors);
         if (FAILED(hr)) {
             LSD_LOG_ERROR("d3d12", "Shader %s failed: %s", entry, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
             return false;
@@ -409,8 +586,13 @@ private:
     u32 frame_ = 0;
     u32 width_ = 0;
     u32 height_ = 0;
+    ComPtr<ID3D12DescriptorHeap> dsv_heap_;
+    ComPtr<ID3D12Resource> depth_;
     ComPtr<ID3D12RootSignature> root_signature_;
-    ComPtr<ID3D12PipelineState> pipeline_;
+    ComPtr<ID3D12PipelineState> triangle_pipeline_;
+    ComPtr<ID3D12PipelineState> mesh_pipeline_;
+    ComPtr<ID3D12PipelineState> line_pipeline_;
+    Buffer buffers_[kMaxBuffers];
     ComPtr<ID3D12DescriptorHeap> srv_heap_;
     u32 srv_size_ = 0;
     bool srv_used_[kDebugUiDescriptors] = {};
