@@ -29,7 +29,8 @@ walkthroughs show proprietary source — ideas only). Use our own names, formats
 - VS Code + CMake Tools + C/C++ extensions, MSVC compiler, preset **`windows-msvc`**
   (Ninja Multi-Config). Also builds on Linux with preset `linux-clang`.
 - Build: `cmake --preset windows-msvc` → `cmake --build --preset windows-msvc`
-- Run: `build\windows-msvc\runtime\Debug\lsd_runtime.exe [-rhi=d3d12|vulkan|opengl] [-gpu=<n>]`
+- Run game: `build\windows-msvc\runtime\Debug\lsd_runtime.exe [-rhi=d3d12|vulkan|opengl] [-gpu=<n>]`
+- Run editor: `build\windows-msvc\editor\Debug\lsd_editor.exe` (same flags)
 - Tests: `ctest --preset windows-msvc`
 
 ## How Charlize likes to work
