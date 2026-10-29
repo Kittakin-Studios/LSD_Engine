@@ -1,23 +1,15 @@
 #pragma once
 // Reflected settings edited live in the runtime's debug Details panel.
-#include "lsd/reflect/reflect.h"
+#include "lsd/reflect/color.h"
 
 namespace lsd {
-
-LSD_STRUCT()
-struct LinearColor {
-    LSD_GENERATED()
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 r = 0.051f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 g = 0.016f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 b = 0.016f;
-};
 
 LSD_STRUCT(Category = "Debug")
 struct ViewportSettings {
     LSD_GENERATED()
 
     LSD_PROPERTY(Edit, Category = "Viewport", Tooltip = "Colour the frame is cleared to")
-    LinearColor background;
+    LinearColor background = LinearColor::hex(0x0D0404);
 
     LSD_PROPERTY(Edit, Category = "Triangle")
     bool draw_triangle = true;

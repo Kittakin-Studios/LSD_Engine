@@ -9,7 +9,7 @@
 //       f32 intensity = 800.0f;
 //   };
 //
-// Struct flags:   Component
+// Struct flags:   Component, Color
 // Property flags: Edit (editable in Details), Visible (read-only in Details), Save (saved, hidden),
 //                 EditorOnly (stripped at packaging). Edit and Visible imply Save.
 // Property keys:  Category, Tooltip, Units (strings); Min, Max (numbers).
@@ -37,6 +37,7 @@ enum PropertyFlags : u32 {
 
 enum TypeFlags : u32 {
     kComponent = 1u << 0,
+    kColor     = 1u << 1,  // r, g, b[, a] f32 fields in that order: edited with a colour picker
 };
 
 struct TypeInfo;
@@ -80,6 +81,17 @@ usize save_text(const TypeInfo& type, const void* object, char* out, usize capac
 // skipped, so old files load after properties are added or removed. Returns false on bad syntax
 // or out-of-range values; the object may then be partly loaded, so load into a copy if that matters.
 bool load_text(const TypeInfo& type, void* object, const char* text, usize length);
+
+// File helpers. load_file reads into a copy first, so a bad or missing file leaves the object unchanged.
+// Reflected structs are plain data (no inheritance, no pointers), so a byte copy is a valid copy.
+bool save_file(const TypeInfo& type, const void* object, const char* path);
+bool load_file(const TypeInfo& type, void* object, const char* path);
+
+template <typename T>
+bool save_file(const T& object, const char* path) { return save_file(type_of<T>(), &object, path); }
+
+template <typename T>
+bool load_file(T& object, const char* path) { return load_file(type_of<T>(), &object, path); }
 
 template <typename T>
 usize save_text(const T& object, char* out, usize capacity) { return save_text(type_of<T>(), &object, out, capacity); }

@@ -1,4 +1,4 @@
-#include "details_panel.h"
+#include "lsd/debug_ui/details_panel.h"
 
 #include <imgui.h>
 
@@ -10,6 +10,20 @@ namespace lsd {
 namespace {
 
 constexpr f32 kLabelWidth = 160.0f;
+
+const DetailsStyle* g_style = nullptr;  // set for the duration of draw_details
+u32 g_row = 0;
+
+// Paints the alternating background behind the next property row.
+void row_background() {
+    if (!g_style) return;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const f32 height = ImGui::GetFrameHeightWithSpacing();
+    const f32 right = ImGui::GetWindowPos().x + ImGui::GetWindowWidth();
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(ImGui::GetWindowPos().x, pos.y - ImGui::GetStyle().ItemSpacing.y * 0.5f),
+                                              ImVec2(right, pos.y + height - ImGui::GetStyle().ItemSpacing.y * 0.5f),
+                                              g_style->row_colors[g_row++ & 1]);
+}
 
 // "attenuation_radius" -> "Attenuation Radius", as Unreal shows property names.
 void display_name(const char* name, char* out, usize capacity) {
@@ -41,7 +55,22 @@ bool draw_property(const reflect::Property& p, u8* object) {
     ImGui::PushID(p.name);
     bool changed = false;
 
+    // Structs flagged Color (r, g, b[, a] floats) get a colour picker.
+    if (p.type == reflect::FieldType::Struct && (p.struct_type->flags & reflect::kColor)) {
+        row_background();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
+        ImGui::SameLine(kLabelWidth);
+        ImGui::SetNextItemWidth(-1.0f);
+        auto* rgba = reinterpret_cast<f32*>(field);
+        changed = p.struct_type->property_count >= 4 ? ImGui::ColorEdit4("##value", rgba) : ImGui::ColorEdit3("##value", rgba);
+        ImGui::PopID();
+        return changed;
+    }
+
     if (p.type == reflect::FieldType::Struct) {
+        row_background();
         const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
         if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
         if (open) {
@@ -52,6 +81,7 @@ bool draw_property(const reflect::Property& p, u8* object) {
         return changed;
     }
 
+    row_background();
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
     if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
@@ -94,7 +124,9 @@ bool draw_fields(const reflect::TypeInfo& type, u8* object, const char* category
 
 } // namespace
 
-bool draw_details(const reflect::TypeInfo& type, void* object) {
+bool draw_details(const reflect::TypeInfo& type, void* object, const DetailsStyle* style) {
+    g_style = style;
+    g_row = 0;
     bool changed = false;
     // One collapsible section per category, in the order categories first appear.
     for (u32 i = 0; i < type.property_count; ++i) {
@@ -106,6 +138,7 @@ bool draw_details(const reflect::TypeInfo& type, void* object) {
             changed |= draw_fields(type, static_cast<u8*>(object), category);
         }
     }
+    g_style = nullptr;
     return changed;
 }
 

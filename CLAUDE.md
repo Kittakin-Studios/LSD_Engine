@@ -71,11 +71,14 @@ blue `#0040FF` → `#5C8DFF`, VFX orange on red → `#FFC266`.
 engine/foundation/  types, logging, asserts, heap + arena allocators, generational handles,
                     constexpr hashed IDs (FNV-1a 64), system info (CPU, cores, SIMD, RAM)
 engine/core/        job system (worker threads, counters, wait-by-helping)
-engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON text save/load
+engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON save/load,
+                    save_file/load_file, LinearColor (Color flag -> colour picker)
+engine/debug_ui/    ImGui Details panel generated from TypeInfo (runtime overlay + editor v1)
 engine/rhi/         RHI interface, adapter scoring/selection, quality presets, create_device();
                     backends/d3d12, backends/vulkan, backends/opengl (each also renders ImGui)
 engine/world, script, render, audio, physics, ui   placeholders
-editor/             editor app (placeholder)
+editor/             lsd_editor: dock layout (Viewport grid/gizmo/orbit, Outliner, Details, Content
+                    Browser) styled by reflected EditorTheme -> Config/editor_theme.json
 tools/data_compiler/ CLI stub: --source-dir / --data-dir
 tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
@@ -99,7 +102,9 @@ clearing, drawing the test triangle and rendering Dear ImGui; reflection generat
 runtime Details panel generated from reflection (edit live, Save/Load/Reset to `Saved/`).
 Flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`, `-frames=<n>`.
 Vulkan triangle needs the **Vulkan SDK** (DXC with SPIR-V + validation layers); without it the
-Vulkan backend runs but skips the triangle. Next: milestone 2 (asset registry, importers, Content Browser).
+Vulkan backend runs but skips the triangle. Editor shell (`lsd_editor.exe`) started early: layout, theme and grid are real; Outliner and
+Content Browser show sample rows until milestones 2-3. Next: milestone 2 (asset registry,
+importers, Content Browser).
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no

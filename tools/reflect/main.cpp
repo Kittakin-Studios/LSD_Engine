@@ -219,9 +219,10 @@ private:
     void parse_struct(const std::vector<Arg>& args, int line) {
         Struct s;
         s.line = line;
-        check_args(args, {"Component"}, {"Category"}, "LSD_STRUCT");
+        check_args(args, {"Component", "Color"}, {"Category"}, "LSD_STRUCT");
         for (const Arg& a : args) {
             if (a.key == "Component") s.flags |= 1u;
+            if (a.key == "Color") s.flags |= 2u;
             if (a.key == "Category") s.category = a.value;
         }
         if (!is("struct") && !is("class")) { error(peek().line, "LSD_STRUCT must be followed by a struct"); return; }

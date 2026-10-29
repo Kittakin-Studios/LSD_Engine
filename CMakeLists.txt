@@ -28,7 +28,12 @@ add_subdirectory(engine/core)
 add_subdirectory(engine/reflect)
 add_subdirectory(tools/reflect)
 add_subdirectory(engine/rhi)
+add_subdirectory(engine/debug_ui)
 add_subdirectory(runtime)
+
+if(LSD_BUILD_EDITOR)
+  add_subdirectory(editor)
+endif()
 
 if(LSD_BUILD_TOOLS)
   add_subdirectory(tools/data_compiler)

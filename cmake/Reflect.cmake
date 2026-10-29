@@ -15,5 +15,7 @@ function(lsd_reflect target)
     )
     target_sources(${target} PRIVATE "${output}")
   endforeach()
-  target_link_libraries(${target} PUBLIC lsd_reflect)
+  if(NOT target STREQUAL "lsd_reflect")  # the reflect library reflects its own color types
+    target_link_libraries(${target} PUBLIC lsd_reflect)
+  endif()
 endfunction()

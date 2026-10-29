@@ -1,5 +1,5 @@
-add_executable(lsd_runtime main.cpp details_panel.cpp)
+add_executable(lsd_runtime main.cpp)
 lsd_reflect(lsd_runtime viewport_settings.h)
 target_include_directories(lsd_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lsd_runtime PRIVATE lsd_foundation lsd_core lsd_rhi imgui SDL3::SDL3-static)
+target_link_libraries(lsd_runtime PRIVATE lsd_foundation lsd_core lsd_rhi lsd_debug_ui SDL3::SDL3-static)
 lsd_configure_target(lsd_runtime)

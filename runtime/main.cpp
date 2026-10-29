@@ -1,10 +1,10 @@
 // LSD_Engine runtime entry point.
 // Prints the hardware report, starts the job system, opens a window and draws a test triangle
 // with a debug Details panel (Dear ImGui) generated from reflection.
-#include "details_panel.h"
 #include "viewport_settings.h"
 
 #include "lsd/core/job_system.h"
+#include "lsd/debug_ui/details_panel.h"
 #include "lsd/foundation/log.h"
 #include "lsd/foundation/system_info.h"
 #include "lsd/rhi/rhi.h"
@@ -23,28 +23,6 @@ namespace {
 constexpr char kSavedDir[] = "Saved";
 constexpr char kSettingsPath[] = "Saved/viewport_settings.json";
 constexpr char kImGuiIniPath[] = "Saved/imgui.ini";
-
-bool save_settings(const lsd::ViewportSettings& settings) {
-    char text[4096];
-    const lsd::usize length = lsd::reflect::save_text(settings, text, sizeof text);
-    if (length >= sizeof text) return false;
-    FILE* file = std::fopen(kSettingsPath, "wb");
-    if (!file) return false;
-    const bool ok = std::fwrite(text, 1, length, file) == length;
-    return std::fclose(file) == 0 && ok;
-}
-
-bool load_settings(lsd::ViewportSettings& settings) {
-    FILE* file = std::fopen(kSettingsPath, "rb");
-    if (!file) return false;
-    char text[4096];
-    const lsd::usize length = std::fread(text, 1, sizeof text, file);
-    std::fclose(file);
-    lsd::ViewportSettings loaded = settings;  // load into a copy so a bad file changes nothing
-    if (length == sizeof text || !lsd::reflect::load_text(loaded, text, length)) return false;
-    settings = loaded;
-    return true;
-}
 
 lsd::u64 window_flags_for(lsd::rhi::Backend backend) {
     switch (backend) {
@@ -120,7 +98,7 @@ int main(int argc, char** argv) {
 
     lsd::ViewportSettings settings;
     char status[128] = "";
-    if (load_settings(settings)) std::snprintf(status, sizeof status, "Loaded %s", kSettingsPath);
+    if (lsd::reflect::load_file(settings, kSettingsPath)) std::snprintf(status, sizeof status, "Loaded %s", kSettingsPath);
 
     bool running = true;
     bool minimized = false;
@@ -159,11 +137,11 @@ int main(int argc, char** argv) {
         if (ImGui::Begin("Details", nullptr, ImGuiWindowFlags_NoCollapse)) {
             ImGui::TextDisabled("%s  |  %s", settings.static_type().name, lsd::rhi::to_string(device->backend()));
             if (ImGui::Button("Save")) {
-                std::snprintf(status, sizeof status, save_settings(settings) ? "Saved %s" : "Could not save %s", kSettingsPath);
+                std::snprintf(status, sizeof status, lsd::reflect::save_file(settings, kSettingsPath) ? "Saved %s" : "Could not save %s", kSettingsPath);
             }
             ImGui::SameLine();
             if (ImGui::Button("Load")) {
-                std::snprintf(status, sizeof status, load_settings(settings) ? "Loaded %s" : "Could not load %s", kSettingsPath);
+                std::snprintf(status, sizeof status, lsd::reflect::load_file(settings, kSettingsPath) ? "Loaded %s" : "Could not load %s", kSettingsPath);
             }
             ImGui::SameLine();
             if (ImGui::Button("Reset")) {

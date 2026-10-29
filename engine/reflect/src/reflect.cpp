@@ -1,4 +1,5 @@
 #include "lsd/reflect/reflect.h"
+#include "lsd/foundation/allocator.h"
 #include "lsd/foundation/log.h"
 
 #include <cerrno>
@@ -242,6 +243,43 @@ bool load_text(const TypeInfo& type, void* object, const char* text, usize lengt
     r.skip_ws();
     if (r.ok && r.p != r.end) r.fail("unexpected text after the object");
     return r.ok;
+}
+
+bool save_file(const TypeInfo& type, const void* object, const char* path) {
+    Allocator& heap = default_allocator();
+    const usize length = save_text(type, object, nullptr, 0);
+    char* text = static_cast<char*>(heap.allocate(length + 1, 1));
+    save_text(type, object, text, length + 1);
+    bool ok = false;
+    if (FILE* file = std::fopen(path, "wb")) {
+        ok = std::fwrite(text, 1, length, file) == length;
+        ok = std::fclose(file) == 0 && ok;
+    }
+    heap.deallocate(text);
+    if (!ok) LSD_LOG_ERROR("reflect", "Could not write %s", path);
+    return ok;
+}
+
+bool load_file(const TypeInfo& type, void* object, const char* path) {
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    std::fseek(file, 0, SEEK_END);
+    const long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+    if (size < 0) { std::fclose(file); return false; }
+    Allocator& heap = default_allocator();
+    char* text = static_cast<char*>(heap.allocate(static_cast<usize>(size) + 1, 1));
+    const usize length = std::fread(text, 1, static_cast<usize>(size), file);
+    std::fclose(file);
+
+    void* copy = heap.allocate(type.size, type.alignment);
+    std::memcpy(copy, object, type.size);
+    const bool ok = load_text(type, copy, text, length);
+    if (ok) std::memcpy(object, copy, type.size);
+    else LSD_LOG_ERROR("reflect", "Could not load %s", path);
+    heap.deallocate(copy);
+    heap.deallocate(text);
+    return ok;
 }
 
 } // namespace lsd::reflect
