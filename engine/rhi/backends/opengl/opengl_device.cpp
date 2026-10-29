@@ -81,6 +81,7 @@ void main() { o_color = v_color; }
 )";
 
 constexpr u32 kMaxBuffers = 4096;
+constexpr u32 kMaxTargets = 256;
 
 // Constants from GL_NVX_gpu_memory_info and GL_ATI_meminfo (not in core headers).
 constexpr GLenum kGpuMemoryTotalNvx = 0x9048;
@@ -120,7 +121,19 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLVERTEXARRAYVERTEXBUFFERPROC, glVertexArrayVertexBuffer)  \
     X(PFNGLVERTEXARRAYELEMENTBUFFERPROC, glVertexArrayElementBuffer) \
     X(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv)                \
-    X(PFNGLUNIFORM4FVPROC, glUniform4fv)
+    X(PFNGLUNIFORM4FVPROC, glUniform4fv)                            \
+    X(PFNGLCREATETEXTURESPROC, glCreateTextures)                    \
+    X(PFNGLTEXTURESTORAGE2DPROC, glTextureStorage2D)                \
+    X(PFNGLTEXTUREPARAMETERIPROC, glTextureParameteri)              \
+    X(PFNGLCREATERENDERBUFFERSPROC, glCreateRenderbuffers)          \
+    X(PFNGLNAMEDRENDERBUFFERSTORAGEPROC, glNamedRenderbufferStorage) \
+    X(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers)          \
+    X(PFNGLCREATEFRAMEBUFFERSPROC, glCreateFramebuffers)            \
+    X(PFNGLNAMEDFRAMEBUFFERTEXTUREPROC, glNamedFramebufferTexture)  \
+    X(PFNGLNAMEDFRAMEBUFFERRENDERBUFFERPROC, glNamedFramebufferRenderbuffer) \
+    X(PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC, glCheckNamedFramebufferStatus) \
+    X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                  \
+    X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -178,6 +191,7 @@ public:
         for (Buffer& b : buffers_) {
             if (b.id) gl_.glDeleteBuffers(1, &b.id);
         }
+        for (u32 i = 0; i < kMaxTargets; ++i) release_target(targets_[i]);
         SDL_GL_DestroyContext(context_);
     }
 
@@ -276,6 +290,8 @@ public:
     }
 
     void begin_frame(const f32 clear_color[4]) override {
+        gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        target_height_ = height_;
         glDisable(GL_SCISSOR_TEST);
         glViewport(0, 0, static_cast<GLsizei>(width_), static_cast<GLsizei>(height_));
         glClearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
@@ -284,9 +300,67 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
+    TextureHandle create_render_target(u32 width, u32 height) override {
+        u32 slot = 0;
+        while (slot < kMaxTargets && targets_[slot].fbo) ++slot;
+        if (slot == kMaxTargets || width == 0 || height == 0) {
+            LSD_LOG_ERROR("opengl", "create_render_target failed: table full (%u) or zero size.", kMaxTargets);
+            return {};
+        }
+        Target& t = targets_[slot];
+        gl_.glCreateTextures(GL_TEXTURE_2D, 1, &t.color);
+        gl_.glTextureStorage2D(t.color, 1, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        gl_.glTextureParameteri(t.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl_.glTextureParameteri(t.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl_.glCreateRenderbuffers(1, &t.depth);
+        gl_.glNamedRenderbufferStorage(t.depth, GL_DEPTH_COMPONENT24, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        gl_.glCreateFramebuffers(1, &t.fbo);
+        gl_.glNamedFramebufferTexture(t.fbo, GL_COLOR_ATTACHMENT0, t.color, 0);
+        gl_.glNamedFramebufferRenderbuffer(t.fbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
+        if (gl_.glCheckNamedFramebufferStatus(t.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            LSD_LOG_ERROR("opengl", "Render target framebuffer is incomplete.");
+            release_target(t);
+            return {};
+        }
+        t.width = width;
+        t.height = height;
+        return TextureHandle::make(slot, t.generation);
+    }
+
+    void destroy_texture(TextureHandle handle) override {
+        Target* t = lookup(handle);
+        if (!t) return;
+        release_target(*t);  // GL defers the real release until the GPU is done
+        ++t->generation;
+    }
+
+    void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
+        const Target* t = lookup(handle);
+        glDisable(GL_SCISSOR_TEST);
+        if (!t) {
+            gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            target_height_ = height_;
+            glViewport(0, 0, static_cast<GLsizei>(width_), static_cast<GLsizei>(height_));
+            return;
+        }
+        gl_.glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
+        target_height_ = t->height;
+        glViewport(0, 0, static_cast<GLsizei>(t->width), static_cast<GLsizei>(t->height));
+        glClearColor(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
+        glDepthMask(GL_TRUE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
+
+    u64 debug_ui_texture(TextureHandle handle) override {
+        const Target* t = lookup(handle);
+        return t ? t->color : 0;
+    }
+
+    bool render_targets_flipped() const override { return true; }  // GL textures start at the bottom row
+
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         // GL's window origin is bottom-left; the RHI's is top-left.
-        const GLint gl_y = static_cast<GLint>(static_cast<f32>(height_) - y - height);
+        const GLint gl_y = static_cast<GLint>(static_cast<f32>(target_height_) - y - height);
         glViewport(static_cast<GLint>(x), gl_y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         glScissor(static_cast<GLint>(x), gl_y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         glEnable(GL_SCISSOR_TEST);
@@ -363,7 +437,10 @@ public:
         return debug_ui_;
     }
     void debug_ui_new_frame() override { ImGui_ImplOpenGL3_NewFrame(); }
-    void render_debug_ui() override { ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData()); }
+    void render_debug_ui() override {
+        set_render_target({}, nullptr);  // the UI always draws to the window
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
 
 private:
     GLuint compile(GLenum stage, const char* source) {
@@ -387,6 +464,29 @@ private:
         BufferUsage usage = BufferUsage::Vertex;
         u32 generation = 0;
     };
+
+    struct Target {
+        GLuint fbo = 0;
+        GLuint color = 0;
+        GLuint depth = 0;
+        u32 width = 0;
+        u32 height = 0;
+        u32 generation = 0;
+    };
+
+    Target* lookup(TextureHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxTargets) return nullptr;
+        Target& t = targets_[handle.index()];
+        if (!t.fbo || (t.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &t;
+    }
+
+    void release_target(Target& t) {
+        if (t.fbo) gl_.glDeleteFramebuffers(1, &t.fbo);
+        if (t.depth) gl_.glDeleteRenderbuffers(1, &t.depth);
+        if (t.color) glDeleteTextures(1, &t.color);
+        t.fbo = t.depth = t.color = 0;
+    }
 
     Buffer* lookup(BufferHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxBuffers) return nullptr;
@@ -461,6 +561,8 @@ private:
     GLuint line_vao_ = 0;
     GLint line_mvp_ = -1;
     Buffer buffers_[kMaxBuffers];
+    Target targets_[kMaxTargets];
+    u32 target_height_ = 0;  // height of what is being drawn to, for set_viewport's Y flip
     GLint params_location_ = -1;
     u32 width_ = 0;
     u32 height_ = 0;

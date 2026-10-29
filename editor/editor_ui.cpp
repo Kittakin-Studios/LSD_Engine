@@ -1,5 +1,7 @@
 #include "editor_ui.h"
 
+#include "thumbnails.h"
+
 #include "lsd/debug_ui/details_panel.h"
 
 #include <imgui.h>
@@ -338,7 +340,20 @@ void draw_asset_grid(EditorState& s) {
     static usize hits[1024];
     const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
-    if (count == 0) {
+
+    // Sub-folders first (not while searching), like Unreal; double-click opens one.
+    // shortcut: listed from disk every frame, like the folder tree.
+    static char folders[64][96];
+    usize folder_count = 0;
+    if (!s.search[0]) {
+        std::error_code error;
+        for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(kContentDir) / s.content_folder, error)) {
+            if (folder_count < 64 && entry.is_directory(error)) {
+                std::snprintf(folders[folder_count++], sizeof folders[0], "%s", entry.path().filename().string().c_str());
+            }
+        }
+    }
+    if (count == 0 && folder_count == 0) {
         ImGui::TextDisabled(s.search[0] ? "No assets match." : "No assets here. Drag .fbx, .gltf or .glb files from Explorer onto the editor to import them into this folder.");
         return;
     }
@@ -348,10 +363,32 @@ void draw_asset_grid(EditorState& s) {
     const int columns = static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing)) > 0
                             ? static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing))
                             : 1;
-    for (usize n = 0; n < count; ++n) {
+    usize tile = 0;
+    for (usize f = 0; f < folder_count; ++f, ++tile) {
+        ImGui::PushID(folders[f]);
+        if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();
+        ImGui::BeginGroup();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::Selectable("##folder", false, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()));
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            char next[256];
+            std::snprintf(next, sizeof next, "%s%s%s", s.content_folder, s.content_folder[0] ? "/" : "", folders[f]);
+            std::snprintf(s.content_folder, sizeof s.content_folder, "%s", next);
+        }
+        // Folder shape: tab on top of a body, in the tree's folder colours.
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(p.x + 12, p.y + 22), ImVec2(p.x + 46, p.y + 32), u32_color(t.folder_tree_text), 3.0f);
+        dl->AddRectFilled(ImVec2(p.x + 12, p.y + 30), ImVec2(p.x + kTile - 12, p.y + kTile - 18), u32_color(t.folder_tree_text), 3.0f);
+        dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
+        dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), folders[f]);
+        dl->PopClipRect();
+        ImGui::EndGroup();
+        ImGui::PopID();
+    }
+    for (usize n = 0; n < count; ++n, ++tile) {
         const asset::AssetRecord& r = s.registry->get(hits[n]);
         ImGui::PushID(static_cast<int>(hits[n]));
-        if (n % static_cast<usize>(columns) != 0) ImGui::SameLine();
+        if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();
         ImGui::BeginGroup();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool selected = r.guid == s.selected_asset;
@@ -368,13 +405,19 @@ void draw_asset_grid(EditorState& s) {
             ImGui::EndDragDropSource();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nContent/%s", r.name, r.path);
-        // shortcut: type badge instead of a rendered thumbnail (next step: render-to-texture thumbnails).
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + kTile - 6, p.y + kTile - 6), u32_color(t.outline_row_b), 4.0f);
-        dl->AddRect(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + kTile - 6, p.y + kTile - 6), u32_color(t.text_mesh), 4.0f, 0, 2.0f);
-        const char* badge = asset::to_string(r.type);
-        const ImVec2 badge_size = ImGui::CalcTextSize(badge);
-        dl->AddText(ImVec2(p.x + (kTile - badge_size.x) * 0.5f, p.y + (kTile - badge_size.y) * 0.5f), u32_color(t.text_mesh), badge);
+        const ImVec2 lo(p.x + 6, p.y + 6), hi(p.x + kTile - 6, p.y + kTile - 6);
+        const u64 thumbnail = s.thumbnails ? s.thumbnails->get(r.guid) : 0;
+        if (thumbnail) {
+            const bool flip = s.thumbnails->flipped();
+            dl->AddImage(ImTextureRef(static_cast<ImTextureID>(thumbnail)), lo, hi, ImVec2(0, flip ? 1.0f : 0.0f), ImVec2(1, flip ? 0.0f : 1.0f));
+        } else {  // still rendering (or failed): type badge
+            dl->AddRectFilled(lo, hi, u32_color(t.outline_row_b), 4.0f);
+            const char* badge = asset::to_string(r.type);
+            const ImVec2 badge_size = ImGui::CalcTextSize(badge);
+            dl->AddText(ImVec2(p.x + (kTile - badge_size.x) * 0.5f, p.y + (kTile - badge_size.y) * 0.5f), u32_color(t.text_mesh), badge);
+        }
+        dl->AddRect(lo, hi, u32_color(selected ? t.details_tab_active : t.text_mesh), 4.0f, 0, 2.0f);
         dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
         dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), r.name);
         dl->PopClipRect();

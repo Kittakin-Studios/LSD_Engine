@@ -25,7 +25,8 @@ namespace {
 constexpr u32 kBackBufferCount = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-constexpr u32 kDebugUiDescriptors = 64;  // ImGui font atlas + user textures
+constexpr u32 kDebugUiDescriptors = 512;  // ImGui font atlas + render targets shown in the UI
+constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
 constexpr u32 kRootConstants = 32;  // one root-constant block shared by every built-in pipeline
@@ -177,6 +178,11 @@ public:
         heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         heap_desc.NumDescriptors = 1;
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&dsv_heap_)), "CreateDescriptorHeap (DSV)")) return false;
+        heap_desc.NumDescriptors = kMaxTargets;
+        if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_dsv_heap_)), "CreateDescriptorHeap (target DSV)")) return false;
+        heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_rtv_heap_)), "CreateDescriptorHeap (target RTV)")) return false;
+        dsv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
         return create_pipelines();
     }
@@ -262,6 +268,90 @@ public:
         wait_for_gpu();  // shortcut: stalls; switch to deferred release when buffers churn per frame
         b->resource.Reset();
         ++b->generation;
+    }
+
+    TextureHandle create_render_target(u32 width, u32 height) override {
+        if (!srv_heap_) {
+            LSD_LOG_ERROR("d3d12", "create_render_target needs init_debug_ui() first (its view lives in the UI heap).");
+            return {};
+        }
+        u32 slot = 0;
+        while (slot < kMaxTargets && targets_[slot].color) ++slot;
+        if (slot == kMaxTargets || width == 0 || height == 0) {
+            LSD_LOG_ERROR("d3d12", "create_render_target failed: table full (%u) or zero size.", kMaxTargets);
+            return {};
+        }
+        Target& t = targets_[slot];
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = width;
+        desc.Height = height;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = kBackBufferFormat;
+        desc.SampleDesc.Count = 1;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        // No optimized clear colour: targets are cleared to varying colours (theme background).
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                    IID_PPV_ARGS(&t.color)), "CreateCommittedResource (render target)")) return {};
+        desc.Format = kDepthFormat;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = kDepthFormat;
+        clear.DepthStencil.Depth = 1.0f;
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
+                                                    IID_PPV_ARGS(&t.depth)), "CreateCommittedResource (target depth)")) {
+            t.color.Reset();
+            return {};
+        }
+        device_->CreateRenderTargetView(t.color.Get(), nullptr, target_rtv(slot));
+        device_->CreateDepthStencilView(t.depth.Get(), nullptr, target_dsv(slot));
+        alloc_srv(t.srv_cpu, t.srv_gpu);
+        device_->CreateShaderResourceView(t.color.Get(), nullptr, t.srv_cpu);
+        t.width = width;
+        t.height = height;
+        return TextureHandle::make(slot, t.generation);
+    }
+
+    void destroy_texture(TextureHandle handle) override {
+        Target* t = lookup(handle);
+        if (!t) return;
+        wait_for_gpu();  // shortcut: stalls; fine for rare destroys (thumbnails, shutdown)
+        free_srv(t->srv_cpu);
+        t->color.Reset();
+        t->depth.Reset();
+        ++t->generation;
+    }
+
+    void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
+        if (current_target_ >= 0) {
+            transition(targets_[current_target_].color.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            current_target_ = -1;
+        }
+        const Target* t = lookup(handle);
+        if (!t) {  // back to the window
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_handle(frame_);
+            const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+            set_viewport(0.0f, 0.0f, static_cast<f32>(width_), static_cast<f32>(height_));
+            return;
+        }
+        const u32 slot = handle.index();
+        transition(t->color.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        current_target_ = static_cast<i32>(slot);
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(slot);
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = target_dsv(slot);
+        list_->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
+        list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        set_viewport(0.0f, 0.0f, static_cast<f32>(t->width), static_cast<f32>(t->height));
+    }
+
+    u64 debug_ui_texture(TextureHandle handle) override {
+        const Target* t = lookup(handle);
+        return t ? t->srv_gpu.ptr : 0;
     }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
@@ -358,12 +448,14 @@ public:
     void debug_ui_new_frame() override { ImGui_ImplDX12_NewFrame(); }
 
     void render_debug_ui() override {
+        if (current_target_ >= 0) set_render_target({}, nullptr);  // the UI always draws to the window
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), list_.Get());
     }
 
     void end_frame() override {
+        if (current_target_ >= 0) set_render_target({}, nullptr);
         transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         list_->Close();
         ID3D12CommandList* lists[] = {list_.Get()};
@@ -409,7 +501,9 @@ private:
         }
         DWORD cookie = 0;
         queue->RegisterMessageCallback(
-            [](D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity, D3D12_MESSAGE_ID, LPCSTR text, void*) {
+            [](D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity, D3D12_MESSAGE_ID id, LPCSTR text, void*) {
+                // Render targets are cleared to theme colours on purpose, so no fixed optimised clear value.
+                if (id == D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE) return;
                 if (severity <= D3D12_MESSAGE_SEVERITY_ERROR) LSD_LOG_ERROR("d3d12", "%s", text);
                 else if (severity == D3D12_MESSAGE_SEVERITY_WARNING) LSD_LOG_WARN("d3d12", "%s", text);
             },
@@ -442,6 +536,35 @@ private:
         BufferUsage usage = BufferUsage::Vertex;
         u32 generation = 0;
     };
+
+    struct Target {
+        ComPtr<ID3D12Resource> color;
+        ComPtr<ID3D12Resource> depth;
+        D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu{};
+        u32 width = 0;
+        u32 height = 0;
+        u32 generation = 0;
+    };
+
+    Target* lookup(TextureHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxTargets) return nullptr;
+        Target& t = targets_[handle.index()];
+        if (!t.color || (t.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &t;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE target_rtv(u32 slot) const {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = target_rtv_heap_->GetCPUDescriptorHandleForHeapStart();
+        h.ptr += static_cast<SIZE_T>(slot) * rtv_size_;
+        return h;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE target_dsv(u32 slot) const {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = target_dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        h.ptr += static_cast<SIZE_T>(slot) * dsv_size_;
+        return h;
+    }
 
     Buffer* lookup(BufferHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxBuffers) return nullptr;
@@ -593,6 +716,11 @@ private:
     ComPtr<ID3D12PipelineState> mesh_pipeline_;
     ComPtr<ID3D12PipelineState> line_pipeline_;
     Buffer buffers_[kMaxBuffers];
+    ComPtr<ID3D12DescriptorHeap> target_rtv_heap_;
+    ComPtr<ID3D12DescriptorHeap> target_dsv_heap_;
+    u32 dsv_size_ = 0;
+    Target targets_[kMaxTargets];
+    i32 current_target_ = -1;  // slot being rendered to, -1 = the window
     ComPtr<ID3D12DescriptorHeap> srv_heap_;
     u32 srv_size_ = 0;
     bool srv_used_[kDebugUiDescriptors] = {};

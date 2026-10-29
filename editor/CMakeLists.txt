@@ -1,4 +1,4 @@
-add_executable(lsd_editor main.cpp editor_ui.cpp editor_scene.cpp)
+add_executable(lsd_editor main.cpp editor_ui.cpp editor_scene.cpp thumbnails.cpp)
 lsd_reflect(lsd_editor editor_theme.h)
 target_include_directories(lsd_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lsd_editor PRIVATE lsd_foundation lsd_core lsd_rhi lsd_render lsd_asset lsd_debug_ui SDL3::SDL3-static)

@@ -36,6 +36,8 @@ enum class QualityPreset : u8 { Low, Medium, High, Epic };
 
 struct BufferTag {};
 using BufferHandle = Handle<BufferTag>;
+struct TextureTag {};
+using TextureHandle = Handle<TextureTag>;
 enum class BufferUsage : u8 { Vertex, Index };
 
 // Vertex formats of the built-in pipelines.
@@ -84,7 +86,14 @@ public:
     virtual BufferHandle create_buffer(BufferUsage usage, const void* data, u64 size) = 0;
     virtual void destroy_buffer(BufferHandle buffer) = 0;  // safe while the GPU may still use it
 
+    // Offscreen colour target (RGBA8, same format as the window) with its own depth buffer.
+    virtual TextureHandle create_render_target(u32 width, u32 height) = 0;
+    virtual void destroy_texture(TextureHandle texture) = 0;  // safe while the GPU may still use it
+
     virtual void begin_frame(const f32 clear_color[4]) = 0;  // clears colour and depth
+    // Following draws go to `target`, cleared to clear_color, with the viewport covering it; an
+    // invalid handle switches back to the window (not cleared again). Call between begin/end_frame.
+    virtual void set_render_target(TextureHandle target, const f32 clear_color[4]) = 0;
     // Pixel rectangle that following draws render into (default: the whole window each frame).
     virtual void set_viewport(f32 x, f32 y, f32 width, f32 height) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
@@ -102,6 +111,10 @@ public:
     virtual bool init_debug_ui() = 0;
     virtual void debug_ui_new_frame() = 0;
     virtual void render_debug_ui() = 0;
+    // ImTextureID for showing a render target with ImGui::Image (0 if unsupported).
+    virtual u64 debug_ui_texture(TextureHandle texture) = 0;
+    // True when render targets come out upside down in ImGui (OpenGL): flip the UVs.
+    virtual bool render_targets_flipped() const { return false; }
 };
 
 // Creates a device for desc.backend (Auto = platform default), selecting the GPU with

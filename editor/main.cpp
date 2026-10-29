@@ -1,6 +1,7 @@
 // LSD_Engine editor entry point: editor shell (Viewport, Outliner, Details, Content Browser).
 #include "editor_scene.h"
 #include "editor_ui.h"
+#include "thumbnails.h"
 
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
@@ -184,6 +185,9 @@ int main(int argc, char** argv) {
     // Owned explicitly: its GPU buffers must be released before the device is destroyed.
     auto* scene_memory = allocator.allocate(sizeof(lsd::editor::EditorScene), alignof(lsd::editor::EditorScene));
     lsd::editor::EditorScene& scene = *new (scene_memory) lsd::editor::EditorScene(*device, allocator, registry, kDataDir);
+    auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
+    lsd::editor::ThumbnailCache& thumbnails = *new (thumbnail_memory) lsd::editor::ThumbnailCache(*device, allocator, registry, kDataDir);
+    state.thumbnails = &thumbnails;
     {
         lsd::render::MeshData cube = lsd::render::make_cube(allocator);
         lsd::render::MeshData sphere = lsd::render::make_sphere(allocator);
@@ -265,7 +269,9 @@ int main(int argc, char** argv) {
 
         const lsd::LinearColor& bg = state.theme.viewport_background;
         const lsd::f32 clear_color[4] = {bg.r, bg.g, bg.b, 1.0f};
+        thumbnails.release_temporaries();
         device->begin_frame(clear_color);
+        thumbnails.render(clear_color);
         const lsd::f32* rect = state.viewport_rect;
         if (rect[2] >= 8.0f && rect[3] >= 8.0f) {
             // ImGui works in window points; the swapchain is in pixels (differs on high-DPI screens).
@@ -284,6 +290,8 @@ int main(int argc, char** argv) {
     }
 
     lsd::render::destroy_lines(*device, grid);
+    thumbnails.~ThumbnailCache();
+    allocator.deallocate(thumbnail_memory);
     scene.~EditorScene();
     allocator.deallocate(scene_memory);
     lsd::rhi::destroy_device(device, allocator);

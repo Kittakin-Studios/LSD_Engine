@@ -5,6 +5,8 @@
 
 #include "lsd/asset/asset_registry.h"
 
+namespace lsd::editor { class ThumbnailCache; }
+
 #include "lsd/foundation/math.h"
 
 namespace lsd::editor {
@@ -37,6 +39,7 @@ struct EditorState {
 
     // Content Browser
     const asset::AssetRegistry* registry = nullptr;
+    ThumbnailCache* thumbnails = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
     char search[96] = "";
     int type_filter = 0;            // 0 = all types, 1 = meshes
