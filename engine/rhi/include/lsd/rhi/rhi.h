@@ -4,6 +4,8 @@
 #include "lsd/foundation/allocator.h"
 #include "lsd/foundation/types.h"
 
+struct SDL_Window;
+
 namespace lsd::rhi {
 
 enum class Backend : u8 { Auto, D3D12, Vulkan, OpenGL };
@@ -42,15 +44,23 @@ public:
     virtual const AdapterInfo& adapter() const = 0;
     virtual MemoryBudget query_memory_budget() const = 0;
 
-    // Swapchain for a native window (HWND on Windows). One per device for now.
-    virtual bool create_swapchain(void* native_window, u32 width, u32 height) = 0;
+    // Swapchain for an SDL window, created with the flags the backend needs (SDL_WINDOW_OPENGL /
+    // SDL_WINDOW_VULKAN). One per device for now. The OpenGL backend creates its context here.
+    virtual bool create_swapchain(SDL_Window* window, u32 width, u32 height) = 0;
     virtual void resize_swapchain(u32 width, u32 height) = 0;
 
     // shortcut: fixed-function frame (clear + built-in test triangle) until the renderer needs
     // buffers, pipelines and command lists; replace with a real command-list API in milestone 1.
     virtual void begin_frame(const f32 clear_color[4]) = 0;
-    virtual void draw_test_triangle() = 0;
+    virtual void draw_test_triangle(f32 scale, f32 rotation_radians) = 0;
     virtual void end_frame() = 0;  // presents
+
+    // Debug UI (Dear ImGui): each backend owns its ImGui renderer. Create the ImGui context and
+    // platform backend first, call init_debug_ui() after create_swapchain(), then each frame call
+    // debug_ui_new_frame() before ImGui::NewFrame() and render_debug_ui() between begin/end_frame.
+    virtual bool init_debug_ui() = 0;
+    virtual void debug_ui_new_frame() = 0;
+    virtual void render_debug_ui() = 0;
 };
 
 // Creates a device for desc.backend (Auto = platform default), selecting the GPU with

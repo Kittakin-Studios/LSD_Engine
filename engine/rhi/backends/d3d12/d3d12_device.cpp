@@ -8,6 +8,10 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 
+#include <SDL3/SDL.h>
+#include <imgui.h>
+#include <imgui_impl_dx12.h>
+
 #include <new>
 
 using Microsoft::WRL::ComPtr;
@@ -19,16 +23,21 @@ namespace {
 constexpr u32 kBackBufferCount = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+constexpr u32 kDebugUiDescriptors = 64;  // ImGui font atlas + user textures
 
 // shortcut: runtime HLSL compile via d3dcompiler_47 (ships with Windows); move to DXC + the data
 // compiler once shaders become assets.
 constexpr char kTriangleHlsl[] = R"(
 struct VsOut { float4 pos : SV_Position; float3 color : COLOR; };
+cbuffer Params : register(b0) { float scale; float angle; float aspect; };
 VsOut vs_main(uint id : SV_VertexID) {
     const float2 pos[3]   = { float2(0.0, 0.6), float2(0.55, -0.5), float2(-0.55, -0.5) };
     const float3 color[3] = { float3(1, 0.2, 0.2), float3(0.2, 1, 0.2), float3(0.2, 0.4, 1) };
     VsOut o;
-    o.pos = float4(pos[id], 0, 1);
+    float s, c;
+    sincos(angle, s, c);
+    const float2 p = mul(float2x2(c, -s, s, c), pos[id] * scale);
+    o.pos = float4(p.x / aspect, p.y, 0, 1);
     o.color = color[id];
     return o;
 }
@@ -63,6 +72,7 @@ class D3D12Device final : public Device {
 public:
     ~D3D12Device() override {
         if (queue_ && fence_ && fence_event_) wait_for_gpu();
+        if (debug_ui_) ImGui_ImplDX12_Shutdown();
         if (fence_event_) CloseHandle(fence_event_);
     }
 
@@ -112,6 +122,7 @@ public:
         info_ = infos[chosen];
         if (!check(adapters[chosen].As(&adapter_), "IDXGIAdapter3 query")) return false;
         if (!check(D3D12CreateDevice(adapter_.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device_)), "D3D12CreateDevice")) return false;
+        if (desc.enable_validation) forward_debug_messages();
 
         D3D12_COMMAND_QUEUE_DESC queue_desc{};
         queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -143,7 +154,7 @@ public:
         return MemoryBudget{mem.Budget, mem.CurrentUsage};
     }
 
-    bool create_swapchain(void* native_window, u32 width, u32 height) override {
+    bool create_swapchain(SDL_Window* window, u32 width, u32 height) override {
         DXGI_SWAP_CHAIN_DESC1 sc{};
         sc.Width = width;
         sc.Height = height;
@@ -152,7 +163,7 @@ public:
         sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sc.BufferCount = kBackBufferCount;
         sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        const HWND hwnd = static_cast<HWND>(native_window);
+        const HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
         ComPtr<IDXGISwapChain1> swapchain1;
         if (!check(factory_->CreateSwapChainForHwnd(queue_.Get(), hwnd, &sc, nullptr, nullptr, &swapchain1), "CreateSwapChainForHwnd")) return false;
         factory_->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
@@ -189,11 +200,47 @@ public:
         list_->RSSetScissorRects(1, &scissor);
     }
 
-    void draw_test_triangle() override {
+    void draw_test_triangle(f32 scale, f32 rotation_radians) override {
+        const f32 params[3] = {scale, rotation_radians, height_ ? static_cast<f32>(width_) / static_cast<f32>(height_) : 1.0f};
         list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, 3, params, 0);
         list_->SetPipelineState(pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);
+    }
+
+    bool init_debug_ui() override {
+        D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
+        heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap_desc.NumDescriptors = kDebugUiDescriptors;
+        heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_heap_)), "CreateDescriptorHeap (debug UI)")) return false;
+        srv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+        ImGui_ImplDX12_InitInfo init;
+        init.Device = device_.Get();
+        init.CommandQueue = queue_.Get();
+        init.NumFramesInFlight = kBackBufferCount;
+        init.RTVFormat = kBackBufferFormat;
+        init.DSVFormat = DXGI_FORMAT_UNKNOWN;
+        init.UserData = this;
+        init.SrvDescriptorHeap = srv_heap_.Get();
+        init.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
+            static_cast<D3D12Device*>(info->UserData)->alloc_srv(*cpu, *gpu);
+        };
+        init.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE) {
+            static_cast<D3D12Device*>(info->UserData)->free_srv(cpu);
+        };
+        debug_ui_ = ImGui_ImplDX12_Init(&init);
+        return debug_ui_;
+    }
+
+    void debug_ui_new_frame() override { ImGui_ImplDX12_NewFrame(); }
+
+    void render_debug_ui() override {
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
+        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), list_.Get());
     }
 
     void end_frame() override {
@@ -233,8 +280,50 @@ private:
         }
     }
 
+    // Sends debug-layer warnings and errors to our log (by default they only reach a debugger).
+    void forward_debug_messages() {
+        ComPtr<ID3D12InfoQueue1> queue;
+        if (FAILED(device_.As(&queue))) {
+            LSD_LOG_WARN("d3d12", "Debug messages only visible in a debugger (ID3D12InfoQueue1 unavailable).");
+            return;
+        }
+        DWORD cookie = 0;
+        queue->RegisterMessageCallback(
+            [](D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity, D3D12_MESSAGE_ID, LPCSTR text, void*) {
+                if (severity <= D3D12_MESSAGE_SEVERITY_ERROR) LSD_LOG_ERROR("d3d12", "%s", text);
+                else if (severity == D3D12_MESSAGE_SEVERITY_WARNING) LSD_LOG_WARN("d3d12", "%s", text);
+            },
+            D3D12_MESSAGE_CALLBACK_FLAG_NONE, nullptr, &cookie);
+    }
+
+    // Free-list of slots in the debug UI descriptor heap.
+    void alloc_srv(D3D12_CPU_DESCRIPTOR_HANDLE& cpu, D3D12_GPU_DESCRIPTOR_HANDLE& gpu) {
+        u32 slot = 0;
+        while (slot < kDebugUiDescriptors && srv_used_[slot]) ++slot;
+        if (slot == kDebugUiDescriptors) {
+            LSD_LOG_ERROR("d3d12", "Debug UI descriptor heap is full (%u).", kDebugUiDescriptors);
+            slot = 0;
+        }
+        srv_used_[slot] = true;
+        cpu = srv_heap_->GetCPUDescriptorHandleForHeapStart();
+        gpu = srv_heap_->GetGPUDescriptorHandleForHeapStart();
+        cpu.ptr += static_cast<SIZE_T>(slot) * srv_size_;
+        gpu.ptr += static_cast<UINT64>(slot) * srv_size_;
+    }
+
+    void free_srv(D3D12_CPU_DESCRIPTOR_HANDLE cpu) {
+        const SIZE_T slot = (cpu.ptr - srv_heap_->GetCPUDescriptorHandleForHeapStart().ptr) / srv_size_;
+        if (slot < kDebugUiDescriptors) srv_used_[slot] = false;
+    }
+
     bool create_triangle_pipeline() {
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        param.Constants.Num32BitValues = 3;  // scale, angle, aspect
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
+        rs_desc.NumParameters = 1;
+        rs_desc.pParameters = &param;
         ComPtr<ID3DBlob> rs_blob, error;
         if (!check(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &error), "D3D12SerializeRootSignature")) return false;
         if (!check(device_->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(), IID_PPV_ARGS(&root_signature_)), "CreateRootSignature")) return false;
@@ -322,6 +411,10 @@ private:
     u32 height_ = 0;
     ComPtr<ID3D12RootSignature> root_signature_;
     ComPtr<ID3D12PipelineState> pipeline_;
+    ComPtr<ID3D12DescriptorHeap> srv_heap_;
+    u32 srv_size_ = 0;
+    bool srv_used_[kDebugUiDescriptors] = {};
+    bool debug_ui_ = false;
 };
 
 } // namespace

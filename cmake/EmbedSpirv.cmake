@@ -1,0 +1,15 @@
+# cmake -DINPUT=<file.spv> -DOUTPUT=<file.h> -DNAME=<array name> -P EmbedSpirv.cmake
+# Writes the SPIR-V binary as a C++ uint32_t array (little-endian words).
+file(READ "${INPUT}" hex HEX)
+string(LENGTH "${hex}" length)
+set(words "")
+math(EXPR last "${length} - 8")
+foreach(i RANGE 0 ${last} 8)
+  string(SUBSTRING "${hex}" ${i} 8 w)
+  string(SUBSTRING "${w}" 0 2 b0)
+  string(SUBSTRING "${w}" 2 2 b1)
+  string(SUBSTRING "${w}" 4 2 b2)
+  string(SUBSTRING "${w}" 6 2 b3)
+  string(APPEND words "0x${b3}${b2}${b1}${b0},")
+endforeach()
+file(WRITE "${OUTPUT}" "// Generated from ${INPUT}. Do not edit.\n#pragma once\n#include <cstdint>\nalignas(4) static const uint32_t ${NAME}[] = {${words}};\n")

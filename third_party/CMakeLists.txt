@@ -14,3 +14,49 @@ FetchContent_Declare(SDL3
   SYSTEM
 )
 FetchContent_MakeAvailable(SDL3)
+
+# Dear ImGui (MIT): debug UI and editor v1. Docking branch for dockable editor panels later.
+# Core + SDL3 platform backend here; each RHI backend compiles its own ImGui renderer.
+FetchContent_Declare(imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG v1.93.0-docking
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(imgui)
+add_library(imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/imgui_demo.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+)
+target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
+set(LSD_IMGUI_DIR ${imgui_SOURCE_DIR} PARENT_SCOPE)
+
+# Vulkan: headers (Apache-2.0) + volk loader (MIT). No Vulkan SDK needed to build; the
+# runtime loads vulkan-1.dll / libvulkan.so from the GPU driver.
+if(LSD_RHI_VULKAN)
+  FetchContent_Declare(VulkanHeaders
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG vulkan-sdk-1.4.363.0
+    GIT_SHALLOW TRUE
+    SYSTEM
+  )
+  # SOURCE_SUBDIR points at a folder without CMakeLists.txt: fetch only, we build volk.c ourselves.
+  FetchContent_Declare(volk
+    GIT_REPOSITORY https://github.com/zeux/volk.git
+    GIT_TAG vulkan-sdk-1.4.363.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR do-not-configure
+  )
+  FetchContent_MakeAvailable(VulkanHeaders volk)
+  add_library(volk STATIC ${volk_SOURCE_DIR}/volk.c)
+  target_include_directories(volk SYSTEM PUBLIC ${volk_SOURCE_DIR})
+  target_link_libraries(volk PUBLIC Vulkan::Headers)
+  target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
+  if(WIN32)
+    target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+  endif()
+endif()
