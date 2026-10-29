@@ -1,10 +1,12 @@
 // Minimal self-contained tests (no framework yet). Each CHECK failure is counted and reported.
+#include "lsd/core/job_system.h"
 #include "lsd/foundation/allocator.h"
 #include "lsd/foundation/handle.h"
 #include "lsd/foundation/hash_id.h"
 #include "lsd/foundation/system_info.h"
 #include "lsd/rhi/rhi.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdint>
 
@@ -76,6 +78,22 @@ static void test_system_info() {
     CHECK(lsd::recommended_worker_count(info) >= 1);
 }
 
+static void test_job_system() {
+    lsd::HeapAllocator heap("jobs");
+    for (lsd::u32 workers : {0u, 4u}) {
+        lsd::JobSystem jobs(heap, workers, 64);  // small queue so the full-queue path runs too
+        std::atomic<int> sum{0};
+        lsd::JobCounter counter;
+        for (int i = 1; i <= 1000; ++i) {
+            jobs.run([](void* data) { static_cast<std::atomic<int>*>(data)->fetch_add(1); }, &sum, &counter);
+        }
+        jobs.wait(counter);
+        CHECK(sum.load() == 1000);
+        CHECK(counter.pending.load() == 0);
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
     test_hash_id();
     test_handle();
@@ -83,6 +101,7 @@ int main() {
     test_arena_allocator();
     test_adapter_selection();
     test_system_info();
+    test_job_system();
     if (g_failures == 0) std::printf("All foundation tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

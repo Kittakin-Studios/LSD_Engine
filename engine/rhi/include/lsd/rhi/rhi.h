@@ -1,6 +1,7 @@
 #pragma once
 // Render Hardware Interface: the only graphics API the rest of LSD_Engine talks to.
 // Backends (Direct3D 12, Vulkan, OpenGL 4.6) implement Device behind this interface.
+#include "lsd/foundation/allocator.h"
 #include "lsd/foundation/types.h"
 
 namespace lsd::rhi {
@@ -40,8 +41,22 @@ public:
     virtual Backend backend() const = 0;
     virtual const AdapterInfo& adapter() const = 0;
     virtual MemoryBudget query_memory_budget() const = 0;
-    // Resource creation, command lists and swapchains are added in milestone 1.
+
+    // Swapchain for a native window (HWND on Windows). One per device for now.
+    virtual bool create_swapchain(void* native_window, u32 width, u32 height) = 0;
+    virtual void resize_swapchain(u32 width, u32 height) = 0;
+
+    // shortcut: fixed-function frame (clear + built-in test triangle) until the renderer needs
+    // buffers, pipelines and command lists; replace with a real command-list API in milestone 1.
+    virtual void begin_frame(const f32 clear_color[4]) = 0;
+    virtual void draw_test_triangle() = 0;
+    virtual void end_frame() = 0;  // presents
 };
+
+// Creates a device for desc.backend (Auto = platform default), selecting the GPU with
+// select_adapter(). Returns nullptr and logs why if the backend is unavailable.
+Device* create_device(const DeviceDesc& desc, Allocator& allocator);
+void destroy_device(Device* device, Allocator& allocator);
 
 // Scores an adapter for automatic selection: discrete beats integrated, then VRAM and features.
 u64 score_adapter(const AdapterInfo& adapter);

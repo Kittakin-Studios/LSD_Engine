@@ -1,5 +1,6 @@
 add_library(lsd_rhi STATIC
   src/device_selection.cpp
+  src/device_factory.cpp
 )
 target_include_directories(lsd_rhi PUBLIC include)
 target_link_libraries(lsd_rhi PUBLIC lsd_foundation)
@@ -18,5 +19,9 @@ target_compile_definitions(lsd_rhi PUBLIC
   LSD_RHI_VULKAN=$<BOOL:${LSD_RHI_VULKAN}>
   LSD_RHI_OPENGL=$<BOOL:${LSD_RHI_OPENGL}>
 )
-# Backend implementations are added in milestone 1 (see docs/ROADMAP.md):
-#   backends/d3d12, backends/vulkan, backends/opengl
+
+if(LSD_RHI_D3D12)
+  target_sources(lsd_rhi PRIVATE backends/d3d12/d3d12_device.cpp)
+  target_link_libraries(lsd_rhi PRIVATE d3d12 dxgi d3dcompiler)
+endif()
+# Vulkan and OpenGL backends: next in milestone 1 (see docs/ROADMAP.md).
