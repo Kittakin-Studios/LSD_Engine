@@ -1,0 +1,4 @@
+add_executable(lsd_foundation_tests foundation_tests.cpp)
+target_link_libraries(lsd_foundation_tests PRIVATE lsd_foundation lsd_rhi)
+lsd_configure_target(lsd_foundation_tests)
+add_test(NAME foundation COMMAND lsd_foundation_tests)

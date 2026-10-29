@@ -1,0 +1,3 @@
+add_executable(lsd_data_compiler main.cpp)
+target_link_libraries(lsd_data_compiler PRIVATE lsd_foundation)
+lsd_configure_target(lsd_data_compiler)

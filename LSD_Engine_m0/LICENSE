@@ -1,0 +1,21 @@
+LSD_Engine — Proprietary Software
+Copyright (c) 2026 Kittakin Studios. All rights reserved.
+
+This software, including its source code, binaries, tools, documentation and
+associated assets (the "Software"), is the confidential and proprietary
+property of Kittakin Studios.
+
+No licence or other right is granted to any person to use, copy, modify,
+merge, publish, distribute, sublicense or sell the Software, in whole or in
+part, except under a separate written agreement signed by Kittakin Studios.
+
+Access to this repository does not grant any rights to the Software beyond
+those stated in such an agreement. Unauthorised use, reproduction or
+distribution is prohibited.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL KITTAKIN STUDIOS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+Third-party components in third_party/ remain under their own licences,
+which are kept alongside each component.

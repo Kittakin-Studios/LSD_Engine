@@ -1,0 +1,25 @@
+# Build output
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# IDEs
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.user
+*.suo
+*.sln.docstates
+
+# Compiled data and caches produced by the data compiler / editor
+**/DerivedData/
+**/Intermediate/
+**/Saved/
+*.lsdcache
+
+# OS
+.DS_Store
+Thumbs.db
