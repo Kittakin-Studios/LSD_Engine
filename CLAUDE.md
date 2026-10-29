@@ -73,13 +73,13 @@ engine/foundation/  types, logging, asserts, heap + arena allocators, generation
 engine/core/        job system (worker threads, counters, wait-by-helping)
 engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON text save/load
 engine/rhi/         RHI interface, adapter scoring/selection, quality presets, create_device();
-                    backends/d3d12 (implemented), backends/vulkan, backends/opengl (to implement)
+                    backends/d3d12, backends/vulkan, backends/opengl (each also renders ImGui)
 engine/world, script, render, audio, physics, ui   placeholders
 editor/             editor app (placeholder)
 tools/data_compiler/ CLI stub: --source-dir / --data-dir
 tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
-runtime/            game exe; hardware report, SDL3 window, clears + draws a triangle
-third_party/        fetched dependencies (SDL3, pinned tag)
+runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
+third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, Vulkan-Headers, volk)
 tests/              framework-free unit tests (CTest)
 docs/               ROADMAP.md, CLEAN_ROOM.md
 ```
@@ -93,10 +93,13 @@ Conventions: namespace `lsd`, snake_case functions, `PascalCase` types, every sy
 **Milestone 0 — done.** Builds clean on MSVC and Clang, tests pass, runtime prints the hardware
 report on Charlize's machine.
 
-**Milestone 1 — in progress.** Done: job system, SDL3 window, D3D12 backend (real adapter
-enumeration, `query_memory_budget()`, clear + triangle), `-rhi=` / `-gpu=` / `-validation` /
-`-frames=` flags; reflection generator + text save/load. Next: Dear ImGui debug Details panel
-(milestone exit test), then Vulkan and OpenGL backends.
+**Milestone 1 — done, pending Charlize's visual check.** Job system; SDL3 window; RHI with
+D3D12, Vulkan 1.3 (volk, dynamic rendering, VK_EXT_memory_budget) and OpenGL 4.6 backends, each
+clearing, drawing the test triangle and rendering Dear ImGui; reflection generator + JSON save/load;
+runtime Details panel generated from reflection (edit live, Save/Load/Reset to `Saved/`).
+Flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`, `-frames=<n>`.
+Vulkan triangle needs the **Vulkan SDK** (DXC with SPIR-V + validation layers); without it the
+Vulkan backend runs but skips the triangle. Next: milestone 2 (asset registry, importers, Content Browser).
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no

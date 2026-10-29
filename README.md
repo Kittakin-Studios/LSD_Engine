@@ -19,9 +19,8 @@ Milestone 0 — project skeleton:
 - [x] Foundation: types, logging, asserts, heap and arena allocators, generational handles, hashed IDs
 - [x] Hardware report: CPU brand, cores, SIMD features, RAM
 - [x] Adapter scoring, automatic GPU selection and quality-preset recommendation
-- [x] Milestone 1 (part): job system, SDL3 window, D3D12 backend clearing the screen and drawing a triangle
-- [x] Milestone 1 (part): reflection code generator and JSON text save/load
-- [ ] Milestone 1 (rest): debug Details panel, Vulkan and OpenGL backends
+- [x] Milestone 1: job system, SDL3 window, D3D12 / Vulkan 1.3 / OpenGL 4.6 backends drawing a
+      triangle, reflection code generator, JSON save/load, Dear ImGui Details panel from reflection
 
 ## Building
 
