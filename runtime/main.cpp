@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(16, 16), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(380, 420), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Details")) {
+        if (ImGui::Begin("Details", nullptr, ImGuiWindowFlags_NoCollapse)) {
             ImGui::TextDisabled("%s  |  %s", settings.static_type().name, lsd::rhi::to_string(device->backend()));
             if (ImGui::Button("Save")) {
                 std::snprintf(status, sizeof status, save_settings(settings) ? "Saved %s" : "Could not save %s", kSettingsPath);
