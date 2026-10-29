@@ -20,10 +20,13 @@ option(LSD_BUILD_TOOLS  "Build the data compiler"  ON)
 option(LSD_BUILD_TESTS  "Build unit tests"         ON)
 
 include(cmake/CompilerSettings.cmake)
+include(cmake/Reflect.cmake)
 
 add_subdirectory(third_party)
 add_subdirectory(engine/foundation)
 add_subdirectory(engine/core)
+add_subdirectory(engine/reflect)
+add_subdirectory(tools/reflect)
 add_subdirectory(engine/rhi)
 add_subdirectory(runtime)
 

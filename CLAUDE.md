@@ -71,11 +71,13 @@ blue `#0040FF` → `#5C8DFF`, VFX orange on red → `#FFC266`.
 engine/foundation/  types, logging, asserts, heap + arena allocators, generational handles,
                     constexpr hashed IDs (FNV-1a 64), system info (CPU, cores, SIMD, RAM)
 engine/core/        job system (worker threads, counters, wait-by-helping)
+engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON text save/load
 engine/rhi/         RHI interface, adapter scoring/selection, quality presets, create_device();
                     backends/d3d12 (implemented), backends/vulkan, backends/opengl (to implement)
 engine/world, script, render, audio, physics, ui   placeholders
 editor/             editor app (placeholder)
 tools/data_compiler/ CLI stub: --source-dir / --data-dir
+tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
 runtime/            game exe; hardware report, SDL3 window, clears + draws a triangle
 third_party/        fetched dependencies (SDL3, pinned tag)
 tests/              framework-free unit tests (CTest)
@@ -93,7 +95,12 @@ report on Charlize's machine.
 
 **Milestone 1 — in progress.** Done: job system, SDL3 window, D3D12 backend (real adapter
 enumeration, `query_memory_budget()`, clear + triangle), `-rhi=` / `-gpu=` / `-validation` /
-`-frames=` flags. Next: reflection code generator, then Vulkan and OpenGL backends.
+`-frames=` flags; reflection generator + text save/load. Next: Dear ImGui debug Details panel
+(milestone exit test), then Vulkan and OpenGL backends.
+
+Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
+`LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no
+inheritance (composition only); source assets save as JSON text, binary only after the data compiler.
 
 ## Roadmap (editor-first)
 

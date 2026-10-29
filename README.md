@@ -20,7 +20,8 @@ Milestone 0 — project skeleton:
 - [x] Hardware report: CPU brand, cores, SIMD features, RAM
 - [x] Adapter scoring, automatic GPU selection and quality-preset recommendation
 - [x] Milestone 1 (part): job system, SDL3 window, D3D12 backend clearing the screen and drawing a triangle
-- [ ] Milestone 1 (rest): reflection code generator, Vulkan and OpenGL backends
+- [x] Milestone 1 (part): reflection code generator and JSON text save/load
+- [ ] Milestone 1 (rest): debug Details panel, Vulkan and OpenGL backends
 
 ## Building
 
