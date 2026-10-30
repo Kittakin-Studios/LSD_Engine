@@ -13,6 +13,8 @@ void open_graph(EditorState& state, const asset::AssetRecord& record);
 void draw_graph_editor(EditorState& state);
 // Creates Content/<folder>/<base>.lsdgraph holding Event Start and Event Update; returns its path.
 std::string create_graph_file(const char* folder_path, const char* base);
+// Creates <folder>/<base>.lsdcue: a Wave Player wired to the Output; returns its path.
+std::string create_cue_file(const char* folder_path, const char* base);
 
 // The Lua the game runs for a graph asset (Saved/Graphs/<guid>.lua), compiled again when the
 // graph is newer. False (logged) if the graph does not compile.

@@ -10,7 +10,10 @@
 
 namespace lsd::script {
 
-enum class PinType : u8 { Exec, Float, Bool, String, Vector, Entity };
+enum class PinType : u8 { Exec, Float, Bool, String, Vector, Entity, Audio };
+
+// Which node library a graph uses: visual scripts, or Sound Cues (same canvas, same file format).
+enum class GraphKind : u8 { Script, SoundCue };
 
 struct PinDef {
     const char* name;
@@ -34,8 +37,8 @@ struct NodeDef {
     const char* output_code[4];  // pure nodes and events: the Lua expression of each data output
 };
 
-const NodeDef* node_defs(u32& count);
-const NodeDef* find_node_def(const char* id);
+const NodeDef* node_defs(u32& count, GraphKind kind = GraphKind::Script);
+const NodeDef* find_node_def(const char* id);  // in either library
 bool is_event(const NodeDef& def);
 bool is_pure(const NodeDef& def);  // no exec pins
 

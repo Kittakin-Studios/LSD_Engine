@@ -161,7 +161,7 @@ Exit test: the audio worked example works end to end.
 
 ### Audio
 
-- [~] Audio (miniaudio, `engine/audio`): Sound assets (volume, pitch, loop, stream, class, attenuation, concurrency, subtitle), preview in the Content Browser, Sound Class tree (volume groups), Sound Attenuation, Sound Concurrency (stop oldest / quietest / refuse), Sound Emitter component (drag a sound into the viewport), Trigger Volume enter sound, `lsd.play_sound` / `stop_sound`, Play Sound 2D / at Location nodes, `stat audio` overlay, `-nosound`; needs Sound Cue graph, Sound Mix push / pop, Submix effects, settings sliders
+- [~] Audio (miniaudio, `engine/audio`): Sound assets (volume, pitch, loop, stream, class, attenuation, concurrency, subtitle), preview in the Content Browser, Sound Class tree (volume groups), Sound Attenuation, Sound Concurrency (stop oldest / quietest / refuse), Sound Emitter component (drag a sound into the viewport), Trigger Volume enter sound, `lsd.play_sound` / `stop_sound`, Play Sound 2D / at Location nodes, `stat audio` overlay, `-nosound`; Sound Cues (`.lsdcue` node graph in the graph editor: Wave Player, Random no-repeat, Modulator, Mixer, Concatenator, Delay, Looping, Switch on an audio parameter, Output; Play preview), Sound Mixes (class volume adjusters with fades; `lsd.push_mix` / `pop_mix`, Push / Pop Sound Mix nodes), `lsd.set_audio_param` / Set Audio Parameter; needs Submix effects (reverb, EQ, compressor), Audio Volumes, low-pass in mixes, settings sliders
 - [ ] Reverb zones from audio volumes; occlusion by trace
 - [ ] Music: crossfades and layers driven by game state
 

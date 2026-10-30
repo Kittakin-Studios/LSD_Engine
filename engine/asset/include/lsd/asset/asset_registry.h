@@ -8,10 +8,10 @@
 
 namespace lsd::asset {
 
-enum class AssetType : u8 { Unknown, Mesh, Level, Data, Prefab, Script, Graph, Table, Sound };
+enum class AssetType : u8 { Unknown, Mesh, Level, Data, Prefab, Script, Graph, Table, Sound, Cue };
 
 const char* to_string(AssetType type);
-AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh, ".lsdlevel" -> Level, ".lsdasset" -> Data, ".lsdprefab" -> Prefab, ".lua" -> Script, ".lsdgraph" -> Graph, ".csv" -> Table, ".wav" ".ogg" ".flac" ".mp3" -> Sound; case-insensitive
+AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh, ".lsdlevel" -> Level, ".lsdasset" -> Data, ".lsdprefab" -> Prefab, ".lua" -> Script, ".lsdgraph" -> Graph, ".csv" -> Table, ".wav" ".ogg" ".flac" ".mp3" -> Sound, ".lsdcue" -> Cue; case-insensitive
 
 struct AssetRecord {
     Guid guid;

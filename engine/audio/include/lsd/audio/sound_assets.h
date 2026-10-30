@@ -31,4 +31,21 @@ struct SoundConcurrency {
     LSD_PROPERTY(Edit, Widget = "Choice:Stop Oldest,Stop Quietest,Refuse New", Tooltip = "What a new sound does when the group is full") u32 when_full = 0;
 };
 
+LSD_STRUCT()
+struct SoundMixAdjuster {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:SoundClass", Tooltip = "Its children follow (Master > SFX > Footsteps)") char sound_class[33] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Multiplies the class volume while the mix is pushed; 0.5 is about -6 dB") f32 volume = 0.5f;
+};
+
+// A temporary balance change (Unreal's Sound Mix): push it when something happens (a pause menu
+// muffles the game, dialogue ducks the music), pop it when it ends.
+LSD_STRUCT(Category = "Audio")
+struct SoundMix {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) List<SoundMixAdjuster, 16> adjusters;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 fade_in = 0.2f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 fade_out = 0.5f;
+};
+
 } // namespace lsd::audio

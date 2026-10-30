@@ -23,6 +23,13 @@ struct PlayDesc {
     bool stream = false;         // read from disk while playing (music) instead of decoding into memory
     u32 sound_class = kMasterClass;
     u32 concurrency = kNoGroup;  // from add_concurrency
+    f32 delay = 0.0f;            // seconds before it starts
+    u32 instance = 0;            // a voice id this one belongs to (a Sound Cue's voices stop together)
+};
+
+struct MixAdjust {
+    u32 sound_class;
+    f32 volume;
 };
 
 struct VoiceInfo {
@@ -57,13 +64,19 @@ public:
 
     // Returns a voice id (0 if refused or the file could not be read).
     u32 play(const PlayDesc& desc);
-    void stop(u32 voice);
+    void stop(u32 voice);  // and the voices that belong to it
+    f32 length_seconds(const char* path);  // 0 if unreadable
     void stop_all();
-    bool playing(u32 voice) const;
+    bool playing(u32 voice) const;  // it, or a voice that belongs to it
     void set_position(u32 voice, Vec3 position);
     void set_listener(Vec3 position, Vec3 forward);
 
-    void update();  // frees finished voices
+    // Sound Mixes: class volumes multiplied while pushed, faded in and out. Returns a mix id.
+    u32 push_mix(const MixAdjust* adjusters, u32 count, f32 fade_in, f32 fade_out);
+    void pop_mix(u32 mix);
+    u32 mix_count() const;
+
+    void update(f32 dt = 0.0f);  // frees finished voices, advances mix fades
     u32 voice_count() const;
     VoiceInfo voice(u32 index) const;
 

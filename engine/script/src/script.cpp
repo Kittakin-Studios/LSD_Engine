@@ -318,6 +318,21 @@ struct Api {
         if (host.stop_sound) host.stop_sound(host.user, static_cast<u32>(luaL_checknumber(L, 1)));
         return 0;
     }
+    static int push_mix(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.push_mix) host.push_mix(host.user, luaL_checkstring(L, 1));
+        return 0;
+    }
+    static int pop_mix(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.pop_mix) host.pop_mix(host.user, luaL_checkstring(L, 1));
+        return 0;
+    }
+    static int set_audio_param(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.set_audio_param) host.set_audio_param(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
+        return 0;
+    }
     static int curve(lua_State* L) {
         ScriptSystem& self = system(L);
         const ScriptHost& host = self.host_;
@@ -502,7 +517,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"table", Api::table}, {"curve", Api::curve},
-        {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
+        {"set_audio_param", Api::set_audio_param}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

@@ -2,6 +2,7 @@
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
+#include "lsd/script/graph.h"
 
 #include <cstdio>
 #include <cstring>
@@ -22,16 +23,19 @@ bool load_by_guid(const asset::AssetRegistry& registry, const char* guid_text, T
 
 } // namespace
 
-const asset::AssetRecord* SoundPlayer::find(const char* sound) const {
+const asset::AssetRecord* SoundPlayer::find(const char* sound, bool cues) const {
     asset::Guid guid;
     if (std::strlen(sound) == 32 && asset::parse_guid(sound, guid)) {
         const asset::AssetRecord* r = registry_->find(guid);
-        return r && r->type == asset::AssetType::Sound ? r : nullptr;
+        return r && (r->type == asset::AssetType::Sound || (cues && r->type == asset::AssetType::Cue)) ? r : nullptr;
     }
-    usize hits[16];
-    const usize n = registry_->search(sound, asset::AssetType::Sound, nullptr, hits, 16);
-    for (usize i = 0; i < n; ++i) {
-        if (std::strcmp(registry_->get(hits[i]).name, sound) == 0) return &registry_->get(hits[i]);
+    for (const asset::AssetType type : {asset::AssetType::Cue, asset::AssetType::Sound}) {  // a cue wins over a wave of the same name
+        if (type == asset::AssetType::Cue && !cues) continue;
+        usize hits[16];
+        const usize n = registry_->search(sound, type, nullptr, hits, 16);
+        for (usize i = 0; i < n; ++i) {
+            if (std::strcmp(registry_->get(hits[i]).name, sound) == 0) return &registry_->get(hits[i]);
+        }
     }
     return nullptr;
 }
@@ -76,28 +80,124 @@ u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position) {
         LSD_LOG_WARN("audio", "No sound asset '%s'", sound);
         return 0;
     }
+    if (r->type == asset::AssetType::Cue) return play_cue(*r, spatial, position);
     asset::AssetMeta meta;
     registry_->load_meta(*r, meta);
+    return play_file(*r, nullptr, spatial, position, 1.0f, 1.0f, meta.looping, 0.0f, 0);
+}
+
+// One sound file. Class, attenuation and concurrency come from the cue that plays it (or the wave's
+// own .meta when played directly); volume and pitch multiply: cue x node x wave.
+u32 SoundPlayer::play_file(const asset::AssetRecord& wave, const asset::AssetMeta* cue_settings, bool spatial, Vec3 position, f32 volume, f32 pitch,
+                           bool looping, f32 delay, u32 instance) {
+    asset::AssetMeta own;
+    registry_->load_meta(wave, own);
+    const asset::AssetMeta& settings = cue_settings ? *cue_settings : own;
     char path[300];
-    registry_->source_path(*r, path, sizeof path);
+    registry_->source_path(wave, path, sizeof path);
     audio::PlayDesc d;
     d.path = path;
-    d.name = r->name;
+    d.name = wave.name;
     d.spatial = spatial;
     d.position = position;
-    load_by_guid(*registry_, meta.attenuation, d.attenuation);  // defaults when none is picked
-    d.volume = meta.volume;
-    d.pitch = meta.pitch;
-    d.looping = meta.looping;
-    d.stream = meta.stream;
-    d.sound_class = class_index(meta.sound_class);
-    d.concurrency = concurrency_index(meta.concurrency);
+    load_by_guid(*registry_, settings.attenuation, d.attenuation);  // defaults when none is picked
+    d.volume = volume * own.volume * (cue_settings ? cue_settings->volume : 1.0f);
+    d.pitch = pitch * own.pitch * (cue_settings ? cue_settings->pitch : 1.0f);
+    d.looping = looping;
+    d.stream = own.stream;
+    d.sound_class = class_index(settings.sound_class);
+    d.concurrency = concurrency_index(settings.concurrency);
+    d.delay = delay;
+    d.instance = instance;
     return audio_->play(d);
+}
+
+u32 SoundPlayer::play_cue(const asset::AssetRecord& cue, bool spatial, Vec3 position) {
+    char path[300];
+    registry_->source_path(cue, path, sizeof path);
+    script::Graph graph(default_allocator());
+    if (!script::load_graph_file(graph, path)) return 0;
+    cue_env_.user = this;
+    cue_env_.length = [](void* user, const char* sound) {
+        auto& self = *static_cast<SoundPlayer*>(user);
+        const asset::AssetRecord* r = self.find(sound, false);
+        char file[300];
+        if (!r) return 0.0f;
+        self.registry_->source_path(*r, file, sizeof file);
+        return self.audio_->length_seconds(file);
+    };
+    cue_env_.parameter = [](void* user, const char* name) { return static_cast<const SoundPlayer*>(user)->param(name); };
+    CueVoice voices[16];
+    const u32 n = evaluate_cue(graph, cue_env_, voices, 16);
+    asset::AssetMeta settings;  // the cue's class, attenuation, concurrency, volume
+    registry_->load_meta(cue, settings);
+    u32 instance = 0;
+    for (u32 i = 0; i < n; ++i) {
+        const asset::AssetRecord* wave = find(voices[i].sound, false);
+        if (!wave) {
+            LSD_LOG_WARN("audio", "%s: Wave Player names no sound asset '%s'", cue.name, voices[i].sound);
+            continue;
+        }
+        const u32 voice = play_file(*wave, &settings, spatial, position, voices[i].volume, voices[i].pitch, voices[i].looping, voices[i].delay, instance);
+        if (!instance) instance = voice;
+    }
+    return instance;
+}
+
+void SoundPlayer::push_mix(const char* name) {
+    if (!audio_ || mix_count_ == sizeof mixes_ / sizeof mixes_[0]) return;
+    usize hits[16];
+    const usize n = registry_->search(name, asset::AssetType::Data, nullptr, hits, 16);
+    const asset::AssetRecord* r = nullptr;
+    for (usize i = 0; i < n && !r; ++i) {
+        const asset::AssetRecord& candidate = registry_->get(hits[i]);
+        if (std::strcmp(candidate.name, name) == 0 && std::strcmp(candidate.data_type, "SoundMix") == 0) r = &candidate;
+    }
+    char path[300];
+    audio::SoundMix mix;
+    if (r) registry_->source_path(*r, path, sizeof path);
+    if (!r || !asset::load_data_asset(path, mix)) {
+        LSD_LOG_WARN("audio", "No Sound Mix '%s'", name);
+        return;
+    }
+    audio::MixAdjust adjust[16];
+    for (u32 i = 0; i < mix.adjusters.count; ++i) adjust[i] = {class_index(mix.adjusters[i].sound_class), mix.adjusters[i].volume};
+    Pushed& p = mixes_[mix_count_++];
+    std::snprintf(p.name, sizeof p.name, "%s", name);
+    p.id = audio_->push_mix(adjust, mix.adjusters.count, mix.fade_in, mix.fade_out);
+}
+
+void SoundPlayer::pop_mix(const char* name) {
+    for (u32 i = mix_count_; i-- > 0;) {
+        if (std::strcmp(mixes_[i].name, name) != 0) continue;
+        if (audio_) audio_->pop_mix(mixes_[i].id);
+        mixes_[i] = mixes_[--mix_count_];
+        return;
+    }
+}
+
+void SoundPlayer::set_param(const char* name, f32 value) {
+    for (u32 i = 0; i < param_count_; ++i) {
+        if (std::strcmp(params_[i].name, name) == 0) {
+            params_[i].value = value;
+            return;
+        }
+    }
+    if (param_count_ == sizeof params_ / sizeof params_[0]) return;
+    std::snprintf(params_[param_count_].name, sizeof params_[0].name, "%s", name);
+    params_[param_count_++].value = value;
+}
+
+f32 SoundPlayer::param(const char* name) const {
+    for (u32 i = 0; i < param_count_; ++i) {
+        if (std::strcmp(params_[i].name, name) == 0) return params_[i].value;
+    }
+    return 0.0f;
 }
 
 void SoundPlayer::stop_all_and_forget() {
     if (audio_) audio_->reset_classes();
-    class_count_ = group_count_ = 0;
+    class_count_ = group_count_ = mix_count_ = param_count_ = 0;
 }
 
 } // namespace lsd::editor

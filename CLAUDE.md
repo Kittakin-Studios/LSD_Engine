@@ -153,8 +153,9 @@ State, Lua debugger, user-defined structs and enums.
 
 **Milestone 5 — in progress.** Audio foundation on miniaudio (`engine/audio`): Sound assets with .meta
 settings, Sound Class / Attenuation / Concurrency data assets, Sound Emitter, trigger sounds, Lua and
-node playback, `stat audio`. Next: Sound Cue graph, Sound Mix, Submix effects, Audio Volumes (the
-audio worked example), then materials, animation, particles.
+node playback, `stat audio`. Sound Cues (`.lsdcue`, same graph canvas as visual scripts, evaluated by
+editor/sound_cue.cpp) and Sound Mixes (push / pop with fades). Next: Submix effects, Audio Volumes
+(the audio worked example), then materials, animation, particles.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

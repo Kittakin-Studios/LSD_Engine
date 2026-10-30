@@ -58,6 +58,12 @@ NodeDef g_defs[] = {
      {kExecIn, {"Sound", PinType::String, "Click"}}, 0, {kExecOut}, 0, "lsd.play_sound($1)", {}},
     {"PlaySoundAt", "Play Sound at Location", "Audio", "Plays a sound asset (by name) in the world, faded by distance",
      {kExecIn, {"Sound", PinType::String, "Click"}, {"Location", PinType::Vector, "0,0,0"}}, 0, {kExecOut}, 0, "__sound($1, $2)", {}},
+    {"PushSoundMix", "Push Sound Mix", "Audio", "Applies a Sound Mix (by name) until it is popped: duck music, muffle the game",
+     {kExecIn, {"Mix", PinType::String, "MIX_Duck"}}, 0, {kExecOut}, 0, "lsd.push_mix($1)", {}},
+    {"PopSoundMix", "Pop Sound Mix", "Audio", "Removes the latest push of a Sound Mix (fading out)", {kExecIn, {"Mix", PinType::String, "MIX_Duck"}}, 0,
+     {kExecOut}, 0, "lsd.pop_mix($1)", {}},
+    {"SetAudioParam", "Set Audio Parameter", "Audio", "A value Sound Cue Switch nodes read (surface type, intensity...)",
+     {kExecIn, {"Name", PinType::String, "Surface"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_audio_param($1, $2)", {}},
     {"Destroy", "Destroy", "Objects", "Removes an object and its children", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.destroy($1)", {}},
     {"SetVariable", "Set Variable", "Variables", "Stores a number on this object", {kExecIn, {"Name", PinType::String, "health"}, {"Value", PinType::Float, "0"}}, 0,
      {kExecOut}, 0, "self[$1] = $2", {}},
@@ -107,6 +113,32 @@ NodeDef g_defs[] = {
     {"Not", "NOT", "Math", "", {{"A", PinType::Bool, "false"}}, 0, {{"Result", PinType::Bool, ""}}, 0, nullptr, {"not $0"}},
     {"And", "AND", "Math", "", {{"A", PinType::Bool, "false"}, {"B", PinType::Bool, "false"}}, 0, {{"Result", PinType::Bool, ""}}, 0, nullptr, {"$0 and $1"}},
     {"Or", "OR", "Math", "", {{"A", PinType::Bool, "false"}, {"B", PinType::Bool, "false"}}, 0, {{"Result", PinType::Bool, ""}}, 0, nullptr, {"$0 or $1"}},
+};
+
+// Sound Cue nodes (editor/sound_cue.cpp plays them). Audio pins carry "what to play".
+constexpr PinDef kAudioIn{"Audio", PinType::Audio, ""};
+constexpr PinDef kAudioOut{"Audio", PinType::Audio, ""};
+NodeDef g_cue_defs[] = {
+    {"CueOutput", "Output", "Sound Cue", "What the cue plays, with an overall volume and pitch",
+     {kAudioIn, {"Volume", PinType::Float, "1"}, {"Pitch", PinType::Float, "1"}}, 0, {}, 0, nullptr, {}},
+    {"CueWave", "Wave Player", "Sound Cue", "Plays a sound asset (by name)", {{"Sound", PinType::String, ""}, {"Looping", PinType::Bool, "false"}}, 0,
+     {kAudioOut}, 0, nullptr, {}},
+    {"CueRandom", "Random", "Sound Cue", "Plays one of its inputs, picked at random each time",
+     {{"A", PinType::Audio, ""}, {"B", PinType::Audio, ""}, {"C", PinType::Audio, ""}, {"D", PinType::Audio, ""}, {"No Repeat", PinType::Bool, "true"}}, 0,
+     {kAudioOut}, 0, nullptr, {}},
+    {"CueModulator", "Modulator", "Sound Cue", "Random volume and pitch in a range, new each play",
+     {kAudioIn, {"Volume Min", PinType::Float, "0.9"}, {"Volume Max", PinType::Float, "1.1"}, {"Pitch Min", PinType::Float, "0.95"}, {"Pitch Max", PinType::Float, "1.05"}}, 0,
+     {kAudioOut}, 0, nullptr, {}},
+    {"CueMixer", "Mixer", "Sound Cue", "Plays all its inputs together",
+     {{"A", PinType::Audio, ""}, {"B", PinType::Audio, ""}, {"C", PinType::Audio, ""}, {"D", PinType::Audio, ""}}, 0, {kAudioOut}, 0, nullptr, {}},
+    {"CueConcat", "Concatenator", "Sound Cue", "Plays its inputs one after another",
+     {{"A", PinType::Audio, ""}, {"B", PinType::Audio, ""}, {"C", PinType::Audio, ""}, {"D", PinType::Audio, ""}}, 0, {kAudioOut}, 0, nullptr, {}},
+    {"CueDelay", "Delay", "Sound Cue", "Waits a random time in a range before playing",
+     {kAudioIn, {"Min", PinType::Float, "0"}, {"Max", PinType::Float, "0.2"}}, 0, {kAudioOut}, 0, nullptr, {}},
+    {"CueLooping", "Looping", "Sound Cue", "Repeats what comes in until stopped", {kAudioIn}, 0, {kAudioOut}, 0, nullptr, {}},
+    {"CueSwitch", "Switch", "Sound Cue", "Picks input 0-3 by an audio parameter (lsd.set_audio_param / Set Audio Parameter)",
+     {{"0", PinType::Audio, ""}, {"1", PinType::Audio, ""}, {"2", PinType::Audio, ""}, {"3", PinType::Audio, ""}, {"Parameter", PinType::String, "Surface"}}, 0,
+     {kAudioOut}, 0, nullptr, {}},
 };
 
 constexpr char kLuaPrelude[] = R"lua(-- Generated from a visual script (.lsdgraph). Edit the graph, not this file.
@@ -282,24 +314,34 @@ struct Compiler {
 
 } // namespace
 
-const NodeDef* node_defs(u32& count) {
+const NodeDef* node_defs(u32& count, GraphKind kind) {
     static const bool counted = [] {
         for (NodeDef& d : g_defs) {
+            d.input_count = count_pins(d.inputs, 6);
+            d.output_count = count_pins(d.outputs, 4);
+        }
+        for (NodeDef& d : g_cue_defs) {
             d.input_count = count_pins(d.inputs, 6);
             d.output_count = count_pins(d.outputs, 4);
         }
         return true;
     }();
     (void)counted;
+    if (kind == GraphKind::SoundCue) {
+        count = static_cast<u32>(sizeof g_cue_defs / sizeof g_cue_defs[0]);
+        return g_cue_defs;
+    }
     count = static_cast<u32>(sizeof g_defs / sizeof g_defs[0]);
     return g_defs;
 }
 
 const NodeDef* find_node_def(const char* id) {
-    u32 count = 0;
-    const NodeDef* defs = node_defs(count);
-    for (u32 i = 0; i < count; ++i) {
-        if (std::strcmp(defs[i].id, id) == 0) return &defs[i];
+    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue}) {
+        u32 count = 0;
+        const NodeDef* defs = node_defs(count, kind);
+        for (u32 i = 0; i < count; ++i) {
+            if (std::strcmp(defs[i].id, id) == 0) return &defs[i];
+        }
     }
     return nullptr;
 }
@@ -371,7 +413,7 @@ bool Graph::connect(u32 from, u32 from_pin, u32 to, u32 to_pin) {
     const PinType out = da->outputs[from_pin].type, in = db->inputs[to_pin].type;
     const bool exec = out == PinType::Exec;
     // Same type, or anything (but exec) into a String (it is converted to text).
-    if (exec != (in == PinType::Exec) || (out != in && in != PinType::String)) return false;
+    if (exec != (in == PinType::Exec) || (out != in && (in != PinType::String || out == PinType::Audio))) return false;
     for (usize i = links.size(); i-- > 0;) {
         const GraphLink& l = links[i];
         // An exec output leads to one place; a data input reads from one place.

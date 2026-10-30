@@ -115,8 +115,54 @@ int main() {
     loudness(a, 48000);  // 1 s: the half-second tone ends
     a.update();
     CHECK(a.voice_count() == 1 && a.playing(loop));
+    a.stop_all();
+
+    // Delayed start, voices grouped under one instance, length.
+    CHECK(std::fabs(a.length_seconds(kTone) - 0.5f) < 0.01f && a.length_seconds("missing.wav") == 0.0f);
+    d.looping = false;
+    d.delay = 0.3f;
+    const u32 cue = a.play(d);
+    d.delay = 0.0f;
+    d.instance = cue;
+    a.play(d);  // a second voice of the same "cue"
+    a.stop(cue);
+    CHECK(a.voice_count() == 0 && !a.playing(cue));
+    d.instance = 0;
+    d.delay = 0.3f;
+    a.play(d);
+    CHECK(loudness(a, 9600) < 0.001f);  // the first 0.2 s: still waiting
+    loudness(a, 4800);
+    CHECK(loudness(a, 4800) > 0.1f);    // started at 0.3 s
+    d.delay = 0.0f;
+    a.stop_all();
+
+    // Sound Mixes: duck SFX (and its Footsteps child) to zero, faded; popping brings it back.
+    const u32 sfx2 = a.add_class("SFX", kMasterClass, 1.0f, 1.0f);
+    const u32 steps2 = a.add_class("Footsteps", sfx2, 1.0f, 1.0f);
+    d.sound_class = steps2;
+    d.looping = true;
+    a.play(d);
+    const MixAdjust duck{sfx2, 0.0f};
+    const u32 mix = a.push_mix(&duck, 1, 0.5f, 0.0f);
+    CHECK(mix && a.mix_count() == 1);
+    a.update(0.25f);  // half way: half volume
+    loudness(a);
+    const f32 halfway = loudness(a);
+    a.update(0.5f);
+    loudness(a);
+    const f32 ducked = loudness(a);
+    a.pop_mix(mix);  // no fade out: straight back
+    CHECK(a.mix_count() == 0);
+    loudness(a);
+    const f32 back = loudness(a);
+    CHECK(ducked < 0.01f && halfway > back * 0.35f && halfway < back * 0.65f && back > 0.1f);
+    a.set_class_volume(sfx2, 0.5f);  // a class set while a mix is up keeps both
+    a.push_mix(&duck, 1, 0.0f, 0.0f);
+    loudness(a);
+    CHECK(loudness(a) < 0.01f);
+
     a.reset_classes();
-    CHECK(a.voice_count() == 0 && a.class_count() == 1);
+    CHECK(a.voice_count() == 0 && a.class_count() == 1 && a.mix_count() == 0);
     a.shutdown();
     if (g_failures == 0) std::printf("All audio tests passed.\n");
     return g_failures == 0 ? 0 : 1;

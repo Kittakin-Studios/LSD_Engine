@@ -235,6 +235,15 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         auto& self = *static_cast<PlaySession*>(user);
         return self.sounds_ ? self.sounds_->play(name, spatial, position) : 0u;
     };
+    host.push_mix = [](void* user, const char* name) {
+        if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->push_mix(name);
+    };
+    host.pop_mix = [](void* user, const char* name) {
+        if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->pop_mix(name);
+    };
+    host.set_audio_param = [](void* user, const char* name, f32 value) {
+        if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_param(name, value);
+    };
     host.stop_sound = [](void* user, u32 voice) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.sounds_) self.sounds_->audio()->stop(voice);

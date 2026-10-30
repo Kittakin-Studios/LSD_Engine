@@ -1,6 +1,8 @@
 #include "graph_editor.h"
 
 #include "lsd/foundation/log.h"
+#include "sound_cue.h"
+#include "sound_player.h"
 #include "lsd/script/graph.h"
 
 #include <imgui.h>
@@ -27,6 +29,7 @@ constexpr char kGraphLuaDir[] = "Saved/Graphs";
 
 struct GraphWindow {
     Graph* graph = nullptr;
+    script::GraphKind kind = script::GraphKind::Script;
     asset::Guid guid;
     char path[300] = "";
     char name[64] = "";
@@ -53,11 +56,13 @@ ImU32 pin_color(PinType type) {
         case PinType::String: return IM_COL32(240, 110, 220, 255);
         case PinType::Vector: return IM_COL32(250, 200, 40, 255);
         case PinType::Entity: return IM_COL32(60, 160, 255, 255);
+        case PinType::Audio: return IM_COL32(190, 140, 255, 255);
     }
     return IM_COL32_WHITE;
 }
 
 ImU32 header_color(const NodeDef& def) {
+    if (std::strcmp(def.category, "Sound Cue") == 0) return std::strcmp(def.id, "CueOutput") == 0 ? IM_COL32(150, 40, 40, 255) : IM_COL32(95, 60, 150, 255);
     if (script::is_event(def)) return IM_COL32(160, 30, 30, 255);
     if (script::is_pure(def)) return IM_COL32(50, 110, 60, 255);
     if (std::strcmp(def.category, "Flow") == 0) return IM_COL32(85, 85, 90, 255);
@@ -141,7 +146,8 @@ bool value_widget(const script::PinDef& pin, char* value, usize capacity) {
             break;
         }
         case PinType::Entity: ImGui::TextDisabled("self"); break;
-        case PinType::Exec: break;
+        case PinType::Exec:
+        case PinType::Audio: break;
     }
     return changed;
 }
@@ -161,6 +167,12 @@ void save_and_compile(EditorState& s) {
         return;
     }
     w.dirty = false;
+    if (w.kind == script::GraphKind::SoundCue) {  // cues are read as they are: nothing to compile
+        std::snprintf(w.message, sizeof w.message, "Saved");
+        w.message_is_error = false;
+        std::snprintf(s.status, sizeof s.status, "%s: saved", w.name);
+        return;
+    }
     std::error_code error;
     std::filesystem::create_directories(kGraphLuaDir, error);
     char problem[256];
@@ -184,7 +196,7 @@ void node_menu(GraphWindow& w) {
     ImGui::SetNextItemWidth(220.0f);
     ImGui::InputTextWithHint("##search", "Search nodes", w.search, sizeof w.search);
     u32 count = 0;
-    const NodeDef* defs = script::node_defs(count);
+    const NodeDef* defs = script::node_defs(count, w.kind);
     auto matches = [&](const NodeDef& d) {
         if (!w.search[0]) return true;
         std::string title = d.title, needle = w.search;
@@ -224,6 +236,19 @@ std::string create_graph_file(const char* folder_path, const char* base) {
     return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
 }
 
+std::string create_cue_file(const char* folder_path, const char* base) {
+    const std::filesystem::path folder(folder_path);
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    std::filesystem::path path = folder / (std::string(base) + kCueExtension);
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + kCueExtension);
+    Graph graph(default_allocator());
+    const u32 wave = graph.add("CueWave", 0, 40)->id;
+    const u32 output = graph.add("CueOutput", 320, 40)->id;
+    graph.connect(wave, 0, output, 0);
+    return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
+}
+
 bool graph_lua(const asset::AssetRegistry& registry, const asset::AssetRecord& record, char* lua_path, usize capacity) {
     char path[300];
     registry.source_path(record, path, sizeof path);
@@ -250,6 +275,7 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
         return;
     }
     w.guid = record.guid;
+    w.kind = record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue : script::GraphKind::Script;
     std::snprintf(w.name, sizeof w.name, "%s", record.name);
     w.open = true;
     w.dirty = false;
@@ -264,7 +290,7 @@ void draw_graph_editor(EditorState& s) {
     if (!w.open || !w.graph) return;
     Graph& g = *w.graph;
     char title[128];
-    std::snprintf(title, sizeof title, "%s%s - Visual Script###VisualScript", w.name, w.dirty ? "*" : "");
+    std::snprintf(title, sizeof title, "%s%s - %s###VisualScript", w.name, w.dirty ? "*" : "", w.kind == script::GraphKind::SoundCue ? "Sound Cue" : "Visual Script");
     const ImGuiViewport* main = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(main->WorkPos.x + main->WorkSize.x * 0.5f, main->WorkPos.y + main->WorkSize.y * 0.45f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(1000, 620), ImGuiCond_FirstUseEver);
@@ -277,9 +303,25 @@ void draw_graph_editor(EditorState& s) {
         if (w.dirty) save_and_compile(s);
         w.open = false;
     }
-    if (ImGui::Button("Save + Compile")) save_and_compile(s);
-    ImGui::SetItemTooltip("Ctrl+S. Playing objects pick the change up within half a second");
+    const bool cue = w.kind == script::GraphKind::SoundCue;
+    if (ImGui::Button(cue ? "Save" : "Save + Compile")) save_and_compile(s);
+    ImGui::SetItemTooltip(cue ? "Ctrl+S" : "Ctrl+S. Playing objects pick the change up within half a second");
     ImGui::SameLine();
+    if (cue && s.sounds) {  // hear it as the game would (not spatialised): saves first
+        static u32 preview = 0;
+        const bool playing = s.sounds->audio()->playing(preview);
+        if (ImGui::Button(playing ? "Stop" : "Play")) {
+            if (playing) {
+                s.sounds->audio()->stop(preview);
+            } else {
+                if (w.dirty) save_and_compile(s);
+                char guid[33];
+                asset::to_string(w.guid, guid);
+                preview = s.sounds->play(guid, false, {});
+            }
+        }
+        ImGui::SameLine();
+    }
     if (w.message[0]) ImGui::TextColored(w.message_is_error ? ImVec4(1, 0.4f, 0.4f, 1) : ImVec4(0.5f, 1, 0.5f, 1), "%s", w.message);
     else ImGui::TextDisabled("Right-click: add node. Drag from a pin: wire. Middle or right drag: pan. Delete: remove node.");
 

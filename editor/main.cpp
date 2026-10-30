@@ -145,9 +145,12 @@ void register_console(EditorState& s) {
     console::add_command("graph.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1) lsd::editor::open_graph(st, st.registry->get(hit));
-        else LSD_LOG_WARN("editor", "graph.Open: no visual script named like '%s'", args);
-    }, &s, "Open a visual script in the graph editor");
+        if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::Cue, nullptr, &hit, 1) == 1) {
+            lsd::editor::open_graph(st, st.registry->get(hit));
+        } else {
+            LSD_LOG_WARN("editor", "graph.Open: no visual script or sound cue named like '%s'", args);
+        }
+    }, &s, "Open a visual script or sound cue in the graph editor");
     console::add_command("table.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -356,6 +359,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundAttenuation>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundConcurrency>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundMix>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
@@ -573,7 +577,7 @@ int main(int argc, char** argv) {
         // The ears: the player's camera in Play, else the editor camera.
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
-        audio.update();
+        audio.update(dt);
         mouse_dx = mouse_dy = 0.0f;
 
         // Window title: level name and unsaved marker, like Unreal.

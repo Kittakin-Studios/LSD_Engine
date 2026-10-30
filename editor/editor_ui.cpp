@@ -1035,7 +1035,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                 place(s, record->name, key, nullptr, drop_point(s, ray));
             } else if (record && record->type == asset::AssetType::Prefab) {
                 place_prefab(s, *record, drop_point(s, ray));
-            } else if (record && record->type == asset::AssetType::Sound) {  // a Sound Emitter, like dropping a Sound Wave in Unreal
+            } else if (record && (record->type == asset::AssetType::Sound || record->type == asset::AssetType::Cue)) {  // a Sound Emitter, like dropping a sound in Unreal
                 const Entity e = place(s, record->name, nullptr, "SoundEmitter", drop_point(s, ray) + Vec3{0, 0, 1});
                 asset::to_string(guid, s.world->get<world::SoundEmitter>(e)->sound);
             }
@@ -1336,7 +1336,7 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
-    if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound;
+    if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue;  // a wave or a cue
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
 
@@ -1888,14 +1888,15 @@ void draw_details_panel(EditorState& s) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Revert")) s.registry->load_meta(*selected, s.selected_meta);
-                if (selected->type == asset::AssetType::Sound) {
+                if (selected->type == asset::AssetType::Sound || selected->type == asset::AssetType::Cue) {
                     ImGui::SameLine();
                     if (ImGui::Button(s.sounds && s.sounds->audio()->playing(s.preview_voice) ? "Stop" : "Play")) toggle_preview(s, *selected);
                 }
                 if (s.status[0]) ImGui::TextDisabled("%s", s.status);
                 ImGui::BeginChild("DetailsRows");
                 DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
-                style.categories = selected->type == asset::AssetType::Mesh ? "Asset,Import" : selected->type == asset::AssetType::Sound ? "Asset,Sound" : "Asset";
+                style.categories = selected->type == asset::AssetType::Mesh ? "Asset,Import"
+                                 : selected->type == asset::AssetType::Sound || selected->type == asset::AssetType::Cue ? "Asset,Sound" : "Asset";
                 draw_details(reflect::type_of<asset::AssetMeta>(), &s.selected_meta, &style);
                 ImGui::EndChild();
             } else {
@@ -2169,6 +2170,16 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A spreadsheet (.csv) of rows and columns; read it with lsd.table() or Get Table Value. Dropping a .csv here imports one too");
+        if (ImGui::MenuItem("New Sound Cue")) {
+            const std::string path = create_cue_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SC_New");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
+        ImGui::SetItemTooltip("A node graph that combines sounds: Random, Modulator, Mixer, Delay, Looping, Switch... Double-click to edit");
         if (ImGui::MenuItem("New Lua Script")) create_script(s);
         ImGui::SetItemTooltip("A .lua file with on_start / on_update; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
@@ -2244,7 +2255,7 @@ void draw_asset_grid(EditorState& s) {
                 request_open(s, path);
             }
             if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
-            if (r.type == asset::AssetType::Graph && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_graph(s, r);
+            if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
             if (r.type == asset::AssetType::Sound && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toggle_preview(s, r);
         }
@@ -2257,7 +2268,8 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Script && ImGui::MenuItem("Edit Script")) open_external(s, r);
             if (r.type == asset::AssetType::Graph && ImGui::MenuItem("Edit Visual Script")) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Edit Data Table")) open_table(s, r);
-            if (r.type == asset::AssetType::Sound && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
+            if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
+            if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem("Delete...")) {
@@ -2435,7 +2447,8 @@ void draw_stats(EditorState& s, ImVec2 pos, ImVec2 size) {
     if (s.show_audio_stats && s.sounds) {  // `stat audio`: Unreal's au.Debug.Sounds
         const audio::AudioSystem& a = *s.sounds->audio();
         char line[160];
-        std::snprintf(line, sizeof line, "Audio: %u voice%s%s", a.voice_count(), a.voice_count() == 1 ? "" : "s", a.has_device() ? "" : "  (no device: silent)");
+        std::snprintf(line, sizeof line, "Audio: %u voice%s, %u mix%s%s", a.voice_count(), a.voice_count() == 1 ? "" : "s", a.mix_count(),
+                      a.mix_count() == 1 ? "" : "es", a.has_device() ? "" : "  (no device: silent)");
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         f32 y = pos.y + size.y - 24.0f - static_cast<f32>(a.voice_count()) * 16.0f;
         fg->AddText(ImVec2(pos.x + 12, y), IM_COL32(120, 230, 255, 255), line);

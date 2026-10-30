@@ -24,6 +24,8 @@
 //   lsd.spline_length(e)                  metres
 //   lsd.play_sound(name [, x, y, z]) -> id   a sound asset by name, 2D or at a position; 0 if none
 //   lsd.stop_sound(id)
+//   lsd.push_mix(name), lsd.pop_mix(name)   Sound Mix data assets by name
+//   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
 //                                         cells are numbers; re-read when the file changes; nil if none
@@ -60,6 +62,9 @@ struct ScriptHost {
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name
     u32 (*play_sound)(void* user, const char* name, bool spatial, Vec3 position) = nullptr;  // voice, 0 if none
     void (*stop_sound)(void* user, u32 voice) = nullptr;
+    void (*push_mix)(void* user, const char* name) = nullptr;
+    void (*pop_mix)(void* user, const char* name) = nullptr;
+    void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
 };
 
 class ScriptSystem {
