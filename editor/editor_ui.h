@@ -57,6 +57,7 @@ struct EditorState {
     u32 preview_voice = 0;  // Content Browser sound preview
     u32 stat_draws = 0;       // set by main.cpp after drawing
     u32 stat_triangles = 0;
+    u32 stat_culled = 0;      // outside the view: not drawn
     EditorCamera bookmarks[10];  // Ctrl+0..9 stores, 0..9 jumps (like Unreal)
     bool bookmark_set[10] = {};
     int details_tab = 0;

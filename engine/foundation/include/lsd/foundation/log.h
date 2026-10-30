@@ -14,6 +14,11 @@ void set_min_level(Level level);
 using Sink = void (*)(void* user, Level level, const char* channel, const char* message);
 void set_sink(Sink sink, void* user);
 
+// Also writes every line to this file (flushed per line, so a crash keeps everything up to it);
+// the previous file is kept as <name>-previous.<ext>. nullptr closes it. False if it cannot be opened.
+bool open_file(const char* path);
+const char* file_path();  // "" when there is none
+
 // Low-level entry point; prefer the LSD_LOG_* macros.
 void write(Level level, const char* channel, const char* file, int line, const char* message);
 

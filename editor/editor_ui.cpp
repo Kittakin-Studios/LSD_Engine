@@ -2700,8 +2700,8 @@ void draw_stats(EditorState& s, ImVec2 pos, ImVec2 size) {
     static f32 smoothed = 0.016f;
     smoothed = smoothed * 0.95f + ImGui::GetIO().DeltaTime * 0.05f;
     char text[160];
-    std::snprintf(text, sizeof text, "%.0f fps   %.2f ms\n%u draws   %u triangles", static_cast<f64>(1.0f / smoothed), static_cast<f64>(smoothed * 1000.0f),
-                  s.stat_draws, s.stat_triangles);
+    std::snprintf(text, sizeof text, "%.0f fps   %.2f ms\n%u draws   %u triangles   %u culled", static_cast<f64>(1.0f / smoothed), static_cast<f64>(smoothed * 1000.0f),
+                  s.stat_draws, s.stat_triangles, s.stat_culled);
     const ImVec2 text_size = ImGui::CalcTextSize(text);
     ImGui::GetForegroundDrawList()->AddText(ImVec2(pos.x + size.x - text_size.x - 14.0f, pos.y + 12.0f), u32_color(s.theme.axis_y), text);
 }

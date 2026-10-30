@@ -186,7 +186,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 
 - [~] Post-process volume: Post Process Volume component (unbound or a box, priority): exposure compensation, ACES filmic tonemapper, saturation, contrast, tint, vignette, applied in the forward shaders; needs an HDR scene target for bloom, LUT grading, DOF, motion blur, AO, anti-aliasing (TAA / FXAA), blend weights between volumes [Post Process Volume]
 - [ ] Baked lightmaps + probes; light build button with progress; lightmap density view; volumetric fog [Lightmass]
-- [ ] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes
+- [~] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes: frustum culling of static and skeletal meshes (the count in `stat fps`); needs LODs, occlusion and distance culling
 - [ ] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]
 - [ ] VRAM-budget scaling: texture streaming, shadow and render-target sizes follow `query_memory_budget()`
 - [ ] Render to screenshot at high resolution [HighResShot]
@@ -216,7 +216,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [ ] Connect the editor to a running game (this PC or another): remote console, push hot reloads, live tweak values **(S)**
 - [ ] Profilers: Tracy, stat overlays (fps, draw calls, voices), memory per system, GPU timings [Unreal Insights]
 - [ ] Asset validation before packaging: missing references, oversize textures, naming rules [Data Validation]
-- [ ] Crash reporting: minidump + log saved, shown on next start (moved up from v2)
+- [x] Crash reporting: minidump + log saved, shown on next start (moved up from v2): the log always goes to Saved/Logs/Editor.log (or Game.log, the last one kept as -previous); a crash writes Saved/Crashes/<date-time>/crash.dmp + log.txt and the next start warns in the Message Log (`lsd::install_crash_reporting`, console `debug.Crash` to try it)
 - [ ] Automated tests run from the editor: unit tests + "play this level for N seconds" smoke tests [Automation]
 - [ ] Source control from the Content Browser (Git LFS, Perforce): check out, diff, history
 

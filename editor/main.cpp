@@ -12,6 +12,7 @@
 #include "navigation.h"
 #include "ui_editor.h"
 
+#include "lsd/core/crash.h"
 #include "lsd/ui/ui.h"
 #include "skinned_cache.h"
 #include "play_session.h"
@@ -160,6 +161,28 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
     device.end_shadow_pass();
 }
 
+// Frustum culling: false when the box (local bounds under `mvp`) is wholly outside one clip plane.
+bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi) {
+    int outside[6] = {};
+    for (int c = 0; c < 8; ++c) {
+        const lsd::Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
+        const lsd::f32 x = mvp.at(0, 0) * p.x + mvp.at(0, 1) * p.y + mvp.at(0, 2) * p.z + mvp.at(0, 3);
+        const lsd::f32 y = mvp.at(1, 0) * p.x + mvp.at(1, 1) * p.y + mvp.at(1, 2) * p.z + mvp.at(1, 3);
+        const lsd::f32 z = mvp.at(2, 0) * p.x + mvp.at(2, 1) * p.y + mvp.at(2, 2) * p.z + mvp.at(2, 3);
+        const lsd::f32 w = mvp.at(3, 0) * p.x + mvp.at(3, 1) * p.y + mvp.at(3, 2) * p.z + mvp.at(3, 3);
+        outside[0] += x < -w;
+        outside[1] += x > w;
+        outside[2] += y < -w;
+        outside[3] += y > w;
+        outside[4] += z < 0.0f;  // 0..1 depth
+        outside[5] += z > w;
+    }
+    for (int k : outside) {
+        if (k == 8) return false;
+    }
+    return true;
+}
+
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
                 lsd::rhi::TextureHandle shadow_atlas, lsd::rhi::TextureHandle local_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
                 EditorState& stats) {
@@ -178,6 +201,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     if (!stats.view_mode_unlit_or_wire() && lsd::editor::world_sky(world, view_proj, eye, skip_hidden, sky)) device.draw_sky(sky);  // behind everything
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
+    stats.stat_culled = 0;
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::world::Entity e = world.owner(type, i);
@@ -186,6 +210,10 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         if (!mesh) continue;
         const lsd::Mat4 m = world.world_matrix(e);
         const lsd::Mat4 mvp = view_proj * m;
+        if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
+            ++stats.stat_culled;
+            continue;
+        }
         const lsd::Mat4 inv = lsd::affine_inverse(m);  // normals use the inverse transpose (correct under non-uniform scale)
         lsd::rhi::MeshDraw draw{};
         draw.vertices = mesh->gpu.vertices;
@@ -228,6 +256,12 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         if (!model || !pose || !pose->joint_count()) continue;
         const lsd::Mat4 m = world.world_matrix(e);
         const lsd::Mat4 mvp = view_proj * m;
+        // Bind-pose bounds grown by half their size: animation moves limbs out of the rest pose.
+        const lsd::Vec3 grow = (model->model->bounds_max - model->model->bounds_min) * 0.5f;
+        if (!in_view(mvp, model->model->bounds_min - grow, model->model->bounds_max + grow)) {
+            ++stats.stat_culled;
+            continue;
+        }
         const lsd::Mat4 inv = lsd::affine_inverse(m);
         lsd::rhi::MeshDraw draw{};
         draw.vertices = model->vertices;
@@ -344,6 +378,10 @@ void register_console(EditorState& s) {
     }, &s, "viewmode lit|unlit|wireframe");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
+    console::add_command("debug.Crash", [](void*, const char*) {  // tests the crash reporter
+        volatile int* nowhere = nullptr;
+        *nowhere = 1;
+    }, &s, "Crash on purpose (writes a crash report to Saved/Crashes)");
     console::add_command("ui.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -516,7 +554,14 @@ int main(int argc, char** argv) {
         fs::current_path(base, cwd_error);
         game_mode = true;
     }
+    // The log on disk and crash reports (Saved/Logs, Saved/Crashes), like Unreal's Saved folder.
+    std::error_code log_error;
+    fs::create_directories("Saved/Logs", log_error);
+    lsd::log::open_file(game_mode ? "Saved/Logs/Game.log" : "Saved/Logs/Editor.log");
+    char last_crash[300];
+    lsd::install_crash_reporting("Saved/Crashes", last_crash, sizeof last_crash);
     LSD_LOG_INFO("editor", game_mode ? "LSD_Engine 0.1.0 (game)" : "LSD_Engine Editor 0.1.0");
+    if (last_crash[0]) LSD_LOG_WARN("editor", "The last session crashed: the dump and its log are in %s", last_crash);
     const lsd::SystemInfo info = lsd::query_system_info();
     lsd::Allocator& allocator = lsd::default_allocator();
     lsd::JobSystem jobs(allocator, lsd::recommended_worker_count(info));
@@ -926,6 +971,7 @@ int main(int argc, char** argv) {
     lsd::console::remove_all();  // the registrations point into state
     lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
+    lsd::log::open_file(nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
