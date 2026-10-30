@@ -145,6 +145,53 @@ NodeDef g_cue_defs[] = {
      {kAudioOut}, 0, nullptr, {}},
 };
 
+// Material Graph nodes. Every value is a float3 in the shader (scalars are (x, x, x), like Unreal's
+// promotion), so Float and Vector pins connect freely; the pin type only picks the widget for typed
+// values. Expressions: $0.. the inputs, mi the material inputs (uv, wpos, normal, view, time); a
+// Texture Sample's @ is its texture slot (filled in by the compiler).
+NodeDef g_material_defs[] = {
+    {"MatOutput", "Material Output", "Output", "The surface: what the mesh looks like (Unreal's main material node)",
+     {{"Base Color", PinType::Vector, "0.8,0.8,0.8"}, {"Metallic", PinType::Float, "0"}, {"Roughness", PinType::Float, "0.5"},
+      {"Emissive", PinType::Vector, "0,0,0"}, {"Normal", PinType::Vector, "0,0,1"}, {"Ambient Occlusion", PinType::Float, "1"}}, 0, {}, 0, nullptr, {}},
+    {"MatConstant", "Constant", "Constants", "A number (1 key + click in Unreal)", {{"Value", PinType::Float, "1"}}, 0, {{"", PinType::Float, ""}}, 0, nullptr, {"$0"}},
+    {"MatColor", "Color", "Constants", "A colour or vector (3 key + click)", {{"Value", PinType::Vector, "1,1,1"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"$0"}},
+    {"MatTime", "Time", "Constants", "Seconds since the editor started: animate with Sine, Panner...", {}, 0, {{"", PinType::Float, ""}}, 0, nullptr, {"lsd_v3(mi.time)"}},
+    {"MatTexture", "Texture Sample", "Texture", "A texture asset by name. Type: Color (sRGB), Normal (normal map, unpacked to -1..1) or Data (masks, roughness)",
+     {{"UV", PinType::Vector, "uv"}, {"Texture", PinType::String, ""}, {"Type", PinType::String, "Color"}}, 0,
+     {{"RGB", PinType::Vector, ""}, {"A", PinType::Float, ""}}, 0, nullptr, {"lsd_tex@($0).rgb", "lsd_v3(lsd_tex@($0).a)"}},
+    {"MatTexCoord", "Texture Coordinate", "Coordinates", "The mesh's UVs times a tiling", {{"Tiling", PinType::Vector, "1,1,1"}}, 0,
+     {{"UV", PinType::Vector, ""}}, 0, nullptr, {"(mi.uv * $0)"}},
+    {"MatPanner", "Panner", "Coordinates", "UVs sliding over time (flowing water, scrolling lava)", {{"UV", PinType::Vector, "uv"}, {"Speed", PinType::Vector, "0.1,0,0"}}, 0,
+     {{"UV", PinType::Vector, ""}}, 0, nullptr, {"($0 + $1 * mi.time)"}},
+    {"MatWorldPosition", "World Position", "Coordinates", "Where the pixel is in the world (metres)", {}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"mi.wpos"}},
+    {"MatVertexNormal", "Vertex Normal", "Coordinates", "The surface direction in the world", {}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"mi.normal"}},
+    {"MatCameraVector", "Camera Vector", "Coordinates", "From the pixel towards the camera", {}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"mi.view"}},
+    {"MatFresnel", "Fresnel", "Coordinates", "1 at grazing angles, 0 facing the camera (rim light)", {{"Exponent", PinType::Float, "5"}}, 0,
+     {{"", PinType::Float, ""}}, 0, nullptr, {"lsd_v3(pow(1.0 - saturate(dot(mi.normal, mi.view)), $0.x))"}},
+    {"MatAdd", "Add", "Math", "A + B", {{"A", PinType::Vector, "0,0,0"}, {"B", PinType::Vector, "0,0,0"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"($0 + $1)"}},
+    {"MatSubtract", "Subtract", "Math", "A - B", {{"A", PinType::Vector, "0,0,0"}, {"B", PinType::Vector, "0,0,0"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"($0 - $1)"}},
+    {"MatMultiply", "Multiply", "Math", "A x B (tint a texture, scale a value)", {{"A", PinType::Vector, "1,1,1"}, {"B", PinType::Vector, "1,1,1"}}, 0,
+     {{"", PinType::Vector, ""}}, 0, nullptr, {"($0 * $1)"}},
+    {"MatDivide", "Divide", "Math", "A / B", {{"A", PinType::Vector, "1,1,1"}, {"B", PinType::Vector, "1,1,1"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"($0 / $1)"}},
+    {"MatLerp", "Lerp", "Math", "Blends A to B by Alpha (0 = A, 1 = B)", {{"A", PinType::Vector, "0,0,0"}, {"B", PinType::Vector, "1,1,1"}, {"Alpha", PinType::Float, "0.5"}}, 0,
+     {{"", PinType::Vector, ""}}, 0, nullptr, {"lerp($0, $1, $2.x)"}},
+    {"MatOneMinus", "One Minus", "Math", "1 - x (invert a mask)", {{"", PinType::Vector, "0,0,0"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"(lsd_v3(1.0) - $0)"}},
+    {"MatPower", "Power", "Math", "Base to the power of Exponent (sharpen a mask)", {{"Base", PinType::Vector, "1,1,1"}, {"Exponent", PinType::Float, "2"}}, 0,
+     {{"", PinType::Vector, ""}}, 0, nullptr, {"pow(max($0, lsd_v3(0.0)), lsd_v3($1.x))"}},
+    {"MatClamp", "Clamp", "Math", "Keeps the value between Min and Max", {{"", PinType::Vector, "0,0,0"}, {"Min", PinType::Float, "0"}, {"Max", PinType::Float, "1"}}, 0,
+     {{"", PinType::Vector, ""}}, 0, nullptr, {"clamp($0, lsd_v3($1.x), lsd_v3($2.x))"}},
+    {"MatDot", "Dot", "Math", "Dot product of two directions", {{"A", PinType::Vector, "0,0,1"}, {"B", PinType::Vector, "0,0,1"}}, 0,
+     {{"", PinType::Float, ""}}, 0, nullptr, {"lsd_v3(dot($0, $1))"}},
+    {"MatNormalize", "Normalize", "Math", "Length 1", {{"", PinType::Vector, "0,0,1"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"normalize($0)"}},
+    {"MatSine", "Sine", "Math", "sin(x), radians: Time into Sine pulses", {{"", PinType::Float, "0"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"sin($0)"}},
+    {"MatAbs", "Abs", "Math", "|x|", {{"", PinType::Vector, "0,0,0"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"abs($0)"}},
+    {"MatFrac", "Frac", "Math", "The part after the point (repeating 0..1)", {{"", PinType::Vector, "0,0,0"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"frac($0)"}},
+    {"MatMask", "Break Vector", "Utility", "Its X, Y and Z (R, G, B) apart (Component Mask)", {{"", PinType::Vector, "0,0,0"}}, 0,
+     {{"X", PinType::Float, ""}, {"Y", PinType::Float, ""}, {"Z", PinType::Float, ""}}, 0, nullptr, {"lsd_v3($0.x)", "lsd_v3($0.y)", "lsd_v3($0.z)"}},
+    {"MatAppend", "Make Vector", "Utility", "A vector from three numbers (Append)", {{"X", PinType::Float, "0"}, {"Y", PinType::Float, "0"}, {"Z", PinType::Float, "0"}}, 0,
+     {{"", PinType::Vector, ""}}, 0, nullptr, {"float3($0.x, $1.x, $2.x)"}},
+};
+
 constexpr char kLuaPrelude[] = R"lua(-- Generated from a visual script (.lsdgraph). Edit the graph, not this file.
 local function __vec(x, y, z) return {x = x or 0, y = y or 0, z = z or 0} end
 local function __vadd(a, b) return __vec(a.x + b.x, a.y + b.y, a.z + b.z) end
@@ -328,6 +375,10 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
             d.input_count = count_pins(d.inputs, 6);
             d.output_count = count_pins(d.outputs, 4);
         }
+        for (NodeDef& d : g_material_defs) {
+            d.input_count = count_pins(d.inputs, 6);
+            d.output_count = count_pins(d.outputs, 4);
+        }
         return true;
     }();
     (void)counted;
@@ -335,12 +386,16 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
         count = static_cast<u32>(sizeof g_cue_defs / sizeof g_cue_defs[0]);
         return g_cue_defs;
     }
+    if (kind == GraphKind::Material) {
+        count = static_cast<u32>(sizeof g_material_defs / sizeof g_material_defs[0]);
+        return g_material_defs;
+    }
     count = static_cast<u32>(sizeof g_defs / sizeof g_defs[0]);
     return g_defs;
 }
 
 const NodeDef* find_node_def(const char* id) {
-    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue}) {
+    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material}) {
         u32 count = 0;
         const NodeDef* defs = node_defs(count, kind);
         for (u32 i = 0; i < count; ++i) {
@@ -349,6 +404,8 @@ const NodeDef* find_node_def(const char* id) {
     }
     return nullptr;
 }
+
+bool is_material_node(const NodeDef& def) { return std::strncmp(def.id, "Mat", 3) == 0; }
 
 bool is_event(const NodeDef& def) { return def.input_count == 0 && def.output_count > 0 && def.outputs[0].type == PinType::Exec; }
 
@@ -416,8 +473,11 @@ bool Graph::connect(u32 from, u32 from_pin, u32 to, u32 to_pin) {
     if (!da || !db || from == to || from_pin >= da->output_count || to_pin >= db->input_count) return false;
     const PinType out = da->outputs[from_pin].type, in = db->inputs[to_pin].type;
     const bool exec = out == PinType::Exec;
-    // Same type, or anything (but exec) into a String (it is converted to text).
-    if (exec != (in == PinType::Exec) || (out != in && (in != PinType::String || out == PinType::Audio))) return false;
+    // Same type, or anything (but exec) into a String (it is converted to text). Material nodes:
+    // numbers and vectors mix (all float3 in the shader).
+    const bool numeric = is_material_node(*da) && is_material_node(*db) && (out == PinType::Float || out == PinType::Vector) &&
+                         (in == PinType::Float || in == PinType::Vector);
+    if (exec != (in == PinType::Exec) || (out != in && !numeric && (in != PinType::String || out == PinType::Audio))) return false;
     for (usize i = links.size(); i-- > 0;) {
         const GraphLink& l = links[i];
         // An exec output leads to one place; a data input reads from one place.

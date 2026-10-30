@@ -2,6 +2,8 @@
 
 #include "lsd/foundation/log.h"
 #include "sound_cue.h"
+
+#include "lsd/script/material_graph.h"
 #include "sound_player.h"
 #include "lsd/script/graph.h"
 
@@ -47,6 +49,7 @@ struct GraphWindow {
     bool message_is_error = false;
 };
 GraphWindow g_window;
+const asset::AssetRegistry* g_registry = nullptr;  // for the Texture Sample's texture list
 
 ImU32 pin_color(PinType type) {
     switch (type) {
@@ -62,6 +65,12 @@ ImU32 pin_color(PinType type) {
 }
 
 ImU32 header_color(const NodeDef& def) {
+    if (script::is_material_node(def)) {
+        if (std::strcmp(def.id, "MatOutput") == 0) return IM_COL32(150, 40, 40, 255);
+        if (std::strcmp(def.category, "Texture") == 0) return IM_COL32(40, 90, 150, 255);
+        if (std::strcmp(def.category, "Constants") == 0) return IM_COL32(110, 100, 40, 255);
+        return IM_COL32(50, 110, 60, 255);
+    }
     if (std::strcmp(def.category, "Sound Cue") == 0) return std::strcmp(def.id, "CueOutput") == 0 ? IM_COL32(150, 40, 40, 255) : IM_COL32(95, 60, 150, 255);
     if (script::is_event(def)) return IM_COL32(160, 30, 30, 255);
     if (script::is_pure(def)) return IM_COL32(50, 110, 60, 255);
@@ -132,10 +141,45 @@ bool value_widget(const script::PinDef& pin, char* value, usize capacity) {
             break;
         }
         case PinType::String:
+            if (std::strcmp(pin.name, "Type") == 0 && std::strcmp(pin.default_value, "Color") == 0) {  // Texture Sample: how the texels are read
+                static const char* const kinds[3] = {"Color", "Normal", "Data"};
+                ImGui::SetNextItemWidth(100.0f);
+                if (ImGui::BeginCombo("##v", value)) {
+                    for (const char* k : kinds) {
+                        if (ImGui::Selectable(k, std::strcmp(value, k) == 0)) {
+                            std::snprintf(value, capacity, "%s", k);
+                            changed = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                break;
+            }
+            if (std::strcmp(pin.name, "Texture") == 0 && g_registry) {  // a texture asset by name
+                ImGui::SetNextItemWidth(140.0f);
+                if (ImGui::BeginCombo("##v", value[0] ? value : "(pick a texture)")) {
+                    usize hits[256];
+                    const usize count = g_registry->search(nullptr, asset::AssetType::Texture, nullptr, hits, 256);
+                    for (usize i = 0; i < count; ++i) {
+                        const char* name = g_registry->get(hits[i]).name;
+                        if (ImGui::Selectable(name, std::strcmp(value, name) == 0)) {
+                            std::snprintf(value, capacity, "%s", name);
+                            changed = true;
+                        }
+                    }
+                    if (!count) ImGui::TextDisabled("No textures: drop a PNG / JPG into the Content Browser");
+                    ImGui::EndCombo();
+                }
+                break;
+            }
             ImGui::SetNextItemWidth(100.0f);
             changed = ImGui::InputText("##v", value, capacity);
             break;
         case PinType::Vector: {
+            if (std::strcmp(value, "uv") == 0) {  // Material Graph: the mesh's own UVs unless something is wired in
+                ImGui::TextDisabled("mesh UVs");
+                break;
+            }
             f32 v[3] = {0, 0, 0};
             std::sscanf(value, "%f , %f , %f", &v[0], &v[1], &v[2]);
             ImGui::SetNextItemWidth(150.0f);
@@ -167,6 +211,15 @@ void save_and_compile(EditorState& s) {
         return;
     }
     w.dirty = false;
+    if (w.kind == script::GraphKind::Material) {  // the editor compiles the shader when it sees the file change
+        script::MaterialCode code(default_allocator());
+        char problem[256] = "";
+        const bool ok = script::compile_material_graph(*w.graph, code, problem, sizeof problem);
+        std::snprintf(w.message, sizeof w.message, "%s", ok ? "Saved: objects using it update in a moment" : problem);
+        w.message_is_error = !ok;
+        std::snprintf(s.status, sizeof s.status, "%s: %s", w.name, w.message);
+        return;
+    }
     if (w.kind == script::GraphKind::SoundCue) {  // cues are read as they are: nothing to compile
         std::snprintf(w.message, sizeof w.message, "Saved");
         w.message_is_error = false;
@@ -249,6 +302,21 @@ std::string create_cue_file(const char* folder_path, const char* base) {
     return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
 }
 
+std::string create_material_graph_file(const char* folder_path, const char* base) {
+    const std::filesystem::path folder(folder_path);
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    std::filesystem::path path = folder / (std::string(base) + script::kMaterialGraphExtension);
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + script::kMaterialGraphExtension);
+    Graph graph(default_allocator());
+    script::GraphNode* color = graph.add("MatColor", 0, 40);
+    std::snprintf(color->values[0], sizeof color->values[0], "0.8,0.8,0.8");
+    const u32 color_id = color->id;
+    const u32 output = graph.add("MatOutput", 380, 0)->id;
+    graph.connect(color_id, 0, output, 0);
+    return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
+}
+
 bool graph_lua(const asset::AssetRegistry& registry, const asset::AssetRecord& record, char* lua_path, usize capacity) {
     char path[300];
     registry.source_path(record, path, sizeof path);
@@ -275,7 +343,9 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
         return;
     }
     w.guid = record.guid;
-    w.kind = record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue : script::GraphKind::Script;
+    w.kind = record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue
+             : record.type == asset::AssetType::MaterialGraph ? script::GraphKind::Material
+                                                              : script::GraphKind::Script;
     std::snprintf(w.name, sizeof w.name, "%s", record.name);
     w.open = true;
     w.dirty = false;
@@ -285,12 +355,20 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     ImGui::SetWindowFocus("###VisualScript");
 }
 
+void shutdown_graph_editor() {
+    delete g_window.graph;
+    g_window.graph = nullptr;
+    g_window.open = false;
+}
+
 void draw_graph_editor(EditorState& s) {
     GraphWindow& w = g_window;
     if (!w.open || !w.graph) return;
     Graph& g = *w.graph;
     char title[128];
-    std::snprintf(title, sizeof title, "%s%s - %s###VisualScript", w.name, w.dirty ? "*" : "", w.kind == script::GraphKind::SoundCue ? "Sound Cue" : "Visual Script");
+    g_registry = s.registry;
+    std::snprintf(title, sizeof title, "%s%s - %s###VisualScript", w.name, w.dirty ? "*" : "",
+                  w.kind == script::GraphKind::SoundCue ? "Sound Cue" : w.kind == script::GraphKind::Material ? "Material Graph" : "Visual Script");
     const ImGuiViewport* main = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(main->WorkPos.x + main->WorkSize.x * 0.5f, main->WorkPos.y + main->WorkSize.y * 0.45f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(1000, 620), ImGuiCond_FirstUseEver);
@@ -304,7 +382,7 @@ void draw_graph_editor(EditorState& s) {
         w.open = false;
     }
     const bool cue = w.kind == script::GraphKind::SoundCue;
-    if (ImGui::Button(cue ? "Save" : "Save + Compile")) save_and_compile(s);
+    if (ImGui::Button(w.kind == script::GraphKind::Script ? "Save + Compile" : "Save")) save_and_compile(s);
     ImGui::SetItemTooltip(cue ? "Ctrl+S" : "Ctrl+S. Playing objects pick the change up within half a second");
     ImGui::SameLine();
     if (cue && s.sounds) {  // hear it as the game would (not spatialised): saves first

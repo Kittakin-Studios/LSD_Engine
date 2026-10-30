@@ -3,6 +3,7 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
+#include "lsd/script/material_graph.h"
 
 #include <cstdio>
 #include <cstring>
@@ -91,11 +92,61 @@ MaterialCache::Entry* MaterialCache::find(const char* guid) {
     return &e;
 }
 
+void MaterialCache::resolve_textures(Entry& e) {
+    for (u32 i = 0; i < e.texture_count; ++i) {
+        e.texture_guids[i][0] = '\0';
+        usize hits[16];
+        const usize count = registry_.search(e.textures[i], asset::AssetType::Texture, nullptr, hits, 16);
+        for (usize k = 0; k < count; ++k) {  // the exact name (search also matches parts of names)
+            const asset::AssetRecord& r = registry_.get(hits[k]);
+            if (std::strcmp(r.name, e.textures[i]) == 0 || k + 1 == count) asset::to_string(r.guid, e.texture_guids[i]);
+            if (std::strcmp(r.name, e.textures[i]) == 0) break;
+        }
+        if (!e.texture_guids[i][0]) LSD_LOG_WARN("material", "Material graph texture '%s' not found", e.textures[i]);
+    }
+}
+
+void MaterialCache::load_graph(Entry& e, const char* path) {
+    e.texture_count = 0;
+    script::Graph graph(default_allocator());
+    script::MaterialCode code(default_allocator());
+    char error[256] = "";
+    if (!script::load_graph_file(graph, path) || !script::compile_material_graph(graph, code, error, sizeof error)) {
+        LSD_LOG_ERROR("material", "%s: %s", path, error[0] ? error : "could not read the graph");
+        e.failed = true;
+        return;
+    }
+    e.shader = device_.create_material_shader(code.code.data());
+    if (!e.shader.valid()) {
+        LSD_LOG_ERROR("material", "%s: the shader did not compile (see the messages above)", path);
+        e.failed = true;
+        return;
+    }
+    e.texture_count = code.texture_count;
+    for (u32 i = 0; i < code.texture_count; ++i) {
+        std::snprintf(e.textures[i], sizeof e.textures[i], "%s", code.textures[i].name);
+        e.texture_srgb[i] = code.textures[i].srgb;
+    }
+    resolve_textures(e);
+    LSD_LOG_INFO("material", "Compiled material graph %s", path);
+}
+
 void MaterialCache::load(Entry& e) {
     e.material = render::Material{};
     e.parent[0] = '\0';
     e.parent_modified = 0;
+    if (e.shader.valid()) device_.destroy_material_shader(e.shader);
+    e.shader = {};
+    e.texture_count = 0;
     char path[300], type[32] = "";
+    asset::Guid guid;
+    const asset::AssetRecord* record = asset::parse_guid(e.guid, guid) ? registry_.find(guid) : nullptr;
+    if (record && record->type == asset::AssetType::MaterialGraph && path_of(registry_, e.guid, path, sizeof path)) {
+        e.modified = file_time(path);
+        e.failed = false;
+        load_graph(e, path);
+        return;
+    }
     e.failed = !path_of(registry_, e.guid, path, sizeof path) || !asset::read_data_asset_type(path, type, sizeof type);
     e.modified = e.failed ? 0 : file_time(path);
     if (e.failed) return;
@@ -117,6 +168,12 @@ void MaterialCache::load(Entry& e) {
 void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
     const Entry* e = guid && guid[0] ? find(guid) : nullptr;
     if (!e || e->failed) return;
+    if (e->shader.valid()) {
+        draw.material_shader = e->shader;
+        rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
+        for (u32 i = 0; i < e->texture_count; ++i) *slots[i] = e->texture_guids[i][0] ? textures_.get(e->texture_guids[i], e->texture_srgb[i]) : rhi::TextureHandle{};
+        return;
+    }
     const render::Material& m = e->material;
     draw.color[0] *= m.base_color.r;
     draw.color[1] *= m.base_color.g;
@@ -139,6 +196,7 @@ void MaterialCache::check_files() {
         if (!path_of(registry_, e.guid, path, sizeof path)) continue;
         const bool parent_changed = e.parent[0] && path_of(registry_, e.parent, parent_path, sizeof parent_path) && file_time(parent_path) != e.parent_modified;
         if (file_time(path) != e.modified || parent_changed) load(e);
+        else if (e.shader.valid()) resolve_textures(e);  // a texture imported after the graph was compiled
     }
 }
 

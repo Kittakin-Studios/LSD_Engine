@@ -2,6 +2,7 @@
 // and reloads when the file changes.
 #include "lsd/asset/data_table.h"
 #include "lsd/script/graph.h"
+#include "lsd/script/material_graph.h"
 #include "lsd/script/script.h"
 
 #include <cmath>
@@ -147,6 +148,54 @@ static void test_graph() {
 
 static void write(const char* path, const char* text);
 
+// Material graphs compile to one shader function; problems name the node.
+static void test_material_graph() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    MaterialCode code(default_allocator());
+    char error[256] = "";
+    CHECK(!compile_material_graph(g, code, error, sizeof error) && std::strstr(error, "Output"));
+    const u32 out = g.add("MatOutput", 400, 0)->id;
+    CHECK(compile_material_graph(g, code, error, sizeof error));
+    CHECK(std::strstr(code.code.data(), "s.base_color = float3(0.8, 0.8, 0.8);"));
+    CHECK(std::strstr(code.code.data(), "s.metallic = (lsd_v3(0.0)).x;"));  // "0" typed: still a float literal
+
+    // Texture x Color into Base Color; the same texture as a Normal map is a second slot.
+    GraphNode* tex = g.add("MatTexture", 0, 0);
+    std::snprintf(tex->values[1], sizeof tex->values[1], "T_Rock");
+    const u32 tex_id = tex->id;
+    const u32 tint = g.add("MatColor", 0, 100)->id;
+    const u32 mul = g.add("MatMultiply", 200, 0)->id;
+    CHECK(g.connect(tex_id, 0, mul, 0));
+    CHECK(g.connect(tint, 0, mul, 1));
+    CHECK(g.connect(mul, 0, out, 0));
+    CHECK(g.connect(tex_id, 1, out, 2));  // a Float output into a Float input
+    const u32 time = g.add("MatTime", 0, 200)->id;
+    CHECK(g.connect(time, 0, mul, 0));    // a Float output into a Vector input (material nodes mix)
+    CHECK(g.connect(tex_id, 0, mul, 0));
+    GraphNode* normal = g.add("MatTexture", 0, 300);
+    std::snprintf(normal->values[1], sizeof normal->values[1], "T_Rock");
+    std::snprintf(normal->values[2], sizeof normal->values[2], "Normal");
+    CHECK(g.connect(normal->id, 0, out, 4));
+    CHECK(compile_material_graph(g, code, error, sizeof error));
+    CHECK(code.texture_count == 2 && code.textures[0].srgb && !code.textures[1].srgb);
+    CHECK(std::strstr(code.code.data(), "lsd_tex0(mi.uv).rgb"));
+    CHECK(std::strstr(code.code.data(), "(lsd_tex1(mi.uv).rgb * 2.0 - lsd_v3(1.0))"));
+    CHECK(std::strstr(code.code.data(), "s.roughness = (v"));
+
+    // A loop and a texture without a name are reported.
+    const u32 a = g.add("MatAdd", 0, 400)->id, b = g.add("MatAdd", 0, 500)->id;
+    CHECK(g.connect(a, 0, b, 0) && g.connect(b, 0, a, 0) && g.connect(b, 0, out, 3));
+    CHECK(!compile_material_graph(g, code, error, sizeof error) && std::strstr(error, "loop"));
+    g.disconnect_input(out, 3);
+    std::snprintf(normal->values[1], sizeof normal->values[1], "%s", "");
+    CHECK(!compile_material_graph(g, code, error, sizeof error) && std::strstr(error, "no texture"));
+    // Scripts still keep their own types: a float does not wire into a vector there.
+    Graph s(default_allocator());
+    const u32 dt = s.add("OnUpdate", 0, 0)->id, pos = s.add("SetPosition", 200, 0)->id;
+    CHECK(!s.connect(dt, 1, pos, 1));
+}
+
 static void test_data_table() {
     asset::DataTable t(default_allocator());
     const char csv[] = "\xEF\xBB\xBFName,Damage,Label\r\nPistol,12.5,\"Small, quiet\"\r\nRifle,40,\"Says \"\"bang\"\"\nloudly\"\n\nShort\n";
@@ -195,6 +244,7 @@ assert(lsd.table("DT_Weapons") == t)  -- same table while the file is unchanged
 int main() {
     test_data_table();
     test_graph();
+    test_material_graph();
     write(kMover, R"(
 function on_start(self)
   self.target = lsd.find("Target")

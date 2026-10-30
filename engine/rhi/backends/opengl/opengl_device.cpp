@@ -90,6 +90,7 @@ constexpr char kMeshFragmentShader[] = R"(#version 460 core
 uniform vec4 u_color;
 uniform vec4 u_mat[2];   // metallic, roughness, emissive.rg | emissive.b, camera.xyz
 uniform vec2 u_flags;    // unlit, has normal map
+uniform float u_time;    // Material Graph Time
 struct Light { vec4 pos_type; vec4 dir_range; vec4 color_inner; vec4 spot; };
 layout(std140, binding = 1) uniform Lights {
     float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16];
@@ -143,26 +144,41 @@ in vec3 v_normal;
 in vec3 v_wpos;
 in vec2 v_uv;
 out vec4 o_color;
+//@MATERIAL
 const float PI = 3.14159265;
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
+    vec3 dp1 = dFdx(wpos), dp2 = dFdy(wpos);
+    vec2 duv1 = dFdx(uv), duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+    vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    float inv = inversesqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
+    return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
+}
 void main() {
+    vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
+#ifdef LSD_MATERIAL
+    MaterialIn mi;
+    mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time;
+    Surface surf = material_main(mi);
+    vec4 base = vec4(surf.base_color * u_color.rgb, u_color.a);
+    if (u_flags.x > 0.5) { o_color = vec4(to_srgb(base.rgb), base.a); return; }
+    n = perturb_normal(n, v_wpos, v_uv, surf.normal);
+    float metallic = clamp(surf.metallic, 0.0, 1.0);
+    float roughness = clamp(surf.roughness, 0.04, 1.0);
+    float ao = clamp(surf.ao, 0.0, 1.0);
+    vec3 emissive = surf.emissive;
+#else
     vec4 base = u_color * texture(base_tex, v_uv);
     if (u_flags.x > 0.5) { o_color = vec4(to_srgb(base.rgb), base.a); return; }
-    vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
-    if (u_flags.y > 0.5) {
-        vec3 dp1 = dFdx(v_wpos), dp2 = dFdy(v_wpos);
-        vec2 duv1 = dFdx(v_uv), duv2 = dFdy(v_uv);
-        vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
-        vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
-        vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
-        float inv = inversesqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
-        vec3 tn = texture(normal_tex, v_uv).xyz * 2.0 - 1.0;
-        n = normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
-    }
+    if (u_flags.y > 0.5) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
     vec3 orm = texture(orm_tex, v_uv).rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
+    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x);
+#endif
     vec3 v = normalize(u_mat[1].yzw - v_wpos);
     float ndv = max(dot(n, v), 1e-4);
     vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
@@ -200,9 +216,27 @@ void main() {
     vec3 sky = mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
-    lit += vec3(u_mat[0].zw, u_mat[1].x);
+    lit += emissive;
     o_color = vec4(to_srgb(lit * exposure), base.a);
 }
+)";
+
+// Material Graph code goes in at //@MATERIAL with these definitions; the macros let the shared
+// (HLSL-spelled) code read as GLSL (see lsd/script/material_graph.h).
+constexpr char kMaterialPreludeGlsl[] = R"(
+#define LSD_MATERIAL 1
+#define float2 vec2
+#define float3 vec3
+#define float4 vec4
+#define lerp mix
+#define frac fract
+#define saturate(x) clamp((x), 0.0, 1.0)
+struct MaterialIn { vec3 uv; vec3 wpos; vec3 normal; vec3 view; float time; };
+struct Surface { vec3 base_color; float metallic; float roughness; vec3 emissive; vec3 normal; float ao; };
+vec3 lsd_v3(float x) { return vec3(x); }
+vec4 lsd_tex0(vec3 uv) { return texture(base_tex, uv.xy); }
+vec4 lsd_tex1(vec3 uv) { return texture(normal_tex, uv.xy); }
+vec4 lsd_tex2(vec3 uv) { return texture(orm_tex, uv.xy); }
 )";
 
 constexpr char kShadowVertexShader[] = R"(#version 460 core
@@ -353,6 +387,16 @@ void APIENTRY debug_callback(GLenum, GLenum type, GLuint, GLenum severity, GLsiz
 }
 
 class OpenGLDevice final : public Device {
+    struct MeshProgram {
+        GLuint id = 0;
+        GLint mvp = -1, normal = -1, world = -1, color = -1, material = -1, flags = -1, time = -1;
+    };
+    struct MaterialShader {
+        MeshProgram mesh, skinned;
+        u32 generation = 0;
+    };
+    static constexpr u32 kMaxMaterialShaders = 256;
+
 public:
     explicit OpenGLDevice(const DeviceDesc& desc) : validation_(desc.enable_validation) {
         if (desc.adapter_override >= 0) {
@@ -374,6 +418,10 @@ public:
             if (program) gl_.glDeleteProgram(program);
         }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
+        for (MaterialShader& m : material_shaders_) {
+            if (m.mesh.id) gl_.glDeleteProgram(m.mesh.id);
+            if (m.skinned.id) gl_.glDeleteProgram(m.skinned.id);
+        }
         for (GLuint vao : {vao_, mesh_vao_, skinned_vao_, line_vao_, particle_vao_}) {
             if (vao) gl_.glDeleteVertexArrays(1, &vao);
         }
@@ -595,6 +643,50 @@ public:
         glEnable(GL_SCISSOR_TEST);
     }
 
+    void locate(MeshProgram& p) {
+        p.mvp = gl_.glGetUniformLocation(p.id, "u_mvp");
+        p.normal = gl_.glGetUniformLocation(p.id, "u_normal");
+        p.world = gl_.glGetUniformLocation(p.id, "u_world");
+        p.color = gl_.glGetUniformLocation(p.id, "u_color");
+        p.material = gl_.glGetUniformLocation(p.id, "u_mat");
+        p.flags = gl_.glGetUniformLocation(p.id, "u_flags");
+        p.time = gl_.glGetUniformLocation(p.id, "u_time");
+    }
+
+    MaterialShader* lookup_material(MaterialShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxMaterialShaders) return nullptr;
+        MaterialShader& m = material_shaders_[handle.index()];
+        return m.mesh.id && (m.generation & MaterialShaderHandle::kGenerationMask) == handle.generation() ? &m : nullptr;
+    }
+
+    MaterialShaderHandle create_material_shader(const char* code) override {
+        u32 slot = 0;
+        while (slot < kMaxMaterialShaders && material_shaders_[slot].mesh.id) ++slot;
+        if (slot == kMaxMaterialShaders || !code) return {};
+        std::string fragment = kMeshFragmentShader;
+        fragment.insert(fragment.find("//@MATERIAL"), std::string(kMaterialPreludeGlsl) + code);
+        MaterialShader& m = material_shaders_[slot];
+        m.mesh.id = link(with_skinning(kMeshVertexShader, false).c_str(), fragment.c_str());
+        m.skinned.id = m.mesh.id ? link(with_skinning(kMeshVertexShader, true).c_str(), fragment.c_str()) : 0;
+        if (!m.mesh.id || !m.skinned.id) {
+            if (m.mesh.id) gl_.glDeleteProgram(m.mesh.id);
+            m.mesh.id = 0;
+            return {};
+        }
+        locate(m.mesh);
+        locate(m.skinned);
+        return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    void destroy_material_shader(MaterialShaderHandle handle) override {
+        MaterialShader* m = lookup_material(handle);
+        if (!m) return;
+        gl_.glDeleteProgram(m->mesh.id);  // GL keeps it alive until queued draws finish
+        gl_.glDeleteProgram(m->skinned.id);
+        m->mesh.id = m->skinned.id = 0;
+        ++m->generation;
+    }
+
     void draw_mesh(const MeshDraw& draw) override {
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
@@ -602,7 +694,8 @@ public:
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         const bool skinned = draw.joint_rows && draw.joint_count;
-        const MeshProgram& program = skinned ? skinned_program_ : mesh_;
+        const MaterialShader* graph = draw.wireframe ? nullptr : lookup_material(draw.material_shader);
+        const MeshProgram& program = graph ? (skinned ? graph->skinned : graph->mesh) : skinned ? skinned_program_ : mesh_;
         if (skinned) upload_joints(draw.joint_rows, draw.joint_count);
         gl_.glUseProgram(program.id);
         gl_.glUniformMatrix4fv(program.mvp, 1, GL_FALSE, draw.mvp);
@@ -616,6 +709,7 @@ public:
         const Texture* normal = lookup_texture(draw.normal_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
         gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : 0.0f, normal ? 1.0f : 0.0f);
+        if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
         gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
@@ -913,14 +1007,7 @@ private:
         if (!skinned_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
-        for (MeshProgram* p : {&mesh_, &skinned_program_}) {
-            p->mvp = gl_.glGetUniformLocation(p->id, "u_mvp");
-            p->normal = gl_.glGetUniformLocation(p->id, "u_normal");
-            p->world = gl_.glGetUniformLocation(p->id, "u_world");
-            p->color = gl_.glGetUniformLocation(p->id, "u_color");
-            p->material = gl_.glGetUniformLocation(p->id, "u_mat");
-            p->flags = gl_.glGetUniformLocation(p->id, "u_flags");
-        }
+        for (MeshProgram* p : {&mesh_, &skinned_program_}) locate(*p);
         // Defaults for meshes without textures: white (colour, occlusion / roughness / metallic) and a flat normal.
         const u32 white = 0xFFFFFFFFu, flat = 0xFFFF8080u;  // RGBA bytes, little-endian
         const void* white_mip[1] = {&white};
@@ -975,10 +1062,6 @@ private:
     SDL_GLContext context_ = nullptr;
     GLuint program_ = 0;
     GLuint vao_ = 0;
-    struct MeshProgram {
-        GLuint id = 0;
-        GLint mvp = -1, normal = -1, world = -1, color = -1, material = -1, flags = -1;
-    };
     // `source` (a vertex shader starting with its #version line) with the skinning code, on or off.
     static std::string with_skinning(const char* source, bool skinned) {
         std::string s = source;
@@ -988,6 +1071,7 @@ private:
     }
     GLuint mesh_program_ = 0;  // == mesh_.id
     MeshProgram mesh_, skinned_program_;
+    MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint joint_ubo_ = 0;
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;

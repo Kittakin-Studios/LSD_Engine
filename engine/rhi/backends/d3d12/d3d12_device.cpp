@@ -14,6 +14,7 @@
 #include <imgui_impl_dx12.h>
 
 #include <cstring>
+#include <string>
 #include <new>
 
 using Microsoft::WRL::ComPtr;
@@ -143,26 +144,42 @@ VsOut vs_main(VsIn i) {
     o.uv = i.uv;
     return o;
 }
+//@MATERIAL
 static const float PI = 3.14159265;
 float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+// Normal map without stored tangents: a tangent frame from screen derivatives.
+float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
+    const float3 dp1 = ddx(wpos), dp2 = ddy(wpos);
+    const float2 duv1 = ddx(uv), duv2 = ddy(uv);
+    const float3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+    const float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    const float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    const float inv = rsqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
+    return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
+}
 float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
-    float4 base = color * base_tex.Sample(samp, i.uv);
-    if (n0.w > 0.5) return float4(to_srgb(base.rgb), base.a);
     float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
-    if (n1.w > 0.5) {  // normal map without stored tangents: a tangent frame from screen derivatives
-        const float3 dp1 = ddx(i.wpos), dp2 = ddy(i.wpos);
-        const float2 duv1 = ddx(i.uv), duv2 = ddy(i.uv);
-        const float3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
-        const float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
-        const float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
-        const float inv = rsqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
-        const float3 tn = normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0;
-        n = normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
-    }
+#ifdef LSD_MATERIAL
+    MaterialIn mi;
+    mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
+    const Surface surf = material_main(mi);
+    const float4 base = float4(surf.base_color * color.rgb, color.a);
+    if (n0.w > 0.5) return float4(to_srgb(base.rgb), base.a);
+    n = perturb_normal(n, i.wpos, i.uv, surf.normal);
+    const float metallic = saturate(surf.metallic);
+    const float roughness = clamp(surf.roughness, 0.04, 1.0);
+    const float ao = saturate(surf.ao);
+    const float3 emissive = surf.emissive;
+#else
+    const float4 base = color * base_tex.Sample(samp, i.uv);
+    if (n0.w > 0.5) return float4(to_srgb(base.rgb), base.a);
+    if (n1.w > 0.5) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
     const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
     const float metallic = saturate(mat0.x * orm.b);
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
     const float ao = orm.r;
+    const float3 emissive = float3(mat0.zw, mat1.x);
+#endif
     const float3 v = normalize(mat1.yzw - i.wpos);
     const float ndv = max(dot(n, v), 1e-4);
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
@@ -200,9 +217,20 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 sky = lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
-    lit += float3(mat0.zw, mat1.x);
+    lit += emissive;
     return float4(to_srgb(lit * exposure), base.a);
 }
+)";
+
+// Material Graph code goes in at //@MATERIAL with these definitions (see lsd/script/material_graph.h).
+constexpr char kMaterialPreludeHlsl[] = R"(
+#define LSD_MATERIAL 1
+struct MaterialIn { float3 uv; float3 wpos; float3 normal; float3 view; float time; };
+struct Surface { float3 base_color; float metallic; float roughness; float3 emissive; float3 normal; float ao; };
+float3 lsd_v3(float x) { return float3(x, x, x); }
+float4 lsd_tex0(float3 uv) { return base_tex.Sample(samp, uv.xy); }
+float4 lsd_tex1(float3 uv) { return normal_tex.Sample(samp, uv.xy); }
+float4 lsd_tex2(float3 uv) { return orm_tex.Sample(samp, uv.xy); }
 )";
 
 // Shadow casters: depth only (SKINNED: skinned first).
@@ -247,6 +275,20 @@ float4 ps_main(VsOut i) : SV_Target {
 }
 )";
 
+const D3D12_INPUT_ELEMENT_DESC kMeshLayout[] = {
+    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+};
+const D3D12_INPUT_ELEMENT_DESC kSkinnedLayout[] = {
+    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"BLENDINDICES", 0, DXGI_FORMAT_R8G8B8A8_UINT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"BLENDWEIGHT", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+};
+const D3D_SHADER_MACRO kSkinnedDefines[] = {{"SKINNED", "1"}, {nullptr, nullptr}};
+
 bool check(HRESULT hr, const char* what) {
     if (SUCCEEDED(hr)) return true;
     LSD_LOG_ERROR("d3d12", "%s failed (HRESULT 0x%08X)", what, static_cast<unsigned>(hr));
@@ -272,6 +314,12 @@ const char* to_string(AdapterType type) {
 }
 
 class D3D12Device final : public Device {
+    struct MaterialShader {
+        ComPtr<ID3D12PipelineState> mesh, skinned;
+        u32 generation = 0;
+    };
+    static constexpr u32 kMaxMaterialShaders = 256;
+
 public:
     ~D3D12Device() override {
         if (queue_ && fence_ && fence_event_) wait_for_gpu();
@@ -666,6 +714,8 @@ public:
         constants[47] = draw.emissive[1];
         constants[48] = draw.emissive[2];
         std::memcpy(constants + 49, draw.camera_position, sizeof draw.camera_position);
+        constants[27] = draw.time;  // the normal matrix's spare w
+        const MaterialShader* material = draw.wireframe ? nullptr : lookup_material(draw.material_shader);
         const Texture* base = lookup_texture(draw.base_color_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
@@ -683,9 +733,9 @@ public:
             const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(draw.joint_rows, draw.joint_count);
             if (!joints) return;
             list_->SetGraphicsRootConstantBufferView(7, joints);
-            list_->SetPipelineState(draw.wireframe ? skinned_wire_pipeline_.Get() : skinned_pipeline_.Get());
+            list_->SetPipelineState(draw.wireframe ? skinned_wire_pipeline_.Get() : material ? material->skinned.Get() : skinned_pipeline_.Get());
         } else {
-            list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
+            list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : material ? material->mesh.Get() : mesh_pipeline_.Get());
         }
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex)};
@@ -693,6 +743,37 @@ public:
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->IASetIndexBuffer(&ibv);
         list_->DrawIndexedInstanced(draw.index_count, 1, 0, 0, 0);
+    }
+
+    MaterialShader* lookup_material(MaterialShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxMaterialShaders) return nullptr;
+        MaterialShader& m = material_shaders_[handle.index()];
+        return m.mesh && (m.generation & MaterialShaderHandle::kGenerationMask) == handle.generation() ? &m : nullptr;
+    }
+
+    MaterialShaderHandle create_material_shader(const char* code) override {
+        u32 slot = 0;
+        while (slot < kMaxMaterialShaders && material_shaders_[slot].mesh) ++slot;
+        if (slot == kMaxMaterialShaders || !code) return {};
+        std::string source = kMeshHlsl;
+        source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
+        MaterialShader& m = material_shaders_[slot];
+        if (!create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) ||
+            !create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.skinned, false, kSkinnedDefines)) {
+            m.mesh.Reset();
+            m.skinned.Reset();
+            return {};
+        }
+        return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    void destroy_material_shader(MaterialShaderHandle handle) override {
+        MaterialShader* m = lookup_material(handle);
+        if (!m) return;
+        wait_for_gpu();  // shortcut: stalls; fine for edits in the editor, defer when materials churn
+        m->mesh.Reset();
+        m->skinned.Reset();
+        ++m->generation;
     }
 
     void set_lights(const LightSetup& lights) override {
@@ -1156,19 +1237,9 @@ private:
             particle_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&particle_mapped_[i]));
         }
 
-        static const D3D12_INPUT_ELEMENT_DESC mesh_layout[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        };
-        static const D3D12_INPUT_ELEMENT_DESC skinned_layout[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"BLENDINDICES", 0, DXGI_FORMAT_R8G8B8A8_UINT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"BLENDWEIGHT", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        };
-        static const D3D_SHADER_MACRO skinned_defines[] = {{"SKINNED", "1"}, {nullptr, nullptr}};
+        const D3D12_INPUT_ELEMENT_DESC* mesh_layout = kMeshLayout;
+        const D3D12_INPUT_ELEMENT_DESC* skinned_layout = kSkinnedLayout;
+        const D3D_SHADER_MACRO* skinned_defines = kSkinnedDefines;
         static const D3D12_INPUT_ELEMENT_DESC line_layout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -1351,6 +1422,7 @@ private:
     u8* particle_mapped_[kBackBufferCount] = {};
     u32 particle_offset_ = 0;
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
+    MaterialShader material_shaders_[kMaxMaterialShaders];
     ShadowMap shadow_maps_[kMaxShadowMaps];
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
     i32 shadow_pass_ = -1;

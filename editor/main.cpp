@@ -196,6 +196,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.camera_position[1] = eye.y;
         draw.camera_position[2] = eye.z;
         to_rgba(component->color, draw.color);
+        draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
         materials.apply(component->material, draw);  // base colour x tint, textures, metallic / roughness, emissive
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
@@ -239,6 +240,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.camera_position[1] = eye.y;
         draw.camera_position[2] = eye.z;
         to_rgba(component->color, draw.color);
+        draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
         materials.apply(component->material, draw);
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
@@ -307,12 +309,13 @@ void register_console(EditorState& s) {
     console::add_command("graph.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::Cue, nullptr, &hit, 1) == 1) {
+        if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::Cue, nullptr, &hit, 1) == 1 ||
+            st.registry->search(args, lsd::asset::AssetType::MaterialGraph, nullptr, &hit, 1) == 1) {
             lsd::editor::open_graph(st, st.registry->get(hit));
         } else {
             LSD_LOG_WARN("editor", "graph.Open: no visual script or sound cue named like '%s'", args);
         }
-    }, &s, "Open a visual script or sound cue in the graph editor");
+    }, &s, "Open a visual script, sound cue or material graph in the graph editor");
     console::add_command("table.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -827,6 +830,7 @@ int main(int argc, char** argv) {
 
     fs::remove(kLockPath, ignored);
     lsd::console::remove_all();  // the registrations point into state
+    lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     lsd::reflect::save_file(state.settings, kSettingsPath);

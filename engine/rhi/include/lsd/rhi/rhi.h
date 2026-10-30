@@ -38,6 +38,8 @@ struct BufferTag {};
 using BufferHandle = Handle<BufferTag>;
 struct TextureTag {};
 using TextureHandle = Handle<TextureTag>;
+struct MaterialShaderTag {};
+using MaterialShaderHandle = Handle<MaterialShaderTag>;
 enum class BufferUsage : u8 { Vertex, Index };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
 enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB };
@@ -95,6 +97,11 @@ struct MeshDraw {
     // as its first three rows (12 floats, joint_count <= kMaxJoints); mvp / world apply after it.
     const f32* joint_rows = nullptr;
     u32 joint_count = 0;
+    // Material Graph: when valid, its code shades the surface (colour is a tint on its base colour;
+    // metallic / roughness / emissive above are unused) and base_color / normal / orm_texture are its
+    // textures 0 / 1 / 2. `time` feeds its Time node.
+    MaterialShaderHandle material_shader;
+    f32 time = 0.0f;
 };
 
 // Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
@@ -192,6 +199,11 @@ public:
     virtual void end_shadow_pass() = 0;
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
+    // Material Graph code (lsd/script/material_graph.h: `Surface material_main(MaterialIn mi)`) built
+    // into the lit-mesh pipelines, static and skinned. Invalid if it does not compile (the shader
+    // compiler's message goes to the log).
+    virtual MaterialShaderHandle create_material_shader(const char* code) = 0;
+    virtual void destroy_material_shader(MaterialShaderHandle shader) = 0;  // safe while the GPU may still use it
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,

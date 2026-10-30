@@ -47,6 +47,7 @@ const char* to_string(AssetType type) {
         case AssetType::Sound: return "Sound";
         case AssetType::Cue: return "Sound Cue";
         case AssetType::Texture: return "Texture";
+        case AssetType::MaterialGraph: return "Material Graph";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -63,6 +64,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdgraph") == 0) return AssetType::Graph;
     if (std::strcmp(lower, ".csv") == 0) return AssetType::Table;
     if (std::strcmp(lower, ".lsdcue") == 0) return AssetType::Cue;
+    if (std::strcmp(lower, ".lsdmatgraph") == 0) return AssetType::MaterialGraph;
     for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd"}) {
         if (std::strcmp(lower, image) == 0) return AssetType::Texture;
     }

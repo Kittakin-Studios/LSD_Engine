@@ -12,8 +12,9 @@ namespace lsd::script {
 
 enum class PinType : u8 { Exec, Float, Bool, String, Vector, Entity, Audio };
 
-// Which node library a graph uses: visual scripts, or Sound Cues (same canvas, same file format).
-enum class GraphKind : u8 { Script, SoundCue };
+// Which node library a graph uses: visual scripts, Sound Cues or Material Graphs (same canvas, same
+// file format). Material nodes are compiled to shader code by engine/render/material_graph.h.
+enum class GraphKind : u8 { Script, SoundCue, Material };
 
 struct PinDef {
     const char* name;
@@ -35,12 +36,14 @@ struct NodeDef {
     // (a single "#0" is appended when absent). Pure nodes: unused, see output_code.
     const char* code;
     const char* output_code[4];  // pure nodes and events: the Lua expression of each data output
+                                 // (material nodes: the shader expression, see material_graph.h)
 };
 
 const NodeDef* node_defs(u32& count, GraphKind kind = GraphKind::Script);
 const NodeDef* find_node_def(const char* id);  // in either library
 bool is_event(const NodeDef& def);
 bool is_pure(const NodeDef& def);  // no exec pins
+bool is_material_node(const NodeDef& def);
 
 constexpr u32 kMaxPinValues = 6;
 

@@ -1422,7 +1422,8 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
     if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue;  // a wave or a cue
     if (std::strcmp(type, "Material") == 0) {  // a material or an instance of one
-        return r.type == asset::AssetType::Data && (std::strcmp(r.data_type, "Material") == 0 || std::strcmp(r.data_type, "MaterialInstance") == 0);
+        return r.type == asset::AssetType::MaterialGraph ||
+               (r.type == asset::AssetType::Data && (std::strcmp(r.data_type, "Material") == 0 || std::strcmp(r.data_type, "MaterialInstance") == 0));
     }
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
@@ -2271,6 +2272,16 @@ void draw_asset_grid(EditorState& s) {
         ImGui::SetItemTooltip("A spreadsheet (.csv) of rows and columns; read it with lsd.table() or Get Table Value. Dropping a .csv here imports one too");
         if (ImGui::MenuItem("New Material")) create_data_asset(s, reflect::type_of<render::Material>());
         ImGui::SetItemTooltip("Base colour, metallic, roughness, normal / ORM maps, emissive. Drag it onto an object in the viewport");
+        if (ImGui::MenuItem("New Material Graph")) {
+            const std::string path = create_material_graph_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "M_New");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
+        ImGui::SetItemTooltip("A material built from nodes (textures, maths, Time, Fresnel...) like Unreal's Material Editor. Double-click to edit; drag onto an object");
         if (ImGui::MenuItem("New Sound Cue")) {
             const std::string path = create_cue_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SC_New");
             s.registry->scan();
@@ -2356,7 +2367,9 @@ void draw_asset_grid(EditorState& s) {
                 request_open(s, path);
             }
             if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
-            if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_graph(s, r);
+            if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                open_graph(s, r);
+            }
             if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
             if (r.type == asset::AssetType::Sound && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toggle_preview(s, r);
             if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) s.particle_editor->open(s, r);
@@ -2373,6 +2386,7 @@ void draw_asset_grid(EditorState& s) {
             if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::MenuItem("Open Particle Editor")) s.particle_editor->open(s, r);
             if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
             if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
+            if (r.type == asset::AssetType::MaterialGraph && ImGui::MenuItem("Edit Material Graph")) open_graph(s, r);
             if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && ImGui::MenuItem("Create Material Instance")) {
                 render::MaterialInstance instance;
                 asset::to_string(r.guid, instance.parent);

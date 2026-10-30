@@ -19,6 +19,7 @@ public:
     // Invalid if the asset is missing or not an image.
     rhi::TextureHandle get(const char* guid, bool srgb);
     void check_files();
+    rhi::Device& device() { return device_; }
 
 private:
     struct Entry {
@@ -38,10 +39,11 @@ private:
 
 class MaterialCache {
 public:
-    MaterialCache(TextureCache& textures, const asset::AssetRegistry& registry) : textures_(textures), registry_(registry) {}
+    MaterialCache(TextureCache& textures, const asset::AssetRegistry& registry) : textures_(textures), device_(textures.device()), registry_(registry) {}
 
     // Fills the material part of a draw (the draw's colour is the tint and is multiplied in). No
-    // material: the draw keeps its colour with default roughness.
+    // material: the draw keeps its colour with default roughness. A Material Graph sets the draw's
+    // material shader and its textures (compiled when first used and again when its file changes).
     void apply(const char* material_guid, rhi::MeshDraw& draw);
     void check_files();
 
@@ -53,11 +55,19 @@ private:
         char parent[33];             // instances: the parent material, reloaded when it changes
         i64 parent_modified;
         bool failed;
+        rhi::MaterialShaderHandle shader;  // Material Graphs
+        char textures[3][64];              // their texture asset names, and the GUIDs found for them
+        char texture_guids[3][33];
+        bool texture_srgb[3];
+        u32 texture_count;
     };
+    void load_graph(Entry& entry, const char* path);
+    void resolve_textures(Entry& entry);
     Entry* find(const char* guid);
     void load(Entry& entry);
 
     TextureCache& textures_;
+    rhi::Device& device_;
     const asset::AssetRegistry& registry_;
     Entry entries_[256];
     u32 count_ = 0;

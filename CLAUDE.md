@@ -84,7 +84,8 @@ engine/world/       entities (generational handles), packed component pools per 
 engine/input/       Input Action / Mapping Context data assets and the InputSystem (keys, mouse, gamepad)
 engine/physics/     Jolt behind a small API: bodies (box/sphere/capsule) and the player's CharacterVirtual
 engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload;
-                    graph.h: visual-script graphs and their compiler to Lua
+                    graph.h: visual-script graphs and their compiler to Lua; material_graph.h: material
+                    graphs compiled to shader code
 engine/animation/   ozz-animation behind SkinnedModel / Clip / Pose: FBX skin + clip import, GPU skinning matrices
 engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
 engine/particles/   ParticleSystem data asset (emitter stack) and its CPU simulation, sprites for rhi draw_particles
@@ -168,7 +169,9 @@ notifies). Animation graph (AnimGraph data asset: states, 1D blend spaces, trans
 crossfades; Character drives Speed / VerticalSpeed / InAir; `lsd.set_anim_param`). The audio exit
 test now passes fully. CPU particles (ParticleSystem data asset, ParticleEffect component, editor
 preview, alpha / additive sprites on D3D12 and OpenGL) and the Particle Editor window (preview, timeline,
-per-emitter stats). Next: material graph.
+per-emitter stats). Material Graphs (`.lsdmatgraph` on the graph canvas, compiled to shader code built
+into the lit-mesh pipelines on D3D12 / OpenGL; used like a Material). Next: material graph preview +
+parameters, sky / fog / post, timeline.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
