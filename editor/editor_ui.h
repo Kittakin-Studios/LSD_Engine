@@ -86,6 +86,7 @@ struct EditorState {
     ThumbnailCache* thumbnails = nullptr;
     class TextureCache* textures = nullptr;  // set by main.cpp (texture thumbnails)
     class SkinnedCache* skinned = nullptr;   // set by main.cpp (rigged meshes: bounds, drop)
+    class ParticleEditor* particle_editor = nullptr;  // set by main.cpp
     rhi::Device* device = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
     char search[96] = "";
@@ -142,6 +143,10 @@ void create_input_setup(EditorState& state);
 u32 refresh_prefabs(EditorState& state);
 // Selects the first asset whose name matches (for scripted screenshots and the console).
 bool select_asset(EditorState& state, const char* name);
+// The Details panel's working copy of a data asset (unsaved edits included) if it is showing that
+// asset as `type`, else nullptr. Editor windows preview from it (the Particle Editor).
+void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type);
+bool asset_matches(const asset::AssetRecord& record, const char* type);  // "Mesh", "Material", a data type name...
 
 // One viewport, or the 2x2 layout (perspective, top, front, right).
 void set_layout(EditorState& state, bool quad);

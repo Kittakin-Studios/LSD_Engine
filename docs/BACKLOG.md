@@ -171,7 +171,7 @@ visual-script sounds, `stat audio`.
 ### Effects
 
 - [~] Particle systems on CPU (`engine/particles`): ParticleSystem data asset with up to 8 emitters (rate, burst, duration / loop, cap, lifetime; Point / Sphere / Box shape; direction + cone spread, speed; gravity scale, wind, drag; start -> end colour, opacity and size; spin; local or world space; texture or a built-in soft dot; Alpha (sorted back to front) or Additive), ParticleEffect component (active, time scale, editor preview; Lua via `lsd.set`), drag a system into the viewport, Place tab entry, hot reload on save, `draw_particles` on D3D12 / OpenGL; needs over-life curves, collision, mesh + ribbon renderers, lit / soft particles, spawn by name from Lua [Niagara]
-- [ ] Particle editor with timeline preview and per-system stats
+- [~] Particle Editor window (double-click a Particle System, or `particles.Open <name>`): its own preview viewport (orbit / zoom), play / pause / restart / loop / speed, timeline scrub (re-simulated from the start), per-emitter counts against their caps, sim time; emitters edited in Details with the preview following unsaved edits; needs a node / stack view of modules, bounds display, per-platform scalability
 
 ### Timelines
 

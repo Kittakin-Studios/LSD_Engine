@@ -5,6 +5,7 @@
 #include "skinned_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
+#include "particle_editor.h"
 
 #include "mesh_cache.h"
 #include "thumbnails.h"
@@ -238,7 +239,6 @@ Entity place(EditorState& s, const char* name, const char* mesh, const char* com
     return e;
 }
 
-bool asset_matches(const asset::AssetRecord& r, const char* type);  // "Mesh", "Material", a data type...
 
 // ---- Prefabs ----
 
@@ -1413,6 +1413,8 @@ void draw_outliner(EditorState& s) {
 void start_rename(EditorState& s, asset::Guid guid, const char* folder, const char* current);
 void toggle_preview(EditorState& s, const asset::AssetRecord& r);
 
+} // namespace
+
 bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
@@ -1424,6 +1426,8 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     }
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
+
+namespace {
 
 // Combo of the assets of one type ("None" clears it); also accepts an asset dragged from the Content Browser.
 bool asset_picker(EditorState& s, const char* type, char* guid_text, usize capacity) {
@@ -1621,6 +1625,14 @@ bool draw_curve_editor(world::Curve& curve) {
     ImGui::TextDisabled("Drag keys. Double-click: add a key. Right-click a key: delete it.");
     return changed;
 }
+
+} // namespace
+
+void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type) {
+    return g_data_type == &type && g_data_guid == guid ? g_data : nullptr;
+}
+
+namespace {
 
 void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     const EditorTheme& t = s.theme;
@@ -2347,6 +2359,7 @@ void draw_asset_grid(EditorState& s) {
             if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
             if (r.type == asset::AssetType::Sound && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toggle_preview(s, r);
+            if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) s.particle_editor->open(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
             if (level && ImGui::MenuItem("Open Level")) {
@@ -2357,6 +2370,7 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Script && ImGui::MenuItem("Edit Script")) open_external(s, r);
             if (r.type == asset::AssetType::Graph && ImGui::MenuItem("Edit Visual Script")) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Edit Data Table")) open_table(s, r);
+            if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::MenuItem("Open Particle Editor")) s.particle_editor->open(s, r);
             if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
             if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
             if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && ImGui::MenuItem("Create Material Instance")) {
@@ -3068,6 +3082,7 @@ void draw_editor(EditorState& s) {
     draw_level_dialogs(s);
     draw_graph_editor(s);
     draw_table_editor(s);
+    if (s.particle_editor) s.particle_editor->draw(s);
     handle_shortcuts(s);
 
     // The central node is left empty and transparent: the 3D viewport shows through it.

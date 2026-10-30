@@ -20,6 +20,10 @@ public:
     void update(const world::World& world, f32 dt, bool playing);
     // One viewport: `view` gives the camera's axes, so sprites face it.
     void draw(rhi::Device& device, const world::World& world, const Mat4& view_proj, const Mat4& view, Vec3 eye, bool skip_hidden);
+    // One instance (the Particle Editor's preview), the same way.
+    void draw_instance(rhi::Device& device, const particles::ParticleInstance& instance, const particles::ParticleSystem& system, const Mat4& world,
+                       const Mat4& view_proj, const Mat4& view, Vec3 eye);
+    const particles::ParticleSystem* system(const char* guid);  // loaded (and hot-reloaded) asset; nullptr if missing
     void reset();         // every effect starts over (Play)
     void check_files();   // about once a second
     u32 particle_count() const { return particle_count_; }

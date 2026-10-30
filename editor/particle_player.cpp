@@ -79,6 +79,11 @@ const ParticlePlayer::System* ParticlePlayer::find(const char* guid) {
     return s->failed ? nullptr : s;
 }
 
+const particles::ParticleSystem* ParticlePlayer::system(const char* guid) {
+    const System* s = find(guid);
+    return s ? &s->system : nullptr;
+}
+
 void ParticlePlayer::check_files() {
     for (u32 i = 0; i < system_count_; ++i) {
         char path[300];
@@ -129,21 +134,24 @@ void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
     }
 }
 
-void ParticlePlayer::draw(rhi::Device& device, const world::World& world, const Mat4& view_proj, const Mat4& view, Vec3 eye, bool skip_hidden) {
+void ParticlePlayer::draw_instance(rhi::Device& device, const particles::ParticleInstance& instance, const particles::ParticleSystem& system,
+                                   const Mat4& world, const Mat4& view_proj, const Mat4& view, Vec3 eye) {
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
     const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
+    for (u32 k = 0; k < system.emitters.count; ++k) {
+        const u32 n = instance.build_sprites(system, k, world, eye, right, up, vertices_, kMaxVertices);
+        if (!n) continue;
+        const particles::ParticleEmitter& emitter = system.emitters[k];
+        const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
+        device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);
+    }
+}
+
+void ParticlePlayer::draw(rhi::Device& device, const world::World& world, const Mat4& view_proj, const Mat4& view, Vec3 eye, bool skip_hidden) {
     for (const Effect& e : effects_) {
         if (!e.used || !e.system || !world.alive(e.entity)) continue;
         if (skip_hidden && world.hidden_in_hierarchy(e.entity)) continue;
-        const Mat4 m = world.world_matrix(e.entity);
-        const particles::ParticleSystem& system = e.system->system;
-        for (u32 k = 0; k < system.emitters.count; ++k) {
-            const u32 n = e.instance->build_sprites(system, k, m, eye, right, up, vertices_, kMaxVertices);
-            if (!n) continue;
-            const particles::ParticleEmitter& emitter = system.emitters[k];
-            const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
-            device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);
-        }
+        draw_instance(device, *e.instance, e.system->system, world.world_matrix(e.entity), view_proj, view, eye);
     }
 }
 

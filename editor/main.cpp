@@ -6,6 +6,7 @@
 #include "lighting.h"
 #include "material_cache.h"
 #include "animation_player.h"
+#include "particle_editor.h"
 #include "particle_player.h"
 #include "skinned_cache.h"
 #include "play_session.h"
@@ -291,6 +292,18 @@ void register_console(EditorState& s) {
     console::add_command("asset.Select", [](void* user, const char* args) {
         if (!lsd::editor::select_asset(*static_cast<EditorState*>(user), args)) LSD_LOG_WARN("console", "asset.Select: no asset named like '%s'", args);
     }, &s, "asset.Select <name>: select an asset and show it in Details");
+    console::add_command("particles.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hits[64];
+        const lsd::usize count = st.registry->search(args, lsd::asset::AssetType::Data, nullptr, hits, 64);
+        for (lsd::usize i = 0; i < count; ++i) {
+            const lsd::asset::AssetRecord& r = st.registry->get(hits[i]);
+            if (!lsd::editor::asset_matches(r, "ParticleSystem") || !st.particle_editor) continue;
+            st.particle_editor->open(st, r);
+            return;
+        }
+        LSD_LOG_WARN("editor", "particles.Open: no particle system named like '%s'", args);
+    }, &s, "Open a particle system in the Particle Editor");
     console::add_command("graph.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -572,7 +585,6 @@ int main(int argc, char** argv) {
     }
     state.play_requested = play_arg;
     register_console(state);
-    for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
     for (lsd::u32 slot = 0; select_arg && slot < world.slot_count(); ++slot) {
         const lsd::world::Entity e = world.entity_at_slot(slot);
         if (e.valid() && std::strcmp(world.name(e), select_arg) == 0) {
@@ -583,6 +595,9 @@ int main(int argc, char** argv) {
 
     lsd::render::GridColors current_grid = grid_colors(state.theme);
     lsd::render::GpuLines grid = lsd::render::create_grid(*device, allocator, current_grid);
+    auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
+    state.particle_editor = particle_editor;
+    for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
 
     lsd::audio::AudioSystem audio;
     audio.init(!no_sound);
@@ -779,6 +794,7 @@ int main(int argc, char** argv) {
         thumbnails.release_temporaries();
         device->begin_frame(clear_color);
         thumbnails.render(clear_color);
+        particle_editor->render(*device, clear_color);
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
@@ -821,6 +837,7 @@ int main(int argc, char** argv) {
     lsd::render::destroy_lines(*device, grid);
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
+    delete particle_editor;
     delete animations;
     delete effects;
     delete skinned_cache;
