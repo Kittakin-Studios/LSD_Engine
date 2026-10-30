@@ -22,6 +22,7 @@ option(LSD_BUILD_TESTS  "Build unit tests"         ON)
 include(cmake/CompilerSettings.cmake)
 include(cmake/Reflect.cmake)
 
+option(LSD_TRACY "Build with the Tracy profiler client (LSD_PROFILE_SCOPE zones)" OFF)
 add_subdirectory(third_party)
 add_subdirectory(engine/foundation)
 add_subdirectory(engine/core)

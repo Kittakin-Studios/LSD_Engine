@@ -2700,9 +2700,14 @@ void draw_stats(EditorState& s, ImVec2 pos, ImVec2 size) {
     if (!s.show_stats) return;
     static f32 smoothed = 0.016f;
     smoothed = smoothed * 0.95f + ImGui::GetIO().DeltaTime * 0.05f;
-    char text[160];
-    std::snprintf(text, sizeof text, "%.0f fps   %.2f ms\n%u draws   %u triangles   %u culled", static_cast<f64>(1.0f / smoothed), static_cast<f64>(smoothed * 1000.0f),
-                  s.stat_draws, s.stat_triangles, s.stat_culled);
+    static f32 game = 0, render = 0, ui = 0;
+    game = game * 0.95f + s.stat_game_ms * 0.05f;
+    render = render * 0.95f + s.stat_render_ms * 0.05f;
+    ui = ui * 0.95f + s.stat_ui_ms * 0.05f;
+    char text[320];
+    std::snprintf(text, sizeof text, "%.0f fps   %.2f ms\ngame %.2f   render %.2f   ui %.2f ms (CPU)\n%u draws   %u triangles   %u culled\nengine memory %.1f MB",
+                  static_cast<f64>(1.0f / smoothed), static_cast<f64>(smoothed * 1000.0f), static_cast<f64>(game), static_cast<f64>(render), static_cast<f64>(ui),
+                  s.stat_draws, s.stat_triangles, s.stat_culled, static_cast<f64>(default_allocator().allocated_bytes()) / (1024.0 * 1024.0));
     const ImVec2 text_size = ImGui::CalcTextSize(text);
     ImGui::GetForegroundDrawList()->AddText(ImVec2(pos.x + size.x - text_size.x - 14.0f, pos.y + 12.0f), u32_color(s.theme.axis_y), text);
 }

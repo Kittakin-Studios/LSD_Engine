@@ -3,6 +3,8 @@
 #include "animation_player.h"
 #include "behavior.h"
 
+#include "lsd/foundation/profile.h"
+
 #include "lsd/ui/ui.h"
 #include "navigation.h"
 #include "graph_editor.h"
@@ -819,6 +821,7 @@ void PlaySession::send_hits() {
 }
 
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
+    LSD_PROFILE_SCOPE("play");
     if (!physics_) return;
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
     input_.update(frame, dt);
@@ -899,7 +902,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_audio_volumes(world, dt);
     send_hits();
     update_triggers(world);
-    scripts_.update(dt);
+    {
+        LSD_PROFILE_SCOPE("scripts");
+        scripts_.update(dt);
+    }
     update_brains(world, dt);
     update_agents(world, dt);
 }

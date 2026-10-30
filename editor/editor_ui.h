@@ -58,6 +58,7 @@ struct EditorState {
     u32 stat_draws = 0;       // set by main.cpp after drawing
     u32 stat_triangles = 0;
     u32 stat_culled = 0;      // outside the view: not drawn
+    f32 stat_game_ms = 0.0f, stat_render_ms = 0.0f, stat_ui_ms = 0.0f;  // stat unit (CPU)
     EditorCamera bookmarks[10];  // Ctrl+0..9 stores, 0..9 jumps (like Unreal)
     bool bookmark_set[10] = {};
     int details_tab = 0;

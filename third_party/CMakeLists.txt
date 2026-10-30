@@ -278,3 +278,15 @@ FetchContent_Declare(rmlui
   SYSTEM
 )
 FetchContent_MakeAvailable(rmlui)
+
+# Tracy: the CPU profiler client (BSD-3), only with -DLSD_TRACY=ON (it listens on a network port).
+if(LSD_TRACY)
+  set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)  # costs nothing until the profiler connects
+  FetchContent_Declare(tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG v0.11.1
+    GIT_SHALLOW TRUE
+    SYSTEM
+  )
+  FetchContent_MakeAvailable(tracy)
+endif()

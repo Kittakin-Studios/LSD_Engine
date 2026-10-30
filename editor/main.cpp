@@ -13,6 +13,7 @@
 #include "ui_editor.h"
 
 #include "lsd/asset/texture.h"
+#include "lsd/foundation/profile.h"
 #include "lsd/core/crash.h"
 #include "lsd/ui/ui.h"
 #include "skinned_cache.h"
@@ -185,9 +186,21 @@ bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi) {
     return true;
 }
 
+// stat unit: CPU milliseconds of the frame's parts (smoothed when shown).
+struct FrameTimer {
+    lsd::u64 start = SDL_GetTicksNS();
+    lsd::f32 lap() {
+        const lsd::u64 now = SDL_GetTicksNS();
+        const lsd::f32 ms = static_cast<lsd::f32>(static_cast<double>(now - start) * 1e-6);
+        start = now;
+        return ms;
+    }
+};
+
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
                 lsd::rhi::TextureHandle shadow_atlas, lsd::rhi::TextureHandle local_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
                 EditorState& stats) {
+    LSD_PROFILE_SCOPE("draw_world");
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
@@ -859,12 +872,17 @@ int main(int argc, char** argv) {
         }
         was_showing = state.show_navigation;
 
+        FrameTimer timer;
         device->debug_ui_new_frame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        if (game_mode) lsd::editor::draw_game(state);
-        else lsd::editor::draw_editor(state);
-        ImGui::Render();
+        {
+            LSD_PROFILE_SCOPE("editor ui");
+            if (game_mode) lsd::editor::draw_game(state);
+            else lsd::editor::draw_editor(state);
+            ImGui::Render();
+        }
+        state.stat_ui_ms = timer.lap();
         if (state.package_requested) {
             state.package_requested = false;
             lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
@@ -956,6 +974,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            LSD_PROFILE_SCOPE("game");
             if (!state.paused || state.step_requested) play.update(world, devices, state.paused ? 1.0f / 60.0f : dt);
             state.step_requested = false;
             state.player_feet = play.feet();
@@ -996,6 +1015,7 @@ int main(int argc, char** argv) {
             current_grid = wanted_grid;
         }
 
+        state.stat_game_ms = timer.lap();  // play, animation, particles, audio, file checks
         const lsd::LinearColor& bg = state.theme.viewport_background;
         const lsd::f32 clear_color[4] = {bg.r, bg.g, bg.b, 1.0f};
         thumbnails.release_temporaries();
@@ -1032,6 +1052,8 @@ int main(int argc, char** argv) {
             }
         }
         device->render_debug_ui();
+        state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
+        LSD_PROFILE_FRAME();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
             LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl for now.");
         }
