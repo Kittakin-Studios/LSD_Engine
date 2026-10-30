@@ -474,6 +474,41 @@ struct Api {
         lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
         return 1;
     }
+    static int move_to(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const Vec3 target{static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_checknumber(L, 3)), static_cast<f32>(luaL_checknumber(L, 4))};
+        lua_pushboolean(L, host.move_to && host.move_to(host.user, live_entity(L, 1), target));
+        return 1;
+    }
+    static int stop_move(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.stop_move) host.stop_move(host.user, live_entity(L, 1));
+        return 0;
+    }
+    static int is_moving(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.is_moving && host.is_moving(host.user, live_entity(L, 1)));
+        return 1;
+    }
+    static int find_path(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const Vec3 from{static_cast<f32>(luaL_checknumber(L, 1)), static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_checknumber(L, 3))};
+        const Vec3 to{static_cast<f32>(luaL_checknumber(L, 4)), static_cast<f32>(luaL_checknumber(L, 5)), static_cast<f32>(luaL_checknumber(L, 6))};
+        Vec3 points[64];
+        const u32 n = host.find_path ? host.find_path(host.user, from, to, points, 64) : 0;
+        lua_createtable(L, static_cast<int>(n), 0);
+        for (u32 i = 0; i < n; ++i) {
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, points[i].x);
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, points[i].y);
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, points[i].z);
+            lua_setfield(L, -2, "z");
+            lua_rawseti(L, -2, static_cast<int>(i + 1));
+        }
+        return 1;
+    }
     static int stop_sound(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.stop_sound) host.stop_sound(host.user, static_cast<u32>(luaL_checknumber(L, 1)));
@@ -732,7 +767,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
-        {"has_save", Api::has_save}, {"delete_save", Api::delete_save},
+        {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
+        {"is_moving", Api::is_moving}, {"find_path", Api::find_path},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

@@ -199,7 +199,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 
 ### AI
 
-- [ ] Navmesh (Recast) with live preview, AI Move To + avoidance (Detour), nav links for jumps
+- [~] Navmesh (Recast & Detour, `engine/ai`): built from the collision boxes (meshes with collision, Blocking Volumes) inside Nav Mesh Bounds (or the whole level) with World Settings > Navigation (agent radius / height, step, slope, cell size); P / Show > Navigation draws it (editor, ejected); Nav Agent component walks with crowd avoidance in Play; `lsd.move_to` / `stop_move` / `is_moving` / `find_path`, AI Move To / AI Stop Moving / Is Moving nodes; needs nav links for jumps, tiled / runtime rebuilds, triangle-exact geometry, the overlay depth-tested and in Play
 - [ ] Behaviour trees + blackboard with live debugging
 - [ ] Perception: sight and hearing (moved up from v2: needed for any enemy) [AI Perception]
 

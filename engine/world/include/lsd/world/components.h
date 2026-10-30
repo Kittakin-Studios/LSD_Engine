@@ -311,6 +311,36 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Darker corners") f32 vignette = 0.3f;
 };
 
+// Where the navmesh is built (Unreal's Nav Mesh Bounds Volume): the unit cube scaled by the
+// transform, like the other volumes. Without any, the whole level is used.
+LSD_STRUCT(Component, Category = "AI")
+struct NavMeshBounds {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
+};
+
+// Walks on the navmesh in Play, steering round other agents (an AI-controlled pawn): Lua
+// lsd.move_to(e, x, y, z) or the AI Move To node sends it somewhere.
+LSD_STRUCT(Component, Category = "AI")
+struct NavAgent {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 max_speed = 3.5f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05) f32 radius = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1) f32 height = 1.8f;
+    LSD_PROPERTY(Edit, Tooltip = "Turn to face where it walks") bool face_movement = true;
+};
+
+// How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).
+LSD_STRUCT()
+struct NavSettings {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Tooltip = "How far from walls agents keep") f32 agent_radius = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.2) f32 agent_height = 1.8f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 max_step_height = 0.45f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89) f32 max_slope = 45.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 1, Tooltip = "Smaller: follows the geometry closer, builds slower") f32 cell_size = 0.15f;
+};
+
 // Per-level settings (Unreal's World Settings), saved in the level file.
 LSD_STRUCT(Category = "World")
 struct WorldSettings {
@@ -320,6 +350,7 @@ struct WorldSettings {
     LSD_PROPERTY(Edit, Min = -10, Max = 20, Tooltip = "Fixed camera exposure (EV100) once the level has lights: higher is darker. 1.5 suits the default 10 lux sun; a 100000 lux real sun wants about 15")
     f32 exposure_ev100 = 1.5f;
     LSD_PROPERTY(Edit, Widget = "Asset:GameMode", Tooltip = "Rules for Play: player prefab and game script") char game_mode[33] = "";
+    LSD_PROPERTY(Edit) NavSettings navigation;
 };
 
 } // namespace lsd::world

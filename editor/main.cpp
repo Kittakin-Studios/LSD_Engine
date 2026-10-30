@@ -9,6 +9,7 @@
 #include "particle_editor.h"
 #include "particle_player.h"
 #include "packaging.h"
+#include "navigation.h"
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
@@ -263,6 +264,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
 void register_console(EditorState& s) {
     namespace console = lsd::console;
     console::add_variable("r.Grid", &s.show_grid, "Draw the floor grid");
+    console::add_variable("show.Navigation", &s.show_navigation, "Draw the navmesh (P)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
     console::add_variable("editor.Snap", &s.settings.snap, "Snap gizmo moves, rotations and scales");
@@ -693,6 +695,18 @@ int main(int argc, char** argv) {
             materials.check_files();
             last_scan = SDL_GetTicks();
         }
+
+        // The navmesh preview (P): rebuilt when switched on, then about once a second (Play shows its own).
+        static lsd::u64 last_nav = 0;
+        static bool was_showing = false;
+        if (state.show_navigation && (!was_showing || SDL_GetTicks() - last_nav > 1000)) {
+            static lsd::ai::NavMesh preview;
+            if (!state.playing) lsd::editor::build_level_navmesh(world, meshes, preview);
+            const lsd::ai::NavMesh& nav = state.playing ? play.navmesh() : preview;
+            state.nav_line_count = nav.debug_lines(state.nav_lines, sizeof state.nav_lines / sizeof state.nav_lines[0]);
+            last_nav = SDL_GetTicks();
+        }
+        was_showing = state.show_navigation;
 
         device->debug_ui_new_frame();
         ImGui_ImplSDL3_NewFrame();

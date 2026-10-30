@@ -42,6 +42,9 @@ struct EditorState {
     EditorCamera camera;
     bool show_grid = true;
     bool show_axis_gizmo = true;
+    bool show_navigation = false;  // P: the navmesh in green (rebuilt by main.cpp about once a second)
+    Vec3 nav_lines[32768];         // line pairs
+    u32 nav_line_count = 0;
     bool game_view = false;  // G: hide grid, gizmos and icons
     ViewMode view_mode = ViewMode::Lit;
     EditorCamera perspective_camera;  // restored when leaving an orthographic view

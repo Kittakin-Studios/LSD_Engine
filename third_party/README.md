@@ -12,3 +12,5 @@ Fetched by `CMakeLists.txt` at configure time, pinned to a tag. Only permissive 
 | ufbx | v0.23.1 | MIT (or public domain) | FBX import |
 | cgltf | v1.15 | MIT | glTF 2.0 import |
 | meshoptimizer | v1.3 | MIT | mesh indexing and optimisation |
+| Recast & Detour (recastnavigation) | v1.6.0 | zlib | navmesh, path finding, crowd avoidance |
+

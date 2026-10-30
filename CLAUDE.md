@@ -88,6 +88,7 @@ engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_u
                     graphs compiled to shader code
 engine/animation/   ozz-animation behind SkinnedModel / Clip / Pose: FBX skin + clip import, GPU skinning matrices
 engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
+engine/ai/          Recast & Detour behind NavMesh: build from triangles, find_path, crowd agents
 engine/particles/   ParticleSystem data asset (emitter stack) and its CPU simulation, sprites for rhi draw_particles
 engine/ui           placeholder
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
@@ -97,7 +98,8 @@ tools/data_compiler/ CLI stub: --source-dir / --data-dir
 tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
 third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, ImGuizmo, Vulkan-Headers, volk,
-                    ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake, miniaudio, stb, ozz-animation)
+                    ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake, miniaudio, stb, ozz-animation,
+                    recastnavigation)
 tests/              framework-free unit tests (CTest)
 docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
 ```
@@ -177,7 +179,8 @@ by Material Instances of a graph.
 **Milestone 6 — in progress, exit test works on this PC.** File > Package Project (editor/packaging.cpp)
 writes Build/<Project>/ (Release exe + Content + Config + VC++ runtime + game.json); the exe in a
 folder with game.json (or `-game`) runs as the game. Save games (`lsd.save_game` / `load_game`, Save / Load Value nodes). Sky, Height Fog and Post Process Volume components
-(forward: fog / grading in the lit shader, `draw_sky`). Next: AI (navmesh, behaviour trees), UI.
+(forward: fog / grading in the lit shader, `draw_sky`). Navmesh + Nav Agents (`engine/ai` on Recast & Detour, `lsd.move_to`). Next: behaviour trees,
+perception, UI.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

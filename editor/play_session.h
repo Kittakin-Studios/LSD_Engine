@@ -9,6 +9,7 @@
 #include "mesh_cache.h"
 #include "sound_player.h"
 
+#include "lsd/ai/navigation.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/input/input.h"
 #include "lsd/physics/physics.h"
@@ -40,6 +41,7 @@ public:
     void set_sounds(SoundPlayer* sounds) { sounds_ = sounds; }
     // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
     void set_animations(AnimationPlayer* animations) { animations_ = animations; }
+    const ai::NavMesh& navmesh() const { return nav_; }  // built when Play starts
 
 private:
     struct Simulated {
@@ -90,6 +92,16 @@ private:
     };
     SoundPlayer* sounds_ = nullptr;
     AnimationPlayer* animations_ = nullptr;
+    // Nav Agents walking on the navmesh.
+    ai::NavMesh nav_;
+    struct Agent {
+        world::Entity entity;
+        i32 id;
+    };
+    Agent agents_[ai::kMaxAgents];
+    u32 agent_count_ = 0;
+    i32 agent_of(world::Entity e);  // adds it on first use; -1 if it cannot walk here
+    void update_agents(world::World& world, f32 dt);
     struct Emitter {
         world::Entity entity;
         u32 voice;

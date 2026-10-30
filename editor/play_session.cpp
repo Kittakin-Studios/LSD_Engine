@@ -1,6 +1,7 @@
 #include "play_session.h"
 
 #include "animation_player.h"
+#include "navigation.h"
 #include "graph_editor.h"
 
 #include "lsd/asset/data_asset.h"
@@ -87,8 +88,47 @@ bool load_asset(const asset::AssetRegistry& registry, const char* guid_text, T& 
 
 PlaySession::~PlaySession() { stop(); }
 
+i32 PlaySession::agent_of(world::Entity e) {
+    for (u32 i = 0; i < agent_count_; ++i) {
+        if (agents_[i].entity == e) return agents_[i].id;
+    }
+    const auto* agent = world_ ? world_->get<world::NavAgent>(e) : nullptr;
+    if (!agent || agent_count_ == ai::kMaxAgents) return -1;
+    const Mat4 m = world_->world_matrix(e);
+    const i32 id = nav_.add_agent({m.at(0, 3), m.at(1, 3), m.at(2, 3)}, agent->radius, agent->height, agent->max_speed);
+    if (id < 0) {
+        LSD_LOG_WARN("play", "%s: Nav Agent is not on the navmesh", world_->name(e));
+        return -1;
+    }
+    agents_[agent_count_++] = {e, id};
+    return id;
+}
+
+// Moves the agents and writes them back to their objects (feet on the navmesh, facing their way).
+void PlaySession::update_agents(world::World& world, f32 dt) {
+    if (!nav_.valid()) return;
+    nav_.update(dt);
+    for (u32 i = 0; i < agent_count_;) {
+        const Agent a = agents_[i];
+        const auto* agent = world.alive(a.entity) ? world.get<world::NavAgent>(a.entity) : nullptr;
+        if (!agent) {  // destroyed (or the component removed) by a script
+            nav_.remove_agent(a.id);
+            agents_[i] = agents_[--agent_count_];
+            continue;
+        }
+        Vec3 t, rotation, scale;
+        decompose_trs(world.world_matrix(a.entity), t, rotation, scale);
+        const Vec3 velocity = nav_.agent_velocity(a.id);
+        if (agent->face_movement && velocity.x * velocity.x + velocity.y * velocity.y > 0.01f) rotation = {0, 0, degrees(std::atan2(velocity.y, velocity.x))};
+        world.set_world_matrix(a.entity, trs(nav_.agent_position(a.id), rotation, scale));
+        ++i;
+    }
+}
+
 void PlaySession::stop() {
     scripts_.stop();
+    nav_.clear();
+    agent_count_ = 0;
     if (sounds_) sounds_->stop_all_and_forget();
     emitter_count_ = 0;
     delete physics_;
@@ -141,6 +181,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (const world::Entity e = world.entity_at_slot(slot); e.valid()) add_entity_bodies(world, e);
     }
     add_joints(world, {});
+    agent_count_ = 0;
+    if (build_level_navmesh(world, *meshes_, nav_)) LSD_LOG_INFO("play", "Navmesh built");
     Vec3 scale;
 
     // The player: the first Character, else a default walker at the Player Start or the camera.
@@ -252,6 +294,20 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_class_volume = [](void* user, const char* name, f32 volume) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_class_volume(name, volume);
     };
+    host.move_to = [](void* user, world::Entity e, Vec3 target) {
+        auto& self = *static_cast<PlaySession*>(user);
+        const i32 agent = self.agent_of(e);
+        return agent >= 0 && self.nav_.move_agent(agent, target);
+    };
+    host.stop_move = [](void* user, world::Entity e) {
+        auto& self = *static_cast<PlaySession*>(user);
+        self.nav_.stop_agent(self.agent_of(e));
+    };
+    host.is_moving = [](void* user, world::Entity e) {
+        auto& self = *static_cast<PlaySession*>(user);
+        return self.nav_.agent_moving(self.agent_of(e));
+    };
+    host.find_path = [](void* user, Vec3 from, Vec3 to, Vec3* out, u32 capacity) { return static_cast<PlaySession*>(user)->nav_.find_path(from, to, out, capacity); };
     host.stop_sound = [](void* user, u32 voice) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.sounds_) self.sounds_->audio()->stop(voice);
@@ -596,6 +652,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     send_hits();
     update_triggers(world);
     scripts_.update(dt);
+    update_agents(world, dt);
 }
 
 // shortcut: point tests (the Character's middle, a body's centre), not shape overlaps; use Jolt sensors for big objects.

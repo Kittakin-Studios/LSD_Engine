@@ -235,3 +235,17 @@ FetchContent_Declare(ozz
   SYSTEM
 )
 FetchContent_MakeAvailable(ozz)
+
+# Recast & Detour: navmesh building, path finding and crowd steering (zlib).
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(recastnavigation
+  GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+  GIT_TAG v1.6.0
+  GIT_SHALLOW TRUE
+  SYSTEM
+)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # its cmake_minimum_required predates what CMake 4 accepts
+FetchContent_MakeAvailable(recastnavigation)
+unset(CMAKE_POLICY_VERSION_MINIMUM)

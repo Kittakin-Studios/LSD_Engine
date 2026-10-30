@@ -29,6 +29,9 @@
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes
+//   lsd.move_to(e, x, y, z) -> ok         a Nav Agent walks there on the navmesh (AI Move To); false if unreachable
+//   lsd.stop_move(e), lsd.is_moving(e) -> bool
+//   lsd.find_path(x, y, z, tx, ty, tz) -> {{x, y, z}, ...}   corners of the navmesh path (empty if none)
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
 //                                         string keys) to Saved/SaveGames/<slot>.json, versioned
 //   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
@@ -67,6 +70,10 @@ struct ScriptHost {
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name
     u32 (*play_sound)(void* user, const char* name, bool spatial, Vec3 position) = nullptr;  // voice, 0 if none
     void (*stop_sound)(void* user, u32 voice) = nullptr;
+    bool (*move_to)(void* user, world::Entity e, Vec3 target) = nullptr;
+    void (*stop_move)(void* user, world::Entity e) = nullptr;
+    bool (*is_moving)(void* user, world::Entity e) = nullptr;
+    u32 (*find_path)(void* user, Vec3 from, Vec3 to, Vec3* out, u32 capacity) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;

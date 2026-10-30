@@ -72,3 +72,8 @@ add_executable(lsd_particles_tests particles_tests.cpp)
 target_link_libraries(lsd_particles_tests PRIVATE lsd_particles)
 lsd_configure_target(lsd_particles_tests)
 add_test(NAME particles COMMAND lsd_particles_tests)
+
+add_executable(lsd_ai_tests ai_tests.cpp)
+target_link_libraries(lsd_ai_tests PRIVATE lsd_ai)
+lsd_configure_target(lsd_ai_tests)
+add_test(NAME ai COMMAND lsd_ai_tests)
