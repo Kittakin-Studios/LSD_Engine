@@ -44,6 +44,9 @@
 //   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
 //                          mouse_sensitivity, invert_look}   the player's settings (options menus)
 //   lsd.set_settings({quality = 1, ...})  changes those given, applies and saves them
+//   lsd.text(key) -> text                 the string table's text in the current language (the key if missing)
+//   lsd.set_language(code)                switches (en, fr...): open UI documents are reloaded translated
+//   lsd.languages() -> {"en", "fr", ...}
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
 // on every script that defines it.
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
@@ -102,6 +105,9 @@ struct ScriptHost {
     // The player's settings: a reflected struct, and a call after Lua changed it.
     void* (*settings)(void* user, const reflect::TypeInfo** type) = nullptr;
     void (*settings_changed)(void* user) = nullptr;
+    const char* (*text)(void* user, const char* key) = nullptr;
+    void (*set_language)(void* user, const char* code) = nullptr;
+    u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;

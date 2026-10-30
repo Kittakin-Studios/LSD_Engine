@@ -23,6 +23,11 @@ using ActionHandler = void (*)(void* user, UiContext& context, DocumentId docume
 
 // The UI library for the whole program (before any context, after the device).
 bool init(rhi::Device& device, const char* fonts_folder = "Content/Fonts");
+
+// Localisation: called for every text in a document as it loads; return the translation (or
+// nullptr to keep the text). Text whose whole content is a string table key gets translated.
+using Translator = const char* (*)(void* user, const char* text);
+void set_translator(Translator translator, void* user);
 void shutdown();
 
 class UiContext {
@@ -39,6 +44,7 @@ public:
     DocumentId open_text(const char* rml, const char* base_path);
     void close(DocumentId document);
     void close_all();
+    void reload_all();  // every open document again, same handles (after a language change)
     bool is_open(DocumentId document) const;
     // Elements by id: their text (escaped), inner markup, or an attribute (class, style, src...).
     bool set_text(DocumentId document, const char* element_id, const char* text);

@@ -30,6 +30,7 @@ struct GameUserSettings {
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named SFX") f32 effects_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Controls", Min = 0.1, Max = 5, Tooltip = "Times the Character's look sensitivity") f32 mouse_sensitivity = 1.0f;
     LSD_PROPERTY(Edit, Category = "Controls") bool invert_look = false;
+    LSD_PROPERTY(Edit, Category = "Language", Tooltip = "A column of the project's string table (en, fr...); empty: the project's default") char language[16] = "";
 };
 
 // Project-wide settings shared by the team, saved to Config/project.json (Unreal's Project Settings).
@@ -42,6 +43,8 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the editor opens when there is no last level") char editor_startup_level[260] = "";
     LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "The game window's icon (a square PNG, 256 x 256 is plenty)") char icon[33] = "";
     LSD_PROPERTY(Edit, Category = "Platform", Tooltip = "Steam: written to steam_appid.txt next to the packaged exe (0 = not on Steam)") u32 steam_app_id = 0;
+    LSD_PROPERTY(Edit, Category = "Localization", Widget = "Asset:Table", Tooltip = "String table: a Data Table with Key, then one column per language (en, fr...)") char string_table[33] = "";
+    LSD_PROPERTY(Edit, Category = "Localization", Tooltip = "The language the game starts in (a column of the string table)") char default_language[16] = "en";
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Validate Assets also checks name prefixes (SM_, T_, M_, MI_, BT_, UI_...)") bool check_naming = false;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Textures larger than this on a side are reported") u32 max_texture_size = 4096;
 };

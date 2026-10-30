@@ -1,5 +1,6 @@
 // Asset pipeline tests, including the milestone 2 exit test on a real Blender FBX:
 // import it into Content/, find it by search, compile it and load the result.
+#include "lsd/asset/localization.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
 #include "lsd/asset/mesh_import.h"
@@ -198,7 +199,24 @@ static void test_texture(const fs::path& root) {
     CHECK(asset::type_from_extension(".PNG") == asset::AssetType::Texture && asset::type_from_extension(".tga") == asset::AssetType::Texture);
 }
 
+static void test_localization() {
+    const char* path = LSD_TEST_TEMP_DIR "/ST_Test.csv";
+    if (FILE* f = std::fopen(path, "wb")) {
+        std::fputs("Key,en,fr\nMENU_PLAY,Play,Jouer\nMENU_QUIT,Quit,\n", f);
+        std::fclose(f);
+    }
+    asset::Localization loc(default_allocator());
+    CHECK(loc.load(path));
+    CHECK(loc.language_count() == 2 && std::strcmp(loc.language_code(1), "fr") == 0);
+    CHECK(std::strcmp(loc.text("MENU_PLAY"), "Play") == 0);
+    CHECK(loc.set_language("fr") && std::strcmp(loc.text("MENU_PLAY"), "Jouer") == 0);
+    CHECK(std::strcmp(loc.text("MENU_QUIT"), "Quit") == 0);  // untranslated: the first language
+    CHECK(std::strcmp(loc.text("NOPE"), "NOPE") == 0 && !loc.find("NOPE"));
+    CHECK(!loc.set_language("de") && std::strcmp(loc.text("MENU_PLAY"), "Play") == 0);
+}
+
 int main() {
+    test_localization();
     const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "asset_tests";
     test_guid_and_array();
     test_blender_fbx(root);

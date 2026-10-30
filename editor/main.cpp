@@ -781,6 +781,19 @@ int main(int argc, char** argv) {
     };
     apply_user_settings();
     play.set_user_settings(&user_settings);
+    // Localisation: the project's string table in the player's language; UI documents translate keys.
+    lsd::asset::Localization localization(allocator);
+    {
+        lsd::asset::Guid table;
+        if (const lsd::asset::AssetRecord* r = state.project.string_table[0] && lsd::asset::parse_guid(state.project.string_table, table) ? registry.find(table) : nullptr) {
+            char path[300];
+            registry.source_path(*r, path, sizeof path);
+            if (!localization.load(path)) LSD_LOG_WARN("editor", "Could not read the string table %s", path);
+        }
+        localization.set_language(user_settings.language[0] ? user_settings.language : state.project.default_language);
+    }
+    play.set_localization(&localization);
+    lsd::ui::set_translator([](void* user, const char* text) { return static_cast<const lsd::asset::Localization*>(user)->find(text); }, &localization);
     play.set_animations(animations);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
@@ -1077,6 +1090,7 @@ int main(int argc, char** argv) {
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;
     play.set_ui(nullptr);  // ~PlaySession stops Play again: it must not reach the deleted context
+    lsd::ui::set_translator(nullptr, nullptr);
     lsd::editor::shutdown_ui_editor();
     delete game_ui;
     lsd::ui::shutdown();  // frees its textures: before the device

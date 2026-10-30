@@ -492,6 +492,25 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return self.user_settings_;
     };
     host.settings_changed = [](void* user) { static_cast<PlaySession*>(user)->settings_changed_ = true; };
+    host.text = [](void* user, const char* key) {
+        const auto* loc = static_cast<PlaySession*>(user)->localization_;
+        return loc ? loc->text(key) : key;
+    };
+    host.set_language = [](void* user, const char* code) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (self.localization_ && !self.localization_->set_language(code)) LSD_LOG_WARN("ui", "The string table has no language '%s'", code);
+        if (self.user_settings_) {
+            std::snprintf(self.user_settings_->language, sizeof self.user_settings_->language, "%s", code);
+            self.settings_changed_ = true;  // saved with the other settings
+        }
+        if (self.ui_) self.ui_->reload_all();  // documents translate as they load
+    };
+    host.languages = [](void* user, const char** out, u32 capacity) {
+        const auto* loc = static_cast<PlaySession*>(user)->localization_;
+        u32 n = 0;
+        for (; loc && n < loc->language_count() && n < capacity; ++n) out[n] = loc->language_code(n);
+        return n;
+    };
     host.bb_set = [](void* user, world::Entity e, const char* key, const f32* value, bool vector) {
         if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) {
             if (vector) b->board.set(key, Vec3{value[0], value[1], value[2]});

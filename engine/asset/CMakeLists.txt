@@ -12,6 +12,7 @@ add_library(lsd_asset STATIC
   src/asset_registry.cpp
   src/data_asset.cpp
   src/data_table.cpp
+  src/localization.cpp
   src/texture.cpp
   src/mesh_import.cpp
   src/cgltf_impl.cpp

@@ -108,6 +108,19 @@ public:
         static const auto start = std::chrono::steady_clock::now();
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     }
+    Translator translator = nullptr;
+    void* translator_user = nullptr;
+    int TranslateString(Rml::String& translated, const Rml::String& input) override {
+        // Only whole texts that are keys ("MENU_PLAY", surrounding spaces allowed).
+        const usize first = input.find_first_not_of(" \t\r\n"), last = input.find_last_not_of(" \t\r\n");
+        const char* t = translator && first != Rml::String::npos ? translator(translator_user, input.substr(first, last - first + 1).c_str()) : nullptr;
+        if (!t) {
+            translated = input;
+            return 0;
+        }
+        translated = t;
+        return 1;
+    }
     bool LogMessage(Rml::Log::Type type, const Rml::String& message) override {
         if (type == Rml::Log::LT_ERROR || type == Rml::Log::LT_ASSERT) LSD_LOG_ERROR("ui", "%s", message.c_str());
         else if (type == Rml::Log::LT_WARNING) LSD_LOG_WARN("ui", "%s", message.c_str());
@@ -228,6 +241,12 @@ bool init(rhi::Device& device, const char* fonts_folder) {
     return true;
 }
 
+void set_translator(Translator translator, void* user) {
+    if (!g_system) return;
+    g_system->translator = translator;
+    g_system->translator_user = user;
+}
+
 void shutdown() {
     if (!g_render) return;
     Rml::Shutdown();
@@ -248,6 +267,11 @@ void shutdown() {
 struct UiContext::Impl {
     Rml::Context* context = nullptr;
     std::vector<Rml::ElementDocument*> documents;  // by DocumentId (closed: nullptr)
+    struct Source {
+        Rml::String path;  // a file, or
+        Rml::String text;  // a document in memory with `path` as its base
+    };
+    std::vector<Source> sources;  // what each document was opened from (reload_all)
     ActionHandler actions = nullptr;
     void* user = nullptr;
     f32 viewport[4] = {0, 0, 1, 1};
@@ -304,10 +328,34 @@ void UiContext::set_actions(ActionHandler handler, void* user) {
     impl_->user = user;
 }
 
-DocumentId UiContext::open(const char* path) { return impl_->context ? impl_->add(impl_->context->LoadDocument(path)) : -1; }
+DocumentId UiContext::open(const char* path) {
+    const DocumentId d = impl_->context ? impl_->add(impl_->context->LoadDocument(path)) : -1;
+    if (d >= 0) {
+        impl_->sources.resize(impl_->documents.size());
+        impl_->sources[d] = {path, ""};
+    }
+    return d;
+}
 
 DocumentId UiContext::open_text(const char* rml, const char* base_path) {
-    return impl_->context ? impl_->add(impl_->context->LoadDocumentFromMemory(rml, base_path)) : -1;
+    const DocumentId d = impl_->context ? impl_->add(impl_->context->LoadDocumentFromMemory(rml, base_path)) : -1;
+    if (d >= 0) {
+        impl_->sources.resize(impl_->documents.size());
+        impl_->sources[d] = {base_path, rml};
+    }
+    return d;
+}
+
+void UiContext::reload_all() {
+    if (!impl_->context) return;
+    for (usize i = 0; i < impl_->documents.size(); ++i) {
+        if (!impl_->documents[i]) continue;
+        impl_->documents[i]->Close();
+        const Impl::Source& s = impl_->sources[i];
+        Rml::ElementDocument* doc = s.text.empty() ? impl_->context->LoadDocument(s.path) : impl_->context->LoadDocumentFromMemory(s.text, s.path);
+        if (doc) doc->Show();
+        impl_->documents[i] = doc;
+    }
 }
 
 void UiContext::close(DocumentId d) {

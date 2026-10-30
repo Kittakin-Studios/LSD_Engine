@@ -13,6 +13,7 @@
 #include "lsd/ai/behavior_tree.h"
 #include "lsd/ai/navigation.h"
 #include "lsd/asset/asset_registry.h"
+#include "lsd/asset/localization.h"
 #include "lsd/input/input.h"
 #include "lsd/physics/physics.h"
 #include "lsd/script/script.h"
@@ -53,6 +54,7 @@ public:
     bool ui_cursor() const { return ui_cursor_; }  // a menu wants the mouse
     // The player's settings Lua reads and changes; `changed` tells main.cpp to apply and save them.
     void set_user_settings(GameUserSettings* settings) { user_settings_ = settings; }
+    void set_localization(asset::Localization* localization) { localization_ = localization; }
     bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
     // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
     void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
@@ -111,6 +113,7 @@ private:
     AnimationPlayer* animations_ = nullptr;
     ui::UiContext* ui_ = nullptr;
     GameUserSettings* user_settings_ = nullptr;
+    asset::Localization* localization_ = nullptr;
     struct UiFollower {
         i32 doc;
         char id[64];

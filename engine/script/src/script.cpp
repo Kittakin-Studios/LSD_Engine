@@ -474,6 +474,28 @@ struct Api {
         lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
         return 1;
     }
+    static int text(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const char* key = luaL_checkstring(L, 1);
+        lua_pushstring(L, host.text ? host.text(host.user, key) : key);
+        return 1;
+    }
+    static int set_language(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.set_language) host.set_language(host.user, luaL_checkstring(L, 1));
+        return 0;
+    }
+    static int languages(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const char* codes[32];
+        const u32 n = host.languages ? host.languages(host.user, codes, 32) : 0;
+        lua_createtable(L, static_cast<int>(n), 0);
+        for (u32 i = 0; i < n; ++i) {
+            lua_pushstring(L, codes[i]);
+            lua_rawseti(L, -2, static_cast<int>(i + 1));
+        }
+        return 1;
+    }
     static int get_settings(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const reflect::TypeInfo* type = nullptr;
@@ -869,7 +891,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
-        {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings},
+        {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
+        {"languages", Api::languages},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

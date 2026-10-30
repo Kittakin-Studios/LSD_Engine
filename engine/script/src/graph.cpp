@@ -80,6 +80,8 @@ NodeDef g_defs[] = {
     {"UiSetText", "Set UI Text", "UI", "Changes the text of the element with that id (score, health, prompts)",
      {kExecIn, {"Handle", PinType::Float, "0"}, {"Element Id", PinType::String, "score"}, {"Text", PinType::String, ""}}, 0, {kExecOut}, 0,
      "lsd.ui_set_text($1, $2, $3)", {}},
+    {"LocText", "Localized Text", "UI", "A string table key's text in the player's language (Unreal's FText from a String Table)",
+     {{"Key", PinType::String, "MENU_PLAY"}}, 0, {{"Text", PinType::String, ""}}, 0, nullptr, {"lsd.text($0)"}},
     {"UiCursor", "Show Mouse Cursor", "UI", "On: the mouse moves a cursor for menus; off: it controls the player again",
      {kExecIn, {"Show", PinType::Bool, "true"}}, 0, {kExecOut}, 0, "lsd.ui_show_cursor($1)", {}},
     {"AIStop", "AI Stop Moving", "AI", "Stops a Nav Agent where it is", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.stop_move($1)", {}},
