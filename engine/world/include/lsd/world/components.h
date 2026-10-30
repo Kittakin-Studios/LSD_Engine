@@ -139,6 +139,21 @@ struct GameMode {
     LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "Runs on an object named GameMode for the whole game") char script[33] = "";
 };
 
+// A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a
+// rigged FBX into the viewport; its animations can come from the same file or another (Mixamo).
+LSD_STRUCT(Component, Category = "Animation")
+struct SkeletalMesh {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "An FBX with a skeleton and skin") char mesh[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX holding the animation, matched by bone names; empty = the mesh's own file") char animation[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Which animation (take) in that file, from 0") u32 clip = 0;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 play_rate = 1.0f;
+    LSD_PROPERTY(Edit) bool looping = true;
+    LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too, so you see the motion while building") bool playing = true;
+};
+
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".
 // shortcut: free text, no project-wide tag list or picker yet; add one with the tag editor in Project Settings.
 LSD_STRUCT(Component, Category = "Gameplay")

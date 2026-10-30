@@ -10,6 +10,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
     static const reflect::TypeInfo* const types[] = {
         &reflect::type_of<Transform>(),
         &reflect::type_of<StaticMesh>(),
+        &reflect::type_of<SkeletalMesh>(),
         &reflect::type_of<PlayerStart>(),
         &reflect::type_of<BlockingVolume>(),
         &reflect::type_of<KillVolume>(),

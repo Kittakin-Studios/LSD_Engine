@@ -85,6 +85,7 @@ struct EditorState {
     asset::AssetRegistry* registry = nullptr;
     ThumbnailCache* thumbnails = nullptr;
     class TextureCache* textures = nullptr;  // set by main.cpp (texture thumbnails)
+    class SkinnedCache* skinned = nullptr;   // set by main.cpp (rigged meshes: bounds, drop)
     rhi::Device* device = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
     char search[96] = "";

@@ -5,6 +5,8 @@
 #include "mesh_cache.h"
 #include "lighting.h"
 #include "material_cache.h"
+#include "animation_player.h"
+#include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
 #include "thumbnails.h"
@@ -69,6 +71,30 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 }
 
 // Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
+// Skinned meshes for drawing and shadows: their model and current pose (set up by main()).
+lsd::editor::SkinnedCache* g_skinned = nullptr;
+lsd::editor::AnimationPlayer* g_animations = nullptr;
+
+// Skinned shadow casters (within `range` of `light` when range > 0).
+void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i))->mesh);
+        const lsd::anim::Pose* pose = g_animations->pose(e);
+        if (!model || !pose || !pose->joint_count()) continue;
+        const lsd::Mat4 m = world.world_matrix(e);
+        if (light && range > 0.0f) {
+            const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
+            const lsd::Vec3 extent = lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f);
+            if (lsd::length(centre - *light) > range + lsd::length(extent) * 2.0f) continue;  // generous: the pose may reach out
+        }
+        const lsd::Mat4 mvp = vp * m;
+        device.draw_shadow_caster(model->vertices, model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
+    }
+}
+
 // The sun's shadow cascades: every visible mesh into each tile of the atlas, then back to the window.
 void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                   lsd::editor::MeshCache& meshes, bool skip_hidden) {
@@ -87,6 +113,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             const lsd::Mat4 mvp = vp * world.world_matrix(e);
             device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
         }
+        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
     }
     device.end_shadow_pass();
 }
@@ -120,6 +147,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 const lsd::Mat4 mvp = vp * m;
                 device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
             }
+            draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
         }
     }
     device.end_shadow_pass();
@@ -178,6 +206,49 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         device.draw_mesh(draw);
         ++stats.stat_draws;
         stats.stat_triangles += mesh->gpu.index_count / 3;
+    }
+    // Skeletal meshes: same material path, skinned on the GPU with their current pose.
+    const lsd::reflect::TypeInfo& skinned_type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
+    for (lsd::u32 i = 0; i < world.count(skinned_type); ++i) {
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(skinned_type, i));
+        const lsd::world::Entity e = world.owner(skinned_type, i);
+        if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
+        const lsd::anim::Pose* pose = g_animations->pose(e);
+        if (!model || !pose || !pose->joint_count()) continue;
+        const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Mat4 mvp = view_proj * m;
+        const lsd::Mat4 inv = lsd::affine_inverse(m);
+        lsd::rhi::MeshDraw draw{};
+        draw.vertices = model->vertices;
+        draw.indices = model->indices;
+        draw.index_count = model->index_count;
+        draw.joint_rows = pose->joint_rows();
+        draw.joint_count = pose->joint_count();
+        std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
+        for (int c = 0; c < 3; ++c) {
+            for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
+            draw.normal_matrix[c * 4 + 3] = 0.0f;
+        }
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
+        }
+        draw.camera_position[0] = eye.x;
+        draw.camera_position[1] = eye.y;
+        draw.camera_position[2] = eye.z;
+        to_rgba(component->color, draw.color);
+        materials.apply(component->material, draw);
+        const bool editor_view = !stats.playing || stats.ejected;
+        draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
+        draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+        if (editor_view && stats.is_selected(e)) {
+            draw.color[0] = 1.0f;
+            draw.color[1] = 0.85f;
+            draw.color[2] = 0.25f;
+        }
+        device.draw_mesh(draw);
+        ++stats.stat_draws;
+        stats.stat_triangles += model->index_count / 3;
     }
 }
 
@@ -455,6 +526,10 @@ int main(int argc, char** argv) {
     const lsd::rhi::TextureHandle shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
     const lsd::rhi::TextureHandle local_shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
     lsd::editor::MaterialCache materials(*texture_cache, registry);
+    auto* skinned_cache = new lsd::editor::SkinnedCache(*device, registry);  // deleted before the device
+    auto* animations = new lsd::editor::AnimationPlayer();
+    g_skinned = skinned_cache;
+    g_animations = animations;
     auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
     lsd::editor::ThumbnailCache& thumbnails = *new (thumbnail_memory) lsd::editor::ThumbnailCache(*device, allocator, registry, kDataDir);
     state.world = &world;
@@ -462,6 +537,7 @@ int main(int argc, char** argv) {
     state.meshes = &meshes;
     state.thumbnails = &thumbnails;
     state.textures = texture_cache;
+    state.skinned = skinned_cache;
     state.device = device;
 
     const char* startup_level = level_arg ? level_arg : state.settings.last_level[0] ? state.settings.last_level : state.project.editor_startup_level;
@@ -570,6 +646,7 @@ int main(int argc, char** argv) {
             registry.scan();
             meshes.hot_reload();
             texture_cache->check_files();
+            skinned_cache->check_files();
             materials.check_files();
             last_scan = SDL_GetTicks();
         }
@@ -621,6 +698,7 @@ int main(int argc, char** argv) {
         if (state.play_requested && !state.playing) {
             lsd::world::save_level(world, play_snapshot);
             play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);
+            animations->reset();  // Play starts every animation from its beginning
             state.playing = true;
             state.mouse_captured = true;
             state.paused = state.ejected = false;
@@ -662,6 +740,9 @@ int main(int argc, char** argv) {
             state.step_requested = false;
             state.player_feet = play.feet();
         }
+        // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
+        animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
+                           state.playing && !state.paused ? &sounds : nullptr);
         // The ears: the player's camera in Play, else the editor camera.
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
@@ -731,6 +812,8 @@ int main(int argc, char** argv) {
     lsd::render::destroy_lines(*device, grid);
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
+    delete animations;
+    delete skinned_cache;
     delete texture_cache;
     device->destroy_texture(shadow_atlas);
     device->destroy_texture(local_shadow_atlas);

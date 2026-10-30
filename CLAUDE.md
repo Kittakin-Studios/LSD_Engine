@@ -85,6 +85,7 @@ engine/input/       Input Action / Mapping Context data assets and the InputSyst
 engine/physics/     Jolt behind a small API: bodies (box/sphere/capsule) and the player's CharacterVirtual
 engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload;
                     graph.h: visual-script graphs and their compiler to Lua
+engine/animation/   ozz-animation behind SkinnedModel / Clip / Pose: FBX skin + clip import, GPU skinning matrices
 engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
 engine/ui           placeholder
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
@@ -94,7 +95,7 @@ tools/data_compiler/ CLI stub: --source-dir / --data-dir
 tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
 third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, ImGuizmo, Vulkan-Headers, volk,
-                    ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake)
+                    ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake, miniaudio, stb, ozz-animation)
 tests/              framework-free unit tests (CTest)
 docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
 ```
@@ -160,8 +161,10 @@ example works except the animation notify. Rendering: textures (`engine/asset/te
 `rhi::Device::create_texture`, PBR mesh shading with Material data assets (`engine/render/material.h`,
 editor/material_cache), Material Instances, light components (editor/lighting.cpp -> rhi::LightSetup,
 up to 16 per frame) with World Settings exposure, cascaded sun shadows (rhi shadow maps + passes,
-cascades fitted in editor/lighting.cpp), spot / point light shadows (16-tile local atlas). Next: material
-graph, animation, particles.
+cascades fitted in editor/lighting.cpp), spot / point light shadows (16-tile local atlas). Skeletal
+animation on ozz (`engine/animation`, editor/skinned_cache + animation_player, SkeletalMesh component,
+notifies). The audio exit test now passes fully. Next: animation graph / blend spaces, material graph,
+particles.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

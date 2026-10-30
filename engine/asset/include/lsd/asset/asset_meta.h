@@ -5,6 +5,15 @@
 
 namespace lsd::asset {
 
+// Something that happens at a moment of an animation (Unreal's AnimNotify): for now, a sound.
+LSD_STRUCT()
+struct AnimNotify {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Which animation in the file (0 = the first)") u32 clip = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 time = 0.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Played at the object (a footstep on the frame the foot lands)") char sound[33] = "";
+};
+
 LSD_STRUCT(Category = "Asset")
 struct AssetMeta {
     LSD_GENERATED()
@@ -17,6 +26,9 @@ struct AssetMeta {
 
     LSD_PROPERTY(Edit, Category = "Import", Min = 0.001, Max = 1000, Tooltip = "Uniform scale applied on import (after unit conversion to metres)")
     f32 import_scale = 1.0f;
+
+    // Animation files (FBX with takes): notifies, edited in Details, played in Play.
+    LSD_PROPERTY(Edit, Category = "Animation") List<AnimNotify, 16> notifies;
 
     // Textures. Colour vs data (sRGB vs linear) is decided by the material slot that uses them.
     LSD_PROPERTY(Edit, Category = "Texture", Min = 1, Max = 8192, Tooltip = "Larger images are halved until they fit (Unreal's Maximum Texture Size)")

@@ -2,6 +2,7 @@
 #include "graph_editor.h"
 #include "lighting.h"
 #include "material_cache.h"
+#include "skinned_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
 
@@ -389,6 +390,12 @@ void world_bounds(EditorState& s, Entity e, Vec3& lo, Vec3& hi) {
             local_hi = cached->bounds_max;
         }
     }
+    if (const auto* skeletal = s.world->get<world::SkeletalMesh>(e); skeletal && s.skinned) {
+        if (const SkinnedEntry* model = s.skinned->get(skeletal->mesh)) {  // the rest pose
+            local_lo = model->model->bounds_min;
+            local_hi = model->model->bounds_max;
+        }
+    }
     lo = {1e30f, 1e30f, 1e30f};
     hi = {-1e30f, -1e30f, -1e30f};
     for (int c = 0; c < 8; ++c) {
@@ -455,6 +462,19 @@ bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hi
         const Mat4 inv = affine_inverse(s.world->world_matrix(e));
         f32 t;
         if (ray_box(transform_point(inv, ray.origin), transform_vector(inv, ray.dir), cached->bounds_min, cached->bounds_max, t) && t < hit_t) {
+            hit_t = t;
+            hit = e;
+        }
+    }
+    const reflect::TypeInfo& skinned_type = reflect::type_of<world::SkeletalMesh>();
+    for (u32 i = 0; i < s.world->count(skinned_type) && s.skinned; ++i) {  // rigged meshes by their rest-pose box
+        const Entity e = s.world->owner(skinned_type, i);
+        if (e == ignore || s.world->hidden_in_hierarchy(e) || (pickable && s.world->locked(e))) continue;
+        const SkinnedEntry* model = s.skinned->get(static_cast<const world::SkeletalMesh*>(s.world->at(skinned_type, i))->mesh);
+        if (!model) continue;
+        const Mat4 inv = affine_inverse(s.world->world_matrix(e));
+        f32 t;
+        if (ray_box(transform_point(inv, ray.origin), transform_vector(inv, ray.dir), model->model->bounds_min, model->model->bounds_max, t) && t < hit_t) {
             hit_t = t;
             hit = e;
         }
@@ -871,7 +891,7 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
     }
     for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
         const Entity e = s.world->entity_at_slot(slot);
-        if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->hidden_in_hierarchy(e)) continue;
+        if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->get<world::SkeletalMesh>(e) || s.world->hidden_in_hierarchy(e)) continue;
         const Mat4 m = s.world->world_matrix(e);
         const Vec3 origin{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
         if (is_volume(*s.world, e)) {  // wire box: orange blocks, red kills, green triggers
@@ -926,7 +946,7 @@ Entity pick(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVe
     raycast(s, ray, {}, hit, t, true);
     for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
         const Entity e = s.world->entity_at_slot(slot);
-        if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->hidden_in_hierarchy(e) || s.world->locked(e)) continue;
+        if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->get<world::SkeletalMesh>(e) || s.world->hidden_in_hierarchy(e) || s.world->locked(e)) continue;
         if (is_volume(*s.world, e)) {  // picked like a mesh, by its box
             const Mat4 inv = affine_inverse(s.world->world_matrix(e));
             f32 vt;
@@ -1071,9 +1091,12 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             asset::Guid guid;
             std::memcpy(&guid, payload->Data, sizeof guid);
             const asset::AssetRecord* record = s.registry->find(guid);
-            if (record && record->type == asset::AssetType::Mesh) {
-                char key[33];
-                asset::to_string(guid, key);
+            char key[33];
+            asset::to_string(guid, key);
+            if (record && record->type == asset::AssetType::Mesh && s.skinned && s.skinned->get(key)) {  // rigged: a Skeletal Mesh
+                const Entity e = place(s, record->name, nullptr, "SkeletalMesh", drop_point(s, ray));
+                std::snprintf(s.world->get<world::SkeletalMesh>(e)->mesh, sizeof(world::SkeletalMesh::mesh), "%s", key);
+            } else if (record && record->type == asset::AssetType::Mesh) {
                 place(s, record->name, key, nullptr, drop_point(s, ray));
             } else if (record && record->type == asset::AssetType::Prefab) {
                 place_prefab(s, *record, drop_point(s, ray));
@@ -1954,7 +1977,7 @@ void draw_details_panel(EditorState& s) {
                 if (s.status[0]) ImGui::TextDisabled("%s", s.status);
                 ImGui::BeginChild("DetailsRows");
                 DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
-                style.categories = selected->type == asset::AssetType::Mesh ? "Asset,Import"
+                style.categories = selected->type == asset::AssetType::Mesh ? "Asset,Import,Animation"
                                  : selected->type == asset::AssetType::Sound || selected->type == asset::AssetType::Cue ? "Asset,Sound"
                                  : selected->type == asset::AssetType::Texture ? "Asset,Texture" : "Asset";
                 draw_details(reflect::type_of<asset::AssetMeta>(), &s.selected_meta, &style);
@@ -2551,6 +2574,7 @@ void draw_stats(EditorState& s, ImVec2 pos, ImVec2 size) {
                       a.mix_count() == 1 ? "" : "es", a.has_device() ? "" : "  (no device: silent)");
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         f32 y = pos.y + size.y - 24.0f - static_cast<f32>(a.voice_count()) * 16.0f;
+        fg->AddRectFilled(ImVec2(pos.x + 6, y - 4), ImVec2(pos.x + 520, pos.y + size.y - 4), IM_COL32(0, 0, 0, 150), 4.0f);  // readable on any background
         fg->AddText(ImVec2(pos.x + 12, y), IM_COL32(120, 230, 255, 255), line);
         for (u32 i = 0; i < a.voice_count(); ++i) {
             const audio::VoiceInfo v = a.voice(i);

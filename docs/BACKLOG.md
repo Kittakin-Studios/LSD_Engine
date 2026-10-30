@@ -130,8 +130,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 ## Milestone 5 — Content editors
 
-Exit test: the audio worked example works end to end. **Works, except the "Play Sound" animation notify**
-(it arrives with animation sequences): import WAVs, Sound Cue graph, Sound Class tree, Sound Mix push / pop,
+Exit test: the audio worked example works end to end. **Works** (the "Play Sound" animation notify too): import WAVs, Sound Cue graph, Sound Class tree, Sound Mix push / pop,
 Attenuation, Concurrency, Submix effect chains, Sound Emitters by drag, Audio Volumes, trigger and
 visual-script sounds, `stat audio`.
 
@@ -157,7 +156,7 @@ visual-script sounds, `stat audio`.
 
 ### Animation
 
-- [ ] Animation sequences: preview, trim, root motion, notifies, curves (ozz-animation)
+- [~] Animation (ozz-animation, `engine/animation`): rigged FBX import (skin weights, skeleton, every take sampled at 30 fps, retargeted by bone name so animations can live in other files), GPU skinning on D3D12 / OpenGL incl. shadows, SkeletalMesh component (mesh, material, animation file, clip, rate, loop, plays in the editor), drag a rigged FBX in, Play Sound notifies on the animation's .meta (fire in Play); tested against ufbx's own skinning; needs glTF skins, clip preview / trim, root motion, curves, a clip list in Details
 - [ ] Skeleton editor: sockets, bone preview, retarget base pose [Skeleton Editor]
 - [ ] Animation graph (state machine + blends), blend spaces 1D/2D, montages and slots, sockets [Anim Blueprint]
 - [ ] Simple IK: two-bone and look-at (moved up from v2; feet on slopes need it) [Two Bone IK]
