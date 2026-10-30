@@ -8,6 +8,7 @@
 #include "animation_player.h"
 #include "particle_editor.h"
 #include "particle_player.h"
+#include "packaging.h"
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
@@ -333,6 +334,8 @@ void register_console(EditorState& s) {
         }
         LSD_LOG_WARN("console", "viewmode: lit, unlit or wireframe");
     }, &s, "viewmode lit|unlit|wireframe");
+    console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
+                         "Package the project into Build/<Project Name>/ (File > Package Project)");
     console::add_command("play", [](void* user, const char*) { static_cast<EditorState*>(user)->play_requested = true; }, &s, "Start Play-in-Editor");
     console::add_command("stop", [](void* user, const char*) { static_cast<EditorState*>(user)->stop_requested = true; }, &s, "Stop Play-in-Editor");
     console::add_command("save", [](void* user, const char*) {
@@ -444,6 +447,7 @@ int main(int argc, char** argv) {
     const char* level_arg = nullptr;   // -level=<path>: open this level instead of the last one
     bool no_sound = false;             // -nosound: no audio device (automated runs stay quiet)
     bool play_arg = false;             // -play: start Play-in-Editor right away
+    bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
     int exec_count = 0;
@@ -460,12 +464,20 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-level=", 7) == 0) level_arg = argv[i] + 7;
         else if (std::strcmp(argv[i], "-nosound") == 0) no_sound = true;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
+        else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
         else LSD_LOG_WARN("editor", "Unknown argument: %s", argv[i]);
     }
 
-    LSD_LOG_INFO("editor", "LSD_Engine Editor 0.1.0");
+    // A packaged game: game.json next to the exe. Its folder is the project (Content/, Config/...).
+    bool game_mode = game_arg;
+    if (const char* base = SDL_GetBasePath(); base && fs::exists(fs::path(base) / lsd::editor::kGameMarker)) {
+        std::error_code cwd_error;
+        fs::current_path(base, cwd_error);
+        game_mode = true;
+    }
+    LSD_LOG_INFO("editor", game_mode ? "LSD_Engine 0.1.0 (game)" : "LSD_Engine Editor 0.1.0");
     const lsd::SystemInfo info = lsd::query_system_info();
     lsd::Allocator& allocator = lsd::default_allocator();
     lsd::JobSystem jobs(allocator, lsd::recommended_worker_count(info));
@@ -515,6 +527,8 @@ int main(int argc, char** argv) {
     lsd::editor::apply_theme(state.theme);
     lsd::reflect::load_file(state.settings, kSettingsPath);
     lsd::reflect::load_file(state.project, "Config/project.json");
+    state.game_mode = game_mode;
+    if (game_mode) SDL_SetWindowTitle(window, state.project.project_name);
 
     // Types that can be created as data assets (Content Browser > New Data Asset).
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputAction>());
@@ -560,17 +574,20 @@ int main(int argc, char** argv) {
     state.skinned = skinned_cache;
     state.device = device;
 
-    const char* startup_level = level_arg ? level_arg : state.settings.last_level[0] ? state.settings.last_level : state.project.editor_startup_level;
+    const char* startup_level = level_arg              ? level_arg
+                                : game_mode              ? state.project.game_default_level
+                                : state.settings.last_level[0] ? state.settings.last_level
+                                                         : state.project.editor_startup_level;
     if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
 
     // Crash recovery: a lock file left behind means the last session did not exit cleanly.
-    if (fs::exists(kLockPath)) {
+    if (!game_mode && fs::exists(kLockPath)) {
         const std::string autosave = autosave_path(state.level_path);
         std::error_code error;
         const bool newer = fs::exists(autosave) && (!state.level_path[0] || fs::last_write_time(autosave, error) > fs::last_write_time(state.level_path, error));
         if (newer && max_frames < 0) std::snprintf(state.recovery_path, sizeof state.recovery_path, "%s", autosave.c_str());
     }
-    if (FILE* lock = std::fopen(kLockPath, "wb")) std::fclose(lock);
+    if (FILE* lock = game_mode ? nullptr : std::fopen(kLockPath, "wb")) std::fclose(lock);
     lsd::u64 last_autosave = SDL_GetTicks();
     if (place_arg) {
         lsd::usize hit = 0;
@@ -586,7 +603,7 @@ int main(int argc, char** argv) {
             LSD_LOG_WARN("editor", "-place: no mesh asset named like '%s'", place_arg);
         }
     }
-    state.play_requested = play_arg;
+    state.play_requested = play_arg || game_mode;
     register_console(state);
     for (lsd::u32 slot = 0; select_arg && slot < world.slot_count(); ++slot) {
         const lsd::world::Entity e = world.entity_at_slot(slot);
@@ -678,8 +695,13 @@ int main(int argc, char** argv) {
         device->debug_ui_new_frame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        lsd::editor::draw_editor(state);
+        if (game_mode) lsd::editor::draw_game(state);
+        else lsd::editor::draw_editor(state);
         ImGui::Render();
+        if (state.package_requested) {
+            state.package_requested = false;
+            lsd::editor::package_project(state.project, state.status, sizeof state.status);
+        }
 
         // ---- Requests from the UI ----
         if (state.new_level_requested) {
@@ -710,7 +732,7 @@ int main(int argc, char** argv) {
             state.recovery_path[0] = '\0';
         }
         const lsd::f32 autosave_ms = state.settings.autosave_minutes * 60000.0f;
-        if (autosave_ms > 0.0f && SDL_GetTicks() - last_autosave > static_cast<lsd::u64>(autosave_ms)) {
+        if (!game_mode && autosave_ms > 0.0f && SDL_GetTicks() - last_autosave > static_cast<lsd::u64>(autosave_ms)) {
             last_autosave = SDL_GetTicks();
             if (history.dirty() && !state.playing) {
                 fs::create_directories(kAutosaveDir, ignored);
@@ -738,6 +760,7 @@ int main(int argc, char** argv) {
             play.stop();
             LSD_LOG_INFO("editor", "Stop");
         }
+        if (game_mode && !state.playing && !state.play_requested) running = false;
         state.stop_requested = false;
         SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
 
@@ -779,7 +802,7 @@ int main(int argc, char** argv) {
         char wanted_title[400];
         std::snprintf(wanted_title, sizeof wanted_title, "%s%s - LSD_Engine Editor%s", state.level_path[0] ? fs::path(state.level_path).stem().string().c_str() : "Untitled",
                       history.dirty() ? "*" : "", state.playing ? " (Playing)" : "");
-        if (std::strcmp(wanted_title, title) != 0) {
+        if (!game_mode && std::strcmp(wanted_title, title) != 0) {
             std::snprintf(title, sizeof title, "%s", wanted_title);
             SDL_SetWindowTitle(window, title);
         }
@@ -829,12 +852,12 @@ int main(int argc, char** argv) {
         ++frame;
     }
 
-    fs::remove(kLockPath, ignored);
+    if (!game_mode) fs::remove(kLockPath, ignored);
     lsd::console::remove_all();  // the registrations point into state
     lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
-    lsd::reflect::save_file(state.settings, kSettingsPath);
+    if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
     audio.shutdown();
     SDL_SetWindowRelativeMouseMode(window, false);

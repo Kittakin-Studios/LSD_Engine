@@ -172,13 +172,18 @@ preview, alpha / additive sprites on D3D12 and OpenGL) and the Particle Editor w
 per-emitter stats). Material Graphs (`.lsdmatgraph` on the graph canvas, compiled to shader code built
 into the lit-mesh pipelines on D3D12 / OpenGL; used like a Material). The graph window previews
 materials live. Scalar / Vector Parameters set
-by Material Instances of a graph. Next: milestone 6 (packaging, save game, fog / post, AI, UI).
+by Material Instances of a graph. 
+
+**Milestone 6 — in progress, exit test works on this PC.** File > Package Project (editor/packaging.cpp)
+writes Build/<Project>/ (Release exe + Content + Config + VC++ runtime + game.json); the exe in a
+folder with game.json (or `-game`) runs as the game. Next: save game, fog / sky / post, AI, UI.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
 `-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`,
 `-exec="<console line>"` (repeatable, e.g. `-exec="view top" -exec="viewmode wireframe"`),
-`-nosound` (no audio device: use it for every automated run so test sounds never play on the speakers).
+`-nosound` (no audio device: use it for every automated run so test sounds never play on the speakers),
+`-game` (run as the packaged game), console `package`. Release build: `cmake --build --preset windows-msvc --config Release`.
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no

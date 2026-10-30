@@ -2758,6 +2758,9 @@ void draw_menu_bar(EditorState& s) {
         ImGui::Separator();
         if (ImGui::MenuItem("Save Level", "Ctrl+S", false, !s.playing)) request_save(s, false);
         if (ImGui::MenuItem("Save Level As...", "Ctrl+Shift+S", false, !s.playing)) request_save(s, true);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Package Project", nullptr, false, !s.playing)) s.package_requested = true;
+        ImGui::SetItemTooltip("Build/<Project Name>/: the game in a folder that runs on another PC (opens Project Settings > Game Default Level)");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
@@ -3113,6 +3116,17 @@ void apply_theme(const EditorTheme& t) {
     style.Colors[ImGuiCol_SeparatorHovered] = vec4(t.details_tab_active);
     style.Colors[ImGuiCol_SeparatorActive] = vec4(t.content_tab);
     style.Colors[ImGuiCol_DockingPreview] = vec4(t.details_tab_active);
+}
+
+void draw_game(EditorState& s) {
+    const ImGuiIO& io = ImGui::GetIO();
+    s.viewport_count = 1;
+    s.viewport_rects[0][0] = 0.0f;
+    s.viewport_rects[0][1] = 0.0f;
+    s.viewport_rects[0][2] = io.DisplaySize.x;
+    s.viewport_rects[0][3] = io.DisplaySize.y;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) s.stop_requested = true;  // ends the game
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) s.mouse_captured = true;
 }
 
 void draw_editor(EditorState& s) {

@@ -180,7 +180,7 @@ visual-script sounds, `stat audio`.
 
 ## Milestone 6 — Vertical slice
 
-Exit test: a packaged level runs on another PC.
+Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Project>/<Project>.exe started from another folder opens the Game Default Level in Play, full window; Release build + app-local VC++ runtime, every other DLL is part of Windows 10/11); still to try on a second PC.
 
 ### Rendering
 
@@ -211,7 +211,7 @@ Exit test: a packaged level runs on another PC.
 
 ### Ship
 
-- [ ] Package project: one button, development/shipping, editor-only data stripped, resource packages per level **(S)** [Package Project, Cook]
+- [~] Package project: File > Package Project (or `package`) writes Build/<Project Name>/ with the Release exe, Content/, Config/, the VC++ runtime and a game.json marker; the exe then runs as the game (also `-game`): Game Default Level in Play, no editor, Esc quits; needs cooking (compiled assets only, editor-only data stripped), development / shipping configs, resource packages per level, building Release from the editor **(S)** [Package Project, Cook]
 - [ ] Platform settings: icons, splash, exe name, Steam app ID
 - [ ] Connect the editor to a running game (this PC or another): remote console, push hot reloads, live tweak values **(S)**
 - [ ] Profilers: Tracy, stat overlays (fps, draw calls, voices), memory per system, GPU timings [Unreal Insights]

@@ -113,6 +113,8 @@ struct EditorState {
     bool playing = false;
     bool quit_requested = false;   // window closed with unsaved changes: the UI asks first
     bool quit_confirmed = false;
+    bool package_requested = false;  // File > Package Project
+    bool game_mode = false;          // a packaged game (or -game): Play only, no editor
     bool quit_after_save = false;
     char recovery_path[260] = "";  // autosave left by a crash: the UI offers to restore it
     bool restore_requested = false;
@@ -167,6 +169,8 @@ void apply_theme(const EditorTheme& theme);
 
 // Draws the whole editor for this frame (between ImGui::NewFrame and ImGui::Render).
 void draw_editor(EditorState& state);
+// Game mode's UI: none, the viewport fills the window; Esc quits, a click takes the mouse back.
+void draw_game(EditorState& state);
 
 // Fills a new level with a floor and a Player Start, like Unreal's default new level.
 void make_default_level(world::World& world);
