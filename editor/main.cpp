@@ -5,7 +5,9 @@
 #include "thumbnails.h"
 #include "transactions.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/core/console.h"
+#include "lsd/input/input.h"
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
 #include "lsd/foundation/system_info.h"
@@ -129,6 +131,11 @@ void register_console(EditorState& s) {
     console::add_command("layout", [](void* user, const char* args) {
         lsd::editor::set_layout(*static_cast<EditorState*>(user), std::strcmp(args, "4") == 0 || std::strcmp(args, "2x2") == 0);
     }, &s, "layout 1|4: one viewport or perspective + top + front + right");
+    console::add_command("input.CreateDefaults", [](void* user, const char*) { lsd::editor::create_input_setup(*static_cast<EditorState*>(user)); },
+                         &s, "Create IA_Move, IA_Look, IA_Jump and IMC_Default in the open folder");
+    console::add_command("asset.Select", [](void* user, const char* args) {
+        if (!lsd::editor::select_asset(*static_cast<EditorState*>(user), args)) LSD_LOG_WARN("console", "asset.Select: no asset named like '%s'", args);
+    }, &s, "asset.Select <name>: select an asset and show it in Details");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"lit", "unlit", "wireframe"};
@@ -319,6 +326,10 @@ int main(int argc, char** argv) {
     lsd::editor::apply_theme(state.theme);
     lsd::reflect::load_file(state.settings, kSettingsPath);
     lsd::reflect::load_file(state.project, "Config/project.json");
+
+    // Types that can be created as data assets (Content Browser > New Data Asset).
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputAction>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);

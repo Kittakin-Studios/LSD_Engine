@@ -1,6 +1,7 @@
 add_library(lsd_asset STATIC
   src/guid.cpp
   src/asset_registry.cpp
+  src/data_asset.cpp
   src/mesh_import.cpp
   src/cgltf_impl.cpp
 )

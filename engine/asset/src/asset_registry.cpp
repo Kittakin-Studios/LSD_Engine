@@ -1,4 +1,5 @@
 #include "lsd/asset/asset_registry.h"
+#include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
 #include <cctype>
@@ -38,6 +39,7 @@ const char* to_string(AssetType type) {
     switch (type) {
         case AssetType::Mesh: return "Mesh";
         case AssetType::Level: return "Level";
+        case AssetType::Data: return "Data";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -48,6 +50,7 @@ AssetType type_from_extension(const char* extension) {
     for (usize i = 0; i + 1 < sizeof lower && extension[i]; ++i) lower[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(extension[i])));
     if (std::strcmp(lower, ".fbx") == 0 || std::strcmp(lower, ".gltf") == 0 || std::strcmp(lower, ".glb") == 0) return AssetType::Mesh;
     if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
+    if (std::strcmp(lower, ".lsdasset") == 0) return AssetType::Data;
     return AssetType::Unknown;
 }
 
@@ -114,6 +117,7 @@ bool AssetRegistry::scan() {
             if (existing->source_size != size || existing->source_time != time) {
                 existing->source_size = size;
                 existing->source_time = time;
+                if (type == AssetType::Data) read_data_asset_type(entry.path().string().c_str(), existing->data_type, sizeof existing->data_type);
                 changed = true;
             }
             continue;
@@ -126,6 +130,9 @@ bool AssetRegistry::scan() {
         copy_string(record.path, sizeof record.path, relative.c_str());
         copy_string(record.folder, sizeof record.folder, fs::path(relative).parent_path().generic_string().c_str());
         copy_string(record.name, sizeof record.name, entry.path().stem().string().c_str());
+        if (type == AssetType::Data && !read_data_asset_type(entry.path().string().c_str(), record.data_type, sizeof record.data_type)) {
+            LSD_LOG_WARN("asset", "%s is not a valid data asset", relative.c_str());
+        }
 
         // Read the GUID from the .meta; create one if missing, invalid, or already taken
         // (a file copied together with its .meta must become a new asset).

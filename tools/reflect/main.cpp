@@ -97,6 +97,8 @@ struct Field {
     std::string category = "\"\"", tooltip = "\"\"", units = "\"\"";
     std::string min = "0", max = "0";
     bool has_min = false, has_max = false;
+    std::string widget = "\"\"";
+    std::string element_type;  // Array: FieldType of the items
 };
 
 struct Struct {
@@ -241,7 +243,7 @@ private:
 
     void parse_field(const std::vector<Arg>& args, int line) {
         Field f;
-        check_args(args, {"Edit", "Visible", "Save", "EditorOnly"}, {"Category", "Tooltip", "Units", "Min", "Max"}, "LSD_PROPERTY");
+        check_args(args, {"Edit", "Visible", "Save", "EditorOnly"}, {"Category", "Tooltip", "Units", "Min", "Max", "Widget"}, "LSD_PROPERTY");
         for (const Arg& a : args) {
             if (a.key == "Edit") f.flags |= 1u;
             else if (a.key == "Visible") f.flags |= 2u;
@@ -250,6 +252,7 @@ private:
             else if (a.key == "Category") f.category = a.value;
             else if (a.key == "Tooltip") f.tooltip = a.value;
             else if (a.key == "Units") f.units = a.value;
+            else if (a.key == "Widget") f.widget = a.value;
             else if (a.key == "Min") { f.min = a.value; f.has_min = true; }
             else if (a.key == "Max") { f.max = a.value; f.has_max = true; }
         }
@@ -282,6 +285,29 @@ private:
         }
         if (decl.back().kind != Kind::Ident) { error(line, "could not read the field after LSD_PROPERTY"); return; }
         f.name = decl.back().text;
+        // List<T, N>: a fixed-capacity array.
+        for (size_t k = 0; k + 1 < decl.size(); ++k) {
+            if (decl[k].text != "List" || decl[k + 1].text != "<") continue;
+            size_t comma = 0, close = 0;
+            for (size_t j = k + 2; j < decl.size(); ++j) {
+                if (decl[j].text == ",") comma = j;
+                if (decl[j].text == ">") close = j;
+            }
+            if (!comma || !close || close < comma) { error(line, "field '" + f.name + "': expected List<Type, Count>"); return; }
+            std::string element;
+            for (size_t j = k + 2; j < comma; ++j) {
+                if (decl[j].text == "[" || decl[j].text == "<" || decl[j].text == "*") { error(line, "field '" + f.name + "': List items must be a number, bool or reflected struct"); return; }
+                if (!element.empty() && decl[j].text != "::" && element.back() != ':') element += ' ';
+                element += decl[j].text;
+            }
+            Field item;
+            if (!map_type(element, item)) return;
+            f.type = "Array";
+            f.element_type = item.type;
+            f.struct_type = item.struct_type;
+            structs_[static_cast<size_t>(current_struct())].fields.push_back(f);
+            return;
+        }
         std::string type;
         for (size_t k = 0; k < type_end; ++k) {
             const std::string& part = decl[k].text;
@@ -343,7 +369,13 @@ std::string generate(const std::vector<Struct>& structs, const std::string& incl
                   << f.category << ", " << f.tooltip << ", " << f.units << ", "
                   << f.min << ", " << f.max << ", " << (f.has_min ? "true" : "false") << ", "
                   << (f.has_max ? "true" : "false") << ", "
-                  << (f.type == "Struct" ? "&" + f.struct_type + "::static_type()" : "nullptr") << "},\n";
+                  << (!f.struct_type.empty() ? "&" + f.struct_type + "::static_type()" : "nullptr") << ", " << f.widget;
+                if (f.type == "Array") {
+                    o << ", ::lsd::reflect::FieldType::" << f.element_type << ", static_cast<::lsd::u32>(sizeof(Self::" << f.name << ".items[0])), "
+                      << "static_cast<::lsd::u32>(sizeof(Self::" << f.name << ".items) / sizeof(Self::" << f.name << ".items[0])), "
+                      << "::lsd::reflect::ListTraits<decltype(Self::" << f.name << ")>::items_offset";
+                }
+                o << "},\n";
             }
             o << "    };\n";
         }

@@ -5,9 +5,15 @@
 
 namespace lsd {
 
+// Draws the value widget for properties with a Widget hint the panel does not know ("Asset:...",
+// "Key"). The label is already drawn and the item width set. Return false to fall back to the default.
+using CustomWidget = bool (*)(void* user, const reflect::Property& property, u8* field, bool& changed);
+
 struct DetailsStyle {
     u32 row_colors[2];             // alternating row backgrounds, packed ImU32 (IM_COL32)
     const char* filter = nullptr;  // show only properties whose name contains this (case-insensitive)
+    CustomWidget custom_widget = nullptr;
+    void* custom_user = nullptr;
 };
 
 // Draws the object's Edit and Visible properties into the current ImGui window.

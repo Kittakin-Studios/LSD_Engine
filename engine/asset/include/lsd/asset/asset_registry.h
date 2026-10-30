@@ -8,10 +8,10 @@
 
 namespace lsd::asset {
 
-enum class AssetType : u8 { Unknown, Mesh, Level };
+enum class AssetType : u8 { Unknown, Mesh, Level, Data };
 
 const char* to_string(AssetType type);
-AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh, ".lsdlevel" -> Level; case-insensitive
+AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh, ".lsdlevel" -> Level, ".lsdasset" -> Data; case-insensitive
 
 struct AssetRecord {
     Guid guid;
@@ -19,6 +19,7 @@ struct AssetRecord {
     char path[256] = "";    // relative to the content root, '/' separators, e.g. "Props/Chair.fbx"
     char folder[256] = "";  // "Props" ("" for the root)
     char name[96] = "";     // file name without extension, e.g. "Chair"
+    char data_type[32] = "";  // Data assets: the reflected type inside, e.g. "InputAction"
     u64 source_size = 0;
     i64 source_time = 0;    // last write time, for the data compiler's up-to-date check
 };

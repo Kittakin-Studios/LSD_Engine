@@ -53,6 +53,39 @@ void write_string(Writer& w, const char* text, u32 capacity) {
     w.put("\"");
 }
 
+void write_object(Writer& w, const TypeInfo& type, const u8* object, u32 depth);
+
+void write_value(Writer& w, const Property& p, const u8* field, u32 depth) {
+    switch (p.type) {
+        case FieldType::Bool: w.put(*reinterpret_cast<const bool*>(field) ? "true" : "false"); break;
+        case FieldType::I32:  w.putf("%d", *reinterpret_cast<const i32*>(field)); break;
+        case FieldType::U32:  w.putf("%u", *reinterpret_cast<const u32*>(field)); break;
+        case FieldType::I64:  w.putf("%lld", static_cast<long long>(*reinterpret_cast<const i64*>(field))); break;
+        case FieldType::U64:  w.putf("%llu", static_cast<unsigned long long>(*reinterpret_cast<const u64*>(field))); break;
+        // 9 / 17 significant digits round-trip f32 / f64 exactly.
+        case FieldType::F32:  w.putf("%.9g", static_cast<f64>(*reinterpret_cast<const f32*>(field))); break;
+        case FieldType::F64:  w.putf("%.17g", *reinterpret_cast<const f64*>(field)); break;
+        case FieldType::String: write_string(w, reinterpret_cast<const char*>(field), p.size); break;
+        case FieldType::Struct: write_object(w, *p.struct_type, field, depth + 1); break;
+        case FieldType::Array: {
+            const u32 count = *reinterpret_cast<const u32*>(field);
+            const Property element = element_property(p);
+            w.put("[");
+            for (u32 i = 0; i < count && i < p.capacity; ++i) {
+                w.put(i ? ",\n" : "\n");
+                w.indent(depth + 2);
+                write_value(w, element, field + p.items_offset + i * p.element_size, depth + 1);
+            }
+            if (count) {
+                w.put("\n");
+                w.indent(depth + 1);
+            }
+            w.put("]");
+            break;
+        }
+    }
+}
+
 void write_object(Writer& w, const TypeInfo& type, const u8* object, u32 depth) {
     w.put("{");
     bool first = true;
@@ -65,19 +98,7 @@ void write_object(Writer& w, const TypeInfo& type, const u8* object, u32 depth) 
         w.put("\"");
         w.put(p.name);
         w.put("\": ");
-        const u8* field = object + p.offset;
-        switch (p.type) {
-            case FieldType::Bool: w.put(*reinterpret_cast<const bool*>(field) ? "true" : "false"); break;
-            case FieldType::I32:  w.putf("%d", *reinterpret_cast<const i32*>(field)); break;
-            case FieldType::U32:  w.putf("%u", *reinterpret_cast<const u32*>(field)); break;
-            case FieldType::I64:  w.putf("%lld", static_cast<long long>(*reinterpret_cast<const i64*>(field))); break;
-            case FieldType::U64:  w.putf("%llu", static_cast<unsigned long long>(*reinterpret_cast<const u64*>(field))); break;
-            // 9 / 17 significant digits round-trip f32 / f64 exactly.
-            case FieldType::F32:  w.putf("%.9g", static_cast<f64>(*reinterpret_cast<const f32*>(field))); break;
-            case FieldType::F64:  w.putf("%.17g", *reinterpret_cast<const f64*>(field)); break;
-            case FieldType::String: write_string(w, reinterpret_cast<const char*>(field), p.size); break;
-            case FieldType::Struct: write_object(w, *p.struct_type, field, depth + 1); break;
-        }
+        write_value(w, p, object + p.offset, depth);
     }
     if (!first) {
         w.put("\n");
@@ -114,6 +135,23 @@ void read_property(Reader& r, const Property& prop, u8* field) {
         read_object(r, *prop.struct_type, field);
         return;
     }
+    if (prop.type == FieldType::Array) {
+        // Elements past the capacity are skipped (with a warning); missing ones keep their defaults.
+        const Property element = element_property(prop);
+        u32 count = 0;
+        r.expect('[');
+        if (r.ok && !r.accept(']')) {
+            do {
+                if (count < prop.capacity) read_property(r, element, field + prop.items_offset + count * prop.element_size);
+                else r.skip_value();
+                ++count;
+            } while (r.ok && r.accept(','));
+            r.expect(']');
+        }
+        if (count > prop.capacity) LSD_LOG_WARN("reflect", "'%s' holds at most %u items; %u were dropped", prop.name, prop.capacity, count - prop.capacity);
+        *reinterpret_cast<u32*>(field) = count < prop.capacity ? count : prop.capacity;
+        return;
+    }
     if (prop.type == FieldType::String) {
         r.read_string(reinterpret_cast<char*>(field), prop.size);
         return;
@@ -145,7 +183,8 @@ void read_property(Reader& r, const Property& prop, u8* field) {
             break;
         }
         case FieldType::String:
-        case FieldType::Struct: break;
+        case FieldType::Struct:
+        case FieldType::Array: break;
     }
     if (!valid) {
         char msg[128];
@@ -189,12 +228,34 @@ void write_binary(BinaryWriter& w, const TypeInfo& type, const u8* object) {
         const Property& p = type.properties[i];
         const u64 id = hash64(p.name);
         w.put(&id, sizeof id);
-        if (p.type == FieldType::Struct) {
+        if (p.type == FieldType::Struct || p.type == FieldType::Array) {
             const usize size_at = w.length;
             u32 size = 0;
             w.put(&size, sizeof size);
             const usize start = w.length;
-            write_binary(w, *p.struct_type, object + p.offset);
+            if (p.type == FieldType::Struct) {
+                write_binary(w, *p.struct_type, object + p.offset);
+            } else {
+                // count, element size (0 = structs, each with its own size), elements
+                const u32 items = *reinterpret_cast<const u32*>(object + p.offset);
+                const u32 element_size = p.element_type == FieldType::Struct ? 0 : p.element_size;
+                w.put(&items, sizeof items);
+                w.put(&element_size, sizeof element_size);
+                for (u32 k = 0; k < items && k < p.capacity; ++k) {
+                    const u8* item = object + p.offset + p.items_offset + k * p.element_size;
+                    if (element_size) {
+                        w.put(item, element_size);
+                        continue;
+                    }
+                    const usize item_size_at = w.length;
+                    u32 item_size = 0;
+                    w.put(&item_size, sizeof item_size);
+                    const usize item_start = w.length;
+                    write_binary(w, *p.struct_type, item);
+                    item_size = static_cast<u32>(w.length - item_start);
+                    if (item_size_at + sizeof item_size <= w.capacity) std::memcpy(w.out + item_size_at, &item_size, sizeof item_size);
+                }
+            }
             size = static_cast<u32>(w.length - start);
             if (size_at + sizeof size <= w.capacity) std::memcpy(w.out + size_at, &size, sizeof size);
         } else {
@@ -202,6 +263,40 @@ void write_binary(BinaryWriter& w, const TypeInfo& type, const u8* object) {
             w.put(object + p.offset, p.size);
         }
     }
+}
+
+bool read_binary(const TypeInfo& type, u8* object, const u8* data, usize size);
+
+bool read_binary_array(const Property& p, u8* field, const u8* data, usize size) {
+    u32 count = 0, element_size = 0;
+    if (size < 8) return false;
+    std::memcpy(&count, data, 4);
+    std::memcpy(&element_size, data + 4, 4);
+    usize at = 8;
+    const bool structs = p.element_type == FieldType::Struct;
+    if (structs != (element_size == 0) || (!structs && element_size != p.element_size)) return true;  // element type changed: keep defaults
+    u32 kept = 0;
+    for (u32 k = 0; k < count; ++k) {
+        u8* item = field + p.items_offset + kept * p.element_size;
+        if (!structs) {
+            if (at + element_size > size) return false;
+            if (kept < p.capacity) std::memcpy(item, data + at, element_size), ++kept;
+            at += element_size;
+            continue;
+        }
+        u32 item_size = 0;
+        if (at + 4 > size) return false;
+        std::memcpy(&item_size, data + at, 4);
+        at += 4;
+        if (at + item_size > size) return false;
+        if (kept < p.capacity) {
+            if (!read_binary(*p.struct_type, item, data + at, item_size)) return false;
+            ++kept;
+        }
+        at += item_size;
+    }
+    std::memcpy(field, &kept, 4);
+    return true;
 }
 
 bool read_binary(const TypeInfo& type, u8* object, const u8* data, usize size) {
@@ -224,6 +319,8 @@ bool read_binary(const TypeInfo& type, u8* object, const u8* data, usize size) {
         }
         if (match && match->type == FieldType::Struct) {
             if (!read_binary(*match->struct_type, object + match->offset, data + at, bytes)) return false;
+        } else if (match && match->type == FieldType::Array) {
+            if (!read_binary_array(*match, object + match->offset, data + at, bytes)) return false;
         } else if (match && match->type == FieldType::String) {
             const u32 n = bytes < match->size ? bytes : match->size;
             std::memcpy(object + match->offset, data + at, n);
@@ -246,6 +343,16 @@ usize save_binary(const TypeInfo& type, const void* object, u8* out, usize capac
 
 bool load_binary(const TypeInfo& type, void* object, const u8* data, usize size) {
     return read_binary(type, static_cast<u8*>(object), data, size);
+}
+
+Property element_property(const Property& array) {
+    Property element = array;
+    element.type = array.element_type;
+    element.size = array.element_size;
+    element.offset = 0;
+    element.element_type = FieldType::Bool;
+    element.element_size = element.capacity = element.items_offset = 0;
+    return element;
 }
 
 const Property* find_property(const TypeInfo& type, const char* name) {

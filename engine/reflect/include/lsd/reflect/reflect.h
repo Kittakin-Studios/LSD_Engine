@@ -12,7 +12,10 @@
 // Struct flags:   Component, Color, Vector
 // Property flags: Edit (editable in Details), Visible (read-only in Details), Save (saved, hidden),
 //                 EditorOnly (stripped at packaging). Edit and Visible imply Save.
-// Property keys:  Category, Tooltip, Units (strings); Min, Max (numbers).
+// Property keys:  Category, Tooltip, Units (strings); Min, Max (numbers); Widget (editor hint):
+//                 "Choice:A,B,C" (u32 / i32 shown as a dropdown, like an enum), "Asset:<Type>" (a char[33]
+//                 asset GUID picked from the Content Browser), "Key" (an input key name).
+// Lists:          List<T, N> fields (fixed capacity, count + items, still plain data) save as JSON arrays.
 // Function flags: Callable.
 #include "lsd/foundation/hash_id.h"
 #include "lsd/foundation/reflect_macros.h"
@@ -20,8 +23,42 @@
 
 namespace lsd::reflect {
 
-// String = fixed-size `char name[N]` (always NUL-terminated, truncated to fit).
-enum class FieldType : u8 { Bool, I32, U32, I64, U64, F32, F64, String, Struct };
+// String = fixed-size `char name[N]` (always NUL-terminated, truncated to fit). Array = a List<T, N>.
+enum class FieldType : u8 { Bool, I32, U32, I64, U64, F32, F64, String, Struct, Array };
+
+// Fixed-capacity list for reflected structs: no allocation, so the owner stays plain data
+// (copyable with memcpy, savable, undoable). Like TArray with a hard limit.
+template <typename T, u32 N>
+struct List {
+    u32 count = 0;
+    T items[N];
+
+    static constexpr u32 capacity() { return N; }
+    T* begin() { return items; }
+    T* end() { return items + count; }
+    const T* begin() const { return items; }
+    const T* end() const { return items + count; }
+    T& operator[](u32 i) { return items[i]; }
+    const T& operator[](u32 i) const { return items[i]; }
+    // False when full.
+    bool push_back(const T& value) {
+        if (count == N) return false;
+        items[count++] = value;
+        return true;
+    }
+    void remove(u32 i) {  // keeps order
+        if (i >= count) return;
+        for (u32 k = i; k + 1 < count; ++k) items[k] = items[k + 1];
+        --count;
+    }
+};
+
+// Where a List's items start (generated code uses it; offsetof does not accept these types).
+template <typename L> struct ListTraits;
+template <typename T, u32 N>
+struct ListTraits<List<T, N>> {
+    static constexpr u32 items_offset = static_cast<u32>((sizeof(u32) + alignof(T) - 1) / alignof(T) * alignof(T));
+};
 
 enum PropertyFlags : u32 {
     kEdit       = 1u << 0,
@@ -51,8 +88,17 @@ struct Property {
     f64 max;
     bool has_min;
     bool has_max;
-    const TypeInfo* struct_type;  // set when type == Struct
+    const TypeInfo* struct_type;  // set when type == Struct, or Array of structs
+    const char* widget = "";      // editor hint (see Widget above)
+    // Array only: the count is a u32 at `offset`; the items start at offset + items_offset.
+    FieldType element_type = FieldType::Bool;
+    u32 element_size = 0;
+    u32 capacity = 0;
+    u32 items_offset = 0;
 };
+
+// The element of an Array property described as a Property of its own (for per-element code).
+Property element_property(const Property& array);
 
 struct TypeInfo {
     const char* name;
@@ -68,6 +114,14 @@ struct TypeInfo {
 
 template <typename T>
 const TypeInfo& type_of() { return T::static_type(); }
+
+} // namespace lsd::reflect
+
+namespace lsd {
+using reflect::List;  // reflected structs in any lsd namespace can write List<T, N>
+} // namespace lsd
+
+namespace lsd::reflect {
 
 const Property* find_property(const TypeInfo& type, const char* name);
 

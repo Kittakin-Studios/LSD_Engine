@@ -4,7 +4,9 @@
 #include "thumbnails.h"
 #include "transactions.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/core/console.h"
+#include "lsd/input/input.h"
 #include "lsd/debug_ui/details_panel.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/components.h"
@@ -70,6 +72,13 @@ char g_save_as_name[96] = "";
 bool g_was_using_gizmo[4] = {};  // per viewport
 bool g_alt_duplicated[4] = {};
 int g_request_active = -1;       // viewport clicked this frame
+
+// The data asset shown in Details (loaded on selection, written back on Save).
+alignas(16) u8 g_data[32768];
+const reflect::TypeInfo* g_data_type = nullptr;
+asset::Guid g_data_guid;
+bool g_data_dirty = false;
+char* g_listening_key = nullptr;  // Key widget waiting for a key press
 
 // ---- Output Log storage (filled from any thread through the log sink) ----
 
@@ -1109,6 +1118,226 @@ void draw_outliner(EditorState& s) {
 
 // ---- Details ----
 
+// ---- Asset references and keys in Details ----
+
+void start_rename(EditorState& s, asset::Guid guid, const char* folder, const char* current);
+
+bool asset_matches(const asset::AssetRecord& r, const char* type) {
+    if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
+    if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
+    return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
+}
+
+// Combo of the assets of one type ("None" clears it); also accepts an asset dragged from the Content Browser.
+bool asset_picker(EditorState& s, const char* type, char* guid_text, usize capacity) {
+    bool changed = false;
+    asset::Guid guid;
+    const asset::AssetRecord* current = asset::parse_guid(guid_text, guid) ? s.registry->find(guid) : nullptr;
+    if (ImGui::BeginCombo("##value", current ? current->name : guid_text[0] ? "(missing asset)" : "None")) {
+        if (ImGui::Selectable("None", !guid_text[0])) {
+            guid_text[0] = '\0';
+            changed = true;
+        }
+        for (usize i = 0; i < s.registry->count(); ++i) {
+            const asset::AssetRecord& r = s.registry->get(i);
+            if (!asset_matches(r, type)) continue;
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Selectable(r.name, current == &r)) {
+                asset::to_string(r.guid, guid_text);
+                changed = true;
+            }
+            ImGui::SetItemTooltip("Content/%s", r.path);
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("%s asset (drag one here from the Content Browser)", type);
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+            std::memcpy(&guid, payload->Data, sizeof guid);
+            const asset::AssetRecord* r = s.registry->find(guid);
+            if (r && asset_matches(*r, type) && capacity >= 33) {
+                asset::to_string(guid, guid_text);
+                changed = true;
+            } else {
+                std::snprintf(s.status, sizeof s.status, "That is not a %s asset", type);
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    return changed;
+}
+
+// Key names in a combo, plus Listen: the next key pressed is used (Escape cancels).
+bool key_picker(char* key, usize capacity) {
+    bool changed = false;
+    if (g_listening_key == key) {
+        ImGui::Button("Press a key... (Esc cancels)", ImVec2(-1.0f, 0));
+        int count = 0;
+        const bool* keys = SDL_GetKeyboardState(&count);
+        for (int k = 0; k < count; ++k) {
+            if (!keys[k]) continue;
+            if (k != SDL_SCANCODE_ESCAPE) {
+                std::snprintf(key, capacity, "%s", SDL_GetScancodeName(static_cast<SDL_Scancode>(k)));
+                changed = true;
+            }
+            g_listening_key = nullptr;
+            break;
+        }
+        const char* mouse[3] = {"Left Mouse Button", "Right Mouse Button", "Middle Mouse Button"};
+        for (int b = 0; b < 3 && g_listening_key && !ImGui::IsItemHovered(); ++b) {
+            if (!ImGui::IsMouseClicked(b)) continue;
+            std::snprintf(key, capacity, "%s", mouse[b]);
+            changed = true;
+            g_listening_key = nullptr;
+        }
+        return changed;
+    }
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
+    if (ImGui::BeginCombo("##value", key[0] ? key : "None", ImGuiComboFlags_HeightLarge)) {
+        u32 count = 0;
+        const char* const* names = input::key_names(count);
+        for (u32 i = 0; i < count; ++i) {
+            if (ImGui::Selectable(names[i], std::strcmp(names[i], key) == 0)) {
+                std::snprintf(key, capacity, "%s", names[i]);
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Listen", ImVec2(-1.0f, 0))) g_listening_key = key;
+    ImGui::SetItemTooltip("Press the key, mouse button or gamepad button to use");
+    return changed;
+}
+
+bool details_widget(void* user, const reflect::Property& p, u8* field, bool& changed) {
+    auto& s = *static_cast<EditorState*>(user);
+    if (p.type != reflect::FieldType::String) return false;
+    if (std::strncmp(p.widget, "Asset:", 6) == 0) {
+        changed |= asset_picker(s, p.widget + 6, reinterpret_cast<char*>(field), p.size);
+        return true;
+    }
+    if (std::strcmp(p.widget, "Key") == 0) {
+        changed |= key_picker(reinterpret_cast<char*>(field), p.size);
+        return true;
+    }
+    return false;
+}
+
+// ---- Data assets ----
+
+void load_selected_data(EditorState& s, const asset::AssetRecord& r) {
+    g_data_type = asset::find_data_type(r.data_type);
+    g_data_guid = r.guid;
+    g_data_dirty = false;
+    if (!g_data_type) return;
+    LSD_ASSERT(g_data_type->size <= sizeof g_data);
+    std::memcpy(g_data, g_data_type->defaults, g_data_type->size);
+    char path[300];
+    s.registry->source_path(r, path, sizeof path);
+    if (!asset::load_data_asset(path, *g_data_type, g_data)) std::snprintf(s.status, sizeof s.status, "Could not read %s", r.path);
+}
+
+void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
+    const EditorTheme& t = s.theme;
+    if (!(g_data_guid == r.guid)) load_selected_data(s, r);
+    ImGui::Text("%s%s", r.name, g_data_dirty ? " *" : "");
+    ImGui::TextDisabled("%s data asset  |  Content/%s", r.data_type[0] ? r.data_type : "Unknown", r.path);
+    if (!g_data_type) {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "The type '%s' is not registered in this editor.", r.data_type);
+        return;
+    }
+    char path[300];
+    s.registry->source_path(r, path, sizeof path);
+    ImGui::BeginDisabled(!g_data_dirty);
+    if (ImGui::Button("Save")) {
+        if (asset::save_data_asset(path, *g_data_type, g_data)) {
+            g_data_dirty = false;
+            std::snprintf(s.status, sizeof s.status, "Saved %s", r.path);
+            s.registry->scan();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert")) load_selected_data(s, r);
+    ImGui::EndDisabled();
+    ImGui::BeginChild("DataRows");
+    const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
+    if (draw_properties(*g_data_type, g_data, &style)) g_data_dirty = true;
+    ImGui::EndChild();
+}
+
+// Path of a new file in the current folder: Content/<folder>/<base>.lsdasset, numbered if taken.
+std::string new_asset_path(EditorState& s, const char* base) {
+    const std::filesystem::path folder = std::filesystem::path(kContentDir) / s.content_folder;
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    std::filesystem::path path = folder / (std::string(base) + asset::kDataAssetExtension);
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + asset::kDataAssetExtension);
+    return path.generic_string();
+}
+
+const asset::AssetRecord* record_at(EditorState& s, const std::string& path) {
+    const std::string relative = std::filesystem::relative(path, kContentDir).generic_string();
+    for (usize i = 0; i < s.registry->count(); ++i) {
+        if (relative == s.registry->get(i).path) return &s.registry->get(i);
+    }
+    return nullptr;
+}
+
+void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
+    char base[64];
+    std::snprintf(base, sizeof base, "New%s", type.name);
+    const std::string path = new_asset_path(s, base);
+    if (!asset::save_data_asset(path.c_str(), type, type.defaults)) return;
+    s.registry->scan();
+    if (const asset::AssetRecord* r = record_at(s, path)) {
+        select(s, {});
+        s.selected_asset = r->guid;
+        load_selected_data(s, *r);
+        start_rename(s, r->guid, "", r->name);
+    }
+}
+
+// A ready-made input setup like Unreal's templates: three actions and a context wired to them.
+void create_default_input(EditorState& s) {
+    struct ActionSpec { const char* name; u32 value_type; const char* description; };
+    const ActionSpec specs[3] = {{"IA_Move", 2, "Walk: WASD or the left stick"}, {"IA_Look", 2, "Turn the camera: mouse or the right stick"},
+                                 {"IA_Jump", 0, "Space or the bottom face button"}};
+    char guids[3][33] = {};
+    for (int i = 0; i < 3; ++i) {
+        input::InputAction action;
+        action.value_type = specs[i].value_type;
+        std::snprintf(action.description, sizeof action.description, "%s", specs[i].description);
+        const std::string path = new_asset_path(s, specs[i].name);
+        asset::save_data_asset(path.c_str(), reflect::type_of<input::InputAction>(), &action);
+        s.registry->scan();  // writes the .meta with the new GUID
+        if (const asset::AssetRecord* r = record_at(s, path)) asset::to_string(r->guid, guids[i]);
+    }
+    input::InputMappingContext imc;
+    auto add = [&](int action, const char* key, u32 axis, f32 scale) {
+        input::KeyMapping m;
+        std::snprintf(m.action, sizeof m.action, "%s", guids[action]);
+        std::snprintf(m.key, sizeof m.key, "%s", key);
+        m.axis = axis;
+        m.scale = scale;
+        imc.mappings.push_back(m);
+    };
+    add(0, "W", 1, 1.0f);
+    add(0, "S", 1, -1.0f);
+    add(0, "D", 0, 1.0f);
+    add(0, "A", 0, -1.0f);
+    add(0, "Gamepad Left Stick", 0, 1.0f);
+    add(1, "Mouse XY", 0, 1.0f);
+    add(1, "Gamepad Right Stick", 0, 12.0f);  // sticks read -1..1 per frame; this feels close to the mouse
+    add(2, "Space", 0, 1.0f);
+    add(2, "Gamepad Face Bottom", 0, 1.0f);
+    const std::string path = new_asset_path(s, "IMC_Default");
+    asset::save_data_asset(path.c_str(), reflect::type_of<input::InputMappingContext>(), &imc);
+    s.registry->scan();
+    std::snprintf(s.status, sizeof s.status, "Created IA_Move, IA_Look, IA_Jump and IMC_Default");
+}
+
 // Mesh slot for a StaticMesh: basic shapes and mesh assets in a combo; also accepts a dragged asset.
 void draw_mesh_slot(EditorState& s, world::StaticMesh& mesh) {
     const char* shown = mesh.mesh;
@@ -1186,7 +1415,7 @@ void draw_entity_details(EditorState& s) {
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##details_search", "Search details", filter, sizeof filter);
     ImGui::BeginChild("DetailsRows");
-    const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, filter};
+    const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, filter, details_widget, &s};
     u32 type_count = 0;
     const reflect::TypeInfo* const* types = world::component_types(type_count);
     for (u32 i = 0; i < type_count; ++i) {
@@ -1239,6 +1468,8 @@ void draw_details_panel(EditorState& s) {
         if (themed_tab("Details", 0, s.details_tab, t.details_tab_active, t.details_tab, t.text_on_bright)) {
             if (s.world->alive(s.selected)) {
                 draw_entity_details(s);
+            } else if (selected && selected->type == asset::AssetType::Data) {
+                draw_data_asset_details(s, *selected);
             } else if (selected) {
                 ImGui::Text("%s", selected->name);
                 ImGui::TextDisabled("%s  |  Content/%s", asset::to_string(selected->type), selected->path);
@@ -1437,14 +1668,15 @@ void draw_asset_grid(EditorState& s) {
     ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0");
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0");
     ImGui::SameLine();
     ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
     if (!s.registry) return;
 
     static usize hits[1024];
-    const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : s.type_filter == 2 ? asset::AssetType::Level : asset::AssetType::Unknown;
+    const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : s.type_filter == 2 ? asset::AssetType::Level
+                                : s.type_filter == 3 ? asset::AssetType::Data : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
@@ -1469,6 +1701,16 @@ void draw_asset_grid(EditorState& s) {
             std::filesystem::create_directories(dir, error);
             start_rename(s, {}, join_folder(s.content_folder, dir.filename().string().c_str()).c_str(), dir.filename().string().c_str());
         }
+        if (ImGui::BeginMenu("New Data Asset")) {
+            u32 type_count = 0;
+            const reflect::TypeInfo* const* types = asset::data_types(type_count);
+            for (u32 i = 0; i < type_count; ++i) {
+                if (ImGui::MenuItem(types[i]->name)) create_data_asset(s, *types[i]);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
+        ImGui::SetItemTooltip("Creates IA_Move, IA_Look, IA_Jump and IMC_Default mapped to WASD, mouse, Space and a gamepad");
         if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(s.content_folder);
         ImGui::EndPopup();
     }
@@ -1533,6 +1775,7 @@ void draw_asset_grid(EditorState& s) {
             s.selected_meta = asset::AssetMeta{};
             s.registry->load_meta(r, s.selected_meta);
             s.status[0] = '\0';
+            if (r.type == asset::AssetType::Data) load_selected_data(s, r);
             if (level && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 char path[300];
                 s.registry->source_path(r, path, sizeof path);
@@ -1567,9 +1810,12 @@ void draw_asset_grid(EditorState& s) {
             dl->AddImage(ImTextureRef(static_cast<ImTextureID>(thumbnail)), lo, hi, ImVec2(0, flip ? 1.0f : 0.0f), ImVec2(1, flip ? 0.0f : 1.0f));
         } else {  // still rendering (or no thumbnail for this type): type badge
             dl->AddRectFilled(lo, hi, u32_color(level ? t.details_tab : t.outline_row_b), 4.0f);
-            const char* badge = asset::to_string(r.type);
+            const char* badge = r.type == asset::AssetType::Data && r.data_type[0] ? r.data_type : asset::to_string(r.type);
             const ImVec2 badge_size = ImGui::CalcTextSize(badge);
-            dl->AddText(ImVec2(p.x + (kTile - badge_size.x) * 0.5f, p.y + (kTile - badge_size.y) * 0.5f), u32_color(level ? t.text_on_bright : t.text_mesh), badge);
+            dl->PushClipRect(lo, hi, true);  // long type names ("InputMappingContext") stay inside the tile
+            dl->AddText(ImVec2(p.x + (badge_size.x < kTile - 12.0f ? (kTile - badge_size.x) * 0.5f : 8.0f), p.y + (kTile - badge_size.y) * 0.5f),
+                        u32_color(level ? t.text_on_bright : t.text_mesh), badge);
+            dl->PopClipRect();
         }
         dl->AddRect(lo, hi, u32_color(selected ? t.details_tab_active : t.text_mesh), 4.0f, 0, 2.0f);
         dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
@@ -2120,6 +2366,18 @@ void handle_shortcuts(EditorState& s) {
 } // namespace
 
 void set_layout(EditorState& s, bool quad) { set_quad_view(s, quad); }
+
+void create_input_setup(EditorState& s) { create_default_input(s); }
+
+bool select_asset(EditorState& s, const char* name) {
+    usize hit = 0;
+    if (s.registry->search(name, asset::AssetType::Unknown, nullptr, &hit, 1) != 1) return false;
+    const asset::AssetRecord& r = s.registry->get(hit);
+    select(s, {});
+    s.selected_asset = r.guid;
+    if (r.type == asset::AssetType::Data) load_selected_data(s, r);
+    return true;
+}
 
 void install_output_log() { log::set_sink(log_sink, nullptr); }
 

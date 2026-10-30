@@ -39,4 +39,13 @@ struct PointLight {
     void set_intensity(f32 lumens) { intensity = lumens; }
 };
 
+// Lists and widget hints.
+LSD_STRUCT()
+struct Palette {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) List<Color, 4> colors;
+    LSD_PROPERTY(Edit, Min = 0) List<f32, 3> weights;
+    LSD_PROPERTY(Edit, Widget = "Choice:Add,Multiply,Screen") u32 blend = 1;
+};
+
 } // namespace lsd::test

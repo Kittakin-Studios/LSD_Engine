@@ -38,3 +38,9 @@ target_include_directories(lsd_editor_tests PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(lsd_editor_tests PRIVATE lsd_world)
 lsd_configure_target(lsd_editor_tests)
 add_test(NAME editor COMMAND lsd_editor_tests)
+
+add_executable(lsd_input_tests input_tests.cpp)
+target_link_libraries(lsd_input_tests PRIVATE lsd_input lsd_asset SDL3::SDL3-static)
+target_compile_definitions(lsd_input_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+lsd_configure_target(lsd_input_tests)
+add_test(NAME input COMMAND lsd_input_tests)

@@ -105,7 +105,54 @@ static void test_strings_and_binary() {
     CHECK(!reflect::load_binary(reflect::type_of<PointLight>(), &b, data, size / 2));  // truncated data is rejected
 }
 
+static void test_lists() {
+    const reflect::Property* colors = reflect::find_property(reflect::type_of<test::Palette>(), "colors");
+    CHECK(colors && colors->type == reflect::FieldType::Array && colors->element_type == reflect::FieldType::Struct && colors->capacity == 4);
+    CHECK(colors && colors->element_size == sizeof(test::Color) && colors->struct_type == &reflect::type_of<test::Color>());
+    const reflect::Property* blend = reflect::find_property(reflect::type_of<test::Palette>(), "blend");
+    CHECK(blend && std::strcmp(blend->widget, "Choice:Add,Multiply,Screen") == 0);
+
+    test::Palette a;
+    CHECK(colors && colors->items_offset == static_cast<u32>(reinterpret_cast<const char*>(&a.colors.items) - reinterpret_cast<const char*>(&a.colors)));
+    const reflect::Property* weights = reflect::find_property(reflect::type_of<test::Palette>(), "weights");
+    CHECK(weights && weights->items_offset == static_cast<u32>(reinterpret_cast<const char*>(&a.weights.items) - reinterpret_cast<const char*>(&a.weights)));
+    test::Color red;
+    red.g = red.b = 0.0f;
+    a.colors.push_back(red);
+    a.colors.push_back(test::Color{});
+    a.weights.push_back(0.25f);
+    a.blend = 2;
+    char text[1024];
+    reflect::save_text(a, text, sizeof text);
+    test::Palette b;
+    CHECK(reflect::load_text(b, text, std::strlen(text)));
+    CHECK(b.colors.count == 2 && b.colors[0].g == 0.0f && b.colors[1].g == 1.0f && b.weights.count == 1 && b.weights[0] == 0.25f && b.blend == 2);
+
+    // Binary round trip.
+    u8 blob[512];
+    const usize size = reflect::save_binary(a, blob, sizeof blob);
+    test::Palette c;
+    CHECK(size <= sizeof blob && reflect::load_binary(reflect::type_of<test::Palette>(), &c, blob, size));
+    CHECK(c.colors.count == 2 && c.colors[0].r == 1.0f && c.colors[0].g == 0.0f && c.weights.count == 1 && c.weights[0] == 0.25f);
+
+    // More items than the capacity: the extra ones are dropped, the rest load.
+    const char overflow[] = "{\"weights\": [1, 2, 3, 4, 5], \"colors\": []}";
+    test::Palette d;
+    d.colors.push_back(red);
+    CHECK(reflect::load_text(d, overflow, sizeof overflow - 1));
+    CHECK(d.weights.count == 3 && d.weights[2] == 3.0f && d.colors.count == 0);
+    const char bad[] = "{\"weights\": [1, \"x\"]}";
+    CHECK(!reflect::load_text(d, bad, sizeof bad - 1));
+
+    // Remove keeps order.
+    test::Palette e = a;
+    e.colors.push_back(red);
+    e.colors.remove(0);
+    CHECK(e.colors.count == 2 && e.colors[0].g == 1.0f && e.colors[1].g == 0.0f);
+}
+
 int main() {
+    test_lists();
     test_type_info();
     test_round_trip();
     test_versioning_and_errors();

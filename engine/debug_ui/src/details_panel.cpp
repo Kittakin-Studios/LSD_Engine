@@ -134,6 +134,79 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
         return changed;
     }
 
+    // List<T, N>: header with the count and +, then one row per item with a remove button.
+    if (p.type == reflect::FieldType::Array) {
+        row_background();
+        u32& count = *reinterpret_cast<u32*>(field);
+        const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+        if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
+        ImGui::SameLine(kLabelWidth);
+        ImGui::TextDisabled("%u item%s", count, count == 1 ? "" : "s");
+        const bool editable = (p.flags & reflect::kEdit) != 0;
+        u8* items = field + p.items_offset;
+        const u8* default_item = default_field ? default_field + p.items_offset : nullptr;  // the default List's items are default-constructed
+        if (editable) {
+            ImGui::SameLine();
+            ImGui::BeginDisabled(count >= p.capacity);
+            if (ImGui::SmallButton("+")) {
+                u8* item = items + count * p.element_size;
+                if (default_item) std::memcpy(item, default_item, p.element_size);
+                else std::memset(item, 0, p.element_size);
+                ++count;
+                changed = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("Add (at most %u)", p.capacity);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(count == 0);
+            if (ImGui::SmallButton("Clear")) {
+                count = 0;
+                changed = true;
+            }
+            ImGui::EndDisabled();
+        }
+        if (open) {
+            reflect::Property element = reflect::element_property(p);
+            for (u32 i = 0; i < count; ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                u8* item = items + i * p.element_size;
+                char item_label[32];
+                std::snprintf(item_label, sizeof item_label, "Item %u", i);
+                bool remove = false;
+                if (element.type == reflect::FieldType::Struct) {
+                    row_background();
+                    const bool item_open = ImGui::TreeNodeEx(item_label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+                    if (editable) {
+                        ImGui::SameLine(kLabelWidth);
+                        remove = ImGui::SmallButton("Remove");
+                    }
+                    if (item_open) {
+                        changed |= draw_fields(*element.struct_type, item, default_item, nullptr);
+                        ImGui::TreePop();
+                    }
+                } else {
+                    element.name = item_label;
+                    changed |= draw_property(element, item - element.offset, default_item ? default_item - element.offset : nullptr);
+                    if (editable) {
+                        ImGui::SameLine();
+                        remove = ImGui::SmallButton("x");
+                    }
+                }
+                if (remove) {
+                    std::memmove(item, item + p.element_size, (count - i - 1) * p.element_size);
+                    --count;
+                    changed = true;
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+        return changed;
+    }
+
     if (p.type == reflect::FieldType::Struct) {
         row_background();
         const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
@@ -155,6 +228,37 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
 
     const bool read_only = !(p.flags & reflect::kEdit);
     if (read_only) ImGui::BeginDisabled();
+
+    // Widget hints: "Choice:A,B,C" is a dropdown for a number; others go to the caller's widget.
+    if (std::strncmp(p.widget, "Choice:", 7) == 0 && (p.type == reflect::FieldType::U32 || p.type == reflect::FieldType::I32)) {
+        char names[256];
+        usize n = 0;
+        for (const char* c = p.widget + 7; *c && n + 2 < sizeof names; ++c) names[n++] = *c == ',' ? '\0' : *c;  // ImGui's "A\0B\0\0" list
+        names[n++] = '\0';
+        names[n] = '\0';
+        int value = p.type == reflect::FieldType::U32 ? static_cast<int>(*reinterpret_cast<u32*>(field)) : *reinterpret_cast<i32*>(field);
+        if (ImGui::Combo("##value", &value, names)) {
+            if (p.type == reflect::FieldType::U32) *reinterpret_cast<u32*>(field) = static_cast<u32>(value);
+            else *reinterpret_cast<i32*>(field) = value;
+            changed = true;
+        }
+        if (read_only) ImGui::EndDisabled();
+        changed |= property_menu(p, field, default_field);
+        ImGui::PopID();
+        return changed;
+    }
+    if (p.widget[0] && g_style && g_style->custom_widget) {
+        const DetailsStyle* style = g_style;  // the callback may draw nested details
+        const u32 row = g_row;
+        if (style->custom_widget(style->custom_user, p, field, changed)) {
+            g_style = style;
+            g_row = row;
+            if (read_only) ImGui::EndDisabled();
+            changed |= property_menu(p, field, default_field);
+            ImGui::PopID();
+            return changed;
+        }
+    }
     char float_format[32], int_format[32];
     std::snprintf(float_format, sizeof float_format, p.units[0] ? "%%.3f %s" : "%%.3f", p.units);
     std::snprintf(int_format, sizeof int_format, p.units[0] ? "%%d %s" : "%%d", p.units);

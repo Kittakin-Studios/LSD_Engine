@@ -124,6 +124,11 @@ struct EditorState {
 
 // Perspective <-> orthographic; restores the perspective camera when coming back.
 void set_view(EditorState& state, ViewType view);
+// Creates IA_Move, IA_Look, IA_Jump and IMC_Default in the open Content Browser folder.
+void create_input_setup(EditorState& state);
+// Selects the first asset whose name matches (for scripted screenshots and the console).
+bool select_asset(EditorState& state, const char* name);
+
 // One viewport, or the 2x2 layout (perspective, top, front, right).
 void set_layout(EditorState& state, bool quad);
 
