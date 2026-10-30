@@ -19,6 +19,13 @@ static const char kMover[] = LSD_TEST_TEMP_DIR "/mover.lua";
 static const char kBroken[] = LSD_TEST_TEMP_DIR "/broken.lua";
 static const char kGraphLua[] = LSD_TEST_TEMP_DIR "/graph.lua";
 static const char kTable[] = LSD_TEST_TEMP_DIR "/DT_Weapons.csv";
+static const char kCurve[] = LSD_TEST_TEMP_DIR "/C_Ramp.lsdasset";
+
+static bool curve_path(void*, const char* name, char* out, usize capacity) {
+    if (std::strcmp(name, "C_Ramp") != 0) return false;
+    std::snprintf(out, capacity, "%s", kCurve);
+    return true;
+}
 
 static bool table_path(void*, const char* name, char* out, usize capacity) {
     if (std::strcmp(name, "DT_Weapons") != 0) return false;
@@ -167,7 +174,11 @@ static void test_data_table() {
         script::ScriptSystem scripts;
         script::ScriptHost host;
         host.table_path = table_path;
+        host.curve_path = curve_path;
         scripts.start(w, host, path_of, nullptr);
+        // Curves: linear 0..10 over 2 s, read through the data asset file.
+        write(kCurve, R"({"type": "Curve", "data": {"keys": [{"time": 2, "value": 10, "interp": 1}, {"time": 0, "value": 0, "interp": 1}]}})");
+        CHECK(scripts.run("assert(math.abs(lsd.curve('C_Ramp', 0.5) - 2.5) < 1e-4 and lsd.curve('C_Ramp', 9) == 10 and lsd.curve('Nope', 1) == 0)"));
         CHECK(scripts.run(R"(
 local t = lsd.table("DT_Weapons")
 assert(t.Pistol.Damage == 12.5 and t.Rifle.Label == "Big" and lsd.table("Nope") == nil)

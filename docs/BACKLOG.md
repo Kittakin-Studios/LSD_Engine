@@ -94,7 +94,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 ### Data
 
-- [~] Data assets (`.lsdasset`, any registered reflected type, New Data Asset, edit + save in Details); data tables: a .csv in Content is the asset (Excel-friendly), grid editor window (add / delete rows and columns, rename), `lsd.table(name)` in Lua (numbers parsed, re-read on change), Get Table Value node, import by drop; needs typed columns, JSON export, curves and curve tables [Data Asset, Data Table, Curve]
+- [~] Data assets (`.lsdasset`, any registered reflected type, New Data Asset, edit + save in Details); data tables: a .csv in Content is the asset (Excel-friendly), grid editor window (add / delete rows and columns, rename), `lsd.table(name)` in Lua (numbers parsed, re-read on change), Get Table Value node, import by drop; curves: Curve data asset (smooth / linear / constant keys, auto tangents) with a graph editor in Details (drag, double-click to add, right-click to delete), `lsd.curve(name, t)`, Evaluate Curve node; needs typed table columns, JSON export, curve tables, tangent handles, vector / colour curves [Data Asset, Data Table, Curve]
 - [x] Reflection: List<T, N> fields (JSON arrays, binary, +/remove in Details), Choice dropdowns, asset pickers (Asset:<Type>, drag-drop), key picker with Listen
 - [~] Gameplay tags: Tags component (comma-separated, dotted hierarchy, `has_tag` / `lsd.has_tag` where "Damage.Fire" matches "Damage"); needs a project tag list with a picker, tag containers on data assets, richer queries (any / all / none) [Gameplay Tags]
 - [ ] Enums and structs defined in the editor for scripts [User Defined Enum / Struct]

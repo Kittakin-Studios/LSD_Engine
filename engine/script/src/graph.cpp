@@ -80,6 +80,8 @@ NodeDef g_defs[] = {
      {{"Table", PinType::String, "DT_Items"}, {"Row", PinType::String, "Row1"}, {"Column", PinType::String, "Value"}}, 0,
      {{"Number", PinType::Float, ""}, {"Text", PinType::String, ""}}, 0, nullptr,
      {"(tonumber(__cell($0, $1, $2)) or 0)", "tostring(__cell($0, $1, $2) or \"\")"}},
+    {"EvaluateCurve", "Evaluate Curve", "Data", "Value of a Curve data asset (by name) at a time",
+     {{"Curve", PinType::String, "C_Fade"}, {"Time", PinType::Float, "0"}}, 0, {{"Value", PinType::Float, ""}}, 0, nullptr, {"lsd.curve($0, $1)"}},
     {"Time", "Game Time", "Utilities", "Seconds since Play started", {}, 0, {{"Seconds", PinType::Float, ""}}, 0, nullptr, {"lsd.time()"}},
     {"MakeVector", "Make Vector", "Math", "", {{"X", PinType::Float, "0"}, {"Y", PinType::Float, "0"}, {"Z", PinType::Float, "0"}}, 0,
      {{"Vector", PinType::Vector, ""}}, 0, nullptr, {"__vec($0, $1, $2)"}},

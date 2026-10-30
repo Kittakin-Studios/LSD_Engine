@@ -1,5 +1,6 @@
 #include "lsd/script/script.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/asset/data_table.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/spline.h"
@@ -162,6 +163,13 @@ void read_struct(lua_State* L, int index, const reflect::TypeInfo& type, u8* dat
 
 } // namespace
 
+struct ScriptSystem::CachedCurve {
+    char path[260];
+    i64 modified;
+    world::Curve curve;
+};
+constexpr u32 kMaxCurves = 32;
+
 // The `lsd` table. Each function finds the ScriptSystem in its upvalue.
 struct Api {
     static ScriptSystem& system(lua_State* L) { return *static_cast<ScriptSystem*>(lua_touserdata(L, lua_upvalueindex(1))); }
@@ -297,6 +305,36 @@ struct Api {
         lua_pushnumber(L, n ? world::spline_length(points, n, closed) : 0.0);
         return 1;
     }
+    static int curve(lua_State* L) {
+        ScriptSystem& self = system(L);
+        const ScriptHost& host = self.host_;
+        const char* name = luaL_checkstring(L, 1);
+        const f32 time = static_cast<f32>(luaL_checknumber(L, 2));
+        char path[260];
+        if (!host.curve_path || !host.curve_path(host.user, name, path, sizeof path)) {
+            lua_pushnumber(L, 0);
+            return 1;
+        }
+        const i64 modified = file_time(path);
+        ScriptSystem::CachedCurve* slot = nullptr;
+        for (u32 i = 0; i < self.curve_count_ && !slot; ++i) {
+            if (std::strcmp(self.curves_[i].path, path) == 0) slot = &self.curves_[i];
+        }
+        if (!slot && self.curve_count_ < kMaxCurves) {
+            slot = &self.curves_[self.curve_count_++];
+            std::snprintf(slot->path, sizeof slot->path, "%s", path);
+            slot->modified = -1;
+        }
+        if (!slot) luaL_error(L, "too many curves in use");
+        if (slot->modified != modified) {  // first use, or the asset was saved again
+            slot->curve = world::Curve{};
+            if (!asset::load_data_asset(path, slot->curve)) slot->curve.keys.count = 0;
+            world::sort_keys(slot->curve);
+            slot->modified = modified;
+        }
+        lua_pushnumber(L, world::evaluate(slot->curve, time));
+        return 1;
+    }
     static int table(lua_State* L) {
         ScriptSystem& self = system(L);
         const ScriptHost& host = self.host_;
@@ -421,6 +459,9 @@ void ScriptSystem::stop() {
     world_ = nullptr;
     count_ = 0;
     table_count_ = 0;  // their refs went with the Lua state
+    delete[] curves_;
+    curves_ = nullptr;
+    curve_count_ = 0;
     time_ = 0;
 }
 
@@ -438,6 +479,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     path_user_ = path_user;
     // shortcut: Lua's own allocator and the full standard library (io, os); give it an Allocator and a sandbox before shipping mods.
     lua_ = luaL_newstate();
+    curves_ = new CachedCurve[kMaxCurves];
     luaL_openlibs(lua_);
 
     const luaL_Reg api[] = {
@@ -446,7 +488,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
-        {"table", Api::table}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"table", Api::table}, {"curve", Api::curve}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

@@ -15,6 +15,7 @@
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
+#include "lsd/world/curve.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -1396,6 +1397,92 @@ void load_selected_data(EditorState& s, const asset::AssetRecord& r) {
     if (!asset::load_data_asset(path, *g_data_type, g_data)) std::snprintf(s.status, sizeof s.status, "Could not read %s", r.path);
 }
 
+// Graph of a Curve asset: drag keys, double-click to add one, right-click a key to delete it.
+bool draw_curve_editor(world::Curve& curve) {
+    static f32 view[4] = {0, 1, 0, 1};  // time min / max, value min / max (kept while dragging)
+    static i32 dragging = -1;
+    bool changed = false;
+    const ImVec2 size(ImGui::GetContentRegionAvail().x, 220.0f);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("curve_canvas", size, ImGuiButtonFlags_MouseButtonLeft);
+    const bool canvas_hovered = ImGui::IsItemHovered();
+    if (dragging < 0 && curve.keys.count) {  // fit the keys
+        view[0] = view[1] = curve.keys[0].time;
+        view[2] = view[3] = curve.keys[0].value;
+        for (const world::CurveKey& k : curve.keys) {
+            view[0] = k.time < view[0] ? k.time : view[0];
+            view[1] = k.time > view[1] ? k.time : view[1];
+            view[2] = k.value < view[2] ? k.value : view[2];
+            view[3] = k.value > view[3] ? k.value : view[3];
+        }
+        const f32 pad_t = (view[1] - view[0]) * 0.1f + 0.1f, pad_v = (view[3] - view[2]) * 0.15f + 0.1f;
+        view[0] -= pad_t;
+        view[1] += pad_t;
+        view[2] -= pad_v;
+        view[3] += pad_v;
+    }
+    auto to_screen = [&](f32 t, f32 v) {
+        return ImVec2(at.x + (t - view[0]) / (view[1] - view[0]) * size.x, at.y + size.y - (v - view[2]) / (view[3] - view[2]) * size.y);
+    };
+    auto to_curve = [&](ImVec2 p, f32& t, f32& v) {
+        t = view[0] + (p.x - at.x) / size.x * (view[1] - view[0]);
+        v = view[2] + (at.y + size.y - p.y) / size.y * (view[3] - view[2]);
+    };
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y), IM_COL32(24, 24, 28, 255));
+    const ImVec2 zero_a = to_screen(view[0], 0.0f), zero_b = to_screen(view[1], 0.0f);
+    dl->AddLine(zero_a, zero_b, IM_COL32(70, 70, 80, 255));
+    char label[64];
+    std::snprintf(label, sizeof label, "%.3g", static_cast<double>(view[3]));
+    dl->AddText(ImVec2(at.x + 4, at.y + 2), IM_COL32(150, 150, 160, 255), label);
+    std::snprintf(label, sizeof label, "%.3g", static_cast<double>(view[2]));
+    dl->AddText(ImVec2(at.x + 4, at.y + size.y - 16), IM_COL32(150, 150, 160, 255), label);
+    std::snprintf(label, sizeof label, "%.3g s", static_cast<double>(view[1]));
+    dl->AddText(ImVec2(at.x + size.x - 60, at.y + size.y - 16), IM_COL32(150, 150, 160, 255), label);
+    ImVec2 previous;
+    for (int i = 0; i <= 120; ++i) {
+        const f32 t = view[0] + (view[1] - view[0]) * static_cast<f32>(i) / 120.0f;
+        const ImVec2 p = to_screen(t, world::evaluate(curve, t));
+        if (i) dl->AddLine(previous, p, IM_COL32(240, 200, 60, 255), 2.0f);
+        previous = p;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    i32 hovered_key = -1;
+    for (u32 i = 0; i < curve.keys.count; ++i) {
+        const ImVec2 p = to_screen(curve.keys[i].time, curve.keys[i].value);
+        const bool hot = (io.MousePos.x - p.x) * (io.MousePos.x - p.x) + (io.MousePos.y - p.y) * (io.MousePos.y - p.y) < 64.0f;
+        if (hot) hovered_key = static_cast<i32>(i);
+        dl->AddCircleFilled(p, hot || dragging == static_cast<i32>(i) ? 6.0f : 4.5f, IM_COL32(255, 255, 255, 255));
+    }
+    if (canvas_hovered && hovered_key >= 0) {
+        ImGui::SetTooltip("%.3f s  =  %.3f", static_cast<double>(curve.keys[static_cast<u32>(hovered_key)].time), static_cast<double>(curve.keys[static_cast<u32>(hovered_key)].value));
+    }
+    if (ImGui::IsItemActivated() && hovered_key >= 0) dragging = hovered_key;
+    if (dragging >= 0 && static_cast<u32>(dragging) < curve.keys.count) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            to_curve(io.MousePos, curve.keys[static_cast<u32>(dragging)].time, curve.keys[static_cast<u32>(dragging)].value);
+            changed = true;
+        } else {
+            dragging = -1;
+            world::sort_keys(curve);
+            changed = true;
+        }
+    }
+    if (canvas_hovered && hovered_key < 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && curve.keys.count < curve.keys.capacity()) {
+        world::CurveKey key;
+        to_curve(io.MousePos, key.time, key.value);
+        curve.keys.push_back(key);
+        world::sort_keys(curve);
+        changed = true;
+    }
+    if (canvas_hovered && hovered_key >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && curve.keys.count > 1) {
+        curve.keys.remove(static_cast<u32>(hovered_key));
+        changed = true;
+    }
+    ImGui::TextDisabled("Drag keys. Double-click: add a key. Right-click a key: delete it.");
+    return changed;
+}
+
 void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     const EditorTheme& t = s.theme;
     if (!(g_data_guid == r.guid)) load_selected_data(s, r);
@@ -1420,6 +1507,7 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     ImGui::EndDisabled();
     ImGui::BeginChild("DataRows");
     const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
+    if (g_data_type == &reflect::type_of<world::Curve>() && draw_curve_editor(*reinterpret_cast<world::Curve*>(g_data))) g_data_dirty = true;
     if (draw_properties(*g_data_type, g_data, &style)) g_data_dirty = true;
     ImGui::EndChild();
 }

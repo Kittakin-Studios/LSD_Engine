@@ -3,6 +3,7 @@
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
+#include "lsd/world/curve.h"
 
 #include <cmath>
 #include <cstdio>
@@ -199,6 +200,25 @@ static void test_spline() {
     CHECK(s.points.count == 2 && s.points[1].x == 4.0f);  // a new Spline starts as a 4 m line
 }
 
+static void test_curve() {
+    Curve c;  // default: 0 at 0 s to 1 at 1 s, smooth
+    CHECK(evaluate(c, -1.0f) == 0.0f && evaluate(c, 5.0f) == 1.0f);  // flat outside the keys
+    CHECK(std::fabs(evaluate(c, 0.5f) - 0.5f) < 1e-5f);              // symmetric ease
+    CHECK(evaluate(c, 0.25f) < 0.25f);                               // eases in (flat end tangents)
+    c.keys[0].interp = 1;  // linear
+    CHECK(std::fabs(evaluate(c, 0.25f) - 0.25f) < 1e-5f);
+    c.keys[0].interp = 2;  // constant
+    CHECK(evaluate(c, 0.99f) == 0.0f);
+    // Unsorted keys after editing; a middle key keeps the curve through it.
+    c.keys.push_back({0.5f, 2.0f, 0});
+    c.keys[0] = {2.0f, 0.0f, 0};
+    sort_keys(c);
+    CHECK(c.keys[0].time == 0.5f && c.keys[1].time == 1.0f && c.keys[2].time == 2.0f);
+    CHECK(evaluate(c, 1.0f) == 1.0f && evaluate(c, 0.5f) == 2.0f);
+    const f32 between = evaluate(c, 1.5f);
+    CHECK(between < 1.0f && between > 0.0f);
+}
+
 int main() {
     test_math();
     test_entities();
@@ -206,6 +226,7 @@ int main() {
     test_prefab();
     test_tags();
     test_spline();
+    test_curve();
     if (g_failures == 0) std::printf("All world tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

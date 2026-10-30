@@ -12,6 +12,7 @@
 #include "lsd/input/input.h"
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
+#include "lsd/world/curve.h"
 #include "lsd/foundation/system_info.h"
 #include "lsd/render/grid.h"
 #include "lsd/render/mesh.h"
@@ -346,6 +347,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputAction>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);

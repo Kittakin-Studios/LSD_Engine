@@ -229,6 +229,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (r) self.registry_->source_path(*r, out, capacity);
         return r != nullptr;
     };
+    host.curve_path = [](void* user, const char* name, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        const asset::AssetRecord* r = self.find_asset(asset::AssetType::Data, name);
+        if (r && std::strcmp(r->data_type, "Curve") == 0) self.registry_->source_path(*r, out, capacity);
+        return r && std::strcmp(r->data_type, "Curve") == 0;
+    };
     scripts_.start(world, host, script_path, const_cast<asset::AssetRegistry*>(&registry));
 }
 
