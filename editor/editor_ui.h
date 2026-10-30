@@ -109,11 +109,23 @@ struct EditorState {
     bool ejected = false;         // Play: F8 frees the editor camera (select and inspect) while the game runs
     Vec3 player_feet;             // Play: where the player is, for the ejected view
     bool show_world_settings = false;
-    f32 viewport_rect[4] = {};  // x, y, width, height in window pixels, set by draw_editor
+    bool show_message_log = false;
+    bool show_project_settings = false;
+    ProjectSettings project;
+    // Viewports: one, or a 2x2 layout (perspective, top, front, right). `camera` always belongs to the
+    // active viewport (the last one clicked); `views` keeps the others' cameras.
+    bool quad_view = false;
+    EditorCamera views[4];
+    int active_view = 0;
+    u32 viewport_count = 0;          // set by draw_editor
+    f32 viewport_rects[4][4] = {};   // x, y, width, height in window pixels
+    const EditorCamera& viewport_camera(u32 i) const { return static_cast<int>(i) == active_view ? camera : views[i]; }
 };
 
 // Perspective <-> orthographic; restores the perspective camera when coming back.
 void set_view(EditorState& state, ViewType view);
+// One viewport, or the 2x2 layout (perspective, top, front, right).
+void set_layout(EditorState& state, bool quad);
 
 Vec3 camera_forward(const EditorCamera& camera);
 Mat4 camera_view(const EditorCamera& camera);

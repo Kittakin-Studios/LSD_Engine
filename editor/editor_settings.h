@@ -16,4 +16,14 @@ struct EditorSettings {
     LSD_PROPERTY(Edit, Category = "Snapping", Min = 0.01) f32 snap_scale = 0.25f;
 };
 
+// Project-wide settings shared by the team, saved to Config/project.json (Unreal's Project Settings).
+LSD_STRUCT()
+struct ProjectSettings {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Category = "Description") char project_name[64] = "LSD Project";
+    LSD_PROPERTY(Edit, Category = "Description") char company[64] = "Kittakin Studios";
+    LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the packaged game opens first (Content/Levels/...)") char game_default_level[260] = "";
+    LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the editor opens when there is no last level") char editor_startup_level[260] = "";
+};
+
 } // namespace lsd::editor

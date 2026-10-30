@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace lsd::editor {
 
@@ -66,8 +67,9 @@ bool g_confirm_new = false;
 bool g_open_confirm = false;
 bool g_open_save_as = false;
 char g_save_as_name[96] = "";
-bool g_was_using_gizmo = false;
-bool g_alt_duplicated = false;
+bool g_was_using_gizmo[4] = {};  // per viewport
+bool g_alt_duplicated[4] = {};
+int g_request_active = -1;       // viewport clicked this frame
 
 // ---- Output Log storage (filled from any thread through the log sink) ----
 
@@ -82,8 +84,22 @@ u32 g_log_next = 0, g_log_count = 0;
 bool g_log_scroll = false;
 std::mutex g_log_mutex;
 
+// Message Log: warnings and errors only, kept apart so they are not lost in the Output Log.
+constexpr u32 kMessages = 300;
+LogLine g_messages[kMessages];
+u32 g_messages_next = 0, g_messages_count = 0, g_unread_warnings = 0, g_unread_errors = 0;
+
 void log_sink(void*, log::Level level, const char* channel, const char* message) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (level >= log::Level::Warning) {
+        LogLine& m = g_messages[g_messages_next];
+        m.level = level;
+        std::snprintf(m.channel, sizeof m.channel, "%s", channel);
+        std::snprintf(m.text, sizeof m.text, "%s", message);
+        g_messages_next = (g_messages_next + 1) % kMessages;
+        if (g_messages_count < kMessages) ++g_messages_count;
+        ++(level >= log::Level::Error ? g_unread_errors : g_unread_warnings);
+    }
     LogLine& line = g_log[g_log_next];
     line.level = level;
     std::snprintf(line.channel, sizeof line.channel, "%s", channel);
@@ -235,6 +251,10 @@ void duplicate_selected(EditorState& s) {
     edited(s, "Duplicate");
 }
 
+// Ctrl+G: a new empty "Group" at the selection's base centre, holding the selected objects.
+void group_selection(EditorState& s);
+void ungroup_selection(EditorState& s);
+
 // World-space box of an entity's mesh; a small box around the origin when it has none.
 void world_bounds(EditorState& s, Entity e, Vec3& lo, Vec3& hi) {
     const Mat4 m = s.world->world_matrix(e);
@@ -303,12 +323,13 @@ bool ray_box(Vec3 o, Vec3 d, Vec3 lo, Vec3 hi, f32& t) {
 
 // Nearest mesh under the ray. shortcut: tests each mesh's bounding box, not its triangles;
 // triangle-accurate picking when imported meshes get detailed.
-bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hit_t) {
+// Hidden objects are never hit; with `pickable`, locked ones are skipped too (viewport clicks).
+bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hit_t, bool pickable = false) {
     const reflect::TypeInfo& type = reflect::type_of<world::StaticMesh>();
     hit_t = 1e30f;
     for (u32 i = 0; i < s.world->count(type); ++i) {
         const Entity e = s.world->owner(type, i);
-        if (e == ignore) continue;
+        if (e == ignore || s.world->hidden_in_hierarchy(e) || (pickable && s.world->locked(e))) continue;
         const CachedMesh* cached = s.meshes->get(static_cast<const world::StaticMesh*>(s.world->at(type, i))->mesh);
         if (!cached) continue;
         const Mat4 inv = affine_inverse(s.world->world_matrix(e));
@@ -359,6 +380,53 @@ void drop_to_floor(EditorState& s) {
         s.world->set_world_matrix(e, m);
     }
     if (count) edited(s, "Drop to Floor");
+}
+
+void group_selection(EditorState& s) {
+    Entity roots[EditorState::kMaxSelection];
+    const u32 count = selection_roots(s, roots);
+    if (count < 1) return;
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    for (u32 i = 0; i < count; ++i) {
+        Vec3 a, b;
+        world_bounds(s, roots[i], a, b);
+        lo = vmin(lo, a);
+        hi = vmax(hi, b);
+    }
+    char name[64];
+    s.world->unique_name("Group", name, sizeof name);
+    const Entity group = s.world->create(name);
+    s.world->get<world::Transform>(group)->position = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, lo.z};
+    const Entity parent = s.world->parent(roots[0]);  // the group goes where the first object was
+    s.world->set_parent(group, parent);
+    for (u32 i = 0; i < count; ++i) s.world->set_parent(roots[i], group);
+    select(s, group);
+    edited(s, "Group");
+}
+
+// Shift+G: removes selected groups (entities with only a Transform), keeping their children in place.
+void ungroup_selection(EditorState& s) {
+    u32 type_count = 0;
+    const reflect::TypeInfo* const* types = world::component_types(type_count);
+    Entity roots[EditorState::kMaxSelection];
+    const u32 count = selection_roots(s, roots);
+    bool any = false;
+    for (u32 i = 0; i < count; ++i) {
+        bool plain = true;
+        for (u32 t = 1; t < type_count; ++t) plain = plain && !s.world->get(roots[i], *types[t]);
+        if (!plain) continue;
+        const Entity parent = s.world->parent(roots[i]);
+        for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
+            const Entity child = s.world->entity_at_slot(slot);
+            if (child.valid() && s.world->parent(child) == roots[i]) s.world->set_parent(child, parent);
+        }
+        s.world->destroy(roots[i]);
+        any = true;
+    }
+    if (any) {
+        select(s, {});
+        edited(s, "Ungroup");
+    }
 }
 
 void focus_selected(EditorState& s) {
@@ -450,10 +518,13 @@ void set_view(EditorState& s, ViewType view) {
 
 namespace {
 
-void update_camera(EditorState& s, bool hovered) {
+void update_camera(EditorState& s, bool hovered, int index) {
     ImGuiIO& io = ImGui::GetIO();
     EditorCamera& cam = s.camera;
-    static bool looking = false, panning = false, orbiting = false;
+    static bool looking_by_view[4], panning_by_view[4], orbiting_by_view[4];  // a drag stays in the viewport it started in
+    bool& looking = looking_by_view[index];
+    bool& panning = panning_by_view[index];
+    bool& orbiting = orbiting_by_view[index];
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) looking = true;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) panning = true;
     if (hovered && io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) orbiting = true;
@@ -466,7 +537,8 @@ void update_camera(EditorState& s, bool hovered) {
     const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
     if (cam.view != ViewType::Perspective) {  // ortho: RMB / MMB drag pans, wheel zooms
         if (looking || panning) {
-            const f32 k = cam.ortho_height / (s.viewport_rect[3] > 1.0f ? s.viewport_rect[3] : 1.0f);
+            const f32 height = s.viewport_rects[index][3];
+            const f32 k = cam.ortho_height / (height > 1.0f ? height : 1.0f);
             cam.position = cam.position - right * (io.MouseDelta.x * k) + up * (io.MouseDelta.y * k);
         } else if (hovered && io.MouseWheel != 0.0f) {
             cam.ortho_height *= std::pow(0.88f, io.MouseWheel);
@@ -505,10 +577,13 @@ void update_camera(EditorState& s, bool hovered) {
 }
 
 // Gizmo for the selection (ImGuizmo). Alt+drag duplicates first, like Unreal.
-void draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size) {
-    if (!s.world->alive(s.selected) || s.game_view || (s.playing && !s.ejected)) {
-        g_was_using_gizmo = false;
-        return;
+// Returns true while the mouse is over or dragging this viewport's gizmo.
+bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+    bool& was_using = g_was_using_gizmo[index];
+    bool& alt_duplicated = g_alt_duplicated[index];
+    if (!s.world->alive(s.selected) || s.world->locked(s.selected) || s.game_view || (s.playing && !s.ejected)) {
+        was_using = false;
+        return false;
     }
     ImGuizmo::SetOrthographic(s.camera.view != ViewType::Perspective);
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
@@ -520,14 +595,17 @@ void draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
     const f32 snap[3] = {step, step, step};
     const Mat4 before = s.world->world_matrix(s.selected);
     Mat4 m = before;
+    ImGui::PushID(index);  // one gizmo per viewport, each with its own drag state
     const bool changed = ImGuizmo::Manipulate(view.m, proj.m, op, s.gizmo_local ? ImGuizmo::LOCAL : ImGuizmo::WORLD, m.m, nullptr,
                                               s.settings.snap ? snap : nullptr);
     const bool using_now = ImGuizmo::IsUsing();
-    if (using_now && !g_was_using_gizmo) g_alt_duplicated = false;
+    const bool over = ImGuizmo::IsOver();
+    ImGui::PopID();
+    if (using_now && !was_using) alt_duplicated = false;
     if (changed) {
-        if (ImGui::GetIO().KeyAlt && !g_alt_duplicated) {
+        if (ImGui::GetIO().KeyAlt && !alt_duplicated) {
             duplicate_selected(s);  // copies are made from the untouched originals; they get the move
-            g_alt_duplicated = true;
+            alt_duplicated = true;
         }
         // The other selected objects follow the primary: same change, pivoting on the primary.
         const Mat4 delta = m * affine_inverse(before);
@@ -537,9 +615,10 @@ void draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
             if (roots[i] != s.selected) s.world->set_world_matrix(roots[i], delta * s.world->world_matrix(roots[i]));
         }
         s.world->set_world_matrix(s.selected, m);
-        edited(s, g_alt_duplicated ? "Duplicate" : s.gizmo == GizmoMode::Translate ? "Move" : s.gizmo == GizmoMode::Rotate ? "Rotate" : "Scale");
+        edited(s, alt_duplicated ? "Duplicate" : s.gizmo == GizmoMode::Translate ? "Move" : s.gizmo == GizmoMode::Rotate ? "Rotate" : "Scale");
     }
-    g_was_using_gizmo = using_now;
+    was_using = using_now;
+    return using_now || over;
 }
 
 // Icons for entities without a mesh (Player Start, empties), drawn over the 3D view.
@@ -547,7 +626,7 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
     const EditorTheme& t = s.theme;
     for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
         const Entity e = s.world->entity_at_slot(slot);
-        if (!e.valid() || s.world->get<world::StaticMesh>(e)) continue;
+        if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->hidden_in_hierarchy(e)) continue;
         const Mat4 m = s.world->world_matrix(e);
         const Vec3 origin{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
         if (is_volume(*s.world, e)) {  // wire box: orange blocks, red kills
@@ -596,10 +675,10 @@ Entity pick(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVe
     Entity hit;
     f32 t;
     const Ray ray = mouse_ray(s.camera, pos, size, mouse);
-    raycast(s, ray, {}, hit, t);
+    raycast(s, ray, {}, hit, t, true);
     for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
         const Entity e = s.world->entity_at_slot(slot);
-        if (!e.valid() || s.world->get<world::StaticMesh>(e)) continue;
+        if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->hidden_in_hierarchy(e) || s.world->locked(e)) continue;
         if (is_volume(*s.world, e)) {  // picked like a mesh, by its box
             const Mat4 inv = affine_inverse(s.world->world_matrix(e));
             f32 vt;
@@ -624,14 +703,37 @@ Entity pick(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVe
     return hit;
 }
 
-void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
+// Turns the 2x2 layout on or off. The first time, the extra views are framed around the camera's pivot.
+void set_quad_view(EditorState& s, bool on) {
+    if (on == s.quad_view) return;
+    if (on && s.views[1].view == ViewType::Perspective) {
+        const Vec3 pivot = s.camera.position + camera_forward(s.camera) * s.camera.pivot_distance;
+        const ViewType types[3] = {ViewType::Top, ViewType::Front, ViewType::Right};
+        for (int i = 1; i < 4; ++i) {
+            s.views[i].view = types[i - 1];
+            s.views[i].position = pivot;
+            s.views[i].ortho_height = 24.0f;
+        }
+        s.views[0] = s.camera;
+    }
+    if (!on && s.active_view != 0) {  // back to one viewport: keep showing the active camera
+        s.views[0] = s.camera;
+        s.active_view = 0;
+    }
+    s.quad_view = on;
+}
+
+void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     if (size.x < 8 || size.y < 8) return;
     const EditorTheme& t = s.theme;
     ImGuiIO& io = ImGui::GetIO();
-    s.viewport_rect[0] = pos.x;
-    s.viewport_rect[1] = pos.y;
-    s.viewport_rect[2] = size.x;
-    s.viewport_rect[3] = size.y;
+    const bool active = index == s.active_view;
+    f32* rect = s.viewport_rects[index];
+    rect[0] = pos.x;
+    rect[1] = pos.y;
+    rect[2] = size.x;
+    rect[3] = size.y;
+    char window_name[32];
     const Mat4 view = camera_view(s.camera);
     const Mat4 proj = camera_projection(s.camera, size.x / size.y);
     const Mat4 view_proj = proj * view;
@@ -640,13 +742,21 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
     ImGui::SetNextWindowPos(pos);
     ImGui::SetNextWindowSize(size);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::Begin("##ViewportInput", nullptr,
+    std::snprintf(window_name, sizeof window_name, "##ViewportInput%d", index);
+    ImGui::Begin(window_name, nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     ImGui::PopStyleVar();
     ImGui::InvisibleButton("##surface", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
+    if (hovered && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+                    ImGui::IsMouseClicked(ImGuiMouseButton_Middle))) {
+        g_request_active = index;
+    }
+    if (s.quad_view && active) {  // gold frame on the active viewport
+        ImGui::GetForegroundDrawList()->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), u32_color(t.details_tab_active), 0.0f, 0, 2.0f);
+    }
 
     if (s.playing && !s.ejected) {
         if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) s.mouse_captured = true;  // click back in to resume control
@@ -668,11 +778,12 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
                                                 "Ejected: the game keeps running   F8: possess the player again   Esc: stop");
     }
 
-    draw_gizmo(s, view, proj, pos, size);
-    const bool gizmo_busy = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+    const bool gizmo_busy = draw_gizmo(s, view, proj, pos, size, index);
     // Click selects; Ctrl+click toggles, Shift+click adds; a drag from empty space draws a selection box.
-    static bool marquee = false;
-    static ImVec2 marquee_start;
+    static bool marquee_by_view[4];
+    static ImVec2 marquee_start_by_view[4];
+    bool& marquee = marquee_by_view[index];
+    ImVec2& marquee_start = marquee_start_by_view[index];
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy) {
         const Entity hit = pick(s, view_proj, pos, size, io.MousePos);
         if (io.KeyCtrl) add_to_selection(s, hit, true);
@@ -694,7 +805,7 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
             // Objects whose bounds centre lands in the box.
             for (u32 slot = 0; dragged && slot < s.world->slot_count(); ++slot) {
                 const Entity e = s.world->entity_at_slot(slot);
-                if (!e.valid()) continue;
+                if (!e.valid() || s.world->hidden_in_hierarchy(e) || s.world->locked(e)) continue;
                 Vec3 lo, hi;
                 world_bounds(s, e, lo, hi);
                 ImVec2 p;
@@ -722,7 +833,7 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
         ImGui::EndDragDropTarget();
     }
     ImGui::End();
-    update_camera(s, hovered);
+    update_camera(s, hovered, index);
 
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
@@ -748,7 +859,8 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
     const ImGuiWindowFlags overlay = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                      ImGuiWindowFlags_NoMove;
-    if (ImGui::Begin("##ViewportToolbar", nullptr, overlay)) {
+    std::snprintf(window_name, sizeof window_name, "##ViewportToolbar%d", index);
+    if (ImGui::Begin(window_name, nullptr, overlay)) {
         static const char* const kViews[] = {"Perspective", "Top", "Front", "Right"};
         static const char* const kViewKeys[] = {"Alt+G", "Alt+J", "Alt+H", "Alt+K"};
         static const char* const kModes[] = {"Lit", "Unlit", "Wireframe"};
@@ -767,6 +879,13 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
                 if (ImGui::MenuItem(kModes[m], kModeKeys[m], static_cast<int>(s.view_mode) == m)) s.view_mode = static_cast<ViewMode>(m);
             }
             ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(s.quad_view ? "2x2" : "1x1")) set_quad_view(s, !s.quad_view);
+        ImGui::SetItemTooltip("Viewport layout: one, or perspective + top + front + right");
+        if (s.quad_view && !active) {  // the other viewports keep a short toolbar
+            ImGui::End();
+            return;
         }
         ImGui::SameLine();
         if (ImGui::Button("Show")) ImGui::OpenPopup("ShowMenu");
@@ -803,8 +922,10 @@ void draw_viewport(EditorState& s, ImVec2 pos, ImVec2 size) {
         ImGui::SetNextItemWidth(90.0f);
         ImGui::SliderFloat("##speed", &s.settings.camera_speed, 0.5f, 50.0f, "speed %.1f", ImGuiSliderFlags_Logarithmic);
         ImGui::SetItemTooltip("Camera speed (RMB + wheel)");
-        ImGui::SameLine();
-        ImGui::TextDisabled("RMB: look + WASD/QE fly  MMB: pan  Alt+LMB: orbit  F: focus");
+        if (!s.quad_view) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("RMB: look + WASD/QE fly  MMB: pan  Alt+LMB: orbit  F: focus");
+        }
     }
     ImGui::End();
     draw_stats(s, pos, size);
@@ -863,8 +984,12 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             dl->AddLine(ImVec2(hx, mid), ImVec2(hx + 9.0f, mid), u32_color(text), 1.5f);
         }
         ImGui::PushID(static_cast<int>(e.value));
-        ImGui::PushStyleColor(ImGuiCol_Text, vec4(text));
+        const bool hidden = s.world->hidden(e), locked = s.world->locked(e);
+        ImVec4 text_color = vec4(text);
+        if (hidden) text_color.w = 0.45f;
+        ImGui::PushStyleColor(ImGuiCol_Text, text_color);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + static_cast<f32>(depth) * 22.0f);
+        ImGui::SetNextItemAllowOverlap();  // the eye and lock buttons sit on top of the row
         if (ImGui::Selectable(s.world->name(e), s.is_selected(e), static_cast<ImGuiSelectableFlags>(ImGuiSelectableFlags_SpanAvailWidth) | ImGuiSelectableFlags_AllowDoubleClick,
                               ImVec2(0, row_height - ImGui::GetStyle().ItemSpacing.y))) {
             const ImGuiIO& io = ImGui::GetIO();
@@ -907,6 +1032,36 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             }
             if (ImGui::MenuItem("Delete", "Delete")) delete_selected(s);
             ImGui::EndPopup();
+        }
+        {  // after the row's menus (they attach to the Selectable): eye (hide in editor) and lock (no viewport selection or gizmo), like Unreal's Outliner
+            const ImVec2 after = ImGui::GetCursorScreenPos();
+            const f32 cy = p.y + row_height * 0.5f;
+            ImGui::SetCursorScreenPos(ImVec2(right - 52.0f, p.y + 2.0f));
+            if (ImGui::InvisibleButton("eye", ImVec2(22.0f, row_height - 6.0f))) {
+                s.world->set_hidden(e, !hidden);
+                edited(s, hidden ? "Show" : "Hide");
+            }
+            ImGui::SetItemTooltip(hidden ? "Hidden in the editor (still plays). Click to show" : "Hide in the editor");
+            const ImU32 icon = hidden ? IM_COL32(140, 140, 140, 200) : u32_color(text);
+            const ImVec2 eye(right - 41.0f, cy);
+            dl->AddEllipse(eye, ImVec2(8.0f, 4.5f), icon, 0.0f, 16, 1.5f);
+            if (!hidden) dl->AddCircleFilled(eye, 2.5f, icon);
+            else dl->AddLine(ImVec2(eye.x - 8, eye.y + 5), ImVec2(eye.x + 8, eye.y - 5), icon, 1.5f);
+            ImGui::SetCursorScreenPos(ImVec2(right - 28.0f, p.y + 2.0f));
+            if (ImGui::InvisibleButton("lock", ImVec2(22.0f, row_height - 6.0f))) {
+                s.world->set_locked(e, !locked);
+                edited(s, locked ? "Unlock" : "Lock");
+            }
+            ImGui::SetItemTooltip(locked ? "Locked: not selectable in the viewport, no gizmo. Click to unlock" : "Lock");
+            const ImU32 lock_color = locked ? u32_color(t.details_tab_active) : IM_COL32(140, 140, 140, 120);
+            const ImVec2 body(right - 17.0f, cy + 1.0f);
+            if (locked) dl->AddRectFilled(ImVec2(body.x - 5, body.y - 1), ImVec2(body.x + 5, body.y + 6), lock_color, 1.5f);
+            else dl->AddRect(ImVec2(body.x - 5, body.y - 1), ImVec2(body.x + 5, body.y + 6), lock_color, 1.5f, 0, 1.5f);
+            dl->PathArcTo(ImVec2(body.x, body.y - 2), 3.5f, 3.14159f, 6.28318f, 8);
+            dl->PathStroke(lock_color, 0, 1.5f);
+            // Back to where the next row starts: a zero-size item ending exactly there keeps ImGui's layout valid.
+            ImGui::SetCursorScreenPos(ImVec2(after.x, after.y - ImGui::GetStyle().ItemSpacing.y));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
         ImGui::PopID();
     }
@@ -1001,6 +1156,18 @@ void draw_mesh_slot(EditorState& s, world::StaticMesh& mesh) {
     }
 }
 
+// Copies each leaf value that differs between `before` and `after` into `target` (same type).
+void copy_changed(const reflect::TypeInfo& type, const u8* before, const u8* after, u8* target) {
+    for (u32 i = 0; i < type.property_count; ++i) {
+        const reflect::Property& p = type.properties[i];
+        if (p.type == reflect::FieldType::Struct) {
+            copy_changed(*p.struct_type, before + p.offset, after + p.offset, target + p.offset);
+        } else if (std::memcmp(before + p.offset, after + p.offset, p.size) != 0) {
+            std::memcpy(target + p.offset, after + p.offset, p.size);
+        }
+    }
+}
+
 void draw_entity_details(EditorState& s) {
     EditorTheme& t = s.theme;
     world::World& w = *s.world;
@@ -1013,10 +1180,13 @@ void draw_entity_details(EditorState& s) {
         edited(s, "Rename");
     }
     if (const Entity parent = w.parent(e); parent.valid()) ImGui::TextDisabled("Attached to %s", w.name(parent));
-    if (s.selection_count > 1) ImGui::TextDisabled("%u objects selected; showing %s (editing several at once comes later)", s.selection_count, w.name(e));
+    if (s.selection_count > 1) ImGui::TextDisabled("%u objects selected: changes apply to all that have the component", s.selection_count);
 
+    static char filter[64] = "";
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##details_search", "Search details", filter, sizeof filter);
     ImGui::BeginChild("DetailsRows");
-    const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}};
+    const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, filter};
     u32 type_count = 0;
     const reflect::TypeInfo* const* types = world::component_types(type_count);
     for (u32 i = 0; i < type_count; ++i) {
@@ -1025,8 +1195,17 @@ void draw_entity_details(EditorState& s) {
         ImGui::PushID(types[i]->name);
         bool keep = true;
         if (ImGui::CollapsingHeader(types[i]->name, i == 0 ? nullptr : &keep, ImGuiTreeNodeFlags_DefaultOpen)) {
+            u8 before[512];
+            LSD_ASSERT(types[i]->size <= sizeof before);
+            std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
-            if (draw_properties(*types[i], component, &style)) {
+            draw_properties(*types[i], component, &style);
+            if (std::memcmp(before, component, types[i]->size) != 0) {
+                // Multi-edit: only the values that changed go to the other selected objects.
+                for (u32 k = 0; k < s.selection_count; ++k) {
+                    if (s.selection[k] == e) continue;
+                    if (void* other = w.get(s.selection[k], *types[i])) copy_changed(*types[i], before, static_cast<const u8*>(component), static_cast<u8*>(other));
+                }
                 char label[96];
                 std::snprintf(label, sizeof label, "Edit %s", types[i]->name);
                 edited(s, label);
@@ -1643,6 +1822,8 @@ void draw_menu_bar(EditorState& s) {
         ImGui::Separator();
         const bool has = s.world->alive(s.selected) && !s.playing;
         if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, has)) duplicate_selected(s);
+        if (ImGui::MenuItem("Group", "Ctrl+G", false, has)) group_selection(s);
+        if (ImGui::MenuItem("Ungroup", "Shift+G", false, has)) ungroup_selection(s);
         if (ImGui::MenuItem("Select All", "Ctrl+A", false, !s.playing)) {
             for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
         }
@@ -1656,11 +1837,13 @@ void draw_menu_bar(EditorState& s) {
         if (ImGui::MenuItem("Drop to Floor", "End", false, has)) drop_to_floor(s);
         ImGui::Separator();
         ImGui::MenuItem("Editor Preferences", nullptr, &s.show_preferences);
+        ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
         ImGui::MenuItem("Undo History", nullptr, &s.show_history);
         ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings);
+        ImGui::MenuItem("Message Log", nullptr, &s.show_message_log);
         ImGui::EndMenu();
     }
     // Play / Stop, like Unreal's main toolbar.
@@ -1679,6 +1862,14 @@ void draw_menu_bar(EditorState& s) {
             s.ejected = !s.ejected;
             s.mouse_captured = !s.ejected;
         }
+    }
+    if (g_unread_errors || g_unread_warnings) {
+        char badge[64];
+        std::snprintf(badge, sizeof badge, "%u error%s, %u warning%s", g_unread_errors, g_unread_errors == 1 ? "" : "s", g_unread_warnings,
+                      g_unread_warnings == 1 ? "" : "s");
+        ImGui::PushStyleColor(ImGuiCol_Text, g_unread_errors ? ImVec4(1.0f, 0.42f, 0.38f, 1) : ImVec4(1.0f, 0.82f, 0.35f, 1));
+        if (ImGui::MenuItem(badge)) s.show_message_log = true;
+        ImGui::PopStyleColor();
     }
     const char* level = s.level_path[0] ? s.level_path : "Untitled level";
     char right[320];
@@ -1776,6 +1967,46 @@ void draw_history_window(EditorState& s) {
     ImGui::End();
 }
 
+void draw_message_log(EditorState& s) {
+    if (!s.show_message_log) return;
+    ImGui::SetNextWindowSize(ImVec2(620, 300), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Message Log", &s.show_message_log)) {
+        std::lock_guard<std::mutex> lock(g_log_mutex);
+        g_unread_errors = g_unread_warnings = 0;  // seen
+        if (ImGui::Button("Clear")) g_messages_count = 0;
+        ImGui::SameLine();
+        ImGui::TextDisabled("Warnings and errors from imports, saves and the engine (all lines are in the Output Log)");
+        ImGui::Separator();
+        if (g_messages_count == 0) ImGui::TextDisabled("No messages.");
+        const u32 first = (g_messages_next + kMessages - g_messages_count) % kMessages;
+        for (u32 i = g_messages_count; i-- > 0;) {  // newest first
+            const LogLine& m = g_messages[(first + i) % kMessages];
+            const bool error = m.level >= log::Level::Error;
+            ImGui::TextColored(error ? ImVec4(1.0f, 0.42f, 0.38f, 1) : ImVec4(1.0f, 0.82f, 0.35f, 1), "%s", error ? "Error" : "Warning");
+            ImGui::SameLine(80.0f);
+            ImGui::TextDisabled("[%s]", m.channel);
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", m.text);
+        }
+    }
+    ImGui::End();
+}
+
+void draw_project_settings(EditorState& s) {
+    if (!s.show_project_settings) return;
+    ImGui::SetNextWindowSize(ImVec2(520, 300), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Project Settings", &s.show_project_settings)) {
+        constexpr char kProjectPath[] = "Config/project.json";
+        ImGui::TextDisabled("%s (shared with the team: commit it)", kProjectPath);
+        if (ImGui::Button("Save")) std::snprintf(s.status, sizeof s.status, reflect::save_file(s.project, kProjectPath) ? "Saved %s" : "Could not save %s", kProjectPath);
+        ImGui::SameLine();
+        if (ImGui::Button("Use Current Level as Game Default") && s.level_path[0]) std::snprintf(s.project.game_default_level, sizeof s.project.game_default_level, "%s", s.level_path);
+        const DetailsStyle style{{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}};
+        draw_details(reflect::type_of<ProjectSettings>(), &s.project, &style);
+    }
+    ImGui::End();
+}
+
 void draw_world_settings_window(EditorState& s) {
     if (!s.show_world_settings) return;
     ImGui::SetNextWindowSize(ImVec2(380, 200), ImGuiCond_FirstUseEver);
@@ -1857,6 +2088,11 @@ void handle_shortcuts(EditorState& s) {
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) paste(s);
     if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_D)) duplicate_selected(s);
+    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_G)) group_selection(s);
+    if (!ctrl && io.KeyShift && has && ImGui::IsKeyPressed(ImGuiKey_G)) {
+        ungroup_selection(s);
+        return;  // not also the G (game view) key below
+    }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
         for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
     }
@@ -1882,6 +2118,8 @@ void handle_shortcuts(EditorState& s) {
 }
 
 } // namespace
+
+void set_layout(EditorState& s, bool quad) { set_quad_view(s, quad); }
 
 void install_output_log() { log::set_sink(log_sink, nullptr); }
 
@@ -1927,11 +2165,41 @@ void draw_editor(EditorState& s) {
     draw_history_window(s);
     draw_preferences_window(s);
     draw_world_settings_window(s);
+    draw_message_log(s);
+    draw_project_settings(s);
     draw_level_dialogs(s);
     handle_shortcuts(s);
 
     // The central node is left empty and transparent: the 3D viewport shows through it.
-    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace)) draw_viewport(s, central->Pos, central->Size);
+    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace)) {
+        const bool quad = s.quad_view && !(s.playing && !s.ejected);  // the game plays in one big viewport
+        s.viewport_count = quad ? 4 : 1;
+        g_request_active = -1;
+        if (!quad) {
+            draw_viewport(s, s.active_view, central->Pos, central->Size);
+            s.viewport_count = 1;
+            if (s.active_view != 0) {  // single view always uses slot 0
+                s.viewport_rects[0][0] = central->Pos.x;
+                s.viewport_rects[0][1] = central->Pos.y;
+                s.viewport_rects[0][2] = central->Size.x;
+                s.viewport_rects[0][3] = central->Size.y;
+            }
+        } else {
+            const f32 gap = 2.0f;
+            const ImVec2 half((central->Size.x - gap) * 0.5f, (central->Size.y - gap) * 0.5f);
+            for (int i = 0; i < 4; ++i) {
+                const ImVec2 at(central->Pos.x + (i % 2) * (half.x + gap), central->Pos.y + static_cast<f32>(i / 2) * (half.y + gap));
+                if (i != s.active_view) std::swap(s.camera, s.views[i]);  // draw_viewport works on s.camera
+                draw_viewport(s, i, at, half);
+                if (i != s.active_view) std::swap(s.camera, s.views[i]);
+            }
+            if (g_request_active >= 0 && g_request_active != s.active_view) {
+                s.views[s.active_view] = s.camera;
+                s.camera = s.views[g_request_active];
+                s.active_view = g_request_active;
+            }
+        }
+    }
 
     prune_selection(s);  // undo or delete may have removed selected objects
     // One undo step per finished edit: wait until drags and text fields are released.

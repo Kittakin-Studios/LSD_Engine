@@ -40,6 +40,14 @@ public:
     // "Cube" -> "Cube", or "Cube2", "Cube3"... if taken.
     void unique_name(const char* base, char* out, usize capacity) const;
 
+    // Editor flags, saved in the level: hidden objects are not drawn or picked in the editor (they
+    // still play); locked ones cannot be selected in the viewport or moved by the gizmo.
+    bool hidden(Entity entity) const;
+    bool locked(Entity entity) const;
+    void set_hidden(Entity entity, bool hidden);
+    void set_locked(Entity entity, bool locked);
+    bool hidden_in_hierarchy(Entity entity) const;  // it or any parent is hidden
+
     // Hierarchy. set_parent refuses cycles; by default the child keeps its world placement
     // (its Transform is rewritten relative to the new parent), like dragging in Unreal's Outliner.
     Entity parent(Entity entity) const;
@@ -74,6 +82,8 @@ private:
     struct Record {
         u32 generation;
         bool alive;
+        bool hidden;
+        bool locked;
         char name[64];
         Entity parent;
         u32 component[kMaxComponentTypes];  // index into each pool, kNone if absent

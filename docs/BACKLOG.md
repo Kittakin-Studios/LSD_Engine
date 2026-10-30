@@ -51,7 +51,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [~] Levels: new / open / save / save as (`.lsdlevel` JSON text in Content/Levels), last level reopens on start, unsaved-changes prompts; needs sub-levels, recent list
 - [x] Autosave and crash recovery: asks to save on quit, autosaves unsaved levels to Saved/Autosaves (default every 5 min), offers to restore after a crash
 - [x] Duplicate (Ctrl+D, Alt+drag with the gizmo), Cut / Copy / Paste (Ctrl+X/C/V) as level text, also between levels and to a text editor
-- [ ] Groups (select and move together) [Group Actors]
+- [x] Groups: Ctrl+G puts the selection under a new "Group" empty, Shift+G ungroups [Group Actors]
 - [ ] Reference Viewer and dependency lists; "used by" before delete; fix broken references [Reference Viewer]
 
 ### Viewport
@@ -61,7 +61,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [~] Snapping: move, angle, scale steps; End drops to the surface below; needs vertex snap, surface snapping while dragging
 - [~] Picking: click select (meshes and volumes by box, icons on screen), Ctrl+click toggles, Shift+click adds (ranges in the Outliner), drag a selection box, Ctrl+A, focus (F); gizmo moves the whole selection around the last-clicked object; needs triangle-accurate picking
 - [x] Unreal camera: RMB look + WASD/QE fly, wheel speed, MMB pan, Alt+LMB orbit, wheel dolly; bookmarks Ctrl+0..9 / 0..9
-- [~] Perspective + Top / Front / Right orthographic views (Alt+G/J/H/K); needs 1 / 2 / 4 viewport layouts, vertical grid in side views
+- [~] Perspective + Top / Front / Right orthographic views (Alt+G/J/H/K), 1x1 or 2x2 layout (each viewport has its own camera and gizmo); needs a 1x2 layout, vertical grid in side views
 - [~] View modes: Lit, Unlit, Wireframe (Alt+4/3/2) on D3D12 and OpenGL; needs normals, lighting only, collision, overdraw [View Modes, Buffer Visualization]
 - [~] Show flags: grid, axis gizmo, Game View (G), stats; needs bounds, collision, nav [Show flags]
 - [~] Icons for Player Start (capsule + facing arrow), empties and volumes (wire boxes); selection tint; needs light/camera/sound icons, selection outline
@@ -69,12 +69,12 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 
 ### Panels
 
-- [~] Outliner: Outline tab (flat, search) and Hierarchy tab (tree, drag to attach, drop on empty space to detach), right-click Focus / Duplicate / Detach / Delete; needs folders, hide/lock, type filter
-- [~] Details: entity name, one section per component, Add / remove component, mesh slot (shapes + mesh assets, accepts drag-drop), shows how many are selected; needs multi-edit, reset to default, copy/paste values, search field
+- [~] Outliner: Outline tab (flat, search) and Hierarchy tab (tree, drag to attach, drop on empty space to detach), right-click Focus / Duplicate / Detach / Delete, hide (eye) and lock buttons saved in the level; needs folders, type filter
+- [x] Details: entity name, one section per component, Add / remove component, mesh slot (shapes + mesh assets, drag-drop), search field, multi-edit (only changed values go to every selected object), right-click Reset to Default / Copy / Paste
 - [~] Place panel (tab next to Content): Cube, Sphere, Plane, Player Start, Blocking Volume, Kill Volume, Empty, by drag or double-click; lights, cameras, sounds when they exist [Place Actors]
-- [~] World Settings window (Window menu; Kill Z, gravity; saved in the level); needs Project Settings
+- [x] World Settings (Window menu; Kill Z, gravity; saved in the level) and Project Settings (Edit menu; name, company, game default level, editor startup level; `Config/project.json`)
 - [x] Output Log tab with filters + console (`engine/core` console: variables and commands, Tab completion, history; `help` lists them; `-exec=` runs lines at startup) [Output Log, CVars]
-- [ ] Message Log for import / save / validation errors with click-to-asset [Message Log]
+- [~] Message Log (Window menu): warnings and errors only, unread count in the menu bar; needs click-to-asset [Message Log]
 - [~] Editor preferences window (Edit menu): theme (`Config/editor_theme.json`) + per-user settings (`Saved/editor_settings.json`: snapping, camera speed, last level); needs keymap editor, autosave interval, saved layouts
 - [~] Menu bar: File (New / Open / Save / Save As), Edit (Undo / Redo / Duplicate / Delete / Drop to Floor), Window (Undo History), Play / Stop; needs Simulate, build buttons, platform/quality dropdown
 

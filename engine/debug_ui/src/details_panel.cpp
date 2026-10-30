@@ -14,6 +14,49 @@ constexpr f32 kLabelWidth = 160.0f;
 const DetailsStyle* g_style = nullptr;  // set for the duration of draw_details
 u32 g_row = 0;
 
+// Copy / Paste between properties of the same kind.
+// shortcut: an in-editor clipboard of raw bytes; switch to text on the system clipboard when values
+// need to go between editors or into documents.
+u8 g_clip[512];
+u32 g_clip_size = 0;
+reflect::FieldType g_clip_type = reflect::FieldType::Bool;
+const reflect::TypeInfo* g_clip_struct = nullptr;
+
+bool contains_ignore_case(const char* text, const char* needle) {
+    for (; *text; ++text) {
+        const char* a = text;
+        const char* b = needle;
+        while (*a && *b && (*a | 32) == (*b | 32)) { ++a; ++b; }
+        if (!*b) return true;
+    }
+    return !*needle;
+}
+
+// Right-click menu on the value just drawn. Returns true if it changed the value.
+bool property_menu(const reflect::Property& p, u8* field, const u8* default_field) {
+    if (!(p.flags & reflect::kEdit) || !ImGui::BeginPopupContextItem("property_menu")) return false;
+    bool changed = false;
+    const bool differs = default_field && std::memcmp(field, default_field, p.size) != 0;
+    if (ImGui::MenuItem("Reset to Default", nullptr, false, differs)) {
+        std::memcpy(field, default_field, p.size);
+        changed = true;
+    }
+    if (ImGui::MenuItem("Copy", nullptr, false, p.size <= sizeof g_clip)) {
+        std::memcpy(g_clip, field, p.size);
+        g_clip_size = p.size;
+        g_clip_type = p.type;
+        g_clip_struct = p.struct_type;
+    }
+    const bool fits = g_clip_size == p.size && g_clip_type == p.type && g_clip_struct == p.struct_type;
+    if (ImGui::MenuItem("Paste", nullptr, false, fits)) {
+        std::memcpy(field, g_clip, p.size);
+        if (p.type == reflect::FieldType::String) field[p.size - 1] = '\0';
+        changed = true;
+    }
+    ImGui::EndPopup();
+    return changed;
+}
+
 // Paints the alternating background behind the next property row.
 void row_background() {
     if (!g_style) return;
@@ -46,10 +89,12 @@ bool drag(ImGuiDataType data_type, void* field, const reflect::Property& p, cons
                              format, ImGuiSliderFlags_AlwaysClamp);
 }
 
-bool draw_fields(const reflect::TypeInfo& type, u8* object, const char* category);
+bool draw_fields(const reflect::TypeInfo& type, u8* object, const u8* defaults, const char* category);
 
-bool draw_property(const reflect::Property& p, u8* object) {
+// `defaults` is the default object the property belongs to (nullptr if unknown).
+bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
     u8* field = object + p.offset;
+    const u8* default_field = defaults ? defaults + p.offset : nullptr;
     char label[128];
     display_name(p.name, label, sizeof label);
     ImGui::PushID(p.name);
@@ -65,6 +110,7 @@ bool draw_property(const reflect::Property& p, u8* object) {
         ImGui::SetNextItemWidth(-1.0f);
         auto* rgba = reinterpret_cast<f32*>(field);
         changed = p.struct_type->property_count >= 4 ? ImGui::ColorEdit4("##value", rgba) : ImGui::ColorEdit3("##value", rgba);
+        changed |= property_menu(p, field, default_field);
         ImGui::PopID();
         return changed;
     }
@@ -83,6 +129,7 @@ bool draw_property(const reflect::Property& p, u8* object) {
         if (read_only) ImGui::BeginDisabled();
         changed = ImGui::DragFloat3("##value", reinterpret_cast<f32*>(field), 0.05f, 0.0f, 0.0f, format);
         if (read_only) ImGui::EndDisabled();
+        changed |= property_menu(p, field, default_field);
         ImGui::PopID();
         return changed;
     }
@@ -92,7 +139,7 @@ bool draw_property(const reflect::Property& p, u8* object) {
         const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
         if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
         if (open) {
-            changed = draw_fields(*p.struct_type, field, nullptr);
+            changed = draw_fields(*p.struct_type, field, default_field, nullptr);
             ImGui::TreePop();
         }
         ImGui::PopID();
@@ -127,18 +174,25 @@ bool draw_property(const reflect::Property& p, u8* object) {
         case reflect::FieldType::Struct: break;
     }
     if (read_only) ImGui::EndDisabled();
+    changed |= property_menu(p, field, default_field);
     ImGui::PopID();
     return changed;
 }
 
 // Draws properties in `category` (nullptr = all) that the Details panel should show.
-bool draw_fields(const reflect::TypeInfo& type, u8* object, const char* category) {
+bool draw_fields(const reflect::TypeInfo& type, u8* object, const u8* defaults, const char* category) {
     bool changed = false;
     for (u32 i = 0; i < type.property_count; ++i) {
         const reflect::Property& p = type.properties[i];
         if (!(p.flags & (reflect::kEdit | reflect::kVisible))) continue;
         if (category && std::strcmp(p.category, category) != 0) continue;
-        changed |= draw_property(p, object);
+        if (g_style && g_style->filter && g_style->filter[0] &&
+            (p.type != reflect::FieldType::Struct || (p.struct_type->flags & (reflect::kVector | reflect::kColor)))) {
+            char label[128];
+            display_name(p.name, label, sizeof label);
+            if (!contains_ignore_case(label, g_style->filter)) continue;
+        }
+        changed |= draw_property(p, object, defaults);
     }
     return changed;
 }
@@ -156,7 +210,7 @@ bool draw_details(const reflect::TypeInfo& type, void* object, const DetailsStyl
         for (u32 j = 0; j < i; ++j) seen = seen || std::strcmp(type.properties[j].category, category) == 0;
         if (seen) continue;
         if (ImGui::CollapsingHeader(category[0] ? category : "Default", ImGuiTreeNodeFlags_DefaultOpen)) {
-            changed |= draw_fields(type, static_cast<u8*>(object), category);
+            changed |= draw_fields(type, static_cast<u8*>(object), static_cast<const u8*>(type.defaults), category);
         }
     }
     g_style = nullptr;
@@ -166,7 +220,7 @@ bool draw_details(const reflect::TypeInfo& type, void* object, const DetailsStyl
 bool draw_properties(const reflect::TypeInfo& type, void* object, const DetailsStyle* style) {
     g_style = style;
     g_row = 0;
-    const bool changed = draw_fields(type, static_cast<u8*>(object), nullptr);
+    const bool changed = draw_fields(type, static_cast<u8*>(object), static_cast<const u8*>(type.defaults), nullptr);
     g_style = nullptr;
     return changed;
 }

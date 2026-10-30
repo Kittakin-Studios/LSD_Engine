@@ -75,6 +75,8 @@ static void test_level_round_trip() {
         w.set_parent(start, floor, false);
         w.destroy(w.create("Gap"));  // a free slot in the middle must survive too
         w.settings().kill_z = -12.5f;
+        w.set_hidden(start, true);
+        w.set_locked(floor, true);
         w.add<KillVolume>(floor)->enabled = false;
         const Entity last = w.create("Last");
 
@@ -88,6 +90,8 @@ static void test_level_round_trip() {
         CHECK(loaded.get<PlayerStart>(start) && loaded.get<PlayerStart>(start)->walk_speed == 7.5f);
         CHECK(loaded.get<StaticMesh>(floor) && std::fabs(loaded.get<StaticMesh>(floor)->color.b - 0.6f) < 1e-6f);
         CHECK(!loaded.get<StaticMesh>(start));
+        CHECK(loaded.hidden(start) && !loaded.hidden(floor) && loaded.locked(floor) && !loaded.locked(start));
+        CHECK(loaded.hidden_in_hierarchy(start));
         CHECK(loaded.settings().kill_z == -12.5f && loaded.get<KillVolume>(floor) && !loaded.get<KillVolume>(floor)->enabled);
         save_level(loaded, again);
         CHECK(text.size() == again.size() && std::memcmp(text.data(), again.data(), text.size()) == 0);

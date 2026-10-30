@@ -75,6 +75,8 @@ void save_level(const World& world, Array<char>& out) {
         append_string(out, world.name(e));
         std::snprintf(line, sizeof line, ", \"parent\": %lld", parent.valid() ? static_cast<long long>(parent.value) : -1LL);
         append(out, line);
+        if (world.hidden(e)) append(out, ", \"hidden\": true");
+        if (world.locked(e)) append(out, ", \"locked\": true");
         for (u32 t = 0; t < type_count; ++t) {
             const void* component = world.get(e, *types[t]);
             if (!component) continue;
@@ -122,6 +124,12 @@ bool load_level(World& world, const char* text, usize length) {
                     } else if (std::strcmp(field, "name") == 0) {
                         r.read_string(name, sizeof name);
                         if (!world.create_at(e, name)) r.fail("missing or duplicate entity id");
+                    } else if (std::strcmp(field, "hidden") == 0 || std::strcmp(field, "locked") == 0) {
+                        char token[8];
+                        r.read_token(token, sizeof token);
+                        const bool on = std::strcmp(token, "true") == 0;
+                        if (field[0] == 'h') world.set_hidden(e, on);
+                        else world.set_locked(e, on);
                     } else if (std::strcmp(field, "parent") == 0) {
                         if (read_integer(r, value) && value >= 0) links.push_back({e, value});
                     } else if (const reflect::TypeInfo* type = find_component_type(field); type && world.alive(e)) {

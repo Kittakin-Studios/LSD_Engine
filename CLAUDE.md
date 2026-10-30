@@ -122,8 +122,9 @@ picking, Unreal camera controls, Outliner tree with drag-to-attach, component De
 undo/redo with history, Play-in-Editor (first-person walk/jump with box collision until Jolt; pause,
 step, eject), multi-select + box select, copy/paste, ortho views, Lit/Unlit/Wireframe, Output Log +
 console (`engine/core/console`), stats, camera bookmarks, autosave + crash recovery, Blocking/Kill
-volumes, World Settings. Remaining milestone 3 items are in `docs/BACKLOG.md` (Message Log, multi-edit
-in Details, viewport layouts, Simulate, play in new window...).
+volumes, World Settings, Project Settings (`Config/project.json`), multi-edit + Reset to Default in
+Details, groups, hide/lock, Message Log, 2x2 viewport layout. Remaining milestone 3 items are in
+`docs/BACKLOG.md` (Simulate, play in new window, pivot editing, vertex snap, Reference Viewer...).
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

@@ -64,6 +64,7 @@ void World::init_record(u32 slot, u32 generation, const char* name) {
     Record& r = records_[slot];
     r.generation = generation;
     r.alive = true;
+    r.hidden = r.locked = false;
     std::snprintf(r.name, sizeof r.name, "%s", name);
     r.parent = {};
     for (u32& c : r.component) c = kNone;
@@ -144,6 +145,31 @@ void World::unique_name(const char* base, char* out, usize capacity) const {
         if (!taken) return;
         std::snprintf(out, capacity, "%s%d", base, n);
     }
+}
+
+bool World::hidden(Entity e) const {
+    const Record* r = record(e);
+    return r && r->hidden;
+}
+
+bool World::locked(Entity e) const {
+    const Record* r = record(e);
+    return r && r->locked;
+}
+
+void World::set_hidden(Entity e, bool value) {
+    if (Record* r = record(e)) r->hidden = value;
+}
+
+void World::set_locked(Entity e, bool value) {
+    if (Record* r = record(e)) r->locked = value;
+}
+
+bool World::hidden_in_hierarchy(Entity e) const {
+    for (; e.valid(); e = parent(e)) {
+        if (hidden(e)) return true;
+    }
+    return false;
 }
 
 Entity World::parent(Entity e) const {

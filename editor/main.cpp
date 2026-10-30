@@ -66,9 +66,10 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::world
     stats.stat_triangles = 0;
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
+        const lsd::world::Entity e = world.owner(type, i);
+        if ((!stats.playing || stats.ejected) && world.hidden_in_hierarchy(e)) continue;  // hidden in the editor, not in the game
         const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
         if (!mesh) continue;
-        const lsd::world::Entity e = world.owner(type, i);
         const lsd::Mat4 m = world.world_matrix(e);
         const lsd::Mat4 mvp = view_proj * m;
         const lsd::Mat4 inv = lsd::affine_inverse(m);  // normals use the inverse transpose (correct under non-uniform scale)
@@ -125,6 +126,9 @@ void register_console(EditorState& s) {
         }
         LSD_LOG_WARN("console", "view: perspective, top, front or right");
     }, &s, "view perspective|top|front|right");
+    console::add_command("layout", [](void* user, const char* args) {
+        lsd::editor::set_layout(*static_cast<EditorState*>(user), std::strcmp(args, "4") == 0 || std::strcmp(args, "2x2") == 0);
+    }, &s, "layout 1|4: one viewport or perspective + top + front + right");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"lit", "unlit", "wireframe"};
@@ -314,6 +318,7 @@ int main(int argc, char** argv) {
     lsd::editor::load_theme(state.theme);
     lsd::editor::apply_theme(state.theme);
     lsd::reflect::load_file(state.settings, kSettingsPath);
+    lsd::reflect::load_file(state.project, "Config/project.json");
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
@@ -332,7 +337,7 @@ int main(int argc, char** argv) {
     state.meshes = &meshes;
     state.thumbnails = &thumbnails;
 
-    const char* startup_level = level_arg ? level_arg : state.settings.last_level;
+    const char* startup_level = level_arg ? level_arg : state.settings.last_level[0] ? state.settings.last_level : state.project.editor_startup_level;
     if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
 
     // Crash recovery: a lock file left behind means the last session did not exit cleanly.
@@ -516,15 +521,17 @@ int main(int argc, char** argv) {
         thumbnails.release_temporaries();
         device->begin_frame(clear_color);
         thumbnails.render(clear_color);
-        const lsd::f32* rect = state.viewport_rect;
-        if (rect[2] >= 8.0f && rect[3] >= 8.0f) {
+        for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
+            const lsd::f32* rect = state.viewport_rects[v];
+            if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
+            const lsd::editor::EditorCamera& camera = state.viewport_count == 1 ? state.camera : state.viewport_camera(v);
             // ImGui works in window points; the swapchain is in pixels (differs on high-DPI screens).
             const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
             device->set_viewport(rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y);
-            lsd::editor::EditorCamera lens = state.camera;
+            lsd::editor::EditorCamera lens = camera;
             if (state.playing && !state.ejected) lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
             const lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
-            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(state.camera);
+            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
             const lsd::Mat4 view_proj = proj * view;
             if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
             draw_world(*device, view_proj, world, meshes, state);
