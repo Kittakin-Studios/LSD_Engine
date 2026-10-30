@@ -1,154 +1,229 @@
 #include "play_session.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
-#include "lsd/world/components.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace lsd::editor {
 
 namespace {
 
-constexpr f32 kRadius = 0.3f;      // half width of the player's box
-constexpr f32 kStepHeight = 0.4f;  // ledges up to this high are walked up, like stairs
+// Action ids of the built-in controls used when the level has no Character (not real asset GUIDs).
+constexpr char kDefaultMove[] = "000000000000000000000000000d0001";
+constexpr char kDefaultLook[] = "000000000000000000000000000d0002";
+constexpr char kDefaultJump[] = "000000000000000000000000000d0003";
 
-struct Box {
-    Vec3 lo, hi;
-};
-
-f32& axis(Vec3& v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
-f32 axis(const Vec3& v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
-
-bool overlaps(const Box& a, const Box& b) {
-    return a.lo.x < b.hi.x && a.hi.x > b.lo.x && a.lo.y < b.hi.y && a.hi.y > b.lo.y && a.lo.z < b.hi.z && a.hi.z > b.lo.z;
+input::InputMappingContext default_controls() {
+    input::InputMappingContext context;
+    auto add = [&](const char* action, const char* key, u32 axis, f32 scale) {
+        input::KeyMapping m;
+        std::snprintf(m.action, sizeof m.action, "%s", action);
+        std::snprintf(m.key, sizeof m.key, "%s", key);
+        m.axis = axis;
+        m.scale = scale;
+        context.mappings.push_back(m);
+    };
+    add(kDefaultMove, "W", 1, 1.0f);
+    add(kDefaultMove, "S", 1, -1.0f);
+    add(kDefaultMove, "D", 0, 1.0f);
+    add(kDefaultMove, "A", 0, -1.0f);
+    add(kDefaultMove, "Gamepad Left Stick", 0, 1.0f);
+    add(kDefaultLook, "Mouse XY", 0, 1.0f);
+    add(kDefaultLook, "Gamepad Right Stick", 0, 12.0f);
+    add(kDefaultJump, "Space", 0, 1.0f);
+    add(kDefaultJump, "Gamepad Face Bottom", 0, 1.0f);
+    return context;
 }
 
-// World-space box of a local box under a world matrix.
-Box world_box(const Mat4& m, Vec3 lo, Vec3 hi) {
-    Box box{{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
-    for (int c = 0; c < 8; ++c) {
-        const Vec3 p = transform_point(m, {(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z});
-        box.lo = vmin(box.lo, p);
-        box.hi = vmax(box.hi, p);
+// A body fitted to a local box (lo..hi) under an entity's world matrix; the scale goes into the size.
+physics::BodyDesc fitted_body(const Mat4& world, Vec3 lo, Vec3 hi, u32 shape, physics::Motion motion, Vec3& scale, Vec3& centre) {
+    Vec3 t, r;
+    decompose_trs(world, t, r, scale);
+    centre = (lo + hi) * 0.5f;
+    const Vec3 half = mul(hi - lo, scale) * 0.5f;
+    physics::BodyDesc d;
+    d.motion = motion;
+    d.transform = translation(t) * rotation_euler(r) * translation(mul(centre, scale));
+    if (shape == 1) {
+        d.shape = physics::Shape::Sphere;
+        d.half_extents = {half.x > half.y ? (half.x > half.z ? half.x : half.z) : (half.y > half.z ? half.y : half.z), 0, 0};
+    } else if (shape == 2) {
+        d.shape = physics::Shape::Capsule;
+        const f32 radius = half.x > half.y ? half.x : half.y;
+        d.half_extents = {radius, 0, half.z - radius > 0.01f ? half.z - radius : 0.01f};
+    } else {
+        d.half_extents = half;
     }
-    return box;
+    return d;
 }
 
-// Volumes: the unit cube (x, y in -0.5..0.5, z in 0..1) scaled by the entity's transform.
-template <typename Volume>
-u32 gather_volumes(const world::World& world, Box* out, u32 n, u32 max) {
-    const reflect::TypeInfo& type = reflect::type_of<Volume>();
-    for (u32 i = 0; i < world.count(type) && n < max; ++i) {
-        if (!static_cast<const Volume*>(world.at(type, i))->enabled) continue;
-        out[n++] = world_box(world.world_matrix(world.owner(type, i)), {-0.5f, -0.5f, 0.0f}, {0.5f, 0.5f, 1.0f});
-    }
-    return n;
-}
+constexpr Vec3 kUnitLo{-0.5f, -0.5f, 0.0f}, kUnitHi{0.5f, 0.5f, 1.0f};  // volumes and meshless bodies
 
-// World-space bounding boxes of everything the player collides with.
-// shortcut: rebuilt every frame (fine for blockout-sized levels).
-u32 gather_boxes(const world::World& world, MeshCache& meshes, Box* out, u32 max) {
-    const reflect::TypeInfo& type = reflect::type_of<world::StaticMesh>();
-    u32 n = 0;
-    for (u32 i = 0; i < world.count(type) && n < max; ++i) {
-        const auto* mesh = static_cast<const world::StaticMesh*>(world.at(type, i));
-        if (!mesh->collision) continue;
-        const CachedMesh* cached = meshes.get(mesh->mesh);
-        if (!cached) continue;
-        Box box = world_box(world.world_matrix(world.owner(type, i)), cached->bounds_min, cached->bounds_max);
-        // Planes are flat: give them some thickness so the player can stand on them.
-        if (box.hi.z - box.lo.z < 0.05f) box.lo.z -= 0.05f;
-        out[n++] = box;
-    }
-    return gather_volumes<world::BlockingVolume>(world, out, n, max);
+bool load_context(const asset::AssetRegistry& registry, const char* guid_text, input::InputMappingContext& out) {
+    asset::Guid guid;
+    const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
+    if (!r) return false;
+    char path[300];
+    registry.source_path(*r, path, sizeof path);
+    return asset::load_data_asset(path, out);
 }
 
 } // namespace
+
+PlaySession::~PlaySession() { stop(); }
+
+void PlaySession::stop() {
+    delete physics_;
+    physics_ = nullptr;
+    simulated_count_ = 0;
+    input_.clear();
+}
 
 Vec3 PlaySession::forward() const {
     return {std::cos(pitch_) * std::cos(yaw_), std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_)};
 }
 
-void PlaySession::start(const world::World& world, Vec3 eye, f32 yaw, f32 pitch) {
-    const reflect::TypeInfo& type = reflect::type_of<world::PlayerStart>();
-    eye_height_ = 1.7f;
-    position_ = eye - Vec3{0, 0, eye_height_};
-    yaw_ = yaw;
-    pitch_ = pitch;
-    if (world.count(type) > 0) {
-        const world::Entity start = world.owner(type, 0);
-        const auto* settings = static_cast<const world::PlayerStart*>(world.get(start, type));
-        eye_height_ = settings->eye_height;
-        walk_speed_ = settings->walk_speed;
-        jump_speed_ = settings->jump_speed;
-        Vec3 rotation, scale;
-        decompose_trs(world.world_matrix(start), position_, rotation, scale);
-        yaw_ = radians(rotation.z);
-        pitch_ = 0.0f;
-    } else {
-        LSD_LOG_INFO("editor", "No Player Start in the level: playing from the camera.");
+void PlaySession::start(const world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch) {
+    stop();
+    physics_ = new physics::PhysicsWorld();
+    physics_->set_gravity(world.settings().gravity);
+
+    // Level geometry: meshes with collision (unless simulated) and Blocking Volumes are static.
+    Vec3 scale, centre;
+    const reflect::TypeInfo& mesh_type = reflect::type_of<world::StaticMesh>();
+    for (u32 i = 0; i < world.count(mesh_type); ++i) {
+        const world::Entity e = world.owner(mesh_type, i);
+        const auto* mesh = static_cast<const world::StaticMesh*>(world.at(mesh_type, i));
+        const CachedMesh* cached = meshes.get(mesh->mesh);
+        if (!mesh->collision || !cached || world.get<world::RigidBody>(e)) continue;
+        physics_->add_body(fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre));
     }
-    spawn_ = position_;
-    spawn_yaw_ = yaw_;
-    velocity_ = {};
-    on_ground_ = false;
-}
-
-void PlaySession::update(const world::World& world, MeshCache& meshes, const PlayInput& in, f32 dt) {
-    dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
-    yaw_ -= in.look_x * 0.0025f;
-    pitch_ -= in.look_y * 0.0025f;
-    pitch_ = pitch_ < -1.5f ? -1.5f : pitch_ > 1.5f ? 1.5f : pitch_;
-
-    const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
-    const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};
-    Vec3 wish = ahead * static_cast<f32>(in.forward - in.back) + right * static_cast<f32>(in.right - in.left);
-    if (length(wish) > 0.0f) wish = normalize(wish) * (walk_speed_ * (in.sprint ? 1.8f : 1.0f));
-    velocity_.x = wish.x;
-    velocity_.y = wish.y;
-    velocity_.z -= world.settings().gravity * dt;
-    if (in.jump && on_ground_) velocity_.z = jump_speed_;
-
-    static Box boxes[4096];
-    const u32 count = gather_boxes(world, meshes, boxes, 4096);
-    const f32 height = eye_height_ + 0.1f;
-    auto player_box = [&] { return Box{position_ - Vec3{kRadius, kRadius, 0}, position_ + Vec3{kRadius, kRadius, height}}; };
-
-    // Move one axis at a time and push out of whatever it hits (simple and stable for boxes).
-    const bool was_on_ground = on_ground_;
-    on_ground_ = false;
-    for (int a = 0; a < 3; ++a) {
-        const f32 move = axis(velocity_, a) * dt;
-        if (move == 0.0f) continue;
-        axis(position_, a) += move;
-        for (u32 i = 0; i < count; ++i) {
-            const Box me = player_box();
-            if (!overlaps(me, boxes[i])) continue;
-            if (a < 2 && was_on_ground && boxes[i].hi.z - position_.z <= kStepHeight) {
-                const f32 old_z = position_.z;
-                position_.z = boxes[i].hi.z;  // step up onto it if there is room
-                bool blocked = false;
-                for (u32 j = 0; j < count && !blocked; ++j) blocked = overlaps(player_box(), boxes[j]);
-                if (!blocked) continue;
-                position_.z = old_z;
-            }
-            const f32 lo = axis(me.lo, a) - axis(position_, a), hi = axis(me.hi, a) - axis(position_, a);  // player extents
-            axis(position_, a) = move > 0 ? axis(boxes[i].lo, a) - hi : axis(boxes[i].hi, a) - lo;
-            if (a == 2) {
-                if (move < 0) on_ground_ = true;
-                velocity_.z = 0.0f;
+    const reflect::TypeInfo& blocking = reflect::type_of<world::BlockingVolume>();
+    for (u32 i = 0; i < world.count(blocking); ++i) {
+        if (!static_cast<const world::BlockingVolume*>(world.at(blocking, i))->enabled) continue;
+        physics_->add_body(fitted_body(world.world_matrix(world.owner(blocking, i)), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
+    }
+    // Simulated objects.
+    const reflect::TypeInfo& rigid_type = reflect::type_of<world::RigidBody>();
+    for (u32 i = 0; i < world.count(rigid_type) && simulated_count_ < sizeof simulated_ / sizeof simulated_[0]; ++i) {
+        const world::Entity e = world.owner(rigid_type, i);
+        const auto* rigid = static_cast<const world::RigidBody*>(world.at(rigid_type, i));
+        Vec3 lo = kUnitLo, hi = kUnitHi;
+        if (const auto* mesh = world.get<world::StaticMesh>(e)) {
+            if (const CachedMesh* cached = meshes.get(mesh->mesh)) {
+                lo = cached->bounds_min;
+                hi = cached->bounds_max;
             }
         }
+        physics::BodyDesc d = fitted_body(world.world_matrix(e), lo, hi, rigid->shape, physics::Motion::Dynamic, scale, centre);
+        d.mass = rigid->mass;
+        d.friction = rigid->friction;
+        d.restitution = rigid->bounciness;
+        simulated_[simulated_count_++] = {e, physics_->add_body(d), scale, centre};
     }
 
-    static Box kill[256];
-    const u32 kill_count = gather_volumes<world::KillVolume>(world, kill, 0, 256);
-    bool killed = position_.z < world.settings().kill_z;
-    for (u32 i = 0; i < kill_count && !killed; ++i) killed = overlaps(player_box(), kill[i]);
+    // The player: the first Character, else a default walker at the Player Start or the camera.
+    const reflect::TypeInfo& character_type = reflect::type_of<world::Character>();
+    const reflect::TypeInfo& start_type = reflect::type_of<world::PlayerStart>();
+    settings_ = world::Character{};
+    character_ = {};
+    wired_ = false;
+    Vec3 rotation;
+    if (world.count(character_type) > 0) {
+        character_ = world.owner(character_type, 0);
+        settings_ = *world.get<world::Character>(character_);
+        decompose_trs(world.world_matrix(character_), feet_, rotation, scale);
+        yaw_ = radians(rotation.z);
+        pitch_ = 0.0f;
+        input::InputMappingContext context;
+        if (load_context(registry, settings_.mapping_context, context)) {
+            input_.add_context(context);
+            wired_ = true;
+        } else {
+            LSD_LOG_WARN("play", "%s has no Input Mapping Context (pick one in its Details): it cannot move", world.name(character_));
+        }
+        if (!settings_.move_action[0] || !settings_.look_action[0] || !settings_.jump_action[0]) {
+            LSD_LOG_WARN("play", "%s: pick its Move, Look and Jump actions in Details to control it", world.name(character_));
+        }
+    } else {
+        input_.add_context(default_controls());
+        std::snprintf(settings_.move_action, sizeof settings_.move_action, "%s", kDefaultMove);
+        std::snprintf(settings_.look_action, sizeof settings_.look_action, "%s", kDefaultLook);
+        std::snprintf(settings_.jump_action, sizeof settings_.jump_action, "%s", kDefaultJump);
+        if (world.count(start_type) > 0) {
+            const world::Entity start = world.owner(start_type, 0);
+            const auto* s = world.get<world::PlayerStart>(start);
+            settings_.eye_height = s->eye_height;
+            settings_.walk_speed = s->walk_speed;
+            settings_.jump_speed = s->jump_speed;
+            decompose_trs(world.world_matrix(start), feet_, rotation, scale);
+            yaw_ = radians(rotation.z);
+            pitch_ = 0.0f;
+        } else {
+            feet_ = eye - Vec3{0, 0, settings_.eye_height};
+            yaw_ = yaw;
+            pitch_ = pitch;
+            LSD_LOG_INFO("play", "No Character or Player Start in the level: playing from the camera.");
+        }
+    }
+    spawn_ = feet_;
+    spawn_yaw_ = yaw_;
+    physics::CharacterDesc desc;
+    desc.feet = feet_;
+    desc.radius = settings_.radius;
+    desc.height = settings_.height;
+    desc.max_slope_degrees = settings_.max_slope;
+    desc.step_height = settings_.step_height;
+    physics_->create_character(desc);
+}
+
+void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
+    if (!physics_) return;
+    dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
+    input_.update(frame);
+    const input::Value move = input_.value(settings_.move_action);
+    const input::Value look = input_.value(settings_.look_action);
+    const bool jump = input_.pressed(settings_.jump_action);
+
+    yaw_ -= radians(look.x * settings_.look_sensitivity);
+    pitch_ += radians(look.y * settings_.look_sensitivity) * (settings_.invert_look_y ? -1.0f : 1.0f);
+    pitch_ = pitch_ < -1.5f ? -1.5f : pitch_ > 1.5f ? 1.5f : pitch_;
+    const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
+    const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};
+    Vec3 velocity = ahead * move.y + right * move.x;
+    const f32 amount = length(velocity);
+    if (amount > 1.0f) velocity = velocity * (1.0f / amount);
+    physics_->move_character(velocity * settings_.walk_speed, jump, settings_.jump_speed, dt);
+    physics_->step(dt);
+    feet_ = physics_->character_feet();
+
+    // Kill Z and Kill Volumes.
+    bool killed = feet_.z < world.settings().kill_z;
+    const reflect::TypeInfo& kill_type = reflect::type_of<world::KillVolume>();
+    for (u32 i = 0; i < world.count(kill_type) && !killed; ++i) {
+        if (!static_cast<const world::KillVolume*>(world.at(kill_type, i))->enabled) continue;
+        const Mat4 inv = affine_inverse(world.world_matrix(world.owner(kill_type, i)));
+        const Vec3 p = transform_point(inv, feet_ + Vec3{0, 0, 0.1f});
+        killed = p.x >= kUnitLo.x && p.x <= kUnitHi.x && p.y >= kUnitLo.y && p.y <= kUnitHi.y && p.z >= kUnitLo.z && p.z <= kUnitHi.z;
+    }
     if (killed) {
-        position_ = spawn_;
+        physics_->teleport_character(spawn_);
+        feet_ = spawn_;
         yaw_ = spawn_yaw_;
-        velocity_ = {};
+    }
+
+    // Write the simulation back so the viewport (and anything attached) shows it.
+    for (u32 i = 0; i < simulated_count_; ++i) {
+        const Simulated& s = simulated_[i];
+        world.set_world_matrix(s.entity, physics_->body_transform(s.body) * translation(-mul(s.centre, s.scale)) * scaling(s.scale));
+    }
+    if (world.alive(character_)) {
+        Vec3 t, r, scale;
+        decompose_trs(world.world_matrix(character_), t, r, scale);
+        world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
 }
 

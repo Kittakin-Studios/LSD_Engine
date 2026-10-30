@@ -89,11 +89,13 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 
 ## Milestone 4 — Gameplay layer
 
-Exit test: a character runs, input wired with no code.
+Exit test: a character runs, input wired with no code. **Works**: place a Character, pick IMC_Default and the
+IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input Setup makes them), press Play.
 
 ### Data
 
-- [ ] Data assets, data tables (CSV/JSON import/export), curves and curve tables — instances of game-defined reflected types [Data Asset, Data Table, Curve]
+- [~] Data assets (`.lsdasset`, any registered reflected type, New Data Asset, edit + save in Details); needs data tables (CSV/JSON import/export), curves and curve tables [Data Asset, Data Table, Curve]
+- [x] Reflection: List<T, N> fields (JSON arrays, binary, +/remove in Details), Choice dropdowns, asset pickers (Asset:<Type>, drag-drop), key picker with Listen
 - [ ] Gameplay tags: hierarchical names, tag containers, tag queries (moved up from v2: scripts and AI need them early) [Gameplay Tags]
 - [ ] Enums and structs defined in the editor for scripts [User Defined Enum / Struct]
 
@@ -118,11 +120,11 @@ Exit test: a character runs, input wired with no code.
 
 ### Input, physics, movement
 
-- [ ] Input actions (triggers, modifiers) and mapping contexts by priority; keyboard, mouse, gamepad [Enhanced Input]
-- [ ] Physics (Jolt): collision shapes (auto on import, simple + convex), channels + presets, rigid bodies, physical materials, kinematic bodies
+- [~] Input Actions (Button / Axis 1D / Axis 2D) and Mapping Contexts (swizzle, scale, priority with key consumption); keyboard, mouse, gamepad with dead zones; New Input Setup template; needs triggers (hold, tap, chord), more modifiers, player rebinding [Enhanced Input]
+- [~] Physics (Jolt 5.6, `engine/physics`): static collision from meshes and Blocking Volumes, RigidBody component (box / sphere / capsule fitted to the mesh, mass, friction, bounciness), simulated in Play; needs convex / mesh shapes, channels + presets, physical materials, kinematic bodies in the editor
 - [ ] Constraints and joints (hinge, ball, slider) (moved up from v2: doors and chains are blockout staples)
 - [ ] Traces and overlaps (line, sphere, box, capsule), also as visual-script nodes
-- [ ] Character movement: walk, slopes, steps, crouch, jump, fall, swim, moving platforms [Character Movement Component]
+- [~] Character component: Jolt CharacterVirtual (walk, slopes, stairs, jump, fall), input asset wiring, first-person camera, possessed in Play (else a default walker at the Player Start); needs crouch, swim, moving platforms, third-person camera [Character Movement Component]
 - [ ] Cameras: spring arm with collision, camera shake, blend between cameras [Camera Manager]
 - [ ] Splines: editable curves in the viewport, follow-spline movement, spline-placed meshes [Spline Component, Spline Mesh]
 

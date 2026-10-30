@@ -35,6 +35,26 @@ target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURC
 target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
 set(LSD_IMGUI_DIR ${imgui_SOURCE_DIR} PARENT_SCOPE)
 
+# Jolt Physics (MIT): rigid bodies, collision queries and the character controller.
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)  # we link the DLL runtime (/MD, /MDd)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+FetchContent_Declare(JoltPhysics
+  GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+  GIT_TAG v5.6.0
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR Build
+  SYSTEM
+)
+FetchContent_MakeAvailable(JoltPhysics)
+
 # ImGuizmo (MIT): move / rotate / scale handles in the editor viewport. No release tags since
 # 2021 that build against current ImGui, so pinned to a commit.
 FetchContent_Declare(imguizmo

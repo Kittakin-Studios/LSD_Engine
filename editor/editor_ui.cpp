@@ -52,7 +52,7 @@ struct PlaceItem {
 };
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
-    {"Player Start", nullptr, "PlayerStart"}, {"Blocking Volume", nullptr, "BlockingVolume"},
+    {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Empty", nullptr, nullptr},
 };
 
@@ -654,7 +654,7 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
             continue;
         }
         ImVec2 base, head, tip;
-        const bool start = s.world->get<world::PlayerStart>(e) != nullptr;
+        const bool start = s.world->get<world::PlayerStart>(e) || s.world->get<world::Character>(e);
         if (!project(view_proj, origin, pos, size, base)) continue;
         const ImU32 color = u32_color(s.is_selected(e) ? t.details_tab_active : start ? t.text_blueprint : t.text_component);
         if (start && project(view_proj, origin + Vec3{0, 0, 1.8f}, pos, size, head)) {
@@ -701,7 +701,8 @@ Entity pick(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVe
         ImVec2 base, head;
         const Vec3 origin{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
         if (!project(view_proj, origin, pos, size, base)) continue;
-        if (!project(view_proj, origin + Vec3{0, 0, s.world->get<world::PlayerStart>(e) ? 1.8f : 0.0f}, pos, size, head)) head = base;
+        const bool standing = s.world->get<world::PlayerStart>(e) || s.world->get<world::Character>(e);
+        if (!project(view_proj, origin + Vec3{0, 0, standing ? 1.8f : 0.0f}, pos, size, head)) head = base;
         const f32 lo = (head.y < base.y ? head.y : base.y) - 10.0f, hi = (head.y > base.y ? head.y : base.y) + 10.0f;
         const f32 depth = length(origin - s.camera.position);
         if (std::fabs(mouse.x - base.x) < 14.0f && mouse.y > lo && mouse.y < hi && depth < t) {
@@ -1851,7 +1852,7 @@ void draw_place_panel(EditorState& s) {
         ImGui::SetItemTooltip("Drag into the viewport, or double-click to place in front of the camera");
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 c(p.x + kTile * 0.5f, p.y + kTile * 0.5f);
-        const bool start = item.component && std::strcmp(item.component, "PlayerStart") == 0;
+        const bool start = item.component && (std::strcmp(item.component, "PlayerStart") == 0 || std::strcmp(item.component, "Character") == 0);
         const bool volume = item.component && !start;
         const ImU32 color = u32_color(item.mesh ? t.text_mesh : start ? t.text_blueprint : volume ? t.text_vfx : t.text_component);
         dl->AddRect(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + kTile - 6, p.y + kTile - 6), color, 4.0f, 0, 2.0f);

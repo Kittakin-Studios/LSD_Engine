@@ -50,6 +50,37 @@ struct PlayerStart {
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 jump_speed = 5.0f;
 };
 
+// Simulated by physics in Play: falls, collides, can be pushed. The shape is fitted to the mesh's bounds.
+LSD_STRUCT(Component, Category = "Physics")
+struct RigidBody {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Box,Sphere,Capsule", Tooltip = "Collision shape, fitted to the mesh bounds") u32 shape = 0;
+    LSD_PROPERTY(Edit, Units = "kg", Min = 0.01) f32 mass = 10.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 friction = 0.5f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
+};
+
+// The player's character (Unreal's Character + Character Movement + its input setup). In Play the
+// first Character in the level is possessed; its input comes from the mapping context and actions
+// picked here, so no code is needed to wire it.
+LSD_STRUCT(Component, Category = "Gameplay")
+struct Character {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:InputMappingContext") char mapping_context[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = right, y = forward") char move_action[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = turn right, y = look up") char look_action[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:InputAction") char jump_action[33] = "";
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 walk_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 jump_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89) f32 max_slope = 45.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 step_height = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.2) f32 height = 1.8f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05) f32 radius = 0.35f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 eye_height = 1.65f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Tooltip = "Turn per unit of Look (per pixel for the mouse)") f32 look_sensitivity = 0.15f;
+    LSD_PROPERTY(Edit) bool invert_look_y = false;
+};
+
 // Per-level settings (Unreal's World Settings), saved in the level file.
 LSD_STRUCT(Category = "World")
 struct WorldSettings {

@@ -44,3 +44,8 @@ target_link_libraries(lsd_input_tests PRIVATE lsd_input lsd_asset SDL3::SDL3-sta
 target_compile_definitions(lsd_input_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 lsd_configure_target(lsd_input_tests)
 add_test(NAME input COMMAND lsd_input_tests)
+
+add_executable(lsd_physics_tests physics_tests.cpp)
+target_link_libraries(lsd_physics_tests PRIVATE lsd_physics)
+lsd_configure_target(lsd_physics_tests)
+add_test(NAME physics COMMAND lsd_physics_tests)

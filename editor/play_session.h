@@ -1,39 +1,53 @@
 #pragma once
-// Play-in-Editor: a first-person player spawned at the level's Player Start (or the editor camera)
-// that walks, jumps and collides with StaticMeshes that have collision on and Blocking Volumes;
-// Kill Volumes and the World Settings' Kill Z send it back to the start.
-// shortcut: the player is a box colliding with each mesh's world-space bounding box until Jolt
-// (milestone 4) brings real collision shapes and the Character Movement component.
+// Play-in-Editor on Jolt physics. On Start the level becomes physics bodies: meshes with collision and
+// Blocking Volumes are static, RigidBody objects are simulated. The player is the first Character in
+// the level, driven by the input assets picked on it; without one, a default first-person walker
+// spawns at the Player Start (or the camera) with built-in WASD / mouse / Space controls.
+// Kill Volumes and the World Settings' Kill Z send the player back to the start.
 #include "mesh_cache.h"
 
+#include "lsd/asset/asset_registry.h"
+#include "lsd/input/input.h"
+#include "lsd/physics/physics.h"
+#include "lsd/world/components.h"
 #include "lsd/world/world.h"
 
 namespace lsd::editor {
 
-struct PlayInput {
-    bool forward, back, left, right, jump, sprint;
-    f32 look_x, look_y;  // mouse movement in pixels
-};
-
 class PlaySession {
 public:
-    // Spawns at the first PlayerStart; without one, at `eye` looking along `yaw`/`pitch`.
-    void start(const world::World& world, Vec3 eye, f32 yaw, f32 pitch);
-    void update(const world::World& world, MeshCache& meshes, const PlayInput& input, f32 dt);
+    PlaySession() = default;
+    ~PlaySession();
+    PlaySession(const PlaySession&) = delete;
+    PlaySession& operator=(const PlaySession&) = delete;
 
-    Vec3 feet() const { return position_; }
-    Vec3 eye() const { return position_ + Vec3{0, 0, eye_height_}; }
+    void start(const world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch);
+    // Moves the player and simulated objects; writes their new transforms into `world` (Stop reverts them).
+    void update(world::World& world, const input::InputFrame& frame, f32 dt);
+    void stop();
+
+    Vec3 feet() const { return feet_; }
+    Vec3 eye() const { return feet_ + Vec3{0, 0, settings_.eye_height}; }
     Vec3 forward() const;
-    f32 yaw() const { return yaw_; }
-    f32 pitch() const { return pitch_; }
+    bool wired() const { return wired_; }  // true when a Character's input assets drive the player
 
 private:
-    Vec3 position_;  // feet
-    Vec3 velocity_;
-    Vec3 spawn_;
+    struct Simulated {
+        world::Entity entity;
+        u32 body;
+        Vec3 scale;
+        Vec3 centre;  // bounds centre in the entity's local space (unscaled)
+    };
+
+    physics::PhysicsWorld* physics_ = nullptr;
+    input::InputSystem input_;
+    world::Character settings_;
+    world::Entity character_;  // invalid for the default walker
+    bool wired_ = false;
+    Simulated simulated_[1024];
+    u32 simulated_count_ = 0;
+    Vec3 feet_, spawn_;
     f32 yaw_ = 0, pitch_ = 0, spawn_yaw_ = 0;
-    f32 eye_height_ = 1.7f, walk_speed_ = 5.0f, jump_speed_ = 5.0f;
-    bool on_ground_ = false;
 };
 
 } // namespace lsd::editor

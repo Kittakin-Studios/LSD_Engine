@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
     lsd::Allocator& allocator = lsd::default_allocator();
     lsd::JobSystem jobs(allocator, lsd::recommended_worker_count(info));
 
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         LSD_LOG_ERROR("editor", "SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
@@ -391,6 +391,7 @@ int main(int argc, char** argv) {
     lsd::editor::PlaySession play;
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
+    SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player
     char title[400] = "";
 
     bool running = true;
@@ -415,6 +416,18 @@ int main(int argc, char** argv) {
                 case SDL_EVENT_MOUSE_MOTION:
                     mouse_dx += event.motion.xrel;
                     mouse_dy += event.motion.yrel;
+                    break;
+                case SDL_EVENT_GAMEPAD_ADDED:
+                    if (!gamepad) {
+                        gamepad = SDL_OpenGamepad(event.gdevice.which);
+                        if (gamepad) LSD_LOG_INFO("editor", "Gamepad: %s", SDL_GetGamepadName(gamepad));
+                    }
+                    break;
+                case SDL_EVENT_GAMEPAD_REMOVED:
+                    if (gamepad && SDL_GetGamepadID(gamepad) == event.gdevice.which) {
+                        SDL_CloseGamepad(gamepad);
+                        gamepad = nullptr;
+                    }
                     break;
                 case SDL_EVENT_DROP_FILE:
                     if (import_file(event.drop.data, state.content_folder, state.status, sizeof state.status)) registry.scan();
@@ -480,7 +493,7 @@ int main(int argc, char** argv) {
 
         if (state.play_requested && !state.playing) {
             lsd::world::save_level(world, play_snapshot);
-            play.start(world, state.camera.position, state.camera.yaw, state.camera.pitch);
+            play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);
             state.playing = true;
             state.mouse_captured = true;
             state.paused = state.ejected = false;
@@ -492,19 +505,33 @@ int main(int argc, char** argv) {
             state.playing = false;
             state.mouse_captured = false;
             state.paused = state.ejected = false;
+            play.stop();
             LSD_LOG_INFO("editor", "Stop");
         }
         state.stop_requested = false;
         SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
 
         if (state.playing) {
-            const bool* keys = SDL_GetKeyboardState(nullptr);
-            lsd::editor::PlayInput input{};
+            // Devices go to the game only while it has the mouse (not when ejected or the mouse is freed).
+            lsd::input::InputFrame devices;
             if (state.mouse_captured && !state.ejected) {
-                input = {keys[SDL_SCANCODE_W], keys[SDL_SCANCODE_S], keys[SDL_SCANCODE_A], keys[SDL_SCANCODE_D], keys[SDL_SCANCODE_SPACE],
-                         keys[SDL_SCANCODE_LSHIFT], mouse_dx, mouse_dy};
+                devices.keys = SDL_GetKeyboardState(&devices.key_count);
+                devices.mouse_dx = mouse_dx;
+                devices.mouse_dy = mouse_dy;
+                const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
+                devices.mouse_buttons = ((buttons & SDL_BUTTON_LMASK) ? 1u : 0u) | ((buttons & SDL_BUTTON_MMASK) ? 2u : 0u) | ((buttons & SDL_BUTTON_RMASK) ? 4u : 0u);
+                if (gamepad) {
+                    const SDL_GamepadAxis axes[6] = {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY,
+                                                     SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER};
+                    for (int a = 0; a < 6; ++a) devices.gamepad_axes[a] = static_cast<lsd::f32>(SDL_GetGamepadAxis(gamepad, axes[a])) / 32767.0f;
+                    devices.gamepad_axes[1] = -devices.gamepad_axes[1];  // SDL's stick Y points down; ours points up
+                    devices.gamepad_axes[3] = -devices.gamepad_axes[3];
+                    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && b < 32; ++b) {
+                        if (SDL_GetGamepadButton(gamepad, static_cast<SDL_GamepadButton>(b))) devices.gamepad_buttons |= 1u << b;
+                    }
+                }
             }
-            if (!state.paused || state.step_requested) play.update(world, meshes, input, state.paused ? 1.0f / 60.0f : dt);
+            if (!state.paused || state.step_requested) play.update(world, devices, state.paused ? 1.0f / 60.0f : dt);
             state.step_requested = false;
             state.player_feet = play.feet();
         }
@@ -561,6 +588,7 @@ int main(int argc, char** argv) {
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     lsd::reflect::save_file(state.settings, kSettingsPath);
     SDL_SetWindowRelativeMouseMode(window, false);
+    if (gamepad) SDL_CloseGamepad(gamepad);
     lsd::render::destroy_lines(*device, grid);
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);

@@ -1,0 +1,227 @@
+#include "lsd/physics/physics.h"
+
+#include "lsd/foundation/log.h"
+
+#include <Jolt/Jolt.h>
+
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Core/JobSystemThreadPool.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/RegisterTypes.h>
+
+#include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+namespace lsd::physics {
+
+namespace {
+
+// Two object layers: things that never move, and everything else.
+constexpr JPH::ObjectLayer kStaticLayer = 0;
+constexpr JPH::ObjectLayer kMovingLayer = 1;
+const JPH::BroadPhaseLayer kStaticBroadPhase(0);
+const JPH::BroadPhaseLayer kMovingBroadPhase(1);
+
+class ObjectPairFilter final : public JPH::ObjectLayerPairFilter {
+public:
+    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override { return a == kMovingLayer || b == kMovingLayer; }
+};
+
+class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
+public:
+    JPH::uint GetNumBroadPhaseLayers() const override { return 2; }
+    JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override { return layer == kStaticLayer ? kStaticBroadPhase : kMovingBroadPhase; }
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override { return layer == kStaticBroadPhase ? "Static" : "Moving"; }
+#endif
+};
+
+class ObjectVsBroadPhaseFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
+public:
+    bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broad) const override { return layer == kMovingLayer || broad == kMovingBroadPhase; }
+};
+
+void trace(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(buffer, sizeof buffer, format, args);
+    va_end(args);
+    LSD_LOG_INFO("physics", "%s", buffer);
+}
+
+// Jolt's global setup (allocator hooks, type registry), once per process.
+void init_jolt() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        JPH::RegisterDefaultAllocator();
+        JPH::Trace = trace;
+        JPH::Factory::sInstance = new JPH::Factory();
+        JPH::RegisterTypes();
+    });
+}
+
+JPH::Vec3 to_jolt(Vec3 v) { return {v.x, v.y, v.z}; }
+
+// Splits a rotation + translation matrix (columns normalised to drop any leftover scale).
+void to_jolt(const Mat4& m, JPH::RVec3& position, JPH::Quat& rotation) {
+    position = JPH::RVec3(m.at(0, 3), m.at(1, 3), m.at(2, 3));
+    JPH::Vec3 axes[3];
+    for (int c = 0; c < 3; ++c) axes[c] = JPH::Vec3(m.at(0, c), m.at(1, c), m.at(2, c)).NormalizedOr(JPH::Vec3::sAxisX());
+    const JPH::Mat44 rotation_matrix(JPH::Vec4(axes[0], 0), JPH::Vec4(axes[1], 0), JPH::Vec4(axes[2], 0), JPH::Vec4(0, 0, 0, 1));
+    rotation = rotation_matrix.GetQuaternion().Normalized();
+}
+
+// Jolt capsules run along Y; ours stand along Z.
+JPH::RefConst<JPH::Shape> z_capsule(f32 half_height, f32 radius, JPH::Vec3 offset) {
+    JPH::RotatedTranslatedShapeSettings settings(offset, JPH::Quat::sRotation(JPH::Vec3::sAxisX(), 0.5f * JPH::JPH_PI), new JPH::CapsuleShape(half_height, radius));
+    return settings.Create().Get();
+}
+
+} // namespace
+
+struct PhysicsWorld::Impl {
+    BroadPhaseLayers broad_phase_layers;
+    ObjectVsBroadPhaseFilter object_vs_broad_phase;
+    ObjectPairFilter object_pairs;
+    JPH::TempAllocatorImpl temp{16 * 1024 * 1024};
+    JPH::JobSystemThreadPool jobs{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
+                                  static_cast<int>(std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1)};
+    JPH::PhysicsSystem system;
+    std::vector<JPH::BodyID> bodies;
+    JPH::Ref<JPH::CharacterVirtual> character;
+    f32 step_height = 0.4f;
+};
+
+PhysicsWorld::PhysicsWorld() {
+    init_jolt();
+    impl_ = new Impl();
+    impl_->system.Init(16384, 0, 16384, 8192, impl_->broad_phase_layers, impl_->object_vs_broad_phase, impl_->object_pairs);
+    set_gravity(9.81f);
+}
+
+PhysicsWorld::~PhysicsWorld() {
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    for (const JPH::BodyID id : impl_->bodies) {
+        bodies.RemoveBody(id);
+        bodies.DestroyBody(id);
+    }
+    delete impl_;
+}
+
+u32 PhysicsWorld::add_body(const BodyDesc& desc) {
+    JPH::RefConst<JPH::Shape> shape;
+    switch (desc.shape) {
+        case Shape::Box: {
+            // Flat boxes (planes) still need some thickness; the convex radius must fit inside.
+            const JPH::Vec3 half = JPH::Vec3::sMax(to_jolt(desc.half_extents), JPH::Vec3::sReplicate(0.01f));
+            shape = new JPH::BoxShape(half, std::fmin(JPH::cDefaultConvexRadius, half.ReduceMin() * 0.5f));
+            break;
+        }
+        case Shape::Sphere: shape = new JPH::SphereShape(std::fmax(desc.half_extents.x, 0.01f)); break;
+        case Shape::Capsule: shape = z_capsule(std::fmax(desc.half_extents.z, 0.01f), std::fmax(desc.half_extents.x, 0.01f), JPH::Vec3::sZero()); break;
+    }
+    JPH::RVec3 position;
+    JPH::Quat rotation;
+    to_jolt(desc.transform, position, rotation);
+    const JPH::EMotionType motion = desc.motion == Motion::Static ? JPH::EMotionType::Static
+                                  : desc.motion == Motion::Dynamic ? JPH::EMotionType::Dynamic
+                                                                   : JPH::EMotionType::Kinematic;
+    JPH::BodyCreationSettings settings(shape, position, rotation, motion, desc.motion == Motion::Static ? kStaticLayer : kMovingLayer);
+    settings.mFriction = desc.friction;
+    settings.mRestitution = desc.restitution;
+    if (desc.motion == Motion::Dynamic) {
+        settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        settings.mMassPropertiesOverride.mMass = std::fmax(desc.mass, 0.01f);
+    }
+    const JPH::BodyID id = impl_->system.GetBodyInterface().CreateAndAddBody(
+        settings, desc.motion == Motion::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+    if (id.IsInvalid()) LSD_LOG_ERROR("physics", "Out of bodies");
+    impl_->bodies.push_back(id);
+    return static_cast<u32>(impl_->bodies.size() - 1);
+}
+
+u32 PhysicsWorld::body_count() const { return static_cast<u32>(impl_->bodies.size()); }
+
+Mat4 PhysicsWorld::body_transform(u32 body) const {
+    const JPH::RMat44 m = impl_->system.GetBodyInterface().GetWorldTransform(impl_->bodies[body]);
+    Mat4 out;
+    for (int c = 0; c < 4; ++c) {
+        const JPH::Vec4 column = c < 3 ? m.GetColumn4(static_cast<JPH::uint>(c)) : JPH::Vec4(JPH::Vec3(m.GetTranslation()), 1.0f);
+        for (int r = 0; r < 4; ++r) out.at(r, c) = column[static_cast<JPH::uint>(r)];
+    }
+    return out;
+}
+
+void PhysicsWorld::set_gravity(f32 g) { impl_->system.SetGravity(JPH::Vec3(0, 0, -g)); }
+
+void PhysicsWorld::step(f32 dt) {
+    if (dt <= 0.0f) return;
+    impl_->system.Update(dt, 1, &impl_->temp, &impl_->jobs);
+}
+
+void PhysicsWorld::create_character(const CharacterDesc& desc) {
+    const f32 half_height = std::fmax(desc.height * 0.5f - desc.radius, 0.05f);
+    JPH::CharacterVirtualSettings settings;
+    settings.mUp = JPH::Vec3::sAxisZ();
+    settings.mMaxSlopeAngle = JPH::DegreesToRadians(desc.max_slope_degrees);
+    settings.mShape = z_capsule(half_height, desc.radius, JPH::Vec3(0, 0, half_height + desc.radius));  // origin at the feet
+    settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisZ(), -desc.radius);  // ground contacts are below the lower sphere's centre
+    impl_->character = new JPH::CharacterVirtual(&settings, JPH::RVec3(desc.feet.x, desc.feet.y, desc.feet.z), JPH::Quat::sIdentity(), 0, &impl_->system);
+    impl_->step_height = desc.step_height;
+}
+
+void PhysicsWorld::move_character(Vec3 velocity, bool jump, f32 jump_speed, f32 dt) {
+    JPH::CharacterVirtual* c = impl_->character.GetPtr();
+    if (!c || dt <= 0.0f) return;
+    c->UpdateGroundVelocity();
+    const JPH::Vec3 ground = c->GetGroundVelocity();
+    const JPH::Vec3 vertical(0, 0, c->GetLinearVelocity().GetZ());
+    const bool on_ground = c->GetGroundState() == JPH::CharacterVirtual::EGroundState::OnGround;
+    JPH::Vec3 next;
+    if (on_ground && vertical.GetZ() - ground.GetZ() < 0.1f) {  // standing (not moving away from the ground)
+        next = ground;
+        if (jump) next += JPH::Vec3(0, 0, jump_speed);
+    } else {
+        next = vertical;
+    }
+    next += impl_->system.GetGravity() * dt;
+    next += JPH::Vec3(velocity.x, velocity.y, 0);
+    c->SetLinearVelocity(next);
+
+    JPH::CharacterVirtual::ExtendedUpdateSettings update;
+    update.mStickToFloorStepDown = JPH::Vec3(0, 0, -0.5f);
+    update.mWalkStairsStepUp = JPH::Vec3(0, 0, impl_->step_height);
+    c->ExtendedUpdate(dt, impl_->system.GetGravity(), update, impl_->system.GetDefaultBroadPhaseLayerFilter(kMovingLayer),
+                      impl_->system.GetDefaultLayerFilter(kMovingLayer), {}, {}, impl_->temp);
+}
+
+void PhysicsWorld::teleport_character(Vec3 feet) {
+    if (!impl_->character) return;
+    impl_->character->SetPosition(JPH::RVec3(feet.x, feet.y, feet.z));
+    impl_->character->SetLinearVelocity(JPH::Vec3::sZero());
+}
+
+Vec3 PhysicsWorld::character_feet() const {
+    if (!impl_->character) return {};
+    const JPH::RVec3 p = impl_->character->GetPosition();
+    return {static_cast<f32>(p.GetX()), static_cast<f32>(p.GetY()), static_cast<f32>(p.GetZ())};
+}
+
+bool PhysicsWorld::character_on_ground() const {
+    return impl_->character && impl_->character->GetGroundState() == JPH::CharacterVirtual::EGroundState::OnGround;
+}
+
+} // namespace lsd::physics
