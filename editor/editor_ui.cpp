@@ -63,7 +63,7 @@ struct PlaceItem {
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
-    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Audio Volume", nullptr, "AudioVolume"},
+    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Audio Volume", nullptr, "AudioVolume"},
     {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Empty", nullptr, nullptr},
 };
 
@@ -1114,6 +1114,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                 } else {
                     std::snprintf(s.status, sizeof s.status, "Drop a material onto an object with a Static Mesh");
                 }
+            } else if (record && asset_matches(*record, "ParticleSystem")) {  // a Particle Effect, like dropping a Niagara System
+                const Entity e = place(s, record->name, nullptr, "ParticleEffect", drop_point(s, ray));
+                asset::to_string(guid, s.world->get<world::ParticleEffect>(e)->system);
             } else if (record && (record->type == asset::AssetType::Sound || record->type == asset::AssetType::Cue)) {  // a Sound Emitter, like dropping a sound in Unreal
                 const Entity e = place(s, record->name, nullptr, "SoundEmitter", drop_point(s, ray) + Vec3{0, 0, 1});
                 asset::to_string(guid, s.world->get<world::SoundEmitter>(e)->sound);

@@ -6,6 +6,7 @@
 #include "lighting.h"
 #include "material_cache.h"
 #include "animation_player.h"
+#include "particle_player.h"
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
@@ -512,6 +513,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundMix>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::Submix>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::anim::AnimGraph>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::particles::ParticleSystem>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
@@ -529,6 +531,7 @@ int main(int argc, char** argv) {
     lsd::editor::MaterialCache materials(*texture_cache, registry);
     auto* skinned_cache = new lsd::editor::SkinnedCache(*device, registry);  // deleted before the device
     auto* animations = new lsd::editor::AnimationPlayer();
+    auto* effects = new lsd::editor::ParticlePlayer(*device, allocator, registry, *texture_cache);  // deleted before the textures
     g_skinned = skinned_cache;
     g_animations = animations;
     auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
@@ -649,6 +652,7 @@ int main(int argc, char** argv) {
             meshes.hot_reload();
             texture_cache->check_files();
             skinned_cache->check_files();
+            effects->check_files();
             materials.check_files();
             last_scan = SDL_GetTicks();
         }
@@ -701,6 +705,7 @@ int main(int argc, char** argv) {
             lsd::world::save_level(world, play_snapshot);
             play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);
             animations->reset();  // Play starts every animation from its beginning
+            effects->reset();
             state.playing = true;
             state.mouse_captured = true;
             state.paused = state.ejected = false;
@@ -745,6 +750,7 @@ int main(int argc, char** argv) {
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
                            state.playing && !state.paused ? &sounds : nullptr);
+        effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : dt, state.playing);
         // The ears: the player's camera in Play, else the editor camera.
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
@@ -793,6 +799,7 @@ int main(int argc, char** argv) {
             light_view.aspect = rect[2] / rect[3];
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state);
+            effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
         }
         device->render_debug_ui();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
@@ -815,6 +822,7 @@ int main(int argc, char** argv) {
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete animations;
+    delete effects;
     delete skinned_cache;
     delete texture_cache;
     device->destroy_texture(shadow_atlas);

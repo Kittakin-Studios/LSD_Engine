@@ -67,3 +67,8 @@ target_link_libraries(lsd_animation_tests PRIVATE lsd_animation ufbx)
 target_compile_definitions(lsd_animation_tests PRIVATE LSD_UFBX_DATA_DIR="${LSD_UFBX_DATA_DIR}")
 lsd_configure_target(lsd_animation_tests)
 add_test(NAME animation COMMAND lsd_animation_tests)
+
+add_executable(lsd_particles_tests particles_tests.cpp)
+target_link_libraries(lsd_particles_tests PRIVATE lsd_particles)
+lsd_configure_target(lsd_particles_tests)
+add_test(NAME particles COMMAND lsd_particles_tests)

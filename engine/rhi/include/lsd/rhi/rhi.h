@@ -62,6 +62,13 @@ struct LineVertex {
     f32 position[3];
     f32 color[4];
 };
+// Particle sprites, built on the CPU each frame (triangle list, world space).
+struct ParticleVertex {
+    f32 position[3];
+    f32 color[4];  // linear; times the texture
+    f32 uv[2];
+};
+constexpr u32 kParticleRingBytes = 8 * 1024 * 1024;  // particle vertices per frame (about 38000 sprites)
 
 // One lit mesh draw, shaded physically based (metal / roughness). Indices are u32. Matrices are
 // column-major (see lsd/foundation/math.h).
@@ -187,6 +194,10 @@ public:
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;
+    // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
+    // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
+    // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.
+    virtual void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) = 0;
     virtual void draw_test_triangle(f32 scale, f32 rotation_radians) = 0;
     virtual void end_frame() = 0;  // presents
 

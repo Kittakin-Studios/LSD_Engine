@@ -87,6 +87,7 @@ engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_u
                     graph.h: visual-script graphs and their compiler to Lua
 engine/animation/   ozz-animation behind SkinnedModel / Clip / Pose: FBX skin + clip import, GPU skinning matrices
 engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
+engine/particles/   ParticleSystem data asset (emitter stack) and its CPU simulation, sprites for rhi draw_particles
 engine/ui           placeholder
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
                     camera), Outliner, Details (components), Content Browser + Place, undo history
@@ -165,7 +166,8 @@ cascades fitted in editor/lighting.cpp), spot / point light shadows (16-tile loc
 animation on ozz (`engine/animation`, editor/skinned_cache + animation_player, SkeletalMesh component,
 notifies). Animation graph (AnimGraph data asset: states, 1D blend spaces, transitions with
 crossfades; Character drives Speed / VerticalSpeed / InAir; `lsd.set_anim_param`). The audio exit
-test now passes fully. Next: material graph, particles.
+test now passes fully. CPU particles (ParticleSystem data asset, ParticleEffect component, editor
+preview, alpha / additive sprites on D3D12 and OpenGL). Next: material graph, particle editor.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

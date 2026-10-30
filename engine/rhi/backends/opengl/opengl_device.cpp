@@ -232,6 +232,28 @@ out vec4 o_color;
 void main() { o_color = v_color; }
 )";
 
+constexpr char kParticleVertexShader[] = R"(#version 460 core
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec4 a_color;
+layout(location = 2) in vec2 a_uv;
+uniform mat4 u_mvp;
+out vec4 v_color;
+out vec2 v_uv;
+void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); v_color = a_color; v_uv = a_uv; }
+)";
+
+constexpr char kParticleFragmentShader[] = R"(#version 460 core
+layout(binding = 0) uniform sampler2D u_sprite;
+in vec4 v_color;
+in vec2 v_uv;
+out vec4 o_color;
+vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+void main() {
+    vec4 c = v_color * texture(u_sprite, v_uv);
+    o_color = vec4(to_srgb(c.rgb), clamp(c.a, 0.0, 1.0));
+}
+)";
+
 constexpr u32 kMaxBuffers = 4096;
 constexpr u32 kMaxTargets = 256;
 constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
@@ -296,6 +318,7 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)              \
     X(PFNGLNAMEDBUFFERSUBDATAPROC, glNamedBufferSubData)            \
     X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)                    \
+    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate) \
     X(PFNGLNAMEDFRAMEBUFFERDRAWBUFFERPROC, glNamedFramebufferDrawBuffer) \
     X(PFNGLNAMEDFRAMEBUFFERREADBUFFERPROC, glNamedFramebufferReadBuffer) \
     X(PFNGLVERTEXARRAYATTRIBIFORMATPROC, glVertexArrayAttribIFormat)
@@ -347,10 +370,11 @@ public:
     ~OpenGLDevice() override {
         if (!context_) return;
         if (debug_ui_) ImGui_ImplOpenGL3_Shutdown();
-        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_}) {
+        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_}) {
             if (program) gl_.glDeleteProgram(program);
         }
-        for (GLuint vao : {vao_, mesh_vao_, skinned_vao_, line_vao_}) {
+        if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
+        for (GLuint vao : {vao_, mesh_vao_, skinned_vao_, line_vao_, particle_vao_}) {
             if (vao) gl_.glDeleteVertexArrays(1, &vao);
         }
         for (Buffer& b : buffers_) {
@@ -698,6 +722,27 @@ public:
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertex_count));
     }
 
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+        const u32 bytes = vertex_count * static_cast<u32>(sizeof(ParticleVertex));
+        if (!vertex_count || bytes > kParticleRingBytes) return;
+        if (particle_offset_ + bytes > kParticleRingBytes) particle_offset_ = 0;  // GL keeps earlier draws' data (it syncs the update)
+        gl_.glNamedBufferSubData(particle_vbo_, particle_offset_, bytes, vertices);
+        const Texture* t = lookup_texture(texture);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        gl_.glBlendFuncSeparate(GL_SRC_ALPHA, additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        gl_.glUseProgram(particle_program_);
+        gl_.glUniformMatrix4fv(particle_mvp_, 1, GL_FALSE, view_proj);
+        gl_.glBindTextureUnit(0, t ? t->id : textures_[white_].id);
+        gl_.glVertexArrayVertexBuffer(particle_vao_, 0, particle_vbo_, particle_offset_, sizeof(ParticleVertex));
+        gl_.glBindVertexArray(particle_vao_);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
+        particle_offset_ += bytes;
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+    }
+
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
         glDisable(GL_DEPTH_TEST);
         gl_.glUseProgram(program_);
@@ -912,6 +957,15 @@ private:
         gl_.glCreateVertexArrays(1, &line_vao_);
         attribute(line_vao_, 0, 3, offsetof(LineVertex, position));
         attribute(line_vao_, 1, 4, offsetof(LineVertex, color));
+        particle_program_ = link(kParticleVertexShader, kParticleFragmentShader);
+        if (!particle_program_) return false;
+        particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
+        gl_.glCreateBuffers(1, &particle_vbo_);
+        gl_.glNamedBufferStorage(particle_vbo_, kParticleRingBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
+        gl_.glCreateVertexArrays(1, &particle_vao_);
+        attribute(particle_vao_, 0, 3, offsetof(ParticleVertex, position));
+        attribute(particle_vao_, 1, 4, offsetof(ParticleVertex, color));
+        attribute(particle_vao_, 2, 2, offsetof(ParticleVertex, uv));
         return true;
     }
 
@@ -936,6 +990,9 @@ private:
     MeshProgram mesh_, skinned_program_;
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint joint_ubo_ = 0;
+    GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
+    GLint particle_mvp_ = -1;
+    u32 particle_offset_ = 0;
     GLuint skinned_shadow_program_ = 0;
     GLint skinned_shadow_mvp_ = -1;
     GLuint line_program_ = 0;

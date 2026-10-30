@@ -72,6 +72,17 @@ struct SoundEmitter {
     LSD_PROPERTY(Edit, Tooltip = "Starts when Play starts; it follows the object if it moves") bool auto_play = true;
 };
 
+// A particle effect in the level (Unreal's Niagara Component): plays a Particle System data asset
+// at the object. Drag a Particle System from the Content Browser into the viewport to make one.
+LSD_STRUCT(Component, Category = "Effects")
+struct ParticleEffect {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:ParticleSystem") char system[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Emitting; turn off (Details, Lua lsd.set) to let the particles die out") bool active = true;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Slow motion / fast forward") f32 time_scale = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too (preview while placing)") bool preview = true;
+};
+
 // Where Play puts the player; facing = the entity's Z rotation.
 LSD_STRUCT(Component, Category = "Gameplay")
 struct PlayerStart {

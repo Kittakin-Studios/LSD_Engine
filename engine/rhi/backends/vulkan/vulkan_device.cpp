@@ -211,6 +211,7 @@ public:
     void set_shadow_map(TextureHandle, TextureHandle) override {}
     void draw_mesh(const MeshDraw&) override {}
     void draw_lines(BufferHandle, u32, const f32*) override {}
+    void draw_particles(const ParticleVertex*, u32, const f32*, TextureHandle, bool) override {}
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         if (skip_frame_) return;

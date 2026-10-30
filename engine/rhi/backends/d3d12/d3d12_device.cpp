@@ -233,6 +233,20 @@ VsOut vs_main(VsIn i) { VsOut o; o.pos = mul(mvp, float4(i.pos, 1)); o.color = i
 float4 ps_main(VsOut i) : SV_Target { return i.color; }
 )";
 
+constexpr char kParticleHlsl[] = R"(
+cbuffer Draw : register(b0) { float4x4 view_proj; };
+Texture2D sprite : register(t0);
+SamplerState linear_wrap : register(s0);
+struct VsIn { float3 pos : POSITION; float4 color : COLOR; float2 uv : TEXCOORD; };
+struct VsOut { float4 pos : SV_Position; float4 color : COLOR; float2 uv : TEXCOORD; };
+VsOut vs_main(VsIn i) { VsOut o; o.pos = mul(view_proj, float4(i.pos, 1)); o.color = i.color; o.uv = i.uv; return o; }
+float3 to_srgb(float3 c) { c = saturate(c); return lerp(c * 12.92, 1.055 * pow(c, 1.0 / 2.4) - 0.055, step(0.0031308, c)); }
+float4 ps_main(VsOut i) : SV_Target {
+    float4 c = i.color * sprite.Sample(linear_wrap, i.uv);
+    return float4(to_srgb(c.rgb), saturate(c.a));
+}
+)";
+
 bool check(HRESULT hr, const char* what) {
     if (SUCCEEDED(hr)) return true;
     LSD_LOG_ERROR("d3d12", "%s failed (HRESULT 0x%08X)", what, static_cast<unsigned>(hr));
@@ -796,6 +810,27 @@ public:
         list_->DrawInstanced(vertex_count, 1, 0, 0);
     }
 
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+        const u32 bytes = vertex_count * static_cast<u32>(sizeof(ParticleVertex));
+        if (!vertex_count || particle_offset_ + bytes > kParticleRingBytes) {
+            if (vertex_count) LSD_LOG_WARN("d3d12", "Too many particles this frame: some are skipped");
+            return;
+        }
+        std::memcpy(particle_mapped_[frame_] + particle_offset_, vertices, bytes);
+        const D3D12_VERTEX_BUFFER_VIEW vbv{particle_buffers_[frame_]->GetGPUVirtualAddress() + particle_offset_, bytes, sizeof(ParticleVertex)};
+        particle_offset_ += (bytes + 255u) & ~255u;
+        const Texture* t = lookup_texture(texture);
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, 16, view_proj, 0);
+        list_->SetGraphicsRootDescriptorTable(1, (t ? t : &textures_[white_])->srv_gpu);
+        list_->SetPipelineState(additive ? particle_add_pipeline_.Get() : particle_alpha_pipeline_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list_->IASetVertexBuffers(0, 1, &vbv);
+        list_->DrawInstanced(vertex_count, 1, 0, 0);
+    }
+
     void begin_frame(const f32 clear_color[4]) override {
         frame_ = swapchain_->GetCurrentBackBufferIndex();
         wait_for_fence(frame_fence_values_[frame_]);
@@ -814,6 +849,7 @@ public:
         list_->RSSetScissorRects(1, &scissor);
         light_offset_ = 0;
         joint_offset_ = 0;
+        particle_offset_ = 0;
         set_lights(default_lights());
         set_shadow_map({}, {});
     }
@@ -1114,6 +1150,10 @@ private:
             if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                         IID_PPV_ARGS(&joint_buffers_[i])), "CreateCommittedResource (joints)")) return false;
             joint_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&joint_mapped_[i]));
+            desc.Width = kParticleRingBytes;
+            if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                        IID_PPV_ARGS(&particle_buffers_[i])), "CreateCommittedResource (particles)")) return false;
+            particle_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&particle_mapped_[i]));
         }
 
         static const D3D12_INPUT_ELEMENT_DESC mesh_layout[] = {
@@ -1140,7 +1180,47 @@ private:
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_pipeline_, false, skinned_defines) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
                create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
-               create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_);
+               create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
+               create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_);
+    }
+
+    bool create_particle_pipeline(bool additive, ComPtr<ID3D12PipelineState>& out) {
+        static const D3D12_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        ComPtr<ID3DBlob> vs, ps;
+        if (!compile(kParticleHlsl, sizeof kParticleHlsl - 1, "vs_main", "vs_5_0", vs, nullptr) ||
+            !compile(kParticleHlsl, sizeof kParticleHlsl - 1, "ps_main", "ps_5_0", ps, nullptr)) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = root_signature_.Get();
+        pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso.InputLayout = {layout, 3};
+        D3D12_RENDER_TARGET_BLEND_DESC& blend = pso.BlendState.RenderTarget[0];
+        blend.BlendEnable = TRUE;
+        blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        blend.DestBlend = additive ? D3D12_BLEND_ONE : D3D12_BLEND_INV_SRC_ALPHA;
+        blend.BlendOp = D3D12_BLEND_OP_ADD;
+        blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+        blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+        blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        blend.LogicOp = D3D12_LOGIC_OP_NOOP;
+        blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso.SampleMask = UINT_MAX;
+        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso.RasterizerState.DepthClipEnable = TRUE;
+        pso.DepthStencilState.DepthEnable = TRUE;
+        pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;  // sprites never hide each other
+        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pso.DSVFormat = kDepthFormat;
+        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso.NumRenderTargets = 1;
+        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.SampleDesc.Count = 1;
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState (particles)");
     }
 
     bool create_pipeline(const char* source, usize source_size, D3D12_INPUT_LAYOUT_DESC layout, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
@@ -1267,6 +1347,10 @@ private:
     ComPtr<ID3D12Resource> joint_buffers_[kBackBufferCount];
     u8* joint_mapped_[kBackBufferCount] = {};
     u32 joint_offset_ = 0;
+    ComPtr<ID3D12Resource> particle_buffers_[kBackBufferCount];
+    u8* particle_mapped_[kBackBufferCount] = {};
+    u32 particle_offset_ = 0;
+    ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ShadowMap shadow_maps_[kMaxShadowMaps];
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
     i32 shadow_pass_ = -1;
