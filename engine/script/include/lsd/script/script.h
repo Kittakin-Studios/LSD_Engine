@@ -29,6 +29,9 @@
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes
+//   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
+//                                         string keys) to Saved/SaveGames/<slot>.json, versioned
+//   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
 //                                         cells are numbers; re-read when the file changes; nil if none
 //
@@ -91,10 +94,13 @@ public:
 
     // Runs a chunk of Lua against the world (tests and the console). False on error (logged).
     bool run(const char* code, const char* chunk_name = "=console");
+    // Where lsd.save_game writes (default Saved/SaveGames).
+    void set_save_directory(const char* path);
     // Calls `event(self, other)` on the scripts of `target`, if they define it.
     void send(world::Entity target, const char* event, world::Entity other);
 
 private:
+    char save_dir_[260] = "Saved/SaveGames";
     struct Instance {
         world::Entity entity;
         char path[260];

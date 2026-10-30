@@ -14,7 +14,9 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <filesystem>
+#include <string>
 
 namespace lsd::script {
 
@@ -24,6 +26,165 @@ i64 file_time(const char* path) {
     std::error_code error;
     const auto time = std::filesystem::last_write_time(path, error);
     return error ? 0 : static_cast<i64>(time.time_since_epoch().count());
+}
+
+// ---- Save games: Lua values <-> JSON ----
+
+constexpr int kSaveVersion = 1;
+
+void write_json_string(std::string& out, const char* text, usize length) {
+    out += '"';
+    for (usize i = 0; i < length; ++i) {
+        const char c = text[i];
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (c == '\n') {
+            out += "\\n";
+        } else if (static_cast<unsigned char>(c) < 0x20) {
+            char escape[8];
+            std::snprintf(escape, sizeof escape, "\\u%04x", c);
+            out += escape;
+        } else {
+            out += c;
+        }
+    }
+    out += '"';
+}
+
+// The value at `index` as JSON; false for what cannot be saved (functions, cycles too deep).
+bool write_json(lua_State* L, int index, std::string& out, int depth) {
+    if (depth > 32) return false;
+    index = index < 0 ? lua_gettop(L) + index + 1 : index;
+    switch (lua_type(L, index)) {
+        case LUA_TNIL: out += "null"; return true;
+        case LUA_TBOOLEAN: out += lua_toboolean(L, index) ? "true" : "false"; return true;
+        case LUA_TNUMBER: {
+            char number[40];
+            std::snprintf(number, sizeof number, "%.17g", lua_tonumber(L, index));
+            out += number;
+            return true;
+        }
+        case LUA_TSTRING: {
+            size_t length = 0;
+            const char* text = lua_tolstring(L, index, &length);
+            write_json_string(out, text, length);
+            return true;
+        }
+        case LUA_TTABLE: {
+            const usize n = lua_objlen(L, index);
+            usize keys = 0;
+            lua_pushnil(L);
+            while (lua_next(L, index)) {
+                ++keys;
+                lua_pop(L, 1);
+            }
+            if (keys == n && n > 0) {  // a list
+                out += '[';
+                for (usize i = 1; i <= n; ++i) {
+                    if (i > 1) out += ',';
+                    lua_rawgeti(L, index, static_cast<int>(i));
+                    const bool ok = write_json(L, -1, out, depth + 1);
+                    lua_pop(L, 1);
+                    if (!ok) return false;
+                }
+                out += ']';
+                return true;
+            }
+            out += '{';
+            bool first = true;
+            lua_pushnil(L);
+            while (lua_next(L, index)) {
+                lua_pushvalue(L, -2);  // the key as text (numbers too), without disturbing lua_next
+                size_t length = 0;
+                const char* key = lua_type(L, -1) == LUA_TSTRING || lua_type(L, -1) == LUA_TNUMBER ? lua_tolstring(L, -1, &length) : nullptr;
+                if (key) {
+                    if (!first) out += ',';
+                    first = false;
+                    write_json_string(out, key, length);
+                    out += ':';
+                }
+                lua_pop(L, 1);
+                if (key && !write_json(L, -1, out, depth + 1)) {
+                    lua_pop(L, 2);
+                    return false;
+                }
+                lua_pop(L, 1);
+            }
+            out += '}';
+            return true;
+        }
+        default: return false;
+    }
+}
+
+// Pushes the JSON value at `c` (advanced past it); false on malformed text.
+bool read_json(lua_State* L, const char*& c, int depth) {
+    auto skip = [&] { while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') ++c; };
+    skip();
+    if (depth > 32) return false;
+    if (*c == '{' || *c == '[') {
+        const bool list = *c == '[';
+        const char close = list ? ']' : '}';
+        ++c;
+        lua_newtable(L);
+        skip();
+        int i = 1;
+        while (*c && *c != close) {
+            if (!list) {
+                if (!read_json(L, c, depth + 1) || lua_type(L, -1) != LUA_TSTRING) return false;  // key
+                skip();
+                if (*c++ != ':') return false;
+            }
+            if (!read_json(L, c, depth + 1)) return false;
+            if (list) lua_rawseti(L, -2, i++);
+            else lua_settable(L, -3);
+            skip();
+            if (*c == ',') ++c;
+            skip();
+        }
+        if (*c != close) return false;
+        ++c;
+        return true;
+    }
+    if (*c == '"') {
+        std::string text;
+        for (++c; *c && *c != '"'; ++c) {
+            if (*c != '\\') {
+                text += *c;
+                continue;
+            }
+            ++c;
+            if (*c == 'n') text += '\n';
+            else if (*c == 'u' && c[1] && c[2] && c[3] && c[4]) {
+                char hex[5] = {c[1], c[2], c[3], c[4], 0};
+                text += static_cast<char>(std::strtol(hex, nullptr, 16));  // shortcut: ASCII escapes only (what we write)
+                c += 4;
+            } else if (*c) text += *c;
+        }
+        if (*c != '"') return false;
+        ++c;
+        lua_pushlstring(L, text.data(), text.size());
+        return true;
+    }
+    if (std::strncmp(c, "true", 4) == 0) { c += 4; lua_pushboolean(L, 1); return true; }
+    if (std::strncmp(c, "false", 5) == 0) { c += 5; lua_pushboolean(L, 0); return true; }
+    if (std::strncmp(c, "null", 4) == 0) { c += 4; lua_pushnil(L); return true; }
+    char* end = nullptr;
+    const double number = std::strtod(c, &end);
+    if (end == c) return false;
+    c = end;
+    lua_pushnumber(L, number);
+    return true;
+}
+
+// Saved/SaveGames/<slot>.json; slot names keep letters, digits, '-' and '_' only.
+std::string save_path(const char* dir, const char* slot) {
+    std::string name;
+    for (const char* c = slot; *c && name.size() < 64; ++c) {
+        if (std::isalnum(static_cast<unsigned char>(*c)) || *c == '-' || *c == '_') name += *c;
+    }
+    return std::string(dir) + "/" + (name.empty() ? std::string("Default") : name) + ".json";
 }
 
 int traceback(lua_State* L) {
@@ -343,6 +504,50 @@ struct Api {
         if (host.set_class_volume) host.set_class_volume(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
         return 0;
     }
+    static int save_game(lua_State* L) {
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        luaL_checkany(L, 2);
+        std::string json = "{\"lsd_save\": " + std::to_string(kSaveVersion) + ", \"data\": ";
+        if (!write_json(L, 2, json, 0)) return luaL_error(L, "save_game: only numbers, strings, booleans and tables can be saved");
+        json += "}\n";
+        std::error_code error;
+        std::filesystem::create_directories(system(L).save_dir_, error);
+        const std::string temp = path + ".tmp";  // written whole, then swapped in: a crash never leaves half a save
+        FILE* file = std::fopen(temp.c_str(), "wb");
+        const bool ok = file && std::fwrite(json.data(), 1, json.size(), file) == json.size();
+        if (file) std::fclose(file);
+        if (ok) std::filesystem::rename(temp, path, error);
+        lua_pushboolean(L, ok && !error);
+        return 1;
+    }
+    static int load_game(lua_State* L) {
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        FILE* file = std::fopen(path.c_str(), "rb");
+        if (!file) return 0;
+        std::string text;
+        char buffer[4096];
+        for (usize n; (n = std::fread(buffer, 1, sizeof buffer, file)) > 0;) text.append(buffer, n);
+        std::fclose(file);
+        const char* data = std::strstr(text.c_str(), "\"data\":");
+        const char* at = data ? data + 7 : nullptr;
+        const int top = lua_gettop(L);
+        if (!at || !read_json(L, at, 0)) {
+            lua_settop(L, top);
+            LSD_LOG_WARN("script", "load_game: %s is damaged", path.c_str());
+            return 0;
+        }
+        return 1;
+    }
+    static int has_save(lua_State* L) {
+        std::error_code error;
+        lua_pushboolean(L, std::filesystem::exists(save_path(system(L).save_dir_, luaL_checkstring(L, 1)), error));
+        return 1;
+    }
+    static int delete_save(lua_State* L) {
+        std::error_code error;
+        lua_pushboolean(L, std::filesystem::remove(save_path(system(L).save_dir_, luaL_checkstring(L, 1)), error));
+        return 1;
+    }
     static int curve(lua_State* L) {
         ScriptSystem& self = system(L);
         const ScriptHost& host = self.host_;
@@ -526,7 +731,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
-        {"table", Api::table}, {"curve", Api::curve},
+        {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
+        {"has_save", Api::has_save}, {"delete_save", Api::delete_save},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
@@ -650,6 +856,8 @@ void ScriptSystem::send(world::Entity target, const char* event, world::Entity o
         if (instances_[i].entity == target && !instances_[i].failed) call(instances_[i], event, &arg, 1);
     }
 }
+
+void ScriptSystem::set_save_directory(const char* path) { std::snprintf(save_dir_, sizeof save_dir_, "%s", path); }
 
 bool ScriptSystem::run(const char* code, const char* chunk_name) {
     if (!lua_) return false;

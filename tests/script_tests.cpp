@@ -249,6 +249,19 @@ assert(lsd.table("DT_Weapons") == t)  -- same table while the file is unchanged
         write(kTable, "Name,Damage\nPistol,99\n");
         std::filesystem::last_write_time(kTable, std::filesystem::last_write_time(kTable) + std::chrono::seconds(5));
         CHECK(scripts.run("assert(lsd.table('DT_Weapons').Pistol.Damage == 99)"));
+        // Save games round-trip through JSON; bad slot characters are dropped, functions refused.
+        scripts.set_save_directory(LSD_TEST_TEMP_DIR "/SaveGames");
+        CHECK(scripts.run(R"(
+lsd.delete_save("Slot1")
+assert(not lsd.has_save("Slot1") and lsd.load_game("Slot1") == nil)
+assert(lsd.save_game("Slot1", {score = 1250.5, name = "Ana \"Q\"\nline", alive = true, items = {"sword", "key", 3}, pos = {x = 1, y = -2}}))
+assert(lsd.has_save("Slot../1"))  -- the same file: "Slot1"
+local s = lsd.load_game("Slot1")
+assert(s.score == 1250.5 and s.name == "Ana \"Q\"\nline" and s.alive == true)
+assert(#s.items == 3 and s.items[1] == "sword" and s.items[3] == 3 and s.pos.y == -2)
+assert(not pcall(lsd.save_game, "Slot2", {f = print}))
+assert(lsd.delete_save("Slot1") and not lsd.has_save("Slot1"))
+)"));
         scripts.stop();
     }
     CHECK(heap.allocated_bytes() == 0);

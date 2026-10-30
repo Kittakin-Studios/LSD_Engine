@@ -205,7 +205,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 
 ### Game services
 
-- [ ] Save game: slots, chosen fields, versioning
+- [~] Save game: `lsd.save_game(slot, value)` / `load_game` / `has_save` / `delete_save` (numbers, strings, booleans, lists and keyed tables as versioned JSON in Saved/SaveGames/, written whole then swapped in), Save Value / Load Value nodes; needs save-whole-object helpers (chosen component fields), version upgrades, async saves, cloud / platform storage
 - [ ] Settings menu backend: graphics, audio, key rebinding (moved up from v2) [Game User Settings]
 - [ ] Localisation: string tables, gather text, language switch (moved up from v2: cheaper before content grows) [Localization Dashboard]
 

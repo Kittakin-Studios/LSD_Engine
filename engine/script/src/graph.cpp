@@ -90,6 +90,12 @@ NodeDef g_defs[] = {
      {{"X", PinType::Float, ""}, {"Y", PinType::Float, ""}}, 0, nullptr, {"(lsd.input($0))", "select(2, lsd.input($0))"}},
     {"InputPressed", "Input Pressed", "Input", "True on the frame the action fires (its Trigger: pressed, hold, tap...)", {{"Action", PinType::String, "IA_Jump"}}, 0,
      {{"Pressed", PinType::Bool, ""}}, 0, nullptr, {"lsd.pressed($0)"}},
+    {"SaveValue", "Save Value", "Save Game", "Stores a number in a save slot (Saved/SaveGames/<Slot>.json); it is still there next time the game runs",
+     {kExecIn, {"Slot", PinType::String, "Slot1"}, {"Key", PinType::String, "score"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0,
+     "__save_value($1, $2, $3)", {}},
+    {"LoadValue", "Load Value", "Save Game", "A number from a save slot, or Default if it was never saved",
+     {{"Slot", PinType::String, "Slot1"}, {"Key", PinType::String, "score"}, {"Default", PinType::Float, "0"}}, 0,
+     {{"Value", PinType::Float, ""}}, 0, nullptr, {"(tonumber(__load_value($0, $1, $2)) or $2)"}},
     {"TableValue", "Get Table Value", "Data", "A cell of a Data Table (.csv) by asset name, row name and column name",
      {{"Table", PinType::String, "DT_Items"}, {"Row", PinType::String, "Row1"}, {"Column", PinType::String, "Value"}}, 0,
      {{"Number", PinType::Float, ""}, {"Text", PinType::String, ""}}, 0, nullptr,
@@ -208,6 +214,8 @@ local function __addrot(e, v) local x, y, z = lsd.rotation(e) lsd.set_rotation(e
 local function __spawn(name, v) return lsd.spawn(name, v.x, v.y, v.z) end
 local function __color(e, v) lsd.set(e, "StaticMesh", {color = {r = v.x, g = v.y, b = v.z}}) end
 local function __sound(name, v) return lsd.play_sound(name, v.x, v.y, v.z) end
+local function __save_value(slot, key, value) local t = lsd.load_game(slot) if type(t) ~= "table" then t = {} end t[key] = value lsd.save_game(slot, t) end
+local function __load_value(slot, key, default) local t = lsd.load_game(slot) local v = type(t) == "table" and t[key] if v == nil then return default end return v end
 local function __cell(t, r, c) local d = lsd.table(t) local row = d and d[r] return row and row[c] end
 local function __str(v)
   if type(v) == "table" then return string.format("(%g, %g, %g)", v.x, v.y, v.z) end
