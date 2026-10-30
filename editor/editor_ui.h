@@ -114,6 +114,8 @@ struct EditorState {
     bool save_requested = false;
     char save_as_requested[260] = "";  // path
     bool play_requested = false;
+    f32 smoke_test_seconds = 0.0f;  // > 0: play the level that long and report its errors (Tools > Smoke Test)
+    bool run_unit_tests = false;    // Tools > Run Unit Tests
     bool stop_requested = false;
     bool playing = false;
     bool quit_requested = false;   // window closed with unsaved changes: the UI asks first

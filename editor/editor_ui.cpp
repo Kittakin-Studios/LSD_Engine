@@ -2836,6 +2836,13 @@ void draw_menu_bar(EditorState& s) {
         ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings);
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Tools")) {
+        if (ImGui::MenuItem("Smoke Test Level (5 s)", nullptr, false, !s.playing)) s.smoke_test_seconds = 5.0f;
+        ImGui::SetItemTooltip("Plays this level for 5 seconds and reports any errors it logs (Unreal's automation smoke test)");
+        if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
+        ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Window")) {
         ImGui::MenuItem("Undo History", nullptr, &s.show_history);
         ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings);

@@ -9,6 +9,7 @@ namespace lsd::log {
 
 namespace {
 std::atomic<Level> g_min_level{Level::Info};
+std::atomic<unsigned long long> g_errors{0};
 std::mutex g_mutex;
 Sink g_sink = nullptr;
 void* g_sink_user = nullptr;
@@ -54,8 +55,10 @@ bool open_file(const char* path) {
 }
 
 const char* file_path() { return g_file_path; }
+unsigned long long error_count() { return g_errors.load(); }
 
 void write(Level level, const char* channel, const char* file, int line, const char* message) {
+    if (level >= Level::Error) ++g_errors;
     if (level < g_min_level.load()) return;
     std::lock_guard<std::mutex> lock(g_mutex);
     FILE* out = level >= Level::Warning ? stderr : stdout;

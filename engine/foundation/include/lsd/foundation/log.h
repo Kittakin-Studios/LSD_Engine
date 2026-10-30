@@ -18,6 +18,8 @@ void set_sink(Sink sink, void* user);
 // the previous file is kept as <name>-previous.<ext>. nullptr closes it. False if it cannot be opened.
 bool open_file(const char* path);
 const char* file_path();  // "" when there is none
+// How many errors (and fatals) have been written so far (smoke tests compare before and after).
+unsigned long long error_count();
 
 // Low-level entry point; prefer the LSD_LOG_* macros.
 void write(Level level, const char* channel, const char* file, int line, const char* message);

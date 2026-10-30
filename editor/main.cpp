@@ -44,6 +44,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <filesystem>
 #include <new>
 #include <string>
@@ -391,6 +392,12 @@ void register_console(EditorState& s) {
         }
         LSD_LOG_WARN("console", "viewmode: lit, unlit or wireframe");
     }, &s, "viewmode lit|unlit|wireframe");
+    console::add_command("test.Smoke", [](void* user, const char* args) {
+        const float seconds = static_cast<float>(std::atof(args));
+        static_cast<EditorState*>(user)->smoke_test_seconds = seconds > 0.0f ? seconds : 5.0f;
+    }, &s, "test.Smoke [seconds]: play this level and report the errors it logs");
+    console::add_command("test.Unit", [](void* user, const char*) { static_cast<EditorState*>(user)->run_unit_tests = true; }, &s,
+                         "Run the unit tests (ctest) in the background");
     console::add_command("validate", [](void* user, const char*) {
         auto& st = *static_cast<EditorState*>(user);
         const lsd::u32 n = lsd::editor::validate_assets(st.project, *st.registry);
@@ -565,6 +572,7 @@ int main(int argc, char** argv) {
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
+    float smoke_arg = 0.0f;            // -smoketest=<seconds>: play the level that long, exit 0 if no errors (CI)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
     int exec_count = 0;
     for (int i = 1; i < argc; ++i) {
@@ -581,6 +589,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-nosound") == 0) no_sound = true;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
+        else if (std::strncmp(argv[i], "-smoketest=", 11) == 0) smoke_arg = static_cast<float>(std::atof(argv[i] + 11));
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
         else LSD_LOG_WARN("editor", "Unknown argument: %s", argv[i]);
@@ -742,6 +751,11 @@ int main(int argc, char** argv) {
         }
     }
     state.play_requested = play_arg || game_mode;
+    state.smoke_test_seconds = smoke_arg;
+    // Smoke tests: errors logged while the level plays; the result is logged (and the exit code with -smoketest).
+    lsd::u64 smoke_started = 0, smoke_errors = 0;
+    int exit_code = 0;
+    std::thread unit_tests;
     register_console(state);
     for (lsd::u32 slot = 0; select_arg && slot < world.slot_count(); ++slot) {
         const lsd::world::Entity e = world.entity_at_slot(slot);
@@ -902,6 +916,42 @@ int main(int argc, char** argv) {
         }
 
         // ---- Requests from the UI ----
+        if (state.smoke_test_seconds > 0.0f && !smoke_started && !state.playing) {
+            smoke_errors = lsd::log::error_count();
+            smoke_started = SDL_GetTicks();
+            state.play_requested = true;
+            LSD_LOG_INFO("test", "Smoke test: playing %s for %.0f s", state.level_path[0] ? state.level_path : "the level", static_cast<double>(state.smoke_test_seconds));
+        }
+        if (smoke_started && SDL_GetTicks() - smoke_started > static_cast<lsd::u64>(state.smoke_test_seconds * 1000.0f)) {
+            const lsd::u64 errors = lsd::log::error_count() - smoke_errors;
+            if (errors) LSD_LOG_ERROR("test", "Smoke test FAILED: %llu error%s while playing (see above)", static_cast<unsigned long long>(errors), errors == 1 ? "" : "s");
+            else LSD_LOG_INFO("test", "Smoke test passed: no errors in %.0f s of play", static_cast<double>(state.smoke_test_seconds));
+            std::snprintf(state.status, sizeof state.status, "Smoke test %s", errors ? "FAILED (Output Log)" : "passed");
+            state.stop_requested = true;
+            state.smoke_test_seconds = 0.0f;
+            smoke_started = 0;
+            exit_code = errors ? 1 : 0;
+            if (smoke_arg > 0.0f) running = false;  // -smoketest: done
+        }
+        if (state.run_unit_tests) {
+            state.run_unit_tests = false;
+            if (unit_tests.joinable()) unit_tests.join();
+            // shortcut: runs the build tree's ctest (a developer setup); packaged games have no tests.
+            unit_tests = std::thread([] {
+                LSD_LOG_INFO("test", "Running unit tests (ctest)...");
+                const int result = std::system("ctest --preset windows-msvc --output-on-failure > Saved/Logs/UnitTests.log 2>&1");
+                std::string output;
+                if (FILE* f = std::fopen("Saved/Logs/UnitTests.log", "rb")) {
+                    char buffer[512];
+                    for (size_t n; (n = std::fread(buffer, 1, sizeof buffer, f)) > 0;) output.append(buffer, n);
+                    std::fclose(f);
+                }
+                if (result == 0) LSD_LOG_INFO("test", "Unit tests passed (Saved/Logs/UnitTests.log)");
+                else if (output.find("not recognized") != std::string::npos || output.find("not found") != std::string::npos)
+                    LSD_LOG_WARN("test", "ctest was not found: start the editor from a Visual Studio developer prompt (or put CMake on the PATH)");
+                else LSD_LOG_ERROR("test", "Unit tests FAILED: see Saved/Logs/UnitTests.log");
+            });
+        }
         if (state.new_level_requested) {
             state.new_level_requested = false;
             new_level(state);
@@ -1074,6 +1124,7 @@ int main(int argc, char** argv) {
         ++frame;
     }
 
+    if (unit_tests.joinable()) unit_tests.join();
     if (!game_mode) fs::remove(kLockPath, ignored);
     lsd::console::remove_all();  // the registrations point into state
     lsd::editor::shutdown_graph_editor();
@@ -1109,5 +1160,5 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     SDL_DestroyWindow(window);
     SDL_Quit();
-    return 0;
+    return exit_code;
 }

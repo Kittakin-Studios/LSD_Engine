@@ -188,7 +188,7 @@ Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-vali
 `-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`,
 `-exec="<console line>"` (repeatable, e.g. `-exec="view top" -exec="viewmode wireframe"`),
 `-nosound` (no audio device: use it for every automated run so test sounds never play on the speakers),
-`-game` (run as the packaged game), console `package`, `validate`, `stat unit`. Tracy profiling: configure with
+`-game` (run as the packaged game), console `package`, `validate`, `stat unit`, `test.Smoke`, `test.Unit`; `-smoketest=<seconds>` (CI: exit 1 on errors). Tracy profiling: configure with
 `-DLSD_TRACY=ON` and connect the Tracy v0.11.1 profiler. Release build: `cmake --build --preset windows-msvc --config Release`.
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
