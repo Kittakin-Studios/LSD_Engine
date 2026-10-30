@@ -65,8 +65,12 @@ if(LSD_RHI_VULKAN)
     target_include_directories(lsd_rhi PRIVATE "${spirv_dir}")
     target_compile_definitions(lsd_rhi PRIVATE LSD_VULKAN_HAVE_SPIRV=1)
   else()
-    message(WARNING "LSD_Engine: DXC with SPIR-V support not found (install the Vulkan SDK). "
-                    "The Vulkan backend will run without the test triangle.")
+    message(STATUS "LSD_Engine: Vulkan SDK not found (its DXC compiles shaders to SPIR-V): "
+                   "the Vulkan backend shows the UI only until it is installed. D3D12 and OpenGL are unaffected.")
     target_compile_definitions(lsd_rhi PRIVATE LSD_VULKAN_HAVE_SPIRV=0)
   endif()
 endif()
+
+# ImGui's D3D12 backend (third-party) keeps HRESULTs it only asserts on: unused in Release.
+set_source_files_properties(${LSD_IMGUI_DIR}/backends/imgui_impl_dx12.cpp PROPERTIES
+  COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/wd4189,-Wno-unused-variable>")

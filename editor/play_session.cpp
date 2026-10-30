@@ -341,11 +341,16 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
                 if (load_asset(registry, m.action, action)) input_.set_trigger(m.action, static_cast<input::Trigger>(action.trigger), action.trigger_time);
             }
             wired_ = true;
+            if (!settings_.move_action[0] || !settings_.look_action[0] || !settings_.jump_action[0]) {
+                LSD_LOG_WARN("play", "%s: pick its Move, Look and Jump actions in Details to control it", world.name(character_));
+            }
         } else {
-            LSD_LOG_WARN("play", "%s has no Input Mapping Context (pick one in its Details): it cannot move", world.name(character_));
-        }
-        if (!settings_.move_action[0] || !settings_.look_action[0] || !settings_.jump_action[0]) {
-            LSD_LOG_WARN("play", "%s: pick its Move, Look and Jump actions in Details to control it", world.name(character_));
+            // No input set up yet: the built-in controls, so a fresh Character can walk straight away.
+            input_.add_context(default_controls());
+            std::snprintf(settings_.move_action, sizeof settings_.move_action, "%s", kDefaultMove);
+            std::snprintf(settings_.look_action, sizeof settings_.look_action, "%s", kDefaultLook);
+            std::snprintf(settings_.jump_action, sizeof settings_.jump_action, "%s", kDefaultJump);
+            LSD_LOG_INFO("play", "%s: no Input Mapping Context, using the built-in WASD / mouse / Space controls", world.name(character_));
         }
     } else {
         input_.add_context(default_controls());

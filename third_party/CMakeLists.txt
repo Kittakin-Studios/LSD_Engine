@@ -247,6 +247,7 @@ FetchContent_Declare(recastnavigation
   SYSTEM
 )
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # its cmake_minimum_required predates what CMake 4 accepts
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)  # and says so: their notice, not ours to fix
 FetchContent_MakeAvailable(recastnavigation)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 
