@@ -69,10 +69,41 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 }
 
 // Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
-void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::Vec3 eye, lsd::world::World& world, lsd::editor::MeshCache& meshes,
-                lsd::editor::MaterialCache& materials, EditorState& stats) {
+// The sun's shadow cascades: every visible mesh into each tile of the atlas, then back to the window.
+void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
+                  lsd::editor::MeshCache& meshes, bool skip_hidden) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
-    device.set_lights(lsd::editor::world_lights(world, eye, !stats.playing || stats.ejected));
+    device.begin_shadow_pass(atlas);
+    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::kShadowAtlasSize);
+    for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]); ++c) {
+        device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
+        lsd::Mat4 vp;
+        std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
+        for (lsd::u32 i = 0; i < world.count(type); ++i) {
+            const lsd::world::Entity e = world.owner(type, i);
+            if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+            const lsd::editor::CachedMesh* mesh = meshes.get(static_cast<const lsd::world::StaticMesh*>(world.at(type, i))->mesh);
+            if (!mesh) continue;
+            const lsd::Mat4 mvp = vp * world.world_matrix(e);
+            device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
+        }
+    }
+    device.end_shadow_pass();
+    device.set_shadow_map(atlas);
+}
+
+void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
+                lsd::rhi::TextureHandle shadow_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
+                EditorState& stats) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
+    const lsd::Vec3 eye = light_view.eye;
+    const bool skip_hidden = !stats.playing || stats.ejected;
+    const lsd::rhi::LightSetup lights = lsd::editor::world_lights(world, light_view, skip_hidden);
+    if (lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire()) {
+        draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden);
+        device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+    device.set_lights(lights);
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
@@ -386,6 +417,7 @@ int main(int argc, char** argv) {
     auto* mesh_memory = allocator.allocate(sizeof(lsd::editor::MeshCache), alignof(lsd::editor::MeshCache));
     lsd::editor::MeshCache& meshes = *new (mesh_memory) lsd::editor::MeshCache(*device, allocator, registry, kDataDir);
     auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
+    const lsd::rhi::TextureHandle shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
     lsd::editor::MaterialCache materials(*texture_cache, registry);
     auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
     lsd::editor::ThumbnailCache& thumbnails = *new (thumbnail_memory) lsd::editor::ThumbnailCache(*device, allocator, registry, kDataDir);
@@ -635,7 +667,13 @@ int main(int argc, char** argv) {
             const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
             const lsd::Mat4 view_proj = proj * view;
             if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
-            draw_world(*device, view_proj, state.playing && !state.ejected ? play.eye() : camera.position, world, meshes, materials, state);
+            lsd::editor::LightView light_view;
+            light_view.eye = state.playing && !state.ejected ? play.eye() : camera.position;
+            light_view.forward = state.playing && !state.ejected ? play.forward() : lsd::editor::camera_forward(camera);
+            light_view.fov_y = lens.fov_y;
+            light_view.aspect = rect[2] / rect[3];
+            const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
+            draw_world(*device, view_proj, light_view, pixels, shadow_atlas, world, meshes, materials, state);
         }
         device->render_debug_ui();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
@@ -658,6 +696,7 @@ int main(int argc, char** argv) {
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete texture_cache;
+    device->destroy_texture(shadow_atlas);
     meshes.~MeshCache();
     allocator.deallocate(mesh_memory);
     state.~EditorState();

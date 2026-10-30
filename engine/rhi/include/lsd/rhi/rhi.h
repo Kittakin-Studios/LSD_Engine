@@ -99,8 +99,15 @@ struct LightSetup {
     f32 sky[4] = {0.30f, 0.36f, 0.45f, 0.0f};    // ambient from above (radiance, before exposure)
     f32 ground[4] = {0.16f, 0.15f, 0.14f, 0.0f}; // ambient from below
     GpuLight lights[kMaxLights] = {};
+    // Sun shadows: cascades (view-projection of each, 0..1 depth) and where each sits in the shadow
+    // map atlas (x, y offset and size as fractions, top-left origin). info: cascade count, index of
+    // the shadowed light (-1 = none), texel size (1 / atlas size), normal offset in metres.
+    f32 shadow_matrices[4][16] = {};
+    f32 shadow_tiles[4][4] = {};
+    f32 shadow_splits[4] = {};  // far distance of each cascade from the camera
+    f32 shadow_info[4] = {0, -1, 0, 0};
 };
-static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64, "matches the shader's light buffer");
+static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16, "matches the shader's light buffer");
 
 // The look before any light is placed (and of thumbnails): one sun, sky and ground ambient.
 LightSetup default_lights();
@@ -147,6 +154,16 @@ public:
     // Lights for the following draw_mesh calls (until the next set_lights; begin_frame resets to
     // default_lights()). Call between begin_frame and end_frame.
     virtual void set_lights(const LightSetup& lights) = 0;
+
+    // Shadow maps: a square depth texture. Between begin_shadow_pass and end_shadow_pass, draws go
+    // into it (set_viewport picks a tile of an atlas) with only their depth; end_shadow_pass returns
+    // to the window. set_shadow_map binds one for the following draw_mesh calls (lights say which
+    // light uses it); begin_frame unbinds it.
+    virtual TextureHandle create_shadow_map(u32 size) = 0;
+    virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
+    virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) = 0;
+    virtual void end_shadow_pass() = 0;
+    virtual void set_shadow_map(TextureHandle shadow_map) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;

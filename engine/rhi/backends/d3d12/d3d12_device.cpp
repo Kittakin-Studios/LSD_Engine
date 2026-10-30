@@ -30,8 +30,9 @@ constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use
 constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
-constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 3 texture tables + lights CBV: 57 of 64 DWORDs)
-constexpr u32 kLightSlot = 1280;     // LightSetup rounded up to the 256-byte CBV alignment
+constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 4 texture tables + lights CBV: 58 of 64 DWORDs)
+constexpr u32 kLightSlot = 1536;     // LightSetup rounded up to the 256-byte CBV alignment
+constexpr u32 kMaxShadowMaps = 8;    // handles kMaxTargets + kMaxTextures..
 constexpr u32 kLightSlots = 64;      // set_lights calls per frame before the ring wraps
 
 // shortcut: runtime HLSL compile via d3dcompiler_47 (ships with Windows); move to DXC + the data
@@ -62,7 +63,29 @@ cbuffer Draw : register(b0) {
     float4 color; float4 mat0; float4 mat1;  // mat0: metallic, roughness, emissive.rg; mat1: emissive.b, camera.xyz
 };
 struct Light { float4 pos_type; float4 dir_range; float4 color_inner; float4 spot; };
-cbuffer Lights : register(b1) { float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16]; };
+cbuffer Lights : register(b1) {
+    float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16];
+    float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
+};
+Texture2D<float> shadow_tex : register(t3);
+SamplerComparisonState shadow_samp : register(s1);
+// Sun shadow: the cascade by distance from the camera, pushed out along the normal against acne,
+// 3x3 hardware-filtered taps (soft edges).
+float sun_shadow(float3 wpos, float3 n, float3 cam) {
+    const float dist = length(wpos - cam);
+    uint c = 0;
+    while (c + 1 < (uint)shadow_info.x && dist > shadow_split[c]) ++c;
+    if (dist > shadow_split[(uint)shadow_info.x - 1]) return 1.0;
+    const float4 s = mul(shadow_vp[c], float4(wpos + n * shadow_info.w * (1.0 + c), 1.0));
+    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0) return 1.0;
+    uv = shadow_tile[c].xy + uv * shadow_tile[c].z;
+    const float2 lo = shadow_tile[c].xy + shadow_info.z, hi = shadow_tile[c].xy + shadow_tile[c].z - shadow_info.z;
+    float lit = 0.0;
+    [unroll] for (int y = -1; y <= 1; ++y)
+        [unroll] for (int x = -1; x <= 1; ++x) lit += shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * shadow_info.z, lo, hi), s.z);
+    return lit / 9.0;
+}
 Texture2D base_tex : register(t0);
 Texture2D normal_tex : register(t1);
 Texture2D orm_tex : register(t2);
@@ -121,6 +144,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         }
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;
+        if ((float)li == shadow_info.y) atten *= sun_shadow(i.wpos, n, mat1.yzw);
         const float3 h = normalize(v + l);
         const float ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
         const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
@@ -136,6 +160,12 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     lit += float3(mat0.zw, mat1.x);
     return float4(to_srgb(lit * exposure), base.a);
 }
+)";
+
+// Shadow casters: depth only.
+constexpr char kShadowHlsl[] = R"(
+cbuffer Draw : register(b0) { float4x4 mvp; };
+float4 vs_main(float3 pos : POSITION) : SV_Position { return mul(mvp, float4(pos, 1)); }
 )";
 
 constexpr char kLinesHlsl[] = R"(
@@ -473,6 +503,13 @@ public:
     }
 
     void destroy_texture(TextureHandle handle) override {
+        if (ShadowMap* shadow = lookup_shadow(handle)) {
+            wait_for_gpu();
+            free_srv(shadow->srv_cpu);
+            shadow->resource.Reset();
+            ++shadow->generation;
+            return;
+        }
         if (Texture* texture = lookup_texture(handle)) {
             wait_for_gpu();  // shortcut: stalls; fine for rare destroys (asset reloads, shutdown)
             free_srv(texture->srv_cpu);
@@ -554,6 +591,7 @@ public:
         list_->SetGraphicsRootDescriptorTable(2, (normal ? normal : &textures_[flat_normal_])->srv_gpu);
         list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
+        list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
         list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
@@ -569,6 +607,92 @@ public:
         std::memcpy(light_mapped_[frame_] + light_offset_, &lights, sizeof lights);
         current_lights_ = light_buffers_[frame_]->GetGPUVirtualAddress() + light_offset_;
         light_offset_ += kLightSlot;
+    }
+
+    TextureHandle create_shadow_map(u32 size) override {
+        if (!srv_heap_) {
+            LSD_LOG_ERROR("d3d12", "create_shadow_map needs init_debug_ui() first (its view lives in the UI heap).");
+            return {};
+        }
+        u32 slot = 0;
+        while (slot < kMaxShadowMaps && shadow_maps_[slot].resource) ++slot;
+        if (slot == kMaxShadowMaps || size == 0) return {};
+        ShadowMap& m = shadow_maps_[slot];
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = size;
+        desc.Height = size;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.Format = DXGI_FORMAT_R32_TYPELESS;  // written as depth, read as a float
+        desc.SampleDesc.Count = 1;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = kDepthFormat;
+        clear.DepthStencil.Depth = 1.0f;
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                    IID_PPV_ARGS(&m.resource)), "CreateCommittedResource (shadow map)")) return {};
+        if (!shadow_dsv_heap_) {
+            D3D12_DESCRIPTOR_HEAP_DESC dsv{};
+            dsv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+            dsv.NumDescriptors = kMaxShadowMaps;
+            device_->CreateDescriptorHeap(&dsv, IID_PPV_ARGS(&shadow_dsv_heap_));
+        }
+        m.dsv = shadow_dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        m.dsv.ptr += static_cast<SIZE_T>(slot) * dsv_size_;
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
+        dsv_desc.Format = kDepthFormat;
+        dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        device_->CreateDepthStencilView(m.resource.Get(), &dsv_desc, m.dsv);
+        alloc_srv(m.srv_cpu, m.srv_gpu);
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = DXGI_FORMAT_R32_FLOAT;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels = 1;
+        device_->CreateShaderResourceView(m.resource.Get(), &srv, m.srv_cpu);
+        m.size = size;
+        return TextureHandle::make(kMaxTargets + kMaxTextures + slot, m.generation);
+    }
+
+    void begin_shadow_pass(TextureHandle handle) override {
+        ShadowMap* m = lookup_shadow(handle);
+        if (!m) return;
+        if (current_target_ >= 0) set_render_target({}, nullptr);
+        transition(m->resource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        list_->ClearDepthStencilView(m->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        list_->OMSetRenderTargets(0, nullptr, FALSE, &m->dsv);
+        set_viewport(0.0f, 0.0f, static_cast<f32>(m->size), static_cast<f32>(m->size));
+        shadow_pass_ = static_cast<i32>(handle.index() - kMaxTargets - kMaxTextures);
+    }
+
+    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) override {
+        const Buffer* vb = lookup(vertices);
+        const Buffer* ib = lookup(indices);
+        if (!vb || !ib || shadow_pass_ < 0) return;
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, 16, light_mvp, 0);
+        list_->SetPipelineState(shadow_pipeline_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
+        const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
+        list_->IASetVertexBuffers(0, 1, &vbv);
+        list_->IASetIndexBuffer(&ibv);
+        list_->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
+    }
+
+    void end_shadow_pass() override {
+        if (shadow_pass_ < 0) return;
+        transition(shadow_maps_[shadow_pass_].resource.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        shadow_pass_ = -1;
+        set_render_target({}, nullptr);  // back to the window
+    }
+
+    void set_shadow_map(TextureHandle handle) override {
+        const ShadowMap* m = lookup_shadow(handle);
+        shadow_srv_ = m ? m->srv_gpu : textures_[white_].srv_gpu;  // the shader only samples it when a light says so
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -601,6 +725,7 @@ public:
         list_->RSSetScissorRects(1, &scissor);
         light_offset_ = 0;
         set_lights(default_lights());
+        set_shadow_map({});
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
@@ -760,6 +885,23 @@ private:
         return &t;
     }
 
+    struct ShadowMap {
+        ComPtr<ID3D12Resource> resource;
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
+        D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu{};
+        u32 size = 0;
+        u32 generation = 0;
+    };
+
+    ShadowMap* lookup_shadow(TextureHandle handle) {
+        const u32 first = kMaxTargets + kMaxTextures;
+        if (!handle.valid() || handle.index() < first || handle.index() >= first + kMaxShadowMaps) return nullptr;
+        ShadowMap& m = shadow_maps_[handle.index() - first];
+        if (!m.resource || (m.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &m;
+    }
+
     Target* lookup(TextureHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxTargets) return nullptr;
         Target& t = targets_[handle.index()];
@@ -810,7 +952,15 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[5]{};
+        D3D12_ROOT_PARAMETER params[6]{};
+        D3D12_DESCRIPTOR_RANGE shadow_range{};
+        shadow_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        shadow_range.NumDescriptors = 1;
+        shadow_range.BaseShaderRegister = 3;  // t3: the sun's shadow map
+        params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[5].DescriptorTable.NumDescriptorRanges = 1;
+        params[5].DescriptorTable.pDescriptorRanges = &shadow_range;
+        params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b1: lights
         params[4].Descriptor.ShaderRegister = 1;
         params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -833,11 +983,18 @@ private:
         sampler.MaxAnisotropy = 8;
         sampler.MaxLOD = D3D12_FLOAT32_MAX;
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_STATIC_SAMPLER_DESC samplers[2] = {sampler, {}};
+        samplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;  // s1: 2x2 filtered depth compare
+        samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+        samplers[1].ShaderRegister = 1;
+        samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 5;
+        rs_desc.NumParameters = 6;
         rs_desc.pParameters = params;
-        rs_desc.NumStaticSamplers = 1;
-        rs_desc.pStaticSamplers = &sampler;
+        rs_desc.NumStaticSamplers = 2;
+        rs_desc.pStaticSamplers = samplers;
         rs_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> rs_blob, error;
         if (!check(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &error), "D3D12SerializeRootSignature")) return false;
@@ -872,7 +1029,8 @@ private:
         return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
-               create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_);
+               create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 3});
     }
 
     bool create_pipeline(const char* source, usize source_size, D3D12_INPUT_LAYOUT_DESC layout, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
@@ -898,6 +1056,28 @@ private:
         pso.RTVFormats[0] = kBackBufferFormat;
         pso.SampleDesc.Count = 1;
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState");
+    }
+
+    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout) {
+        ComPtr<ID3DBlob> vs;
+        if (!compile(kShadowHlsl, sizeof kShadowHlsl - 1, "vs_main", "vs_5_0", vs)) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = root_signature_.Get();
+        pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso.InputLayout = layout;
+        pso.SampleMask = UINT_MAX;
+        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso.RasterizerState.DepthClipEnable = FALSE;  // casters behind the light's near plane still cast (pancaking)
+        pso.RasterizerState.SlopeScaledDepthBias = 2.0f;  // against shadow acne on slopes; the shader adds a normal offset
+        pso.DepthStencilState.DepthEnable = TRUE;
+        pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pso.DSVFormat = kDepthFormat;
+        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso.NumRenderTargets = 0;
+        pso.SampleDesc.Count = 1;
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&shadow_pipeline_)), "CreateGraphicsPipelineState (shadow)");
     }
 
     static bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out) {
@@ -969,6 +1149,11 @@ private:
     ComPtr<ID3D12PipelineState> mesh_pipeline_;
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> line_pipeline_;
+    ComPtr<ID3D12PipelineState> shadow_pipeline_;
+    ShadowMap shadow_maps_[kMaxShadowMaps];
+    ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
+    i32 shadow_pass_ = -1;
+    D3D12_GPU_DESCRIPTOR_HANDLE shadow_srv_{};
     Buffer buffers_[kMaxBuffers];
     ComPtr<ID3D12DescriptorHeap> target_rtv_heap_;
     ComPtr<ID3D12DescriptorHeap> target_dsv_heap_;

@@ -203,6 +203,8 @@ struct DirectionalLight {
     LSD_PROPERTY(Edit, Units = "lux", Min = 0, Tooltip = "Light on a surface facing it (10 = Unreal's default sun)") f32 intensity = 10.0f;
     LSD_PROPERTY(Edit, Tooltip = "Use the colour temperature instead of the colour") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "1900 candle, 3200 tungsten, 5500 noon sun, 6500 overcast") f32 temperature = 6500.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The first sun with this on casts shadows (4 cascades)") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 5, Max = 1000, Tooltip = "Shadows end this far from the camera; shorter is sharper") f32 shadow_distance = 60.0f;
 };
 
 // A bulb (Unreal's Point Light): shines in every direction.

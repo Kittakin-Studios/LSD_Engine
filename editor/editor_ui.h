@@ -49,6 +49,7 @@ struct EditorState {
     bool show_preferences = false;
     bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
     bool show_audio_stats = false;  // `stat audio`: active voices
+    bool view_mode_unlit_or_wire() const { return (!playing || ejected) && view_mode != ViewMode::Lit; }
     class SoundPlayer* sounds = nullptr;  // set by main.cpp
     u32 preview_voice = 0;  // Content Browser sound preview
     u32 stat_draws = 0;       // set by main.cpp after drawing

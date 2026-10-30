@@ -66,7 +66,29 @@ uniform vec4 u_color;
 uniform vec4 u_mat[2];   // metallic, roughness, emissive.rg | emissive.b, camera.xyz
 uniform vec2 u_flags;    // unlit, has normal map
 struct Light { vec4 pos_type; vec4 dir_range; vec4 color_inner; vec4 spot; };
-layout(std140, binding = 1) uniform Lights { float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16]; };
+layout(std140, binding = 1) uniform Lights {
+    float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16];
+    mat4 shadow_vp[4]; vec4 shadow_tile[4]; vec4 shadow_split; vec4 shadow_info;
+};
+layout(binding = 3) uniform sampler2DShadow shadow_tex;
+float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
+    float dist = length(wpos - cam);
+    int count = int(shadow_info.x);
+    int c = 0;
+    while (c + 1 < count && dist > shadow_split[c]) ++c;
+    if (dist > shadow_split[count - 1]) return 1.0;
+    vec4 s = shadow_vp[c] * vec4(wpos + n * shadow_info.w * (1.0 + float(c)), 1.0);
+    vec2 uv = s.xy * 0.5 + 0.5;  // GL textures start at the bottom row
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0) return 1.0;
+    // Tiles are given top-left; in GL the atlas's rows run bottom-up.
+    vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
+    uv = origin + uv * shadow_tile[c].z;
+    vec2 lo = origin + shadow_info.z, hi = origin + shadow_tile[c].z - shadow_info.z;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) lit += texture(shadow_tex, vec3(clamp(uv + vec2(x, y) * shadow_info.z, lo, hi), s.z));
+    return lit / 9.0;
+}
 layout(binding = 0) uniform sampler2D base_tex;
 layout(binding = 1) uniform sampler2D normal_tex;
 layout(binding = 2) uniform sampler2D orm_tex;
@@ -117,6 +139,7 @@ void main() {
         }
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;
+        if (float(li) == shadow_info.y) atten *= sun_shadow(v_wpos, n, u_mat[1].yzw);
         vec3 h = normalize(v + l);
         float ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
         float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
@@ -132,6 +155,15 @@ void main() {
     lit += vec3(u_mat[0].zw, u_mat[1].x);
     o_color = vec4(to_srgb(lit * exposure), base.a);
 }
+)";
+
+constexpr char kShadowVertexShader[] = R"(#version 460 core
+layout(location = 0) in vec3 a_pos;
+uniform mat4 u_mvp;
+void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
+)";
+constexpr char kShadowFragmentShader[] = R"(#version 460 core
+void main() {}
 )";
 
 constexpr char kLineVertexShader[] = R"(#version 460 core
@@ -152,6 +184,7 @@ constexpr u32 kMaxBuffers = 4096;
 constexpr u32 kMaxTargets = 256;
 constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
 constexpr GLenum kMaxAnisotropy = 0x84FE;  // GL_TEXTURE_MAX_ANISOTROPY (core in 4.6)
+constexpr u32 kMaxShadowMaps = 8;          // handles kMaxTargets + kMaxTextures..
 
 // Constants from GL_NVX_gpu_memory_info and GL_ATI_meminfo (not in core headers).
 constexpr GLenum kGpuMemoryTotalNvx = 0x9048;
@@ -210,7 +243,9 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLUNIFORM2FPROC, glUniform2f)                              \
     X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)              \
     X(PFNGLNAMEDBUFFERSUBDATAPROC, glNamedBufferSubData)            \
-    X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)
+    X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)                    \
+    X(PFNGLNAMEDFRAMEBUFFERDRAWBUFFERPROC, glNamedFramebufferDrawBuffer) \
+    X(PFNGLNAMEDFRAMEBUFFERREADBUFFERPROC, glNamedFramebufferReadBuffer)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -376,6 +411,7 @@ public:
         glClearDepth(1.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         set_lights(default_lights());
+        set_shadow_map({});
     }
 
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
@@ -430,6 +466,13 @@ public:
     }
 
     void destroy_texture(TextureHandle handle) override {
+        if (ShadowMap* shadow = lookup_shadow(handle)) {
+            gl_.glDeleteFramebuffers(1, &shadow->fbo);
+            glDeleteTextures(1, &shadow->texture);
+            shadow->fbo = shadow->texture = 0;
+            ++shadow->generation;
+            return;
+        }
         if (Texture* texture = lookup_texture(handle)) {
             glDeleteTextures(1, &texture->id);
             texture->id = 0;
@@ -496,6 +539,7 @@ public:
         gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
+        gl_.glBindTextureUnit(3, shadow_texture_);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
@@ -507,6 +551,69 @@ public:
     void set_lights(const LightSetup& lights) override {
         gl_.glNamedBufferSubData(light_ubo_, 0, sizeof lights, &lights);  // GL keeps earlier draws' data
         gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 1, light_ubo_);
+    }
+
+    TextureHandle create_shadow_map(u32 size) override {
+        u32 slot = 0;
+        while (slot < kMaxShadowMaps && shadow_maps_[slot].texture) ++slot;
+        if (slot == kMaxShadowMaps || size == 0) return {};
+        ShadowMap& m = shadow_maps_[slot];
+        gl_.glCreateTextures(GL_TEXTURE_2D, 1, &m.texture);
+        gl_.glTextureStorage2D(m.texture, 1, GL_DEPTH_COMPONENT32F, static_cast<GLsizei>(size), static_cast<GLsizei>(size));
+        gl_.glTextureParameteri(m.texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // with compare mode: 2x2 filtered compare
+        gl_.glTextureParameteri(m.texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl_.glTextureParameteri(m.texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl_.glTextureParameteri(m.texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gl_.glTextureParameteri(m.texture, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        gl_.glTextureParameteri(m.texture, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        gl_.glCreateFramebuffers(1, &m.fbo);
+        gl_.glNamedFramebufferTexture(m.fbo, GL_DEPTH_ATTACHMENT, m.texture, 0);
+        gl_.glNamedFramebufferDrawBuffer(m.fbo, GL_NONE);
+        gl_.glNamedFramebufferReadBuffer(m.fbo, GL_NONE);
+        m.size = size;
+        return TextureHandle::make(kMaxTargets + kMaxTextures + slot, m.generation);
+    }
+
+    void begin_shadow_pass(TextureHandle handle) override {
+        const ShadowMap* m = lookup_shadow(handle);
+        if (!m) return;
+        gl_.glBindFramebuffer(GL_FRAMEBUFFER, m->fbo);
+        target_height_ = m->size;
+        glDisable(GL_SCISSOR_TEST);
+        glViewport(0, 0, static_cast<GLsizei>(m->size), static_cast<GLsizei>(m->size));
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.0f, 1.0f);  // against shadow acne on slopes; the shader adds a normal offset
+        glEnable(GL_DEPTH_CLAMP);     // casters behind the light's near plane still cast (pancaking)
+        in_shadow_pass_ = true;
+    }
+
+    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) override {
+        const Buffer* vb = lookup(vertices);
+        const Buffer* ib = lookup(indices);
+        if (!vb || !ib || !in_shadow_pass_) return;
+        gl_.glUseProgram(shadow_program_);
+        gl_.glUniformMatrix4fv(shadow_mvp_, 1, GL_FALSE, light_mvp);
+        gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
+        gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
+        gl_.glBindVertexArray(mesh_vao_);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_INT, nullptr);
+    }
+
+    void end_shadow_pass() override {
+        if (!in_shadow_pass_) return;
+        in_shadow_pass_ = false;
+        glDisable(GL_POLYGON_OFFSET_FILL);
+        glDisable(GL_DEPTH_CLAMP);
+        set_render_target({}, nullptr);  // back to the window
+    }
+
+    void set_shadow_map(TextureHandle handle) override {
+        const ShadowMap* m = lookup_shadow(handle);
+        shadow_texture_ = m ? m->texture : shadow_maps_[0].texture;  // slot 0: 1x1 "fully lit" default
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -613,6 +720,21 @@ private:
         return &t;
     }
 
+    struct ShadowMap {
+        GLuint texture = 0;
+        GLuint fbo = 0;
+        u32 size = 0;
+        u32 generation = 0;
+    };
+
+    ShadowMap* lookup_shadow(TextureHandle handle) {
+        const u32 first = kMaxTargets + kMaxTextures;
+        if (!handle.valid() || handle.index() < first || handle.index() >= first + kMaxShadowMaps) return nullptr;
+        ShadowMap& m = shadow_maps_[handle.index() - first];
+        if (!m.texture || (m.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &m;
+    }
+
     Target* lookup(TextureHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxTargets) return nullptr;
         Target& t = targets_[handle.index()];
@@ -667,6 +789,8 @@ private:
         program_ = link(kVertexShader, kFragmentShader);
         mesh_program_ = link(kMeshVertexShader, kMeshFragmentShader);
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
+        shadow_program_ = link(kShadowVertexShader, kShadowFragmentShader);
+        shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
         mesh_mvp_ = gl_.glGetUniformLocation(mesh_program_, "u_mvp");
@@ -684,6 +808,11 @@ private:
         gl_.glCreateBuffers(1, &light_ubo_);
         const LightSetup defaults = default_lights();
         gl_.glNamedBufferStorage(light_ubo_, sizeof defaults, &defaults, GL_DYNAMIC_STORAGE_BIT);
+        // Shadow map slot 0: a 1x1 map at full depth, bound whenever no light casts shadows.
+        create_shadow_map(1);
+        const f32 far_depth = 1.0f;
+        gl_.glTextureSubImage2D(shadow_maps_[0].texture, 0, 0, 0, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &far_depth);
+        shadow_texture_ = shadow_maps_[0].texture;
         line_mvp_ = gl_.glGetUniformLocation(line_program_, "u_mvp");
 
         gl_.glCreateVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
@@ -719,6 +848,11 @@ private:
     Texture textures_[kMaxTextures];
     u32 white_ = 0, flat_normal_ = 0;  // default textures (slots in textures_)
     GLuint light_ubo_ = 0;
+    GLuint shadow_program_ = 0;
+    GLint shadow_mvp_ = -1;
+    ShadowMap shadow_maps_[kMaxShadowMaps];
+    GLuint shadow_texture_ = 0;
+    bool in_shadow_pass_ = false;
     u32 target_height_ = 0;  // height of what is being drawn to, for set_viewport's Y flip
     GLint params_location_ = -1;
     u32 width_ = 0;

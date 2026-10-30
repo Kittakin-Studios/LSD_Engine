@@ -159,7 +159,8 @@ on Sound Classes, incl. our own compressor node) and Audio Volumes (reverb + muf
 example works except the animation notify. Rendering: textures (`engine/asset/texture.h`, stb_image),
 `rhi::Device::create_texture`, PBR mesh shading with Material data assets (`engine/render/material.h`,
 editor/material_cache), Material Instances, light components (editor/lighting.cpp -> rhi::LightSetup,
-up to 16 per frame) with World Settings exposure. Next: shadows, material graph, animation, particles.
+up to 16 per frame) with World Settings exposure, cascaded sun shadows (rhi shadow maps + passes,
+cascades fitted in editor/lighting.cpp). Next: local-light shadows, material graph, animation, particles.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

@@ -48,7 +48,57 @@ LinearColor temperature_color(f32 kelvin) {
     return c;
 }
 
-rhi::LightSetup world_lights(const world::World& w, Vec3 eye, bool skip_hidden) {
+namespace {
+
+// Four cascades split between near and far (Nvidia's practical split: mostly logarithmic), each a
+// sphere around its slice of the view so it does not change size as the camera turns, snapped to
+// whole texels so shadow edges do not crawl when the camera moves.
+void fit_cascades(rhi::LightSetup& s, u32 light_index, Vec3 travel, const LightView& view, f32 distance) {
+    const u32 count = 4;
+    const f32 near_z = 0.1f, far_z = distance;
+    const f32 tile = 0.5f, tile_texels = static_cast<f32>(kShadowAtlasSize) * tile;
+    const f32 tan_y = std::tan(view.fov_y * 0.5f), tan_x = tan_y * view.aspect;
+    const Vec3 up = std::fabs(travel.z) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 0, 1};
+    const Vec3 side = normalize(cross(travel, up));  // the light view's basis (same as look_at builds)
+    const Vec3 lift = cross(side, travel);
+    f32 previous = near_z;
+    f32 texel0 = 0.0f;
+    for (u32 c = 0; c < count; ++c) {
+        const f32 fraction = static_cast<f32>(c + 1) / static_cast<f32>(count);
+        const f32 uniform = near_z + (far_z - near_z) * fraction;
+        const f32 logarithmic = near_z * std::pow(far_z / near_z, fraction);
+        const f32 split = uniform + (logarithmic - uniform) * 0.75f;
+        const f32 middle = (previous + split) * 0.5f;
+        auto corner = [&](f32 depth) {  // distance from the slice centre to a corner at `depth`
+            const f32 dx = depth * tan_x, dy = depth * tan_y, dz = depth - middle;
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        };
+        const f32 radius = std::ceil(std::fmax(corner(previous), corner(split)) * 16.0f) / 16.0f;  // rounded: keeps the texel size steady
+        Vec3 centre = view.eye + view.forward * middle;
+        const f32 texel = radius * 2.0f / tile_texels;
+        const f32 cs = dot(centre, side), cu = dot(centre, lift);
+        centre = centre + side * (std::floor(cs / texel) * texel - cs) + lift * (std::floor(cu / texel) * texel - cu);
+        const f32 back = 100.0f;  // casters this far towards the light still cast
+        const Mat4 light_view = look_at(centre - travel * (radius + back), centre, up);
+        const Mat4 vp = orthographic(radius * 2.0f, radius * 2.0f, 0.1f, radius * 2.0f + back) * light_view;
+        for (int k = 0; k < 16; ++k) s.shadow_matrices[c][k] = vp.m[k];
+        s.shadow_tiles[c][0] = static_cast<f32>(c % 2) * tile;
+        s.shadow_tiles[c][1] = static_cast<f32>(c / 2) * tile;
+        s.shadow_tiles[c][2] = tile;
+        s.shadow_splits[c] = split;
+        if (c == 0) texel0 = texel;
+        previous = split;
+    }
+    s.shadow_info[0] = static_cast<f32>(count);
+    s.shadow_info[1] = static_cast<f32>(light_index);
+    s.shadow_info[2] = 1.0f / static_cast<f32>(kShadowAtlasSize);
+    s.shadow_info[3] = texel0 * 1.5f;  // normal offset
+}
+
+} // namespace
+
+rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
+    const Vec3 eye = view.eye;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
     const reflect::TypeInfo& spot_type = reflect::type_of<world::SpotLight>();
@@ -90,7 +140,9 @@ rhi::LightSetup world_lights(const world::World& w, Vec3 eye, bool skip_hidden) 
         const world::Entity e = w.owner(dir_type, i);
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
         const auto* light = static_cast<const world::DirectionalLight*>(w.at(dir_type, i));
-        put(rhi::LightType::Directional, {}, forward_of(w.world_matrix(e)), light_rgb(light->color, light->use_temperature, light->temperature) * light->intensity, 0, 0, 0);
+        const Vec3 travel = forward_of(w.world_matrix(e));
+        if (light->cast_shadows && s.shadow_info[1] < 0.0f) fit_cascades(s, s.count, travel, view, light->shadow_distance);
+        put(rhi::LightType::Directional, {}, travel, light_rgb(light->color, light->use_temperature, light->temperature) * light->intensity, 0, 0, 0);
     }
     // Local lights nearest the camera fill the rest (shortcut: no clustering; 16 per frame is the limit).
     struct Candidate {

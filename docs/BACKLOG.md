@@ -150,7 +150,7 @@ visual-script sounds, `stat audio`.
 - [~] Material instances (MaterialInstance data asset: parent + ticked overrides, follows parent edits live; Create Material Instance on a material); needs the material graph with live preview, material functions (moved up from v2) [Material Editor, Material Instance, Material Function]
 - [ ] Decals (moved up from v2: blockout and set dressing need them) [Decal Actor]
 - [~] Lights: Directional (lux), Point and Spot (lumens, attenuation radius, cone angles), Sky Light (ambient), colour temperature in Kelvin, World Settings exposure (EV100), 16 per frame (nearest local lights), Place tab entries, direction / range markers; needs shadows, rect / disc / sphere area lights (LTC), IES, light functions, mobility
-- [ ] Shadows: cascaded for the sun, shadow maps for local lights, quality per light, contact shadows
+- [~] Shadows: cascaded sun shadows (4 cascades in a 4096 atlas, practical splits, stable spheres snapped to texels, 3x3 hardware PCF, slope bias + normal offset, pancaking; Cast Shadows / Shadow Distance on the Directional Light) on D3D12 and OpenGL; needs shadow maps for spot / point lights, quality per light, contact shadows, caster culling
 - [ ] Reflections: capture probes, screen-space reflections
 - [ ] Sky, atmosphere, height fog; sun angle drives sky colour; environment asset that bundles sky, fog and post settings **(S)**
 - [ ] Instanced meshes (many copies, one draw) [Instanced Static Mesh]
