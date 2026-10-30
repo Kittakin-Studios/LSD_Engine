@@ -54,6 +54,8 @@ private:
     world::Entity spawn(const char* name, Vec3 position);  // during Play: bodies and scripts too
     void start_game_mode(world::World& world);
     void send_hits();
+    void add_joints(const world::World& world, world::Entity root);  // all, if root is invalid
+    u32 body_of(world::Entity e) const;  // kNoBody if it has none
     static bool action_guid(const asset::AssetRegistry& registry, const char* name, char* out);
 
     physics::PhysicsWorld* physics_ = nullptr;

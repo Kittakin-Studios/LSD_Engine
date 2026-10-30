@@ -19,6 +19,79 @@ static BodyDesc box(Vec3 centre, Vec3 half, Motion motion) {
     return d;
 }
 
+static Vec3 centre(const PhysicsWorld& w, u32 body) {
+    const Mat4 m = w.body_transform(body);
+    return {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+}
+
+// Pendulum on a ball joint, a hinged flap with limits, a slider stopped by its limit, a box welded
+// to the world and a motor-driven wheel (no floor: everything else would just fall).
+static void test_joints() {
+    PhysicsWorld w;
+    const f32 dt = 1.0f / 60.0f;
+    const u32 bob = w.add_body(box({2, 0, 10}, {0.2f, 0.2f, 0.2f}, Motion::Dynamic));
+    JointDesc ball;
+    ball.type = JointType::Ball;
+    ball.body_a = bob;
+    ball.pivot = {0, 0, 10};  // 2 m to the side: it swings down
+    w.add_joint(ball);
+
+    const u32 flap = w.add_body(box({11, 0, 10}, {1, 0.1f, 0.1f}, Motion::Dynamic));
+    JointDesc hinge;
+    hinge.body_a = flap;
+    hinge.pivot = {10, 0, 10};
+    hinge.axis = {0, 1, 0};  // swings in the XZ plane
+    hinge.limited = true;
+    hinge.limit_min = -30.0f;
+    hinge.limit_max = 30.0f;
+    w.add_joint(hinge);
+
+    const u32 sled = w.add_body(box({20, 0, 10}, {0.3f, 0.3f, 0.3f}, Motion::Dynamic));
+    JointDesc slider;
+    slider.type = JointType::Slider;
+    slider.body_a = sled;
+    slider.pivot = {20, 0, 10};
+    slider.axis = {0, 0, 1};
+    slider.limited = true;
+    slider.limit_min = -1.0f;
+    slider.limit_max = 0.0f;
+    w.add_joint(slider);
+
+    const u32 welded = w.add_body(box({30, 0, 10}, {0.3f, 0.3f, 0.3f}, Motion::Dynamic));
+    JointDesc weld;
+    weld.type = JointType::Fixed;
+    weld.body_a = welded;
+    w.add_joint(weld);
+
+    const u32 wheel = w.add_body(box({40, 0, 10}, {0.5f, 0.5f, 0.1f}, Motion::Dynamic));
+    JointDesc motor;
+    motor.body_a = wheel;
+    motor.pivot = {40, 0, 10};
+    motor.axis = {0, 0, 1};
+    motor.motor_speed = 90.0f;
+    w.add_joint(motor);
+    CHECK(w.joint_count() == 5);
+
+    f32 lowest_flap = 10.0f, lowest_bob = 10.0f;
+    for (int i = 0; i < 120; ++i) {
+        w.step(dt);
+        const Vec3 b = centre(w, bob);
+        CHECK(std::fabs(length(b - Vec3{0, 0, 10}) - 2.0f) < 0.05f);  // stays on its 2 m rope
+        lowest_flap = std::fmin(lowest_flap, centre(w, flap).z);
+        lowest_bob = std::fmin(lowest_bob, b.z);
+    }
+    CHECK(lowest_bob < 8.1f);                             // it swung down to the bottom of its rope
+    CHECK(lowest_flap > 10.0f - std::sin(0.6f) && lowest_flap < 9.6f);  // 30 deg limit (a little give): the centre drops ~0.5 m
+    CHECK(std::fabs(centre(w, sled).z - 9.0f) < 0.05f && std::fabs(centre(w, sled).x - 20.0f) < 0.01f);  // slid down 1 m and stopped
+    CHECK(std::fabs(centre(w, welded).z - 10.0f) < 0.01f);  // held in place
+    const Mat4 spun = w.body_transform(wheel);
+    const f32 turned = std::atan2(spun.at(1, 0), spun.at(0, 0));  // 2 s at 90 deg/s: half a turn (wraps to +-pi)
+    CHECK(std::fabs(std::fabs(turned) - 3.14159f) < 0.3f && std::fabs(centre(w, wheel).z - 10.0f) < 0.05f);
+
+    w.remove_body(bob);  // its joint goes with it, no dangling pointer in Jolt
+    w.step(dt);
+}
+
 int main() {
     PhysicsWorld world;
     world.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));        // floor, top at z = 0
@@ -90,6 +163,7 @@ int main() {
     }
     CHECK(world.character_feet().z > 0.8f && !world.character_on_ground());
 
+    test_joints();
     if (g_failures == 0) std::printf("All physics tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

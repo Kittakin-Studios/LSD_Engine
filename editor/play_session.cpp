@@ -135,6 +135,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         if (const world::Entity e = world.entity_at_slot(slot); e.valid()) add_entity_bodies(world, e);
     }
+    add_joints(world, {});
     Vec3 scale;
 
     // The player: the first Character, else a default walker at the Player Start or the camera.
@@ -301,11 +302,56 @@ world::Entity PlaySession::spawn(const char* name, Vec3 position) {
         for (world::Entity p = e; p.valid() && !inside; p = world.parent(p)) inside = p == root;
         if (inside) add_entity_bodies(world, e);
     }
+    add_joints(world, root);
     scripts_.attach(root);
     return root;
 }
 
 // World Settings > Game Mode: spawn the player prefab (when the level has no Character) and the game script.
+u32 PlaySession::body_of(world::Entity e) const {
+    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
+        if (body_entities_[b] == e) return b;
+    }
+    return physics::kWorldBody;
+}
+
+void PlaySession::add_joints(const world::World& world, world::Entity root) {
+    const reflect::TypeInfo& type = reflect::type_of<world::PhysicsJoint>();
+    for (u32 i = 0; i < world.count(type); ++i) {
+        const world::Entity e = world.owner(type, i);
+        bool inside = !root.valid();
+        for (world::Entity p = e; p.valid() && !inside; p = world.parent(p)) inside = p == root;
+        if (!inside) continue;
+        const auto* joint = static_cast<const world::PhysicsJoint*>(world.at(type, i));
+        const u32 body = body_of(e);
+        if (body == physics::kWorldBody) {
+            LSD_LOG_WARN("play", "%s: a Physics Joint needs a RigidBody (or collision) on the same object", world.name(e));
+            continue;
+        }
+        physics::JointDesc d;
+        d.type = static_cast<physics::JointType>(joint->type);
+        d.body_a = body;
+        if (joint->other[0]) {
+            world::Entity other;
+            for (u32 slot = 0; slot < world.slot_count() && !other.valid(); ++slot) {
+                const world::Entity candidate = world.entity_at_slot(slot);
+                if (candidate.valid() && std::strcmp(world.name(candidate), joint->other) == 0) other = candidate;
+            }
+            if (!other.valid()) LSD_LOG_WARN("play", "%s: Physics Joint other '%s' not found: held to the world", world.name(e), joint->other);
+            d.body_b = other.valid() ? body_of(other) : physics::kWorldBody;
+        }
+        const Mat4 m = world.world_matrix(e);
+        d.pivot = transform_point(m, joint->pivot);
+        d.axis = transform_vector(m, joint->axis);
+        d.limited = joint->limited;
+        d.limit_min = joint->limit_min;
+        d.limit_max = joint->limit_max;
+        d.motor_speed = joint->motor_speed;
+        d.motor_strength = joint->motor_strength;
+        physics_->add_joint(d);
+    }
+}
+
 void PlaySession::start_game_mode(world::World& world) {
     if (!world.settings().game_mode[0]) return;
     world::GameMode mode;

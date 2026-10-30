@@ -682,6 +682,24 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
 // Icons for entities without a mesh (Player Start, empties), drawn over the 3D view.
 void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 pos, ImVec2 size) {
     const EditorTheme& t = s.theme;
+    // Physics Joints: a ring at the pivot and a line along the axis.
+    const reflect::TypeInfo& joint_type = reflect::type_of<world::PhysicsJoint>();
+    for (u32 i = 0; i < s.world->count(joint_type); ++i) {
+        const Entity e = s.world->owner(joint_type, i);
+        if (s.world->hidden_in_hierarchy(e)) continue;
+        const auto* joint = static_cast<const world::PhysicsJoint*>(s.world->at(joint_type, i));
+        const Mat4 m = s.world->world_matrix(e);
+        const Vec3 pivot = transform_point(m, joint->pivot);
+        const Vec3 axis = transform_vector(m, joint->axis);
+        const f32 axis_length = length(axis);
+        ImVec2 a, b;
+        if (!project(view_proj, pivot, pos, size, a)) continue;
+        const ImU32 color = IM_COL32(255, 230, 40, 255);
+        dl->AddCircle(a, 7.0f, color, 16, 2.0f);
+        if (joint->type != 0 && joint->type != 2 && axis_length > 0.0f && project(view_proj, pivot + axis * (0.75f / axis_length), pos, size, b)) {
+            dl->AddLine(a, b, color, 2.0f);
+        }
+    }
     for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
         const Entity e = s.world->entity_at_slot(slot);
         if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->hidden_in_hierarchy(e)) continue;

@@ -122,7 +122,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 - [~] Input Actions (Button / Axis 1D / Axis 2D) and Mapping Contexts (swizzle, scale, priority with key consumption); keyboard, mouse, gamepad with dead zones; New Input Setup template; needs triggers (hold, tap, chord), more modifiers, player rebinding [Enhanced Input]
 - [~] Physics (Jolt 5.6, `engine/physics`): static collision from meshes and Blocking Volumes, RigidBody component (box / sphere / capsule fitted to the mesh, mass, friction, bounciness), simulated in Play; needs convex / mesh shapes, channels + presets, physical materials, kinematic bodies in the editor
-- [ ] Constraints and joints (hinge, ball, slider) (moved up from v2: doors and chains are blockout staples)
+- [~] Constraints and joints: Physics Joint component (fixed, hinge, ball, slider; to another object by name or to the world; limits; velocity motor), pivot / axis marker in the viewport; needs a joint gizmo, breakable joints, springs, cone / twist limits (moved up from v2: doors and chains are blockout staples)
 - [~] Traces: line trace (`PhysicsWorld::raycast`, `lsd.raycast`); needs sphere / box / capsule sweeps and overlaps, visual-script nodes
 - [~] Character component: Jolt CharacterVirtual (walk, slopes, stairs, jump, fall), input asset wiring, first-person camera, possessed in Play (else a default walker at the Player Start); needs crouch, swim, moving platforms, third-person camera [Character Movement Component]
 - [~] Cameras: Character `camera_distance` spring arm (third person) pulled in by walls; needs camera shake, blends, camera components [Camera Manager]

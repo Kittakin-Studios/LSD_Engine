@@ -68,6 +68,23 @@ struct RigidBody {
     LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
 };
 
+// Holds this RigidBody to another object or to the world (Unreal's Physics Constraint): doors,
+// chains, pendulums, drawers, fans. Pivot and axis are in this object's local space (mesh units,
+// so (0, -0.5, 0) is the edge of a cube); the yellow marker in the viewport shows them.
+LSD_STRUCT(Component, Category = "Physics")
+struct PhysicsJoint {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Fixed,Hinge,Ball,Slider", Tooltip = "Fixed: welded. Hinge: turns about the axis. Ball: turns any way. Slider: moves along the axis") u32 type = 1;
+    LSD_PROPERTY(Edit, Tooltip = "Name of the object to hold on to; empty = the world") char other[64] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Where it turns, local") Vec3 pivot;
+    LSD_PROPERTY(Edit, Tooltip = "Hinge or slider axis, local") Vec3 axis = {0, 0, 1};
+    LSD_PROPERTY(Edit) bool limited = false;
+    LSD_PROPERTY(Edit, Tooltip = "Degrees (hinge) or metres (slider) from where it starts") f32 limit_min = -45.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Degrees (hinge) or metres (slider) from where it starts") f32 limit_max = 45.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Hinge deg/s or slider m/s; 0 = no motor") f32 motor_speed = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "N m (hinge) or N (slider)") f32 motor_strength = 1000.0f;
+};
+
 // The player's character (Unreal's Character + Character Movement + its input setup). In Play the
 // first Character in the level is possessed; its input comes from the mapping context and actions
 // picked here, so no code is needed to wire it.

@@ -15,6 +15,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<KillVolume>(),
         &reflect::type_of<TriggerVolume>(),
         &reflect::type_of<RigidBody>(),
+        &reflect::type_of<PhysicsJoint>(),
         &reflect::type_of<Character>(),
         &reflect::type_of<PrefabInstance>(),
         &reflect::type_of<Tags>(),

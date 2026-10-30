@@ -40,6 +40,24 @@ struct Contact {
     u32 a, b;
 };
 
+enum class JointType : u8 { Fixed, Hinge, Ball, Slider };
+constexpr u32 kWorldBody = 0xFFFFFFFEu;  // a joint's second body: the static world
+
+// Holds two bodies together (Unreal's Physics Constraint). Pivot and axis are in world space at
+// creation; limits are degrees for a hinge, metres for a slider (from where it starts).
+struct JointDesc {
+    JointType type = JointType::Hinge;
+    u32 body_a = 0;
+    u32 body_b = kWorldBody;
+    Vec3 pivot;
+    Vec3 axis{0, 0, 1};
+    bool limited = false;
+    f32 limit_min = -45.0f;
+    f32 limit_max = 45.0f;
+    f32 motor_speed = 0.0f;  // hinge deg/s or slider m/s; 0 = no motor
+    f32 motor_strength = 1000.0f;  // N m (hinge) or N (slider)
+};
+
 class PhysicsWorld {
 public:
     PhysicsWorld();
@@ -59,6 +77,10 @@ public:
     bool raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit) const;
     // Contacts that began since the previous call (bodies with each other and with the player).
     u32 take_contacts(Contact* out, u32 capacity);
+
+    // Returns the joint's index; joints on a removed body go with it.
+    u32 add_joint(const JointDesc& desc);
+    u32 joint_count() const;
 
     void set_gravity(f32 metres_per_second2);
     void step(f32 dt);

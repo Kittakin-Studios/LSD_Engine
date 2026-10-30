@@ -14,6 +14,10 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
@@ -127,6 +131,11 @@ struct PhysicsWorld::Impl {
     std::vector<JPH::BodyID> bodies;
     JPH::Ref<JPH::CharacterVirtual> character;
     Contacts contacts;
+    struct Joint {
+        JPH::Ref<JPH::Constraint> constraint;
+        u32 a, b;
+    };
+    std::vector<Joint> joints;
     f32 step_height = 0.4f;
 };
 
@@ -140,6 +149,9 @@ PhysicsWorld::PhysicsWorld() {
 }
 
 PhysicsWorld::~PhysicsWorld() {
+    for (const auto& joint : impl_->joints) {
+        if (joint.constraint) impl_->system.RemoveConstraint(joint.constraint);
+    }
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     for (const JPH::BodyID id : impl_->bodies) {
         if (id.IsInvalid()) continue;  // removed
@@ -186,6 +198,12 @@ u32 PhysicsWorld::body_count() const { return static_cast<u32>(impl_->bodies.siz
 
 void PhysicsWorld::remove_body(u32 body) {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
+    for (auto& joint : impl_->joints) {  // Jolt joints point at their bodies: they go first
+        if (joint.constraint && (joint.a == body || joint.b == body)) {
+            impl_->system.RemoveConstraint(joint.constraint);
+            joint.constraint = nullptr;
+        }
+    }
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     bodies.RemoveBody(impl_->bodies[body]);
     bodies.DestroyBody(impl_->bodies[body]);
@@ -217,6 +235,76 @@ u32 PhysicsWorld::take_contacts(Contact* out, u32 capacity) {
     impl_->contacts.pending.clear();
     return n;
 }
+
+u32 PhysicsWorld::add_joint(const JointDesc& desc) {
+    auto id_of = [&](u32 body) { return body < impl_->bodies.size() ? impl_->bodies[body] : JPH::BodyID(); };  // invalid = the world
+    const JPH::BodyID a = id_of(desc.body_a), b = id_of(desc.body_b);
+    const JPH::RVec3 pivot(desc.pivot.x, desc.pivot.y, desc.pivot.z);
+    const JPH::Vec3 axis = to_jolt(desc.axis).NormalizedOr(JPH::Vec3::sAxisZ());
+    const JPH::Vec3 normal = axis.GetNormalizedPerpendicular();
+    JPH::Ref<JPH::TwoBodyConstraintSettings> settings;
+    switch (desc.type) {
+        case JointType::Fixed: {
+            auto* s = new JPH::FixedConstraintSettings();
+            s->mAutoDetectPoint = true;
+            settings = s;
+            break;
+        }
+        case JointType::Ball: {
+            auto* s = new JPH::PointConstraintSettings();
+            s->mPoint1 = s->mPoint2 = pivot;
+            settings = s;
+            break;
+        }
+        case JointType::Hinge: {
+            auto* s = new JPH::HingeConstraintSettings();
+            s->mPoint1 = s->mPoint2 = pivot;
+            s->mHingeAxis1 = s->mHingeAxis2 = axis;
+            s->mNormalAxis1 = s->mNormalAxis2 = normal;
+            if (desc.limited) {
+                s->mLimitsMin = JPH::DegreesToRadians(std::fmin(desc.limit_min, 0.0f));
+                s->mLimitsMax = JPH::DegreesToRadians(std::fmax(desc.limit_max, 0.0f));
+            }
+            s->mMotorSettings = JPH::MotorSettings(10.0f, 1.0f, 0.0f, desc.motor_strength);
+            settings = s;
+            break;
+        }
+        case JointType::Slider: {
+            auto* s = new JPH::SliderConstraintSettings();
+            s->mPoint1 = s->mPoint2 = pivot;
+            s->mSliderAxis1 = s->mSliderAxis2 = axis;
+            s->mNormalAxis1 = s->mNormalAxis2 = normal;
+            if (desc.limited) {
+                s->mLimitsMin = std::fmin(desc.limit_min, 0.0f);
+                s->mLimitsMax = std::fmax(desc.limit_max, 0.0f);
+            }
+            s->mMotorSettings = JPH::MotorSettings(10.0f, 1.0f, desc.motor_strength, 0.0f);
+            settings = s;
+            break;
+        }
+    }
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    JPH::Ref<JPH::Constraint> constraint = a.IsInvalid() && b.IsInvalid() ? nullptr : bodies.CreateConstraint(settings, b, a);  // Jolt measures body 2 against body 1: limits and motors describe body_a
+    if (constraint) {
+        if (desc.motor_speed != 0.0f && desc.type == JointType::Hinge) {
+            auto* hinge = static_cast<JPH::HingeConstraint*>(constraint.GetPtr());
+            hinge->SetMotorState(JPH::EMotorState::Velocity);
+            hinge->SetTargetAngularVelocity(JPH::DegreesToRadians(desc.motor_speed));
+        } else if (desc.motor_speed != 0.0f && desc.type == JointType::Slider) {
+            auto* slider = static_cast<JPH::SliderConstraint*>(constraint.GetPtr());
+            slider->SetMotorState(JPH::EMotorState::Velocity);
+            slider->SetTargetVelocity(desc.motor_speed);
+        }
+        impl_->system.AddConstraint(constraint);
+        bodies.ActivateConstraint(static_cast<JPH::TwoBodyConstraint*>(constraint.GetPtr()));
+    } else {
+        LSD_LOG_WARN("physics", "A joint needs at least one body");
+    }
+    impl_->joints.push_back({constraint, desc.body_a, desc.body_b});
+    return static_cast<u32>(impl_->joints.size() - 1);
+}
+
+u32 PhysicsWorld::joint_count() const { return static_cast<u32>(impl_->joints.size()); }
 
 Mat4 PhysicsWorld::body_transform(u32 body) const {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return Mat4{};
