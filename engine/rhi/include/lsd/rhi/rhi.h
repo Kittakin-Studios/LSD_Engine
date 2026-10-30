@@ -39,6 +39,9 @@ using BufferHandle = Handle<BufferTag>;
 struct TextureTag {};
 using TextureHandle = Handle<TextureTag>;
 enum class BufferUsage : u8 { Vertex, Index };
+// RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
+enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB };
+constexpr u32 kMaxMips = 16;
 
 // Vertex formats of the built-in pipelines.
 struct MeshVertex {
@@ -51,14 +54,25 @@ struct LineVertex {
     f32 color[4];
 };
 
-// One lit mesh draw. Indices are u32. Matrices are column-major (see lsd/foundation/math.h).
+// One lit mesh draw, shaded physically based (metal / roughness). Indices are u32. Matrices are
+// column-major (see lsd/foundation/math.h).
 struct MeshDraw {
     BufferHandle vertices;
     BufferHandle indices;
     u32 index_count = 0;
-    f32 mvp[16];          // projection * view * world
-    f32 world_rotation[12];  // world matrix 3x3 as three float4 columns (w unused), for normals
-    f32 color[4];         // base colour, linear
+    f32 mvp[16];            // projection * view * world
+    f32 normal_matrix[12];  // inverse transpose of the world 3x3, as three float4 columns (w unused)
+    f32 world[12];          // world matrix rows 0..2 (3x4), for world positions
+    f32 camera_position[3] = {};
+    f32 color[4];           // base colour, linear (multiplies the base colour texture)
+    f32 metallic = 0.0f;
+    f32 roughness = 0.5f;
+    f32 emissive[3] = {};   // linear, added on top (already times its strength)
+    // Invalid handles use the defaults: white base colour, flat normal, white occlusion /
+    // roughness / metallic (glTF packing: R occlusion, G roughness, B metallic; G and B multiply the values above).
+    TextureHandle base_color_texture;
+    TextureHandle normal_texture;
+    TextureHandle orm_texture;
     bool unlit = false;      // colour only, no lighting (Unlit view mode)
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
 };
@@ -88,6 +102,10 @@ public:
     virtual BufferHandle create_buffer(BufferUsage usage, const void* data, u64 size) = 0;
     virtual void destroy_buffer(BufferHandle buffer) = 0;  // safe while the GPU may still use it
 
+    // Sampled texture with its mip chain (mips[0] full size, each next one half, rows tightly packed).
+    // Needs init_debug_ui() first on D3D12 (its view lives in the UI's descriptor heap).
+    virtual TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) = 0;
+
     // Offscreen colour target (RGBA8, same format as the window) with its own depth buffer.
     virtual TextureHandle create_render_target(u32 width, u32 height) = 0;
     virtual void destroy_texture(TextureHandle texture) = 0;  // safe while the GPU may still use it
@@ -113,7 +131,7 @@ public:
     virtual bool init_debug_ui() = 0;
     virtual void debug_ui_new_frame() = 0;
     virtual void render_debug_ui() = 0;
-    // ImTextureID for showing a render target with ImGui::Image (0 if unsupported).
+    // ImTextureID for showing a render target or texture with ImGui::Image (0 if unsupported).
     virtual u64 debug_ui_texture(TextureHandle texture) = 0;
     // True when render targets come out upside down in ImGui (OpenGL): flip the UVs.
     virtual bool render_targets_flipped() const { return false; }

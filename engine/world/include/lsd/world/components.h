@@ -20,7 +20,8 @@ struct StaticMesh {
     LSD_GENERATED()
     // Edited with the editor's mesh picker (asset combo + drag-drop), so saved but not shown as text.
     LSD_PROPERTY(Save, Tooltip = "A mesh asset's GUID, or a basic shape: Cube, Sphere, Plane") char mesh[40] = "Cube";
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drag a material from the Content Browser onto the object in the viewport, or pick it here") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Tints the material (white = as the material is)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "Blocks the player in Play") bool collision = true;
 };
 

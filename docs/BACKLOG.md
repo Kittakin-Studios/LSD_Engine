@@ -137,7 +137,8 @@ visual-script sounds, `stat audio`.
 
 ### Import
 
-- [~] Audio import: .wav .ogg .flac .mp3 dropped into Content become Sound assets (settings in their .meta); needs texture import (PNG, TGA, EXR, HDR; BC compression, mips, sRGB, normal maps), waveform thumbnails
+- [~] Audio import: .wav .ogg .flac .mp3 dropped into Content become Sound assets (settings in their .meta); needs waveform thumbnails
+- [~] Texture import (stb_image): PNG, JPG, TGA, BMP, PSD as Texture assets, mips built on load (colour mips averaged in linear light), Max Size per texture, sRGB / linear chosen by the material slot, the image as its Content Browser thumbnail, hot reload on save; needs EXR / HDR, BC compression in the data compiler, streaming
 - [ ] Multiple meshes and materials per imported file; scene import as a prefab; skeletal meshes, skeletons, animations
 - [ ] Reimport on source change, import settings per asset, batch import
 - [ ] Live link to Blender/Maya: re-export pushes into the running editor and game **(S)** [Live Link]
@@ -145,7 +146,7 @@ visual-script sounds, `stat audio`.
 ### Rendering content
 
 - [ ] Shader pipeline: HLSL → DXIL / SPIR-V (DXC) / GLSL (SPIRV-Cross) as assets; replaces the hand-written test shaders; shader hot reload
-- [ ] Physically based shading (metal/rough), opaque, masked, translucent, two-sided
+- [~] Physically based shading (metal / rough, GGX, sun + sky ambient, sRGB output) on D3D12 and OpenGL with base colour, normal (derivative tangent frame) and ORM textures, emissive; Material data asset (New Material, Create Material from a texture, drag onto an object, StaticMesh material slot, live edits); needs masked / translucent, image-based lighting, Vulkan meshes (needs the Vulkan SDK)
 - [ ] Material graph with live preview; material instances; material functions (moved up from v2) [Material Editor, Material Instance, Material Function]
 - [ ] Decals (moved up from v2: blockout and set dressing need them) [Decal Actor]
 - [ ] Lights: directional, point, spot, rect, disc/sphere, sky, emissive; physical units; IES; light functions; mobility

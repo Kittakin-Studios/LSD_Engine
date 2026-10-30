@@ -25,11 +25,12 @@ namespace {
 constexpr u32 kBackBufferCount = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-constexpr u32 kDebugUiDescriptors = 512;  // ImGui font atlas + render targets shown in the UI
+constexpr u32 kDebugUiDescriptors = 4096;  // ImGui font atlas, render targets and textures (the meshes sample them too)
+constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
 constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
-constexpr u32 kRootConstants = 32;  // one root-constant block shared by every built-in pipeline
+constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 3 texture tables: 55 of 64 DWORDs)
 
 // shortcut: runtime HLSL compile via d3dcompiler_47 (ships with Windows); move to DXC + the data
 // compiler once shaders become assets.
@@ -50,24 +51,68 @@ VsOut vs_main(uint id : SV_VertexID) {
 float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 )";
 
-// Lit mesh: one directional light plus sky/ground ambient. Constants match rhi::MeshDraw;
-// rot0.w (unused by the normal transform) carries the unlit flag.
+// Lit mesh, physically based (metal / roughness, GGX): one sun plus sky / ground ambient. Constants
+// match rhi::MeshDraw; n0.w carries the unlit flag, n1.w "has a normal map". Output is encoded to
+// sRGB by hand (the swapchain is UNORM so the UI keeps its exact colours).
+// shortcut: the sun and sky are fixed here until light components arrive (milestone 5 lighting).
 constexpr char kMeshHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 mvp; float4 rot0; float4 rot1; float4 rot2; float4 color; };
+cbuffer Draw : register(b0) {
+    float4x4 mvp; float4 n0; float4 n1; float4 n2; float4 w0; float4 w1; float4 w2;
+    float4 color; float4 mat0; float4 mat1;  // mat0: metallic, roughness, emissive.rg; mat1: emissive.b, camera.xyz
+};
+Texture2D base_tex : register(t0);
+Texture2D normal_tex : register(t1);
+Texture2D orm_tex : register(t2);
+SamplerState samp : register(s0);
 struct VsIn { float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
-struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; };
+struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float3 wpos : TEXCOORD1; float2 uv : TEXCOORD0; };
 VsOut vs_main(VsIn i) {
     VsOut o;
     o.pos = mul(mvp, float4(i.pos, 1));
-    o.normal = rot0.xyz * i.normal.x + rot1.xyz * i.normal.y + rot2.xyz * i.normal.z;
+    o.normal = n0.xyz * i.normal.x + n1.xyz * i.normal.y + n2.xyz * i.normal.z;
+    const float4 p = float4(i.pos, 1);
+    o.wpos = float3(dot(w0, p), dot(w1, p), dot(w2, p));
+    o.uv = i.uv;
     return o;
 }
-float4 ps_main(VsOut i) : SV_Target {
-    if (rot0.w > 0.5) return color;
-    const float3 n = normalize(i.normal);
-    const float3 sun = normalize(float3(-0.5, -0.35, 0.8));
-    const float ambient = 0.25 + 0.1 * n.z;
-    return float4(color.rgb * (ambient + 0.85 * saturate(dot(n, sun))), color.a);
+static const float PI = 3.14159265;
+float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
+    float4 base = color * base_tex.Sample(samp, i.uv);
+    if (n0.w > 0.5) return float4(to_srgb(base.rgb), base.a);
+    float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
+    if (n1.w > 0.5) {  // normal map without stored tangents: a tangent frame from screen derivatives
+        const float3 dp1 = ddx(i.wpos), dp2 = ddy(i.wpos);
+        const float2 duv1 = ddx(i.uv), duv2 = ddy(i.uv);
+        const float3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+        const float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+        const float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+        const float inv = rsqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
+        const float3 tn = normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0;
+        n = normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
+    }
+    const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
+    const float metallic = saturate(mat0.x * orm.b);
+    const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
+    const float ao = orm.r;
+    const float3 v = normalize(mat1.yzw - i.wpos);
+    const float3 l = normalize(float3(-0.5, -0.35, 0.8));
+    const float3 h = normalize(v + l);
+    const float ndl = saturate(dot(n, l)), ndv = max(dot(n, v), 1e-4), ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
+    const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
+    const float a2 = roughness * roughness * roughness * roughness;
+    const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
+    const float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    const float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+    const float3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+    const float3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+    const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
+    const float3 sun = float3(1.0, 0.96, 0.9) * 2.8;
+    const float3 sky = lerp(float3(0.16, 0.15, 0.14), float3(0.30, 0.36, 0.45), n.z * 0.5 + 0.5);
+    const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
+    const float3 ambient = (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
+    const float3 lit = (diffuse + specular) * sun * ndl + ambient + float3(mat0.zw, mat1.x);
+    return float4(to_srgb(lit), base.a);
 }
 )";
 
@@ -272,6 +317,94 @@ public:
         ++b->generation;
     }
 
+    TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
+        if (!srv_heap_) {
+            LSD_LOG_ERROR("d3d12", "create_texture needs init_debug_ui() first (its view lives in the UI heap).");
+            return {};
+        }
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].resource) ++slot;
+        if (slot == kMaxTextures || width == 0 || height == 0 || mip_count == 0 || mip_count > kMaxMips) {
+            LSD_LOG_ERROR("d3d12", "create_texture failed: table full (%u), zero size or bad mip count.", kMaxTextures);
+            return {};
+        }
+        Texture& t = textures_[slot];
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = width;
+        desc.Height = height;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = static_cast<UINT16>(mip_count);
+        desc.Format = format == TextureFormat::RGBA8_sRGB ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                    IID_PPV_ARGS(&t.resource)), "CreateCommittedResource (texture)")) return {};
+        // Every mip through one upload buffer, copied on a separate list and waited for.
+        // shortcut: synchronous upload (a stall per texture); move to a copy queue + streaming later.
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT layouts[kMaxMips];
+        UINT rows[kMaxMips];
+        UINT64 row_bytes[kMaxMips];
+        UINT64 total = 0;
+        device_->GetCopyableFootprints(&desc, 0, mip_count, 0, layouts, rows, row_bytes, &total);
+        heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC buffer_desc{};
+        buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buffer_desc.Width = total;
+        buffer_desc.Height = 1;
+        buffer_desc.DepthOrArraySize = 1;
+        buffer_desc.MipLevels = 1;
+        buffer_desc.SampleDesc.Count = 1;
+        buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> upload;
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                    IID_PPV_ARGS(&upload)), "CreateCommittedResource (texture upload)")) {
+            t.resource.Reset();
+            return {};
+        }
+        u8* mapped = nullptr;
+        const D3D12_RANGE no_read{0, 0};
+        upload->Map(0, &no_read, reinterpret_cast<void**>(&mapped));
+        for (u32 m = 0; m < mip_count; ++m) {
+            const u8* source = static_cast<const u8*>(mips[m]);
+            for (UINT r = 0; r < rows[m]; ++r) std::memcpy(mapped + layouts[m].Offset + r * layouts[m].Footprint.RowPitch, source + r * row_bytes[m], row_bytes[m]);
+        }
+        upload->Unmap(0, nullptr);
+        if (!upload_list_) {
+            device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&upload_allocator_));
+            device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, upload_allocator_.Get(), nullptr, IID_PPV_ARGS(&upload_list_));
+        } else {
+            upload_allocator_->Reset();
+            upload_list_->Reset(upload_allocator_.Get(), nullptr);
+        }
+        for (u32 m = 0; m < mip_count; ++m) {
+            D3D12_TEXTURE_COPY_LOCATION to{};
+            to.pResource = t.resource.Get();
+            to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            to.SubresourceIndex = m;
+            D3D12_TEXTURE_COPY_LOCATION from{};
+            from.pResource = upload.Get();
+            from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            from.PlacedFootprint = layouts[m];
+            upload_list_->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+        }
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = t.resource.Get();
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        upload_list_->ResourceBarrier(1, &barrier);
+        upload_list_->Close();
+        ID3D12CommandList* lists[] = {upload_list_.Get()};
+        queue_->ExecuteCommandLists(1, lists);
+        wait_for_gpu();
+        alloc_srv(t.srv_cpu, t.srv_gpu);
+        device_->CreateShaderResourceView(t.resource.Get(), nullptr, t.srv_cpu);
+        return TextureHandle::make(kMaxTargets + slot, t.generation);
+    }
+
     TextureHandle create_render_target(u32 width, u32 height) override {
         if (!srv_heap_) {
             LSD_LOG_ERROR("d3d12", "create_render_target needs init_debug_ui() first (its view lives in the UI heap).");
@@ -318,6 +451,13 @@ public:
     }
 
     void destroy_texture(TextureHandle handle) override {
+        if (Texture* texture = lookup_texture(handle)) {
+            wait_for_gpu();  // shortcut: stalls; fine for rare destroys (asset reloads, shutdown)
+            free_srv(texture->srv_cpu);
+            texture->resource.Reset();
+            ++texture->generation;
+            return;
+        }
         Target* t = lookup(handle);
         if (!t) return;
         wait_for_gpu();  // shortcut: stalls; fine for rare destroys (thumbnails, shutdown)
@@ -352,6 +492,7 @@ public:
     }
 
     u64 debug_ui_texture(TextureHandle handle) override {
+        if (const Texture* texture = lookup_texture(handle)) return texture->srv_gpu.ptr;
         const Target* t = lookup(handle);
         return t ? t->srv_gpu.ptr : 0;
     }
@@ -369,11 +510,27 @@ public:
         if (!vb || !ib) return;
         f32 constants[kRootConstants];
         std::memcpy(constants, draw.mvp, sizeof draw.mvp);
-        std::memcpy(constants + 16, draw.world_rotation, sizeof draw.world_rotation);
-        std::memcpy(constants + 28, draw.color, sizeof draw.color);
+        std::memcpy(constants + 16, draw.normal_matrix, sizeof draw.normal_matrix);
+        std::memcpy(constants + 28, draw.world, sizeof draw.world);
+        std::memcpy(constants + 40, draw.color, sizeof draw.color);
         constants[19] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
+        const Texture* normal = lookup_texture(draw.normal_texture);
+        constants[23] = normal ? 1.0f : 0.0f;
+        constants[44] = draw.metallic;
+        constants[45] = draw.roughness;
+        constants[46] = draw.emissive[0];
+        constants[47] = draw.emissive[1];
+        constants[48] = draw.emissive[2];
+        std::memcpy(constants + 49, draw.camera_position, sizeof draw.camera_position);
+        const Texture* base = lookup_texture(draw.base_color_texture);
+        const Texture* orm = lookup_texture(draw.orm_texture);
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, kRootConstants, constants, 0);
+        list_->SetGraphicsRootDescriptorTable(1, (base ? base : &textures_[white_])->srv_gpu);
+        list_->SetGraphicsRootDescriptorTable(2, (normal ? normal : &textures_[flat_normal_])->srv_gpu);
+        list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
         list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
@@ -445,6 +602,12 @@ public:
             static_cast<D3D12Device*>(info->UserData)->free_srv(cpu);
         };
         debug_ui_ = ImGui_ImplDX12_Init(&init);
+        // Defaults for meshes without textures: white (colour, occlusion / roughness / metallic) and a flat normal.
+        const u32 white = 0xFFFFFFFFu, flat = 0xFFFF8080u;  // RGBA bytes, little-endian
+        const void* white_mip[1] = {&white};
+        const void* flat_mip[1] = {&flat};
+        white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
+        flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
         return debug_ui_;
     }
 
@@ -550,6 +713,20 @@ private:
         u32 generation = 0;
     };
 
+    struct Texture {
+        ComPtr<ID3D12Resource> resource;
+        D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu{};
+        u32 generation = 0;
+    };
+
+    Texture* lookup_texture(TextureHandle handle) {
+        if (!handle.valid() || handle.index() < kMaxTargets || handle.index() >= kMaxTargets + kMaxTextures) return nullptr;
+        Texture& t = textures_[handle.index() - kMaxTargets];
+        if (!t.resource || (t.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &t;
+    }
+
     Target* lookup(TextureHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxTargets) return nullptr;
         Target& t = targets_[handle.index()];
@@ -599,13 +776,32 @@ private:
     }
 
     bool create_pipelines() {
-        D3D12_ROOT_PARAMETER param{};
-        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        param.Constants.Num32BitValues = kRootConstants;
-        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
+        D3D12_ROOT_PARAMETER params[4]{};
+        params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        params[0].Constants.Num32BitValues = kRootConstants;
+        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_DESCRIPTOR_RANGE ranges[3]{};
+        for (UINT i = 0; i < 3; ++i) {
+            ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            ranges[i].NumDescriptors = 1;
+            ranges[i].BaseShaderRegister = i;
+            params[1 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            params[1 + i].DescriptorTable.NumDescriptorRanges = 1;
+            params[1 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
+            params[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        }
+        D3D12_STATIC_SAMPLER_DESC sampler{};
+        sampler.Filter = D3D12_FILTER_ANISOTROPIC;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        sampler.MaxAnisotropy = 8;
+        sampler.MaxLOD = D3D12_FLOAT32_MAX;
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 1;
-        rs_desc.pParameters = &param;
+        rs_desc.NumParameters = 4;
+        rs_desc.pParameters = params;
+        rs_desc.NumStaticSamplers = 1;
+        rs_desc.pStaticSamplers = &sampler;
         rs_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> rs_blob, error;
         if (!check(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &error), "D3D12SerializeRootSignature")) return false;
@@ -725,6 +921,10 @@ private:
     ComPtr<ID3D12DescriptorHeap> target_dsv_heap_;
     u32 dsv_size_ = 0;
     Target targets_[kMaxTargets];
+    Texture textures_[kMaxTextures];
+    u32 white_ = 0, flat_normal_ = 0;  // default textures (slots in textures_)
+    ComPtr<ID3D12CommandAllocator> upload_allocator_;
+    ComPtr<ID3D12GraphicsCommandList> upload_list_;
     i32 current_target_ = -1;  // slot being rendered to, -1 = the window
     ComPtr<ID3D12DescriptorHeap> srv_heap_;
     u32 srv_size_ = 0;

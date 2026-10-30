@@ -18,6 +18,10 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "Import", Min = 0.001, Max = 1000, Tooltip = "Uniform scale applied on import (after unit conversion to metres)")
     f32 import_scale = 1.0f;
 
+    // Textures. Colour vs data (sRGB vs linear) is decided by the material slot that uses them.
+    LSD_PROPERTY(Edit, Category = "Texture", Min = 1, Max = 8192, Tooltip = "Larger images are halved until they fit (Unreal's Maximum Texture Size)")
+    u32 max_size = 4096;
+
     // Sound files (Unreal's Sound Wave settings).
     LSD_PROPERTY(Edit, Category = "Sound", Min = 0, Max = 4) f32 volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Sound", Min = 0.1, Max = 4) f32 pitch = 1.0f;

@@ -208,3 +208,13 @@ FetchContent_Declare(miniaudio
 )
 FetchContent_MakeAvailable(miniaudio)
 set(LSD_MINIAUDIO_DIR ${miniaudio_SOURCE_DIR} PARENT_SCOPE)
+
+# stb_image (public domain / MIT): PNG, JPG, TGA, BMP, PSD, HDR decoding for texture import.
+# Fetch only, pinned to a commit (stb has no release tags): engine/asset compiles the implementation.
+FetchContent_Declare(stb
+  GIT_REPOSITORY https://github.com/nothings/stb.git
+  GIT_TAG 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(stb)
+set(LSD_STB_DIR ${stb_SOURCE_DIR} PARENT_SCOPE)

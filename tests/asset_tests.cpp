@@ -1,6 +1,7 @@
 // Asset pipeline tests, including the milestone 2 exit test on a real Blender FBX:
 // import it into Content/, find it by search, compile it and load the result.
 #include "lsd/asset/asset_registry.h"
+#include "lsd/asset/texture.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/array.h"
 
@@ -155,11 +156,54 @@ static void test_gltf_axes(const fs::path& root) {
     CHECK(!asset::import_mesh((root / "missing.fbx").string().c_str(), 1.0f, heap, mesh, error, sizeof error) && error[0]);
 }
 
+// Textures: mip chain sizes, colour mips averaged in light (sRGB) vs data mips in bytes, size cap, TGA load.
+static void test_texture(const fs::path& root) {
+    // 4x2: left half black, right half white.
+    u8 pixels[4 * 2 * 4];
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            const u8 v = x < 2 ? 0 : 255;
+            u8* p = pixels + (y * 4 + x) * 4;
+            p[0] = p[1] = p[2] = v;
+            p[3] = 255;
+        }
+    }
+    asset::TextureData t(default_allocator());
+    CHECK(asset::build_texture(pixels, 4, 2, true, 4096, t));
+    CHECK(t.width == 4 && t.height == 2 && t.mip_count == 3);  // 4x2, 2x1, 1x1
+    CHECK(t.mip_offset[1] == 4 * 2 * 4 && t.mip_offset[2] == t.mip_offset[1] + 2 * 4 && t.pixels.size() == t.mip_offset[2] + 4);
+    CHECK(t.mip(1)[0] == 0 && t.mip(1)[4] == 255);  // 2x1: still black | white
+    CHECK(t.mip(2)[0] >= 186 && t.mip(2)[0] <= 189);  // half the light of white is sRGB 188, not 128
+    CHECK(t.mip(2)[3] == 255);
+    asset::TextureData data(default_allocator());
+    CHECK(asset::build_texture(pixels, 4, 2, false, 4096, data) && data.mip(2)[0] == 128);  // data: plain average
+    asset::TextureData capped(default_allocator());
+    CHECK(asset::build_texture(pixels, 4, 2, true, 2, capped) && capped.width == 2 && capped.height == 1 && capped.mip_count == 2);
+    CHECK(!asset::build_texture(nullptr, 4, 2, true, 4096, t));
+
+    // A real file through stb_image: an uncompressed 2x2 TGA (red, green / blue, white).
+    fs::create_directories(root);
+    const fs::path tga = root / "checker.tga";
+    const u8 header[18] = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 32, 0x28};  // 32-bit, top-left origin
+    const u8 bgra[16] = {0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255};
+    FILE* f = std::fopen(tga.string().c_str(), "wb");
+    std::fwrite(header, 1, sizeof header, f);
+    std::fwrite(bgra, 1, sizeof bgra, f);
+    std::fclose(f);
+    asset::TextureData loaded(default_allocator());
+    CHECK(asset::load_texture(tga.string().c_str(), false, 4096, loaded));
+    CHECK(loaded.width == 2 && loaded.height == 2 && loaded.mip_count == 2);
+    CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 0 && loaded.mip(0)[5] == 255 && loaded.mip(0)[10] == 255);  // red, green, blue
+    CHECK(!asset::load_texture((root / "missing.png").string().c_str(), true, 4096, loaded));
+    CHECK(asset::type_from_extension(".PNG") == asset::AssetType::Texture && asset::type_from_extension(".tga") == asset::AssetType::Texture);
+}
+
 int main() {
     const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "asset_tests";
     test_guid_and_array();
     test_blender_fbx(root);
     test_gltf_axes(root);
+    test_texture(root);
     if (g_failures == 0) std::printf("All asset tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

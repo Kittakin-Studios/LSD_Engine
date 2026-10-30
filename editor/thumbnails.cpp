@@ -85,8 +85,13 @@ bool ThumbnailCache::render_one(Entry& entry, const f32 background[4]) {
     draw.indices = mesh.indices;
     draw.index_count = mesh.index_count;
     std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
-    const f32 identity_rotation[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-    std::memcpy(draw.world_rotation, identity_rotation, sizeof identity_rotation);
+    const f32 identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    std::memcpy(draw.normal_matrix, identity, sizeof identity);
+    std::memcpy(draw.world, identity, sizeof identity);
+    const Vec3 eye = center + dir * distance;
+    draw.camera_position[0] = eye.x;
+    draw.camera_position[1] = eye.y;
+    draw.camera_position[2] = eye.z;
     const f32 grey[4] = {0.75f, 0.75f, 0.75f, 1.0f};
     std::memcpy(draw.color, grey, sizeof grey);
     device_.draw_mesh(draw);

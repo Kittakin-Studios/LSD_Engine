@@ -9,6 +9,10 @@
 #include "lsd/foundation/math.h"
 #include "lsd/world/world.h"
 
+namespace lsd::rhi {
+class Device;
+}
+
 namespace lsd::editor {
 
 class MeshCache;
@@ -79,6 +83,8 @@ struct EditorState {
     // Content Browser
     asset::AssetRegistry* registry = nullptr;
     ThumbnailCache* thumbnails = nullptr;
+    class TextureCache* textures = nullptr;  // set by main.cpp (texture thumbnails)
+    rhi::Device* device = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
     char search[96] = "";
     int type_filter = 0;            // 0 = all types, 1 = meshes, 2 = levels

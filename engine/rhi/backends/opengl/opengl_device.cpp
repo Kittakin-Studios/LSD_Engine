@@ -46,25 +46,70 @@ layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
 uniform mat4 u_mvp;
-uniform vec4 u_rot[3];
+uniform vec4 u_normal[3];
+uniform vec4 u_world[3];
 out vec3 v_normal;
+out vec3 v_wpos;
+out vec2 v_uv;
 void main() {
     gl_Position = u_mvp * vec4(a_pos, 1.0);
-    v_normal = u_rot[0].xyz * a_normal.x + u_rot[1].xyz * a_normal.y + u_rot[2].xyz * a_normal.z;
+    v_normal = u_normal[0].xyz * a_normal.x + u_normal[1].xyz * a_normal.y + u_normal[2].xyz * a_normal.z;
+    vec4 p = vec4(a_pos, 1.0);
+    v_wpos = vec3(dot(u_world[0], p), dot(u_world[1], p), dot(u_world[2], p));
+    v_uv = a_uv;
 }
 )";
 
+// Same shading as the HLSL in the D3D12 backend (keep them in step).
 constexpr char kMeshFragmentShader[] = R"(#version 460 core
 uniform vec4 u_color;
-uniform float u_unlit;
+uniform vec4 u_mat[2];   // metallic, roughness, emissive.rg | emissive.b, camera.xyz
+uniform vec2 u_flags;    // unlit, has normal map
+layout(binding = 0) uniform sampler2D base_tex;
+layout(binding = 1) uniform sampler2D normal_tex;
+layout(binding = 2) uniform sampler2D orm_tex;
 in vec3 v_normal;
+in vec3 v_wpos;
+in vec2 v_uv;
 out vec4 o_color;
+const float PI = 3.14159265;
+vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 void main() {
-    if (u_unlit > 0.5) { o_color = u_color; return; }
-    vec3 n = normalize(v_normal);
-    vec3 sun = normalize(vec3(-0.5, -0.35, 0.8));
-    float ambient = 0.25 + 0.1 * n.z;
-    o_color = vec4(u_color.rgb * (ambient + 0.85 * clamp(dot(n, sun), 0.0, 1.0)), u_color.a);
+    vec4 base = u_color * texture(base_tex, v_uv);
+    if (u_flags.x > 0.5) { o_color = vec4(to_srgb(base.rgb), base.a); return; }
+    vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
+    if (u_flags.y > 0.5) {
+        vec3 dp1 = dFdx(v_wpos), dp2 = dFdy(v_wpos);
+        vec2 duv1 = dFdx(v_uv), duv2 = dFdy(v_uv);
+        vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+        vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+        vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+        float inv = inversesqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
+        vec3 tn = texture(normal_tex, v_uv).xyz * 2.0 - 1.0;
+        n = normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
+    }
+    vec3 orm = texture(orm_tex, v_uv).rgb;
+    float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
+    float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
+    float ao = orm.r;
+    vec3 v = normalize(u_mat[1].yzw - v_wpos);
+    vec3 l = normalize(vec3(-0.5, -0.35, 0.8));
+    vec3 h = normalize(v + l);
+    float ndl = clamp(dot(n, l), 0.0, 1.0), ndv = max(dot(n, v), 1e-4), ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
+    vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
+    float a2 = roughness * roughness * roughness * roughness;
+    float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
+    float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+    vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+    vec3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+    vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
+    vec3 sun = vec3(1.0, 0.96, 0.9) * 2.8;
+    vec3 sky = mix(vec3(0.16, 0.15, 0.14), vec3(0.30, 0.36, 0.45), n.z * 0.5 + 0.5);
+    vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
+    vec3 ambient = (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
+    vec3 lit = (diffuse + specular) * sun * ndl + ambient + vec3(u_mat[0].zw, u_mat[1].x);
+    o_color = vec4(to_srgb(lit), base.a);
 }
 )";
 
@@ -84,6 +129,8 @@ void main() { o_color = v_color; }
 
 constexpr u32 kMaxBuffers = 4096;
 constexpr u32 kMaxTargets = 256;
+constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
+constexpr GLenum kMaxAnisotropy = 0x84FE;  // GL_TEXTURE_MAX_ANISOTROPY (core in 4.6)
 
 // Constants from GL_NVX_gpu_memory_info and GL_ATI_meminfo (not in core headers).
 constexpr GLenum kGpuMemoryTotalNvx = 0x9048;
@@ -136,7 +183,11 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLNAMEDFRAMEBUFFERRENDERBUFFERPROC, glNamedFramebufferRenderbuffer) \
     X(PFNGLCHECKNAMEDFRAMEBUFFERSTATUSPROC, glCheckNamedFramebufferStatus) \
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                  \
-    X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)
+    X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)          \
+    X(PFNGLTEXTURESUBIMAGE2DPROC, glTextureSubImage2D)              \
+    X(PFNGLBINDTEXTUREUNITPROC, glBindTextureUnit)                  \
+    X(PFNGLUNIFORM2FPROC, glUniform2f)                              \
+    X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -303,6 +354,30 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
+    TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].id) ++slot;
+        if (slot == kMaxTextures || width == 0 || height == 0 || mip_count == 0 || mip_count > kMaxMips) {
+            LSD_LOG_ERROR("opengl", "create_texture failed: table full (%u), zero size or bad mip count.", kMaxTextures);
+            return {};
+        }
+        Texture& t = textures_[slot];
+        gl_.glCreateTextures(GL_TEXTURE_2D, 1, &t.id);
+        gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), format == TextureFormat::RGBA8_sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8,
+                               static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        for (u32 m = 0; m < mip_count; ++m) {
+            const u32 w = width >> m ? width >> m : 1, h = height >> m ? height >> m : 1;
+            gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA, GL_UNSIGNED_BYTE, mips[m]);
+        }
+        gl_.glTextureParameteri(t.id, GL_TEXTURE_MIN_FILTER, mip_count > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        gl_.glTextureParameteri(t.id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl_.glTextureParameteri(t.id, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        gl_.glTextureParameteri(t.id, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        gl_.glTextureParameterf(t.id, kMaxAnisotropy, 8.0f);
+        return TextureHandle::make(kMaxTargets + slot, t.generation);
+    }
+
     TextureHandle create_render_target(u32 width, u32 height) override {
         u32 slot = 0;
         while (slot < kMaxTargets && targets_[slot].fbo) ++slot;
@@ -331,6 +406,12 @@ public:
     }
 
     void destroy_texture(TextureHandle handle) override {
+        if (Texture* texture = lookup_texture(handle)) {
+            glDeleteTextures(1, &texture->id);
+            texture->id = 0;
+            ++texture->generation;
+            return;
+        }
         Target* t = lookup(handle);
         if (!t) return;
         release_target(*t);  // GL defers the real release until the GPU is done
@@ -355,6 +436,7 @@ public:
     }
 
     u64 debug_ui_texture(TextureHandle handle) override {
+        if (const Texture* texture = lookup_texture(handle)) return texture->id;
         const Target* t = lookup(handle);
         return t ? t->color : 0;
     }
@@ -377,9 +459,19 @@ public:
         glDepthMask(GL_TRUE);
         gl_.glUseProgram(mesh_program_);
         gl_.glUniformMatrix4fv(mesh_mvp_, 1, GL_FALSE, draw.mvp);
-        gl_.glUniform4fv(mesh_rot_, 3, draw.world_rotation);
+        gl_.glUniform4fv(mesh_normal_, 3, draw.normal_matrix);
+        gl_.glUniform4fv(mesh_world_, 3, draw.world);
         gl_.glUniform4fv(mesh_color_, 1, draw.color);
-        gl_.glUniform1f(mesh_unlit_, draw.unlit || draw.wireframe ? 1.0f : 0.0f);
+        const f32 material[8] = {draw.metallic, draw.roughness, draw.emissive[0], draw.emissive[1], draw.emissive[2],
+                                 draw.camera_position[0], draw.camera_position[1], draw.camera_position[2]};
+        gl_.glUniform4fv(mesh_material_, 2, material);
+        const Texture* base = lookup_texture(draw.base_color_texture);
+        const Texture* normal = lookup_texture(draw.normal_texture);
+        const Texture* orm = lookup_texture(draw.orm_texture);
+        gl_.glUniform2f(mesh_flags_, draw.unlit || draw.wireframe ? 1.0f : 0.0f, normal ? 1.0f : 0.0f);
+        gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
+        gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
+        gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
@@ -480,6 +572,18 @@ private:
         u32 generation = 0;
     };
 
+    struct Texture {
+        GLuint id = 0;
+        u32 generation = 0;
+    };
+
+    Texture* lookup_texture(TextureHandle handle) {
+        if (!handle.valid() || handle.index() < kMaxTargets || handle.index() >= kMaxTargets + kMaxTextures) return nullptr;
+        Texture& t = textures_[handle.index() - kMaxTargets];
+        if (!t.id || (t.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &t;
+    }
+
     Target* lookup(TextureHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxTargets) return nullptr;
         Target& t = targets_[handle.index()];
@@ -537,9 +641,17 @@ private:
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
         mesh_mvp_ = gl_.glGetUniformLocation(mesh_program_, "u_mvp");
-        mesh_rot_ = gl_.glGetUniformLocation(mesh_program_, "u_rot");
+        mesh_normal_ = gl_.glGetUniformLocation(mesh_program_, "u_normal");
+        mesh_world_ = gl_.glGetUniformLocation(mesh_program_, "u_world");
         mesh_color_ = gl_.glGetUniformLocation(mesh_program_, "u_color");
-        mesh_unlit_ = gl_.glGetUniformLocation(mesh_program_, "u_unlit");
+        mesh_material_ = gl_.glGetUniformLocation(mesh_program_, "u_mat");
+        mesh_flags_ = gl_.glGetUniformLocation(mesh_program_, "u_flags");
+        // Defaults for meshes without textures: white (colour, occlusion / roughness / metallic) and a flat normal.
+        const u32 white = 0xFFFFFFFFu, flat = 0xFFFF8080u;  // RGBA bytes, little-endian
+        const void* white_mip[1] = {&white};
+        const void* flat_mip[1] = {&flat};
+        white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
+        flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
         line_mvp_ = gl_.glGetUniformLocation(line_program_, "u_mvp");
 
         gl_.glCreateVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
@@ -562,14 +674,18 @@ private:
     GLuint mesh_program_ = 0;
     GLuint mesh_vao_ = 0;
     GLint mesh_mvp_ = -1;
-    GLint mesh_rot_ = -1;
+    GLint mesh_normal_ = -1;
+    GLint mesh_world_ = -1;
     GLint mesh_color_ = -1;
-    GLint mesh_unlit_ = -1;
+    GLint mesh_material_ = -1;
+    GLint mesh_flags_ = -1;
     GLuint line_program_ = 0;
     GLuint line_vao_ = 0;
     GLint line_mvp_ = -1;
     Buffer buffers_[kMaxBuffers];
     Target targets_[kMaxTargets];
+    Texture textures_[kMaxTextures];
+    u32 white_ = 0, flat_normal_ = 0;  // default textures (slots in textures_)
     u32 target_height_ = 0;  // height of what is being drawn to, for set_viewport's Y flip
     GLint params_location_ = -1;
     u32 width_ = 0;

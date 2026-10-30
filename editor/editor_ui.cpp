@@ -1,5 +1,6 @@
 #include "editor_ui.h"
 #include "graph_editor.h"
+#include "material_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
 
@@ -17,6 +18,7 @@
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/curve.h"
+#include "lsd/render/material.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -1036,6 +1038,20 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                 place(s, record->name, key, nullptr, drop_point(s, ray));
             } else if (record && record->type == asset::AssetType::Prefab) {
                 place_prefab(s, *record, drop_point(s, ray));
+            } else if (record && record->type == asset::AssetType::Data && std::strcmp(record->data_type, "Material") == 0) {
+                // Onto the object under the mouse, like dropping a material on an actor in Unreal.
+                Entity hit;
+                f32 hit_t = 0.0f;
+                world::StaticMesh* mesh = raycast(s, ray, {}, hit, hit_t, true) ? s.world->get<world::StaticMesh>(hit) : nullptr;
+                if (mesh) {
+                    asset::to_string(guid, mesh->material);
+                    select(s, hit);
+                    char label[96];
+                    std::snprintf(label, sizeof label, "Apply %s", record->name);
+                    edited(s, label);
+                } else {
+                    std::snprintf(s.status, sizeof s.status, "Drop a material onto an object with a Static Mesh");
+                }
             } else if (record && (record->type == asset::AssetType::Sound || record->type == asset::AssetType::Cue)) {  // a Sound Emitter, like dropping a sound in Unreal
                 const Entity e = place(s, record->name, nullptr, "SoundEmitter", drop_point(s, ray) + Vec3{0, 0, 1});
                 asset::to_string(guid, s.world->get<world::SoundEmitter>(e)->sound);
@@ -1897,7 +1913,8 @@ void draw_details_panel(EditorState& s) {
                 ImGui::BeginChild("DetailsRows");
                 DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
                 style.categories = selected->type == asset::AssetType::Mesh ? "Asset,Import"
-                                 : selected->type == asset::AssetType::Sound || selected->type == asset::AssetType::Cue ? "Asset,Sound" : "Asset";
+                                 : selected->type == asset::AssetType::Sound || selected->type == asset::AssetType::Cue ? "Asset,Sound"
+                                 : selected->type == asset::AssetType::Texture ? "Asset,Texture" : "Asset";
                 draw_details(reflect::type_of<asset::AssetMeta>(), &s.selected_meta, &style);
                 ImGui::EndChild();
             } else {
@@ -2106,7 +2123,7 @@ void draw_asset_grid(EditorState& s) {
     ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0Visual Scripts\0Data Tables\0Sounds\0");
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0Visual Scripts\0Data Tables\0Sounds\0Textures\0");
     ImGui::SameLine();
     ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
@@ -2118,7 +2135,8 @@ void draw_asset_grid(EditorState& s) {
                                 : s.type_filter == 5 ? asset::AssetType::Script
                                 : s.type_filter == 6 ? asset::AssetType::Graph
                                 : s.type_filter == 7 ? asset::AssetType::Table
-                                : s.type_filter == 8 ? asset::AssetType::Sound : asset::AssetType::Unknown;
+                                : s.type_filter == 8 ? asset::AssetType::Sound
+                                : s.type_filter == 9 ? asset::AssetType::Texture : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
@@ -2171,6 +2189,8 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A spreadsheet (.csv) of rows and columns; read it with lsd.table() or Get Table Value. Dropping a .csv here imports one too");
+        if (ImGui::MenuItem("New Material")) create_data_asset(s, reflect::type_of<render::Material>());
+        ImGui::SetItemTooltip("Base colour, metallic, roughness, normal / ORM maps, emissive. Drag it onto an object in the viewport");
         if (ImGui::MenuItem("New Sound Cue")) {
             const std::string path = create_cue_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SC_New");
             s.registry->scan();
@@ -2271,6 +2291,21 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Edit Data Table")) open_table(s, r);
             if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
             if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
+            if (r.type == asset::AssetType::Texture && ImGui::MenuItem("Create Material")) {  // like Unreal: a material using this texture
+                render::Material m;
+                asset::to_string(r.guid, m.base_color_texture);
+                char base[64];
+                std::snprintf(base, sizeof base, "M_%s", r.name);
+                const std::string path = new_asset_path(s, base);
+                if (asset::save_data_asset(path.c_str(), reflect::type_of<render::Material>(), &m)) {
+                    s.registry->scan();
+                    if (const asset::AssetRecord* created = record_at(s, path)) {
+                        select(s, {});
+                        s.selected_asset = created->guid;
+                        load_selected_data(s, *created);
+                    }
+                }
+            }
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem("Delete...")) {
@@ -2288,7 +2323,14 @@ void draw_asset_grid(EditorState& s) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(level ? "%s\nContent/%s\nDouble-click to open" : "%s\nContent/%s", r.name, r.path);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 lo(p.x + 6, p.y + 6), hi(p.x + kTile - 6, p.y + kTile - 6);
-        const u64 thumbnail = s.thumbnails && !level ? s.thumbnails->get(r.guid) : 0;
+        u64 thumbnail = 0;
+        if (r.type == asset::AssetType::Texture && s.textures && s.device) {  // the image itself
+            char key[33];
+            asset::to_string(r.guid, key);
+            thumbnail = s.device->debug_ui_texture(s.textures->get(key, true));
+        } else if (r.type == asset::AssetType::Mesh && s.thumbnails) {
+            thumbnail = s.thumbnails->get(r.guid);
+        }
         if (thumbnail) {
             const bool flip = s.thumbnails->flipped();
             dl->AddImage(ImTextureRef(static_cast<ImTextureID>(thumbnail)), lo, hi, ImVec2(0, flip ? 1.0f : 0.0f), ImVec2(1, flip ? 0.0f : 1.0f));
@@ -2887,6 +2929,8 @@ bool select_asset(EditorState& s, const char* name) {
     const asset::AssetRecord& r = s.registry->get(hit);
     select(s, {});
     s.selected_asset = r.guid;
+    s.selected_meta = asset::AssetMeta{};
+    s.registry->load_meta(r, s.selected_meta);  // as a click in the Content Browser does
     if (r.type == asset::AssetType::Data) load_selected_data(s, r);
     return true;
 }

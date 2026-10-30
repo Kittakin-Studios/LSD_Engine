@@ -199,6 +199,7 @@ public:
     }
     void destroy_buffer(BufferHandle) override {}
     TextureHandle create_render_target(u32, u32) override { return {}; }
+    TextureHandle create_texture(u32, u32, u32, TextureFormat, const void* const*) override { return {}; }
     void destroy_texture(TextureHandle) override {}
     void set_render_target(TextureHandle, const f32*) override {}
     u64 debug_ui_texture(TextureHandle) override { return 0; }

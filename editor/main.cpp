@@ -3,6 +3,7 @@
 #include "graph_editor.h"
 #include "table_editor.h"
 #include "mesh_cache.h"
+#include "material_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
 #include "thumbnails.h"
@@ -14,6 +15,7 @@
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/curve.h"
+#include "lsd/render/material.h"
 #include "lsd/audio/audio.h"
 #include "lsd/foundation/system_info.h"
 #include "lsd/render/grid.h"
@@ -66,8 +68,8 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 }
 
 // Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
-void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::world::World& world, lsd::editor::MeshCache& meshes,
-                EditorState& stats) {
+void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::Vec3 eye, lsd::world::World& world, lsd::editor::MeshCache& meshes,
+                lsd::editor::MaterialCache& materials, EditorState& stats) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
@@ -86,10 +88,17 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::world
         draw.index_count = mesh->gpu.index_count;
         std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
         for (int c = 0; c < 3; ++c) {
-            for (int r = 0; r < 3; ++r) draw.world_rotation[c * 4 + r] = inv.at(c, r);
-            draw.world_rotation[c * 4 + 3] = 0.0f;
+            for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
+            draw.normal_matrix[c * 4 + 3] = 0.0f;
         }
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
+        }
+        draw.camera_position[0] = eye.x;
+        draw.camera_position[1] = eye.y;
+        draw.camera_position[2] = eye.z;
         to_rgba(component->color, draw.color);
+        materials.apply(component->material, draw);  // base colour x tint, textures, metallic / roughness, emissive
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
@@ -356,6 +365,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundAttenuation>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundConcurrency>());
@@ -372,12 +382,16 @@ int main(int argc, char** argv) {
     lsd::editor::Transactions history(allocator);
     auto* mesh_memory = allocator.allocate(sizeof(lsd::editor::MeshCache), alignof(lsd::editor::MeshCache));
     lsd::editor::MeshCache& meshes = *new (mesh_memory) lsd::editor::MeshCache(*device, allocator, registry, kDataDir);
+    auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
+    lsd::editor::MaterialCache materials(*texture_cache, registry);
     auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
     lsd::editor::ThumbnailCache& thumbnails = *new (thumbnail_memory) lsd::editor::ThumbnailCache(*device, allocator, registry, kDataDir);
     state.world = &world;
     state.history = &history;
     state.meshes = &meshes;
     state.thumbnails = &thumbnails;
+    state.textures = texture_cache;
+    state.device = device;
 
     const char* startup_level = level_arg ? level_arg : state.settings.last_level[0] ? state.settings.last_level : state.project.editor_startup_level;
     if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
@@ -484,6 +498,8 @@ int main(int argc, char** argv) {
         if (SDL_GetTicks() - last_scan > 1000) {
             registry.scan();
             meshes.hot_reload();
+            texture_cache->check_files();
+            materials.check_files();
             last_scan = SDL_GetTicks();
         }
 
@@ -616,7 +632,7 @@ int main(int argc, char** argv) {
             const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
             const lsd::Mat4 view_proj = proj * view;
             if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
-            draw_world(*device, view_proj, world, meshes, state);
+            draw_world(*device, view_proj, state.playing && !state.ejected ? play.eye() : camera.position, world, meshes, materials, state);
         }
         device->render_debug_ui();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
@@ -638,6 +654,7 @@ int main(int argc, char** argv) {
     lsd::render::destroy_lines(*device, grid);
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
+    delete texture_cache;
     meshes.~MeshCache();
     allocator.deallocate(mesh_memory);
     state.~EditorState();
