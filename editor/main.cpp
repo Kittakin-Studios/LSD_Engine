@@ -170,6 +170,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     if (sun_shadows || local_shadows) device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
     device.set_lights(lights);
+    lsd::rhi::SkyDraw sky;
+    if (!stats.view_mode_unlit_or_wire() && lsd::editor::world_sky(world, view_proj, eye, skip_hidden, sky)) device.draw_sky(sky);  // behind everything
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
     for (lsd::u32 i = 0; i < world.count(type); ++i) {

@@ -97,7 +97,120 @@ void fit_cascades(rhi::LightSetup& s, u32 light_index, Vec3 travel, const LightV
 
 } // namespace
 
+namespace {
+
+// Fog and post-processing on top of the lights (also when the level has no lights).
+void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::LightSetup& s) {
+    const reflect::TypeInfo& fog_type = reflect::type_of<world::HeightFog>();
+    for (u32 i = 0; i < w.count(fog_type); ++i) {
+        if (skip_hidden && w.hidden_in_hierarchy(w.owner(fog_type, i))) continue;
+        const auto* fog = static_cast<const world::HeightFog*>(w.at(fog_type, i));
+        const Mat4 m = w.world_matrix(w.owner(fog_type, i));
+        s.fog[0] = fog->density;
+        s.fog[1] = fog->height_falloff;
+        s.fog[2] = m.at(2, 3);  // the object's height is where the density is as set
+        s.fog[3] = fog->max_opacity;
+        s.fog_color[0] = fog->color.r;
+        s.fog_color[1] = fog->color.g;
+        s.fog_color[2] = fog->color.b;
+        s.fog_color[3] = fog->start_distance;
+        break;
+    }
+    const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
+    const world::PostProcessVolume* best = nullptr;
+    for (u32 i = 0; i < w.count(post_type); ++i) {
+        const world::Entity e = w.owner(post_type, i);
+        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
+        const auto* v = static_cast<const world::PostProcessVolume*>(w.at(post_type, i));
+        if (!v->unbound) {
+            const Vec3 p = transform_point(affine_inverse(w.world_matrix(e)), eye);  // the unit volume: x, y in -0.5..0.5, z in 0..1
+            if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;
+        }
+        if (!best || v->priority > best->priority) best = v;
+    }
+    if (!best) return;
+    s.exposure *= std::pow(2.0f, best->exposure_compensation);
+    s.post[0] = best->saturation;
+    s.post[1] = best->contrast;
+    s.post[2] = best->vignette;
+    s.post[3] = best->filmic_tonemapper ? 1.0f : 0.0f;
+    s.tint[0] = best->tint.r;
+    s.tint[1] = best->tint.g;
+    s.tint[2] = best->tint.b;
+}
+
+rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden);
+
+} // namespace
+
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
+    rhi::LightSetup s = lights_only(w, view, skip_hidden);
+    add_atmosphere(w, view.eye, skip_hidden, s);
+    return s;
+}
+
+bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out) {
+    const reflect::TypeInfo& sky_type = reflect::type_of<world::Sky>();
+    const world::Sky* sky = nullptr;
+    for (u32 i = 0; i < w.count(sky_type) && !sky; ++i) {
+        if (!skip_hidden || !w.hidden_in_hierarchy(w.owner(sky_type, i))) sky = static_cast<const world::Sky*>(w.at(sky_type, i));
+    }
+    if (!sky) return false;
+    out = rhi::SkyDraw{};
+    // The inverse view-projection (general 4x4 inverse by cofactors).
+    const f32* m = view_proj.m;
+    f32 inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+    const f32 det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if (std::fabs(det) < 1e-12f) return false;
+    for (int i = 0; i < 16; ++i) out.inv_view_proj[i] = inv[i] / det;
+    const f32 b = sky->brightness;
+    const LinearColor* colors[3] = {&sky->zenith, &sky->horizon, &sky->ground};
+    f32* slots[3] = {out.zenith, out.horizon, out.ground};
+    for (int k = 0; k < 3; ++k) {
+        slots[k][0] = colors[k]->r * b;
+        slots[k][1] = colors[k]->g * b;
+        slots[k][2] = colors[k]->b * b;
+    }
+    out.camera[0] = eye.x;
+    out.camera[1] = eye.y;
+    out.camera[2] = eye.z;
+    const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
+    for (u32 i = 0; i < w.count(dir_type) && sky->sun_disc; ++i) {
+        const world::Entity e = w.owner(dir_type, i);
+        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
+        const Vec3 toward = -forward_of(w.world_matrix(e));  // the light travels along +X; the sun is the other way
+        out.sun_direction[0] = toward.x;
+        out.sun_direction[1] = toward.y;
+        out.sun_direction[2] = toward.z;
+        out.sun_direction[3] = std::cos(radians(sky->sun_size * 0.5f));
+        out.sun_color[0] = sky->sun_color.r * 4.0f;  // brighter than the sky around it
+        out.sun_color[1] = sky->sun_color.g * 4.0f;
+        out.sun_color[2] = sky->sun_color.b * 4.0f;
+        out.sun_color[3] = 1.0f;
+        break;
+    }
+    return true;
+}
+
+namespace {
+
+rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden) {
     const Vec3 eye = view.eye;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
@@ -216,5 +329,7 @@ rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool 
     s.local_tiles[0][3] = static_cast<f32>(tiles_used);  // tiles in use (read by the editor's shadow pass)
     return s;
 }
+
+} // namespace
 
 } // namespace lsd::editor

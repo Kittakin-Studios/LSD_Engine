@@ -19,7 +19,10 @@ struct LightView {
 
 constexpr u32 kShadowAtlasSize = 4096;  // sun: 2 x 2 cascades of 2048; local lights: 4 x 4 tiles of 1024
 
+// Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
+// The level's Sky, if it has one (sun disc from the first Directional Light).
+bool world_sky(const world::World& world, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out);
 
 // A black body's colour at `kelvin` (linear RGB, 6500 K about white), for light temperature.
 LinearColor temperature_color(f32 kelvin);

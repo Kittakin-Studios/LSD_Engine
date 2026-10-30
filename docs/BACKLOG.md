@@ -152,7 +152,7 @@ visual-script sounds, `stat audio`.
 - [~] Lights: Directional (lux), Point and Spot (lumens, attenuation radius, cone angles), Sky Light (ambient), colour temperature in Kelvin, World Settings exposure (EV100), 16 per frame (nearest local lights), Place tab entries, direction / range markers; needs shadows, rect / disc / sphere area lights (LTC), IES, light functions, mobility
 - [~] Shadows: cascaded sun shadows (4 cascades in a 4096 atlas, practical splits, stable spheres snapped to texels, 3x3 hardware PCF, slope bias + normal offset, pancaking; Cast Shadows / Shadow Distance on the Directional Light) on D3D12 and OpenGL; spot and point light shadows (a second 4096 atlas of 16 tiles: 1 per spot light, 6 cube faces per point light, nearest lights first, casters culled by range, Cast Shadows per light); needs quality per light, contact shadows, sun caster culling, shadow caching for static lights
 - [ ] Reflections: capture probes, screen-space reflections
-- [ ] Sky, atmosphere, height fog; sun angle drives sky colour; environment asset that bundles sky, fog and post settings **(S)**
+- [~] Sky, atmosphere, height fog: Sky component (zenith / horizon / ground gradient, sun disc from the first Directional Light; `draw_sky`), Height Fog component (exponential, height falloff integrated along the view ray, start distance, max opacity) on lit meshes, material graphs and the sky; needs sun angle driving the sky colour (scattering), fog on particles, an environment asset bundling sky / fog / post **(S)**
 - [ ] Instanced meshes (many copies, one draw) [Instanced Static Mesh]
 
 ### Animation
@@ -184,7 +184,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 
 ### Rendering
 
-- [ ] Post-process volume: exposure, bloom, grading, LUT, vignette, DOF, motion blur, AO, anti-aliasing (TAA / FXAA) [Post Process Volume]
+- [~] Post-process volume: Post Process Volume component (unbound or a box, priority): exposure compensation, ACES filmic tonemapper, saturation, contrast, tint, vignette, applied in the forward shaders; needs an HDR scene target for bloom, LUT grading, DOF, motion blur, AO, anti-aliasing (TAA / FXAA), blend weights between volumes [Post Process Volume]
 - [ ] Baked lightmaps + probes; light build button with progress; lightmap density view; volumetric fog [Lightmass]
 - [ ] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes
 - [ ] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]

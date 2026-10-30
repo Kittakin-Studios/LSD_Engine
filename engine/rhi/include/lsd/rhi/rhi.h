@@ -142,8 +142,28 @@ struct LightSetup {
     // Spot / point light shadows: one view-projection and atlas tile per shadow tile.
     f32 local_matrices[kMaxShadowTiles][16] = {};
     f32 local_tiles[kMaxShadowTiles][4] = {};
+    // Height fog and post-processing, applied after exposure (display colours, like a colour picker
+    // shows them): fog = density (1/m), height falloff (1/m), base height (m), max opacity (0: none);
+    // fog_color = rgb, start distance (m); post = saturation, contrast, vignette, filmic tonemapper (1 = on);
+    // tint = rgb gain. viewport = the pixel rectangle (the device fills it in from set_viewport).
+    f32 fog[4] = {};
+    f32 fog_color[4] = {};
+    f32 post[4] = {1.0f, 1.0f, 0.0f, 0.0f};
+    f32 tint[4] = {1.0f, 1.0f, 1.0f, 0.0f};
+    f32 viewport[4] = {};
 };
-static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80, "matches the shader's light buffer");
+static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 80, "matches the shader's light buffer");
+
+// A gradient sky with a sun disc behind everything (display colours; fog and post-processing apply).
+struct SkyDraw {
+    f32 inv_view_proj[16];
+    f32 zenith[4];
+    f32 horizon[4];
+    f32 ground[4];
+    f32 sun_direction[4];  // xyz towards the sun (normalised), w = disc size (cosine of its angular radius)
+    f32 sun_color[4];      // w = 0: no disc
+    f32 camera[4];
+};
 
 // The look before any light is placed (and of thumbnails): one sun, sky and ground ambient.
 LightSetup default_lights();
@@ -209,6 +229,8 @@ public:
     virtual void destroy_material_shader(MaterialShaderHandle shader) = 0;  // safe while the GPU may still use it
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;
+    // The sky over the whole viewport, without depth: draw it before the meshes (uses set_lights' fog / post).
+    virtual void draw_sky(const SkyDraw& sky) = 0;
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
     // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
     // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.

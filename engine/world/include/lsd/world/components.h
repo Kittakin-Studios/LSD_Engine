@@ -270,6 +270,47 @@ struct SkyLight {
     LSD_PROPERTY(Edit, Min = 0, Max = 20, Tooltip = "1 = the editor's default ambient") f32 intensity = 1.0f;
 };
 
+// The sky behind everything (Unreal's Sky Atmosphere, as a gradient): colours as they appear, a sun
+// disc in the first Directional Light's direction. Without one the viewport keeps its plain colour.
+LSD_STRUCT(Component, Category = "Environment")
+struct Sky {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Straight up") LinearColor zenith = LinearColor::hex(0x2F6FC4);
+    LSD_PROPERTY(Edit, Tooltip = "At the horizon (match the fog colour for a seamless distance)") LinearColor horizon = LinearColor::hex(0xB8D2EA);
+    LSD_PROPERTY(Edit, Tooltip = "Below the horizon") LinearColor ground = LinearColor::hex(0x4A4640);
+    LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 brightness = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Draw the sun where the Directional Light shines from") bool sun_disc = true;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0.1, Max = 10) f32 sun_size = 0.8f;
+    LSD_PROPERTY(Edit) LinearColor sun_color = LinearColor::hex(0xFFF2D6);
+};
+
+// Exponential height fog (Unreal's Exponential Height Fog): thicker low down, thinning with height.
+LSD_STRUCT(Component, Category = "Environment")
+struct HeightFog {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How thick at the fog's height (per metre)") f32 density = 0.01f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "How fast it thins going up (per metre); 0 = the same everywhere") f32 height_falloff = 0.2f;
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB8D2EA);
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "No fog nearer than this") f32 start_distance = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Never thicker than this (1 = can hide everything)") f32 max_opacity = 1.0f;
+};
+
+// Colour grading and camera effects (Unreal's Post Process Volume): applies while the camera is
+// inside its box (the unit cube scaled by the transform, like the other volumes) or everywhere if
+// Unbound; the highest Priority wins.
+LSD_STRUCT(Component, Category = "Environment")
+struct PostProcessVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Everywhere, not just inside the box") bool unbound = true;
+    LSD_PROPERTY(Edit) i32 priority = 0;
+    LSD_PROPERTY(Edit, Units = "EV", Min = -10, Max = 10, Tooltip = "Brighter (+) or darker (-) on top of World Settings exposure") f32 exposure_compensation = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Filmic (ACES) curve: soft highlights instead of clipping") bool filmic_tonemapper = true;
+    LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "0 = black and white") f32 saturation = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 2) f32 contrast = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Multiplies the image (colour grading gain)") LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Darker corners") f32 vignette = 0.3f;
+};
+
 // Per-level settings (Unreal's World Settings), saved in the level file.
 LSD_STRUCT(Category = "World")
 struct WorldSettings {

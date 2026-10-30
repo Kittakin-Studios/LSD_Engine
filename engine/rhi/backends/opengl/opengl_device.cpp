@@ -96,6 +96,7 @@ layout(std140, binding = 1) uniform Lights {
     float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16];
     mat4 shadow_vp[4]; vec4 shadow_tile[4]; vec4 shadow_split; vec4 shadow_info;
     mat4 local_vp[16]; vec4 local_tile[16];
+    vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px;
 };
 layout(binding = 3) uniform sampler2DShadow shadow_tex;
 layout(binding = 4) uniform sampler2DShadow local_shadow_tex;
@@ -147,6 +148,25 @@ out vec4 o_color;
 //@MATERIAL
 const float PI = 3.14159265;
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
+    c *= tint.rgb;
+    if (post.w > 0.5) c = aces(c);
+    if (fog.w > 0.0) {
+        float d = max(length(wpos - cam) - fog_color.w, 0.0);
+        float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
+        float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
+        c = mix(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+    }
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = max(mix(vec3(luma), c, post.x), 0.0);
+    c = max((c - 0.18) * post.y + 0.18, 0.0);
+    if (post.z > 0.0 && viewport_px.z > 0.0) {
+        vec2 uv = (pixel - viewport_px.xy) / viewport_px.zw - 0.5;
+        c *= 1.0 - post.z * smoothstep(0.1, 0.5, dot(uv, uv));
+    }
+    return c;
+}
 vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
     vec3 dp1 = dFdx(wpos), dp2 = dFdy(wpos);
     vec2 duv1 = dFdx(uv), duv2 = dFdy(uv);
@@ -156,6 +176,7 @@ vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
     float inv = inversesqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
     return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
 }
+#ifndef SKY
 void main() {
     vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
 #ifdef LSD_MATERIAL
@@ -217,7 +238,33 @@ void main() {
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    o_color = vec4(to_srgb(lit * exposure), base.a);
+    o_color = vec4(to_srgb(finish(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy)), base.a);
+}
+#else
+// The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
+uniform vec4 u_sky[6];
+in vec3 v_dir;
+void main() {
+    vec3 d = normalize(v_dir);
+    vec3 c = d.z >= 0.0 ? mix(u_sky[1].rgb, u_sky[0].rgb, pow(clamp(d.z, 0.0, 1.0), 0.6)) : mix(u_sky[1].rgb, u_sky[2].rgb, clamp(-d.z * 4.0, 0.0, 1.0));
+    if (u_sky[4].w > 0.0) {
+        float s = dot(d, u_sky[3].xyz);
+        c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0));
+    }
+    o_color = vec4(to_srgb(finish(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy)), 1.0);
+}
+#endif
+)";
+
+constexpr char kSkyVertexShader[] = R"(#version 460 core
+uniform mat4 u_mvp;  // the inverse view-projection
+uniform vec3 u_camera;
+out vec3 v_dir;
+void main() {
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0;
+    gl_Position = vec4(p, 1.0, 1.0);
+    vec4 w = u_mvp * vec4(p, 1.0, 1.0);
+    v_dir = w.xyz / w.w - u_camera;
 }
 )";
 
@@ -415,7 +462,7 @@ public:
     ~OpenGLDevice() override {
         if (!context_) return;
         if (debug_ui_) ImGui_ImplOpenGL3_Shutdown();
-        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_}) {
+        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_, sky_program_}) {
             if (program) gl_.glDeleteProgram(program);
         }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
@@ -640,6 +687,10 @@ public:
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         // GL's window origin is bottom-left; the RHI's is top-left.
         const GLint gl_y = static_cast<GLint>(static_cast<f32>(target_height_) - y - height);
+        viewport_[0] = x;
+        viewport_[1] = static_cast<f32>(gl_y);  // gl_FragCoord counts from the bottom
+        viewport_[2] = width;
+        viewport_[3] = height;
         glViewport(static_cast<GLint>(x), gl_y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         glScissor(static_cast<GLint>(x), gl_y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         glEnable(GL_SCISSOR_TEST);
@@ -735,6 +786,7 @@ public:
 
     void set_lights(const LightSetup& lights) override {
         gl_.glNamedBufferSubData(light_ubo_, 0, sizeof lights, &lights);  // GL keeps earlier draws' data
+        gl_.glNamedBufferSubData(light_ubo_, offsetof(LightSetup, viewport), sizeof viewport_, viewport_);
         gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 1, light_ubo_);
     }
 
@@ -844,6 +896,22 @@ public:
         particle_offset_ += bytes;
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
+    }
+
+    void draw_sky(const SkyDraw& sky) override {
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        gl_.glUseProgram(sky_program_);
+        gl_.glUniformMatrix4fv(sky_mvp_, 1, GL_FALSE, sky.inv_view_proj);
+        gl_.glUniform3f(sky_camera_, sky.camera[0], sky.camera[1], sky.camera[2]);
+        const f32 values[24] = {sky.zenith[0], sky.zenith[1], sky.zenith[2], sky.zenith[3], sky.horizon[0], sky.horizon[1], sky.horizon[2], sky.horizon[3],
+                                sky.ground[0], sky.ground[1], sky.ground[2], sky.ground[3], sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2],
+                                sky.sun_direction[3], sky.sun_color[0], sky.sun_color[1], sky.sun_color[2], sky.sun_color[3], sky.camera[0], sky.camera[1], sky.camera[2], 0.0f};
+        gl_.glUniform4fv(sky_values_, 6, values);
+        gl_.glBindVertexArray(vao_);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
@@ -1055,6 +1123,13 @@ private:
         gl_.glCreateVertexArrays(1, &line_vao_);
         attribute(line_vao_, 0, 3, offsetof(LineVertex, position));
         attribute(line_vao_, 1, 4, offsetof(LineVertex, color));
+        std::string sky_fragment = kMeshFragmentShader;
+        sky_fragment.insert(sky_fragment.find('\n') + 1, "#define SKY\n");
+        sky_program_ = link(kSkyVertexShader, sky_fragment.c_str());
+        if (!sky_program_) return false;
+        sky_mvp_ = gl_.glGetUniformLocation(sky_program_, "u_mvp");
+        sky_camera_ = gl_.glGetUniformLocation(sky_program_, "u_camera");
+        sky_values_ = gl_.glGetUniformLocation(sky_program_, "u_sky");
         particle_program_ = link(kParticleVertexShader, kParticleFragmentShader);
         if (!particle_program_) return false;
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
@@ -1086,6 +1161,9 @@ private:
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint joint_ubo_ = 0;
     GLuint param_ubo_ = 0;
+    GLuint sky_program_ = 0;
+    GLint sky_mvp_ = -1, sky_camera_ = -1, sky_values_ = -1;
+    f32 viewport_[4] = {};  // the last set_viewport (top-left origin), for the shaders' vignette
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
     GLint particle_mvp_ = -1;
     u32 particle_offset_ = 0;

@@ -69,6 +69,7 @@ cbuffer Lights : register(b1) {
     float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16];
     float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
     float4x4 local_vp[16]; float4 local_tile[16];
+    float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px;
 };
 Texture2D<float> shadow_tex : register(t3);
 Texture2D<float> local_shadow_tex : register(t4);
@@ -147,6 +148,28 @@ VsOut vs_main(VsIn i) {
 //@MATERIAL
 static const float PI = 3.14159265;
 float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+// Fog and post-processing on an exposed colour (see rhi::LightSetup): tint, filmic tonemap, height
+// fog, saturation, contrast, vignette. `pixel` is SV_Position.xy.
+float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
+float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel) {
+    c *= tint.rgb;
+    if (post.w > 0.5) c = aces(c);
+    if (fog.w > 0.0) {  // exponential height fog: density falls off with height, integrated along the view ray
+        const float d = max(length(wpos - cam) - fog_color.w, 0.0);
+        const float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
+        const float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
+        c = lerp(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+    }
+    const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    c = max(lerp(luma.xxx, c, post.x), 0.0);
+    c = max((c - 0.18) * post.y + 0.18, 0.0);
+    if (post.z > 0.0 && viewport_px.z > 0.0) {
+        const float2 uv = (pixel - viewport_px.xy) / viewport_px.zw - 0.5;
+        c *= 1.0 - post.z * smoothstep(0.1, 0.5, dot(uv, uv));
+    }
+    return c;
+}
+
 // Normal map without stored tangents: a tangent frame from screen derivatives.
 float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
     const float3 dp1 = ddx(wpos), dp2 = ddy(wpos);
@@ -218,7 +241,28 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    return float4(to_srgb(lit * exposure), base.a);
+    return float4(to_srgb(finish(lit * exposure, i.wpos, mat1.yzw, i.pos.xy)), base.a);
+}
+
+// The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
+// horizon, n2 ground, w0 sun direction + size, w1 sun colour, mat1.yzw camera).
+struct SkyOut { float4 pos : SV_Position; float3 dir : TEXCOORD0; };
+SkyOut vs_sky(uint id : SV_VertexID) {
+    SkyOut o;
+    const float2 p = float2((id << 1) & 2, id & 2) * 2.0 - 1.0;  // one triangle over the screen
+    o.pos = float4(p, 1.0, 1.0);
+    const float4 w = mul(mvp, float4(p, 1.0, 1.0));
+    o.dir = w.xyz / w.w - mat1.yzw;
+    return o;
+}
+float4 ps_sky(SkyOut i) : SV_Target {
+    const float3 d = normalize(i.dir);
+    float3 c = d.z >= 0.0 ? lerp(n1.rgb, n0.rgb, pow(saturate(d.z), 0.6)) : lerp(n1.rgb, n2.rgb, saturate(-d.z * 4.0));
+    if (w1.w > 0.0) {
+        const float s = dot(d, w0.xyz);
+        c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0));  // disc + glow
+    }
+    return float4(to_srgb(finish(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy)), 1.0);
 }
 )";
 
@@ -677,6 +721,10 @@ public:
     }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
+        viewport_[0] = x;
+        viewport_[1] = y;
+        viewport_[2] = width;
+        viewport_[3] = height;
         const D3D12_VIEWPORT viewport{x, y, width, height, 0.0f, 1.0f};
         const D3D12_RECT scissor{static_cast<LONG>(x), static_cast<LONG>(y), static_cast<LONG>(x + width), static_cast<LONG>(y + height)};
         list_->RSSetViewports(1, &viewport);
@@ -792,6 +840,7 @@ public:
         // Each call takes the next slot of this frame's buffer, so earlier draws keep their lights.
         if (light_offset_ + kLightSlot > kLightSlot * kLightSlots) light_offset_ = 0;
         std::memcpy(light_mapped_[frame_] + light_offset_, &lights, sizeof lights);
+        std::memcpy(light_mapped_[frame_] + light_offset_ + offsetof(LightSetup, viewport), viewport_, sizeof viewport_);
         current_lights_ = light_buffers_[frame_]->GetGPUVirtualAddress() + light_offset_;
         light_offset_ += kLightSlot;
     }
@@ -922,6 +971,23 @@ public:
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->DrawInstanced(vertex_count, 1, 0, 0);
+    }
+
+    void draw_sky(const SkyDraw& sky) override {
+        f32 constants[kRootConstants] = {};
+        std::memcpy(constants, sky.inv_view_proj, sizeof sky.inv_view_proj);
+        std::memcpy(constants + 16, sky.zenith, 16);
+        std::memcpy(constants + 20, sky.horizon, 16);
+        std::memcpy(constants + 24, sky.ground, 16);
+        std::memcpy(constants + 28, sky.sun_direction, 16);
+        std::memcpy(constants + 32, sky.sun_color, 16);
+        std::memcpy(constants + 49, sky.camera, 12);
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, kRootConstants, constants, 0);
+        list_->SetGraphicsRootConstantBufferView(4, current_lights_);
+        list_->SetPipelineState(sky_pipeline_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list_->DrawInstanced(3, 1, 0, 0);
     }
 
     void begin_frame(const f32 clear_color[4]) override {
@@ -1267,7 +1333,27 @@ private:
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
                create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
                create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
-               create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_);
+               create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_) && create_sky_pipeline();
+    }
+
+    bool create_sky_pipeline() {
+        ComPtr<ID3DBlob> vs, ps;
+        if (!compile(kMeshHlsl, sizeof kMeshHlsl - 1, "vs_sky", "vs_5_0", vs, nullptr) || !compile(kMeshHlsl, sizeof kMeshHlsl - 1, "ps_sky", "ps_5_0", ps, nullptr)) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = root_signature_.Get();
+        pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso.SampleMask = UINT_MAX;
+        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso.DepthStencilState.DepthEnable = FALSE;  // behind everything: drawn first, depth untouched
+        pso.DSVFormat = kDepthFormat;
+        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso.NumRenderTargets = 1;
+        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.SampleDesc.Count = 1;
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&sky_pipeline_)), "CreateGraphicsPipelineState (sky)");
     }
 
     bool create_particle_pipeline(bool additive, ComPtr<ID3D12PipelineState>& out) {
@@ -1437,6 +1523,8 @@ private:
     u8* particle_mapped_[kBackBufferCount] = {};
     u32 particle_offset_ = 0;
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
+    ComPtr<ID3D12PipelineState> sky_pipeline_;
+    f32 viewport_[4] = {};  // the last set_viewport, for the shaders' vignette
     MaterialShader material_shaders_[kMaxMaterialShaders];
     ShadowMap shadow_maps_[kMaxShadowMaps];
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;

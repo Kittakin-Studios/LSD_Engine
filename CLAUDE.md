@@ -176,7 +176,8 @@ by Material Instances of a graph.
 
 **Milestone 6 — in progress, exit test works on this PC.** File > Package Project (editor/packaging.cpp)
 writes Build/<Project>/ (Release exe + Content + Config + VC++ runtime + game.json); the exe in a
-folder with game.json (or `-game`) runs as the game. Save games (`lsd.save_game` / `load_game`, Save / Load Value nodes). Next: fog / sky / post, AI, UI.
+folder with game.json (or `-game`) runs as the game. Save games (`lsd.save_game` / `load_game`, Save / Load Value nodes). Sky, Height Fog and Post Process Volume components
+(forward: fog / grading in the lit shader, `draw_sky`). Next: AI (navmesh, behaviour trees), UI.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
