@@ -305,6 +305,19 @@ struct Api {
         lua_pushnumber(L, n ? world::spline_length(points, n, closed) : 0.0);
         return 1;
     }
+    static int play_sound(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const char* name = luaL_checkstring(L, 1);
+        const bool spatial = lua_gettop(L) >= 4;
+        const Vec3 at = spatial ? check_vec3(L, 2) : Vec3{};
+        lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
+        return 1;
+    }
+    static int stop_sound(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.stop_sound) host.stop_sound(host.user, static_cast<u32>(luaL_checknumber(L, 1)));
+        return 0;
+    }
     static int curve(lua_State* L) {
         ScriptSystem& self = system(L);
         const ScriptHost& host = self.host_;
@@ -488,7 +501,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
-        {"table", Api::table}, {"curve", Api::curve}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"table", Api::table}, {"curve", Api::curve},
+        {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

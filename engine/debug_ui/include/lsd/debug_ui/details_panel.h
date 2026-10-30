@@ -18,6 +18,7 @@ struct DetailsStyle {
     // their right-click menu (called with custom_user; only top-level properties are asked about).
     bool (*is_overridden)(void* user, const reflect::Property& property) = nullptr;
     void (*revert)(void* user, const reflect::Property& property) = nullptr;
+    const char* categories = nullptr;  // draw_details: only these categories ("Asset,Sound"); null = all
 };
 
 // Draws the object's Edit and Visible properties into the current ImGui window.

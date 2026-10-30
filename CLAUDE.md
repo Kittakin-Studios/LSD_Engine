@@ -85,7 +85,8 @@ engine/input/       Input Action / Mapping Context data assets and the InputSyst
 engine/physics/     Jolt behind a small API: bodies (box/sphere/capsule) and the player's CharacterVirtual
 engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload;
                     graph.h: visual-script graphs and their compiler to Lua
-engine/audio, ui    placeholders
+engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
+engine/ui           placeholder
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
                     camera), Outliner, Details (components), Content Browser + Place, undo history
                     (whole-level snapshots), Play-in-Editor; theme in Config/, user settings in Saved/
@@ -147,13 +148,19 @@ component (fixed / hinge / ball / slider, limits, motors). Data tables
 (.csv assets, grid editor, `lsd.table`). Input
 triggers (Hold, Tap...). Splines + Spline Follower (moving platforms). Curves (Curve
 data asset with a graph editor, `lsd.curve`). Prefab
-per-instance overrides (PrefabInstance.overrides, Revert to Prefab). Next: Player Controller / State,
-Lua debugger, user-defined structs and enums.
+per-instance overrides (PrefabInstance.overrides, Revert to Prefab). Left for later: Player Controller /
+State, Lua debugger, user-defined structs and enums.
+
+**Milestone 5 — in progress.** Audio foundation on miniaudio (`engine/audio`): Sound assets with .meta
+settings, Sound Class / Attenuation / Concurrency data assets, Sound Emitter, trigger sounds, Lua and
+node playback, `stat audio`. Next: Sound Cue graph, Sound Mix, Submix effects, Audio Volumes (the
+audio worked example), then materials, animation, particles.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
 `-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`,
-`-exec="<console line>"` (repeatable, e.g. `-exec="view top" -exec="viewmode wireframe"`).
+`-exec="<console line>"` (repeatable, e.g. `-exec="view top" -exec="viewmode wireframe"`),
+`-nosound` (no audio device: use it for every automated run so test sounds never play on the speakers).
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no

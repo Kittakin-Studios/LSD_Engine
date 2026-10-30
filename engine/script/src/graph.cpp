@@ -54,6 +54,10 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "__color($1, $2)", {}},
     {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
+    {"PlaySound2D", "Play Sound 2D", "Audio", "Plays a sound asset (by name) everywhere: UI, music, stingers",
+     {kExecIn, {"Sound", PinType::String, "Click"}}, 0, {kExecOut}, 0, "lsd.play_sound($1)", {}},
+    {"PlaySoundAt", "Play Sound at Location", "Audio", "Plays a sound asset (by name) in the world, faded by distance",
+     {kExecIn, {"Sound", PinType::String, "Click"}, {"Location", PinType::Vector, "0,0,0"}}, 0, {kExecOut}, 0, "__sound($1, $2)", {}},
     {"Destroy", "Destroy", "Objects", "Removes an object and its children", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.destroy($1)", {}},
     {"SetVariable", "Set Variable", "Variables", "Stores a number on this object", {kExecIn, {"Name", PinType::String, "health"}, {"Value", PinType::Float, "0"}}, 0,
      {kExecOut}, 0, "self[$1] = $2", {}},
@@ -116,6 +120,7 @@ local function __setrot(e, v) lsd.set_rotation(e, v.x, v.y, v.z) end
 local function __addrot(e, v) local x, y, z = lsd.rotation(e) lsd.set_rotation(e, x + v.x, y + v.y, z + v.z) end
 local function __spawn(name, v) return lsd.spawn(name, v.x, v.y, v.z) end
 local function __color(e, v) lsd.set(e, "StaticMesh", {color = {r = v.x, g = v.y, b = v.z}}) end
+local function __sound(name, v) return lsd.play_sound(name, v.x, v.y, v.z) end
 local function __cell(t, r, c) local d = lsd.table(t) local row = d and d[r] return row and row[c] end
 local function __str(v)
   if type(v) == "table" then return string.format("(%g, %g, %g)", v.x, v.y, v.z) end

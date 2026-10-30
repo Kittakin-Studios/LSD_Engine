@@ -4,6 +4,7 @@
 #include "table_editor.h"
 #include "mesh_cache.h"
 #include "play_session.h"
+#include "sound_player.h"
 #include "thumbnails.h"
 #include "transactions.h"
 
@@ -13,6 +14,7 @@
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/curve.h"
+#include "lsd/audio/audio.h"
 #include "lsd/foundation/system_info.h"
 #include "lsd/render/grid.h"
 #include "lsd/render/mesh.h"
@@ -121,8 +123,9 @@ void register_console(EditorState& s) {
     console::add_command("stat", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         if (std::strcmp(args, "fps") == 0 || std::strcmp(args, "unit") == 0) st.show_stats = !st.show_stats;
-        else LSD_LOG_WARN("console", "stat: try 'stat fps'");
-    }, &s, "stat fps: toggle the fps / draw call overlay");
+        else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
+        else LSD_LOG_WARN("console", "stat: try 'stat fps' or 'stat audio'");
+    }, &s, "stat fps | stat audio: toggle the fps / draw call or the active sounds overlay");
     console::add_command("view", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"perspective", "top", "front", "right"};
@@ -182,7 +185,7 @@ void register_console(EditorState& s) {
 bool import_file(const char* source, const char* content_folder, char* status, lsd::usize capacity) {
     const fs::path src(source);
     if (lsd::asset::type_from_extension(src.extension().string().c_str()) == lsd::asset::AssetType::Unknown) {
-        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .csv)", src.filename().string().c_str());
+        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .csv, .wav, .ogg, .flac, .mp3)", src.filename().string().c_str());
         return false;
     }
     std::error_code error;
@@ -271,6 +274,7 @@ int main(int argc, char** argv) {
     const char* import_arg = nullptr;  // -import=<file>: same as dropping the file on the editor
     const char* place_arg = nullptr;   // -place=<asset name>: place that mesh asset at (-2, 0, 0) on startup
     const char* level_arg = nullptr;   // -level=<path>: open this level instead of the last one
+    bool no_sound = false;             // -nosound: no audio device (automated runs stay quiet)
     bool play_arg = false;             // -play: start Play-in-Editor right away
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
@@ -286,6 +290,7 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-import=", 8) == 0) import_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-place=", 7) == 0) place_arg = argv[i] + 7;
         else if (std::strncmp(argv[i], "-level=", 7) == 0) level_arg = argv[i] + 7;
+        else if (std::strcmp(argv[i], "-nosound") == 0) no_sound = true;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
@@ -348,6 +353,9 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundAttenuation>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundConcurrency>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
@@ -406,7 +414,13 @@ int main(int argc, char** argv) {
     lsd::render::GridColors current_grid = grid_colors(state.theme);
     lsd::render::GpuLines grid = lsd::render::create_grid(*device, allocator, current_grid);
 
+    lsd::audio::AudioSystem audio;
+    audio.init(!no_sound);
+    lsd::editor::SoundPlayer sounds;
+    sounds.bind(&audio, &registry);
+    state.sounds = &sounds;
     lsd::editor::PlaySession play;
+    play.set_sounds(&sounds);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
@@ -556,6 +570,10 @@ int main(int argc, char** argv) {
             state.step_requested = false;
             state.player_feet = play.feet();
         }
+        // The ears: the player's camera in Play, else the editor camera.
+        if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.forward());
+        else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
+        audio.update();
         mouse_dx = mouse_dy = 0.0f;
 
         // Window title: level name and unsaved marker, like Unreal.
@@ -608,6 +626,8 @@ int main(int argc, char** argv) {
     lsd::log::set_sink(nullptr, nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     lsd::reflect::save_file(state.settings, kSettingsPath);
+    play.stop();
+    audio.shutdown();
     SDL_SetWindowRelativeMouseMode(window, false);
     if (gamepad) SDL_CloseGamepad(gamepad);
     lsd::render::destroy_lines(*device, grid);

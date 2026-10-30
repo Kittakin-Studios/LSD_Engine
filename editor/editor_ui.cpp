@@ -1,5 +1,6 @@
 #include "editor_ui.h"
 #include "graph_editor.h"
+#include "sound_player.h"
 #include "table_editor.h"
 
 #include "mesh_cache.h"
@@ -58,7 +59,7 @@ struct PlaceItem {
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
-    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Empty", nullptr, nullptr},
+    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Empty", nullptr, nullptr},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
@@ -1034,6 +1035,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                 place(s, record->name, key, nullptr, drop_point(s, ray));
             } else if (record && record->type == asset::AssetType::Prefab) {
                 place_prefab(s, *record, drop_point(s, ray));
+            } else if (record && record->type == asset::AssetType::Sound) {  // a Sound Emitter, like dropping a Sound Wave in Unreal
+                const Entity e = place(s, record->name, nullptr, "SoundEmitter", drop_point(s, ray) + Vec3{0, 0, 1});
+                asset::to_string(guid, s.world->get<world::SoundEmitter>(e)->sound);
             }
         }
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPlacePayload)) {
@@ -1325,12 +1329,14 @@ void draw_outliner(EditorState& s) {
 // ---- Asset references and keys in Details ----
 
 void start_rename(EditorState& s, asset::Guid guid, const char* folder, const char* current);
+void toggle_preview(EditorState& s, const asset::AssetRecord& r);
 
 bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
+    if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound;
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
 
@@ -1882,9 +1888,14 @@ void draw_details_panel(EditorState& s) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Revert")) s.registry->load_meta(*selected, s.selected_meta);
+                if (selected->type == asset::AssetType::Sound) {
+                    ImGui::SameLine();
+                    if (ImGui::Button(s.sounds && s.sounds->audio()->playing(s.preview_voice) ? "Stop" : "Play")) toggle_preview(s, *selected);
+                }
                 if (s.status[0]) ImGui::TextDisabled("%s", s.status);
                 ImGui::BeginChild("DetailsRows");
-                const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}};
+                DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
+                style.categories = selected->type == asset::AssetType::Mesh ? "Asset,Import" : selected->type == asset::AssetType::Sound ? "Asset,Sound" : "Asset";
                 draw_details(reflect::type_of<asset::AssetMeta>(), &s.selected_meta, &style);
                 ImGui::EndChild();
             } else {
@@ -1933,6 +1944,20 @@ void open_external(EditorState& s, const asset::AssetRecord& r) {
     s.registry->source_path(r, path, sizeof path);
     std::error_code error;
     SDL_OpenURL(("file:///" + std::filesystem::absolute(path, error).generic_string()).c_str());
+}
+
+// Content Browser preview: plays the sound with its settings (not spatialised), or stops it.
+void toggle_preview(EditorState& s, const asset::AssetRecord& r) {
+    if (!s.sounds) return;
+    audio::AudioSystem& a = *s.sounds->audio();
+    if (a.playing(s.preview_voice)) {
+        a.stop(s.preview_voice);
+        s.preview_voice = 0;
+        return;
+    }
+    char guid[33];
+    asset::to_string(r.guid, guid);
+    s.preview_voice = s.sounds->play(guid, false, {});
 }
 
 void show_in_explorer(const char* folder) {
@@ -2079,7 +2104,7 @@ void draw_asset_grid(EditorState& s) {
     ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0Visual Scripts\0Data Tables\0");
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0Visual Scripts\0Data Tables\0Sounds\0");
     ImGui::SameLine();
     ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
@@ -2090,7 +2115,8 @@ void draw_asset_grid(EditorState& s) {
                                 : s.type_filter == 3 ? asset::AssetType::Data : s.type_filter == 4 ? asset::AssetType::Prefab
                                 : s.type_filter == 5 ? asset::AssetType::Script
                                 : s.type_filter == 6 ? asset::AssetType::Graph
-                                : s.type_filter == 7 ? asset::AssetType::Table : asset::AssetType::Unknown;
+                                : s.type_filter == 7 ? asset::AssetType::Table
+                                : s.type_filter == 8 ? asset::AssetType::Sound : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
@@ -2220,6 +2246,7 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
             if (r.type == asset::AssetType::Graph && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
+            if (r.type == asset::AssetType::Sound && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toggle_preview(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
             if (level && ImGui::MenuItem("Open Level")) {
@@ -2230,6 +2257,7 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Script && ImGui::MenuItem("Edit Script")) open_external(s, r);
             if (r.type == asset::AssetType::Graph && ImGui::MenuItem("Edit Visual Script")) open_graph(s, r);
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Edit Data Table")) open_table(s, r);
+            if (r.type == asset::AssetType::Sound && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem("Delete...")) {
@@ -2404,6 +2432,24 @@ void draw_output_log(EditorState& s) {
 }
 
 void draw_stats(EditorState& s, ImVec2 pos, ImVec2 size) {
+    if (s.show_audio_stats && s.sounds) {  // `stat audio`: Unreal's au.Debug.Sounds
+        const audio::AudioSystem& a = *s.sounds->audio();
+        char line[160];
+        std::snprintf(line, sizeof line, "Audio: %u voice%s%s", a.voice_count(), a.voice_count() == 1 ? "" : "s", a.has_device() ? "" : "  (no device: silent)");
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        f32 y = pos.y + size.y - 24.0f - static_cast<f32>(a.voice_count()) * 16.0f;
+        fg->AddText(ImVec2(pos.x + 12, y), IM_COL32(120, 230, 255, 255), line);
+        for (u32 i = 0; i < a.voice_count(); ++i) {
+            const audio::VoiceInfo v = a.voice(i);
+            // Columns placed in pixels: the UI font is proportional, so padding with spaces does not line up.
+            y += 16.0f;
+            fg->AddText(ImVec2(pos.x + 20, y), IM_COL32(200, 240, 255, 255), v.name);
+            fg->AddText(ImVec2(pos.x + 200, y), IM_COL32(200, 240, 255, 255), a.class_name(v.sound_class));
+            if (v.spatial) std::snprintf(line, sizeof line, "vol %.2f   %.1f m", static_cast<f64>(v.volume), static_cast<f64>(v.distance));
+            else std::snprintf(line, sizeof line, "vol %.2f   2D", static_cast<f64>(v.volume));
+            fg->AddText(ImVec2(pos.x + 340, y), IM_COL32(200, 240, 255, 255), line);
+        }
+    }
     if (!s.show_stats) return;
     static f32 smoothed = 0.016f;
     smoothed = smoothed * 0.95f + ImGui::GetIO().DeltaTime * 0.05f;

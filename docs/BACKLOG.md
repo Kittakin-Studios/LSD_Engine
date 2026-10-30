@@ -134,7 +134,7 @@ Exit test: the audio worked example works end to end.
 
 ### Import
 
-- [ ] Texture import (PNG, TGA, EXR, HDR; BC compression, mips, sRGB, normal maps) and audio import (WAV, OGG, FLAC)
+- [~] Audio import: .wav .ogg .flac .mp3 dropped into Content become Sound assets (settings in their .meta); needs texture import (PNG, TGA, EXR, HDR; BC compression, mips, sRGB, normal maps), waveform thumbnails
 - [ ] Multiple meshes and materials per imported file; scene import as a prefab; skeletal meshes, skeletons, animations
 - [ ] Reimport on source change, import settings per asset, batch import
 - [ ] Live link to Blender/Maya: re-export pushes into the running editor and game **(S)** [Live Link]
@@ -161,7 +161,7 @@ Exit test: the audio worked example works end to end.
 
 ### Audio
 
-- [ ] Audio (miniaudio): Sound Wave, Sound Cue, Sound Class, Sound Mix, Attenuation, Submix, emitters, concurrency limits
+- [~] Audio (miniaudio, `engine/audio`): Sound assets (volume, pitch, loop, stream, class, attenuation, concurrency, subtitle), preview in the Content Browser, Sound Class tree (volume groups), Sound Attenuation, Sound Concurrency (stop oldest / quietest / refuse), Sound Emitter component (drag a sound into the viewport), Trigger Volume enter sound, `lsd.play_sound` / `stop_sound`, Play Sound 2D / at Location nodes, `stat audio` overlay, `-nosound`; needs Sound Cue graph, Sound Mix push / pop, Submix effects, settings sliders
 - [ ] Reverb zones from audio volumes; occlusion by trace
 - [ ] Music: crossfades and layers driven by game state
 

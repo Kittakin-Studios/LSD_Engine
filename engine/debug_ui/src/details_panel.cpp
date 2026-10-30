@@ -325,6 +325,11 @@ bool draw_details(const reflect::TypeInfo& type, void* object, const DetailsStyl
         bool seen = false;
         for (u32 j = 0; j < i; ++j) seen = seen || std::strcmp(type.properties[j].category, category) == 0;
         if (seen) continue;
+        if (style && style->categories) {
+            const char* found = std::strstr(style->categories, category);
+            const usize n = std::strlen(category);
+            if (!found || (found[n] != ',' && found[n] != '\0')) continue;
+        }
         if (ImGui::CollapsingHeader(category[0] ? category : "Default", ImGuiTreeNodeFlags_DefaultOpen)) {
             changed |= draw_fields(type, static_cast<u8*>(object), static_cast<const u8*>(type.defaults), category);
         }

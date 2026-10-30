@@ -7,6 +7,7 @@
 // Script component run their Lua file (engine/script) after physics each frame; Trigger Volumes
 // send them on_overlap_begin / on_overlap_end when the Character or a simulated object enters or leaves.
 #include "mesh_cache.h"
+#include "sound_player.h"
 
 #include "lsd/asset/asset_registry.h"
 #include "lsd/input/input.h"
@@ -34,6 +35,7 @@ public:
     Vec3 forward() const;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
+    void set_sounds(SoundPlayer* sounds) { sounds_ = sounds; }
 
 private:
     struct Simulated {
@@ -82,6 +84,13 @@ private:
         u32 body;       // kinematic body, or physics::kWorldBody when it has no collision
         Vec3 scale, centre;
     };
+    SoundPlayer* sounds_ = nullptr;
+    struct Emitter {
+        world::Entity entity;
+        u32 voice;
+    };
+    Emitter emitters_[256];
+    u32 emitter_count_ = 0;
     Follower followers_[256];
     u32 follower_count_ = 0;
     void update_followers(world::World& world, f32 dt);

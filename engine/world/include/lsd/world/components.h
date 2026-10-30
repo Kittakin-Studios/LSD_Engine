@@ -47,6 +47,16 @@ LSD_STRUCT(Component, Category = "Volumes")
 struct TriggerVolume {
     LSD_GENERATED()
     LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Played here when something enters (no script needed)") char enter_sound[33] = "";
+};
+
+// A sound in the level (Unreal's Ambient Sound): ambience, a river, a crackling torch. Drag a
+// sound from the Content Browser into the viewport to make one.
+LSD_STRUCT(Component, Category = "Audio")
+struct SoundEmitter {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Sound") char sound[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Starts when Play starts; it follows the object if it moves") bool auto_play = true;
 };
 
 // Where Play puts the player; facing = the entity's Z rotation.

@@ -197,3 +197,14 @@ else()
   target_compile_options(luajit PRIVATE -w)
   target_link_libraries(luajit PUBLIC m dl)
 endif()
+
+# miniaudio (public domain / MIT-0): audio device, decoding (WAV, FLAC, MP3; OGG through its bundled
+# stb_vorbis), mixing, 3D spatialisation. Fetch only: engine/audio compiles the implementation.
+FetchContent_Declare(miniaudio
+  GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+  GIT_TAG 0.11.25
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(miniaudio)
+set(LSD_MINIAUDIO_DIR ${miniaudio_SOURCE_DIR} PARENT_SCOPE)

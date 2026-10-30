@@ -88,6 +88,8 @@ PlaySession::~PlaySession() { stop(); }
 
 void PlaySession::stop() {
     scripts_.stop();
+    if (sounds_) sounds_->stop_all_and_forget();
+    emitter_count_ = 0;
     delete physics_;
     physics_ = nullptr;
     simulated_count_ = 0;
@@ -229,6 +231,26 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (r) self.registry_->source_path(*r, out, capacity);
         return r != nullptr;
     };
+    host.play_sound = [](void* user, const char* name, bool spatial, Vec3 position) {
+        auto& self = *static_cast<PlaySession*>(user);
+        return self.sounds_ ? self.sounds_->play(name, spatial, position) : 0u;
+    };
+    host.stop_sound = [](void* user, u32 voice) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (self.sounds_) self.sounds_->audio()->stop(voice);
+    };
+    // Sound Emitters set to Auto Play start with the game.
+    if (sounds_) {
+        sounds_->stop_all_and_forget();  // classes are read fresh: edits since the last Play count
+        const reflect::TypeInfo& emitter_type = reflect::type_of<world::SoundEmitter>();
+        for (u32 i = 0; i < world.count(emitter_type) && emitter_count_ < sizeof emitters_ / sizeof emitters_[0]; ++i) {
+            const auto* emitter = static_cast<const world::SoundEmitter*>(world.at(emitter_type, i));
+            const world::Entity e = world.owner(emitter_type, i);
+            if (!emitter->auto_play || !emitter->sound[0]) continue;
+            const Mat4 m = world.world_matrix(e);
+            emitters_[emitter_count_++] = {e, sounds_->play(emitter->sound, true, {m.at(0, 3), m.at(1, 3), m.at(2, 3)})};
+        }
+    }
     host.curve_path = [](void* user, const char* name, char* out, usize capacity) {
         const auto& self = *static_cast<const PlaySession*>(user);
         const asset::AssetRecord* r = self.find_asset(asset::AssetType::Data, name);
@@ -510,6 +532,14 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
         eye_ = head + back * arm;
     }
+    for (u32 i = 0; i < emitter_count_ && sounds_; ++i) {  // emitters follow their objects
+        if (!world.alive(emitters_[i].entity)) {
+            sounds_->audio()->stop(emitters_[i].voice);
+            continue;
+        }
+        const Mat4 m = world.world_matrix(emitters_[i].entity);
+        sounds_->audio()->set_position(emitters_[i].voice, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+    }
     send_hits();
     update_triggers(world);
     scripts_.update(dt);
@@ -560,6 +590,11 @@ void PlaySession::update_triggers(world::World& world) {
         scripts_.send(left[i].other, "on_overlap_end", left[i].trigger);
     }
     for (u32 i = 0; i < entered_count; ++i) {
+        const auto* trigger = world.get<world::TriggerVolume>(entered[i].trigger);
+        if (trigger && trigger->enter_sound[0] && sounds_) {
+            const Mat4 m = world.world_matrix(entered[i].trigger);
+            sounds_->play(trigger->enter_sound, true, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        }
         scripts_.send(entered[i].trigger, "on_overlap_begin", entered[i].other);
         scripts_.send(entered[i].other, "on_overlap_begin", entered[i].trigger);
     }

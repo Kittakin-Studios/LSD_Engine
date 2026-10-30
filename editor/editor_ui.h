@@ -44,6 +44,9 @@ struct EditorState {
     bool show_history = false;
     bool show_preferences = false;
     bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
+    bool show_audio_stats = false;  // `stat audio`: active voices
+    class SoundPlayer* sounds = nullptr;  // set by main.cpp
+    u32 preview_voice = 0;  // Content Browser sound preview
     u32 stat_draws = 0;       // set by main.cpp after drawing
     u32 stat_triangles = 0;
     EditorCamera bookmarks[10];  // Ctrl+0..9 stores, 0..9 jumps (like Unreal)

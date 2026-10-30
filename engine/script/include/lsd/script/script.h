@@ -22,6 +22,8 @@
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
 //   lsd.spline_point(e, distance) -> x, y, z, dx, dy, dz   world point and direction along e's Spline
 //   lsd.spline_length(e)                  metres
+//   lsd.play_sound(name [, x, y, z]) -> id   a sound asset by name, 2D or at a position; 0 if none
+//   lsd.stop_sound(id)
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
 //                                         cells are numbers; re-read when the file changes; nil if none
@@ -56,6 +58,8 @@ struct ScriptHost {
     bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
     bool (*table_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Data Table file by asset name
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name
+    u32 (*play_sound)(void* user, const char* name, bool spatial, Vec3 position) = nullptr;  // voice, 0 if none
+    void (*stop_sound)(void* user, u32 voice) = nullptr;
 };
 
 class ScriptSystem {

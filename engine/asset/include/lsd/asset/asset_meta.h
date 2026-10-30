@@ -17,6 +17,16 @@ struct AssetMeta {
 
     LSD_PROPERTY(Edit, Category = "Import", Min = 0.001, Max = 1000, Tooltip = "Uniform scale applied on import (after unit conversion to metres)")
     f32 import_scale = 1.0f;
+
+    // Sound files (Unreal's Sound Wave settings).
+    LSD_PROPERTY(Edit, Category = "Sound", Min = 0, Max = 4) f32 volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Sound", Min = 0.1, Max = 4) f32 pitch = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Sound") bool looping = false;
+    LSD_PROPERTY(Edit, Category = "Sound", Tooltip = "Read from disk while playing (long music); off = decoded into memory (short effects)") bool stream = false;
+    LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundClass", Tooltip = "Its volume group (Master > SFX > Footsteps...)") char sound_class[33] = "";
+    LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundAttenuation", Tooltip = "How it fades with distance; none = defaults (2 m to 40 m)") char attenuation[33] = "";
+    LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundConcurrency", Tooltip = "How many of its group may play at once") char concurrency[33] = "";
+    LSD_PROPERTY(Edit, Category = "Sound") char subtitle[128] = "";
 };
 
 } // namespace lsd::asset
