@@ -1,4 +1,4 @@
-add_executable(lsd_editor main.cpp editor_ui.cpp graph_editor.cpp mesh_cache.cpp play_session.cpp thumbnails.cpp transactions.cpp)
+add_executable(lsd_editor main.cpp editor_ui.cpp graph_editor.cpp table_editor.cpp mesh_cache.cpp play_session.cpp thumbnails.cpp transactions.cpp)
 lsd_reflect(lsd_editor editor_theme.h editor_settings.h)
 target_include_directories(lsd_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lsd_editor PRIVATE lsd_foundation lsd_core lsd_rhi lsd_render lsd_asset lsd_world lsd_input lsd_physics lsd_script lsd_debug_ui lsd_imguizmo SDL3::SDL3-static)

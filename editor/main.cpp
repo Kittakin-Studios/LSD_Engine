@@ -1,6 +1,7 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
 #include "graph_editor.h"
+#include "table_editor.h"
 #include "mesh_cache.h"
 #include "play_session.h"
 #include "thumbnails.h"
@@ -143,6 +144,12 @@ void register_console(EditorState& s) {
         if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1) lsd::editor::open_graph(st, st.registry->get(hit));
         else LSD_LOG_WARN("editor", "graph.Open: no visual script named like '%s'", args);
     }, &s, "Open a visual script in the graph editor");
+    console::add_command("table.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hit = 0;
+        if (st.registry->search(args, lsd::asset::AssetType::Table, nullptr, &hit, 1) == 1) lsd::editor::open_table(st, st.registry->get(hit));
+        else LSD_LOG_WARN("editor", "table.Open: no data table named like '%s'", args);
+    }, &s, "Open a data table in the table editor");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"lit", "unlit", "wireframe"};
@@ -174,7 +181,7 @@ void register_console(EditorState& s) {
 bool import_file(const char* source, const char* content_folder, char* status, lsd::usize capacity) {
     const fs::path src(source);
     if (lsd::asset::type_from_extension(src.extension().string().c_str()) == lsd::asset::AssetType::Unknown) {
-        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb)", src.filename().string().c_str());
+        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .csv)", src.filename().string().c_str());
         return false;
     }
     std::error_code error;

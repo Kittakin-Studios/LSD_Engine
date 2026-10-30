@@ -1,5 +1,6 @@
-﻿// Script tests: a Lua file moves its object, finds others, reads tags and input, survives errors
+// Script tests: a Lua file moves its object, finds others, reads tags and input, survives errors
 // and reloads when the file changes.
+#include "lsd/asset/data_table.h"
 #include "lsd/script/graph.h"
 #include "lsd/script/script.h"
 
@@ -17,6 +18,13 @@ using namespace lsd::world;
 static const char kMover[] = LSD_TEST_TEMP_DIR "/mover.lua";
 static const char kBroken[] = LSD_TEST_TEMP_DIR "/broken.lua";
 static const char kGraphLua[] = LSD_TEST_TEMP_DIR "/graph.lua";
+static const char kTable[] = LSD_TEST_TEMP_DIR "/DT_Weapons.csv";
+
+static bool table_path(void*, const char* name, char* out, usize capacity) {
+    if (std::strcmp(name, "DT_Weapons") != 0) return false;
+    std::snprintf(out, capacity, "%s", kTable);
+    return true;
+}
 
 static void write(const char* path, const char* text) {
     FILE* f = std::fopen(path, "wb");
@@ -130,7 +138,51 @@ static void test_graph() {
     CHECK(!compile_graph(g, lua, error, sizeof error) && std::strstr(error, "twice"));
 }
 
+static void write(const char* path, const char* text);
+
+static void test_data_table() {
+    asset::DataTable t(default_allocator());
+    const char csv[] = "\xEF\xBB\xBFName,Damage,Label\r\nPistol,12.5,\"Small, quiet\"\r\nRifle,40,\"Says \"\"bang\"\"\nloudly\"\n\nShort\n";
+    CHECK(t.parse(csv, sizeof csv - 1));
+    CHECK(t.rows() == 4 && t.columns() == 3);
+    CHECK(std::strcmp(t.cell(0, 0), "Name") == 0 && std::strcmp(t.cell(1, 2), "Small, quiet") == 0);
+    CHECK(std::strcmp(t.cell(2, 2), "Says \"bang\"\nloudly") == 0);
+    CHECK(std::strcmp(t.cell(3, 0), "Short") == 0 && std::strcmp(t.cell(3, 1), "") == 0);  // padded
+    CHECK(t.find_row("Rifle") == 2 && t.find_row("Name") == -1 && t.find_column("Damage") == 1);
+    const char trailing[] = "a,b,\n1,2,";
+    CHECK(t.parse(trailing, sizeof trailing - 1) && t.columns() == 3 && t.rows() == 2);
+    CHECK(!t.parse("a,\"open", 8));
+
+    // Write and read back.
+    const char* cells[] = {"Name", "Note", "x", "a, \"b\"\nc"};
+    Array<char> out(default_allocator());
+    asset::write_csv(cells, 2, 2, out);
+    CHECK(t.parse(out.data(), out.size()) && std::strcmp(t.cell(1, 1), cells[3]) == 0);
+
+    // From Lua, cached until the file changes.
+    write(kTable, "Name,Damage,Label\nPistol,12.5,Small\nRifle,40,Big\n");
+    HeapAllocator heap("table");
+    {
+        World w(heap);
+        script::ScriptSystem scripts;
+        script::ScriptHost host;
+        host.table_path = table_path;
+        scripts.start(w, host, path_of, nullptr);
+        CHECK(scripts.run(R"(
+local t = lsd.table("DT_Weapons")
+assert(t.Pistol.Damage == 12.5 and t.Rifle.Label == "Big" and lsd.table("Nope") == nil)
+assert(lsd.table("DT_Weapons") == t)  -- same table while the file is unchanged
+)"));
+        write(kTable, "Name,Damage\nPistol,99\n");
+        std::filesystem::last_write_time(kTable, std::filesystem::last_write_time(kTable) + std::chrono::seconds(5));
+        CHECK(scripts.run("assert(lsd.table('DT_Weapons').Pistol.Damage == 99)"));
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
+    test_data_table();
     test_graph();
     write(kMover, R"(
 function on_start(self)

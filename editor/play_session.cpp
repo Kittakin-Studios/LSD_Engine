@@ -217,6 +217,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         normal = ray.normal;
         return true;
     };
+    host.table_path = [](void* user, const char* name, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        const asset::AssetRecord* r = self.find_asset(asset::AssetType::Table, name);
+        if (r) self.registry_->source_path(*r, out, capacity);
+        return r != nullptr;
+    };
     scripts_.start(world, host, script_path, const_cast<asset::AssetRegistry*>(&registry));
 }
 

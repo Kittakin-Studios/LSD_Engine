@@ -1,5 +1,6 @@
 #include "lsd/script/script.h"
 
+#include "lsd/asset/data_table.h"
 #include "lsd/foundation/log.h"
 
 extern "C" {
@@ -9,6 +10,7 @@ extern "C" {
 }
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 
@@ -266,6 +268,54 @@ struct Api {
         push_vec3(L, normal);
         return 7;
     }
+    static int table(lua_State* L) {
+        ScriptSystem& self = system(L);
+        const ScriptHost& host = self.host_;
+        char path[260];
+        if (!host.table_path || !host.table_path(host.user, luaL_checkstring(L, 1), path, sizeof path)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        const i64 modified = file_time(path);
+        ScriptSystem::CachedTable* slot = nullptr;
+        for (u32 i = 0; i < self.table_count_ && !slot; ++i) {
+            if (std::strcmp(self.tables_[i].path, path) == 0) slot = &self.tables_[i];
+        }
+        if (slot && slot->modified == modified) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, slot->ref);
+            return 1;
+        }
+        asset::DataTable data(default_allocator());
+        if (!data.load(path)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        lua_createtable(L, 0, static_cast<int>(data.rows()));
+        for (u32 r = 1; r < data.rows(); ++r) {
+            lua_createtable(L, 0, static_cast<int>(data.columns()));
+            for (u32 c = 1; c < data.columns(); ++c) {
+                const char* text = data.cell(r, c);
+                char* stop = nullptr;
+                const double number = std::strtod(text, &stop);
+                if (text[0] && stop && *stop == '\0') lua_pushnumber(L, number);  // "12.5" is a number, "12 mm" text
+                else lua_pushstring(L, text);
+                lua_setfield(L, -2, data.cell(0, c));
+            }
+            lua_setfield(L, -2, data.cell(r, 0));
+        }
+        if (!slot && self.table_count_ < sizeof self.tables_ / sizeof self.tables_[0]) {
+            slot = &self.tables_[self.table_count_++];
+            std::snprintf(slot->path, sizeof slot->path, "%s", path);
+            slot->ref = LUA_NOREF;
+        }
+        if (slot) {
+            luaL_unref(L, LUA_REGISTRYINDEX, slot->ref);
+            lua_pushvalue(L, -1);
+            slot->ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            slot->modified = modified;
+        }
+        return 1;
+    }
     static int has(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
         lua_pushboolean(L, world(L).get(e, component_type(L, 2)) != nullptr);
@@ -341,6 +391,7 @@ void ScriptSystem::stop() {
     lua_ = nullptr;
     world_ = nullptr;
     count_ = 0;
+    table_count_ = 0;  // their refs went with the Lua state
     time_ = 0;
 }
 
@@ -366,6 +417,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
+        {"table", Api::table},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

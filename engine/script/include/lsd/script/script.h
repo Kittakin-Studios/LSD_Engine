@@ -20,6 +20,8 @@
 //   lsd.log_error(...)                    print as an error
 //   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset or built-in shape ("Cube") by name; nil if none
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
+//   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
+//                                         cells are numbers; re-read when the file changes; nil if none
 //
 // Any component, through reflection (field names as in Details; structs are tables):
 //   lsd.get(e, "Character")               a copy of the component as a table, or nil
@@ -48,6 +50,7 @@ struct ScriptHost {
     bool (*pressed)(void* user, const char* action) = nullptr;
     world::Entity (*spawn)(void* user, const char* name, Vec3 position) = nullptr;
     bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
+    bool (*table_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Data Table file by asset name
 };
 
 class ScriptSystem {
@@ -93,6 +96,13 @@ private:
     void* path_user_ = nullptr;
     f64 time_ = 0;
     Instance instances_[256];
+    struct CachedTable {
+        char path[260];
+        i64 modified;
+        int ref;  // registry ref of the Lua table
+    };
+    CachedTable tables_[32];
+    u32 table_count_ = 0;
     u32 count_ = 0;
 
     friend struct Api;

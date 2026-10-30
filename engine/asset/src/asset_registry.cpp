@@ -43,6 +43,7 @@ const char* to_string(AssetType type) {
         case AssetType::Prefab: return "Prefab";
         case AssetType::Script: return "Script";
         case AssetType::Graph: return "Visual Script";
+        case AssetType::Table: return "Data Table";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -57,6 +58,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdprefab") == 0) return AssetType::Prefab;
     if (std::strcmp(lower, ".lua") == 0) return AssetType::Script;
     if (std::strcmp(lower, ".lsdgraph") == 0) return AssetType::Graph;
+    if (std::strcmp(lower, ".csv") == 0) return AssetType::Table;
     return AssetType::Unknown;
 }
 

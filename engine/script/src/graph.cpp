@@ -72,6 +72,10 @@ NodeDef g_defs[] = {
      {{"X", PinType::Float, ""}, {"Y", PinType::Float, ""}}, 0, nullptr, {"(lsd.input($0))", "select(2, lsd.input($0))"}},
     {"InputPressed", "Input Pressed", "Input", "True on the frame the action went down", {{"Action", PinType::String, "IA_Jump"}}, 0,
      {{"Pressed", PinType::Bool, ""}}, 0, nullptr, {"lsd.pressed($0)"}},
+    {"TableValue", "Get Table Value", "Data", "A cell of a Data Table (.csv) by asset name, row name and column name",
+     {{"Table", PinType::String, "DT_Items"}, {"Row", PinType::String, "Row1"}, {"Column", PinType::String, "Value"}}, 0,
+     {{"Number", PinType::Float, ""}, {"Text", PinType::String, ""}}, 0, nullptr,
+     {"(tonumber(__cell($0, $1, $2)) or 0)", "tostring(__cell($0, $1, $2) or \"\")"}},
     {"Time", "Game Time", "Utilities", "Seconds since Play started", {}, 0, {{"Seconds", PinType::Float, ""}}, 0, nullptr, {"lsd.time()"}},
     {"MakeVector", "Make Vector", "Math", "", {{"X", PinType::Float, "0"}, {"Y", PinType::Float, "0"}, {"Z", PinType::Float, "0"}}, 0,
      {{"Vector", PinType::Vector, ""}}, 0, nullptr, {"__vec($0, $1, $2)"}},
@@ -106,6 +110,7 @@ local function __setrot(e, v) lsd.set_rotation(e, v.x, v.y, v.z) end
 local function __addrot(e, v) local x, y, z = lsd.rotation(e) lsd.set_rotation(e, x + v.x, y + v.y, z + v.z) end
 local function __spawn(name, v) return lsd.spawn(name, v.x, v.y, v.z) end
 local function __color(e, v) lsd.set(e, "StaticMesh", {color = {r = v.x, g = v.y, b = v.z}}) end
+local function __cell(t, r, c) local d = lsd.table(t) local row = d and d[r] return row and row[c] end
 local function __str(v)
   if type(v) == "table" then return string.format("(%g, %g, %g)", v.x, v.y, v.z) end
   return tostring(v)
