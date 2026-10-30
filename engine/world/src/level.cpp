@@ -1,0 +1,171 @@
+#include "lsd/world/level.h"
+
+#include "lsd/foundation/log.h"
+#include "lsd/reflect/json.h"
+
+#include <cstdio>
+#include <cstring>
+
+namespace lsd::world {
+
+namespace {
+
+constexpr int kLevelVersion = 1;
+
+void append(Array<char>& out, const char* text, usize n) {
+    const usize at = out.size();
+    out.resize(at + n);
+    std::memcpy(out.data() + at, text, n);
+}
+
+void append(Array<char>& out, const char* text) { append(out, text, std::strlen(text)); }
+
+void append_string(Array<char>& out, const char* text) {
+    append(out, "\"");
+    for (const char* c = text; *c; ++c) {
+        if (*c == '"' || *c == '\\') append(out, "\\", 1);
+        if (static_cast<unsigned char>(*c) >= 0x20) append(out, c, 1);
+    }
+    append(out, "\"");
+}
+
+void append_component(Array<char>& out, const reflect::TypeInfo& type, const void* component) {
+    char buffer[2048];
+    const usize length = reflect::save_text(type, component, buffer, sizeof buffer, 2);
+    if (length < sizeof buffer) {
+        append(out, buffer, length);
+        return;
+    }
+    Allocator& heap = default_allocator();  // rare: a component bigger than the stack buffer
+    char* big = static_cast<char*>(heap.allocate(length + 1, 1));
+    reflect::save_text(type, component, big, length + 1, 2);
+    append(out, big, length);
+    heap.deallocate(big);
+}
+
+// Reads an integer token (ids and parents).
+bool read_integer(reflect::JsonReader& r, long long& out) {
+    char token[32];
+    r.read_token(token, sizeof token);
+    char* stop = nullptr;
+    out = std::strtoll(token, &stop, 10);
+    if (r.ok && *stop) r.fail("expected an integer");
+    return r.ok;
+}
+
+} // namespace
+
+void save_level(const World& world, Array<char>& out) {
+    out.clear();
+    char line[128];
+    std::snprintf(line, sizeof line, "{\n  \"lsd_level\": %d,\n  \"entities\": [", kLevelVersion);
+    append(out, line);
+    u32 type_count = 0;
+    const reflect::TypeInfo* const* types = component_types(type_count);
+    bool first = true;
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {
+        const Entity e = world.entity_at_slot(slot);
+        if (!e.valid()) continue;
+        const Entity parent = world.parent(e);
+        std::snprintf(line, sizeof line, "%s\n    {\"id\": %u, \"name\": ", first ? "" : ",", e.value);
+        append(out, line);
+        append_string(out, world.name(e));
+        std::snprintf(line, sizeof line, ", \"parent\": %lld", parent.valid() ? static_cast<long long>(parent.value) : -1LL);
+        append(out, line);
+        for (u32 t = 0; t < type_count; ++t) {
+            const void* component = world.get(e, *types[t]);
+            if (!component) continue;
+            std::snprintf(line, sizeof line, ",\n     \"%s\": ", types[t]->name);
+            append(out, line);
+            append_component(out, *types[t], component);
+        }
+        append(out, "}");
+        first = false;
+    }
+    append(out, "\n  ]\n}\n");
+}
+
+bool load_level(World& world, const char* text, usize length) {
+    world.clear();
+    Allocator& heap = default_allocator();
+    struct Link { Entity child; long long parent; };
+    Array<Link> links(heap);
+    reflect::JsonReader r{text, text + length};
+
+    r.expect('{');
+    while (r.ok && !r.peek('}')) {
+        char key[64];
+        r.read_string(key, sizeof key);
+        r.expect(':');
+        if (std::strcmp(key, "lsd_level") == 0) {
+            long long version = 0;
+            if (read_integer(r, version) && version > kLevelVersion) r.fail("level saved by a newer editor");
+        } else if (std::strcmp(key, "entities") == 0) {
+            r.expect('[');
+            while (r.ok && !r.peek(']')) {
+                // Entity object. "id" and "name" come first (save_level writes them first).
+                Entity e;
+                char name[64] = "";
+                r.expect('{');
+                while (r.ok && !r.peek('}')) {
+                    char field[64];
+                    r.read_string(field, sizeof field);
+                    r.expect(':');
+                    long long value = 0;
+                    if (std::strcmp(field, "id") == 0) {
+                        if (read_integer(r, value)) e.value = static_cast<u32>(value);
+                    } else if (std::strcmp(field, "name") == 0) {
+                        r.read_string(name, sizeof name);
+                        if (!world.create_at(e, name)) r.fail("missing or duplicate entity id");
+                    } else if (std::strcmp(field, "parent") == 0) {
+                        if (read_integer(r, value) && value >= 0) links.push_back({e, value});
+                    } else if (const reflect::TypeInfo* type = find_component_type(field); type && world.alive(e)) {
+                        reflect::read_object(r, *type, world.add(e, *type));
+                    } else {
+                        r.skip_value();  // unknown component (removed from the engine): dropped
+                    }
+                    if (!r.accept(',')) break;
+                }
+                r.expect('}');
+                if (!r.accept(',')) break;
+            }
+            r.expect(']');
+        } else {
+            r.skip_value();
+        }
+        if (!r.accept(',')) break;
+    }
+    r.expect('}');
+
+    for (const Link& link : links) {
+        Entity parent;
+        parent.value = static_cast<u32>(link.parent);
+        // Raw link, not set_parent(): the saved Transform is already relative to the parent.
+        if (!world.alive(parent) || !world.set_parent(link.child, parent, false)) LSD_LOG_WARN("world", "Dropped a bad parent link in the level");
+    }
+    if (!r.ok) world.clear();
+    return r.ok;
+}
+
+bool save_level_file(const World& world, const char* path) {
+    Array<char> text(default_allocator());
+    save_level(world, text);
+    FILE* file = std::fopen(path, "wb");
+    if (!file) return false;
+    const bool ok = std::fwrite(text.data(), 1, text.size(), file) == text.size();
+    return std::fclose(file) == 0 && ok;
+}
+
+bool load_level_file(World& world, const char* path) {
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    Array<char> text(default_allocator());
+    char chunk[8192];
+    for (usize n; (n = std::fread(chunk, 1, sizeof chunk, file)) > 0;) append(text, chunk, n);
+    std::fclose(file);
+    const bool ok = load_level(world, text.data(), text.size());
+    if (!ok) LSD_LOG_ERROR("world", "Could not load level %s", path);
+    return ok;
+}
+
+} // namespace lsd::world

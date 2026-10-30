@@ -26,3 +26,15 @@ target_compile_definitions(lsd_asset_tests PRIVATE
   LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 lsd_configure_target(lsd_asset_tests)
 add_test(NAME asset COMMAND lsd_asset_tests)
+
+add_executable(lsd_world_tests world_tests.cpp)
+target_link_libraries(lsd_world_tests PRIVATE lsd_world)
+lsd_configure_target(lsd_world_tests)
+add_test(NAME world COMMAND lsd_world_tests)
+
+# Editor logic that needs no GPU (undo / redo history).
+add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/transactions.cpp)
+target_include_directories(lsd_editor_tests PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(lsd_editor_tests PRIVATE lsd_world)
+lsd_configure_target(lsd_editor_tests)
+add_test(NAME editor COMMAND lsd_editor_tests)

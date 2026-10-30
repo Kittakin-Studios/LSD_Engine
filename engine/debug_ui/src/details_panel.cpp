@@ -69,6 +69,24 @@ bool draw_property(const reflect::Property& p, u8* object) {
         return changed;
     }
 
+    // Structs flagged Vector (x, y, z floats) edit on one row.
+    if (p.type == reflect::FieldType::Struct && (p.struct_type->flags & reflect::kVector)) {
+        row_background();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
+        ImGui::SameLine(kLabelWidth);
+        ImGui::SetNextItemWidth(-1.0f);
+        char format[32];
+        std::snprintf(format, sizeof format, p.units[0] ? "%%.3f %s" : "%%.3f", p.units);
+        const bool read_only = !(p.flags & reflect::kEdit);
+        if (read_only) ImGui::BeginDisabled();
+        changed = ImGui::DragFloat3("##value", reinterpret_cast<f32*>(field), 0.05f, 0.0f, 0.0f, format);
+        if (read_only) ImGui::EndDisabled();
+        ImGui::PopID();
+        return changed;
+    }
+
     if (p.type == reflect::FieldType::Struct) {
         row_background();
         const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
@@ -141,6 +159,14 @@ bool draw_details(const reflect::TypeInfo& type, void* object, const DetailsStyl
             changed |= draw_fields(type, static_cast<u8*>(object), category);
         }
     }
+    g_style = nullptr;
+    return changed;
+}
+
+bool draw_properties(const reflect::TypeInfo& type, void* object, const DetailsStyle* style) {
+    g_style = style;
+    g_row = 0;
+    const bool changed = draw_fields(type, static_cast<u8*>(object), nullptr);
     g_style = nullptr;
     return changed;
 }

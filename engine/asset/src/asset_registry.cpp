@@ -37,6 +37,7 @@ i64 write_time(const fs::path& path) {
 const char* to_string(AssetType type) {
     switch (type) {
         case AssetType::Mesh: return "Mesh";
+        case AssetType::Level: return "Level";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -46,6 +47,7 @@ AssetType type_from_extension(const char* extension) {
     char lower[16] = "";
     for (usize i = 0; i + 1 < sizeof lower && extension[i]; ++i) lower[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(extension[i])));
     if (std::strcmp(lower, ".fbx") == 0 || std::strcmp(lower, ".gltf") == 0 || std::strcmp(lower, ".glb") == 0) return AssetType::Mesh;
+    if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
     return AssetType::Unknown;
 }
 

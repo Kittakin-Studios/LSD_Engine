@@ -79,13 +79,17 @@ engine/render/      mesh data, built-in shapes, GPU upload, grid lines
 engine/asset/       GUIDs, .meta sidecars, AssetRegistry, FBX/glTF import, .lsdmesh compiled format
 engine/rhi/         RHI interface, adapter scoring/selection, quality presets, create_device();
                     backends/d3d12, backends/vulkan, backends/opengl (each also renders ImGui)
-engine/world, script, render, audio, physics, ui   placeholders
-editor/             lsd_editor: dock layout (Viewport grid/gizmo/orbit, Outliner, Details, Content
-                    Browser) styled by reflected EditorTheme -> Config/editor_theme.json
+engine/world/       entities (generational handles), packed component pools per reflected type,
+                    hierarchy, built-in components (Transform, StaticMesh, PlayerStart), .lsdlevel text files
+engine/script, audio, physics, ui   placeholders
+editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
+                    camera), Outliner, Details (components), Content Browser + Place, undo history
+                    (whole-level snapshots), Play-in-Editor; theme in Config/, user settings in Saved/
 tools/data_compiler/ CLI stub: --source-dir / --data-dir
 tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
-third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, Vulkan-Headers, volk)
+third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, ImGuizmo, Vulkan-Headers, volk,
+                    ufbx, cgltf, meshoptimizer)
 tests/              framework-free unit tests (CTest)
 docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
 ```
@@ -112,17 +116,23 @@ Content Browser (thumbnails, search, import by drop, rename/move/delete, folders
 Outliner of placed objects, Details for the selected asset or the theme. Data assets moved to
 milestone 4, texture/audio import to milestone 5.
 
-**Next: milestone 3** — World (entities + components) and levels saved to disk, move/rotate/scale
-gizmos, picking, undo/redo, Play-in-Editor.
+**Milestone 3 — in progress, exit test works.** World (entities + component pools + hierarchy),
+`.lsdlevel` levels (new/open/save/save as, reopen last), move/rotate/scale gizmos with snapping,
+picking, Unreal camera controls, Outliner tree with drag-to-attach, component Details, Place panel,
+undo/redo with history, Play-in-Editor (first-person walk/jump with box collision until Jolt).
+Remaining milestone 3 items are listed in `docs/BACKLOG.md` (multi-select, ortho views, view modes,
+Output Log + console, volumes, autosave...).
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
-`-import=<file>`, `-place=<asset name>`.
+`-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`.
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no
 inheritance (composition only); strings are fixed `char name[N]`; source assets save as JSON text,
-binary only after the data compiler. World is Z-up, right-handed (like Blender), metres.
+binary only after the data compiler. World is Z-up, right-handed (like Blender), metres. Rotations
+are Euler degrees X then Y then Z (Blender's XYZ Euler). Components are reflected plain structs; the
+world stores them by TypeInfo, so Details, level files, undo and Play copies need no per-component code.
 
 ## Roadmap (editor-first)
 

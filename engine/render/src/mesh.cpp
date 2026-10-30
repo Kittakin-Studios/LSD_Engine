@@ -1,4 +1,5 @@
 #include "lsd/render/mesh.h"
+#include "lsd/foundation/math.h"
 
 #include <cmath>
 
@@ -50,7 +51,6 @@ MeshData make_cube(Allocator& allocator) {
 
 MeshData make_sphere(Allocator& allocator, u32 segments, u32 rings) {
     MeshData mesh = allocate_mesh(allocator, (segments + 1) * (rings + 1), segments * rings * 6);
-    constexpr f32 kPi = 3.14159265358979f;
     u32 v = 0;
     for (u32 r = 0; r <= rings; ++r) {
         const f32 theta = kPi * static_cast<f32>(r) / static_cast<f32>(rings);  // 0 at the top

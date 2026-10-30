@@ -13,4 +13,7 @@ struct DetailsStyle {
 // Returns true if the user changed a value this frame.
 bool draw_details(const reflect::TypeInfo& type, void* object, const DetailsStyle* style = nullptr);
 
+// Same rows without the category headers, for callers that draw their own header (components).
+bool draw_properties(const reflect::TypeInfo& type, void* object, const DetailsStyle* style = nullptr);
+
 } // namespace lsd

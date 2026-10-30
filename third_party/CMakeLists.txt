@@ -35,6 +35,18 @@ target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURC
 target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
 set(LSD_IMGUI_DIR ${imgui_SOURCE_DIR} PARENT_SCOPE)
 
+# ImGuizmo (MIT): move / rotate / scale handles in the editor viewport. No release tags since
+# 2021 that build against current ImGui, so pinned to a commit.
+FetchContent_Declare(imguizmo
+  GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+  GIT_TAG 105e4fde45e4e74aae8973d98750820ef7aca7e2
+  SOURCE_SUBDIR not_used  # fetch only: we build ImGuizmo.cpp against our ImGui target below
+)
+FetchContent_MakeAvailable(imguizmo)
+add_library(lsd_imguizmo STATIC ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp)
+target_include_directories(lsd_imguizmo SYSTEM PUBLIC ${imguizmo_SOURCE_DIR}/src)
+target_link_libraries(lsd_imguizmo PUBLIC imgui)
+
 # Vulkan: headers (Apache-2.0) + volk loader (MIT). No Vulkan SDK needed to build; the
 # runtime loads vulkan-1.dll / libvulkan.so from the GPU driver.
 if(LSD_RHI_VULKAN)

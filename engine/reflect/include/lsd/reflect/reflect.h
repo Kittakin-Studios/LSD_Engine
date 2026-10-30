@@ -9,20 +9,14 @@
 //       f32 intensity = 800.0f;
 //   };
 //
-// Struct flags:   Component, Color
+// Struct flags:   Component, Color, Vector
 // Property flags: Edit (editable in Details), Visible (read-only in Details), Save (saved, hidden),
 //                 EditorOnly (stripped at packaging). Edit and Visible imply Save.
 // Property keys:  Category, Tooltip, Units (strings); Min, Max (numbers).
 // Function flags: Callable.
 #include "lsd/foundation/hash_id.h"
+#include "lsd/foundation/reflect_macros.h"
 #include "lsd/foundation/types.h"
-
-// The annotations compile to nothing; only lsd_reflect_gen reads them.
-#define LSD_STRUCT(...)
-#define LSD_PROPERTY(...)
-#define LSD_FUNCTION(...)
-// Inside the struct body, like Unreal's GENERATED_BODY(). Defined in the generated .gen.cpp.
-#define LSD_GENERATED() static const ::lsd::reflect::TypeInfo& static_type();
 
 namespace lsd::reflect {
 
@@ -39,6 +33,7 @@ enum PropertyFlags : u32 {
 enum TypeFlags : u32 {
     kComponent = 1u << 0,
     kColor     = 1u << 1,  // r, g, b[, a] f32 fields in that order: edited with a colour picker
+    kVector    = 1u << 2,  // x, y, z f32 fields: edited on one row, like Unreal's X / Y / Z boxes
 };
 
 struct TypeInfo;
@@ -68,6 +63,7 @@ struct TypeInfo {
     const char* category;
     const Property* properties;
     u32 property_count;
+    const void* defaults;  // a default-constructed instance: new components start as a copy of it
 };
 
 template <typename T>
@@ -77,7 +73,8 @@ const Property* find_property(const TypeInfo& type, const char* name);
 
 // Text save format: JSON objects of the saved properties, nested structs as nested objects.
 // Writes at most capacity-1 chars plus a NUL; returns the full length so callers can grow and retry.
-usize save_text(const TypeInfo& type, const void* object, char* out, usize capacity);
+// depth > 0 indents the object for embedding in a bigger document (no trailing newline then).
+usize save_text(const TypeInfo& type, const void* object, char* out, usize capacity, u32 depth = 0);
 
 // Reads text produced by save_text. Missing keys keep their current values and unknown keys are
 // skipped, so old files load after properties are added or removed. Returns false on bad syntax

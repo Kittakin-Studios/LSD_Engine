@@ -1,0 +1,253 @@
+#include "lsd/world/world.h"
+#include "lsd/world/components.h"
+
+#include <cstdio>
+#include <cstring>
+
+namespace lsd::world {
+
+const reflect::TypeInfo* const* component_types(u32& count) {
+    static const reflect::TypeInfo* const types[] = {
+        &reflect::type_of<Transform>(),
+        &reflect::type_of<StaticMesh>(),
+        &reflect::type_of<PlayerStart>(),
+    };
+    static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
+    count = static_cast<u32>(sizeof types / sizeof types[0]);
+    return types;
+}
+
+const reflect::TypeInfo* find_component_type(const char* name) {
+    u32 count = 0;
+    const reflect::TypeInfo* const* types = component_types(count);
+    for (u32 i = 0; i < count; ++i) {
+        if (std::strcmp(types[i]->name, name) == 0) return types[i];
+    }
+    return nullptr;
+}
+
+World::World(Allocator& allocator) : allocator_(allocator), records_(allocator), free_slots_(allocator) {
+    const reflect::TypeInfo* const* types = component_types(pool_count_);
+    for (u32 i = 0; i < pool_count_; ++i) {
+        pools_[i].type = types[i];
+        pools_[i].stride = (types[i]->size + 15u) & ~15u;
+    }
+}
+
+World::~World() {
+    for (u32 i = 0; i < pool_count_; ++i) {
+        if (pools_[i].data) allocator_.deallocate(pools_[i].data);
+        if (pools_[i].owners) allocator_.deallocate(pools_[i].owners);
+    }
+}
+
+World::Record* World::record(Entity e) {
+    if (!e.valid() || e.index() >= records_.size()) return nullptr;
+    Record& r = records_[e.index()];
+    return r.alive && r.generation == e.generation() ? &r : nullptr;
+}
+
+const World::Record* World::record(Entity e) const { return const_cast<World*>(this)->record(e); }
+
+bool World::alive(Entity e) const { return record(e) != nullptr; }
+
+i32 World::pool_index(const reflect::TypeInfo& type) const {
+    for (u32 i = 0; i < pool_count_; ++i) {
+        if (pools_[i].type == &type) return static_cast<i32>(i);
+    }
+    return -1;
+}
+
+void World::init_record(u32 slot, u32 generation, const char* name) {
+    Record& r = records_[slot];
+    r.generation = generation;
+    r.alive = true;
+    std::snprintf(r.name, sizeof r.name, "%s", name);
+    r.parent = {};
+    for (u32& c : r.component) c = kNone;
+    add(Entity::make(slot, generation), reflect::type_of<Transform>());
+}
+
+Entity World::create(const char* name) {
+    u32 slot;
+    if (!free_slots_.empty()) {
+        slot = free_slots_[free_slots_.size() - 1];
+        free_slots_.resize(free_slots_.size() - 1);
+    } else {
+        slot = static_cast<u32>(records_.size());
+        records_.resize(records_.size() + 1);
+        records_[slot].generation = 0;
+    }
+    const u32 generation = records_[slot].generation & Entity::kGenerationMask;
+    init_record(slot, generation, name);
+    return Entity::make(slot, generation);
+}
+
+bool World::create_at(Entity handle, const char* name) {
+    if (!handle.valid()) return false;
+    const u32 slot = handle.index();
+    while (records_.size() <= slot) {
+        records_.resize(records_.size() + 1);
+        Record& r = records_[records_.size() - 1];
+        r.generation = 0;
+        r.alive = false;
+        free_slots_.push_back(static_cast<u32>(records_.size() - 1));
+    }
+    if (records_[slot].alive) return false;
+    for (usize i = 0; i < free_slots_.size(); ++i) {
+        if (free_slots_[i] == slot) {
+            free_slots_.remove_swap(i);
+            break;
+        }
+    }
+    init_record(slot, handle.generation(), name);
+    return true;
+}
+
+void World::destroy(Entity e) {
+    Record* r = record(e);
+    if (!r) return;
+    // shortcut: children found by scanning all slots; keep a child list when worlds reach many thousands.
+    for (u32 slot = 0; slot < records_.size(); ++slot) {
+        if (records_[slot].alive && records_[slot].parent == e) destroy(Entity::make(slot, records_[slot].generation));
+    }
+    r = record(e);
+    for (u32 p = 0; p < pool_count_; ++p) remove_component(*r, p);
+    r->alive = false;
+    r->generation = (r->generation + 1) & Entity::kGenerationMask;
+    free_slots_.push_back(e.index());
+}
+
+void World::clear() {
+    records_.clear();
+    free_slots_.clear();
+    for (u32 p = 0; p < pool_count_; ++p) pools_[p].count = 0;
+}
+
+const char* World::name(Entity e) const {
+    const Record* r = record(e);
+    return r ? r->name : "";
+}
+
+void World::set_name(Entity e, const char* name) {
+    if (Record* r = record(e)) std::snprintf(r->name, sizeof r->name, "%s", name);
+}
+
+void World::unique_name(const char* base, char* out, usize capacity) const {
+    std::snprintf(out, capacity, "%s", base);
+    for (int n = 2;; ++n) {
+        bool taken = false;
+        for (const Record& r : records_) taken = taken || (r.alive && std::strcmp(r.name, out) == 0);
+        if (!taken) return;
+        std::snprintf(out, capacity, "%s%d", base, n);
+    }
+}
+
+Entity World::parent(Entity e) const {
+    const Record* r = record(e);
+    return r && alive(r->parent) ? r->parent : Entity{};
+}
+
+bool World::set_parent(Entity child, Entity new_parent, bool keep_world_placement) {
+    Record* r = record(child);
+    if (!r || (new_parent.valid() && !alive(new_parent))) return false;
+    for (Entity p = new_parent; p.valid(); p = parent(p)) {
+        if (p == child) return false;  // would make a cycle
+    }
+    const Mat4 world = world_matrix(child);
+    r->parent = new_parent;
+    if (keep_world_placement) set_world_matrix(child, world);
+    return true;
+}
+
+Mat4 World::world_matrix(Entity e) const {
+    const Transform* t = get<Transform>(e);
+    if (!t) return Mat4{};
+    const Mat4 local = trs(t->position, t->rotation, t->scale);
+    const Entity p = parent(e);
+    return p.valid() ? world_matrix(p) * local : local;
+}
+
+void World::set_world_matrix(Entity e, const Mat4& world) {
+    Transform* t = get<Transform>(e);
+    if (!t) return;
+    const Entity p = parent(e);
+    const Mat4 local = p.valid() ? affine_inverse(world_matrix(p)) * world : world;
+    decompose_trs(local, t->position, t->rotation, t->scale);
+}
+
+void* World::add(Entity e, const reflect::TypeInfo& type) {
+    Record* r = record(e);
+    const i32 p = pool_index(type);
+    if (!r || p < 0) return nullptr;
+    Pool& pool = pools_[p];
+    if (r->component[p] != kNone) return pool.data + r->component[p] * pool.stride;
+    if (pool.count == pool.capacity) {
+        const u32 capacity = pool.capacity ? pool.capacity * 2 : 64;
+        auto* data = static_cast<u8*>(allocator_.allocate(static_cast<usize>(capacity) * pool.stride, 16));
+        auto* owners = static_cast<Entity*>(allocator_.allocate(sizeof(Entity) * capacity, alignof(Entity)));
+        if (pool.count) {
+            std::memcpy(data, pool.data, static_cast<usize>(pool.count) * pool.stride);
+            std::memcpy(owners, pool.owners, sizeof(Entity) * pool.count);
+        }
+        if (pool.data) allocator_.deallocate(pool.data);
+        if (pool.owners) allocator_.deallocate(pool.owners);
+        pool.data = data;
+        pool.owners = owners;
+        pool.capacity = capacity;
+    }
+    const u32 index = pool.count++;
+    u8* component = pool.data + index * pool.stride;
+    std::memcpy(component, type.defaults, type.size);
+    pool.owners[index] = e;
+    r->component[p] = index;
+    return component;
+}
+
+void* World::get(Entity e, const reflect::TypeInfo& type) {
+    Record* r = record(e);
+    const i32 p = pool_index(type);
+    if (!r || p < 0 || r->component[p] == kNone) return nullptr;
+    return pools_[p].data + r->component[p] * pools_[p].stride;
+}
+
+const void* World::get(Entity e, const reflect::TypeInfo& type) const { return const_cast<World*>(this)->get(e, type); }
+
+void World::remove(Entity e, const reflect::TypeInfo& type) {
+    Record* r = record(e);
+    const i32 p = pool_index(type);
+    if (r && p > 0) remove_component(*r, static_cast<u32>(p));  // pool 0 is Transform
+}
+
+// Moves the pool's last component into the hole so the pool stays packed.
+void World::remove_component(Record& r, u32 p) {
+    if (r.component[p] == kNone) return;
+    Pool& pool = pools_[p];
+    const u32 index = r.component[p];
+    const u32 last = --pool.count;
+    if (index != last) {
+        std::memcpy(pool.data + index * pool.stride, pool.data + last * pool.stride, pool.stride);
+        pool.owners[index] = pool.owners[last];
+        records_[pool.owners[index].index()].component[p] = index;
+    }
+    r.component[p] = kNone;
+}
+
+u32 World::count(const reflect::TypeInfo& type) const {
+    const i32 p = pool_index(type);
+    return p < 0 ? 0 : pools_[p].count;
+}
+
+Entity World::owner(const reflect::TypeInfo& type, u32 i) const { return pools_[pool_index(type)].owners[i]; }
+
+void* World::at(const reflect::TypeInfo& type, u32 i) {
+    const Pool& pool = pools_[pool_index(type)];
+    return pool.data + i * pool.stride;
+}
+
+Entity World::entity_at_slot(u32 slot) const {
+    const Record& r = records_[slot];
+    return r.alive ? Entity::make(slot, r.generation) : Entity{};
+}
+
+} // namespace lsd::world

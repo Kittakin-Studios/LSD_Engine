@@ -21,7 +21,7 @@ everything later depends on. Anything a small team does not need to ship a first
 - [x] Text serialization with versioning (missing keys keep defaults, unknown keys skipped)
 - [x] Details panel generated from reflection, colour pickers
 - [ ] Linux / Clang build verified (`linux-clang` preset never run since milestone 0)
-- [ ] Reflection: enums (dropdowns), fixed arrays, dynamic arrays, asset references, Vec3/Quat/Transform types
+- [~] Reflection: Vec3 (one-row X/Y/Z), type defaults (new components, later reset-to-default) done; needs enums (dropdowns), arrays, asset references, Quat
 - [ ] Memory tracking per allocator shown in a debug panel [memreport]
 
 ## Milestone 2 — Assets + Content Browser (done)
@@ -42,48 +42,49 @@ Exit test: import a Blender FBX and find it by search. **Passes** (automated in 
 
 ## Milestone 3 — Editor shell
 
-Exit test: block out a level and play it.
+Exit test: block out a level and play it. **Works** (place shapes, move them with gizmos, save, Play, walk and jump on them);
+the first-person player is temporary until Jolt + Character Movement in milestone 4.
 
 ### World and levels
 
-- [ ] World: entities as handles, components in SoA managers, transforms + parent/child hierarchy
-- [ ] Levels: new / open / save / save as; persistent level + sub-levels; recent levels; startup level
-- [ ] Autosave and crash recovery ("restore unsaved changes?")
-- [ ] Copy / paste / duplicate entities (Ctrl+D, Alt-drag), also between levels as text
+- [x] World: entities as generational handles, one packed pool per reflected component type, transforms + parent/child hierarchy (`engine/world`)
+- [~] Levels: new / open / save / save as (`.lsdlevel` JSON text in Content/Levels), last level reopens on start, unsaved-changes prompts; needs sub-levels, recent list
+- [~] Autosave and crash recovery: asks to save on quit; needs timed autosave + "restore unsaved changes?"
+- [~] Duplicate: Ctrl+D and Alt+drag with the gizmo (children included); needs copy / paste between levels as text
 - [ ] Groups (select and move together) [Group Actors]
 - [ ] Reference Viewer and dependency lists; "used by" before delete; fix broken references [Reference Viewer]
 
 ### Viewport
 
-- [~] Grid, axes, axis gizmo, orbit done
-- [ ] Move / rotate / scale gizmos, world / local space, pivot editing
-- [ ] Snapping: grid, angle, scale, surface (drop to floor with End), vertex snap
-- [ ] Picking: click select, Ctrl/Shift multi-select, box select, focus selection (F)
-- [ ] Fly camera (right-mouse + WASD) with speed setting; camera bookmarks (Ctrl+1..9)
+- [x] Grid, axes, axis gizmo
+- [~] Move / rotate / scale gizmos (W / E / R, ImGuizmo), world / local space; needs pivot editing
+- [~] Snapping: move, angle, scale steps; End drops to the surface below; needs vertex snap, surface snapping while dragging
+- [~] Picking: click select (meshes by bounding box, icons on screen), focus selection (F, or double-click in the Outliner); needs multi-select, box select, triangle-accurate picking
+- [~] Unreal camera: RMB look + WASD/QE fly, wheel speed, MMB pan, Alt+LMB orbit, wheel dolly; needs camera bookmarks (Ctrl+1..9)
 - [ ] Perspective + top/front/side ortho views; 1 / 2 / 4 viewport layouts
 - [ ] View modes: lit, unlit, wireframe, normals, lighting only, collision, overdraw [View Modes, Buffer Visualization]
-- [ ] Show flags (grid, gizmos, icons, bounds, collision, nav) and Game View (G) [Show flags]
-- [ ] Billboard icons for lights, cameras, sounds, volumes; selection outline
+- [~] Show flags: grid, axis gizmo, Game View (G); needs bounds, collision, nav [Show flags]
+- [~] Icons for Player Start (capsule + facing arrow) and empties; selection tint; needs light/camera/sound icons, selection outline
 - [ ] Stats overlay: fps, frame time, draw calls, triangles [stat fps / stat unit]
 
 ### Panels
 
-- [~] Outliner: themed, lists objects, click selects; needs World entities, folders, search, hide/lock, parent by drag, type filter
-- [~] Details: reflection-driven; needs multi-edit, reset to default, copy/paste values, asset slots with search + drag-drop, search field
-- [ ] Place panel: shapes, lights, cameras, volumes, sound emitters, player start [Place Actors]
+- [~] Outliner: Outline tab (flat, search) and Hierarchy tab (tree, drag to attach, drop on empty space to detach), right-click Focus / Duplicate / Detach / Delete; needs folders, hide/lock, type filter
+- [~] Details: entity name, one section per component, Add / remove component, mesh slot (shapes + mesh assets, accepts drag-drop); needs multi-edit, reset to default, copy/paste values, search field
+- [~] Place panel (tab next to Content): Cube, Sphere, Plane, Player Start, Empty, by drag or double-click; lights, cameras, volumes, sounds when they exist [Place Actors]
 - [ ] World Settings and Project Settings windows (reflected config files)
 - [ ] Output Log with filters + console with commands and variables (`r.Shadows 0`) [Output Log, CVars]
 - [ ] Message Log for import / save / validation errors with click-to-asset [Message Log]
-- [~] Editor preferences: theme done (`Config/editor_theme.json`); needs keymap editor, autosave interval, saved layouts
-- [ ] Toolbar: Save, Play, Simulate, build buttons, platform/quality dropdown
+- [~] Editor preferences window (Edit menu): theme (`Config/editor_theme.json`) + per-user settings (`Saved/editor_settings.json`: snapping, camera speed, last level); needs keymap editor, autosave interval, saved layouts
+- [~] Menu bar: File (New / Open / Save / Save As), Edit (Undo / Redo / Duplicate / Delete / Drop to Floor), Window (Undo History), Play / Stop; needs Simulate, build buttons, platform/quality dropdown
 
 ### Editing
 
-- [ ] Transactions: undo/redo across every editor, Undo History panel [Transaction system]
-- [ ] Play-in-Editor: play in viewport / new window, possess/eject (F8), pause, frame step, simulate; changes revert on stop [PIE]
+- [x] Transactions: undo/redo (Ctrl+Z / Ctrl+Y) of every level edit, Undo History window with click-to-jump, unsaved marker in the title [Transaction system]
+- [~] Play-in-Editor (Alt+P / Esc): play in the viewport from the Player Start, mouse capture (Shift+F1 frees it), changes revert on Stop; needs new window, possess/eject (F8), pause, frame step, simulate [PIE]
 - [ ] Keep simulation changes: copy a property or object from PIE back to the editor world [Keep Simulation Changes]
 - [ ] Volumes: trigger, kill, blocking, post-process, audio, nav modifier
-- [ ] Brushes / blockout shapes with box UV, quick resize handles [BSP / Modeling Mode basics]
+- [~] Blockout: basic shapes scaled with the gizmo, collision on by default; needs box UVs, resize handles [BSP / Modeling Mode basics]
 - [ ] Visual debugging: draw debug lines/shapes/text from scripts, persistent or for N seconds
 
 ## Milestone 4 — Gameplay layer

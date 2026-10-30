@@ -1,48 +1,59 @@
 #pragma once
-// Editor shell: dock layout (Viewport, Outliner, Details, Content Browser) drawn with Dear ImGui.
-// The UI only edits EditorState; main.cpp acts on the requests it leaves there (place, delete).
+// Editor shell: menu bar, dock layout (Viewport, Outliner, Details, Content Browser / Place)
+// drawn with Dear ImGui. The UI edits the World directly and names each finished edit, which
+// becomes one undo step. File and Play requests are left in EditorState for main.cpp.
+#include "editor_settings.h"
 #include "editor_theme.h"
 
 #include "lsd/asset/asset_registry.h"
-
-namespace lsd::editor { class ThumbnailCache; }
-
 #include "lsd/foundation/math.h"
+#include "lsd/world/world.h"
 
 namespace lsd::editor {
 
-struct OrbitCamera {
-    f32 yaw = -2.4f;     // radians around +Z
-    f32 pitch = 0.45f;   // radians above the floor
-    f32 distance = 7.0f;
-    f32 fov_y = 1.0f;    // radians
+class MeshCache;
+class ThumbnailCache;
+class Transactions;
+
+// Unreal-style viewport camera: a position and a look direction.
+struct EditorCamera {
+    Vec3 position{-4.65f, -4.26f, 3.04f};
+    f32 yaw = 0.74f;     // radians around +Z; 0 looks along +X
+    f32 pitch = -0.45f;  // radians; negative looks down
+    f32 fov_y = 1.0f;
+    f32 pivot_distance = 7.0f;  // Alt+LMB orbits around the point this far ahead
 };
 
-// One Outliner row. The kind picks the text/row colours from the theme.
-enum class RowKind { Mesh, Component, Blueprint, Folder, Vfx };
-struct OutlineRow {
-    const char* name;
-    RowKind kind;
-    int depth;  // 0 = top level, 1 = inside the folder above
-};
+enum class GizmoMode { Translate, Rotate, Scale };
 
 struct EditorState {
     EditorTheme theme;
-    OrbitCamera camera;
+    EditorSettings settings;
+    EditorCamera camera;
     bool show_grid = true;
     bool show_axis_gizmo = true;
-    bool orbiting = false;
-    const OutlineRow* rows = nullptr;  // what is in the scene, set by main.cpp
-    int row_count = 0;
-    int selected_row = -1;
+    bool game_view = false;  // G: hide grid, gizmos and icons
+    bool show_history = false;
+    bool show_preferences = false;
     int details_tab = 0;
+    char status[160] = "";
+
+    // Level
+    world::World* world = nullptr;
+    MeshCache* meshes = nullptr;
+    Transactions* history = nullptr;
+    world::Entity selected;
+    GizmoMode gizmo = GizmoMode::Translate;
+    bool gizmo_local = false;
+    char level_path[260] = "";  // "" = never saved
+    char pending_edit[64] = "";  // label of an edit in progress; committed when the mouse and widgets are idle
 
     // Content Browser
     asset::AssetRegistry* registry = nullptr;
     ThumbnailCache* thumbnails = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)
     char search[96] = "";
-    int type_filter = 0;            // 0 = all types, 1 = meshes
+    int type_filter = 0;            // 0 = all types, 1 = meshes, 2 = levels
     asset::Guid selected_asset;     // shown in Details when valid
     asset::AssetMeta selected_meta;
 
@@ -56,17 +67,23 @@ struct EditorState {
     bool open_delete = false;
 
     // Requests for main.cpp, cleared once handled
-    bool place_requested = false;
-    asset::Guid place_asset;
-    Vec3 place_position;
-    int delete_row = -1;
-    char status[160] = "";
+    bool new_level_requested = false;
+    char open_level_requested[260] = "";
+    bool save_requested = false;
+    char save_as_requested[260] = "";  // path
+    bool play_requested = false;
+    bool stop_requested = false;
+    bool playing = false;
+    bool quit_requested = false;   // window closed with unsaved changes: the UI asks first
+    bool quit_confirmed = false;
+    bool quit_after_save = false;
+    bool mouse_captured = false;  // Play: mouse drives the player's view
     f32 viewport_rect[4] = {};  // x, y, width, height in window pixels, set by draw_editor
 };
 
-Vec3 camera_eye(const OrbitCamera& camera);
-Mat4 camera_view(const OrbitCamera& camera);
-Mat4 camera_projection(const OrbitCamera& camera, f32 aspect);
+Vec3 camera_forward(const EditorCamera& camera);
+Mat4 camera_view(const EditorCamera& camera);
+Mat4 camera_projection(const EditorCamera& camera, f32 aspect);
 
 // Loads Config/editor_theme.json into theme if it exists.
 void load_theme(EditorTheme& theme);
@@ -76,5 +93,8 @@ void apply_theme(const EditorTheme& theme);
 
 // Draws the whole editor for this frame (between ImGui::NewFrame and ImGui::Render).
 void draw_editor(EditorState& state);
+
+// Fills a new level with a floor and a Player Start, like Unreal's default new level.
+void make_default_level(world::World& world);
 
 } // namespace lsd::editor
