@@ -30,8 +30,8 @@ constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use
 constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
-constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 4 texture tables + lights CBV: 58 of 64 DWORDs)
-constexpr u32 kLightSlot = 1536;     // LightSetup rounded up to the 256-byte CBV alignment
+constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 5 texture tables + lights CBV: 59 of 64 DWORDs)
+constexpr u32 kLightSlot = 2816;     // LightSetup rounded up to the 256-byte CBV alignment
 constexpr u32 kMaxShadowMaps = 8;    // handles kMaxTargets + kMaxTextures..
 constexpr u32 kLightSlots = 64;      // set_lights calls per frame before the ring wraps
 
@@ -66,8 +66,10 @@ struct Light { float4 pos_type; float4 dir_range; float4 color_inner; float4 spo
 cbuffer Lights : register(b1) {
     float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16];
     float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
+    float4x4 local_vp[16]; float4 local_tile[16];
 };
 Texture2D<float> shadow_tex : register(t3);
+Texture2D<float> local_shadow_tex : register(t4);
 SamplerComparisonState shadow_samp : register(s1);
 // Sun shadow: the cascade by distance from the camera, pushed out along the normal against acne,
 // 3x3 hardware-filtered taps (soft edges).
@@ -84,6 +86,26 @@ float sun_shadow(float3 wpos, float3 n, float3 cam) {
     float lit = 0.0;
     [unroll] for (int y = -1; y <= 1; ++y)
         [unroll] for (int x = -1; x <= 1; ++x) lit += shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * shadow_info.z, lo, hi), s.z);
+    return lit / 9.0;
+}
+// Spot / point light shadow: the light's tile (a point light's cube face by the major axis).
+float local_shadow(Light L, float3 wpos, float3 n) {
+    uint tile = (uint)L.spot.y;
+    const float3 d = wpos - L.pos_type.xyz;
+    if (L.pos_type.w < 1.5) {
+        const float3 a = abs(d);
+        tile += a.x >= a.y && a.x >= a.z ? (d.x > 0 ? 0 : 1) : a.y >= a.z ? (d.y > 0 ? 2 : 3) : (d.z > 0 ? 4 : 5);
+    }
+    float4 s = mul(local_vp[tile], float4(wpos + n * (L.spot.z * length(d)), 1.0));
+    s.xyz /= s.w;
+    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0 || s.z < 0.0) return 1.0;
+    uv = local_tile[tile].xy + uv * local_tile[tile].z;
+    const float texel = 1.0 / 4096.0;
+    const float2 lo = local_tile[tile].xy + texel, hi = local_tile[tile].xy + local_tile[tile].z - texel;
+    float lit = 0.0;
+    [unroll] for (int y = -1; y <= 1; ++y)
+        [unroll] for (int x = -1; x <= 1; ++x) lit += local_shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * texel, lo, hi), s.z);
     return lit / 9.0;
 }
 Texture2D base_tex : register(t0);
@@ -145,6 +167,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;
         if ((float)li == shadow_info.y) atten *= sun_shadow(i.wpos, n, mat1.yzw);
+        else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
         const float3 h = normalize(v + l);
         const float ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
         const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
@@ -592,6 +615,7 @@ public:
         list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
         list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
+        list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
         list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
@@ -690,9 +714,11 @@ public:
         set_render_target({}, nullptr);  // back to the window
     }
 
-    void set_shadow_map(TextureHandle handle) override {
-        const ShadowMap* m = lookup_shadow(handle);
-        shadow_srv_ = m ? m->srv_gpu : textures_[white_].srv_gpu;  // the shader only samples it when a light says so
+    void set_shadow_map(TextureHandle sun, TextureHandle local) override {
+        const ShadowMap* s = lookup_shadow(sun);
+        const ShadowMap* l = lookup_shadow(local);
+        shadow_srv_ = s ? s->srv_gpu : textures_[white_].srv_gpu;  // the shader only samples them when a light says so
+        local_shadow_srv_ = l ? l->srv_gpu : textures_[white_].srv_gpu;
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -725,7 +751,7 @@ public:
         list_->RSSetScissorRects(1, &scissor);
         light_offset_ = 0;
         set_lights(default_lights());
-        set_shadow_map({});
+        set_shadow_map({}, {});
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
@@ -952,15 +978,17 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[6]{};
-        D3D12_DESCRIPTOR_RANGE shadow_range{};
-        shadow_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        shadow_range.NumDescriptors = 1;
-        shadow_range.BaseShaderRegister = 3;  // t3: the sun's shadow map
-        params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[5].DescriptorTable.NumDescriptorRanges = 1;
-        params[5].DescriptorTable.pDescriptorRanges = &shadow_range;
-        params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_ROOT_PARAMETER params[7]{};
+        D3D12_DESCRIPTOR_RANGE shadow_ranges[2]{};
+        for (UINT k = 0; k < 2; ++k) {  // t3: the sun's shadow atlas, t4: the local lights' atlas
+            shadow_ranges[k].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            shadow_ranges[k].NumDescriptors = 1;
+            shadow_ranges[k].BaseShaderRegister = 3 + k;
+            params[5 + k].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            params[5 + k].DescriptorTable.NumDescriptorRanges = 1;
+            params[5 + k].DescriptorTable.pDescriptorRanges = &shadow_ranges[k];
+            params[5 + k].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        }
         params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b1: lights
         params[4].Descriptor.ShaderRegister = 1;
         params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -991,7 +1019,7 @@ private:
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 6;
+        rs_desc.NumParameters = 7;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 2;
         rs_desc.pStaticSamplers = samplers;
@@ -1154,6 +1182,7 @@ private:
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
     i32 shadow_pass_ = -1;
     D3D12_GPU_DESCRIPTOR_HANDLE shadow_srv_{};
+    D3D12_GPU_DESCRIPTOR_HANDLE local_shadow_srv_{};
     Buffer buffers_[kMaxBuffers];
     ComPtr<ID3D12DescriptorHeap> target_rtv_heap_;
     ComPtr<ID3D12DescriptorHeap> target_dsv_heap_;

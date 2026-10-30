@@ -82,6 +82,7 @@ struct MeshDraw {
 // and spot). The shader multiplies everything by `exposure` and encodes to sRGB.
 enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2 };
 constexpr u32 kMaxLights = 16;
+constexpr u32 kMaxShadowTiles = 16;  // spot / point light shadow tiles per frame
 struct GpuLight {
     f32 position[3];
     f32 type;          // LightType as a float (the shader reads it from a float4)
@@ -90,7 +91,9 @@ struct GpuLight {
     f32 color[3];
     f32 spot_inner_cos;
     f32 spot_outer_cos;
-    f32 pad[3];
+    f32 shadow_tile;     // first tile in the local shadow atlas (point lights use 6: +X -X +Y -Y +Z -Z), -1 = none
+    f32 shadow_offset;   // normal offset per metre of distance (texel size grows with distance)
+    f32 pad;
 };
 struct LightSetup {
     f32 exposure = 1.0f;
@@ -106,8 +109,11 @@ struct LightSetup {
     f32 shadow_tiles[4][4] = {};
     f32 shadow_splits[4] = {};  // far distance of each cascade from the camera
     f32 shadow_info[4] = {0, -1, 0, 0};
+    // Spot / point light shadows: one view-projection and atlas tile per shadow tile.
+    f32 local_matrices[kMaxShadowTiles][16] = {};
+    f32 local_tiles[kMaxShadowTiles][4] = {};
 };
-static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16, "matches the shader's light buffer");
+static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80, "matches the shader's light buffer");
 
 // The look before any light is placed (and of thumbnails): one sun, sky and ground ambient.
 LightSetup default_lights();
@@ -157,13 +163,13 @@ public:
 
     // Shadow maps: a square depth texture. Between begin_shadow_pass and end_shadow_pass, draws go
     // into it (set_viewport picks a tile of an atlas) with only their depth; end_shadow_pass returns
-    // to the window. set_shadow_map binds one for the following draw_mesh calls (lights say which
-    // light uses it); begin_frame unbinds it.
+    // to the window. set_shadow_map binds the sun's and the local lights' atlases for the following
+    // draw_mesh calls (the lights say which tiles they use); begin_frame unbinds them.
     virtual TextureHandle create_shadow_map(u32 size) = 0;
     virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) = 0;
     virtual void end_shadow_pass() = 0;
-    virtual void set_shadow_map(TextureHandle shadow_map) = 0;
+    virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;

@@ -89,20 +89,55 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
         }
     }
     device.end_shadow_pass();
-    device.set_shadow_map(atlas);
+}
+
+// Spot / point light shadow tiles: the meshes that reach into each light's range.
+void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
+                        lsd::editor::MeshCache& meshes, bool skip_hidden) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
+    device.begin_shadow_pass(atlas);
+    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::kShadowAtlasSize);
+    for (lsd::u32 li = 0; li < lights.count; ++li) {
+        const lsd::rhi::GpuLight& light = lights.lights[li];
+        if (light.shadow_tile < 0.0f) continue;
+        const lsd::u32 first = static_cast<lsd::u32>(light.shadow_tile);
+        const lsd::u32 tiles = light.type == static_cast<lsd::f32>(lsd::rhi::LightType::Point) ? 6u : 1u;
+        const lsd::Vec3 at{light.position[0], light.position[1], light.position[2]};
+        for (lsd::u32 t = first; t < first + tiles; ++t) {
+            device.set_viewport(lights.local_tiles[t][0] * size, lights.local_tiles[t][1] * size, lights.local_tiles[t][2] * size, lights.local_tiles[t][2] * size);
+            lsd::Mat4 vp;
+            std::memcpy(vp.m, lights.local_matrices[t], sizeof vp.m);
+            for (lsd::u32 i = 0; i < world.count(type); ++i) {
+                const lsd::world::Entity e = world.owner(type, i);
+                if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+                const lsd::editor::CachedMesh* mesh = meshes.get(static_cast<const lsd::world::StaticMesh*>(world.at(type, i))->mesh);
+                if (!mesh) continue;
+                const lsd::Mat4 m = world.world_matrix(e);
+                // Skip meshes whose bounding sphere does not reach the light.
+                const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
+                const lsd::Vec3 extent = lsd::transform_vector(m, (mesh->bounds_max - mesh->bounds_min) * 0.5f);
+                if (lsd::length(centre - at) > light.range + lsd::length(extent) * 1.8f) continue;
+                const lsd::Mat4 mvp = vp * m;
+                device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
+            }
+        }
+    }
+    device.end_shadow_pass();
 }
 
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
-                lsd::rhi::TextureHandle shadow_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
+                lsd::rhi::TextureHandle shadow_atlas, lsd::rhi::TextureHandle local_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
                 EditorState& stats) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
     const lsd::rhi::LightSetup lights = lsd::editor::world_lights(world, light_view, skip_hidden);
-    if (lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire()) {
-        draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden);
-        device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    }
+    const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
+    const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
+    if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden);
+    if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden);
+    if (sun_shadows || local_shadows) device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
     device.set_lights(lights);
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
@@ -418,6 +453,7 @@ int main(int argc, char** argv) {
     lsd::editor::MeshCache& meshes = *new (mesh_memory) lsd::editor::MeshCache(*device, allocator, registry, kDataDir);
     auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
     const lsd::rhi::TextureHandle shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
+    const lsd::rhi::TextureHandle local_shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
     lsd::editor::MaterialCache materials(*texture_cache, registry);
     auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
     lsd::editor::ThumbnailCache& thumbnails = *new (thumbnail_memory) lsd::editor::ThumbnailCache(*device, allocator, registry, kDataDir);
@@ -673,7 +709,7 @@ int main(int argc, char** argv) {
             light_view.fov_y = lens.fov_y;
             light_view.aspect = rect[2] / rect[3];
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
-            draw_world(*device, view_proj, light_view, pixels, shadow_atlas, world, meshes, materials, state);
+            draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state);
         }
         device->render_debug_ui();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
@@ -697,6 +733,7 @@ int main(int argc, char** argv) {
     allocator.deallocate(thumbnail_memory);
     delete texture_cache;
     device->destroy_texture(shadow_atlas);
+    device->destroy_texture(local_shadow_atlas);
     meshes.~MeshCache();
     allocator.deallocate(mesh_memory);
     state.~EditorState();

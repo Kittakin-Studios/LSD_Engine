@@ -216,6 +216,7 @@ struct PointLight {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 10.0f;
     LSD_PROPERTY(Edit) bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000) f32 temperature = 3200.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
 };
 
 // A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
@@ -229,6 +230,7 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Units = "deg", Min = 1, Max = 89, Tooltip = "No light outside this angle from the centre") f32 outer_angle = 35.0f;
     LSD_PROPERTY(Edit) bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000) f32 temperature = 3200.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).

@@ -17,7 +17,7 @@ struct LightView {
     f32 aspect = 1.0f;
 };
 
-constexpr u32 kShadowAtlasSize = 4096;  // 2 x 2 cascades of 2048
+constexpr u32 kShadowAtlasSize = 4096;  // sun: 2 x 2 cascades of 2048; local lights: 4 x 4 tiles of 1024
 
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
 

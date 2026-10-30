@@ -69,8 +69,10 @@ struct Light { vec4 pos_type; vec4 dir_range; vec4 color_inner; vec4 spot; };
 layout(std140, binding = 1) uniform Lights {
     float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16];
     mat4 shadow_vp[4]; vec4 shadow_tile[4]; vec4 shadow_split; vec4 shadow_info;
+    mat4 local_vp[16]; vec4 local_tile[16];
 };
 layout(binding = 3) uniform sampler2DShadow shadow_tex;
+layout(binding = 4) uniform sampler2DShadow local_shadow_tex;
 float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
     float dist = length(wpos - cam);
     int count = int(shadow_info.x);
@@ -87,6 +89,26 @@ float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
     float lit = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) lit += texture(shadow_tex, vec3(clamp(uv + vec2(x, y) * shadow_info.z, lo, hi), s.z));
+    return lit / 9.0;
+}
+float local_shadow(Light L, vec3 wpos, vec3 n) {
+    int tile = int(L.spot.y);
+    vec3 d = wpos - L.pos_type.xyz;
+    if (L.pos_type.w < 1.5) {
+        vec3 a = abs(d);
+        tile += a.x >= a.y && a.x >= a.z ? (d.x > 0.0 ? 0 : 1) : a.y >= a.z ? (d.y > 0.0 ? 2 : 3) : (d.z > 0.0 ? 4 : 5);
+    }
+    vec4 s = local_vp[tile] * vec4(wpos + n * (L.spot.z * length(d)), 1.0);
+    s.xyz /= s.w;
+    vec2 uv = s.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0 || s.z < 0.0) return 1.0;
+    vec2 origin = vec2(local_tile[tile].x, 1.0 - local_tile[tile].y - local_tile[tile].z);
+    uv = origin + uv * local_tile[tile].z;
+    float texel = 1.0 / 4096.0;
+    vec2 lo = origin + texel, hi = origin + local_tile[tile].z - texel;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) lit += texture(local_shadow_tex, vec3(clamp(uv + vec2(x, y) * texel, lo, hi), s.z));
     return lit / 9.0;
 }
 layout(binding = 0) uniform sampler2D base_tex;
@@ -140,6 +162,7 @@ void main() {
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;
         if (float(li) == shadow_info.y) atten *= sun_shadow(v_wpos, n, u_mat[1].yzw);
+        else if (L.spot.y >= 0.0) atten *= local_shadow(L, v_wpos, n);
         vec3 h = normalize(v + l);
         float ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
         float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
@@ -411,7 +434,7 @@ public:
         glClearDepth(1.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         set_lights(default_lights());
-        set_shadow_map({});
+        set_shadow_map({}, {});
     }
 
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
@@ -540,6 +563,7 @@ public:
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
         gl_.glBindTextureUnit(3, shadow_texture_);
+        gl_.glBindTextureUnit(4, local_shadow_texture_);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
@@ -611,9 +635,11 @@ public:
         set_render_target({}, nullptr);  // back to the window
     }
 
-    void set_shadow_map(TextureHandle handle) override {
-        const ShadowMap* m = lookup_shadow(handle);
-        shadow_texture_ = m ? m->texture : shadow_maps_[0].texture;  // slot 0: 1x1 "fully lit" default
+    void set_shadow_map(TextureHandle sun, TextureHandle local) override {
+        const ShadowMap* s = lookup_shadow(sun);
+        const ShadowMap* l = lookup_shadow(local);
+        shadow_texture_ = s ? s->texture : shadow_maps_[0].texture;  // slot 0: 1x1 "fully lit" default
+        local_shadow_texture_ = l ? l->texture : shadow_maps_[0].texture;
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -812,7 +838,7 @@ private:
         create_shadow_map(1);
         const f32 far_depth = 1.0f;
         gl_.glTextureSubImage2D(shadow_maps_[0].texture, 0, 0, 0, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &far_depth);
-        shadow_texture_ = shadow_maps_[0].texture;
+        shadow_texture_ = local_shadow_texture_ = shadow_maps_[0].texture;
         line_mvp_ = gl_.glGetUniformLocation(line_program_, "u_mvp");
 
         gl_.glCreateVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
@@ -852,6 +878,7 @@ private:
     GLint shadow_mvp_ = -1;
     ShadowMap shadow_maps_[kMaxShadowMaps];
     GLuint shadow_texture_ = 0;
+    GLuint local_shadow_texture_ = 0;
     bool in_shadow_pass_ = false;
     u32 target_height_ = 0;  // height of what is being drawn to, for set_viewport's Y flip
     GLint params_location_ = -1;
