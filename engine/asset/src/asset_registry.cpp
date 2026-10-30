@@ -41,6 +41,7 @@ const char* to_string(AssetType type) {
         case AssetType::Level: return "Level";
         case AssetType::Data: return "Data";
         case AssetType::Prefab: return "Prefab";
+        case AssetType::Script: return "Script";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -53,6 +54,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
     if (std::strcmp(lower, ".lsdasset") == 0) return AssetType::Data;
     if (std::strcmp(lower, ".lsdprefab") == 0) return AssetType::Prefab;
+    if (std::strcmp(lower, ".lua") == 0) return AssetType::Script;
     return AssetType::Unknown;
 }
 

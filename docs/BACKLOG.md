@@ -96,7 +96,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 - [~] Data assets (`.lsdasset`, any registered reflected type, New Data Asset, edit + save in Details); needs data tables (CSV/JSON import/export), curves and curve tables [Data Asset, Data Table, Curve]
 - [x] Reflection: List<T, N> fields (JSON arrays, binary, +/remove in Details), Choice dropdowns, asset pickers (Asset:<Type>, drag-drop), key picker with Listen
-- [ ] Gameplay tags: hierarchical names, tag containers, tag queries (moved up from v2: scripts and AI need them early) [Gameplay Tags]
+- [~] Gameplay tags: Tags component (comma-separated, dotted hierarchy, `has_tag` / `lsd.has_tag` where "Damage.Fire" matches "Damage"); needs a project tag list with a picker, tag containers on data assets, richer queries (any / all / none) [Gameplay Tags]
 - [ ] Enums and structs defined in the editor for scripts [User Defined Enum / Struct]
 
 ### Prefabs and components
@@ -109,7 +109,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 ### Scripting
 
-- [ ] Lua scripting (LuaJIT) with hot reload, bindings generated from reflection
+- [~] Lua scripting (LuaJIT, `engine/script`): Script component, on_start / on_update per object with its own `self`, `lsd` API (log, find, position / rotation, tags, input, time, destroy), hot reload on save while playing, errors with stack in the Output Log, New Lua Script + double-click to edit, `lua` console command; needs bindings generated from reflection (any component from Lua), events (overlap, hit), timers, sandboxing
 - [ ] Lua debugger in the editor: breakpoints, step, watch, call stack **(S)**
 - [ ] Visual scripting: events, variables, functions, macros, flow control, calls into C++/Lua [Blueprints]
 - [ ] Level script: a visual-script graph owned by the level for one-off events **(S)** [Level Blueprint]

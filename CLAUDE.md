@@ -83,7 +83,8 @@ engine/world/       entities (generational handles), packed component pools per 
                     hierarchy, built-in components (Transform, StaticMesh, PlayerStart), .lsdlevel text files
 engine/input/       Input Action / Mapping Context data assets and the InputSystem (keys, mouse, gamepad)
 engine/physics/     Jolt behind a small API: bodies (box/sphere/capsule) and the player's CharacterVirtual
-engine/script, audio, ui   placeholders
+engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload
+engine/audio, ui    placeholders
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
                     camera), Outliner, Details (components), Content Browser + Place, undo history
                     (whole-level snapshots), Play-in-Editor; theme in Config/, user settings in Saved/
@@ -91,7 +92,7 @@ tools/data_compiler/ CLI stub: --source-dir / --data-dir
 tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
 third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, ImGuizmo, Vulkan-Headers, volk,
-                    ufbx, cgltf, meshoptimizer, Jolt Physics)
+                    ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake)
 tests/              framework-free unit tests (CTest)
 docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
 ```
@@ -133,7 +134,9 @@ Details, groups, hide/lock, Message Log, 2x2 viewport layout. Remaining mileston
 Input-style Input Actions + Mapping Contexts (`engine/input`); Jolt physics (`engine/physics`: static
 level collision, RigidBody, CharacterVirtual); Character component possessed in Play with its input
 wired in Details. Prefabs (`.lsdprefab`, `engine/world/prefab.h`: create, place, apply, revert; no
-per-instance overrides yet). Next: gameplay tags, Lua, visual scripting, game framework classes.
+per-instance overrides yet). Gameplay tags (Tags component). Lua scripts (`engine/script`, LuaJIT
+built from source by third_party/CMakeLists.txt with its own minilua/buildvm tools). Next: visual
+scripting, game framework classes, reflection-generated Lua bindings, events and timers.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

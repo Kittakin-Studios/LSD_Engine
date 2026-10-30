@@ -3,12 +3,14 @@
 // Blocking Volumes are static, RigidBody objects are simulated. The player is the first Character in
 // the level, driven by the input assets picked on it; without one, a default first-person walker
 // spawns at the Player Start (or the camera) with built-in WASD / mouse / Space controls.
-// Kill Volumes and the World Settings' Kill Z send the player back to the start.
+// Kill Volumes and the World Settings' Kill Z send the player back to the start. Objects with a
+// Script component run their Lua file (engine/script) after physics each frame.
 #include "mesh_cache.h"
 
 #include "lsd/asset/asset_registry.h"
 #include "lsd/input/input.h"
 #include "lsd/physics/physics.h"
+#include "lsd/script/script.h"
 #include "lsd/world/components.h"
 #include "lsd/world/world.h"
 
@@ -21,7 +23,7 @@ public:
     PlaySession(const PlaySession&) = delete;
     PlaySession& operator=(const PlaySession&) = delete;
 
-    void start(const world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch);
+    void start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch);
     // Moves the player and simulated objects; writes their new transforms into `world` (Stop reverts them).
     void update(world::World& world, const input::InputFrame& frame, f32 dt);
     void stop();
@@ -30,6 +32,7 @@ public:
     Vec3 eye() const { return feet_ + Vec3{0, 0, settings_.eye_height}; }
     Vec3 forward() const;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
+    bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
 
 private:
     struct Simulated {
@@ -39,7 +42,12 @@ private:
         Vec3 centre;  // bounds centre in the entity's local space (unscaled)
     };
 
+    static bool script_path(void* user, const char* guid, char* out, usize capacity);
+    static bool action_guid(const asset::AssetRegistry& registry, const char* name, char* out);
+
     physics::PhysicsWorld* physics_ = nullptr;
+    script::ScriptSystem scripts_;
+    const asset::AssetRegistry* registry_ = nullptr;
     input::InputSystem input_;
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker

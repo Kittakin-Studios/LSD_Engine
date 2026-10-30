@@ -112,6 +112,11 @@ private:
     WorldSettings settings_;
 };
 
+// Gameplay tags: true if any tag in the comma-separated list is `query` or under it
+// ("Damage.Fire" matches "Damage" and "Damage.Fire", not "Dam" or "Fire").
+bool tags_match(const char* tags, const char* query);
+bool has_tag(const World& world, Entity entity, const char* query);
+
 // Copies an entity and its children from one world into another (or the same one), under `parent`.
 // The copy gets a unique name in `to`; returns it.
 Entity copy_entity(const World& from, Entity source, World& to, Entity parent);

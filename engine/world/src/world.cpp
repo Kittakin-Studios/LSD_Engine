@@ -16,6 +16,8 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<RigidBody>(),
         &reflect::type_of<Character>(),
         &reflect::type_of<PrefabInstance>(),
+        &reflect::type_of<Tags>(),
+        &reflect::type_of<Script>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);
@@ -280,6 +282,28 @@ void* World::at(const reflect::TypeInfo& type, u32 i) {
 Entity World::entity_at_slot(u32 slot) const {
     const Record& r = records_[slot];
     return r.alive ? Entity::make(slot, r.generation) : Entity{};
+}
+
+bool tags_match(const char* tags, const char* query) {
+    const usize length = std::strlen(query);
+    if (length == 0) return false;
+    for (const char* p = tags; *p;) {
+        while (*p == ' ' || *p == ',') ++p;
+        const char* end = p;
+        while (*end && *end != ',') ++end;
+        const char* last = end;
+        while (last > p && last[-1] == ' ') --last;
+        const usize n = static_cast<usize>(last - p);
+        // Exact, or the tag is a child of the query ("Damage.Fire" matches "Damage").
+        if (n >= length && std::strncmp(p, query, length) == 0 && (n == length || p[length] == '.')) return true;
+        p = end;
+    }
+    return false;
+}
+
+bool has_tag(const World& world, Entity entity, const char* query) {
+    const Tags* tags = world.get<Tags>(entity);
+    return tags && tags_match(tags->tags, query);
 }
 
 Entity copy_entity(const World& from, Entity source, World& to, Entity parent) {

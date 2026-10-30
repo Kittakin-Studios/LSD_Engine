@@ -390,6 +390,9 @@ int main(int argc, char** argv) {
     lsd::render::GpuLines grid = lsd::render::create_grid(*device, allocator, current_grid);
 
     lsd::editor::PlaySession play;
+    lsd::console::add_command("lua", [](void* user, const char* args) {
+        if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
+    }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
     SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player

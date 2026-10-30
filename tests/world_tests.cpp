@@ -159,11 +159,31 @@ static void test_prefab() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+static void test_tags() {
+    CHECK(tags_match("Enemy, Damage.Fire", "Damage"));
+    CHECK(tags_match("Enemy, Damage.Fire", "Damage.Fire"));
+    CHECK(tags_match("Enemy , Damage.Fire", "Enemy"));
+    CHECK(!tags_match("Enemy, Damage.Fire", "Fire"));
+    CHECK(!tags_match("Enemy, Damage.Fire", "Dam"));
+    CHECK(!tags_match("Enemy, Damage.Fire", "Damage.Fire.Big"));
+    CHECK(!tags_match("", "Enemy") && !tags_match("Enemy", ""));
+    HeapAllocator heap("tags");
+    {
+        World w(heap);
+        const Entity e = w.create("Orc");
+        CHECK(!has_tag(w, e, "Enemy"));
+        std::snprintf(w.add<Tags>(e)->tags, sizeof(Tags::tags), "Enemy.Orc");
+        CHECK(has_tag(w, e, "Enemy") && !has_tag(w, e, "Orc"));
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
     test_math();
     test_entities();
     test_level_round_trip();
     test_prefab();
+    test_tags();
     if (g_failures == 0) std::printf("All world tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

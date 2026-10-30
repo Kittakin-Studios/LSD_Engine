@@ -119,3 +119,81 @@ add_library(cgltf INTERFACE)
 target_include_directories(cgltf SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
 # Blender-exported sample files used by the import tests.
 set(LSD_UFBX_DATA_DIR ${ufbx_SOURCE_DIR}/data PARENT_SCOPE)
+
+# LuaJIT (MIT): gameplay scripting. Upstream has no CMake build, so this runs its own host tools
+# the way src/msvcbuild.bat and src/Makefile do: minilua -> DynASM -> buildvm -> VM object + headers.
+# Pinned to a commit on the v2.1 rolling branch; LSD_LUAJIT_RELVER is that commit's time (%ct).
+FetchContent_Declare(luajit
+  GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
+  GIT_TAG 8ca762976ebc85ad9bde3e15f147a7e326e0dd01
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(luajit)
+set(LSD_LUAJIT_RELVER 1793275035)
+set(LJ_SRC ${luajit_SOURCE_DIR}/src)
+set(LJ_GEN ${CMAKE_CURRENT_BINARY_DIR}/luajit_gen)
+file(MAKE_DIRECTORY ${LJ_GEN})
+file(WRITE ${LJ_GEN}/luajit_relver.txt "${LSD_LUAJIT_RELVER}\n")
+
+add_executable(lsd_luajit_minilua ${LJ_SRC}/host/minilua.c)
+if(UNIX)
+  target_link_libraries(lsd_luajit_minilua PRIVATE m)
+endif()
+
+if(WIN32)
+  set(LJ_DASM_FLAGS -D WIN -D JIT -D FFI -D ENDIAN_LE -D FPU -D P64)
+  set(LJ_VM_MODE peobj)
+  set(LJ_VM ${LJ_GEN}/lj_vm.obj)
+else()
+  set(LJ_DASM_FLAGS -D JIT -D FFI -D ENDIAN_LE -D FPU -D P64)
+  set(LJ_VM_MODE elfasm)
+  set(LJ_VM ${LJ_GEN}/lj_vm.S)
+  enable_language(ASM)
+endif()
+add_custom_command(OUTPUT ${LJ_GEN}/buildvm_arch.h
+  COMMAND lsd_luajit_minilua ${luajit_SOURCE_DIR}/dynasm/dynasm.lua -LN ${LJ_DASM_FLAGS} -o ${LJ_GEN}/buildvm_arch.h vm_x64.dasc
+  WORKING_DIRECTORY ${LJ_SRC}
+  DEPENDS lsd_luajit_minilua ${LJ_SRC}/vm_x64.dasc
+  VERBATIM)
+add_custom_command(OUTPUT ${LJ_GEN}/luajit.h
+  COMMAND lsd_luajit_minilua host/genversion.lua luajit_rolling.h ${LJ_GEN}/luajit_relver.txt ${LJ_GEN}/luajit.h
+  WORKING_DIRECTORY ${LJ_SRC}
+  DEPENDS lsd_luajit_minilua ${LJ_SRC}/luajit_rolling.h
+  VERBATIM)
+
+file(GLOB LJ_BUILDVM_SOURCES ${LJ_SRC}/host/buildvm*.c)
+add_executable(lsd_luajit_buildvm ${LJ_BUILDVM_SOURCES} ${LJ_GEN}/buildvm_arch.h ${LJ_GEN}/luajit.h)
+target_include_directories(lsd_luajit_buildvm PRIVATE ${LJ_GEN} ${LJ_SRC} ${luajit_SOURCE_DIR}/dynasm)
+target_compile_definitions(lsd_luajit_buildvm PRIVATE _CRT_SECURE_NO_DEPRECATE)
+
+set(LJ_LIB_SOURCES lib_base.c lib_math.c lib_bit.c lib_string.c lib_table.c lib_io.c lib_os.c lib_package.c
+  lib_debug.c lib_jit.c lib_ffi.c lib_buffer.c)
+set(LJ_HEADERS)
+foreach(mode bcdef ffdef libdef recdef)
+  add_custom_command(OUTPUT ${LJ_GEN}/lj_${mode}.h
+    COMMAND lsd_luajit_buildvm -m ${mode} -o ${LJ_GEN}/lj_${mode}.h ${LJ_LIB_SOURCES}
+    WORKING_DIRECTORY ${LJ_SRC}
+    DEPENDS lsd_luajit_buildvm
+    VERBATIM)
+  list(APPEND LJ_HEADERS ${LJ_GEN}/lj_${mode}.h)
+endforeach()
+add_custom_command(OUTPUT ${LJ_GEN}/lj_folddef.h
+  COMMAND lsd_luajit_buildvm -m folddef -o ${LJ_GEN}/lj_folddef.h lj_opt_fold.c
+  WORKING_DIRECTORY ${LJ_SRC}
+  DEPENDS lsd_luajit_buildvm
+  VERBATIM)
+add_custom_command(OUTPUT ${LJ_VM}
+  COMMAND lsd_luajit_buildvm -m ${LJ_VM_MODE} -o ${LJ_VM}
+  DEPENDS lsd_luajit_buildvm
+  VERBATIM)
+
+file(GLOB LJ_CORE_SOURCES ${LJ_SRC}/lj_*.c ${LJ_SRC}/lib_*.c)
+add_library(luajit STATIC ${LJ_CORE_SOURCES} ${LJ_VM} ${LJ_HEADERS} ${LJ_GEN}/lj_folddef.h ${LJ_GEN}/luajit.h)
+target_include_directories(luajit SYSTEM PUBLIC ${LJ_SRC} ${LJ_GEN})
+target_compile_definitions(luajit PRIVATE _CRT_SECURE_NO_DEPRECATE)
+if(MSVC)
+  target_compile_options(luajit PRIVATE /w)
+else()
+  target_compile_options(luajit PRIVATE -w)
+  target_link_libraries(luajit PUBLIC m dl)
+endif()

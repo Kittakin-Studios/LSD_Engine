@@ -76,6 +76,7 @@ bool load_context(const asset::AssetRegistry& registry, const char* guid_text, i
 PlaySession::~PlaySession() { stop(); }
 
 void PlaySession::stop() {
+    scripts_.stop();
     delete physics_;
     physics_ = nullptr;
     simulated_count_ = 0;
@@ -86,8 +87,32 @@ Vec3 PlaySession::forward() const {
     return {std::cos(pitch_) * std::cos(yaw_), std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_)};
 }
 
-void PlaySession::start(const world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch) {
+bool PlaySession::script_path(void* user, const char* guid_text, char* out, usize capacity) {
+    const auto& registry = *static_cast<const asset::AssetRegistry*>(user);
+    asset::Guid guid;
+    const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
+    if (!r || r->type != asset::AssetType::Script) return false;
+    registry.source_path(*r, out, capacity);
+    return true;
+}
+
+// Scripts name Input Actions by asset name ("IA_Move"); the input system knows them by GUID.
+bool PlaySession::action_guid(const asset::AssetRegistry& registry, const char* name, char* out) {
+    usize hits[8];
+    const usize n = registry.search(name, asset::AssetType::Data, nullptr, hits, 8);
+    for (usize i = 0; i < n; ++i) {
+        const asset::AssetRecord& r = registry.get(hits[i]);
+        if (std::strcmp(r.name, name) == 0 && std::strcmp(r.data_type, "InputAction") == 0) {
+            asset::to_string(r.guid, out);
+            return true;
+        }
+    }
+    return false;
+}
+
+void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch) {
     stop();
+    registry_ = &registry;
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
 
@@ -178,6 +203,22 @@ void PlaySession::start(const world::World& world, MeshCache& meshes, const asse
     desc.max_slope_degrees = settings_.max_slope;
     desc.step_height = settings_.step_height;
     physics_->create_character(desc);
+
+    script::ScriptHost host;
+    host.user = this;
+    host.input = [](void* user, const char* action) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        char guid[33];
+        if (!action_guid(*self.registry_, action, guid)) return Vec3{};
+        const input::Value v = self.input_.value(guid);
+        return Vec3{v.x, v.y, 0};
+    };
+    host.pressed = [](void* user, const char* action) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        char guid[33];
+        return action_guid(*self.registry_, action, guid) && self.input_.pressed(guid);
+    };
+    scripts_.start(world, host, script_path, const_cast<asset::AssetRegistry*>(&registry));
 }
 
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
@@ -218,6 +259,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     // Write the simulation back so the viewport (and anything attached) shows it.
     for (u32 i = 0; i < simulated_count_; ++i) {
         const Simulated& s = simulated_[i];
+        if (!world.alive(s.entity)) continue;  // a script destroyed it
         world.set_world_matrix(s.entity, physics_->body_transform(s.body) * translation(-mul(s.centre, s.scale)) * scaling(s.scale));
     }
     if (world.alive(character_)) {
@@ -225,6 +267,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         decompose_trs(world.world_matrix(character_), t, r, scale);
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
+    scripts_.update(dt);
 }
 
 } // namespace lsd::editor

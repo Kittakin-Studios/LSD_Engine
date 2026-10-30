@@ -1180,6 +1180,7 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
+    if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script;
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
 
@@ -1350,6 +1351,35 @@ void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
         select(s, {});
         s.selected_asset = r->guid;
         load_selected_data(s, *r);
+        start_rename(s, r->guid, "", r->name);
+    }
+}
+
+constexpr char kScriptTemplate[] = R"(-- Runs on every object whose Script component points at this file (in Play).
+-- self.entity is the object, self.name its name; keep your own state in self.
+-- The engine API is the lsd table: see engine/script/include/lsd/script/script.h.
+
+function on_start(self)
+  lsd.log("Hello from " .. self.name)
+end
+
+function on_update(self, dt)
+  -- spin around Z, 90 degrees a second
+  local x, y, z = lsd.rotation(self.entity)
+  lsd.set_rotation(self.entity, x, y, z + 90 * dt)
+end
+)";
+
+void create_script(EditorState& s) {
+    const std::string path = new_asset_path(s, "NewScript", ".lua");
+    FILE* file = std::fopen(path.c_str(), "wb");
+    if (!file) return;
+    std::fputs(kScriptTemplate, file);
+    std::fclose(file);
+    s.registry->scan();
+    if (const asset::AssetRecord* r = record_at(s, path)) {
+        select(s, {});
+        s.selected_asset = r->guid;
         start_rename(s, r->guid, "", r->name);
     }
 }
@@ -1611,6 +1641,14 @@ void folder_drop_target(EditorState& s, const char* folder) {
     ImGui::EndDragDropTarget();
 }
 
+// Opens a file in the program Windows / the desktop associates with it (VS Code for .lua, usually).
+void open_external(EditorState& s, const asset::AssetRecord& r) {
+    char path[300];
+    s.registry->source_path(r, path, sizeof path);
+    std::error_code error;
+    SDL_OpenURL(("file:///" + std::filesystem::absolute(path, error).generic_string()).c_str());
+}
+
 void show_in_explorer(const char* folder) {
     std::error_code error;
     const std::string path = std::filesystem::absolute(std::filesystem::path(kContentDir) / folder, error).generic_string();
@@ -1755,7 +1793,7 @@ void draw_asset_grid(EditorState& s) {
     ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0");
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0");
     ImGui::SameLine();
     ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
@@ -1763,7 +1801,8 @@ void draw_asset_grid(EditorState& s) {
 
     static usize hits[1024];
     const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : s.type_filter == 2 ? asset::AssetType::Level
-                                : s.type_filter == 3 ? asset::AssetType::Data : s.type_filter == 4 ? asset::AssetType::Prefab : asset::AssetType::Unknown;
+                                : s.type_filter == 3 ? asset::AssetType::Data : s.type_filter == 4 ? asset::AssetType::Prefab
+                                : s.type_filter == 5 ? asset::AssetType::Script : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
@@ -1796,6 +1835,8 @@ void draw_asset_grid(EditorState& s) {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem("New Lua Script")) create_script(s);
+        ImGui::SetItemTooltip("A .lua file with on_start / on_update; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
         ImGui::SetItemTooltip("Creates IA_Move, IA_Look, IA_Jump and IMC_Default mapped to WASD, mouse, Space and a gamepad");
         if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(s.content_folder);
@@ -1868,6 +1909,7 @@ void draw_asset_grid(EditorState& s) {
                 s.registry->source_path(r, path, sizeof path);
                 request_open(s, path);
             }
+            if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
             if (level && ImGui::MenuItem("Open Level")) {
@@ -1875,6 +1917,7 @@ void draw_asset_grid(EditorState& s) {
                 s.registry->source_path(r, path, sizeof path);
                 request_open(s, path);
             }
+            if (r.type == asset::AssetType::Script && ImGui::MenuItem("Edit Script")) open_external(s, r);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem("Delete...")) {
                 s.delete_asset = r.guid;

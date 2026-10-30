@@ -81,6 +81,21 @@ struct Character {
     LSD_PROPERTY(Edit) bool invert_look_y = false;
 };
 
+// Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".
+// shortcut: free text, no project-wide tag list or picker yet; add one with the tag editor in Project Settings.
+LSD_STRUCT(Component, Category = "Gameplay")
+struct Tags {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Comma-separated, e.g. Enemy, Damage.Fire") char tags[256] = "";
+};
+
+// Runs a Lua file in Play: on_start(self) once, on_update(self, dt) every frame (see engine/script).
+LSD_STRUCT(Component, Category = "Gameplay")
+struct Script {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Script") char script[33] = "";
+};
+
 // Root of a placed prefab (Unreal's Blueprint actor / Packed Level Actor). Its children and its
 // other components come from the prefab asset: Apply writes them back to it, Revert reloads them.
 LSD_STRUCT(Component, Category = "Prefab")
