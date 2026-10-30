@@ -106,4 +106,12 @@ bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out) {
     return ok;
 }
 
+bool texture_size(const char* path, u32& width, u32& height) {
+    int w = 0, h = 0, channels = 0;
+    if (!stbi_info(path, &w, &h, &channels)) return false;
+    width = static_cast<u32>(w);
+    height = static_cast<u32>(h);
+    return true;
+}
+
 } // namespace lsd::asset

@@ -7,6 +7,7 @@
 #include "table_editor.h"
 #include "particle_editor.h"
 #include "ui_editor.h"
+#include "packaging.h"
 
 #include "lsd/script/material_graph.h"
 
@@ -2796,6 +2797,12 @@ void draw_menu_bar(EditorState& s) {
         if (ImGui::MenuItem("Save Level", "Ctrl+S", false, !s.playing)) request_save(s, false);
         if (ImGui::MenuItem("Save Level As...", "Ctrl+Shift+S", false, !s.playing)) request_save(s, true);
         ImGui::Separator();
+        if (ImGui::MenuItem("Validate Assets")) {
+            const u32 n = validate_assets(s.project, *s.registry);
+            std::snprintf(s.status, sizeof s.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
+            if (n) s.show_message_log = true;
+        }
+        ImGui::SetItemTooltip("Missing references, oversize textures, name prefixes (Project Settings > Validation)");
         if (ImGui::MenuItem("Package Project", nullptr, false, !s.playing)) s.package_requested = true;
         ImGui::SetItemTooltip("Build/<Project Name>/: the game in a folder that runs on another PC (opens Project Settings > Game Default Level)");
         ImGui::EndMenu();

@@ -12,6 +12,7 @@
 #include "navigation.h"
 #include "ui_editor.h"
 
+#include "lsd/asset/texture.h"
 #include "lsd/core/crash.h"
 #include "lsd/ui/ui.h"
 #include "skinned_cache.h"
@@ -376,6 +377,11 @@ void register_console(EditorState& s) {
         }
         LSD_LOG_WARN("console", "viewmode: lit, unlit or wireframe");
     }, &s, "viewmode lit|unlit|wireframe");
+    console::add_command("validate", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        const lsd::u32 n = lsd::editor::validate_assets(st.project, *st.registry);
+        std::snprintf(st.status, sizeof st.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
+    }, &s, "Validate Assets: missing references, oversize textures, naming");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
     console::add_command("debug.Crash", [](void*, const char*) {  // tests the crash reporter
@@ -633,6 +639,20 @@ int main(int argc, char** argv) {
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
+    // The window icon (Project Settings > Platform), editor and game alike.
+    lsd::asset::Guid icon_guid;
+    if (const lsd::asset::AssetRecord* icon = state.project.icon[0] && lsd::asset::parse_guid(state.project.icon, icon_guid) ? registry.find(icon_guid) : nullptr) {
+        char icon_path[300];
+        registry.source_path(*icon, icon_path, sizeof icon_path);
+        lsd::asset::TextureData pixels(allocator);
+        if (lsd::asset::load_texture(icon_path, false, 256, pixels)) {
+            if (SDL_Surface* surface = SDL_CreateSurfaceFrom(static_cast<int>(pixels.width), static_cast<int>(pixels.height), SDL_PIXELFORMAT_ABGR8888,
+                                                             const_cast<lsd::u8*>(pixels.mip(0)), static_cast<int>(pixels.width * 4))) {
+                SDL_SetWindowIcon(window, surface);
+                SDL_DestroySurface(surface);
+            }
+        }
+    }
     LSD_LOG_INFO("editor", "%zu assets in %s/", registry.count(), kContentDir);
     state.registry = &registry;
 
@@ -800,7 +820,7 @@ int main(int argc, char** argv) {
         ImGui::Render();
         if (state.package_requested) {
             state.package_requested = false;
-            lsd::editor::package_project(state.project, state.status, sizeof state.status);
+            lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
         }
 
         // ---- Requests from the UI ----

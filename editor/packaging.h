@@ -14,11 +14,21 @@
 
 #include "lsd/foundation/types.h"
 
+namespace lsd::asset {
+class AssetRegistry;
+}
+
 namespace lsd::editor {
 
 constexpr char kGameMarker[] = "game.json";
 
 // Writes the package; false with the reason in `message` (also the output folder on success).
-bool package_project(const ProjectSettings& project, char* message, usize capacity);
+// Validates the assets first (problems go to the Message Log; they do not stop the package).
+bool package_project(const ProjectSettings& project, const asset::AssetRegistry& registry, char* message, usize capacity);
+
+// Unreal's Data Validation: references to assets that no longer exist (GUIDs in levels, prefabs,
+// data assets and graphs), oversize textures and (if the project asks) name prefixes. Each
+// problem is a warning in the Message Log; returns how many.
+u32 validate_assets(const ProjectSettings& project, const asset::AssetRegistry& registry);
 
 } // namespace lsd::editor

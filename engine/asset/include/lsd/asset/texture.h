@@ -19,6 +19,8 @@ struct TextureData {
 // Reads an image, halves it until it fits `max_size`, and builds mips down to 1x1 (averaged in
 // linear light when `srgb`). False if the file is missing or not an image.
 bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out);
+// The image's size from its header only (no decoding); false if it is not a readable image.
+bool texture_size(const char* path, u32& width, u32& height);
 // Same from RGBA8 pixels in memory (tests, generated textures).
 bool build_texture(const u8* rgba, u32 width, u32 height, bool srgb, u32 max_size, TextureData& out);
 
