@@ -2,6 +2,8 @@
 
 #include "animation_player.h"
 #include "behavior.h"
+
+#include "lsd/ui/ui.h"
 #include "navigation.h"
 #include "graph_editor.h"
 
@@ -246,6 +248,8 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 }
 
 void PlaySession::stop() {
+    if (ui_) ui_->close_all();
+    ui_cursor_ = false;
     scripts_.stop();
     nav_.clear();
     agent_count_ = 0;
@@ -436,6 +440,29 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return self.nav_.agent_moving(self.agent_of(e));
     };
     host.find_path = [](void* user, Vec3 from, Vec3 to, Vec3* out, u32 capacity) { return static_cast<PlaySession*>(user)->nav_.find_path(from, to, out, capacity); };
+    host.ui_open = [](void* user, const char* name) -> i32 {
+        auto& self = *static_cast<PlaySession*>(user);
+        const asset::AssetRecord* r = self.find_asset(asset::AssetType::UiDocument, name);
+        if (!r || !self.ui_) {
+            LSD_LOG_WARN("ui", "ui_open: no UI document named '%s'", name);
+            return -1;
+        }
+        char path[300];
+        self.registry_->source_path(*r, path, sizeof path);
+        return self.ui_->open(path);
+    };
+    host.ui_close = [](void* user, i32 doc) {
+        if (auto* ui = static_cast<PlaySession*>(user)->ui_) ui->close(doc);
+    };
+    host.ui_set = [](void* user, i32 doc, const char* id, const char* attribute, const char* value) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        return ui && (attribute ? ui->set_attribute(doc, id, attribute, value) : ui->set_text(doc, id, value));
+    };
+    host.ui_value = [](void* user, i32 doc, const char* id, char* out, usize capacity) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        return ui && ui->get_value(doc, id, out, capacity);
+    };
+    host.ui_show_cursor = [](void* user, bool on) { static_cast<PlaySession*>(user)->ui_cursor_ = on; };
     host.bb_set = [](void* user, world::Entity e, const char* key, const f32* value, bool vector) {
         if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) {
             if (vector) b->board.set(key, Vec3{value[0], value[1], value[2]});
@@ -645,6 +672,23 @@ void PlaySession::start_game_mode(world::World& world) {
         if (!player.valid() || !world.get<world::Character>(player)) LSD_LOG_WARN("play", "Game Mode: the player prefab is missing or has no Character component");
     }
     if (mode.script[0]) std::snprintf(world.add<world::Script>(world.create("GameMode"))->script, sizeof(world::Script::script), "%s", mode.script);
+    asset::Guid hud;
+    const asset::AssetRecord* r = mode.hud[0] && asset::parse_guid(mode.hud, hud) ? registry_->find(hud) : nullptr;
+    if (r && ui_) {
+        char path[300];
+        registry_->source_path(*r, path, sizeof path);
+        if (ui_->open(path) < 0) LSD_LOG_WARN("play", "Game Mode: could not open the HUD %s", path);
+    }
+    ui_cursor_ = mode.show_cursor;
+}
+
+void PlaySession::set_ui(ui::UiContext* ui) {
+    ui_ = ui;
+    if (!ui_) return;
+    ui_->set_actions([](void* user, ui::UiContext&, ui::DocumentId, const char* action, const char* element_id) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (self.scripts_.broadcast(action, element_id) == 0) LSD_LOG_WARN("ui", "No script has a function '%s' (from #%s)", action, element_id);
+    }, this);
 }
 
 void PlaySession::update_followers(world::World& world, f32 dt) {

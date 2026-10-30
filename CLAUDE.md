@@ -90,7 +90,7 @@ engine/animation/   ozz-animation behind SkinnedModel / Clip / Pose: FBX skin + 
 engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
 engine/ai/          Recast & Detour behind NavMesh: build from triangles, find_path, crowd agents
 engine/particles/   ParticleSystem data asset (emitter stack) and its CPU simulation, sprites for rhi draw_particles
-engine/ui           placeholder
+engine/ui/          RmlUi game UI: UiContext (documents, input, actions), drawn by rhi draw_ui
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
                     camera), Outliner, Details (components), Content Browser + Place, undo history
                     (whole-level snapshots), Play-in-Editor; theme in Config/, user settings in Saved/
@@ -99,7 +99,7 @@ tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<tar
 runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
 third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, ImGuizmo, Vulkan-Headers, volk,
                     ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake, miniaudio, stb, ozz-animation,
-                    recastnavigation)
+                    recastnavigation, FreeType, RmlUi)
 tests/              framework-free unit tests (CTest)
 docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
 ```
@@ -180,7 +180,8 @@ by Material Instances of a graph.
 writes Build/<Project>/ (Release exe + Content + Config + VC++ runtime + game.json); the exe in a
 folder with game.json (or `-game`) runs as the game. Save games (`lsd.save_game` / `load_game`, Save / Load Value nodes). Sky, Height Fog and Post Process Volume components
 (forward: fog / grading in the lit shader, `draw_sky`). Navmesh + Nav Agents (`engine/ai` on Recast & Detour, `lsd.move_to`). Behaviour trees (`.lsdbt`, `ai::BtRunner`, AI
-Controller with sight / hearing, live debugging in the graph window). Next: UI designer, settings, profiling.
+Controller with sight / hearing, live debugging in the graph window). Game UI on RmlUi (`engine/ui`, `.rml` / `.rcss`, the UI window
+with code + live preview, `lsd.ui_*`, Game Mode HUD). Next: UI designer canvas, settings, profiling.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

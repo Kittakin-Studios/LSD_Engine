@@ -71,6 +71,22 @@ struct ParticleVertex {
     f32 uv[2];
 };
 constexpr u32 kParticleRingBytes = 8 * 1024 * 1024;  // particle vertices per frame (about 38000 sprites)
+// Game UI (RmlUi): 2D pixels from the viewport's top-left, premultiplied colour (as the UI wants it, sRGB).
+struct UiVertex {
+    f32 position[2];
+    u8 color[4];
+    f32 uv[2];
+};
+struct UiDraw {
+    const UiVertex* vertices = nullptr;
+    u32 vertex_count = 0;
+    const u32* indices = nullptr;
+    u32 index_count = 0;
+    TextureHandle texture;         // invalid: white
+    f32 translation[2] = {};       // added to every position
+    f32 viewport[4] = {};          // x, y, width, height in pixels (where the UI is drawn)
+    i32 scissor[4] = {};           // x, y, width, height inside the viewport; width 0: none
+};
 
 // One lit mesh draw, shaded physically based (metal / roughness). Indices are u32. Matrices are
 // column-major (see lsd/foundation/math.h).
@@ -231,6 +247,8 @@ public:
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;
     // The sky over the whole viewport, without depth: draw it before the meshes (uses set_lights' fog / post).
     virtual void draw_sky(const SkyDraw& sky) = 0;
+    // UI triangles over everything (no depth), premultiplied-alpha blending; data is copied.
+    virtual void draw_ui(const UiDraw& draw) = 0;
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
     // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
     // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.

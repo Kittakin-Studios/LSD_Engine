@@ -18,6 +18,10 @@
 #include "lsd/world/components.h"
 #include "lsd/world/world.h"
 
+namespace lsd::ui {
+class UiContext;
+}
+
 namespace lsd::editor {
 
 class AnimationPlayer;
@@ -43,6 +47,9 @@ public:
     // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
     void set_animations(AnimationPlayer* animations) { animations_ = animations; }
     const ai::NavMesh& navmesh() const { return nav_; }  // built when Play starts
+    // The game's UI (documents opened by scripts and the Game Mode's HUD). Its actions call Lua.
+    void set_ui(ui::UiContext* ui);
+    bool ui_cursor() const { return ui_cursor_; }  // a menu wants the mouse
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
     // the graph window's live debugging.
     u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;
@@ -96,6 +103,8 @@ private:
     };
     SoundPlayer* sounds_ = nullptr;
     AnimationPlayer* animations_ = nullptr;
+    ui::UiContext* ui_ = nullptr;
+    bool ui_cursor_ = false;
     // Nav Agents walking on the navmesh.
     ai::NavMesh nav_;
     struct Agent {

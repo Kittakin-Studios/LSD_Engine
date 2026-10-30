@@ -336,6 +336,29 @@ void main() {
 }
 )";
 
+constexpr char kUiVertexShader[] = R"(#version 460 core
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec4 a_color;
+layout(location = 2) in vec2 a_uv;
+uniform vec4 u_draw;  // translation, 2 / viewport size
+out vec4 v_color;
+out vec2 v_uv;
+void main() {
+    vec2 p = (a_pos + u_draw.xy) * u_draw.zw;
+    gl_Position = vec4(p.x - 1.0, 1.0 - p.y, 0.0, 1.0);
+    v_color = a_color;
+    v_uv = a_uv;
+}
+)";
+
+constexpr char kUiFragmentShader[] = R"(#version 460 core
+layout(binding = 0) uniform sampler2D u_tex;
+in vec4 v_color;
+in vec2 v_uv;
+out vec4 o_color;
+void main() { o_color = v_color * texture(u_tex, v_uv); }
+)";
+
 constexpr u32 kMaxBuffers = 4096;
 constexpr u32 kMaxTargets = 256;
 constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
@@ -462,11 +485,13 @@ public:
     ~OpenGLDevice() override {
         if (!context_) return;
         if (debug_ui_) ImGui_ImplOpenGL3_Shutdown();
-        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_, sky_program_}) {
+        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_, sky_program_, ui_program_}) {
             if (program) gl_.glDeleteProgram(program);
         }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
         if (param_ubo_) gl_.glDeleteBuffers(1, &param_ubo_);
+        if (ui_ibo_) gl_.glDeleteBuffers(1, &ui_ibo_);
+        if (ui_vao_) gl_.glDeleteVertexArrays(1, &ui_vao_);
         for (MaterialShader& m : material_shaders_) {
             if (m.mesh.id) gl_.glDeleteProgram(m.mesh.id);
             if (m.skinned.id) gl_.glDeleteProgram(m.skinned.id);
@@ -914,6 +939,43 @@ public:
         glEnable(GL_DEPTH_TEST);
     }
 
+    void draw_ui(const UiDraw& d) override {
+        const u32 vbytes = d.vertex_count * static_cast<u32>(sizeof(UiVertex));
+        const u32 ibytes = d.index_count * 4u;
+        if (!d.vertex_count || !d.index_count || vbytes > kParticleRingBytes || ibytes > kUiIndexBytes) return;
+        if (particle_offset_ + vbytes > kParticleRingBytes) particle_offset_ = 0;
+        if (ui_index_offset_ + ibytes > kUiIndexBytes) ui_index_offset_ = 0;
+        gl_.glNamedBufferSubData(particle_vbo_, particle_offset_, vbytes, d.vertices);
+        gl_.glNamedBufferSubData(ui_ibo_, ui_index_offset_, ibytes, d.indices);
+        const Texture* t = lookup_texture(d.texture);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        gl_.glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        // The UI's rectangle (top-left origin) in GL's bottom-left window coordinates.
+        const GLint gl_y = static_cast<GLint>(static_cast<f32>(target_height_) - d.viewport[1] - d.viewport[3]);
+        glViewport(static_cast<GLint>(d.viewport[0]), gl_y, static_cast<GLsizei>(d.viewport[2]), static_cast<GLsizei>(d.viewport[3]));
+        if (d.scissor[2] > 0) {
+            glScissor(static_cast<GLint>(d.viewport[0]) + d.scissor[0], gl_y + static_cast<GLint>(d.viewport[3]) - d.scissor[1] - d.scissor[3], d.scissor[2], d.scissor[3]);
+        } else {
+            glScissor(static_cast<GLint>(d.viewport[0]), gl_y, static_cast<GLsizei>(d.viewport[2]), static_cast<GLsizei>(d.viewport[3]));
+        }
+        gl_.glUseProgram(ui_program_);
+        const f32 draw[4] = {d.translation[0], d.translation[1], 2.0f / d.viewport[2], 2.0f / d.viewport[3]};
+        gl_.glUniform4fv(ui_draw_, 1, draw);
+        gl_.glBindTextureUnit(0, t ? t->id : textures_[white_].id);
+        gl_.glVertexArrayVertexBuffer(ui_vao_, 0, particle_vbo_, particle_offset_, sizeof(UiVertex));
+        gl_.glVertexArrayElementBuffer(ui_vao_, ui_ibo_);
+        gl_.glBindVertexArray(ui_vao_);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(d.index_count), GL_UNSIGNED_INT, reinterpret_cast<const void*>(static_cast<uintptr_t>(ui_index_offset_)));
+        particle_offset_ += (vbytes + 255u) & ~255u;
+        ui_index_offset_ += (ibytes + 255u) & ~255u;
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+        set_viewport(viewport_[0], static_cast<f32>(target_height_) - viewport_[1] - viewport_[3], viewport_[2], viewport_[3]);  // the caller's rectangle again
+    }
+
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
         glDisable(GL_DEPTH_TEST);
         gl_.glUseProgram(program_);
@@ -1130,6 +1192,17 @@ private:
         sky_mvp_ = gl_.glGetUniformLocation(sky_program_, "u_mvp");
         sky_camera_ = gl_.glGetUniformLocation(sky_program_, "u_camera");
         sky_values_ = gl_.glGetUniformLocation(sky_program_, "u_sky");
+        ui_program_ = link(kUiVertexShader, kUiFragmentShader);
+        if (!ui_program_) return false;
+        ui_draw_ = gl_.glGetUniformLocation(ui_program_, "u_draw");
+        gl_.glCreateBuffers(1, &ui_ibo_);
+        gl_.glNamedBufferStorage(ui_ibo_, kUiIndexBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
+        gl_.glCreateVertexArrays(1, &ui_vao_);
+        attribute(ui_vao_, 0, 2, offsetof(UiVertex, position));
+        gl_.glEnableVertexArrayAttrib(ui_vao_, 1);
+        gl_.glVertexArrayAttribFormat(ui_vao_, 1, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(UiVertex, color));
+        gl_.glVertexArrayAttribBinding(ui_vao_, 1, 0);
+        attribute(ui_vao_, 2, 2, offsetof(UiVertex, uv));
         particle_program_ = link(kParticleVertexShader, kParticleFragmentShader);
         if (!particle_program_) return false;
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
@@ -1162,6 +1235,10 @@ private:
     GLuint joint_ubo_ = 0;
     GLuint param_ubo_ = 0;
     GLuint sky_program_ = 0;
+    static constexpr u32 kUiIndexBytes = 2 * 1024 * 1024;
+    GLuint ui_program_ = 0, ui_vao_ = 0, ui_ibo_ = 0;
+    GLint ui_draw_ = -1;
+    u32 ui_index_offset_ = 0;
     GLint sky_mvp_ = -1, sky_camera_ = -1, sky_values_ = -1;
     f32 viewport_[4] = {};  // the last set_viewport (top-left origin), for the shaders' vignette
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;

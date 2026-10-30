@@ -8,10 +8,10 @@
 
 namespace lsd::asset {
 
-enum class AssetType : u8 { Unknown, Mesh, Level, Data, Prefab, Script, Graph, Table, Sound, Cue, Texture, MaterialGraph, BehaviorTree };
+enum class AssetType : u8 { Unknown, Mesh, Level, Data, Prefab, Script, Graph, Table, Sound, Cue, Texture, MaterialGraph, BehaviorTree, UiDocument, UiStyle };
 
 const char* to_string(AssetType type);
-AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh, ".lsdlevel" -> Level, ".lsdasset" -> Data, ".lsdprefab" -> Prefab, ".lua" -> Script, ".lsdgraph" -> Graph, ".csv" -> Table, ".wav" ".ogg" ".flac" ".mp3" -> Sound, ".lsdcue" -> Cue, ".lsdmatgraph" -> MaterialGraph, ".lsdbt" -> BehaviorTree, ".png" ".jpg" ".jpeg" ".tga" ".bmp" ".psd" -> Texture; case-insensitive
+AssetType type_from_extension(const char* extension);  // ".fbx" -> Mesh, ".lsdlevel" -> Level, ".lsdasset" -> Data, ".lsdprefab" -> Prefab, ".lua" -> Script, ".lsdgraph" -> Graph, ".csv" -> Table, ".wav" ".ogg" ".flac" ".mp3" -> Sound, ".lsdcue" -> Cue, ".lsdmatgraph" -> MaterialGraph, ".lsdbt" -> BehaviorTree, ".rml" -> UiDocument, ".rcss" -> UiStyle, ".png" ".jpg" ".jpeg" ".tga" ".bmp" ".psd" -> Texture; case-insensitive
 
 struct AssetRecord {
     Guid guid;

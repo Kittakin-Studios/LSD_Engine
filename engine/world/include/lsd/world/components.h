@@ -148,6 +148,8 @@ struct GameMode {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Prefab", Tooltip = "Spawned at the Player Start when the level has no Character; should contain one") char player_prefab[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "Runs on an object named GameMode for the whole game") char script[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:UI", Tooltip = "A UI document (.rml) shown when the game starts: the HUD or a main menu") char hud[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Show the mouse cursor (a menu) instead of capturing the mouse for the player") bool show_cursor = false;
 };
 
 // A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a

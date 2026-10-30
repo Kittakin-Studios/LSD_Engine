@@ -10,6 +10,9 @@
 #include "particle_player.h"
 #include "packaging.h"
 #include "navigation.h"
+#include "ui_editor.h"
+
+#include "lsd/ui/ui.h"
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
@@ -341,6 +344,37 @@ void register_console(EditorState& s) {
     }, &s, "viewmode lit|unlit|wireframe");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
+    console::add_command("ui.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hit = 0;
+        if (st.registry->search(args, lsd::asset::AssetType::UiDocument, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::UiStyle, nullptr, &hit, 1) == 1) {
+            lsd::editor::open_ui_editor(st, st.registry->get(hit));
+        } else {
+            LSD_LOG_WARN("editor", "ui.Open: no UI document or style named like '%s'", args);
+        }
+    }, &s, "Open a UI document (.rml) or style (.rcss) in the UI window");
+    console::add_command("ui.Click", [](void*, const char* args) {  // tests: a real click through SDL's queue
+        static float at[2];
+        if (std::sscanf(args, "%f %f", &at[0], &at[1]) != 2) return;
+        SDL_AddTimer(800, [](void*, SDL_TimerID, Uint32) -> Uint32 {  // after Play has started and the UI is up
+        const float x = at[0], y = at[1];
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_MOTION;
+        e.motion.x = x;
+        e.motion.y = y;
+        SDL_PushEvent(&e);
+        for (const SDL_EventType type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            e = SDL_Event{};
+            e.type = type;
+            e.button.button = SDL_BUTTON_LEFT;
+            e.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            e.button.x = x;
+            e.button.y = y;
+            SDL_PushEvent(&e);
+        }
+        return 0;
+        }, nullptr);
+    }, &s, "ui.Click <x> <y>: click the game UI at window pixels, 0.8 s later (tests)");
     console::add_command("play", [](void* user, const char*) { static_cast<EditorState*>(user)->play_requested = true; }, &s, "Start Play-in-Editor");
     console::add_command("stop", [](void* user, const char*) { static_cast<EditorState*>(user)->stop_requested = true; }, &s, "Stop Play-in-Editor");
     console::add_command("save", [](void* user, const char*) {
@@ -524,6 +558,7 @@ int main(int argc, char** argv) {
     load_editor_font();
     ImGui_ImplSDL3_InitForOther(window);
     if (!device->init_debug_ui()) LSD_LOG_WARN("editor", "Editor UI unavailable on this backend.");
+    lsd::ui::init(*device);  // game UI (RmlUi): after the device's UI heap, before any texture
 
     // Placement-allocated: the state holds big buffers, and GPU owners must go before the device.
     auto* state_memory = allocator.allocate(sizeof(EditorState), alignof(EditorState));
@@ -631,6 +666,8 @@ int main(int argc, char** argv) {
     state.sounds = &sounds;
     lsd::editor::PlaySession play;
     play.set_sounds(&sounds);
+    auto* game_ui = new lsd::ui::UiContext("game");  // documents over the player's view; deleted before the device
+    play.set_ui(game_ui);
     play.set_animations(animations);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
@@ -648,6 +685,7 @@ int main(int argc, char** argv) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if (state.playing && !state.ejected && play.ui_cursor()) game_ui->process_event(event);  // a menu has the mouse and keys
             switch (event.type) {
                 case SDL_EVENT_QUIT:
                     if (history.dirty() && !state.playing && max_frames < 0) state.quit_requested = true;
@@ -779,6 +817,7 @@ int main(int argc, char** argv) {
         }
         if (game_mode && !state.playing && !state.play_requested) running = false;
         state.stop_requested = false;
+        if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
         SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
 
         if (state.playing) {
@@ -848,6 +887,7 @@ int main(int argc, char** argv) {
         thumbnails.render(clear_color);
         particle_editor->render(*device, clear_color);
         lsd::editor::render_graph_preview(state, clear_color);
+        lsd::editor::render_ui_editor(*device, clear_color);
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
@@ -869,6 +909,10 @@ int main(int argc, char** argv) {
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
+            if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
+                game_ui->update(pixels);
+                game_ui->render(*device);
+            }
         }
         device->render_debug_ui();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
@@ -892,6 +936,10 @@ int main(int argc, char** argv) {
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;
+    play.set_ui(nullptr);  // ~PlaySession stops Play again: it must not reach the deleted context
+    lsd::editor::shutdown_ui_editor();
+    delete game_ui;
+    lsd::ui::shutdown();  // frees its textures: before the device
     delete animations;
     delete effects;
     delete skinned_cache;

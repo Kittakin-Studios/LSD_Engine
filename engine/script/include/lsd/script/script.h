@@ -35,6 +35,12 @@
 //   lsd.bb_set(e, key, number | x, y, z), lsd.bb_get(e, key) -> number | x, y, z | nil, lsd.bb_clear(e, key)
 //                                         an AI Controller's blackboard (what its behaviour tree reads)
 //   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
+//   lsd.ui_open(name) -> doc              a UI document (.rml) by asset name over the game; nil if none
+//   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
+//   lsd.ui_value(doc, id) -> text         a text field's value
+//   lsd.ui_show_cursor(on)                a menu: the mouse moves a cursor instead of the player
+// UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
+// on every script that defines it.
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
 //                                         string keys) to Saved/SaveGames/<slot>.json, versioned
 //   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
@@ -82,6 +88,11 @@ struct ScriptHost {
     int (*bb_get)(void* user, world::Entity e, const char* key, f32* value) = nullptr;
     void (*bb_clear)(void* user, world::Entity e, const char* key) = nullptr;
     void (*report_noise)(void* user, Vec3 at, f32 loudness) = nullptr;
+    i32 (*ui_open)(void* user, const char* name) = nullptr;  // -1 if none
+    void (*ui_close)(void* user, i32 doc) = nullptr;
+    bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text
+    bool (*ui_value)(void* user, i32 doc, const char* id, char* out, usize capacity) = nullptr;
+    void (*ui_show_cursor)(void* user, bool on) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
@@ -116,6 +127,8 @@ public:
     // A behaviour tree's Run Script: `function(self, dt)` on `target`'s script. 1 = returned true,
     // 0 = false (or an error), 2 = nothing (still running), -1 = no such function.
     int call_task(world::Entity target, const char* function, f32 dt);
+    // Calls `function(self, text)` on every script that defines it (UI actions). Returns how many.
+    u32 broadcast(const char* function, const char* text);
 
 private:
     char save_dir_[260] = "Saved/SaveGames";

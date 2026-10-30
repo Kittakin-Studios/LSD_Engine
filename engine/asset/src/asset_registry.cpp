@@ -49,6 +49,8 @@ const char* to_string(AssetType type) {
         case AssetType::Texture: return "Texture";
         case AssetType::MaterialGraph: return "Material Graph";
         case AssetType::BehaviorTree: return "Behavior Tree";
+        case AssetType::UiDocument: return "UI Document";
+        case AssetType::UiStyle: return "UI Style";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -67,6 +69,8 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdcue") == 0) return AssetType::Cue;
     if (std::strcmp(lower, ".lsdmatgraph") == 0) return AssetType::MaterialGraph;
     if (std::strcmp(lower, ".lsdbt") == 0) return AssetType::BehaviorTree;
+    if (std::strcmp(lower, ".rml") == 0) return AssetType::UiDocument;
+    if (std::strcmp(lower, ".rcss") == 0) return AssetType::UiStyle;
     for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd"}) {
         if (std::strcmp(lower, image) == 0) return AssetType::Texture;
     }

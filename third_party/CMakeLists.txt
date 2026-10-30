@@ -249,3 +249,32 @@ FetchContent_Declare(recastnavigation
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # its cmake_minimum_required predates what CMake 4 accepts
 FetchContent_MakeAvailable(recastnavigation)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+# FreeType: font rasterising for RmlUi (FreeType Licence, the BSD-style option).
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+FetchContent_Declare(freetype
+  GIT_REPOSITORY https://github.com/freetype/freetype.git
+  GIT_TAG VER-2-13-3
+  GIT_SHALLOW TRUE
+  SYSTEM
+)
+FetchContent_MakeAvailable(freetype)
+
+# RmlUi: HTML / CSS game UI (MIT). Its find_package(Freetype) is answered by cmake/FindFreetype.cmake.
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
+set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
+set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
+set(RMLUI_BACKEND "native" CACHE STRING "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(rmlui
+  GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
+  GIT_TAG 6.0
+  GIT_SHALLOW TRUE
+  SYSTEM
+)
+FetchContent_MakeAvailable(rmlui)

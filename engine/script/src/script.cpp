@@ -474,6 +474,46 @@ struct Api {
         lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
         return 1;
     }
+    static int ui_open(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const i32 doc = host.ui_open ? host.ui_open(host.user, luaL_checkstring(L, 1)) : -1;
+        if (doc < 0) return 0;
+        lua_pushinteger(L, doc);
+        return 1;
+    }
+    static int ui_close(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.ui_close && !lua_isnil(L, 1)) host.ui_close(host.user, static_cast<i32>(luaL_checkinteger(L, 1)));
+        return 0;
+    }
+    static int ui_set_text(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_set && host.ui_set(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), nullptr, luaL_tolstring_compat(L, 3)));
+        return 1;
+    }
+    static const char* luaL_tolstring_compat(lua_State* L, int index) {  // numbers and booleans as text
+        if (lua_isboolean(L, index)) return lua_toboolean(L, index) ? "true" : "false";
+        const char* s = lua_tostring(L, index);
+        return s ? s : "";
+    }
+    static int ui_set(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_set && host.ui_set(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3),
+                                                      luaL_tolstring_compat(L, 4)));
+        return 1;
+    }
+    static int ui_value(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        char text[512];
+        if (!host.ui_value || !host.ui_value(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), text, sizeof text)) return 0;
+        lua_pushstring(L, text);
+        return 1;
+    }
+    static int ui_show_cursor(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.ui_show_cursor) host.ui_show_cursor(host.user, lua_toboolean(L, 1) != 0);
+        return 0;
+    }
     static int bb_set(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const world::Entity e = live_entity(L, 1);
@@ -799,7 +839,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
-        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise},
+        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
+        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
@@ -950,6 +991,28 @@ int ScriptSystem::call_task(world::Entity target, const char* function, f32 dt) 
         return result;
     }
     return -1;
+}
+
+u32 ScriptSystem::broadcast(const char* function, const char* text) {
+    u32 called = 0;
+    for (u32 i = 0; i < count_; ++i) {
+        Instance& instance = instances_[i];
+        if (instance.failed || !world_->alive(instance.entity)) continue;
+        lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
+        lua_getfield(lua_, -1, function);
+        lua_remove(lua_, -2);
+        if (!lua_isfunction(lua_, -1)) {
+            lua_pop(lua_, 1);
+            continue;
+        }
+        lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.self);
+        lua_pushstring(lua_, text);
+        char what[300];
+        std::snprintf(what, sizeof what, "%s (%s)", instance.path, function);
+        if (!protected_call(lua_, 2, what)) instance.failed = true;
+        ++called;
+    }
+    return called;
 }
 
 void ScriptSystem::set_save_directory(const char* path) { std::snprintf(save_dir_, sizeof save_dir_, "%s", path); }

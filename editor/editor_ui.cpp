@@ -6,6 +6,7 @@
 #include "sound_player.h"
 #include "table_editor.h"
 #include "particle_editor.h"
+#include "ui_editor.h"
 
 #include "lsd/script/material_graph.h"
 
@@ -1432,6 +1433,7 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     if (std::strcmp(type, "BehaviorTree") == 0) return r.type == asset::AssetType::BehaviorTree;
+    if (std::strcmp(type, "UI") == 0) return r.type == asset::AssetType::UiDocument;
     if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
     if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue;  // a wave or a cue
     if (std::strcmp(type, "Material") == 0) {  // a material or an instance of one
@@ -2332,6 +2334,16 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A material built from nodes (textures, maths, Time, Fresnel...) like Unreal's Material Editor. Double-click to edit; drag onto an object");
+        if (ImGui::MenuItem("New UI Document")) {
+            const std::string path = create_ui_document((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "UI_New");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
+        ImGui::SetItemTooltip("Game UI in HTML / CSS (Unreal's Widget Blueprint): a HUD or a menu. Open it from Lua (lsd.ui_open) or as the Game Mode's HUD");
         if (ImGui::MenuItem("New Behavior Tree")) {
             const std::string path = create_behavior_tree_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "BT_New");
             s.registry->scan();
@@ -2434,6 +2446,7 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
             if (r.type == asset::AssetType::Sound && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toggle_preview(s, r);
             if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) s.particle_editor->open(s, r);
+            if ((r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_ui_editor(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
             if (level && ImGui::MenuItem("Open Level")) {
@@ -2449,6 +2462,7 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
             if (r.type == asset::AssetType::MaterialGraph && ImGui::MenuItem("Edit Material Graph")) open_graph(s, r);
             if (r.type == asset::AssetType::BehaviorTree && ImGui::MenuItem("Edit Behavior Tree")) open_graph(s, r);
+            if ((r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) && ImGui::MenuItem("Edit UI")) open_ui_editor(s, r);
             if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && ImGui::MenuItem("Create Material Instance")) {
                 render::MaterialInstance instance;
                 asset::to_string(r.guid, instance.parent);
@@ -3174,6 +3188,7 @@ void draw_editor(EditorState& s) {
     draw_graph_editor(s);
     draw_table_editor(s);
     if (s.particle_editor) s.particle_editor->draw(s);
+    draw_ui_editor(s);
     handle_shortcuts(s);
 
     // The central node is left empty and transparent: the 3D viewport shows through it.
