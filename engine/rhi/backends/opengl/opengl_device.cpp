@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include <string>
 
 namespace lsd::rhi {
 
@@ -41,6 +42,28 @@ void main() { o_color = vec4(v_color, 1.0); }
 )";
 
 // Built-in lit mesh and line programs; mirror the HLSL in the D3D12 backend.
+// Skinning (compiled a second time with SKINNED defined) mirrors the HLSL.
+constexpr char kSkinGlsl[] = R"(
+#ifdef SKINNED
+layout(location = 3) in uvec4 a_joints;
+layout(location = 4) in vec4 a_weights;
+layout(std140, binding = 2) uniform Joints { vec4 joint_rows[768]; };  // 3 rows per joint
+void skin(inout vec3 position, inout vec3 normal) {
+    vec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0);
+    for (int k = 0; k < 4; ++k) {
+        r0 += joint_rows[a_joints[k] * 3u] * a_weights[k];
+        r1 += joint_rows[a_joints[k] * 3u + 1u] * a_weights[k];
+        r2 += joint_rows[a_joints[k] * 3u + 2u] * a_weights[k];
+    }
+    vec4 p = vec4(position, 1.0);
+    position = vec3(dot(r0, p), dot(r1, p), dot(r2, p));
+    normal = vec3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+}
+#else
+void skin(inout vec3 position, inout vec3 normal) {}
+#endif
+)";
+
 constexpr char kMeshVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
@@ -52,9 +75,11 @@ out vec3 v_normal;
 out vec3 v_wpos;
 out vec2 v_uv;
 void main() {
-    gl_Position = u_mvp * vec4(a_pos, 1.0);
-    v_normal = u_normal[0].xyz * a_normal.x + u_normal[1].xyz * a_normal.y + u_normal[2].xyz * a_normal.z;
-    vec4 p = vec4(a_pos, 1.0);
+    vec3 position = a_pos, normal = a_normal;
+    skin(position, normal);
+    gl_Position = u_mvp * vec4(position, 1.0);
+    v_normal = u_normal[0].xyz * normal.x + u_normal[1].xyz * normal.y + u_normal[2].xyz * normal.z;
+    vec4 p = vec4(position, 1.0);
     v_wpos = vec3(dot(u_world[0], p), dot(u_world[1], p), dot(u_world[2], p));
     v_uv = a_uv;
 }
@@ -183,7 +208,11 @@ void main() {
 constexpr char kShadowVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
 uniform mat4 u_mvp;
-void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
+void main() {
+    vec3 position = a_pos, normal = vec3(0.0, 0.0, 1.0);
+    skin(position, normal);
+    gl_Position = u_mvp * vec4(position, 1.0);
+}
 )";
 constexpr char kShadowFragmentShader[] = R"(#version 460 core
 void main() {}
@@ -268,7 +297,8 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLNAMEDBUFFERSUBDATAPROC, glNamedBufferSubData)            \
     X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)                    \
     X(PFNGLNAMEDFRAMEBUFFERDRAWBUFFERPROC, glNamedFramebufferDrawBuffer) \
-    X(PFNGLNAMEDFRAMEBUFFERREADBUFFERPROC, glNamedFramebufferReadBuffer)
+    X(PFNGLNAMEDFRAMEBUFFERREADBUFFERPROC, glNamedFramebufferReadBuffer) \
+    X(PFNGLVERTEXARRAYATTRIBIFORMATPROC, glVertexArrayAttribIFormat)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -317,10 +347,10 @@ public:
     ~OpenGLDevice() override {
         if (!context_) return;
         if (debug_ui_) ImGui_ImplOpenGL3_Shutdown();
-        for (GLuint program : {program_, mesh_program_, line_program_}) {
+        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_}) {
             if (program) gl_.glDeleteProgram(program);
         }
-        for (GLuint vao : {vao_, mesh_vao_, line_vao_}) {
+        for (GLuint vao : {vao_, mesh_vao_, skinned_vao_, line_vao_}) {
             if (vao) gl_.glDeleteVertexArrays(1, &vao);
         }
         for (Buffer& b : buffers_) {
@@ -547,27 +577,31 @@ public:
         if (!vb || !ib) return;
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
-        gl_.glUseProgram(mesh_program_);
-        gl_.glUniformMatrix4fv(mesh_mvp_, 1, GL_FALSE, draw.mvp);
-        gl_.glUniform4fv(mesh_normal_, 3, draw.normal_matrix);
-        gl_.glUniform4fv(mesh_world_, 3, draw.world);
-        gl_.glUniform4fv(mesh_color_, 1, draw.color);
+        const bool skinned = draw.joint_rows && draw.joint_count;
+        const MeshProgram& program = skinned ? skinned_program_ : mesh_;
+        if (skinned) upload_joints(draw.joint_rows, draw.joint_count);
+        gl_.glUseProgram(program.id);
+        gl_.glUniformMatrix4fv(program.mvp, 1, GL_FALSE, draw.mvp);
+        gl_.glUniform4fv(program.normal, 3, draw.normal_matrix);
+        gl_.glUniform4fv(program.world, 3, draw.world);
+        gl_.glUniform4fv(program.color, 1, draw.color);
         const f32 material[8] = {draw.metallic, draw.roughness, draw.emissive[0], draw.emissive[1], draw.emissive[2],
                                  draw.camera_position[0], draw.camera_position[1], draw.camera_position[2]};
-        gl_.glUniform4fv(mesh_material_, 2, material);
+        gl_.glUniform4fv(program.material, 2, material);
         const Texture* base = lookup_texture(draw.base_color_texture);
         const Texture* normal = lookup_texture(draw.normal_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
-        gl_.glUniform2f(mesh_flags_, draw.unlit || draw.wireframe ? 1.0f : 0.0f, normal ? 1.0f : 0.0f);
+        gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : 0.0f, normal ? 1.0f : 0.0f);
         gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
         gl_.glBindTextureUnit(3, shadow_texture_);
         gl_.glBindTextureUnit(4, local_shadow_texture_);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
-        gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
-        gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
-        gl_.glBindVertexArray(mesh_vao_);
+        const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;
+        gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
+        gl_.glVertexArrayElementBuffer(vao, ib->id);
+        gl_.glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
@@ -615,15 +649,19 @@ public:
         in_shadow_pass_ = true;
     }
 
-    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) override {
+    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,
+                            u32 joint_count) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || !in_shadow_pass_) return;
-        gl_.glUseProgram(shadow_program_);
-        gl_.glUniformMatrix4fv(shadow_mvp_, 1, GL_FALSE, light_mvp);
-        gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
-        gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
-        gl_.glBindVertexArray(mesh_vao_);
+        const bool skinned = joint_rows && joint_count;
+        if (skinned) upload_joints(joint_rows, joint_count);
+        gl_.glUseProgram(skinned ? skinned_shadow_program_ : shadow_program_);
+        gl_.glUniformMatrix4fv(skinned ? skinned_shadow_mvp_ : shadow_mvp_, 1, GL_FALSE, light_mvp);
+        const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;
+        gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
+        gl_.glVertexArrayElementBuffer(vao, ib->id);
+        gl_.glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_INT, nullptr);
     }
 
@@ -640,6 +678,12 @@ public:
         const ShadowMap* l = lookup_shadow(local);
         shadow_texture_ = s ? s->texture : shadow_maps_[0].texture;  // slot 0: 1x1 "fully lit" default
         local_shadow_texture_ = l ? l->texture : shadow_maps_[0].texture;
+    }
+
+    void upload_joints(const f32* rows, u32 count) {
+        const u32 joints = count < kMaxJoints ? count : kMaxJoints;
+        gl_.glNamedBufferSubData(joint_ubo_, 0, joints * 48, rows);  // GL keeps earlier draws' data
+        gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 2, joint_ubo_);
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -813,18 +857,25 @@ private:
 
     bool create_programs() {
         program_ = link(kVertexShader, kFragmentShader);
-        mesh_program_ = link(kMeshVertexShader, kMeshFragmentShader);
+        mesh_.id = link(with_skinning(kMeshVertexShader, false).c_str(), kMeshFragmentShader);
+        skinned_program_.id = link(with_skinning(kMeshVertexShader, true).c_str(), kMeshFragmentShader);
+        mesh_program_ = mesh_.id;
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
-        shadow_program_ = link(kShadowVertexShader, kShadowFragmentShader);
+        shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
+        skinned_shadow_program_ = link(with_skinning(kShadowVertexShader, true).c_str(), kShadowFragmentShader);
+        skinned_shadow_mvp_ = gl_.glGetUniformLocation(skinned_shadow_program_, "u_mvp");
+        if (!skinned_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
-        mesh_mvp_ = gl_.glGetUniformLocation(mesh_program_, "u_mvp");
-        mesh_normal_ = gl_.glGetUniformLocation(mesh_program_, "u_normal");
-        mesh_world_ = gl_.glGetUniformLocation(mesh_program_, "u_world");
-        mesh_color_ = gl_.glGetUniformLocation(mesh_program_, "u_color");
-        mesh_material_ = gl_.glGetUniformLocation(mesh_program_, "u_mat");
-        mesh_flags_ = gl_.glGetUniformLocation(mesh_program_, "u_flags");
+        for (MeshProgram* p : {&mesh_, &skinned_program_}) {
+            p->mvp = gl_.glGetUniformLocation(p->id, "u_mvp");
+            p->normal = gl_.glGetUniformLocation(p->id, "u_normal");
+            p->world = gl_.glGetUniformLocation(p->id, "u_world");
+            p->color = gl_.glGetUniformLocation(p->id, "u_color");
+            p->material = gl_.glGetUniformLocation(p->id, "u_mat");
+            p->flags = gl_.glGetUniformLocation(p->id, "u_flags");
+        }
         // Defaults for meshes without textures: white (colour, occlusion / roughness / metallic) and a flat normal.
         const u32 white = 0xFFFFFFFFu, flat = 0xFFFF8080u;  // RGBA bytes, little-endian
         const void* white_mip[1] = {&white};
@@ -846,6 +897,18 @@ private:
         attribute(mesh_vao_, 0, 3, offsetof(MeshVertex, position));
         attribute(mesh_vao_, 1, 3, offsetof(MeshVertex, normal));
         attribute(mesh_vao_, 2, 2, offsetof(MeshVertex, uv));
+        gl_.glCreateVertexArrays(1, &skinned_vao_);
+        attribute(skinned_vao_, 0, 3, offsetof(SkinnedVertex, position));
+        attribute(skinned_vao_, 1, 3, offsetof(SkinnedVertex, normal));
+        attribute(skinned_vao_, 2, 2, offsetof(SkinnedVertex, uv));
+        gl_.glEnableVertexArrayAttrib(skinned_vao_, 3);
+        gl_.glVertexArrayAttribIFormat(skinned_vao_, 3, 4, GL_UNSIGNED_BYTE, offsetof(SkinnedVertex, joints));
+        gl_.glVertexArrayAttribBinding(skinned_vao_, 3, 0);
+        gl_.glEnableVertexArrayAttrib(skinned_vao_, 4);
+        gl_.glVertexArrayAttribFormat(skinned_vao_, 4, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(SkinnedVertex, weights));
+        gl_.glVertexArrayAttribBinding(skinned_vao_, 4, 0);
+        gl_.glCreateBuffers(1, &joint_ubo_);
+        gl_.glNamedBufferStorage(joint_ubo_, kMaxJoints * 48, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateVertexArrays(1, &line_vao_);
         attribute(line_vao_, 0, 3, offsetof(LineVertex, position));
         attribute(line_vao_, 1, 4, offsetof(LineVertex, color));
@@ -858,14 +921,23 @@ private:
     SDL_GLContext context_ = nullptr;
     GLuint program_ = 0;
     GLuint vao_ = 0;
-    GLuint mesh_program_ = 0;
-    GLuint mesh_vao_ = 0;
-    GLint mesh_mvp_ = -1;
-    GLint mesh_normal_ = -1;
-    GLint mesh_world_ = -1;
-    GLint mesh_color_ = -1;
-    GLint mesh_material_ = -1;
-    GLint mesh_flags_ = -1;
+    struct MeshProgram {
+        GLuint id = 0;
+        GLint mvp = -1, normal = -1, world = -1, color = -1, material = -1, flags = -1;
+    };
+    // `source` (a vertex shader starting with its #version line) with the skinning code, on or off.
+    static std::string with_skinning(const char* source, bool skinned) {
+        std::string s = source;
+        const usize line_end = s.find('\n') + 1;
+        s.insert(line_end, std::string(skinned ? "#define SKINNED\n" : "") + kSkinGlsl);
+        return s;
+    }
+    GLuint mesh_program_ = 0;  // == mesh_.id
+    MeshProgram mesh_, skinned_program_;
+    GLuint mesh_vao_ = 0, skinned_vao_ = 0;
+    GLuint joint_ubo_ = 0;
+    GLuint skinned_shadow_program_ = 0;
+    GLint skinned_shadow_mvp_ = -1;
     GLuint line_program_ = 0;
     GLuint line_vao_ = 0;
     GLint line_mvp_ = -1;

@@ -218,3 +218,20 @@ FetchContent_Declare(stb
 )
 FetchContent_MakeAvailable(stb)
 set(LSD_STB_DIR ${stb_SOURCE_DIR} PARENT_SCOPE)
+
+# ozz-animation (MIT): skeletons, compressed animations, sampling / blending / IK jobs. Runtime +
+# offline builder libraries only; our importer feeds the offline builders from ufbx.
+set(ozz_build_tools OFF CACHE BOOL "" FORCE)
+set(ozz_build_fbx OFF CACHE BOOL "" FORCE)
+set(ozz_build_gltf OFF CACHE BOOL "" FORCE)
+set(ozz_build_samples OFF CACHE BOOL "" FORCE)
+set(ozz_build_howtos OFF CACHE BOOL "" FORCE)
+set(ozz_build_tests OFF CACHE BOOL "" FORCE)
+set(ozz_build_msvc_rt_dll ON CACHE BOOL "" FORCE)  # we link the DLL runtime (/MD, /MDd)
+FetchContent_Declare(ozz
+  GIT_REPOSITORY https://github.com/guillaumeblanc/ozz-animation.git
+  GIT_TAG 0.17.0
+  GIT_SHALLOW TRUE
+  SYSTEM
+)
+FetchContent_MakeAvailable(ozz)

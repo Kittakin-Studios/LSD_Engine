@@ -30,10 +30,11 @@ constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use
 constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
-constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 5 texture tables + lights CBV: 59 of 64 DWORDs)
+constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 5 texture tables + lights and joints CBVs: 61 of 64 DWORDs)
 constexpr u32 kLightSlot = 2816;     // LightSetup rounded up to the 256-byte CBV alignment
 constexpr u32 kMaxShadowMaps = 8;    // handles kMaxTargets + kMaxTextures..
 constexpr u32 kLightSlots = 64;      // set_lights calls per frame before the ring wraps
+constexpr u32 kJointRingBytes = 4 * 1024 * 1024;  // skinning matrices per frame (about 340 characters at 256 joints)
 
 // shortcut: runtime HLSL compile via d3dcompiler_47 (ships with Windows); move to DXC + the data
 // compiler once shaders become assets.
@@ -112,13 +113,32 @@ Texture2D base_tex : register(t0);
 Texture2D normal_tex : register(t1);
 Texture2D orm_tex : register(t2);
 SamplerState samp : register(s0);
-struct VsIn { float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
+struct VsIn {
+    float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0;
+#ifdef SKINNED
+    uint4 joints : BLENDINDICES; float4 weights : BLENDWEIGHT;
+#endif
+};
 struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float3 wpos : TEXCOORD1; float2 uv : TEXCOORD0; };
+#ifdef SKINNED
+cbuffer Joints : register(b2) { float4 joint_rows[768]; };  // 3 rows per joint
+#endif
 VsOut vs_main(VsIn i) {
     VsOut o;
-    o.pos = mul(mvp, float4(i.pos, 1));
-    o.normal = n0.xyz * i.normal.x + n1.xyz * i.normal.y + n2.xyz * i.normal.z;
-    const float4 p = float4(i.pos, 1);
+    float3 position = i.pos, normal = i.normal;
+#ifdef SKINNED
+    float4 r0 = 0, r1 = 0, r2 = 0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        r0 += joint_rows[i.joints[k] * 3] * i.weights[k];
+        r1 += joint_rows[i.joints[k] * 3 + 1] * i.weights[k];
+        r2 += joint_rows[i.joints[k] * 3 + 2] * i.weights[k];
+    }
+    position = float3(dot(r0, float4(position, 1)), dot(r1, float4(position, 1)), dot(r2, float4(position, 1)));
+    normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+#endif
+    o.pos = mul(mvp, float4(position, 1));
+    o.normal = n0.xyz * normal.x + n1.xyz * normal.y + n2.xyz * normal.z;
+    const float4 p = float4(position, 1);
     o.wpos = float3(dot(w0, p), dot(w1, p), dot(w2, p));
     o.uv = i.uv;
     return o;
@@ -185,10 +205,24 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
 }
 )";
 
-// Shadow casters: depth only.
+// Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(
 cbuffer Draw : register(b0) { float4x4 mvp; };
+#ifdef SKINNED
+cbuffer Joints : register(b2) { float4 joint_rows[768]; };
+float4 vs_main(float3 pos : POSITION, uint4 joints : BLENDINDICES, float4 weights : BLENDWEIGHT) : SV_Position {
+    float4 r0 = 0, r1 = 0, r2 = 0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        r0 += joint_rows[joints[k] * 3] * weights[k];
+        r1 += joint_rows[joints[k] * 3 + 1] * weights[k];
+        r2 += joint_rows[joints[k] * 3 + 2] * weights[k];
+    }
+    const float4 p = float4(pos, 1);
+    return mul(mvp, float4(dot(r0, p), dot(r1, p), dot(r2, p), 1));
+}
+#else
 float4 vs_main(float3 pos : POSITION) : SV_Position { return mul(mvp, float4(pos, 1)); }
+#endif
 )";
 
 constexpr char kLinesHlsl[] = R"(
@@ -586,6 +620,20 @@ public:
         list_->RSSetScissorRects(1, &scissor);
     }
 
+    // Copies skinning rows into this frame's ring and returns their GPU address (0 if full).
+    D3D12_GPU_VIRTUAL_ADDRESS upload_joints(const f32* rows, u32 count) {
+        const u32 bytes = (count < kMaxJoints ? count : kMaxJoints) * 48;
+        const u32 aligned = (bytes + 255u) & ~255u;
+        if (joint_offset_ + aligned > kJointRingBytes) {
+            LSD_LOG_WARN("d3d12", "Too many skinned draws this frame: some are skipped");
+            return 0;
+        }
+        std::memcpy(joint_mapped_[frame_] + joint_offset_, rows, bytes);
+        const D3D12_GPU_VIRTUAL_ADDRESS address = joint_buffers_[frame_]->GetGPUVirtualAddress() + joint_offset_;
+        joint_offset_ += aligned;
+        return address;
+    }
+
     void draw_mesh(const MeshDraw& draw) override {
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
@@ -616,9 +664,17 @@ public:
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
         list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
         list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
-        list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
+        const bool skinned = draw.joint_rows && draw.joint_count;
+        if (skinned) {
+            const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(draw.joint_rows, draw.joint_count);
+            if (!joints) return;
+            list_->SetGraphicsRootConstantBufferView(7, joints);
+            list_->SetPipelineState(draw.wireframe ? skinned_wire_pipeline_.Get() : skinned_pipeline_.Get());
+        } else {
+            list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
+        }
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
+        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex)};
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->IASetIndexBuffer(&ibv);
@@ -692,15 +748,22 @@ public:
         shadow_pass_ = static_cast<i32>(handle.index() - kMaxTargets - kMaxTextures);
     }
 
-    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) override {
+    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,
+                            u32 joint_count) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || shadow_pass_ < 0) return;
+        const bool skinned = joint_rows && joint_count;
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 16, light_mvp, 0);
-        list_->SetPipelineState(shadow_pipeline_.Get());
+        if (skinned) {
+            const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(joint_rows, joint_count);
+            if (!joints) return;
+            list_->SetGraphicsRootConstantBufferView(7, joints);
+        }
+        list_->SetPipelineState(skinned ? skinned_shadow_pipeline_.Get() : shadow_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
+        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex)};
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->IASetIndexBuffer(&ibv);
@@ -750,6 +813,7 @@ public:
         list_->RSSetViewports(1, &viewport);
         list_->RSSetScissorRects(1, &scissor);
         light_offset_ = 0;
+        joint_offset_ = 0;
         set_lights(default_lights());
         set_shadow_map({}, {});
     }
@@ -978,7 +1042,10 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[7]{};
+        D3D12_ROOT_PARAMETER params[8]{};
+        params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b2: skinning matrices
+        params[7].Descriptor.ShaderRegister = 2;
+        params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
         D3D12_DESCRIPTOR_RANGE shadow_ranges[2]{};
         for (UINT k = 0; k < 2; ++k) {  // t3: the sun's shadow atlas, t4: the local lights' atlas
             shadow_ranges[k].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -1019,7 +1086,7 @@ private:
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 7;
+        rs_desc.NumParameters = 8;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 2;
         rs_desc.pStaticSamplers = samplers;
@@ -1043,6 +1110,10 @@ private:
                                                         IID_PPV_ARGS(&light_buffers_[i])), "CreateCommittedResource (lights)")) return false;
             const D3D12_RANGE no_read{0, 0};
             light_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&light_mapped_[i]));
+            desc.Width = kJointRingBytes;
+            if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                        IID_PPV_ARGS(&joint_buffers_[i])), "CreateCommittedResource (joints)")) return false;
+            joint_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&joint_mapped_[i]));
         }
 
         static const D3D12_INPUT_ELEMENT_DESC mesh_layout[] = {
@@ -1050,6 +1121,14 @@ private:
             {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
+        static const D3D12_INPUT_ELEMENT_DESC skinned_layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"BLENDINDICES", 0, DXGI_FORMAT_R8G8B8A8_UINT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"BLENDWEIGHT", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        static const D3D_SHADER_MACRO skinned_defines[] = {{"SKINNED", "1"}, {nullptr, nullptr}};
         static const D3D12_INPUT_ELEMENT_DESC line_layout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -1058,13 +1137,16 @@ private:
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
                create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_) &&
-               create_shadow_pipeline({mesh_layout, 3});
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_pipeline_, false, skinned_defines) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
+               create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
+               create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_);
     }
 
     bool create_pipeline(const char* source, usize source_size, D3D12_INPUT_LAYOUT_DESC layout, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
-                         bool depth_test, ComPtr<ID3D12PipelineState>& out, bool wireframe = false) {
+                         bool depth_test, ComPtr<ID3D12PipelineState>& out, bool wireframe = false, const D3D_SHADER_MACRO* defines = nullptr) {
         ComPtr<ID3DBlob> vs, ps;
-        if (!compile(source, source_size - 1, "vs_main", "vs_5_0", vs) || !compile(source, source_size - 1, "ps_main", "ps_5_0", ps)) return false;
+        if (!compile(source, source_size - 1, "vs_main", "vs_5_0", vs, defines) || !compile(source, source_size - 1, "ps_main", "ps_5_0", ps, defines)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
         pso.pRootSignature = root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
@@ -1086,9 +1168,9 @@ private:
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState");
     }
 
-    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout) {
+    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout, const D3D_SHADER_MACRO* defines, ComPtr<ID3D12PipelineState>& out) {
         ComPtr<ID3DBlob> vs;
-        if (!compile(kShadowHlsl, sizeof kShadowHlsl - 1, "vs_main", "vs_5_0", vs)) return false;
+        if (!compile(kShadowHlsl, sizeof kShadowHlsl - 1, "vs_main", "vs_5_0", vs, defines)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
         pso.pRootSignature = root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
@@ -1105,12 +1187,13 @@ private:
         pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pso.NumRenderTargets = 0;
         pso.SampleDesc.Count = 1;
-        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&shadow_pipeline_)), "CreateGraphicsPipelineState (shadow)");
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState (shadow)");
     }
 
-    static bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out) {
+    static bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out,
+                        const D3D_SHADER_MACRO* defines = nullptr) {
         ComPtr<ID3DBlob> errors;
-        const HRESULT hr = D3DCompile(source, length, "builtin.hlsl", nullptr, nullptr, entry, target, 0, 0, &out, &errors);
+        const HRESULT hr = D3DCompile(source, length, "builtin.hlsl", defines, nullptr, entry, target, 0, 0, &out, &errors);
         if (FAILED(hr)) {
             LSD_LOG_ERROR("d3d12", "Shader %s failed: %s", entry, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
             return false;
@@ -1178,6 +1261,12 @@ private:
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
+    ComPtr<ID3D12PipelineState> skinned_pipeline_;
+    ComPtr<ID3D12PipelineState> skinned_wire_pipeline_;
+    ComPtr<ID3D12PipelineState> skinned_shadow_pipeline_;
+    ComPtr<ID3D12Resource> joint_buffers_[kBackBufferCount];
+    u8* joint_mapped_[kBackBufferCount] = {};
+    u32 joint_offset_ = 0;
     ShadowMap shadow_maps_[kMaxShadowMaps];
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
     i32 shadow_pass_ = -1;

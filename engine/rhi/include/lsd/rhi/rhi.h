@@ -49,6 +49,15 @@ struct MeshVertex {
     f32 normal[3];
     f32 uv[2];
 };
+// Skinned meshes: up to 4 joints per vertex, weights as bytes summing to 255.
+struct SkinnedVertex {
+    f32 position[3];
+    f32 normal[3];
+    f32 uv[2];
+    u8 joints[4];
+    u8 weights[4];
+};
+constexpr u32 kMaxJoints = 256;
 struct LineVertex {
     f32 position[3];
     f32 color[4];
@@ -75,6 +84,10 @@ struct MeshDraw {
     TextureHandle orm_texture;
     bool unlit = false;      // colour only, no lighting (Unlit view mode)
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
+    // Skinning: when set, the vertices are SkinnedVertex and each joint's skinning matrix is given
+    // as its first three rows (12 floats, joint_count <= kMaxJoints); mvp / world apply after it.
+    const f32* joint_rows = nullptr;
+    u32 joint_count = 0;
 };
 
 // Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
@@ -167,7 +180,8 @@ public:
     // draw_mesh calls (the lights say which tiles they use); begin_frame unbinds them.
     virtual TextureHandle create_shadow_map(u32 size) = 0;
     virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
-    virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16]) = 0;
+    virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
+                                    const f32* joint_rows = nullptr, u32 joint_count = 0) = 0;  // joints: a skinned caster
     virtual void end_shadow_pass() = 0;
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;

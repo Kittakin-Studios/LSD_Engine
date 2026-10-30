@@ -35,6 +35,7 @@ add_subdirectory(engine/input)
 add_subdirectory(engine/physics)
 add_subdirectory(engine/script)
 add_subdirectory(engine/audio)
+add_subdirectory(engine/animation)
 add_subdirectory(engine/debug_ui)
 add_subdirectory(runtime)
 
