@@ -187,7 +187,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [~] Post-process volume: Post Process Volume component (unbound or a box, priority): exposure compensation, ACES filmic tonemapper, saturation, contrast, tint, vignette, applied in the forward shaders; needs an HDR scene target for bloom, LUT grading, DOF, motion blur, AO, anti-aliasing (TAA / FXAA), blend weights between volumes [Post Process Volume]
 - [ ] Baked lightmaps + probes; light build button with progress; lightmap density view; volumetric fog [Lightmass]
 - [~] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes: frustum culling of static and skeletal meshes (the count in `stat fps`); needs LODs, occlusion and distance culling
-- [ ] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]
+- [~] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]: the quality setting scales shadows (none / sun only, nearer / as set / further); needs more features per level, device profiles
 - [ ] VRAM-budget scaling: texture streaming, shadow and render-target sizes follow `query_memory_budget()`
 - [ ] Render to screenshot at high resolution [HighResShot]
 
@@ -206,7 +206,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 ### Game services
 
 - [~] Save game: `lsd.save_game(slot, value)` / `load_game` / `has_save` / `delete_save` (numbers, strings, booleans, lists and keyed tables as versioned JSON in Saved/SaveGames/, written whole then swapped in), Save Value / Load Value nodes; needs save-whole-object helpers (chosen component fields), version upgrades, async saves, cloud / platform storage
-- [ ] Settings menu backend: graphics, audio, key rebinding (moved up from v2) [Game User Settings]
+- [~] Settings menu backend: graphics, audio, key rebinding (moved up from v2) [Game User Settings]: Saved/GameUserSettings.json (fullscreen, quality Low..Epic driving shadows, master / Music / SFX volume, mouse sensitivity, invert look), the first run picks the recommended quality, `lsd.get_settings` / `lsd.set_settings` apply and save; needs key rebinding, resolution / vsync, an example options menu
 - [ ] Localisation: string tables, gather text, language switch (moved up from v2: cheaper before content grows) [Localization Dashboard]
 
 ### Ship

@@ -39,6 +39,9 @@
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
 //   lsd.ui_value(doc, id) -> text         a text field's value
 //   lsd.ui_show_cursor(on)                a menu: the mouse moves a cursor instead of the player
+//   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
+//                          mouse_sensitivity, invert_look}   the player's settings (options menus)
+//   lsd.set_settings({quality = 1, ...})  changes those given, applies and saves them
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
 // on every script that defines it.
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
@@ -93,6 +96,9 @@ struct ScriptHost {
     bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text
     bool (*ui_value)(void* user, i32 doc, const char* id, char* out, usize capacity) = nullptr;
     void (*ui_show_cursor)(void* user, bool on) = nullptr;
+    // The player's settings: a reflected struct, and a call after Lua changed it.
+    void* (*settings)(void* user, const reflect::TypeInfo** type) = nullptr;
+    void (*settings_changed)(void* user) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;

@@ -179,7 +179,7 @@ void SoundPlayer::pop_mix(const char* name) {
     }
 }
 
-void SoundPlayer::set_class_volume(const char* name, f32 volume) {
+void SoundPlayer::set_class_volume(const char* name, f32 volume, bool warn) {
     if (!audio_) return;
     usize hits[16];
     const usize n = registry_->search(name, asset::AssetType::Data, nullptr, hits, 16);
@@ -192,7 +192,7 @@ void SoundPlayer::set_class_volume(const char* name, f32 volume) {
         return;
     }
     if (std::strcmp(name, "Master") == 0) audio_->set_class_volume(audio::kMasterClass, volume);
-    else LSD_LOG_WARN("audio", "No Sound Class '%s'", name);
+    else if (warn) LSD_LOG_WARN("audio", "No Sound Class '%s'", name);
 }
 
 void SoundPlayer::set_param(const char* name, f32 value) {

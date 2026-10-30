@@ -141,7 +141,11 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
 
 rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden);
 
+u32 g_quality = 2;
+
 } // namespace
+
+void set_shadow_quality(u32 quality) { g_quality = quality < 3 ? quality : 3; }
 
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
     rhi::LightSetup s = lights_only(w, view, skip_hidden);
@@ -266,7 +270,8 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
         const auto* light = static_cast<const world::DirectionalLight*>(w.at(dir_type, i));
         const Vec3 travel = forward_of(w.world_matrix(e));
-        if (light->cast_shadows && s.shadow_info[1] < 0.0f) fit_cascades(s, s.count, travel, view, light->shadow_distance);
+        static const f32 distance_scale[4] = {0.0f, 0.6f, 1.0f, 1.5f};
+        if (light->cast_shadows && g_quality > 0 && s.shadow_info[1] < 0.0f) fit_cascades(s, s.count, travel, view, light->shadow_distance * distance_scale[g_quality]);
         put(rhi::LightType::Directional, {}, travel, light_rgb(light->color, light->use_temperature, light->temperature) * light->intensity, 0, 0, 0);
     }
     // Local lights nearest the camera fill the rest (shortcut: no clustering; 16 per frame is the limit).
@@ -303,7 +308,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const auto* light = static_cast<const world::PointLight*>(w.at(point_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
-            if (light->cast_shadows && tiles_used + 6 <= rhi::kMaxShadowTiles) {
+            if (light->cast_shadows && g_quality >= 2 && tiles_used + 6 <= rhi::kMaxShadowTiles) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 l.shadow_tile = static_cast<f32>(tiles_used);
                 l.shadow_offset = 2.0f / tile_texels * 1.5f;  // texel size per metre for a 90 degree view
@@ -317,7 +322,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const Vec3 dir = forward_of(m);
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
-            if (light->cast_shadows && tiles_used + 1 <= rhi::kMaxShadowTiles) {
+            if (light->cast_shadows && g_quality >= 2 && tiles_used + 1 <= rhi::kMaxShadowTiles) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 const f32 fov = radians(outer) * 2.0f + 0.1f;  // the cone, plus a little for the filter
                 l.shadow_tile = static_cast<f32>(tiles_used);

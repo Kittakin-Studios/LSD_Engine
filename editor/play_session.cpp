@@ -463,6 +463,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return ui && ui->get_value(doc, id, out, capacity);
     };
     host.ui_show_cursor = [](void* user, bool on) { static_cast<PlaySession*>(user)->ui_cursor_ = on; };
+    host.settings = [](void* user, const reflect::TypeInfo** type) -> void* {
+        auto& self = *static_cast<PlaySession*>(user);
+        *type = &reflect::type_of<GameUserSettings>();
+        return self.user_settings_;
+    };
+    host.settings_changed = [](void* user) { static_cast<PlaySession*>(user)->settings_changed_ = true; };
     host.bb_set = [](void* user, world::Entity e, const char* key, const f32* value, bool vector) {
         if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) {
             if (vector) b->board.set(key, Vec3{value[0], value[1], value[2]});
@@ -772,8 +778,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const input::Value look = input_.value(settings_.look_action);
     const bool jump = input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...
 
-    yaw_ -= radians(look.x * settings_.look_sensitivity);
-    pitch_ += radians(look.y * settings_.look_sensitivity) * (settings_.invert_look_y ? -1.0f : 1.0f);
+    const f32 sensitivity = settings_.look_sensitivity * (user_settings_ ? user_settings_->mouse_sensitivity : 1.0f);
+    const bool invert = settings_.invert_look_y != (user_settings_ && user_settings_->invert_look);
+    yaw_ -= radians(look.x * sensitivity);
+    pitch_ += radians(look.y * sensitivity) * (invert ? -1.0f : 1.0f);
     pitch_ = pitch_ < -1.5f ? -1.5f : pitch_ > 1.5f ? 1.5f : pitch_;
     const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
     const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};

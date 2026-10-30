@@ -16,6 +16,22 @@ struct EditorSettings {
     LSD_PROPERTY(Edit, Category = "Snapping", Min = 0.01) f32 snap_scale = 0.25f;
 };
 
+// The player's own settings (Unreal's Game User Settings), saved to Saved/GameUserSettings.json and
+// applied at once when changed: the game's options menu edits them from Lua (lsd.get_settings /
+// lsd.set_settings). The first run picks the quality the graphics card suits.
+LSD_STRUCT()
+struct GameUserSettings {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Category = "Graphics") bool fullscreen = false;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "Shadows: Low none, Medium sun only and nearer, High as set, Epic further")
+    u32 quality = 2;
+    LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1) f32 master_volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named Music") f32 music_volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named SFX") f32 effects_volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Controls", Min = 0.1, Max = 5, Tooltip = "Times the Character's look sensitivity") f32 mouse_sensitivity = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Controls") bool invert_look = false;
+};
+
 // Project-wide settings shared by the team, saved to Config/project.json (Unreal's Project Settings).
 LSD_STRUCT()
 struct ProjectSettings {

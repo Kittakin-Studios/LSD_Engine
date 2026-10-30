@@ -6,6 +6,7 @@
 // Kill Volumes and the World Settings' Kill Z send the player back to the start. Objects with a
 // Script component run their Lua file (engine/script) after physics each frame; Trigger Volumes
 // send them on_overlap_begin / on_overlap_end when the Character or a simulated object enters or leaves.
+#include "editor_settings.h"
 #include "mesh_cache.h"
 #include "sound_player.h"
 
@@ -50,6 +51,9 @@ public:
     // The game's UI (documents opened by scripts and the Game Mode's HUD). Its actions call Lua.
     void set_ui(ui::UiContext* ui);
     bool ui_cursor() const { return ui_cursor_; }  // a menu wants the mouse
+    // The player's settings Lua reads and changes; `changed` tells main.cpp to apply and save them.
+    void set_user_settings(GameUserSettings* settings) { user_settings_ = settings; }
+    bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
     // the graph window's live debugging.
     u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;
@@ -104,6 +108,8 @@ private:
     SoundPlayer* sounds_ = nullptr;
     AnimationPlayer* animations_ = nullptr;
     ui::UiContext* ui_ = nullptr;
+    GameUserSettings* user_settings_ = nullptr;
+    bool settings_changed_ = false;
     bool ui_cursor_ = false;
     // Nav Agents walking on the navmesh.
     ai::NavMesh nav_;

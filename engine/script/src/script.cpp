@@ -474,6 +474,24 @@ struct Api {
         lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
         return 1;
     }
+    static int get_settings(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const reflect::TypeInfo* type = nullptr;
+        const void* data = host.settings ? host.settings(host.user, &type) : nullptr;
+        if (!data || !type) return 0;
+        push_struct(L, *type, static_cast<const u8*>(data));
+        return 1;
+    }
+    static int set_settings(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        luaL_checktype(L, 1, LUA_TTABLE);
+        const reflect::TypeInfo* type = nullptr;
+        void* data = host.settings ? host.settings(host.user, &type) : nullptr;
+        if (!data || !type) return 0;
+        read_struct(L, 1, *type, static_cast<u8*>(data));
+        if (host.settings_changed) host.settings_changed(host.user);
+        return 0;
+    }
     static int ui_open(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const i32 doc = host.ui_open ? host.ui_open(host.user, luaL_checkstring(L, 1)) : -1;
@@ -841,6 +859,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor},
+        {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

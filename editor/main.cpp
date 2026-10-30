@@ -55,6 +55,7 @@ using lsd::editor::EditorState;
 constexpr char kContentDir[] = "Content";
 constexpr char kDataDir[] = "DerivedData";
 constexpr char kSettingsPath[] = "Saved/editor_settings.json";
+constexpr char kUserSettingsPath[] = "Saved/GameUserSettings.json";  // the player's (also in a packaged game)
 constexpr char kLockPath[] = "Saved/editor.lock";  // exists while the editor runs; left behind by a crash
 constexpr char kAutosaveDir[] = "Saved/Autosaves";
 
@@ -733,6 +734,21 @@ int main(int argc, char** argv) {
     play.set_sounds(&sounds);
     auto* game_ui = new lsd::ui::UiContext("game");  // documents over the player's view; deleted before the device
     play.set_ui(game_ui);
+    // The player's settings: loaded (the first time: the quality this graphics card suits) and applied.
+    lsd::editor::GameUserSettings user_settings;
+    if (!lsd::reflect::load_file(user_settings, kUserSettingsPath)) {
+        user_settings.quality = static_cast<lsd::u32>(lsd::rhi::recommend_preset(device->adapter(), info.total_ram_bytes));
+        LSD_LOG_INFO("editor", "Graphics quality: %s (recommended for this PC)", lsd::rhi::to_string(static_cast<lsd::rhi::QualityPreset>(user_settings.quality)));
+    }
+    auto apply_user_settings = [&] {
+        lsd::editor::set_shadow_quality(user_settings.quality);
+        sounds.set_class_volume("Master", user_settings.master_volume);
+        sounds.set_class_volume("Music", user_settings.music_volume, false);  // projects without these classes: nothing to set
+        sounds.set_class_volume("SFX", user_settings.effects_volume, false);
+        if (game_mode) SDL_SetWindowFullscreen(window, user_settings.fullscreen);
+    };
+    apply_user_settings();
+    play.set_user_settings(&user_settings);
     play.set_animations(animations);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
@@ -883,6 +899,10 @@ int main(int argc, char** argv) {
         if (game_mode && !state.playing && !state.play_requested) running = false;
         state.stop_requested = false;
         if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
+        if (play.take_settings_changed()) {  // an options menu changed them
+            apply_user_settings();
+            lsd::reflect::save_file(user_settings, kUserSettingsPath);
+        }
         SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
 
         if (state.playing) {
