@@ -82,6 +82,43 @@ end
         CHECK(w.get<Transform>(target)->position.y == 2.0f);
         CHECK(!scripts.run("lsd.position(12345)"));  // bad entity: an error, not a crash
         CHECK(!scripts.run("this is not lua"));
+
+        // Any component through reflection.
+        CHECK(scripts.run(R"(
+local t = lsd.find("Target")
+assert(lsd.get(t, "RigidBody") == nil and not lsd.has(t, "RigidBody"))
+lsd.add(t, "RigidBody", {mass = 3})
+assert(lsd.has(t, "RigidBody") and lsd.get(t, "RigidBody").mass == 3 and lsd.get(t, "RigidBody").friction == 0.5)
+lsd.set(t, "Transform", {scale = {z = 4}})
+local tr = lsd.get(t, "Transform")
+assert(tr.scale.x == 1 and tr.scale.z == 4 and tr.position.y == 2)
+lsd.set(t, "Tags", {tags = "Friend"})
+assert(lsd.has_tag(t, "Friend"))
+)"));
+        CHECK(w.get<RigidBody>(target) && w.get<RigidBody>(target)->mass == 3.0f && w.get<Transform>(target)->scale.z == 4.0f);
+        CHECK(!scripts.run("lsd.set(lsd.find('Target'), 'RigidBody', {mass = 'heavy', friction = 0.9})"));
+        CHECK(w.get<RigidBody>(target)->friction == 0.5f);  // a bad field changes nothing
+        CHECK(!scripts.run("lsd.set(lsd.find('Target'), 'RigidBody', {weight = 1})"));
+        CHECK(!scripts.run("lsd.get(lsd.find('Target'), 'Banana')"));
+        CHECK(scripts.run("lsd.remove(lsd.find('Target'), 'RigidBody')") && !w.get<RigidBody>(target));
+
+        // Timers: after fires once, every repeats until cancelled.
+        CHECK(scripts.run(R"(
+once, many = 0, 0
+lsd.after(0.25, function() once = once + 1 end)
+local id
+id = lsd.every(0.1, function() many = many + 1; if many == 3 then lsd.cancel(id) end end)
+)"));
+        for (int i = 0; i < 10; ++i) scripts.update(0.1f);
+        CHECK(scripts.run("assert(once == 1, once) assert(many == 3, many)"));
+
+        // Events go to the target's scripts with the other object.
+        write(kMover, "function on_overlap_begin(self, other) lsd.set_position(self.entity, 0, 0, 0); _G.hit = lsd.name(other) end\n");
+        std::filesystem::last_write_time(kMover, std::filesystem::last_write_time(kMover) + std::chrono::seconds(10));
+        scripts.update(0.5f);
+        scripts.send(mover, "on_overlap_begin", target);
+        scripts.send(mover, "on_not_defined", target);  // fine: scripts need not handle every event
+        CHECK(scripts.run("assert(hit == 'Target', hit)") && w.get<Transform>(mover)->position.x == 0.0f);
         scripts.stop();
     }
     CHECK(heap.allocated_bytes() == 0);

@@ -17,6 +17,17 @@
 //   lsd.time()                            seconds since Play started
 //   lsd.input(action) -> x, y             value of an Input Action, by asset name
 //   lsd.pressed(action)                   true on the frame the action went down
+//   lsd.log_error(...)                    print as an error
+//
+// Any component, through reflection (field names as in Details; structs are tables):
+//   lsd.get(e, "Character")               a copy of the component as a table, or nil
+//   lsd.set(e, "Character", {walk_speed = 8})          writes only the fields given
+//   lsd.add(e, "RigidBody" [, fields]), lsd.remove(e, "RigidBody"), lsd.has(e, "RigidBody")
+//
+// Timers (callbacks run before on_update):
+//   lsd.after(seconds, fn) -> id, lsd.every(seconds, fn) -> id, lsd.cancel(id)
+//
+// Events sent by the game: on_overlap_begin(self, other), on_overlap_end(self, other) (Trigger Volumes).
 //
 // Saving a script while playing reloads it; `self` keeps its fields. A script that errors stops
 // running (the error and stack go to the Output Log) until it is fixed and saved.
@@ -52,6 +63,8 @@ public:
 
     // Runs a chunk of Lua against the world (tests and the console). False on error (logged).
     bool run(const char* code, const char* chunk_name = "=console");
+    // Calls `event(self, other)` on the scripts of `target`, if they define it.
+    void send(world::Entity target, const char* event, world::Entity other);
 
 private:
     struct Instance {
@@ -63,7 +76,7 @@ private:
         bool failed = false;
     };
     bool load(Instance& instance);
-    bool call(Instance& instance, const char* function, f32 dt, bool with_dt);
+    bool call(Instance& instance, const char* function, const f64* args, int arg_count);
 
     lua_State* lua_ = nullptr;
     world::World* world_ = nullptr;

@@ -71,7 +71,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 
 - [~] Outliner: Outline tab (flat, search) and Hierarchy tab (tree, drag to attach, drop on empty space to detach), right-click Focus / Duplicate / Detach / Delete, hide (eye) and lock buttons saved in the level; needs folders, type filter
 - [x] Details: entity name, one section per component, Add / remove component, mesh slot (shapes + mesh assets, drag-drop), search field, multi-edit (only changed values go to every selected object), right-click Reset to Default / Copy / Paste
-- [~] Place panel (tab next to Content): Cube, Sphere, Plane, Player Start, Blocking Volume, Kill Volume, Empty, by drag or double-click; lights, cameras, sounds when they exist [Place Actors]
+- [~] Place panel (tab next to Content): Cube, Sphere, Plane, Player Start, Blocking Volume, Kill Volume, Trigger Volume, Empty, by drag or double-click; lights, cameras, sounds when they exist [Place Actors]
 - [x] World Settings (Window menu; Kill Z, gravity; saved in the level) and Project Settings (Edit menu; name, company, game default level, editor startup level; `Config/project.json`)
 - [x] Output Log tab with filters + console (`engine/core` console: variables and commands, Tab completion, history; `help` lists them; `-exec=` runs lines at startup) [Output Log, CVars]
 - [~] Message Log (Window menu): warnings and errors only, unread count in the menu bar; needs click-to-asset [Message Log]
@@ -83,7 +83,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [x] Transactions: undo/redo (Ctrl+Z / Ctrl+Y) of every level edit, Undo History window with click-to-jump, unsaved marker in the title [Transaction system]
 - [~] Play-in-Editor (Alt+P / Esc): play in the viewport from the Player Start, mouse capture (Shift+F1), Pause + frame step (]), Eject / Possess (F8: editor camera and selection while the game runs), changes revert on Stop; needs play in a new window, Simulate [PIE]
 - [ ] Keep simulation changes: copy a property or object from PIE back to the editor world [Keep Simulation Changes]
-- [~] Volumes: Blocking and Kill (used by Play); trigger needs scripting (milestone 4), post-process / audio / nav modifier come with those systems
+- [~] Volumes: Blocking, Kill and Trigger (on_overlap_begin / end to scripts; point tests for now), post-process / audio / nav modifier come with those systems
 - [~] Blockout: basic shapes scaled with the gizmo, collision on by default; needs box UVs, resize handles [BSP / Modeling Mode basics]
 - [ ] Visual debugging: draw debug lines/shapes/text from scripts, persistent or for N seconds
 
@@ -109,7 +109,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 ### Scripting
 
-- [~] Lua scripting (LuaJIT, `engine/script`): Script component, on_start / on_update per object with its own `self`, `lsd` API (log, find, position / rotation, tags, input, time, destroy), hot reload on save while playing, errors with stack in the Output Log, New Lua Script + double-click to edit, `lua` console command; needs bindings generated from reflection (any component from Lua), events (overlap, hit), timers, sandboxing
+- [~] Lua scripting (LuaJIT, `engine/script`): Script component, on_start / on_update per object with its own `self`, `lsd` API (log, find, position / rotation, tags, input, time, destroy), hot reload on save while playing, errors with stack in the Output Log, New Lua Script + double-click to edit, `lua` console command; any component from Lua through reflection (`lsd.get` / `set` / `add` / `remove` / `has`), timers (`lsd.after` / `every` / `cancel`), overlap events from Trigger Volumes; needs hit events, spawning objects and prefabs from Lua, sandboxing
 - [ ] Lua debugger in the editor: breakpoints, step, watch, call stack **(S)**
 - [ ] Visual scripting: events, variables, functions, macros, flow control, calls into C++/Lua [Blueprints]
 - [ ] Level script: a visual-script graph owned by the level for one-off events **(S)** [Level Blueprint]

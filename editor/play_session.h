@@ -4,7 +4,8 @@
 // the level, driven by the input assets picked on it; without one, a default first-person walker
 // spawns at the Player Start (or the camera) with built-in WASD / mouse / Space controls.
 // Kill Volumes and the World Settings' Kill Z send the player back to the start. Objects with a
-// Script component run their Lua file (engine/script) after physics each frame.
+// Script component run their Lua file (engine/script) after physics each frame; Trigger Volumes
+// send them on_overlap_begin / on_overlap_end when the Character or a simulated object enters or leaves.
 #include "mesh_cache.h"
 
 #include "lsd/asset/asset_registry.h"
@@ -52,7 +53,14 @@ private:
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker
     bool wired_ = false;
+    struct Overlap {
+        world::Entity trigger, other;
+    };
+    void update_triggers(world::World& world);
+
     Simulated simulated_[1024];
+    Overlap overlaps_[256];  // inside a Trigger Volume last frame
+    u32 overlap_count_ = 0;
     u32 simulated_count_ = 0;
     Vec3 feet_, spawn_;
     f32 yaw_ = 0, pitch_ = 0, spawn_yaw_ = 0;

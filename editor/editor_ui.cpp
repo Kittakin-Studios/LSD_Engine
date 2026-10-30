@@ -54,14 +54,14 @@ struct PlaceItem {
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
-    {"Kill Volume", nullptr, "KillVolume"}, {"Empty", nullptr, nullptr},
+    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Empty", nullptr, nullptr},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
 constexpr Vec3 kVolumeLo{-0.5f, -0.5f, 0.0f}, kVolumeHi{0.5f, 0.5f, 1.0f};
 
 bool is_volume(const world::World& w, world::Entity e) {
-    return w.get<world::BlockingVolume>(e) || w.get<world::KillVolume>(e);
+    return w.get<world::BlockingVolume>(e) || w.get<world::KillVolume>(e) || w.get<world::TriggerVolume>(e);
 }
 
 // UI-only state for the confirmation dialogs.
@@ -686,9 +686,11 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
         if (!e.valid() || s.world->get<world::StaticMesh>(e) || s.world->hidden_in_hierarchy(e)) continue;
         const Mat4 m = s.world->world_matrix(e);
         const Vec3 origin{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
-        if (is_volume(*s.world, e)) {  // wire box: orange blocks, red kills
+        if (is_volume(*s.world, e)) {  // wire box: orange blocks, red kills, green triggers
             const ImU32 color = s.is_selected(e) ? u32_color(t.details_tab_active)
-                                : s.world->get<world::KillVolume>(e) ? IM_COL32(255, 70, 60, 255) : IM_COL32(255, 160, 40, 255);
+                                : s.world->get<world::KillVolume>(e)    ? IM_COL32(255, 70, 60, 255)
+                                : s.world->get<world::TriggerVolume>(e) ? IM_COL32(90, 230, 120, 255)
+                                                                         : IM_COL32(255, 160, 40, 255);
             ImVec2 corner[8];
             bool visible = true;
             for (int c = 0; c < 8 && visible; ++c) {

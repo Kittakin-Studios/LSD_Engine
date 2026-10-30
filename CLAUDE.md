@@ -135,8 +135,9 @@ Input-style Input Actions + Mapping Contexts (`engine/input`); Jolt physics (`en
 level collision, RigidBody, CharacterVirtual); Character component possessed in Play with its input
 wired in Details. Prefabs (`.lsdprefab`, `engine/world/prefab.h`: create, place, apply, revert; no
 per-instance overrides yet). Gameplay tags (Tags component). Lua scripts (`engine/script`, LuaJIT
-built from source by third_party/CMakeLists.txt with its own minilua/buildvm tools). Next: visual
-scripting, game framework classes, reflection-generated Lua bindings, events and timers.
+built from source by third_party/CMakeLists.txt with its own minilua/buildvm tools). Lua reaches any
+component through reflection (`lsd.get/set/add`), has timers, and gets overlap events from Trigger
+Volumes. Next: visual scripting, game framework classes, spawning from Lua, hit events.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

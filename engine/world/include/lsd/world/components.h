@@ -41,6 +41,14 @@ struct KillVolume {
     LSD_PROPERTY(Edit) bool enabled = true;
 };
 
+// Tells scripts when the player or a simulated object enters or leaves it (Unreal's Trigger Box):
+// on_overlap_begin(self, other) / on_overlap_end(self, other) run on both objects' scripts.
+LSD_STRUCT(Component, Category = "Volumes")
+struct TriggerVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
+};
+
 // Where Play puts the player; facing = the entity's Z rotation.
 LSD_STRUCT(Component, Category = "Gameplay")
 struct PlayerStart {

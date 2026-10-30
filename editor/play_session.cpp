@@ -62,6 +62,12 @@ physics::BodyDesc fitted_body(const Mat4& world, Vec3 lo, Vec3 hi, u32 shape, ph
 
 constexpr Vec3 kUnitLo{-0.5f, -0.5f, 0.0f}, kUnitHi{0.5f, 0.5f, 1.0f};  // volumes and meshless bodies
 
+// Is the point inside the volume's unit box (under its world matrix)?
+bool inside_volume(const world::World& world, world::Entity volume, Vec3 point) {
+    const Vec3 p = transform_point(affine_inverse(world.world_matrix(volume)), point);
+    return p.x >= kUnitLo.x && p.x <= kUnitHi.x && p.y >= kUnitLo.y && p.y <= kUnitHi.y && p.z >= kUnitLo.z && p.z <= kUnitHi.z;
+}
+
 bool load_context(const asset::AssetRegistry& registry, const char* guid_text, input::InputMappingContext& out) {
     asset::Guid guid;
     const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
@@ -80,6 +86,7 @@ void PlaySession::stop() {
     delete physics_;
     physics_ = nullptr;
     simulated_count_ = 0;
+    overlap_count_ = 0;
     input_.clear();
 }
 
@@ -246,9 +253,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const reflect::TypeInfo& kill_type = reflect::type_of<world::KillVolume>();
     for (u32 i = 0; i < world.count(kill_type) && !killed; ++i) {
         if (!static_cast<const world::KillVolume*>(world.at(kill_type, i))->enabled) continue;
-        const Mat4 inv = affine_inverse(world.world_matrix(world.owner(kill_type, i)));
-        const Vec3 p = transform_point(inv, feet_ + Vec3{0, 0, 0.1f});
-        killed = p.x >= kUnitLo.x && p.x <= kUnitHi.x && p.y >= kUnitLo.y && p.y <= kUnitHi.y && p.z >= kUnitLo.z && p.z <= kUnitHi.z;
+        killed = inside_volume(world, world.owner(kill_type, i), feet_ + Vec3{0, 0, 0.1f});
     }
     if (killed) {
         physics_->teleport_character(spawn_);
@@ -267,7 +272,58 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         decompose_trs(world.world_matrix(character_), t, r, scale);
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
+    update_triggers(world);
     scripts_.update(dt);
+}
+
+// shortcut: point tests (the Character's middle, a body's centre), not shape overlaps; use Jolt sensors for big objects.
+void PlaySession::update_triggers(world::World& world) {
+    const reflect::TypeInfo& trigger_type = reflect::type_of<world::TriggerVolume>();
+    Overlap now[sizeof overlaps_ / sizeof overlaps_[0]];
+    u32 now_count = 0;
+    auto test = [&](world::Entity other, Vec3 point) {
+        for (u32 i = 0; i < world.count(trigger_type) && now_count < sizeof now / sizeof now[0]; ++i) {
+            const world::Entity trigger = world.owner(trigger_type, i);
+            if (trigger != other && static_cast<const world::TriggerVolume*>(world.at(trigger_type, i))->enabled && inside_volume(world, trigger, point)) {
+                now[now_count++] = {trigger, other};
+            }
+        }
+    };
+    if (world.alive(character_)) test(character_, feet_ + Vec3{0, 0, settings_.height * 0.5f});
+    for (u32 i = 0; i < simulated_count_; ++i) {
+        if (!world.alive(simulated_[i].entity)) continue;
+        const Mat4 body = physics_->body_transform(simulated_[i].body);
+        test(simulated_[i].entity, {body.at(0, 3), body.at(1, 3), body.at(2, 3)});
+    }
+    auto contains = [](const Overlap* list, u32 count, const Overlap& o) {
+        for (u32 i = 0; i < count; ++i) {
+            if (list[i].trigger == o.trigger && list[i].other == o.other) return true;
+        }
+        return false;
+    };
+    const Overlap* before = overlaps_;
+    const u32 before_count = overlap_count_;
+    Overlap left[sizeof overlaps_ / sizeof overlaps_[0]];
+    u32 left_count = 0;
+    for (u32 i = 0; i < before_count; ++i) {
+        if (!contains(now, now_count, before[i])) left[left_count++] = before[i];
+    }
+    Overlap entered[sizeof overlaps_ / sizeof overlaps_[0]];
+    u32 entered_count = 0;
+    for (u32 i = 0; i < now_count; ++i) {
+        if (!contains(before, before_count, now[i])) entered[entered_count++] = now[i];
+    }
+    // State first: scripts reacting to the events may destroy objects or move them.
+    std::memcpy(overlaps_, now, now_count * sizeof now[0]);
+    overlap_count_ = now_count;
+    for (u32 i = 0; i < left_count; ++i) {
+        scripts_.send(left[i].trigger, "on_overlap_end", left[i].other);
+        scripts_.send(left[i].other, "on_overlap_end", left[i].trigger);
+    }
+    for (u32 i = 0; i < entered_count; ++i) {
+        scripts_.send(entered[i].trigger, "on_overlap_begin", entered[i].other);
+        scripts_.send(entered[i].other, "on_overlap_begin", entered[i].trigger);
+    }
 }
 
 } // namespace lsd::editor
