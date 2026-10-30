@@ -154,6 +154,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         input::InputMappingContext context;
         if (load_asset(registry, settings_.mapping_context, context)) {
             input_.add_context(context);
+            for (const input::KeyMapping& m : context.mappings) {  // each action's trigger (Hold, Tap...) from its asset
+                input::InputAction action;
+                if (load_asset(registry, m.action, action)) input_.set_trigger(m.action, static_cast<input::Trigger>(action.trigger), action.trigger_time);
+            }
             wired_ = true;
         } else {
             LSD_LOG_WARN("play", "%s has no Input Mapping Context (pick one in its Details): it cannot move", world.name(character_));
@@ -205,7 +209,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.pressed = [](void* user, const char* action) {
         const auto& self = *static_cast<const PlaySession*>(user);
         char guid[33];
-        return action_guid(*self.registry_, action, guid) && self.input_.pressed(guid);
+        return action_guid(*self.registry_, action, guid) && self.input_.fired(guid);
     };
     host.spawn = [](void* user, const char* name, Vec3 position) { return static_cast<PlaySession*>(user)->spawn(name, position); };
     host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
@@ -392,10 +396,10 @@ void PlaySession::send_hits() {
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
     if (!physics_) return;
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
-    input_.update(frame);
+    input_.update(frame, dt);
     const input::Value move = input_.value(settings_.move_action);
     const input::Value look = input_.value(settings_.look_action);
-    const bool jump = input_.pressed(settings_.jump_action);
+    const bool jump = input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...
 
     yaw_ -= radians(look.x * settings_.look_sensitivity);
     pitch_ += radians(look.y * settings_.look_sensitivity) * (settings_.invert_look_y ? -1.0f : 1.0f);

@@ -70,7 +70,7 @@ NodeDef g_defs[] = {
      {{"Value", PinType::Float, ""}}, 0, nullptr, {"(self[$0] or 0)"}},
     {"InputAxis", "Input Axis", "Input", "Value of an Input Action by asset name", {{"Action", PinType::String, "IA_Move"}}, 0,
      {{"X", PinType::Float, ""}, {"Y", PinType::Float, ""}}, 0, nullptr, {"(lsd.input($0))", "select(2, lsd.input($0))"}},
-    {"InputPressed", "Input Pressed", "Input", "True on the frame the action went down", {{"Action", PinType::String, "IA_Jump"}}, 0,
+    {"InputPressed", "Input Pressed", "Input", "True on the frame the action fires (its Trigger: pressed, hold, tap...)", {{"Action", PinType::String, "IA_Jump"}}, 0,
      {{"Pressed", PinType::Bool, ""}}, 0, nullptr, {"lsd.pressed($0)"}},
     {"TableValue", "Get Table Value", "Data", "A cell of a Data Table (.csv) by asset name, row name and column name",
      {{"Table", PinType::String, "DT_Items"}, {"Row", PinType::String, "Row1"}, {"Column", PinType::String, "Value"}}, 0,

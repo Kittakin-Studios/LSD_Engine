@@ -16,7 +16,7 @@
 //   lsd.has_tag(e, tag)                   gameplay tags ("Damage" matches "Damage.Fire")
 //   lsd.time()                            seconds since Play started
 //   lsd.input(action) -> x, y             value of an Input Action, by asset name
-//   lsd.pressed(action)                   true on the frame the action went down
+//   lsd.pressed(action)                   true on the frame the action fires (its Trigger: pressed, hold, tap...)
 //   lsd.log_error(...)                    print as an error
 //   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset or built-in shape ("Cube") by name; nil if none
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil

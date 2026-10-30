@@ -12,7 +12,12 @@ struct InputAction {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Choice:Button (bool),Axis 1D (float),Axis 2D (Vector2D)") u32 value_type = 0;
     LSD_PROPERTY(Edit) char description[96] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Down,Pressed,Released,Hold,Tap",
+                 Tooltip = "When the action fires (Unreal's Triggers): Down and Pressed when pushed, Released when let go, Hold after Trigger Time held, Tap when let go within Trigger Time") u32 trigger = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Hold: how long to hold. Tap: the longest press that still counts") f32 trigger_time = 0.5f;
 };
+
+enum class Trigger : u32 { Down, Pressed, Released, Hold, Tap };
 
 // One key (or stick, or mouse axis) feeding one action.
 LSD_STRUCT()
@@ -54,11 +59,14 @@ public:
     void clear();
     // Adds a context's mappings. Actions are asset GUIDs (32 hex characters). Unknown keys are logged and skipped.
     void add_context(const InputMappingContext& context);
-    void update(const InputFrame& frame);
+    // How an action fires (from its InputAction asset); actions not yet in a context are ignored.
+    void set_trigger(const char* action, Trigger trigger, f32 seconds);
+    void update(const InputFrame& frame, f32 dt = 0.0f);
 
     Value value(const char* action) const;  // Axis 2D: x, y; Axis 1D and Button: x
     bool down(const char* action) const;    // value length above 0.5
     bool pressed(const char* action) const; // went down in the last update
+    bool fired(const char* action) const;   // its trigger fired in the last update (Pressed when not set)
 
     static constexpr u32 kMaxActions = 64;
     static constexpr u32 kMaxBindings = 256;
@@ -68,6 +76,11 @@ private:
         char guid[33];
         Value value;
         bool down, was_down;
+        Trigger trigger;
+        f32 trigger_time;
+        f32 held;       // seconds down so far
+        bool fired;
+        bool hold_done; // Hold fires once per press
     };
     struct Binding {
         u32 action;

@@ -134,6 +134,10 @@ void InputSystem::add_context(const InputMappingContext& context) {
             std::memcpy(a.guid, m.action, sizeof a.guid);
             a.value = {};
             a.down = a.was_down = false;
+            a.trigger = Trigger::Down;
+            a.trigger_time = 0.5f;
+            a.held = 0.0f;
+            a.fired = a.hold_done = false;
             action = static_cast<i32>(action_count_++);
         }
         if (binding_count_ == kMaxBindings) return;
@@ -147,7 +151,14 @@ void InputSystem::add_context(const InputMappingContext& context) {
     }
 }
 
-void InputSystem::update(const InputFrame& frame) {
+void InputSystem::set_trigger(const char* action, Trigger trigger, f32 seconds) {
+    const i32 i = find_action(action);
+    if (i < 0) return;
+    actions_[i].trigger = trigger;
+    actions_[i].trigger_time = seconds;
+}
+
+void InputSystem::update(const InputFrame& frame, f32 dt) {
     for (u32 i = 0; i < action_count_; ++i) {
         actions_[i].was_down = actions_[i].down;
         actions_[i].value = {};
@@ -180,9 +191,26 @@ void InputSystem::update(const InputFrame& frame) {
         }
     }
     for (u32 i = 0; i < action_count_; ++i) {
-        const Value& v = actions_[i].value;
-        actions_[i].down = v.x * v.x + v.y * v.y > 0.25f;
+        Action& a = actions_[i];
+        a.down = a.value.x * a.value.x + a.value.y * a.value.y > 0.25f;
+        const f32 held_before = a.held;
+        a.held = a.down ? a.held + dt : 0.0f;
+        switch (a.trigger) {
+            case Trigger::Down:
+            case Trigger::Pressed: a.fired = a.down && !a.was_down; break;
+            case Trigger::Released: a.fired = !a.down && a.was_down; break;
+            case Trigger::Hold:
+                a.fired = a.down && !a.hold_done && a.held >= a.trigger_time;
+                a.hold_done = a.down && (a.hold_done || a.fired);
+                break;
+            case Trigger::Tap: a.fired = !a.down && a.was_down && held_before <= a.trigger_time; break;
+        }
     }
+}
+
+bool InputSystem::fired(const char* action) const {
+    const i32 i = find_action(action);
+    return i >= 0 && actions_[i].fired;
 }
 
 Value InputSystem::value(const char* action) const {

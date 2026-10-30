@@ -19,6 +19,9 @@ constexpr char kMove[] = "00000000000000000000000000000001";
 constexpr char kJump[] = "00000000000000000000000000000002";
 constexpr char kLook[] = "00000000000000000000000000000003";
 constexpr char kTalk[] = "00000000000000000000000000000004";
+constexpr char kHold[] = "00000000000000000000000000000005";
+constexpr char kTap[] = "00000000000000000000000000000006";
+constexpr char kUp[] = "00000000000000000000000000000007";
 
 static KeyMapping map(const char* action, const char* key, u32 axis = 0, f32 scale = 1.0f) {
     KeyMapping m;
@@ -78,6 +81,36 @@ static void test_mappings() {
     input.update(frame);
     CHECK(input.down(kTalk) && !input.down(kJump));
     CHECK(input.value("ffffffffffffffffffffffffffffffff").x == 0.0f);  // unknown action reads as zero
+
+    // Triggers: Hold fires once after 0.5 s held; Tap fires on a quick release only; Released on any release.
+    InputMappingContext buttons;
+    buttons.priority = 20;
+    buttons.mappings.push_back(map(kHold, "E"));
+    buttons.mappings.push_back(map(kTap, "F"));
+    buttons.mappings.push_back(map(kUp, "G"));
+    input.add_context(buttons);
+    input.set_trigger(kHold, Trigger::Hold, 0.5f);
+    input.set_trigger(kTap, Trigger::Tap, 0.3f);
+    input.set_trigger(kUp, Trigger::Released, 0.0f);
+    keys[SDL_SCANCODE_E] = keys[SDL_SCANCODE_F] = keys[SDL_SCANCODE_G] = true;
+    int hold_fires = 0;
+    for (int i = 0; i < 10; ++i) {  // 1 s held
+        input.update(frame, 0.1f);
+        hold_fires += input.fired(kHold);
+        CHECK(!input.fired(kTap) && !input.fired(kUp));
+    }
+    CHECK(hold_fires == 1);
+    keys[SDL_SCANCODE_E] = keys[SDL_SCANCODE_F] = keys[SDL_SCANCODE_G] = false;
+    input.update(frame, 0.1f);
+    CHECK(!input.fired(kTap) && input.fired(kUp));  // held 1 s: too long for a tap
+    keys[SDL_SCANCODE_F] = true;
+    input.update(frame, 0.1f);
+    input.update(frame, 0.1f);
+    keys[SDL_SCANCODE_F] = false;
+    input.update(frame, 0.1f);
+    CHECK(input.fired(kTap));
+    input.update(frame, 0.1f);
+    CHECK(!input.fired(kTap));  // once
 }
 
 static void test_data_asset() {
