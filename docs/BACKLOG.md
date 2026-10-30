@@ -200,8 +200,8 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 ### AI
 
 - [~] Navmesh (Recast & Detour, `engine/ai`): built from the collision boxes (meshes with collision, Blocking Volumes) inside Nav Mesh Bounds (or the whole level) with World Settings > Navigation (agent radius / height, step, slope, cell size); P / Show > Navigation draws it (editor, ejected); Nav Agent component walks with crowd avoidance in Play; `lsd.move_to` / `stop_move` / `is_moving` / `find_path`, AI Move To / AI Stop Moving / Is Moving nodes; needs nav links for jumps, tiled / runtime rebuilds, triangle-exact geometry, the overlay depth-tested and in Play
-- [ ] Behaviour trees + blackboard with live debugging
-- [ ] Perception: sight and hearing (moved up from v2: needed for any enemy) [AI Perception]
+- [~] Behaviour trees + blackboard with live debugging: `.lsdbt` on the graph canvas (Root, reactive Selector, Sequence, Move To, Wait, Random Location, Set / Clear Key, Run Script, Is Set, Compare), interpreted by `ai::BtRunner`; AI Controller component runs one per Nav Agent; the open tree glows along the active branch in Play; `lsd.bb_set` / `bb_get` / `bb_clear`, Set Blackboard Value node; needs decorators / services as in Unreal, a blackboard asset with typed keys, hot reload while playing, subtrees
+- [~] Perception: sight (range, field of view, line of sight by physics ray: CanSeePlayer, PlayerLocation) and hearing (`lsd.report_noise` / Report Noise in range: NoiseLocation, HeardNoise) on the AI Controller; needs seeing other agents / teams, memory and forgetting, debug cones in the viewport [AI Perception]
 
 ### Game services
 

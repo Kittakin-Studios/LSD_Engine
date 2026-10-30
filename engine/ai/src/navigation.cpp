@@ -172,6 +172,25 @@ bool NavMesh::nearest_point(Vec3 point, Vec3& out) const {
     return true;
 }
 
+bool NavMesh::random_point(Vec3 around, f32 radius, Vec3& out) const {
+    if (!impl_->query) return false;
+    f32 p[3], start[3], point[3];
+    to_recast(around, p);
+    dtPolyRef start_ref = 0, ref = 0;
+    impl_->query->findNearestPoly(p, kSearchExtents, &impl_->filter, &start_ref, start);
+    if (!start_ref) return false;
+    static u32 seed = 0x2545F491u;
+    auto frand = []() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return static_cast<f32>(seed >> 8) * (1.0f / 16777216.0f);
+    };
+    if (dtStatusFailed(impl_->query->findRandomPointAroundCircle(start_ref, start, radius, &impl_->filter, frand, &ref, point)) || !ref) return false;
+    out = from_recast(point);
+    return true;
+}
+
 u32 NavMesh::find_path(Vec3 from, Vec3 to, Vec3* out, u32 capacity) const {
     if (!impl_->query || capacity < 2) return 0;
     f32 a[3], b[3], start[3], end[3];

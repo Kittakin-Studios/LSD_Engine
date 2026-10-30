@@ -474,6 +474,36 @@ struct Api {
         lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
         return 1;
     }
+    static int bb_set(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const world::Entity e = live_entity(L, 1);
+        const char* key = luaL_checkstring(L, 2);
+        const bool vector = lua_gettop(L) >= 5;
+        f32 v[3];
+        v[0] = static_cast<f32>(lua_isboolean(L, 3) ? (lua_toboolean(L, 3) ? 1.0 : 0.0) : luaL_checknumber(L, 3));
+        v[1] = vector ? static_cast<f32>(luaL_checknumber(L, 4)) : v[0];
+        v[2] = vector ? static_cast<f32>(luaL_checknumber(L, 5)) : v[0];
+        if (host.bb_set) host.bb_set(host.user, e, key, v, vector);
+        return 0;
+    }
+    static int bb_get(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        f32 v[3] = {};
+        const int n = host.bb_get ? host.bb_get(host.user, live_entity(L, 1), luaL_checkstring(L, 2), v) : 0;
+        for (int i = 0; i < n; ++i) lua_pushnumber(L, v[i]);
+        return n;
+    }
+    static int bb_clear(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.bb_clear) host.bb_clear(host.user, live_entity(L, 1), luaL_checkstring(L, 2));
+        return 0;
+    }
+    static int report_noise(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const Vec3 at{static_cast<f32>(luaL_checknumber(L, 1)), static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_checknumber(L, 3))};
+        if (host.report_noise) host.report_noise(host.user, at, static_cast<f32>(luaL_optnumber(L, 4, 1.0)));
+        return 0;
+    }
     static int move_to(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const Vec3 target{static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_checknumber(L, 3)), static_cast<f32>(luaL_checknumber(L, 4))};
@@ -768,7 +798,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
-        {"is_moving", Api::is_moving}, {"find_path", Api::find_path},
+        {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
+        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
@@ -891,6 +922,34 @@ void ScriptSystem::send(world::Entity target, const char* event, world::Entity o
     for (u32 i = 0; i < count_; ++i) {
         if (instances_[i].entity == target && !instances_[i].failed) call(instances_[i], event, &arg, 1);
     }
+}
+
+int ScriptSystem::call_task(world::Entity target, const char* function, f32 dt) {
+    for (u32 i = 0; i < count_; ++i) {
+        Instance& instance = instances_[i];
+        if (instance.entity != target || instance.failed) continue;
+        lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
+        lua_getfield(lua_, -1, function);
+        lua_remove(lua_, -2);
+        if (!lua_isfunction(lua_, -1)) {
+            lua_pop(lua_, 1);
+            continue;
+        }
+        lua_pushcfunction(lua_, traceback);
+        lua_insert(lua_, -2);
+        const int handler = lua_gettop(lua_) - 1;
+        lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.self);
+        lua_pushnumber(lua_, dt);
+        if (lua_pcall(lua_, 2, 1, handler) != 0) {
+            LSD_LOG_ERROR("script", "%s (%s): %s", instance.path, function, lua_tostring(lua_, -1));
+            lua_settop(lua_, handler - 1);
+            return 0;
+        }
+        const int result = lua_isnil(lua_, -1) ? 2 : lua_toboolean(lua_, -1) ? 1 : 0;
+        lua_settop(lua_, handler - 1);
+        return result;
+    }
+    return -1;
 }
 
 void ScriptSystem::set_save_directory(const char* path) { std::snprintf(save_dir_, sizeof save_dir_, "%s", path); }

@@ -70,6 +70,10 @@ NodeDef g_defs[] = {
      {kExecIn, kTarget, {"Name", PinType::String, "Speed"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_anim_param($1, $2, $3)", {}},
     {"AIMoveTo", "AI Move To", "AI", "Walks the target (it needs a Nav Agent) to a location on the navmesh, round obstacles and other agents",
      {kExecIn, kTarget, {"Location", PinType::Vector, "0,0,0"}}, 0, {kExecOut}, 0, "lsd.move_to($1, $2.x, $2.y, $2.z)", {}},
+    {"BbSet", "Set Blackboard Value", "AI", "A number on the target's AI Controller blackboard (its behaviour tree reads it)",
+     {kExecIn, kTarget, {"Key", PinType::String, "Alert"}, {"Value", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.bb_set($1, $2, $3)", {}},
+    {"ReportNoise", "Report Noise", "AI", "AI Controllers within hearing range (times Loudness) hear it: NoiseLocation",
+     {kExecIn, {"Location", PinType::Vector, "0,0,0"}, {"Loudness", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.report_noise($1.x, $1.y, $1.z, $2)", {}},
     {"AIStop", "AI Stop Moving", "AI", "Stops a Nav Agent where it is", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.stop_move($1)", {}},
     {"AIIsMoving", "Is Moving", "AI", "True while a Nav Agent is still on its way", {kTarget}, 0, {{"Moving", PinType::Bool, ""}}, 0, nullptr,
      {"lsd.is_moving($0)"}},
@@ -205,6 +209,31 @@ NodeDef g_material_defs[] = {
      {{"X", PinType::Float, ""}, {"Y", PinType::Float, ""}, {"Z", PinType::Float, ""}}, 0, nullptr, {"lsd_v3($0.x)", "lsd_v3($0.y)", "lsd_v3($0.z)"}},
     {"MatAppend", "Make Vector", "Utility", "A vector from three numbers (Append)", {{"X", PinType::Float, "0"}, {"Y", PinType::Float, "0"}, {"Z", PinType::Float, "0"}}, 0,
      {{"", PinType::Vector, ""}}, 0, nullptr, {"float3($0.x, $1.x, $2.x)"}},
+};
+
+// Behaviour Tree nodes (.lsdbt): white wires go from a parent's Child pins to its children, left
+// to right in pin order. The editor turns the graph into an ai::BehaviorTree (editor/behavior.cpp).
+constexpr PinDef kParent{"", PinType::Exec, ""};
+NodeDef g_bt_defs[] = {
+    {"BtRoot", "Root", "Tree", "Where the tree starts (one per tree)", {}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtSelector", "Selector", "Composites", "Tries its children top to bottom until one does not fail. Higher ones interrupt lower ones as soon as they can run (chase beats patrol)",
+     {kParent}, 0, {{"1", PinType::Exec, ""}, {"2", PinType::Exec, ""}, {"3", PinType::Exec, ""}, {"4", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtSequence", "Sequence", "Composites", "Runs its children in order; stops at the first that fails",
+     {kParent}, 0, {{"1", PinType::Exec, ""}, {"2", PinType::Exec, ""}, {"3", PinType::Exec, ""}, {"4", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtMoveTo", "Move To", "Tasks", "Walks (Nav Agent) to the location in a blackboard key; follows it if it moves",
+     {kParent, {"Key", PinType::String, "PlayerLocation"}, {"Acceptance", PinType::Float, "1"}}, 0, {}, 0, nullptr, {}},
+    {"BtWait", "Wait", "Tasks", "Does nothing for a while", {kParent, {"Seconds", PinType::Float, "2"}}, 0, {}, 0, nullptr, {}},
+    {"BtRandomLocation", "Random Location", "Tasks", "Puts a reachable point near the agent into a key (patrols, wandering)",
+     {kParent, {"Key", PinType::String, "PatrolLocation"}, {"Radius", PinType::Float, "8"}}, 0, {}, 0, nullptr, {}},
+    {"BtSetKey", "Set Key", "Tasks", "Sets a blackboard key to a number or a location (x,y,z)",
+     {kParent, {"Key", PinType::String, "Alert"}, {"Value", PinType::String, "1"}}, 0, {}, 0, nullptr, {}},
+    {"BtClearKey", "Clear Key", "Tasks", "Removes a blackboard key", {kParent, {"Key", PinType::String, "Alert"}}, 0, {}, 0, nullptr, {}},
+    {"BtRunScript", "Run Script", "Tasks", "Calls a function of the agent's Lua script: return true (success), false (failure) or nothing (still running)",
+     {kParent, {"Function", PinType::String, "bt_attack"}}, 0, {}, 0, nullptr, {}},
+    {"BtIsSet", "Is Set", "Conditions", "Succeeds if the key is set and not 0 (CanSeePlayer, HeardNoise...)",
+     {kParent, {"Key", PinType::String, "CanSeePlayer"}}, 0, {}, 0, nullptr, {}},
+    {"BtCompare", "Compare", "Conditions", "Succeeds if Key <Op> Value (Op: > < == !=)",
+     {kParent, {"Key", PinType::String, "Health"}, {"Op", PinType::String, "<"}, {"Value", PinType::Float, "30"}}, 0, {}, 0, nullptr, {}},
 };
 
 constexpr char kLuaPrelude[] = R"lua(-- Generated from a visual script (.lsdgraph). Edit the graph, not this file.
@@ -392,6 +421,10 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
             d.input_count = count_pins(d.inputs, 6);
             d.output_count = count_pins(d.outputs, 4);
         }
+        for (NodeDef& d : g_bt_defs) {
+            d.input_count = count_pins(d.inputs, 6);
+            d.output_count = count_pins(d.outputs, 4);
+        }
         for (NodeDef& d : g_material_defs) {
             d.input_count = count_pins(d.inputs, 6);
             d.output_count = count_pins(d.outputs, 4);
@@ -407,12 +440,16 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
         count = static_cast<u32>(sizeof g_material_defs / sizeof g_material_defs[0]);
         return g_material_defs;
     }
+    if (kind == GraphKind::BehaviorTree) {
+        count = static_cast<u32>(sizeof g_bt_defs / sizeof g_bt_defs[0]);
+        return g_bt_defs;
+    }
     count = static_cast<u32>(sizeof g_defs / sizeof g_defs[0]);
     return g_defs;
 }
 
 const NodeDef* find_node_def(const char* id) {
-    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material}) {
+    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material, GraphKind::BehaviorTree}) {
         u32 count = 0;
         const NodeDef* defs = node_defs(count, kind);
         for (u32 i = 0; i < count; ++i) {

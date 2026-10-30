@@ -32,6 +32,9 @@
 //   lsd.move_to(e, x, y, z) -> ok         a Nav Agent walks there on the navmesh (AI Move To); false if unreachable
 //   lsd.stop_move(e), lsd.is_moving(e) -> bool
 //   lsd.find_path(x, y, z, tx, ty, tz) -> {{x, y, z}, ...}   corners of the navmesh path (empty if none)
+//   lsd.bb_set(e, key, number | x, y, z), lsd.bb_get(e, key) -> number | x, y, z | nil, lsd.bb_clear(e, key)
+//                                         an AI Controller's blackboard (what its behaviour tree reads)
+//   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
 //                                         string keys) to Saved/SaveGames/<slot>.json, versioned
 //   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
@@ -74,6 +77,11 @@ struct ScriptHost {
     void (*stop_move)(void* user, world::Entity e) = nullptr;
     bool (*is_moving)(void* user, world::Entity e) = nullptr;
     u32 (*find_path)(void* user, Vec3 from, Vec3 to, Vec3* out, u32 capacity) = nullptr;
+    // Blackboards: values are 3 numbers (a number repeats in all three); get returns 0 if unset, 1 number, 3 location.
+    void (*bb_set)(void* user, world::Entity e, const char* key, const f32* value, bool vector) = nullptr;
+    int (*bb_get)(void* user, world::Entity e, const char* key, f32* value) = nullptr;
+    void (*bb_clear)(void* user, world::Entity e, const char* key) = nullptr;
+    void (*report_noise)(void* user, Vec3 at, f32 loudness) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
@@ -105,6 +113,9 @@ public:
     void set_save_directory(const char* path);
     // Calls `event(self, other)` on the scripts of `target`, if they define it.
     void send(world::Entity target, const char* event, world::Entity other);
+    // A behaviour tree's Run Script: `function(self, dt)` on `target`'s script. 1 = returned true,
+    // 0 = false (or an error), 2 = nothing (still running), -1 = no such function.
+    int call_task(world::Entity target, const char* function, f32 dt);
 
 private:
     char save_dir_[260] = "Saved/SaveGames";

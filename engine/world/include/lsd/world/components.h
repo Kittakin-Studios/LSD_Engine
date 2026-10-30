@@ -330,6 +330,18 @@ struct NavAgent {
     LSD_PROPERTY(Edit, Tooltip = "Turn to face where it walks") bool face_movement = true;
 };
 
+// Thinks for a Nav Agent (Unreal's AI Controller): runs a Behavior Tree with its own blackboard,
+// and sees / hears the player. Perception sets CanSeePlayer (1 while in view), PlayerLocation (where
+// it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range).
+LSD_STRUCT(Component, Category = "AI")
+struct AIController {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:BehaviorTree") char behavior_tree[33] = "";
+    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 sight_range = 15.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 360, Tooltip = "Field of view, centred on the object's +X") f32 sight_angle = 120.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 hearing_range = 12.0f;
+};
+
 // How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).
 LSD_STRUCT()
 struct NavSettings {

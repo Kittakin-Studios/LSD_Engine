@@ -36,6 +36,7 @@ public:
     // mesh: the path then ends at the nearest point on it.
     u32 find_path(Vec3 from, Vec3 to, Vec3* out, u32 capacity) const;
     bool nearest_point(Vec3 point, Vec3& out) const;  // within a few metres
+    bool random_point(Vec3 around, f32 radius, Vec3& out) const;  // reachable from `around`
     // The navmesh's polygon edges as line pairs (the viewport's Show Navigation). Returns points written.
     u32 debug_lines(Vec3* out, u32 capacity) const;
 

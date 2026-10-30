@@ -1,6 +1,7 @@
 #include "play_session.h"
 
 #include "animation_player.h"
+#include "behavior.h"
 #include "navigation.h"
 #include "graph_editor.h"
 
@@ -104,6 +105,125 @@ i32 PlaySession::agent_of(world::Entity e) {
     return id;
 }
 
+const ai::BehaviorTree* PlaySession::tree_for(const char* guid) {
+    if (!guid[0]) return nullptr;
+    for (u32 i = 0; i < tree_count_; ++i) {
+        if (std::strcmp(trees_[i]->guid, guid) == 0) return trees_[i]->ok ? &trees_[i]->tree : nullptr;
+    }
+    if (tree_count_ == sizeof trees_ / sizeof trees_[0]) return nullptr;
+    TreeEntry* t = trees_[tree_count_++] = new TreeEntry();
+    std::snprintf(t->guid, sizeof t->guid, "%s", guid);
+    asset::Guid id;
+    const asset::AssetRecord* r = asset::parse_guid(guid, id) ? registry_->find(id) : nullptr;
+    char path[300], error[256] = "";
+    if (r) registry_->source_path(*r, path, sizeof path);
+    t->ok = r && load_behavior_tree(path, t->tree, error, sizeof error);
+    if (!t->ok) LSD_LOG_ERROR("ai", "Behaviour tree %s: %s", r ? r->name : guid, error[0] ? error : "not found");
+    return t->ok ? &t->tree : nullptr;
+}
+
+PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
+    if (!brains_ || !world_) return nullptr;
+    for (u32 i = 0; i < brain_count_; ++i) {
+        if (brains_[i].entity == e) return &brains_[i];
+    }
+    const auto* controller = world_->alive(e) ? world_->get<world::AIController>(e) : nullptr;
+    if (!controller || brain_count_ == kMaxBrains) return nullptr;
+    Brain& b = brains_[brain_count_++];
+    b = Brain{};
+    b.session = this;
+    b.entity = e;
+    std::snprintf(b.tree_guid, sizeof b.tree_guid, "%s", controller->behavior_tree);
+    b.tree = tree_for(b.tree_guid);
+    return &b;
+}
+
+u32 PlaySession::active_bt_nodes(const char* guid, u32* out, u32 capacity) const {
+    for (u32 i = 0; i < brain_count_; ++i) {
+        if (std::strcmp(brains_[i].tree_guid, guid) == 0) return brains_[i].runner.active(out, capacity);
+    }
+    return 0;
+}
+
+// Perception, then each AI Controller's behaviour tree.
+void PlaySession::update_brains(world::World& world, f32 dt) {
+    if (!brains_) return;
+    const reflect::TypeInfo& type = reflect::type_of<world::AIController>();
+    for (u32 i = 0; i < world.count(type); ++i) brain_of(world.owner(type, i));  // new ones (spawned) too
+    const Vec3 player_eye = feet_ + Vec3{0, 0, settings_.eye_height};
+    ai::BtHost host;
+    host.move_to = [](void* user, Vec3 target, f32) {
+        Brain& b = *static_cast<Brain*>(user);
+        const i32 agent = b.session->agent_of(b.entity);
+        return agent >= 0 && b.session->nav_.move_agent(agent, target);
+    };
+    host.moving = [](void* user) {
+        Brain& b = *static_cast<Brain*>(user);
+        return b.session->nav_.agent_moving(b.session->agent_of(b.entity));
+    };
+    host.stop = [](void* user) {
+        Brain& b = *static_cast<Brain*>(user);
+        b.session->nav_.stop_agent(b.session->agent_of(b.entity));
+    };
+    host.position = [](void* user) {
+        Brain& b = *static_cast<Brain*>(user);
+        const Mat4 m = b.session->world_->world_matrix(b.entity);
+        return Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    };
+    host.random_point = [](void* user, Vec3 around, f32 radius, Vec3& out) { return static_cast<Brain*>(user)->session->nav_.random_point(around, radius, out); };
+    host.run_script = [](void* user, const char* function, f32) {
+        Brain& b = *static_cast<Brain*>(user);
+        return b.session->scripts_.call_task(b.entity, function, b.dt);
+    };
+    for (u32 i = 0; i < brain_count_;) {
+        Brain& b = brains_[i];
+        const auto* controller = world.alive(b.entity) ? world.get<world::AIController>(b.entity) : nullptr;
+        if (!controller) {  // destroyed by a script
+            brains_[i] = brains_[--brain_count_];
+            continue;
+        }
+        const Mat4 m = world.world_matrix(b.entity);
+        const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        // Sight: in range, inside the field of view, nothing solid in between.
+        const Vec3 eye = at + Vec3{0, 0, 1.6f};
+        const Vec3 to_player = player_eye - eye;
+        const f32 distance = length(to_player);
+        bool sees = distance <= controller->sight_range && distance > 1e-3f;
+        if (sees) {
+            const Vec3 dir = to_player * (1.0f / distance);
+            Vec3 forward = transform_vector(m, {1, 0, 0});
+            forward.z = 0;
+            const f32 flat = length(forward);
+            const f32 half = radians(controller->sight_angle * 0.5f);
+            sees = controller->sight_angle >= 360.0f || (flat > 1e-4f && dot(forward * (1.0f / flat), normalize(Vec3{dir.x, dir.y, 0})) >= std::cos(half));
+            physics::RayHit hit;
+            const f32 skip = 0.6f;  // past the agent's own body
+            if (sees && distance > skip && physics_->raycast(eye + dir * skip, dir, distance - skip - 0.3f, hit)) sees = false;
+        }
+        if (sees) {
+            b.board.set("CanSeePlayer", 1.0f);
+            b.board.set("PlayerLocation", feet_);
+        } else {
+            b.board.clear("CanSeePlayer");
+        }
+        // Hearing.
+        for (u32 n = 0; n < noise_count_; ++n) {
+            const Vec3 d = noises_[n].at - at;
+            const f32 reach = controller->hearing_range * noises_[n].loudness;
+            if (dot(d, d) > reach * reach) continue;
+            b.board.set("NoiseLocation", noises_[n].at);
+            b.board.set("HeardNoise", 1.0f);
+        }
+        if (b.tree) {
+            b.dt = dt;
+            host.user = &b;
+            b.runner.tick(*b.tree, b.board, host, dt);
+        }
+        ++i;
+    }
+    noise_count_ = 0;
+}
+
 // Moves the agents and writes them back to their objects (feet on the navmesh, facing their way).
 void PlaySession::update_agents(world::World& world, f32 dt) {
     if (!nav_.valid()) return;
@@ -129,6 +249,11 @@ void PlaySession::stop() {
     scripts_.stop();
     nav_.clear();
     agent_count_ = 0;
+    delete[] brains_;
+    brains_ = nullptr;
+    brain_count_ = 0;
+    for (u32 i = 0; i < tree_count_; ++i) delete trees_[i];
+    tree_count_ = 0;
     if (sounds_) sounds_->stop_all_and_forget();
     emitter_count_ = 0;
     delete physics_;
@@ -183,6 +308,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     add_joints(world, {});
     agent_count_ = 0;
     if (build_level_navmesh(world, *meshes_, nav_)) LSD_LOG_INFO("play", "Navmesh built");
+    brains_ = new Brain[kMaxBrains];
+    brain_count_ = 0;
+    noise_count_ = 0;
     Vec3 scale;
 
     // The player: the first Character, else a default walker at the Player Start or the camera.
@@ -308,6 +436,26 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return self.nav_.agent_moving(self.agent_of(e));
     };
     host.find_path = [](void* user, Vec3 from, Vec3 to, Vec3* out, u32 capacity) { return static_cast<PlaySession*>(user)->nav_.find_path(from, to, out, capacity); };
+    host.bb_set = [](void* user, world::Entity e, const char* key, const f32* value, bool vector) {
+        if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) {
+            if (vector) b->board.set(key, Vec3{value[0], value[1], value[2]});
+            else b->board.set(key, value[0]);
+        }
+    };
+    host.bb_get = [](void* user, world::Entity e, const char* key, f32* value) {
+        const Brain* b = static_cast<PlaySession*>(user)->brain_of(e);
+        const ai::Blackboard::Entry* entry = b ? b->board.find(key) : nullptr;
+        if (!entry) return 0;
+        for (int i = 0; i < 3; ++i) value[i] = entry->value[i];
+        return entry->vector ? 3 : 1;
+    };
+    host.bb_clear = [](void* user, world::Entity e, const char* key) {
+        if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) b->board.clear(key);
+    };
+    host.report_noise = [](void* user, Vec3 at, f32 loudness) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (self.noise_count_ < sizeof self.noises_ / sizeof self.noises_[0]) self.noises_[self.noise_count_++] = {at, loudness};
+    };
     host.stop_sound = [](void* user, u32 voice) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.sounds_) self.sounds_->audio()->stop(voice);
@@ -652,6 +800,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     send_hits();
     update_triggers(world);
     scripts_.update(dt);
+    update_brains(world, dt);
     update_agents(world, dt);
 }
 

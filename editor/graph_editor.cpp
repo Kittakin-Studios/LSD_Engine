@@ -3,6 +3,7 @@
 #include "lsd/foundation/log.h"
 #include "sound_cue.h"
 
+#include "behavior.h"
 #include "material_cache.h"
 #include "mesh_cache.h"
 
@@ -70,6 +71,8 @@ struct GraphWindow {
 GraphWindow g_window;
 constexpr u32 kPreviewSize = 384;
 const asset::AssetRegistry* g_registry = nullptr;  // for the Texture Sample's texture list
+u32 g_active[64];  // behaviour tree nodes running in Play
+u32 g_active_count = 0;
 
 ImU32 pin_color(PinType type) {
     switch (type) {
@@ -85,6 +88,12 @@ ImU32 pin_color(PinType type) {
 }
 
 ImU32 header_color(const NodeDef& def) {
+    if (std::strncmp(def.id, "Bt", 2) == 0) {
+        if (std::strcmp(def.id, "BtRoot") == 0) return IM_COL32(85, 85, 90, 255);
+        if (std::strcmp(def.category, "Composites") == 0) return IM_COL32(110, 70, 150, 255);
+        if (std::strcmp(def.category, "Conditions") == 0) return IM_COL32(40, 90, 150, 255);
+        return IM_COL32(150, 80, 40, 255);
+    }
     if (script::is_material_node(def)) {
         if (std::strcmp(def.id, "MatOutput") == 0) return IM_COL32(150, 40, 40, 255);
         if (std::strcmp(def.category, "Texture") == 0) return IM_COL32(40, 90, 150, 255);
@@ -231,6 +240,15 @@ void save_and_compile(EditorState& s) {
         return;
     }
     w.dirty = false;
+    if (w.kind == script::GraphKind::BehaviorTree) {  // AI Controllers load it when Play starts
+        ai::BehaviorTree tree;
+        char problem[256] = "";
+        const bool ok = build_behavior_tree(*w.graph, tree, problem, sizeof problem);
+        std::snprintf(w.message, sizeof w.message, "%s", ok ? "Saved: used from the next Play" : problem);
+        w.message_is_error = !ok;
+        std::snprintf(s.status, sizeof s.status, "%s: %s", w.name, w.message);
+        return;
+    }
     if (w.kind == script::GraphKind::Material) {  // the editor compiles the shader when it sees the file change
         script::MaterialCode code(default_allocator());
         char problem[256] = "";
@@ -322,6 +340,38 @@ std::string create_cue_file(const char* folder_path, const char* base) {
     return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
 }
 
+void set_graph_active_nodes(const u32* ids, u32 count) {
+    g_active_count = count < 64 ? count : 64;
+    std::memcpy(g_active, ids, g_active_count * sizeof(u32));
+}
+
+bool open_behavior_tree(asset::Guid& out) {
+    if (!g_window.open || g_window.kind != script::GraphKind::BehaviorTree) return false;
+    out = g_window.guid;
+    return true;
+}
+
+std::string create_behavior_tree_file(const char* folder_path, const char* base) {
+    const std::filesystem::path folder(folder_path);
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    std::filesystem::path path = folder / (std::string(base) + kBehaviorTreeExtension);
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + kBehaviorTreeExtension);
+    Graph graph(default_allocator());
+    const u32 root = graph.add("BtRoot", 0, 0)->id;
+    const u32 sequence = graph.add("BtSequence", 220, 0)->id;
+    const u32 pick = graph.add("BtRandomLocation", 520, -40)->id;
+    const u32 move = graph.add("BtMoveTo", 520, 80)->id;
+    script::GraphNode* move_node = graph.find(move);
+    std::snprintf(move_node->values[1], sizeof move_node->values[1], "PatrolLocation");
+    const u32 wait = graph.add("BtWait", 520, 200)->id;
+    graph.connect(root, 0, sequence, 0);
+    graph.connect(sequence, 0, pick, 0);
+    graph.connect(sequence, 1, move, 0);
+    graph.connect(sequence, 2, wait, 0);
+    return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
+}
+
 std::string create_material_graph_file(const char* folder_path, const char* base) {
     const std::filesystem::path folder(folder_path);
     std::error_code error;
@@ -365,6 +415,7 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     w.guid = record.guid;
     w.kind = record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue
              : record.type == asset::AssetType::MaterialGraph ? script::GraphKind::Material
+             : record.type == asset::AssetType::BehaviorTree  ? script::GraphKind::BehaviorTree
                                                               : script::GraphKind::Script;
     std::snprintf(w.name, sizeof w.name, "%s", record.name);
     w.open = true;
@@ -485,7 +536,10 @@ void draw_graph_editor(EditorState& s) {
     char title[128];
     g_registry = s.registry;
     std::snprintf(title, sizeof title, "%s%s - %s###VisualScript", w.name, w.dirty ? "*" : "",
-                  w.kind == script::GraphKind::SoundCue ? "Sound Cue" : w.kind == script::GraphKind::Material ? "Material Graph" : "Visual Script");
+                  w.kind == script::GraphKind::SoundCue        ? "Sound Cue"
+                  : w.kind == script::GraphKind::Material      ? "Material Graph"
+                  : w.kind == script::GraphKind::BehaviorTree ? "Behavior Tree"
+                                                               : "Visual Script");
     const ImGuiViewport* main = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(main->WorkPos.x + main->WorkSize.x * 0.5f, main->WorkPos.y + main->WorkSize.y * 0.45f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(1000, 620), ImGuiCond_FirstUseEver);
@@ -562,6 +616,11 @@ void draw_graph_editor(EditorState& s) {
         dl->AddRectFilled(p, ImVec2(p.x + width, p.y + kHeader), header_color(*def), 6.0f, ImDrawFlags_RoundCornersTop);
         dl->AddRect(p, ImVec2(p.x + width, p.y + height), w.selected == n.id ? IM_COL32(243, 195, 18, 255) : IM_COL32(10, 10, 10, 255), 6.0f, 0,
                     w.selected == n.id ? 2.5f : 1.0f);
+        if (w.kind == script::GraphKind::BehaviorTree) {  // running in Play: a green glow (live debugging)
+            for (u32 a = 0; a < g_active_count; ++a) {
+                if (g_active[a] == n.id) dl->AddRect(ImVec2(p.x - 3, p.y - 3), ImVec2(p.x + width + 3, p.y + height + 3), IM_COL32(80, 255, 120, 255), 8.0f, 0, 3.0f);
+            }
+        }
         dl->AddText(ImVec2(p.x + 8, p.y + 4), IM_COL32_WHITE, def->title);
 
         // Header: select and drag.

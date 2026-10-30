@@ -27,6 +27,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<PostProcessVolume>(),
         &reflect::type_of<NavMeshBounds>(),
         &reflect::type_of<NavAgent>(),
+        &reflect::type_of<AIController>(),
         &reflect::type_of<RigidBody>(),
         &reflect::type_of<PhysicsJoint>(),
         &reflect::type_of<Character>(),

@@ -21,6 +21,12 @@ std::string create_graph_file(const char* folder_path, const char* base);
 std::string create_cue_file(const char* folder_path, const char* base);
 // Creates <folder>/<base>.lsdmatgraph: a Color wired to the Material Output's Base Color; returns its path.
 std::string create_material_graph_file(const char* folder_path, const char* base);
+// Creates <folder>/<base>.lsdbt: a Root with a patrol (Random Location, Move To, Wait); returns its path.
+std::string create_behavior_tree_file(const char* folder_path, const char* base);
+// Graph node ids to outline as running (Play's live debugging of a behaviour tree), for the open graph.
+void set_graph_active_nodes(const u32* ids, u32 count);
+// The open graph's asset, if it is a behaviour tree (else an invalid GUID).
+bool open_behavior_tree(asset::Guid& out);
 
 // The Lua the game runs for a graph asset (Saved/Graphs/<guid>.lua), compiled again when the
 // graph is newer. False (logged) if the graph does not compile.

@@ -315,7 +315,8 @@ void register_console(EditorState& s) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
         if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::Cue, nullptr, &hit, 1) == 1 ||
-            st.registry->search(args, lsd::asset::AssetType::MaterialGraph, nullptr, &hit, 1) == 1) {
+            st.registry->search(args, lsd::asset::AssetType::MaterialGraph, nullptr, &hit, 1) == 1 ||
+            st.registry->search(args, lsd::asset::AssetType::BehaviorTree, nullptr, &hit, 1) == 1) {
             lsd::editor::open_graph(st, st.registry->get(hit));
         } else {
             LSD_LOG_WARN("editor", "graph.Open: no visual script or sound cue named like '%s'", args);
@@ -803,6 +804,15 @@ int main(int argc, char** argv) {
             if (!state.paused || state.step_requested) play.update(world, devices, state.paused ? 1.0f / 60.0f : dt);
             state.step_requested = false;
             state.player_feet = play.feet();
+        }
+        // Behaviour tree live debugging: the open tree's running nodes glow.
+        {
+            lsd::asset::Guid tree;
+            lsd::u32 active[64];
+            char guid[33];
+            const bool shown = state.playing && lsd::editor::open_behavior_tree(tree);
+            if (shown) lsd::asset::to_string(tree, guid);
+            lsd::editor::set_graph_active_nodes(active, shown ? play.active_bt_nodes(guid, active, 64) : 0);
         }
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,

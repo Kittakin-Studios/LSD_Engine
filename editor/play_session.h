@@ -9,6 +9,7 @@
 #include "mesh_cache.h"
 #include "sound_player.h"
 
+#include "lsd/ai/behavior_tree.h"
 #include "lsd/ai/navigation.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/input/input.h"
@@ -42,6 +43,9 @@ public:
     // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
     void set_animations(AnimationPlayer* animations) { animations_ = animations; }
     const ai::NavMesh& navmesh() const { return nav_; }  // built when Play starts
+    // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
+    // the graph window's live debugging.
+    u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;
 
 private:
     struct Simulated {
@@ -102,6 +106,35 @@ private:
     u32 agent_count_ = 0;
     i32 agent_of(world::Entity e);  // adds it on first use; -1 if it cannot walk here
     void update_agents(world::World& world, f32 dt);
+    // AI Controllers: a behaviour tree, a blackboard and perception each.
+    struct Brain {
+        PlaySession* session;
+        world::Entity entity;
+        char tree_guid[33];
+        const ai::BehaviorTree* tree;  // nullptr: no (valid) tree, perception only
+        ai::BtRunner runner;
+        ai::Blackboard board;
+        f32 dt;
+    };
+    static constexpr u32 kMaxBrains = 64;
+    Brain* brains_ = nullptr;  // kMaxBrains, while playing
+    u32 brain_count_ = 0;
+    struct TreeEntry {
+        char guid[33];
+        ai::BehaviorTree tree;
+        bool ok;
+    };
+    TreeEntry* trees_[16] = {};
+    u32 tree_count_ = 0;
+    struct Noise {
+        Vec3 at;
+        f32 loudness;
+    };
+    Noise noises_[16];
+    u32 noise_count_ = 0;
+    Brain* brain_of(world::Entity e);  // adds it on first use if it has an AI Controller
+    const ai::BehaviorTree* tree_for(const char* guid);
+    void update_brains(world::World& world, f32 dt);
     struct Emitter {
         world::Entity entity;
         u32 voice;

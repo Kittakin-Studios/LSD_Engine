@@ -1,6 +1,8 @@
 // AI tests: a navmesh over a floor with a wall in the middle; paths go round the wall and agents
 // walk to their targets.
+#include "lsd/ai/behavior_tree.h"
 #include "lsd/ai/navigation.h"
+#include <cstring>
 
 #include <cmath>
 #include <cstdio>
@@ -27,7 +29,96 @@ static void add_box(std::vector<f32>& v, std::vector<u32>& idx, Vec3 lo, Vec3 hi
     }
 }
 
+// A pretend agent for the behaviour tree: walks 4 m/s straight at its target.
+struct FakeAgent {
+    Vec3 at{0, 0, 0}, target{0, 0, 0};
+    bool walking = false;
+    int scripts = 0;
+};
+
+static void bt_tests() {
+    using namespace lsd::ai;
+    BehaviorTree t;
+    auto add = [&](BtType type, const char* key = "", f32 value = 0, const char* text = "") {
+        BtNode& n = t.nodes[t.count];
+        n.type = type;
+        n.id = 100 + t.count;
+        std::snprintf(n.key, sizeof n.key, "%s", key);
+        std::snprintf(n.text, sizeof n.text, "%s", text);
+        n.value = value;
+        return t.count++;
+    };
+    auto link = [&](u32 parent, u32 child) { t.nodes[parent].children[t.nodes[parent].child_count++] = child; };
+    // Root -> Selector [ Sequence(CanSeePlayer?, Move To PlayerLocation), Sequence(Random Patrol, Move To Patrol, Wait 1, Run bt_done) ]
+    const u32 root = add(BtType::Root), sel = add(BtType::Selector);
+    const u32 chase = add(BtType::Sequence), see = add(BtType::IsSet, "CanSeePlayer"), go = add(BtType::MoveTo, "PlayerLocation", 1.0f);
+    const u32 patrol = add(BtType::Sequence), pick = add(BtType::RandomLocation, "Patrol", 5.0f), walk = add(BtType::MoveTo, "Patrol", 0.5f);
+    const u32 wait = add(BtType::Wait, "", 1.0f), done = add(BtType::RunScript, "", 0, "bt_done");
+    link(root, sel);
+    link(sel, chase);
+    link(chase, see);
+    link(chase, go);
+    link(sel, patrol);
+    link(patrol, pick);
+    link(patrol, walk);
+    link(patrol, wait);
+    link(patrol, done);
+
+    FakeAgent agent;
+    BtHost host;
+    host.user = &agent;
+    host.move_to = [](void* u, Vec3 to, f32) { auto& a = *static_cast<FakeAgent*>(u); a.target = to; a.walking = true; return true; };
+    host.moving = [](void* u) { return static_cast<FakeAgent*>(u)->walking; };
+    host.stop = [](void* u) { static_cast<FakeAgent*>(u)->walking = false; };
+    host.position = [](void* u) { return static_cast<FakeAgent*>(u)->at; };
+    host.random_point = [](void*, Vec3 around, f32 radius, Vec3& out) { out = around + Vec3{radius, 0, 0}; return true; };
+    host.run_script = [](void* u, const char* f, f32) { ++static_cast<FakeAgent*>(u)->scripts; return std::strcmp(f, "bt_done") == 0 ? 1 : -1; };
+    auto step = [&](FakeAgent& a, f32 dt) {
+        if (!a.walking) return;
+        const Vec3 d = a.target - a.at;
+        const f32 len = lsd::length(d);
+        if (len <= 4.0f * dt) { a.at = a.target; a.walking = false; }
+        else a.at = a.at + d * (4.0f * dt / len);
+    };
+
+    Blackboard board;
+    BtRunner runner;
+    u32 ids[16];
+    // Patrol: pick a point 5 m away, walk there (about 1.25 s), wait 1 s, run the script, repeat.
+    for (int f = 0; f < 60 * 3; ++f) {
+        runner.tick(t, board, host, 1.0f / 60.0f);
+        step(agent, 1.0f / 60.0f);
+    }
+    CHECK(agent.scripts == 1);
+    CHECK(agent.at.x > 5.0f);  // reached the first point, now on the next leg
+    const u32 n = runner.active(ids, 16);
+    CHECK(n >= 3 && ids[0] == 100 + root);  // root, selector, patrol sequence, (move or wait)
+    // Seeing the player interrupts the patrol: the chase branch runs and the agent heads for the player.
+    board.set("CanSeePlayer", 1.0f);
+    board.set("PlayerLocation", Vec3{-10, 0, 0});
+    runner.tick(t, board, host, 1.0f / 60.0f);
+    CHECK(agent.walking && agent.target.x == -10.0f);
+    for (int f = 0; f < 60 * 5; ++f) {
+        runner.tick(t, board, host, 1.0f / 60.0f);
+        step(agent, 1.0f / 60.0f);
+    }
+    CHECK(agent.at.x < -8.9f);  // within the 1 m acceptance
+    // Out of sight: back to patrolling.
+    board.clear("CanSeePlayer");
+    runner.tick(t, board, host, 1.0f / 60.0f);
+    CHECK(board.find("Patrol") && agent.walking);
+    (void)go;
+    (void)walk;
+    (void)wait;
+    (void)see;
+    (void)pick;
+    (void)done;
+    (void)chase;
+    (void)patrol;
+}
+
 int main() {
+    bt_tests();
     std::vector<f32> verts;
     std::vector<u32> idx;
     add_box(verts, idx, {-10, -10, -0.2f}, {10, 10, 0});          // floor, top at z = 0

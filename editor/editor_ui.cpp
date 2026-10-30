@@ -67,7 +67,7 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
-    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Agent", "Cube", "NavAgent"}, {"Audio Volume", nullptr, "AudioVolume"},
+    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
     {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Empty", nullptr, nullptr},
 };
 
@@ -1431,6 +1431,7 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
+    if (std::strcmp(type, "BehaviorTree") == 0) return r.type == asset::AssetType::BehaviorTree;
     if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
     if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue;  // a wave or a cue
     if (std::strcmp(type, "Material") == 0) {  // a material or an instance of one
@@ -2331,6 +2332,16 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A material built from nodes (textures, maths, Time, Fresnel...) like Unreal's Material Editor. Double-click to edit; drag onto an object");
+        if (ImGui::MenuItem("New Behavior Tree")) {
+            const std::string path = create_behavior_tree_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "BT_New");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
+        ImGui::SetItemTooltip("AI decisions as a tree (Selector, Sequence, Move To, Wait, conditions...). Pick it on an AI Controller");
         if (ImGui::MenuItem("New Sound Cue")) {
             const std::string path = create_cue_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SC_New");
             s.registry->scan();
@@ -2416,7 +2427,8 @@ void draw_asset_grid(EditorState& s) {
                 request_open(s, path);
             }
             if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
-            if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree) &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 open_graph(s, r);
             }
             if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
@@ -2436,6 +2448,7 @@ void draw_asset_grid(EditorState& s) {
             if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
             if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
             if (r.type == asset::AssetType::MaterialGraph && ImGui::MenuItem("Edit Material Graph")) open_graph(s, r);
+            if (r.type == asset::AssetType::BehaviorTree && ImGui::MenuItem("Edit Behavior Tree")) open_graph(s, r);
             if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && ImGui::MenuItem("Create Material Instance")) {
                 render::MaterialInstance instance;
                 asset::to_string(r.guid, instance.parent);

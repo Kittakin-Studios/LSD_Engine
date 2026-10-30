@@ -14,7 +14,7 @@ enum class PinType : u8 { Exec, Float, Bool, String, Vector, Entity, Audio };
 
 // Which node library a graph uses: visual scripts, Sound Cues or Material Graphs (same canvas, same
 // file format). Material nodes are compiled to shader code by engine/render/material_graph.h.
-enum class GraphKind : u8 { Script, SoundCue, Material };
+enum class GraphKind : u8 { Script, SoundCue, Material, BehaviorTree };
 
 struct PinDef {
     const char* name;
