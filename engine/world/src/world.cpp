@@ -20,6 +20,8 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<PrefabInstance>(),
         &reflect::type_of<Tags>(),
         &reflect::type_of<Script>(),
+        &reflect::type_of<Spline>(),
+        &reflect::type_of<SplineFollower>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);

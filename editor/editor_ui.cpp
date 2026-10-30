@@ -14,6 +14,7 @@
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
+#include "lsd/world/spline.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -56,7 +57,7 @@ struct PlaceItem {
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
-    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Empty", nullptr, nullptr},
+    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Empty", nullptr, nullptr},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
@@ -130,6 +131,7 @@ void edited(EditorState& s, const char* label) { std::snprintf(s.pending_edit, s
 
 // Replaces the selection with `e` (or clears it).
 void select(EditorState& s, Entity e) {
+    if (e != s.selected) s.spline_point = -1;
     s.selected = e;
     s.selection_count = 0;
     if (e.valid()) {
@@ -637,7 +639,53 @@ void update_camera(EditorState& s, bool hovered, int index) {
 
 // Gizmo for the selection (ImGuizmo). Alt+drag duplicates first, like Unreal.
 // Returns true while the mouse is over or dragging this viewport's gizmo.
+// A Spline's points in world space.
+u32 spline_world_points(const world::World& w, Entity e, Vec3* out) {
+    const auto* spline = w.get<world::Spline>(e);
+    if (!spline) return 0;
+    const Mat4 m = w.world_matrix(e);
+    for (u32 i = 0; i < spline->points.count; ++i) out[i] = transform_point(m, spline->points[i]);
+    return spline->points.count;
+}
+
+// The selected Spline's point under the mouse, or -1.
+i32 spline_point_at(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVec2 mouse) {
+    Vec3 points[32];
+    const u32 n = s.world->alive(s.selected) ? spline_world_points(*s.world, s.selected, points) : 0;
+    for (u32 i = 0; i < n; ++i) {
+        ImVec2 p;
+        if (project(view_proj, points[i], pos, size, p) && (p.x - mouse.x) * (p.x - mouse.x) + (p.y - mouse.y) * (p.y - mouse.y) < 81.0f) return static_cast<i32>(i);
+    }
+    return -1;
+}
+
+// Moves the selected Spline point with a move gizmo; true while the gizmo has the mouse.
+bool draw_spline_point_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+    auto* spline = s.world->get<world::Spline>(s.selected);
+    if (!spline || s.spline_point < 0 || static_cast<u32>(s.spline_point) >= spline->points.count) {
+        s.spline_point = -1;
+        return false;
+    }
+    const Mat4 world = s.world->world_matrix(s.selected);
+    Mat4 m = translation(transform_point(world, spline->points[static_cast<u32>(s.spline_point)]));
+    const f32 snap[3] = {s.settings.snap_move, s.settings.snap_move, s.settings.snap_move};
+    ImGuizmo::SetOrthographic(s.camera.view != ViewType::Perspective);
+    ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+    ImGuizmo::SetRect(pos.x, pos.y, size.x, size.y);
+    ImGui::PushID(index + 100);
+    if (ImGuizmo::Manipulate(view.m, proj.m, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, m.m, nullptr, s.settings.snap ? snap : nullptr)) {
+        spline->points[static_cast<u32>(s.spline_point)] = transform_point(affine_inverse(world), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        edited(s, "Move Spline Point");
+    }
+    const bool busy = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+    ImGui::PopID();
+    return busy;
+}
+
 bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+    if (s.spline_point >= 0 && s.world->alive(s.selected) && !s.world->locked(s.selected) && !s.game_view && !(s.playing && !s.ejected)) {
+        return draw_spline_point_gizmo(s, view, proj, pos, size, index);
+    }
     bool& was_using = g_was_using_gizmo[index];
     bool& alt_duplicated = g_alt_duplicated[index];
     if (!s.world->alive(s.selected) || s.world->locked(s.selected) || s.game_view || (s.playing && !s.ejected)) {
@@ -683,6 +731,35 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
 // Icons for entities without a mesh (Player Start, empties), drawn over the 3D view.
 void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 pos, ImVec2 size) {
     const EditorTheme& t = s.theme;
+    // Splines: the curve, and the points of the selected one (click a point to move it).
+    const reflect::TypeInfo& spline_type = reflect::type_of<world::Spline>();
+    for (u32 i = 0; i < s.world->count(spline_type); ++i) {
+        const Entity e = s.world->owner(spline_type, i);
+        if (s.world->hidden_in_hierarchy(e)) continue;
+        const auto* spline = static_cast<const world::Spline*>(s.world->at(spline_type, i));
+        Vec3 points[32];
+        const u32 n = spline_world_points(*s.world, e, points);
+        const bool selected = s.is_selected(e);
+        const ImU32 color = selected ? u32_color(t.details_tab_active) : IM_COL32(120, 200, 255, 220);
+        const u32 samples = world::spline_segments(n, spline->closed) * 12;
+        ImVec2 previous;
+        bool have_previous = false;
+        for (u32 k = 0; k <= samples; ++k) {
+            ImVec2 p;
+            const bool visible = project(view_proj, world::spline_point(points, n, spline->closed, static_cast<f32>(k) / 12.0f), pos, size, p);
+            if (visible && have_previous) dl->AddLine(previous, p, color, 2.0f);
+            previous = p;
+            have_previous = visible;
+        }
+        if (!selected) continue;
+        for (u32 k = 0; k < n; ++k) {
+            ImVec2 p;
+            if (!project(view_proj, points[k], pos, size, p)) continue;
+            const bool active = s.selected == e && s.spline_point == static_cast<i32>(k);
+            if (active) dl->AddRectFilled(ImVec2(p.x - 6, p.y - 6), ImVec2(p.x + 6, p.y + 6), IM_COL32(255, 255, 255, 255));
+            dl->AddRect(ImVec2(p.x - 6, p.y - 6), ImVec2(p.x + 6, p.y + 6), color, 0.0f, 0, 2.0f);
+        }
+    }
     // Physics Joints: a ring at the pivot and a line along the axis.
     const reflect::TypeInfo& joint_type = reflect::type_of<world::PhysicsJoint>();
     for (u32 i = 0; i < s.world->count(joint_type); ++i) {
@@ -864,7 +941,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     static ImVec2 marquee_start_by_view[4];
     bool& marquee = marquee_by_view[index];
     ImVec2& marquee_start = marquee_start_by_view[index];
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy) {
+    const i32 clicked_point = ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy ? spline_point_at(s, view_proj, pos, size, io.MousePos) : -1;
+    if (clicked_point >= 0) s.spline_point = clicked_point;  // the gizmo now moves that point
+    else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy) {
         const Entity hit = pick(s, view_proj, pos, size, io.MousePos);
         if (io.KeyCtrl) add_to_selection(s, hit, true);
         else if (io.KeyShift) add_to_selection(s, hit, false);
@@ -1567,6 +1646,30 @@ void draw_entity_details(EditorState& s) {
             LSD_ASSERT(types[i]->size <= sizeof before);
             std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
+            if (types[i] == &reflect::type_of<world::Spline>()) {  // point tools; points are moved in the viewport
+                auto& points = static_cast<world::Spline*>(component)->points;
+                const bool has_point = s.spline_point >= 0 && static_cast<u32>(s.spline_point) < points.count;
+                if (ImGui::Button("Add Point") && points.count < points.capacity()) {
+                    // After the selected point (or at the end), continuing the curve's direction.
+                    const u32 after = has_point ? static_cast<u32>(s.spline_point) : points.count - 1;
+                    const Vec3 a = points.count ? points[after] : Vec3{};
+                    const Vec3 b = after > 0 ? points[after - 1] : a - Vec3{2, 0, 0};
+                    const Vec3 next = after + 1 < points.count ? (a + points[after + 1]) * 0.5f : a + (a - b);
+                    for (u32 k = points.count; k > after + 1; --k) points[k] = points[k - 1];
+                    points[after + 1] = next;
+                    ++points.count;
+                    s.spline_point = static_cast<i32>(after + 1);
+                    edited(s, "Add Spline Point");
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove Point") && has_point && points.count > 2) {
+                    points.remove(static_cast<u32>(s.spline_point));
+                    s.spline_point = -1;
+                    edited(s, "Remove Spline Point");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled(has_point ? "Point %d selected" : "Click a point in the viewport", s.spline_point);
+            }
             draw_properties(*types[i], component, &style);
             if (std::memcmp(before, component, types[i]->size) != 0) {
                 // Multi-edit: only the values that changed go to the other selected objects.

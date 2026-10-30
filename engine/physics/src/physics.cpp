@@ -196,6 +196,14 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
 
 u32 PhysicsWorld::body_count() const { return static_cast<u32>(impl_->bodies.size()); }
 
+void PhysicsWorld::move_kinematic(u32 body, const Mat4& transform, f32 dt) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid() || dt <= 0.0f) return;
+    JPH::RVec3 position;
+    JPH::Quat rotation;
+    to_jolt(transform, position, rotation);
+    impl_->system.GetBodyInterface().MoveKinematic(impl_->bodies[body], position, rotation, dt);
+}
+
 void PhysicsWorld::remove_body(u32 body) {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
     for (auto& joint : impl_->joints) {  // Jolt joints point at their bodies: they go first

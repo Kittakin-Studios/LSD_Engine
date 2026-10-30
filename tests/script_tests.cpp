@@ -257,6 +257,17 @@ assert(lsd.has_tag(t, "Friend"))
         CHECK(!scripts.run("lsd.set(lsd.find('Target'), 'RigidBody', {weight = 1})"));
         CHECK(!scripts.run("lsd.get(lsd.find('Target'), 'Banana')"));
         CHECK(scripts.run("lsd.remove(lsd.find('Target'), 'RigidBody')") && !w.get<RigidBody>(target));
+        // Splines in world space (the object's Transform applies).
+        w.add<Spline>(target);  // a 4 m line along X
+        CHECK(scripts.run(R"(
+local t = lsd.find("Target")
+lsd.set_rotation(t, 0, 0, 0)  -- an earlier test turned it
+assert(math.abs(lsd.spline_length(t) - 4) < 0.01, lsd.spline_length(t))
+local x, y, z, dx, dy, dz = lsd.spline_point(t, 2)
+local px, py, pz = lsd.position(t)
+assert(math.abs(x - (px + 2)) < 0.05 and math.abs(y - py) < 0.01 and dx > 0.99, x)
+)"));
+        CHECK(!scripts.run("lsd.spline_point(lsd.find('Mover'), 1)"));  // no Spline: an error
 
         // Timers: after fires once, every repeats until cancelled.
         CHECK(scripts.run(R"(

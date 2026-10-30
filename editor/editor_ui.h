@@ -58,6 +58,7 @@ struct EditorState {
     // Selection: `selected` is the primary (last clicked: Details and the gizmo pivot follow it);
     // `selection` holds every selected entity, primary included.
     world::Entity selected;
+    i32 spline_point = -1;  // selected point of the selected object's Spline (the gizmo moves it); -1 = none
     static constexpr u32 kMaxSelection = 1024;
     world::Entity selection[kMaxSelection];
     u32 selection_count = 0;

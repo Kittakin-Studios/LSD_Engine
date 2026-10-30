@@ -88,6 +88,17 @@ static void test_joints() {
     const f32 turned = std::atan2(spun.at(1, 0), spun.at(0, 0));  // 2 s at 90 deg/s: half a turn (wraps to +-pi)
     CHECK(std::fabs(std::fabs(turned) - 3.14159f) < 0.3f && std::fabs(centre(w, wheel).z - 10.0f) < 0.05f);
 
+    // A kinematic platform moved 3 m along X over a second carries a box resting on it.
+    const u32 platform = w.add_body(box({0, 20, 1}, {2, 2, 0.1f}, Motion::Kinematic));
+    const u32 rider = w.add_body(box({0, 20, 1.4f}, {0.3f, 0.3f, 0.3f}, Motion::Dynamic));
+    for (int i = 0; i < 30; ++i) w.step(dt);  // settle
+    for (int i = 1; i <= 60; ++i) {
+        w.move_kinematic(platform, translation({3.0f * static_cast<f32>(i) / 60.0f, 20, 1}), dt);
+        w.step(dt);
+    }
+    CHECK(std::fabs(centre(w, platform).x - 3.0f) < 0.01f);
+    CHECK(centre(w, rider).x > 1.5f && centre(w, rider).z > 1.0f);  // carried along (slipping a little on the sudden start), still on top
+
     w.remove_body(bob);  // its joint goes with it, no dangling pointer in Jolt
     w.step(dt);
 }

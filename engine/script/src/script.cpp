@@ -2,6 +2,7 @@
 
 #include "lsd/asset/data_table.h"
 #include "lsd/foundation/log.h"
+#include "lsd/world/spline.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -268,6 +269,34 @@ struct Api {
         push_vec3(L, normal);
         return 7;
     }
+    // The Spline's points in world space; 0 if the object has none.
+    static u32 spline_points(lua_State* L, Vec3* out, bool& closed) {
+        const world::Entity e = live_entity(L, 1);
+        const auto* spline = world(L).get<world::Spline>(e);
+        if (!spline) return 0;
+        const Mat4 m = world(L).world_matrix(e);
+        for (u32 i = 0; i < spline->points.count; ++i) out[i] = transform_point(m, spline->points[i]);
+        closed = spline->closed;
+        return spline->points.count;
+    }
+    static int spline_point(lua_State* L) {
+        Vec3 points[32];
+        bool closed = false;
+        const u32 n = spline_points(L, points, closed);
+        if (n == 0) luaL_argerror(L, 1, "has no Spline");
+        Vec3 tangent;
+        push_vec3(L, world::spline_at_distance(points, n, closed, static_cast<f32>(luaL_checknumber(L, 2)), &tangent));
+        const f32 len = length(tangent);
+        push_vec3(L, len > 0.0f ? tangent * (1.0f / len) : Vec3{1, 0, 0});
+        return 6;
+    }
+    static int spline_length(lua_State* L) {
+        Vec3 points[32];
+        bool closed = false;
+        const u32 n = spline_points(L, points, closed);
+        lua_pushnumber(L, n ? world::spline_length(points, n, closed) : 0.0);
+        return 1;
+    }
     static int table(lua_State* L) {
         ScriptSystem& self = system(L);
         const ScriptHost& host = self.host_;
@@ -417,7 +446,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
-        {"table", Api::table},
+        {"table", Api::table}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

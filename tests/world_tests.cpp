@@ -2,6 +2,7 @@
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
+#include "lsd/world/spline.h"
 
 #include <cmath>
 #include <cstdio>
@@ -178,12 +179,33 @@ static void test_tags() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+static void test_spline() {
+    const Vec3 line[3] = {{0, 0, 0}, {5, 0, 0}, {10, 0, 0}};
+    CHECK(spline_segments(3, false) == 2 && spline_segments(3, true) == 3 && spline_segments(1, false) == 0);
+    CHECK(length(spline_point(line, 3, false, 1.0f) - line[1]) < 1e-5f);  // passes through its points
+    CHECK(std::fabs(spline_length(line, 3, false) - 10.0f) < 0.01f);
+    Vec3 tangent;
+    const Vec3 mid = spline_at_distance(line, 3, false, 2.5f, &tangent);
+    CHECK(std::fabs(mid.x - 2.5f) < 0.05f && tangent.x > 0.0f && std::fabs(tangent.y) < 1e-5f);
+    CHECK(length(spline_at_distance(line, 3, false, 99.0f) - line[2]) < 1e-4f);  // clamped to the end
+    CHECK(length(spline_at_distance(line, 3, false, -1.0f) - line[0]) < 1e-4f);
+    // A closed square: every corner on the curve, longer than its 4 m perimeter? No: Catmull-Rom bulges out a little.
+    const Vec3 square[4] = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+    CHECK(length(spline_point(square, 4, true, 3.0f) - square[3]) < 1e-5f);
+    CHECK(length(spline_point(square, 4, true, 4.0f) - square[0]) < 1e-5f);  // closes the loop
+    const f32 around = spline_length(square, 4, true);
+    CHECK(around > 3.9f && around < 4.6f);
+    Spline s;
+    CHECK(s.points.count == 2 && s.points[1].x == 4.0f);  // a new Spline starts as a 4 m line
+}
+
 int main() {
     test_math();
     test_entities();
     test_level_round_trip();
     test_prefab();
     test_tags();
+    test_spline();
     if (g_failures == 0) std::printf("All world tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

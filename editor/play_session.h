@@ -75,6 +75,16 @@ private:
 
     Simulated simulated_[1024];
     Overlap overlaps_[256];  // inside a Trigger Volume last frame
+    struct Follower {
+        world::Entity entity, spline;
+        f32 distance;
+        f32 direction;  // +1 forward, -1 back (Ping-Pong)
+        u32 body;       // kinematic body, or physics::kWorldBody when it has no collision
+        Vec3 scale, centre;
+    };
+    Follower followers_[256];
+    u32 follower_count_ = 0;
+    void update_followers(world::World& world, f32 dt);
     u32 overlap_count_ = 0;
     u32 simulated_count_ = 0;
     Vec3 feet_, spawn_, eye_;

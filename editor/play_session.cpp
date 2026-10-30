@@ -5,6 +5,7 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/prefab.h"
+#include "lsd/world/spline.h"
 
 #include <cmath>
 #include <cstdio>
@@ -91,6 +92,7 @@ void PlaySession::stop() {
     physics_ = nullptr;
     simulated_count_ = 0;
     overlap_count_ = 0;
+    follower_count_ = 0;
     input_.clear();
 }
 
@@ -256,6 +258,20 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     Vec3 scale, centre;
     const auto* mesh = world.get<world::StaticMesh>(e);
     const CachedMesh* cached = mesh ? meshes_->get(mesh->mesh) : nullptr;
+    if (const auto* follower = world.get<world::SplineFollower>(e)) {  // moved along its spline; kinematic when solid
+        if (follower_count_ == sizeof followers_ / sizeof followers_[0]) return;
+        Follower& f = followers_[follower_count_++];
+        f = Follower{e, {}, 0.0f, 1.0f, physics::kWorldBody, {1, 1, 1}, {}};
+        for (u32 slot = 0; slot < world.slot_count() && !f.spline.valid(); ++slot) {
+            const world::Entity candidate = world.entity_at_slot(slot);
+            if (candidate.valid() && world.get<world::Spline>(candidate) && std::strcmp(world.name(candidate), follower->spline) == 0) f.spline = candidate;
+        }
+        if (!f.spline.valid()) LSD_LOG_WARN("play", "%s: Spline Follower: no object named '%s' with a Spline", world.name(e), follower->spline);
+        if (cached && mesh->collision) {
+            f.body = add_body(e, fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Kinematic, f.scale, f.centre));
+        }
+        return;
+    }
     if (const auto* rigid = world.get<world::RigidBody>(e)) {
         if (simulated_count_ == sizeof simulated_ / sizeof simulated_[0]) return;
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi,
@@ -382,6 +398,39 @@ void PlaySession::start_game_mode(world::World& world) {
     if (mode.script[0]) std::snprintf(world.add<world::Script>(world.create("GameMode"))->script, sizeof(world::Script::script), "%s", mode.script);
 }
 
+void PlaySession::update_followers(world::World& world, f32 dt) {
+    for (u32 i = 0; i < follower_count_; ++i) {
+        Follower& f = followers_[i];
+        const auto* follower = world.get<world::SplineFollower>(f.entity);
+        const auto* spline = world.alive(f.spline) ? world.get<world::Spline>(f.spline) : nullptr;
+        if (!follower || !spline || spline->points.count < 2) continue;
+        Vec3 points[32];
+        const Mat4 m = world.world_matrix(f.spline);
+        for (u32 k = 0; k < spline->points.count; ++k) points[k] = transform_point(m, spline->points[k]);
+        const f32 total = world::spline_length(points, spline->points.count, spline->closed);
+        f.distance += follower->speed * f.direction * dt;
+        if (follower->mode == 1) {  // Loop
+            f.distance = total > 0.0f ? std::fmod(f.distance, total) : 0.0f;
+            if (f.distance < 0.0f) f.distance += total;
+        } else if (follower->mode == 2) {  // Ping-Pong
+            if (f.distance > total) f.distance = total, f.direction = -1.0f;
+            if (f.distance < 0.0f) f.distance = 0.0f, f.direction = 1.0f;
+        } else {
+            f.distance = f.distance < 0.0f ? 0.0f : f.distance > total ? total : f.distance;
+        }
+        Vec3 tangent;
+        const Vec3 at = world::spline_at_distance(points, spline->points.count, spline->closed, f.distance, &tangent);
+        Vec3 t, rotation, scale;
+        decompose_trs(world.world_matrix(f.entity), t, rotation, scale);
+        if (follower->face_forward) {
+            const Vec3 d = tangent * f.direction;
+            rotation = {0.0f, -degrees(std::atan2(d.z, std::sqrt(d.x * d.x + d.y * d.y))), degrees(std::atan2(d.y, d.x))};
+        }
+        world.set_world_matrix(f.entity, trs(at, rotation, scale));
+        if (f.body != physics::kWorldBody) physics_->move_kinematic(f.body, translation(at) * rotation_euler(rotation) * translation(mul(f.centre, f.scale)), dt);
+    }
+}
+
 void PlaySession::send_hits() {
     physics::Contact contacts[256];
     const u32 n = physics_->take_contacts(contacts, 256);
@@ -409,6 +458,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     Vec3 velocity = ahead * move.y + right * move.x;
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);
+    update_followers(world, dt);  // before the step: moving platforms carry the player and objects
     physics_->move_character(velocity * settings_.walk_speed, jump, settings_.jump_speed, dt);
     physics_->step(dt);
     feet_ = physics_->character_feet();

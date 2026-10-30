@@ -131,6 +131,25 @@ struct Script {
     LSD_PROPERTY(Edit, Widget = "Asset:Script") char script[33] = "";
 };
 
+// A curve through points (Unreal's Spline Component): paths for platforms, enemies and cameras.
+// Select the object to see its points in the viewport; click one to move it with the gizmo.
+LSD_STRUCT(Component, Category = "Gameplay")
+struct Spline {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Points the curve passes through, in this object's local space") List<Vec3, 32> points = {2, {Vec3{0, 0, 0}, Vec3{4, 0, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Joins the last point back to the first") bool closed = false;
+};
+
+// Moves this object along a Spline in Play. With collision it is a moving platform the player rides.
+LSD_STRUCT(Component, Category = "Gameplay")
+struct SplineFollower {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Name of the object with the Spline") char spline[64] = "";
+    LSD_PROPERTY(Edit, Units = "m/s") f32 speed = 2.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Once,Loop,Ping-Pong") u32 mode = 1;
+    LSD_PROPERTY(Edit, Tooltip = "Turn to face along the curve") bool face_forward = false;
+};
+
 // Root of a placed prefab (Unreal's Blueprint actor / Packed Level Actor). Its children and its
 // other components come from the prefab asset: Apply writes them back to it, Revert reloads them.
 LSD_STRUCT(Component, Category = "Prefab")

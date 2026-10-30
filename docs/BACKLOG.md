@@ -124,9 +124,9 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 - [~] Physics (Jolt 5.6, `engine/physics`): static collision from meshes and Blocking Volumes, RigidBody component (box / sphere / capsule fitted to the mesh, mass, friction, bounciness), simulated in Play; needs convex / mesh shapes, channels + presets, physical materials, kinematic bodies in the editor
 - [~] Constraints and joints: Physics Joint component (fixed, hinge, ball, slider; to another object by name or to the world; limits; velocity motor), pivot / axis marker in the viewport; needs a joint gizmo, breakable joints, springs, cone / twist limits (moved up from v2: doors and chains are blockout staples)
 - [~] Traces: line trace (`PhysicsWorld::raycast`, `lsd.raycast`); needs sphere / box / capsule sweeps and overlaps, visual-script nodes
-- [~] Character component: Jolt CharacterVirtual (walk, slopes, stairs, jump, fall), input asset wiring, first-person camera, possessed in Play (else a default walker at the Player Start); needs crouch, swim, moving platforms, third-person camera [Character Movement Component]
+- [~] Character component: Jolt CharacterVirtual (walk, slopes, stairs, jump, fall), input asset wiring, first-person camera, possessed in Play (else a default walker at the Player Start); moving platforms (Spline Follower); needs crouch, swim [Character Movement Component]
 - [~] Cameras: Character `camera_distance` spring arm (third person) pulled in by walls; needs camera shake, blends, camera components [Camera Manager]
-- [ ] Splines: editable curves in the viewport, follow-spline movement, spline-placed meshes [Spline Component, Spline Mesh]
+- [~] Splines: Spline component (Catmull-Rom through up to 32 points, open or closed), drawn in the viewport, click a point to move it with the gizmo, Add / Remove Point; Spline Follower (Once / Loop / Ping-Pong, face forward; kinematic moving platform when solid); `lsd.spline_point` / `spline_length`, Spline Location / Length nodes; needs tangent handles, Alt-drag to add points, spline-placed meshes [Spline Component, Spline Mesh]
 
 ## Milestone 5 — Content editors
 

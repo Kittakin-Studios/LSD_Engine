@@ -20,6 +20,8 @@
 //   lsd.log_error(...)                    print as an error
 //   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset or built-in shape ("Cube") by name; nil if none
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
+//   lsd.spline_point(e, distance) -> x, y, z, dx, dy, dz   world point and direction along e's Spline
+//   lsd.spline_length(e)                  metres
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
 //                                         cells are numbers; re-read when the file changes; nil if none
 //
