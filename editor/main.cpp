@@ -511,6 +511,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundConcurrency>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundMix>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::Submix>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::anim::AnimGraph>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
@@ -587,6 +588,7 @@ int main(int argc, char** argv) {
     state.sounds = &sounds;
     lsd::editor::PlaySession play;
     play.set_sounds(&sounds);
+    play.set_animations(animations);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");

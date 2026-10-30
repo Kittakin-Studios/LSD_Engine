@@ -26,6 +26,7 @@
 //   lsd.stop_sound(id)
 //   lsd.push_mix(name), lsd.pop_mix(name)   Sound Mix data assets by name
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
+//   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
@@ -66,6 +67,7 @@ struct ScriptHost {
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
+    void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
 };
 

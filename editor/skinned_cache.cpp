@@ -1,5 +1,6 @@
 #include "skinned_cache.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
 #include <cstdio>
@@ -30,6 +31,27 @@ SkinnedCache::~SkinnedCache() {
         delete entries_[i].model;
     }
     for (u32 i = 0; i < set_count_; ++i) delete sets_[i];
+    for (u32 i = 0; i < graph_count_; ++i) delete graphs_[i];
+}
+
+void SkinnedCache::load(GraphEntry& e) {
+    e.graph = anim::AnimGraph{};
+    const asset::AssetRecord* r = record_of(registry_, e.guid);
+    char path[300] = "";
+    if (r) registry_.source_path(*r, path, sizeof path);
+    e.modified = r ? file_time(path) : 0;
+    e.failed = !r || !asset::load_data_asset(path, e.graph);
+}
+
+const anim::AnimGraph* SkinnedCache::graph(const char* guid) {
+    for (u32 i = 0; i < graph_count_; ++i) {
+        if (std::strcmp(graphs_[i]->guid, guid) == 0) return graphs_[i]->failed ? nullptr : &graphs_[i]->graph;
+    }
+    if (graph_count_ == sizeof graphs_ / sizeof graphs_[0]) return nullptr;
+    GraphEntry* e = graphs_[graph_count_++] = new GraphEntry();
+    std::snprintf(e->guid, sizeof e->guid, "%s", guid);
+    load(*e);
+    return e->failed ? nullptr : &e->graph;
 }
 
 bool SkinnedCache::load(SkinnedEntry& e) {
@@ -115,6 +137,13 @@ void SkinnedCache::check_files() {
         registry_.source_path(*r, path, sizeof path);
         if (file_time(path) != set.modified) load(set, *model);
         else registry_.load_meta(*r, set.meta);  // notifies edited in Details
+    }
+    for (u32 i = 0; i < graph_count_; ++i) {  // graphs edited in Details save to disk: picked up here
+        const asset::AssetRecord* r = record_of(registry_, graphs_[i]->guid);
+        char path[300];
+        if (!r) continue;
+        registry_.source_path(*r, path, sizeof path);
+        if (file_time(path) != graphs_[i]->modified) load(*graphs_[i]);
     }
 }
 

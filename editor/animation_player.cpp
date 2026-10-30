@@ -4,6 +4,19 @@
 
 namespace lsd::editor {
 
+namespace {
+
+// Play Sound notifies of `clip` between `from` and `to` seconds (wrapped: went past the end and round).
+void fire_notifies(const ClipSet& set, u32 clip, f32 from, f32 to, bool wrapped, Vec3 at, SoundPlayer& sounds) {
+    for (const asset::AnimNotify& n : set.meta.notifies) {
+        if (n.clip != clip || !n.sound[0]) continue;
+        const bool crossed = wrapped ? (n.time > from || n.time <= to) : (n.time > from && n.time <= to);
+        if (crossed) sounds.play(n.sound, true, at);
+    }
+}
+
+} // namespace
+
 const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
     for (const State& s : states_) {
         if (s.used && s.entity == e) return &s.pose;
@@ -12,7 +25,23 @@ const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
 }
 
 void AnimationPlayer::reset() {
-    for (State& s : states_) s.time = 0.0f;
+    for (State& s : states_) {
+        s.time = 0.0f;
+        s.graph = anim::GraphState{};
+        s.notify_clip = ~0u;
+    }
+}
+
+void AnimationPlayer::set_param(const world::World& world, world::Entity e, const char* name, f32 value) {
+    for (State& s : states_) {
+        if (!s.used) continue;
+        for (world::Entity p = s.entity; p.valid(); p = world.parent(p)) {
+            if (p == e) {
+                s.graph.set(name, value);
+                break;
+            }
+        }
+    }
 }
 
 void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds) {
@@ -35,9 +64,36 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
                 s.used = true;
                 s.entity = e;
                 s.time = 0.0f;
+                s.graph = anim::GraphState{};
+                s.notify_clip = ~0u;
             }
         }
         if (!state) continue;  // more than 256 animated objects: the rest stay still
+        const Mat4 m = world.world_matrix(e);
+        const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+
+        // Animation Graph: states, blend spaces and crossfades pick the clips.
+        if (const anim::AnimGraph* graph = mesh->anim_graph[0] ? cache.graph(mesh->anim_graph) : nullptr) {
+            const ClipSet* set = cache.clips(mesh->mesh, graph->animation[0] ? graph->animation : mesh->animation);
+            anim::BlendInput inputs[anim::kMaxBlendInputs];
+            const u32 n = anim::step_graph(*graph, set ? set->clips : nullptr, set ? set->count : 0, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
+            state->pose.sample_blend(*model->model, inputs, n);
+            // Notifies follow the strongest clip (a blend space's feet are in step, so one is enough).
+            u32 best = 0;
+            for (u32 k = 1; k < n; ++k) {
+                if (inputs[k].weight > inputs[best].weight) best = k;
+            }
+            const u32 clip = n && set && inputs[best].clip ? static_cast<u32>(inputs[best].clip - set->clips) : ~0u;
+            const f32 ratio = n ? inputs[best].ratio : 0.0f;
+            if (sounds && clip != ~0u && clip == state->notify_clip && ratio != state->notify_ratio) {
+                const f32 duration = set->clips[clip].duration;
+                fire_notifies(*set, clip, state->notify_ratio * duration, ratio * duration, ratio < state->notify_ratio, at, *sounds);
+            }
+            state->notify_clip = clip;
+            state->notify_ratio = ratio;
+            continue;
+        }
+
         const ClipSet* set = cache.clips(mesh->mesh, mesh->animation);
         const anim::Clip* clip = set && mesh->clip < set->count ? &set->clips[mesh->clip] : nullptr;
         const f32 before = state->time;
@@ -49,13 +105,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 duration = clip->duration;
         auto local = [&](f32 t) { return mesh->looping ? t - std::floor(t / duration) * duration : (t < 0.0f ? 0.0f : t > duration ? duration : t); };
         const f32 from = local(before), to = local(state->time);
-        const bool wrapped = mesh->looping && to < from;  // went past the end and round again
-        const Mat4 m = world.world_matrix(e);
-        for (const asset::AnimNotify& n : set->meta.notifies) {
-            if (n.clip != mesh->clip || !n.sound[0]) continue;
-            const bool crossed = wrapped ? (n.time > from || n.time <= to) : (n.time > from && n.time <= to);
-            if (crossed) sounds->play(n.sound, true, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
-        }
+        fire_notifies(*set, mesh->clip, from, to, mesh->looping && to < from, at, *sounds);
     }
 }
 

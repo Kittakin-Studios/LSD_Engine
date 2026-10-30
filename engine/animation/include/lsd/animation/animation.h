@@ -47,6 +47,14 @@ struct Clip {
 // written to `out`.
 u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity);
 
+// One clip's contribution to a blended pose.
+struct BlendInput {
+    const Clip* clip = nullptr;  // nullptr: the rest pose
+    f32 ratio = 0.0f;            // 0..1 through the clip
+    f32 weight = 1.0f;
+};
+constexpr u32 kMaxBlendInputs = 4;
+
 // Sampling state for one animated object.
 class Pose {
 public:
@@ -58,6 +66,8 @@ public:
     // Samples `clip` at `time` seconds (wrapped when looping, clamped otherwise); no clip = rest pose.
     // Fills joint_rows(): per joint, the skinning matrix's first three rows (12 floats).
     void sample(const SkinnedModel& model, const Clip* clip, f32 time, bool looping);
+    // Up to kMaxBlendInputs clips mixed by weight (normalised here), e.g. a blend space or a crossfade.
+    void sample_blend(const SkinnedModel& model, const BlendInput* inputs, u32 count);
     const f32* joint_rows() const { return rows_; }
     u32 joint_count() const { return joints_; }
     Mat4 joint_model(u32 joint) const;  // the joint's model-space transform (sockets, attachments)

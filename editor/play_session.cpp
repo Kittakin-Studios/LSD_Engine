@@ -1,5 +1,6 @@
 #include "play_session.h"
 
+#include "animation_player.h"
 #include "graph_editor.h"
 
 #include "lsd/asset/data_asset.h"
@@ -243,6 +244,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     };
     host.set_audio_param = [](void* user, const char* name, f32 value) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_param(name, value);
+    };
+    host.set_anim_param = [](void* user, world::Entity e, const char* name, f32 value) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (self.animations_) self.animations_->set_param(*self.world_, e, name, value);
     };
     host.set_class_volume = [](void* user, const char* name, f32 volume) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_class_volume(name, volume);
@@ -530,7 +535,13 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
     physics_->move_character(velocity * settings_.walk_speed, jump, settings_.jump_speed, dt);
     physics_->step(dt);
+    const Vec3 moved = physics_->character_feet() - feet_;
     feet_ = physics_->character_feet();
+    if (animations_ && character_.valid() && dt > 0.0f) {
+        animations_->set_param(world, character_, "Speed", std::sqrt(moved.x * moved.x + moved.y * moved.y) / dt);
+        animations_->set_param(world, character_, "VerticalSpeed", moved.z / dt);
+        animations_->set_param(world, character_, "InAir", physics_->character_on_ground() ? 0.0f : 1.0f);
+    }
     // Objects scripts destroyed leave the simulation.
     for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
         if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {

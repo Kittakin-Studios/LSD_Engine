@@ -333,6 +333,11 @@ struct Api {
         if (host.set_audio_param) host.set_audio_param(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
         return 0;
     }
+    static int set_anim_param(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.set_anim_param) host.set_anim_param(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_checknumber(L, 3)));
+        return 0;
+    }
     static int set_class_volume(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.set_class_volume) host.set_class_volume(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
@@ -523,7 +528,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"table", Api::table}, {"curve", Api::curve},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
-        {"set_audio_param", Api::set_audio_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

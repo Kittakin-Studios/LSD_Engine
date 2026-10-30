@@ -152,6 +152,8 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 play_rate = 1.0f;
     LSD_PROPERTY(Edit) bool looping = true;
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too, so you see the motion while building") bool playing = true;
+    LSD_PROPERTY(Edit, Widget = "Asset:AnimGraph", Tooltip = "A state machine (Idle, Walk/Run blend space, Jump...) driven by parameters; replaces the clip above")
+    char anim_graph[33] = "";
 };
 
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".

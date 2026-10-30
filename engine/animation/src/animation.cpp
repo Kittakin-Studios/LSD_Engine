@@ -7,6 +7,7 @@
 #include <ozz/animation/offline/raw_skeleton.h>
 #include <ozz/animation/offline/skeleton_builder.h>
 #include <ozz/animation/runtime/animation.h>
+#include <ozz/animation/runtime/blending_job.h>
 #include <ozz/animation/runtime/local_to_model_job.h>
 #include <ozz/animation/runtime/sampling_job.h>
 #include <ozz/animation/runtime/skeleton.h>
@@ -329,6 +330,9 @@ struct Pose::Impl {
     ozz::animation::SamplingJob::Context context;
     std::vector<ozz::math::SoaTransform> locals;
     std::vector<ozz::math::Float4x4> models;
+    // Blending: one sampled pose per input.
+    ozz::animation::SamplingJob::Context contexts[kMaxBlendInputs];
+    std::vector<ozz::math::SoaTransform> layers[kMaxBlendInputs];
 };
 
 Pose::~Pose() {
@@ -337,6 +341,13 @@ Pose::~Pose() {
 }
 
 void Pose::sample(const SkinnedModel& model, const Clip* clip, f32 time, bool looping) {
+    f32 ratio = clip && clip->duration > 0.0f ? time / clip->duration : 0.0f;
+    ratio = looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
+    const BlendInput input{clip, ratio, 1.0f};
+    sample_blend(model, &input, 1);
+}
+
+void Pose::sample_blend(const SkinnedModel& model, const BlendInput* inputs, u32 count) {
     if (!model.impl || !model.impl->skeleton) return;
     const auto& skeleton = *model.impl->skeleton;
     const u32 joints = static_cast<u32>(skeleton.num_joints());
@@ -348,20 +359,41 @@ void Pose::sample(const SkinnedModel& model, const Clip* clip, f32 time, bool lo
         impl_->locals.resize(static_cast<usize>(skeleton.num_soa_joints()));
         impl_->models.resize(joints);
     }
-    const ozz::animation::Animation* animation = clip && clip->impl ? clip->impl->animation.get() : nullptr;
-    if (animation && animation->num_tracks() == skeleton.num_joints()) {
-        impl_->context.Resize(animation->num_tracks());
-        f32 ratio = clip->duration > 0.0f ? time / clip->duration : 0.0f;
-        ratio = looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
-        ozz::animation::SamplingJob sampling;
-        sampling.animation = animation;
-        sampling.context = &impl_->context;
-        sampling.ratio = ratio;
-        sampling.output = ozz::make_span(impl_->locals);
-        if (!sampling.Run()) return;
+    const auto rest = skeleton.joint_rest_poses();
+    // Each input sampled into its own layer (or the rest pose), then blended by weight.
+    auto sample_into = [&](const BlendInput& in, ozz::animation::SamplingJob::Context& context, std::vector<ozz::math::SoaTransform>& out) {
+        out.resize(impl_->locals.size());
+        const ozz::animation::Animation* animation = in.clip && in.clip->impl ? in.clip->impl->animation.get() : nullptr;
+        if (animation && animation->num_tracks() == skeleton.num_joints()) {
+            context.Resize(animation->num_tracks());
+            ozz::animation::SamplingJob sampling;
+            sampling.animation = animation;
+            sampling.context = &context;
+            sampling.ratio = in.ratio < 0.0f ? 0.0f : in.ratio > 1.0f ? 1.0f : in.ratio;
+            sampling.output = ozz::make_span(out);
+            if (sampling.Run()) return;
+        }
+        for (usize i = 0; i < out.size(); ++i) out[i] = rest[i];
+    };
+    count = count < kMaxBlendInputs ? count : kMaxBlendInputs;
+    if (count <= 1) {
+        const BlendInput none{};
+        sample_into(count ? inputs[0] : none, impl_->context, impl_->locals);
     } else {
-        const auto rest = skeleton.joint_rest_poses();
-        for (usize i = 0; i < impl_->locals.size(); ++i) impl_->locals[i] = rest[i];
+        ozz::animation::BlendingJob::Layer layers[kMaxBlendInputs];
+        f32 total = 0.0f;
+        for (u32 i = 0; i < count; ++i) total += inputs[i].weight > 0.0f ? inputs[i].weight : 0.0f;
+        for (u32 i = 0; i < count; ++i) {
+            sample_into(inputs[i], impl_->contexts[i], impl_->layers[i]);
+            layers[i].weight = total > 0.0f ? (inputs[i].weight > 0.0f ? inputs[i].weight : 0.0f) / total : (i == 0 ? 1.0f : 0.0f);
+            layers[i].transform = ozz::make_span(impl_->layers[i]);
+        }
+        ozz::animation::BlendingJob blend;
+        blend.threshold = 0.01f;
+        blend.layers = ozz::span<const ozz::animation::BlendingJob::Layer>(layers, count);
+        blend.rest_pose = rest;
+        blend.output = ozz::make_span(impl_->locals);
+        if (!blend.Run()) return;
     }
     ozz::animation::LocalToModelJob to_model;
     to_model.skeleton = &skeleton;

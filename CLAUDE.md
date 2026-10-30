@@ -163,8 +163,9 @@ editor/material_cache), Material Instances, light components (editor/lighting.cp
 up to 16 per frame) with World Settings exposure, cascaded sun shadows (rhi shadow maps + passes,
 cascades fitted in editor/lighting.cpp), spot / point light shadows (16-tile local atlas). Skeletal
 animation on ozz (`engine/animation`, editor/skinned_cache + animation_player, SkeletalMesh component,
-notifies). The audio exit test now passes fully. Next: animation graph / blend spaces, material graph,
-particles.
+notifies). Animation graph (AnimGraph data asset: states, 1D blend spaces, transitions with
+crossfades; Character drives Speed / VerticalSpeed / InAir; `lsd.set_anim_param`). The audio exit
+test now passes fully. Next: material graph, particles.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

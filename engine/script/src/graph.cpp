@@ -66,6 +66,8 @@ NodeDef g_defs[] = {
      {kExecIn, {"Class", PinType::String, "Master"}, {"Volume", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_class_volume($1, $2)", {}},
     {"SetAudioParam", "Set Audio Parameter", "Audio", "A value Sound Cue Switch nodes read (surface type, intensity...)",
      {kExecIn, {"Name", PinType::String, "Surface"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_audio_param($1, $2)", {}},
+    {"SetAnimParam", "Set Anim Parameter", "Animation", "A parameter of the target's Animation Graph (Speed, InAir, or your own)",
+     {kExecIn, kTarget, {"Name", PinType::String, "Speed"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_anim_param($1, $2, $3)", {}},
     {"Destroy", "Destroy", "Objects", "Removes an object and its children", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.destroy($1)", {}},
     {"SetVariable", "Set Variable", "Variables", "Stores a number on this object", {kExecIn, {"Name", PinType::String, "health"}, {"Value", PinType::Float, "0"}}, 0,
      {kExecOut}, 0, "self[$1] = $2", {}},

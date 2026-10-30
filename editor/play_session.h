@@ -18,6 +18,8 @@
 
 namespace lsd::editor {
 
+class AnimationPlayer;
+
 class PlaySession {
 public:
     PlaySession() = default;
@@ -36,6 +38,8 @@ public:
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
     void set_sounds(SoundPlayer* sounds) { sounds_ = sounds; }
+    // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
+    void set_animations(AnimationPlayer* animations) { animations_ = animations; }
 
 private:
     struct Simulated {
@@ -85,6 +89,7 @@ private:
         Vec3 scale, centre;
     };
     SoundPlayer* sounds_ = nullptr;
+    AnimationPlayer* animations_ = nullptr;
     struct Emitter {
         world::Entity entity;
         u32 voice;

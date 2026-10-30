@@ -1,6 +1,6 @@
 // Animation tests: skinned FBX files from ufbx's test data. Our import + ozz sampling + skinning
 // must put vertices where ufbx's own skinning does, at rest and part-way through an animation.
-#include "lsd/animation/animation.h"
+#include "lsd/animation/anim_graph.h"
 
 #include <ufbx.h>
 
@@ -66,7 +66,84 @@ static f32 worst_error(const char* path, const anim::SkinnedModel& model, const 
     return worst;
 }
 
+// The graph's state machine and blend space, without any real animation data.
+static void graph_tests() {
+    anim::Clip clips[3];
+    clips[0].duration = 2.0f;  // idle
+    clips[1].duration = 1.0f;  // walk
+    clips[2].duration = 0.5f;  // run
+    anim::AnimGraph g;
+    g.states.count = 2;
+    std::snprintf(g.states[0].name, 32, "Idle");
+    g.states[0].clip = 0;
+    std::snprintf(g.states[1].name, 32, "Move");
+    std::snprintf(g.states[1].blend_parameter, 32, "Speed");
+    g.states[1].samples.count = 2;
+    g.states[1].samples[0] = {2, 5.0f};  // out of order on purpose
+    g.states[1].samples[1] = {1, 1.0f};
+    g.transitions.count = 2;
+    g.transitions[0] = {};
+    std::snprintf(g.transitions[0].from, 32, "Idle");
+    std::snprintf(g.transitions[0].to, 32, "Move");
+    g.transitions[0].condition = 0;  // Speed > 0.1
+    g.transitions[0].blend_time = 0.2f;
+    g.transitions[1] = {};
+    std::snprintf(g.transitions[1].from, 32, "Move");
+    std::snprintf(g.transitions[1].to, 32, "Idle");
+    g.transitions[1].condition = 1;  // Speed < 0.1
+
+    anim::GraphState gs;
+    anim::BlendInput in[anim::kMaxBlendInputs];
+    u32 n = anim::step_graph(g, clips, 3, gs, 0.5f, in);
+    CHECK(n == 1 && in[0].clip == &clips[0] && std::strcmp(anim::state_name(g, gs), "Idle") == 0);
+    CHECK(std::fabs(gs.phase - 0.25f) < 1e-4f);  // 0.5 s of a 2 s clip
+
+    gs.set("Speed", 3.0f);  // halfway between walk (1) and run (5)
+    n = anim::step_graph(g, clips, 3, gs, 0.1f, in);
+    CHECK(std::strcmp(anim::state_name(g, gs), "Move") == 0);
+    CHECK(n == 3);  // walk + run fading in, idle fading out
+    f32 total = 0.0f, walk = 0.0f, run = 0.0f;
+    for (u32 i = 0; i < n; ++i) {
+        total += in[i].weight;
+        if (in[i].clip == &clips[1]) walk += in[i].weight;
+        if (in[i].clip == &clips[2]) run += in[i].weight;
+    }
+    CHECK(std::fabs(total - 1.0f) < 1e-4f && std::fabs(walk - run) < 1e-4f && walk > 0.0f);
+
+    n = anim::step_graph(g, clips, 3, gs, 0.2f, in);  // the crossfade is over
+    CHECK(n == 2 && gs.previous == -1);
+    CHECK(std::fabs(in[0].weight + in[1].weight - 1.0f) < 1e-4f);
+
+    gs.set("Speed", 9.0f);  // past the last sample: run alone
+    n = anim::step_graph(g, clips, 3, gs, 0.0f, in);
+    CHECK(n == 1 && in[0].clip == &clips[2]);
+
+    gs.set("Speed", 0.0f);  // back to idle, instantly (blend_time 0.2 default -> crossfade)
+    anim::step_graph(g, clips, 3, gs, 0.0f, in);
+    CHECK(std::strcmp(anim::state_name(g, gs), "Idle") == 0 && gs.previous == 1);
+
+    // Finished: a one-shot state hands back when its clip ends.
+    anim::AnimGraph once;
+    once.states.count = 2;
+    std::snprintf(once.states[0].name, 32, "Jump");
+    once.states[0].looping = false;
+    once.states[0].clip = 1;
+    std::snprintf(once.states[1].name, 32, "Land");
+    once.transitions.count = 1;
+    once.transitions[0] = {};
+    std::snprintf(once.transitions[0].to, 32, "Land");
+    once.transitions[0].condition = 4;
+    anim::GraphState os;
+    anim::step_graph(once, clips, 3, os, 0.6f, in);
+    CHECK(std::strcmp(anim::state_name(once, os), "Jump") == 0 && !os.finished);
+    anim::step_graph(once, clips, 3, os, 0.6f, in);
+    CHECK(os.finished);
+    anim::step_graph(once, clips, 3, os, 0.0f, in);
+    CHECK(std::strcmp(anim::state_name(once, os), "Land") == 0);
+}
+
 int main() {
+    graph_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
     u32 tested_animation = 0;
