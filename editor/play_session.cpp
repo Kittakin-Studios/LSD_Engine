@@ -244,6 +244,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_audio_param = [](void* user, const char* name, f32 value) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_param(name, value);
     };
+    host.set_class_volume = [](void* user, const char* name, f32 volume) {
+        if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_class_volume(name, volume);
+    };
     host.stop_sound = [](void* user, u32 voice) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.sounds_) self.sounds_->audio()->stop(voice);
@@ -468,6 +471,35 @@ void PlaySession::update_followers(world::World& world, f32 dt) {
     }
 }
 
+// Audio Volumes: the one the ears are in sets the reverb (faded); voices on the other side of a
+// volume's walls are muffled.
+void PlaySession::update_audio_volumes(const world::World& world, f32 dt) {
+    if (!sounds_) return;
+    audio::AudioSystem& a = *sounds_->audio();
+    const reflect::TypeInfo& type = reflect::type_of<world::AudioVolume>();
+    auto volume_at = [&](Vec3 p) {
+        for (u32 i = 0; i < world.count(type); ++i) {
+            const auto* v = static_cast<const world::AudioVolume*>(world.at(type, i));
+            if (v->enabled && inside_volume(world, world.owner(type, i), p)) return v;
+        }
+        return static_cast<const world::AudioVolume*>(nullptr);
+    };
+    const world::AudioVolume* here = volume_at(eye_);
+    const f32 target_reverb = here ? here->reverb : 0.0f, target_room = here ? here->room_size : 0.5f;
+    const f32 fade = here ? here->fade : 0.5f;
+    const f32 step = fade > 0.0f ? dt / fade : 1.0f;
+    reverb_now_ += (target_reverb - reverb_now_) * (step > 1.0f ? 1.0f : step);
+    room_now_ = target_room;
+    a.set_environment(reverb_now_, room_now_);
+    for (u32 i = 0; i < a.voice_count(); ++i) {
+        const audio::VoiceInfo v = a.voice(i);
+        if (!v.spatial) continue;
+        const world::AudioVolume* there = volume_at(v.position);
+        const world::AudioVolume* wall = here != there ? (here ? here : there) : nullptr;  // between the ears and the sound
+        a.set_voice_lowpass(v.id, wall ? wall->muffle : 20000.0f);
+    }
+}
+
 void PlaySession::send_hits() {
     physics::Contact contacts[256];
     const u32 n = physics_->take_contacts(contacts, 256);
@@ -549,6 +581,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const Mat4 m = world.world_matrix(emitters_[i].entity);
         sounds_->audio()->set_position(emitters_[i].voice, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
     }
+    update_audio_volumes(world, dt);
     send_hits();
     update_triggers(world);
     scripts_.update(dt);

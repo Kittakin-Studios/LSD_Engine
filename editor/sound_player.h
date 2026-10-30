@@ -22,6 +22,7 @@ public:
     void push_mix(const char* name);
     void pop_mix(const char* name);
     void set_param(const char* name, f32 value);
+    void set_class_volume(const char* name, f32 volume);  // a Sound Class by asset name (settings sliders)
     f32 param(const char* name) const;
     void stop_all_and_forget();  // stops every voice and drops the registered classes
 

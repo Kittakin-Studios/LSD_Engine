@@ -1,5 +1,5 @@
 # miniaudio's implementation as its own library: third-party C, built without our warning flags.
-add_library(lsd_miniaudio STATIC src/miniaudio_impl.c)
+add_library(lsd_miniaudio STATIC src/miniaudio_impl.c ${LSD_MINIAUDIO_DIR}/extras/nodes/ma_reverb_node/ma_reverb_node.c)
 target_include_directories(lsd_miniaudio SYSTEM PUBLIC ${LSD_MINIAUDIO_DIR})
 if(MSVC)
   target_compile_options(lsd_miniaudio PRIVATE /w)

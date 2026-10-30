@@ -50,7 +50,10 @@ u32 SoundPlayer::class_index(const char* guid, int depth) {
     const asset::AssetRecord* r = asset::parse_guid(guid, id) ? registry_->find(id) : nullptr;
     if (!r || !load_by_guid(*registry_, guid, c)) return audio::kMasterClass;
     const u32 parent = class_index(c.parent, depth + 1);  // parents first
-    const u32 index = audio_->add_class(r->name, parent, c.volume, c.pitch);
+    audio::Submix submix;
+    const bool has_submix = load_by_guid(*registry_, c.submix, submix);
+    const u32 index = has_submix ? audio_->add_class(r->name, parent, c.volume, c.pitch, submix.effects.items, submix.effects.count, submix.volume)
+                                 : audio_->add_class(r->name, parent, c.volume, c.pitch);
     if (class_count_ < sizeof classes_ / sizeof classes_[0]) {
         std::snprintf(classes_[class_count_].guid, sizeof classes_[0].guid, "%s", guid);
         classes_[class_count_++].index = index;
@@ -174,6 +177,22 @@ void SoundPlayer::pop_mix(const char* name) {
         mixes_[i] = mixes_[--mix_count_];
         return;
     }
+}
+
+void SoundPlayer::set_class_volume(const char* name, f32 volume) {
+    if (!audio_) return;
+    usize hits[16];
+    const usize n = registry_->search(name, asset::AssetType::Data, nullptr, hits, 16);
+    for (usize i = 0; i < n; ++i) {
+        const asset::AssetRecord& r = registry_->get(hits[i]);
+        if (std::strcmp(r.name, name) != 0 || std::strcmp(r.data_type, "SoundClass") != 0) continue;
+        char guid[33];
+        asset::to_string(r.guid, guid);
+        audio_->set_class_volume(class_index(guid), volume);
+        return;
+    }
+    if (std::strcmp(name, "Master") == 0) audio_->set_class_volume(audio::kMasterClass, volume);
+    else LSD_LOG_WARN("audio", "No Sound Class '%s'", name);
 }
 
 void SoundPlayer::set_param(const char* name, f32 value) {

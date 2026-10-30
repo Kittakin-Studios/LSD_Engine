@@ -62,6 +62,8 @@ NodeDef g_defs[] = {
      {kExecIn, {"Mix", PinType::String, "MIX_Duck"}}, 0, {kExecOut}, 0, "lsd.push_mix($1)", {}},
     {"PopSoundMix", "Pop Sound Mix", "Audio", "Removes the latest push of a Sound Mix (fading out)", {kExecIn, {"Mix", PinType::String, "MIX_Duck"}}, 0,
      {kExecOut}, 0, "lsd.pop_mix($1)", {}},
+    {"SetClassVolume", "Set Sound Class Volume", "Audio", "A Sound Class's volume by name (Master, Music, SFX...): settings sliders",
+     {kExecIn, {"Class", PinType::String, "Master"}, {"Volume", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_class_volume($1, $2)", {}},
     {"SetAudioParam", "Set Audio Parameter", "Audio", "A value Sound Cue Switch nodes read (surface type, intensity...)",
      {kExecIn, {"Name", PinType::String, "Surface"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_audio_param($1, $2)", {}},
     {"Destroy", "Destroy", "Objects", "Removes an object and its children", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.destroy($1)", {}},

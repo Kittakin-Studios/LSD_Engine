@@ -59,14 +59,14 @@ struct PlaceItem {
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
-    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Empty", nullptr, nullptr},
+    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Audio Volume", nullptr, "AudioVolume"}, {"Empty", nullptr, nullptr},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
 constexpr Vec3 kVolumeLo{-0.5f, -0.5f, 0.0f}, kVolumeHi{0.5f, 0.5f, 1.0f};
 
 bool is_volume(const world::World& w, world::Entity e) {
-    return w.get<world::BlockingVolume>(e) || w.get<world::KillVolume>(e) || w.get<world::TriggerVolume>(e);
+    return w.get<world::BlockingVolume>(e) || w.get<world::KillVolume>(e) || w.get<world::TriggerVolume>(e) || w.get<world::AudioVolume>(e);
 }
 
 // UI-only state for the confirmation dialogs.
@@ -837,6 +837,7 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
             const ImU32 color = s.is_selected(e) ? u32_color(t.details_tab_active)
                                 : s.world->get<world::KillVolume>(e)    ? IM_COL32(255, 70, 60, 255)
                                 : s.world->get<world::TriggerVolume>(e) ? IM_COL32(90, 230, 120, 255)
+                                : s.world->get<world::AudioVolume>(e)   ? IM_COL32(190, 140, 255, 255)
                                                                          : IM_COL32(255, 160, 40, 255);
             ImVec2 corner[8];
             bool visible = true;
@@ -2458,7 +2459,9 @@ void draw_stats(EditorState& s, ImVec2 pos, ImVec2 size) {
             y += 16.0f;
             fg->AddText(ImVec2(pos.x + 20, y), IM_COL32(200, 240, 255, 255), v.name);
             fg->AddText(ImVec2(pos.x + 200, y), IM_COL32(200, 240, 255, 255), a.class_name(v.sound_class));
-            if (v.spatial) std::snprintf(line, sizeof line, "vol %.2f   %.1f m", static_cast<f64>(v.volume), static_cast<f64>(v.distance));
+            if (v.spatial && v.lowpass < 19000.0f) {
+                std::snprintf(line, sizeof line, "vol %.2f   %.1f m   muffled %.0f Hz", static_cast<f64>(v.volume), static_cast<f64>(v.distance), static_cast<f64>(v.lowpass));
+            } else if (v.spatial) std::snprintf(line, sizeof line, "vol %.2f   %.1f m", static_cast<f64>(v.volume), static_cast<f64>(v.distance));
             else std::snprintf(line, sizeof line, "vol %.2f   2D", static_cast<f64>(v.volume));
             fg->AddText(ImVec2(pos.x + 340, y), IM_COL32(200, 240, 255, 255), line);
         }

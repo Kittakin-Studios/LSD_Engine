@@ -130,7 +130,10 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 ## Milestone 5 — Content editors
 
-Exit test: the audio worked example works end to end.
+Exit test: the audio worked example works end to end. **Works, except the "Play Sound" animation notify**
+(it arrives with animation sequences): import WAVs, Sound Cue graph, Sound Class tree, Sound Mix push / pop,
+Attenuation, Concurrency, Submix effect chains, Sound Emitters by drag, Audio Volumes, trigger and
+visual-script sounds, `stat audio`.
 
 ### Import
 
@@ -161,8 +164,8 @@ Exit test: the audio worked example works end to end.
 
 ### Audio
 
-- [~] Audio (miniaudio, `engine/audio`): Sound assets (volume, pitch, loop, stream, class, attenuation, concurrency, subtitle), preview in the Content Browser, Sound Class tree (volume groups), Sound Attenuation, Sound Concurrency (stop oldest / quietest / refuse), Sound Emitter component (drag a sound into the viewport), Trigger Volume enter sound, `lsd.play_sound` / `stop_sound`, Play Sound 2D / at Location nodes, `stat audio` overlay, `-nosound`; Sound Cues (`.lsdcue` node graph in the graph editor: Wave Player, Random no-repeat, Modulator, Mixer, Concatenator, Delay, Looping, Switch on an audio parameter, Output; Play preview), Sound Mixes (class volume adjusters with fades; `lsd.push_mix` / `pop_mix`, Push / Pop Sound Mix nodes), `lsd.set_audio_param` / Set Audio Parameter; needs Submix effects (reverb, EQ, compressor), Audio Volumes, low-pass in mixes, settings sliders
-- [ ] Reverb zones from audio volumes; occlusion by trace
+- [~] Audio (miniaudio, `engine/audio`): Sound assets (volume, pitch, loop, stream, class, attenuation, concurrency, subtitle), preview in the Content Browser, Sound Class tree (volume groups), Sound Attenuation, Sound Concurrency (stop oldest / quietest / refuse), Sound Emitter component (drag a sound into the viewport), Trigger Volume enter sound, `lsd.play_sound` / `stop_sound`, Play Sound 2D / at Location nodes, `stat audio` overlay, `-nosound`; Sound Cues (`.lsdcue` node graph in the graph editor: Wave Player, Random no-repeat, Modulator, Mixer, Concatenator, Delay, Looping, Switch on an audio parameter, Output; Play preview), Sound Mixes (class volume adjusters with fades; `lsd.push_mix` / `pop_mix`, Push / Pop Sound Mix nodes), `lsd.set_audio_param` / Set Audio Parameter; Submixes (effect chains a Sound Class runs through: Reverb, Low Pass, High Pass, EQ Band, Echo, Compressor), `lsd.set_class_volume` / Set Sound Class Volume for settings sliders; needs a submix graph with live meters, low-pass in mixes, a project base mix, a settings menu (with the UI system)
+- [~] Audio Volume component: reverb while the listener is inside (faded), sounds through its walls muffled by a per-voice low-pass; needs occlusion by trace, priority for overlapping volumes
 - [ ] Music: crossfades and layers driven by game state
 
 ### Effects

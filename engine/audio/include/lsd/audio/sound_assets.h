@@ -6,12 +6,36 @@
 
 namespace lsd::audio {
 
+// One effect in a Submix. Each effect uses the fields its tooltip names.
+LSD_STRUCT()
+struct SubmixEffect {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Reverb,Low Pass,High Pass,EQ Band,Echo,Compressor") u32 type = 0;
+    LSD_PROPERTY(Edit, Units = "Hz", Min = 20, Max = 20000, Tooltip = "Low Pass / High Pass: cutoff. EQ Band: centre") f32 frequency = 1000.0f;
+    LSD_PROPERTY(Edit, Units = "dB", Min = -24, Max = 24, Tooltip = "EQ Band: boost or cut. Compressor: make-up gain") f32 gain_db = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Reverb and Echo: how much of the effect is heard") f32 amount = 0.3f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Reverb: room size. Echo: how much each repeat keeps") f32 size = 0.5f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0.01, Max = 2, Tooltip = "Echo: time between repeats. Compressor: release") f32 time = 0.3f;
+    LSD_PROPERTY(Edit, Units = "dB", Min = -60, Max = 0, Tooltip = "Compressor: level where it starts working") f32 threshold_db = -12.0f;
+    LSD_PROPERTY(Edit, Min = 1, Max = 20, Tooltip = "Compressor: 4 means 4 dB over the threshold comes out as 1 dB over") f32 ratio = 4.0f;
+};
+
+// An effect chain a Sound Class runs through (Unreal's Submix): reverb for caves, a radio EQ for
+// voices, a compressor on music. The chain sits between the class and its parent.
+LSD_STRUCT(Category = "Audio")
+struct Submix {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) List<SubmixEffect, 8> effects;
+    LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Level after the effects") f32 volume = 1.0f;
+};
+
 LSD_STRUCT(Category = "Audio")
 struct SoundClass {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:SoundClass", Tooltip = "Its volume and pitch multiply into this one's; none = under Master") char parent[33] = "";
     LSD_PROPERTY(Edit, Min = 0, Max = 4) f32 volume = 1.0f;
     LSD_PROPERTY(Edit, Min = 0.1, Max = 4) f32 pitch = 1.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:Submix", Tooltip = "Effects this class's sound passes through") char submix[33] = "";
 };
 
 LSD_STRUCT(Category = "Audio")

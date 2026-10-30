@@ -94,6 +94,8 @@ private:
     Follower followers_[256];
     u32 follower_count_ = 0;
     void update_followers(world::World& world, f32 dt);
+    void update_audio_volumes(const world::World& world, f32 dt);
+    f32 reverb_now_ = 0.0f, room_now_ = 0.5f;
     u32 overlap_count_ = 0;
     u32 simulated_count_ = 0;
     Vec3 feet_, spawn_, eye_;

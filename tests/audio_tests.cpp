@@ -163,6 +163,86 @@ int main() {
 
     a.reset_classes();
     CHECK(a.voice_count() == 0 && a.class_count() == 1 && a.mix_count() == 0);
+
+    // Submixes: the 440 Hz tone through each effect, measured against the same tone without one.
+    d = PlayDesc{};
+    d.path = kTone;
+    d.looping = true;
+    auto level_through = [&](const SubmixEffect* fx, u32 n) {
+        a.reset_classes();
+        d.sound_class = a.add_class("Fx", kMasterClass, 1.0f, 1.0f, fx, n);
+        a.play(d);
+        loudness(a, 9600);  // let filters and envelopes settle
+        const f32 level = loudness(a, 9600);
+        a.stop_all();
+        return level;
+    };
+    const f32 dry = level_through(nullptr, 0);
+    SubmixEffect fx;
+    fx.type = 1;  // low pass at 100 Hz: 440 Hz mostly gone
+    fx.frequency = 100.0f;
+    CHECK(level_through(&fx, 1) < dry * 0.3f);
+    fx.type = 2;  // high pass at 4 kHz: same
+    fx.frequency = 4000.0f;
+    CHECK(level_through(&fx, 1) < dry * 0.3f);
+    fx.type = 3;  // EQ band +12 dB at 440 Hz: about four times louder
+    fx.frequency = 440.0f;
+    fx.gain_db = 12.0f;
+    CHECK(level_through(&fx, 1) > dry * 2.5f);
+    fx.type = 5;  // compressor: -40 dB threshold, 10:1, no make-up gain: much quieter
+    fx.threshold_db = -40.0f;
+    fx.ratio = 10.0f;
+    fx.gain_db = 0.0f;
+    CHECK(level_through(&fx, 1) < dry * 0.3f);
+    SubmixEffect chain[2];  // a chain: low pass then EQ boost still ends quieter than dry at 440 Hz
+    chain[0].type = 1;
+    chain[0].frequency = 100.0f;
+    chain[1].type = 3;
+    chain[1].frequency = 440.0f;
+    chain[1].gain_db = 6.0f;
+    CHECK(level_through(chain, 2) < dry);
+
+    // Reverb and echo leave a tail after the sound ends; dry sound does not.
+    auto tail_after = [&](const SubmixEffect* effect) {
+        a.reset_classes();
+        d.sound_class = a.add_class("Fx", kMasterClass, 1.0f, 1.0f, effect, effect ? 1 : 0);
+        d.looping = false;
+        a.play(d);
+        loudness(a, 24000 + 2400);  // the half-second tone, plus a little
+        return loudness(a, 4800);
+    };
+    CHECK(tail_after(nullptr) < 0.001f);
+    SubmixEffect reverb;
+    reverb.type = 0;
+    reverb.amount = 0.8f;
+    reverb.size = 0.8f;
+    CHECK(tail_after(&reverb) > 0.005f);
+    SubmixEffect echo;
+    echo.type = 4;
+    echo.time = 0.1f;
+    echo.amount = 0.8f;
+    echo.size = 0.5f;
+    CHECK(tail_after(&echo) > 0.005f);
+
+    // Audio Volume pieces: environment reverb on everything, and a muffled voice.
+    a.reset_classes();
+    d.sound_class = kMasterClass;
+    a.set_environment(0.8f, 0.8f);  // (tail_after would reset it with the classes)
+    d.looping = false;
+    a.play(d);
+    loudness(a, 24000 + 2400);
+    CHECK(loudness(a, 4800) > 0.005f);
+    a.set_environment(0.0f, 0.5f);
+    a.stop_all();
+    d.looping = true;
+    d.sound_class = kMasterClass;
+    const u32 muffled = a.play(d);
+    loudness(a, 4800);
+    const f32 open_level = loudness(a);
+    a.set_voice_lowpass(muffled, 100.0f);
+    loudness(a, 4800);
+    CHECK(loudness(a) < open_level * 0.3f && a.voice(0).lowpass < 200.0f);
+    a.reset_classes();
     a.shutdown();
     if (g_failures == 0) std::printf("All audio tests passed.\n");
     return g_failures == 0 ? 0 : 1;

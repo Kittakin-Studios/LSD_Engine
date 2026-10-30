@@ -39,6 +39,8 @@ struct VoiceInfo {
     f32 volume;    // its own volume (before class and distance)
     f32 distance;  // from the listener; 0 when not spatial
     bool spatial;
+    Vec3 position;
+    f32 lowpass;   // Hz; 20000 = open
 };
 
 class AudioSystem {
@@ -53,8 +55,9 @@ public:
     void shutdown();
     bool has_device() const;
 
-    // Sound Classes. Master (index 0) always exists; parents must be added before children.
-    u32 add_class(const char* name, u32 parent, f32 volume, f32 pitch);
+    // Sound Classes. Master (index 0) always exists; parents must be added before children. A class
+    // may run through a Submix effect chain on its way to its parent.
+    u32 add_class(const char* name, u32 parent, f32 volume, f32 pitch, const SubmixEffect* effects = nullptr, u32 effect_count = 0, f32 submix_volume = 1.0f);
     void set_class_volume(u32 sound_class, f32 volume);  // settings sliders and mixes
     u32 class_count() const;
     const char* class_name(u32 sound_class) const;
@@ -70,6 +73,11 @@ public:
     bool playing(u32 voice) const;  // it, or a voice that belongs to it
     void set_position(u32 voice, Vec3 position);
     void set_listener(Vec3 position, Vec3 forward);
+
+    // The listener's surroundings (Audio Volumes): reverb on everything heard, and per-voice
+    // muffling for sounds on the other side of a wall.
+    void set_environment(f32 reverb_amount, f32 room_size);
+    void set_voice_lowpass(u32 voice, f32 cutoff_hz);  // 20000 = open
 
     // Sound Mixes: class volumes multiplied while pushed, faded in and out. Returns a mix id.
     u32 push_mix(const MixAdjust* adjusters, u32 count, f32 fade_in, f32 fade_out);
