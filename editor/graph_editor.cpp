@@ -3,7 +3,13 @@
 #include "lsd/foundation/log.h"
 #include "sound_cue.h"
 
+#include "material_cache.h"
+#include "mesh_cache.h"
+
+#include "lsd/rhi/rhi.h"
 #include "lsd/script/material_graph.h"
+
+#include <SDL3/SDL_timer.h>
 #include "sound_player.h"
 #include "lsd/script/graph.h"
 
@@ -47,8 +53,20 @@ struct GraphWindow {
     char search[64] = "";
     char message[256] = "";
     bool message_is_error = false;
+    // Material Graph preview: recompiled a moment after the graph last changed.
+    rhi::Device* device = nullptr;
+    rhi::MaterialShaderHandle preview_shader;
+    rhi::TextureHandle preview_target;
+    char preview_textures[3][33] = {};
+    bool preview_srgb[3] = {};
+    u32 preview_texture_count = 0;
+    std::string preview_source;  // the graph as text when last compiled
+    u64 changed_at = 0;          // ms; 0 = up to date
+    bool preview_cube = false;
+    char preview_error[256] = "";
 };
 GraphWindow g_window;
+constexpr u32 kPreviewSize = 384;
 const asset::AssetRegistry* g_registry = nullptr;  // for the Texture Sample's texture list
 
 ImU32 pin_color(PinType type) {
@@ -352,10 +370,103 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     w.selected = 0;
     w.wiring = false;
     w.message[0] = '\0';
+    w.preview_source.clear();  // a new graph: preview it straight away
+    w.preview_error[0] = '\0';
     ImGui::SetWindowFocus("###VisualScript");
 }
 
+namespace {
+
+// Compiles the graph into the preview shader when it has changed (and then stayed still a moment).
+void update_preview(EditorState& s, GraphWindow& w) {
+    Array<char> text(default_allocator());
+    script::save_graph(*w.graph, text);
+    const std::string now(text.data(), text.size());
+    if (now != w.preview_source) {
+        w.preview_source = now;
+        w.changed_at = SDL_GetTicks() + (w.preview_shader.valid() ? 300 : 0);  // the first one at once
+    }
+    if (!w.changed_at || SDL_GetTicks() < w.changed_at || !s.device) return;
+    w.changed_at = 0;
+    w.device = s.device;
+    script::MaterialCode code(default_allocator());
+    if (!script::compile_material_graph(*w.graph, code, w.preview_error, sizeof w.preview_error)) return;
+    const rhi::MaterialShaderHandle shader = s.device->create_material_shader(code.code.data());
+    if (!shader.valid()) {
+        std::snprintf(w.preview_error, sizeof w.preview_error, "The shader did not compile: see the Output Log");
+        return;
+    }
+    if (w.preview_shader.valid()) s.device->destroy_material_shader(w.preview_shader);
+    w.preview_shader = shader;
+    w.preview_error[0] = '\0';
+    w.preview_texture_count = code.texture_count;
+    for (u32 i = 0; i < code.texture_count; ++i) {
+        find_texture_guid(*s.registry, code.textures[i].name, w.preview_textures[i]);
+        w.preview_srgb[i] = code.textures[i].srgb;
+    }
+}
+
+void draw_preview_panel(EditorState& s, GraphWindow& w) {
+    update_preview(s, w);
+    if (!w.preview_target.valid() && s.device) w.preview_target = s.device->create_render_target(kPreviewSize, kPreviewSize);
+    const f32 side = ImGui::GetContentRegionAvail().x;
+    if (w.preview_target.valid() && s.device) {
+        const bool flipped = s.device->render_targets_flipped();
+        ImGui::Image(static_cast<ImTextureID>(s.device->debug_ui_texture(w.preview_target)), ImVec2(side, side), ImVec2(0, flipped ? 1.0f : 0.0f),
+                     ImVec2(1, flipped ? 0.0f : 1.0f));
+    }
+    if (ImGui::RadioButton("Sphere", !w.preview_cube)) w.preview_cube = false;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Cube", w.preview_cube)) w.preview_cube = true;
+    if (w.preview_error[0]) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", w.preview_error);
+    else ImGui::TextDisabled("Live: follows your edits. Save to update the level.");
+}
+
+} // namespace
+
+void render_graph_preview(EditorState& s, const f32 background[4]) {
+    GraphWindow& w = g_window;
+    if (!w.open || w.kind != script::GraphKind::Material || !w.preview_shader.valid() || !w.preview_target.valid() || !s.device || !s.meshes) return;
+    const CachedMesh* mesh = s.meshes->get(w.preview_cube ? "Cube" : "Sphere");
+    if (!mesh) return;
+    rhi::Device& device = *s.device;
+    const f32 time = static_cast<f32>(SDL_GetTicks()) * 0.001f;
+    const Vec3 center = (mesh->bounds_min + mesh->bounds_max) * 0.5f;
+    const f32 radius = length(mesh->bounds_max - mesh->bounds_min) * (w.preview_cube ? 0.42f : 0.32f);  // fill the frame (the box's diagonal overstates a sphere)
+    const f32 yaw = time * 0.4f, pitch = 0.35f, distance = radius / std::sin(0.3f) * 1.05f;
+    const Vec3 eye = center + Vec3{std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch)} * distance;
+    const Mat4 view_proj = perspective(0.6f, 1.0f, distance * 0.05f, distance * 3.0f) * look_at(eye, center, Vec3{0, 0, 1});
+    device.set_render_target(w.preview_target, background);
+    device.set_shadow_map({}, {});
+    device.set_lights(rhi::default_lights());
+    rhi::MeshDraw draw{};
+    draw.vertices = mesh->gpu.vertices;
+    draw.indices = mesh->gpu.indices;
+    draw.index_count = mesh->gpu.index_count;
+    std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+    const f32 identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    std::memcpy(draw.normal_matrix, identity, sizeof identity);
+    std::memcpy(draw.world, identity, sizeof identity);
+    draw.camera_position[0] = eye.x;
+    draw.camera_position[1] = eye.y;
+    draw.camera_position[2] = eye.z;
+    const f32 white[4] = {1, 1, 1, 1};
+    std::memcpy(draw.color, white, sizeof white);
+    draw.material_shader = w.preview_shader;
+    draw.time = time;
+    rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
+    for (u32 i = 0; i < w.preview_texture_count; ++i) *slots[i] = w.preview_textures[i][0] && s.textures ? s.textures->get(w.preview_textures[i], w.preview_srgb[i]) : rhi::TextureHandle{};
+    device.draw_mesh(draw);
+    device.set_render_target({}, nullptr);
+}
+
 void shutdown_graph_editor() {
+    if (g_window.device) {
+        if (g_window.preview_shader.valid()) g_window.device->destroy_material_shader(g_window.preview_shader);
+        if (g_window.preview_target.valid()) g_window.device->destroy_texture(g_window.preview_target);
+    }
+    g_window.preview_shader = {};
+    g_window.preview_target = {};
     delete g_window.graph;
     g_window.graph = nullptr;
     g_window.open = false;
@@ -403,7 +514,9 @@ void draw_graph_editor(EditorState& s) {
     if (w.message[0]) ImGui::TextColored(w.message_is_error ? ImVec4(1, 0.4f, 0.4f, 1) : ImVec4(0.5f, 1, 0.5f, 1), "%s", w.message);
     else ImGui::TextDisabled("Right-click: add node. Drag from a pin: wire. Middle or right drag: pan. Delete: remove node.");
 
-    ImGui::BeginChild("Canvas", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove);
+    const bool material = w.kind == script::GraphKind::Material;
+    const f32 preview_width = material ? 300.0f : 0.0f;
+    ImGui::BeginChild("Canvas", ImVec2(material ? -preview_width : 0.0f, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 canvas = ImGui::GetCursorScreenPos();
     const ImVec2 size = ImGui::GetContentRegionAvail();
@@ -567,6 +680,12 @@ void draw_graph_editor(EditorState& s) {
     }
     if (focused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) save_and_compile(s);
     ImGui::EndChild();
+    if (material) {
+        ImGui::SameLine();
+        ImGui::BeginChild("Preview", ImVec2(0, 0), ImGuiChildFlags_Borders);
+        draw_preview_panel(s, w);
+        ImGui::EndChild();
+    }
     ImGui::End();
 }
 

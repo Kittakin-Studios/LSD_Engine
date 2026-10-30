@@ -92,17 +92,21 @@ MaterialCache::Entry* MaterialCache::find(const char* guid) {
     return &e;
 }
 
+bool find_texture_guid(const asset::AssetRegistry& registry, const char* name, char out[33]) {
+    out[0] = '\0';
+    usize hits[16];
+    const usize count = registry.search(name, asset::AssetType::Texture, nullptr, hits, 16);
+    for (usize k = 0; k < count; ++k) {  // the exact name (search also matches parts of names)
+        const asset::AssetRecord& r = registry.get(hits[k]);
+        if (std::strcmp(r.name, name) == 0 || k + 1 == count) asset::to_string(r.guid, out);
+        if (std::strcmp(r.name, name) == 0) break;
+    }
+    return out[0] != '\0';
+}
+
 void MaterialCache::resolve_textures(Entry& e) {
     for (u32 i = 0; i < e.texture_count; ++i) {
-        e.texture_guids[i][0] = '\0';
-        usize hits[16];
-        const usize count = registry_.search(e.textures[i], asset::AssetType::Texture, nullptr, hits, 16);
-        for (usize k = 0; k < count; ++k) {  // the exact name (search also matches parts of names)
-            const asset::AssetRecord& r = registry_.get(hits[k]);
-            if (std::strcmp(r.name, e.textures[i]) == 0 || k + 1 == count) asset::to_string(r.guid, e.texture_guids[i]);
-            if (std::strcmp(r.name, e.textures[i]) == 0) break;
-        }
-        if (!e.texture_guids[i][0]) LSD_LOG_WARN("material", "Material graph texture '%s' not found", e.textures[i]);
+        if (!find_texture_guid(registry_, e.textures[i], e.texture_guids[i])) LSD_LOG_WARN("material", "Material graph texture '%s' not found", e.textures[i]);
     }
 }
 

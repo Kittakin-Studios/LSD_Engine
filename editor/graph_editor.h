@@ -11,7 +11,10 @@ namespace lsd::editor {
 
 void open_graph(EditorState& state, const asset::AssetRecord& record);
 void draw_graph_editor(EditorState& state);
-void shutdown_graph_editor();  // frees the open graph (at exit)
+void shutdown_graph_editor();  // frees the open graph and its preview (at exit)
+// A Material Graph's preview (a turning sphere or cube) into its own target; between begin_frame
+// and the viewports.
+void render_graph_preview(EditorState& state, const f32 background[4]);
 // Creates Content/<folder>/<base>.lsdgraph holding Event Start and Event Update; returns its path.
 std::string create_graph_file(const char* folder_path, const char* base);
 // Creates <folder>/<base>.lsdcue: a Wave Player wired to the Output; returns its path.

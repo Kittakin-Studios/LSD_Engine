@@ -8,6 +8,9 @@
 
 namespace lsd::editor {
 
+// The GUID of the texture asset named `name` (an exact name wins over a partial match); false if none.
+bool find_texture_guid(const asset::AssetRegistry& registry, const char* name, char out[33]);
+
 class TextureCache {
 public:
     TextureCache(rhi::Device& device, const asset::AssetRegistry& registry) : device_(device), registry_(registry) {}

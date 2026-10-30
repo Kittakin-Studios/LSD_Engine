@@ -798,6 +798,7 @@ int main(int argc, char** argv) {
         device->begin_frame(clear_color);
         thumbnails.render(clear_color);
         particle_editor->render(*device, clear_color);
+        lsd::editor::render_graph_preview(state, clear_color);
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
