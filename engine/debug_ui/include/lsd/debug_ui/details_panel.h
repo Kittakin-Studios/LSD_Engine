@@ -14,6 +14,10 @@ struct DetailsStyle {
     const char* filter = nullptr;  // show only properties whose name contains this (case-insensitive)
     CustomWidget custom_widget = nullptr;
     void* custom_user = nullptr;
+    // Prefab overrides: overridden properties get a highlighted name and "Revert to Prefab" in
+    // their right-click menu (called with custom_user; only top-level properties are asked about).
+    bool (*is_overridden)(void* user, const reflect::Property& property) = nullptr;
+    void (*revert)(void* user, const reflect::Property& property) = nullptr;
 };
 
 // Draws the object's Edit and Visible properties into the current ImGui window.

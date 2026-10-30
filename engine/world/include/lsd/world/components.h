@@ -150,12 +150,24 @@ struct SplineFollower {
     LSD_PROPERTY(Edit, Tooltip = "Turn to face along the curve") bool face_forward = false;
 };
 
+// One property this instance changed from its prefab (Unreal's overridden, bold, values).
+LSD_STRUCT()
+struct PrefabOverride {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) char object[64] = "";     // names below the instance root, "Body/Wheel"; "" = the root
+    LSD_PROPERTY(Save) char component[32] = "";  // TypeInfo name, "StaticMesh"
+    LSD_PROPERTY(Save) char property[32] = "";   // top-level property, "color"
+};
+
 // Root of a placed prefab (Unreal's Blueprint actor / Packed Level Actor). Its children and its
-// other components come from the prefab asset: Apply writes them back to it, Revert reloads them.
+// other components come from the prefab asset, except the properties listed as overrides: those
+// keep this instance's values when the prefab changes. Apply writes the instance back to the
+// prefab; Revert drops the overrides and reloads.
 LSD_STRUCT(Component, Category = "Prefab")
 struct PrefabInstance {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Prefab") char prefab[33] = "";
+    LSD_PROPERTY(Save) List<PrefabOverride, 32> overrides;
 };
 
 // Per-level settings (Unreal's World Settings), saved in the level file.

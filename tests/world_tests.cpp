@@ -155,6 +155,32 @@ static void test_prefab() {
         children = 0;
         for (u32 slot = 0; slot < w.slot_count(); ++slot) children += w.entity_at_slot(slot).valid() && w.parent(w.entity_at_slot(slot)) == placed;
         CHECK(children == 1);
+        // Overrides: the instance's wheel colour survives the prefab changing; the rest follows.
+        Entity wheel_copy;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const Entity e = w.entity_at_slot(slot);
+            if (e.valid() && w.parent(e) == placed) wheel_copy = e;
+        }
+        char path[64];
+        CHECK(instance_path(w, placed, wheel_copy, path, sizeof path) && std::strcmp(path, "Wheel") == 0);  // prefab names, not "Wheel2"
+        CHECK(instance_path(w, placed, placed, path, sizeof path) && path[0] == '\0');
+        CHECK(!instance_path(w, placed, car, path, sizeof path));
+        CHECK(find_in_instance(w, placed, "Wheel") == wheel_copy && !find_in_instance(w, placed, "Nope").valid());
+        w.add<StaticMesh>(wheel_copy)->color = LinearColor::hex(0x00FF00);
+        w.get<Transform>(wheel_copy)->position.y = 7.0f;
+        CHECK(set_override(w, placed, "Wheel", "StaticMesh", "color", true) && is_overridden(w, placed, "Wheel", "StaticMesh", "color"));
+        w.add<StaticMesh>(wheel)->color = LinearColor::hex(0x0000FF);  // the prefab's wheel gets a mesh too and moves
+        w.get<Transform>(wheel)->position.x = 3.0f;
+        save_prefab(w, car, text);
+        CHECK(update_instance(w, placed, text.data(), text.size()));
+        const Entity new_wheel = find_in_instance(w, placed, "Wheel");
+        CHECK(new_wheel.valid() && w.get<StaticMesh>(new_wheel));
+        CHECK(w.get<StaticMesh>(new_wheel)->color.g == 1.0f && w.get<StaticMesh>(new_wheel)->color.b == 0.0f);  // kept
+        CHECK(w.get<Transform>(new_wheel)->position.x == 3.0f && w.get<Transform>(new_wheel)->position.y == 0.0f);  // not overridden: follows
+        CHECK(set_override(w, placed, "Wheel", "StaticMesh", "color", false) && !is_overridden(w, placed, "Wheel", "StaticMesh", "color"));
+        CHECK(update_instance(w, placed, text.data(), text.size()));
+        CHECK(w.get<StaticMesh>(find_in_instance(w, placed, "Wheel"))->color.b == 1.0f);  // reverted
+
         const char empty[] = "{\"lsd_level\": 1, \"entities\": []}";
         CHECK(!update_instance(w, placed, empty, sizeof empty - 1) && w.get<StaticMesh>(placed));
     }

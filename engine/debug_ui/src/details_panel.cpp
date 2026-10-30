@@ -32,10 +32,22 @@ bool contains_ignore_case(const char* text, const char* needle) {
     return !*needle;
 }
 
+bool overridden(const reflect::Property& p) { return g_style && g_style->is_overridden && g_style->is_overridden(g_style->custom_user, p); }
+
+// The property's name; overridden ones in gold with a marker, like Unreal's bold overrides.
+void draw_label(const reflect::Property& p, const char* label) {
+    if (!overridden(p)) {
+        ImGui::TextUnformatted(label);
+        return;
+    }
+    ImGui::TextColored(ImVec4(0.95f, 0.76f, 0.07f, 1.0f), "%s *", label);
+}
+
 // Right-click menu on the value just drawn. Returns true if it changed the value.
 bool property_menu(const reflect::Property& p, u8* field, const u8* default_field) {
     if (!(p.flags & reflect::kEdit) || !ImGui::BeginPopupContextItem("property_menu")) return false;
     bool changed = false;
+    if (overridden(p) && g_style->revert && ImGui::MenuItem("Revert to Prefab")) g_style->revert(g_style->custom_user, p);
     const bool differs = default_field && std::memcmp(field, default_field, p.size) != 0;
     if (ImGui::MenuItem("Reset to Default", nullptr, false, differs)) {
         std::memcpy(field, default_field, p.size);
@@ -104,7 +116,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
     if (p.type == reflect::FieldType::Struct && (p.struct_type->flags & reflect::kColor)) {
         row_background();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(label);
+        draw_label(p, label);
         if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
         ImGui::SameLine(kLabelWidth);
         ImGui::SetNextItemWidth(-1.0f);
@@ -119,7 +131,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
     if (p.type == reflect::FieldType::Struct && (p.struct_type->flags & reflect::kVector)) {
         row_background();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(label);
+        draw_label(p, label);
         if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
         ImGui::SameLine(kLabelWidth);
         ImGui::SetNextItemWidth(-1.0f);
@@ -221,7 +233,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
 
     row_background();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
+    draw_label(p, label);
     if (p.tooltip[0]) ImGui::SetItemTooltip("%s", p.tooltip);
     ImGui::SameLine(kLabelWidth);
     ImGui::SetNextItemWidth(-1.0f);

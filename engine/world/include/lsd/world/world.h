@@ -118,7 +118,7 @@ bool tags_match(const char* tags, const char* query);
 bool has_tag(const World& world, Entity entity, const char* query);
 
 // Copies an entity and its children from one world into another (or the same one), under `parent`.
-// The copy gets a unique name in `to`; returns it.
-Entity copy_entity(const World& from, Entity source, World& to, Entity parent);
+// The copy gets a unique name in `to` (or keeps its name); returns it.
+Entity copy_entity(const World& from, Entity source, World& to, Entity parent, bool unique_names = true);
 
 } // namespace lsd::world

@@ -15,9 +15,18 @@ constexpr char kPrefabExtension[] = ".lsdprefab";
 void save_prefab(const World& world, Entity root, Array<char>& out);
 bool save_prefab_file(const World& world, Entity root, const char* path);
 
-// Makes `instance` match the prefab text. False (instance untouched) if the text holds no root object.
+// Makes `instance` match the prefab text, keeping its overridden properties. False (instance
+// untouched) if the text holds no root object.
 // `new_placement` also takes the prefab root's rotation and scale (when it is first placed).
 bool update_instance(World& world, Entity instance, const char* text, usize length, bool new_placement = false);
 bool update_instance_from_file(World& world, Entity instance, const char* path, bool new_placement = false);
+
+// ---- Overrides ----
+// Path of `object` below the instance root ("" for the root itself); false if it is not inside it.
+bool instance_path(const World& world, Entity root, Entity object, char* out, usize capacity);
+Entity find_in_instance(const World& world, Entity root, const char* path);  // invalid if missing
+bool is_overridden(const World& world, Entity root, const char* path, const char* component, const char* property);
+// Marks (or unmarks) a property as this instance's own. False if the instance's list is full.
+bool set_override(World& world, Entity root, const char* path, const char* component, const char* property, bool on);
 
 } // namespace lsd::world

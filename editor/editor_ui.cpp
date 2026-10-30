@@ -228,6 +228,17 @@ Entity place(EditorState& s, const char* name, const char* mesh, const char* com
 
 // ---- Prefabs ----
 
+// A property reverted from the Details right-click menu, applied next frame (rebuilding the instance
+// while the panel draws would pull its components out from under it).
+struct RevertRequest {
+    Entity object;
+    char component[32];
+    char property[32];
+    bool pending = false;
+};
+RevertRequest g_revert;
+const reflect::TypeInfo* g_details_type = nullptr;  // the component the Details panel is drawing
+
 bool prefab_path(const EditorState& s, const char* guid_text, char* path, usize capacity) {
     asset::Guid guid;
     const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? s.registry->find(guid) : nullptr;
@@ -259,6 +270,40 @@ u32 refresh_instances(EditorState& s, const char* guid_text, Entity skip) {
     }
     prune_selection(s);
     return updated;
+}
+
+// Marks a changed property of an object inside a prefab instance as overridden. The root's own
+// Transform and PrefabInstance are never part of the prefab, so they need no override.
+void note_override(EditorState& s, Entity object, const reflect::TypeInfo& type, const reflect::Property& p) {
+    const Entity root = prefab_root(*s.world, object);
+    if (!root.valid() || &type == &reflect::type_of<world::PrefabInstance>() || (object == root && &type == &reflect::type_of<world::Transform>())) return;
+    char path[64];
+    if (world::instance_path(*s.world, root, object, path, sizeof path) && !world::set_override(*s.world, root, path, type.name, p.name, true)) {
+        std::snprintf(s.status, sizeof s.status, "%s holds 32 overrides already: this change is not kept when the prefab changes", s.world->name(root));
+    }
+}
+
+void note_changed_overrides(EditorState& s, Entity object, const reflect::TypeInfo& type, const u8* before, const u8* after) {
+    for (u32 i = 0; i < type.property_count; ++i) {
+        const reflect::Property& p = type.properties[i];
+        if (std::memcmp(before + p.offset, after + p.offset, p.size) != 0) note_override(s, object, type, p);
+    }
+}
+
+bool details_is_overridden(void* user, const reflect::Property& p) {
+    const EditorState& s = *static_cast<const EditorState*>(user);
+    const Entity root = g_details_type ? prefab_root(*s.world, s.selected) : Entity{};
+    char path[64];
+    return root.valid() && world::instance_path(*s.world, root, s.selected, path, sizeof path) && world::is_overridden(*s.world, root, path, g_details_type->name, p.name);
+}
+
+void details_revert(void* user, const reflect::Property& p) {
+    const EditorState& s = *static_cast<const EditorState*>(user);
+    if (!g_details_type) return;
+    g_revert.object = s.selected;
+    std::snprintf(g_revert.component, sizeof g_revert.component, "%s", g_details_type->name);
+    std::snprintf(g_revert.property, sizeof g_revert.property, "%s", p.name);
+    g_revert.pending = true;
 }
 
 Entity place_prefab(EditorState& s, const asset::AssetRecord& r, Vec3 position) {
@@ -720,9 +765,12 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
         Entity roots[EditorState::kMaxSelection];
         const u32 count = selection_roots(s, roots);
         for (u32 i = 0; i < count; ++i) {
+            const world::Transform moved_before = *s.world->get<world::Transform>(roots[i]);
             if (roots[i] != s.selected) s.world->set_world_matrix(roots[i], delta * s.world->world_matrix(roots[i]));
+            else s.world->set_world_matrix(s.selected, m);
+            note_changed_overrides(s, roots[i], reflect::type_of<world::Transform>(), reinterpret_cast<const u8*>(&moved_before),
+                                   reinterpret_cast<const u8*>(s.world->get<world::Transform>(roots[i])));
         }
-        s.world->set_world_matrix(s.selected, m);
         edited(s, alt_duplicated ? "Duplicate" : s.gizmo == GizmoMode::Translate ? "Move" : s.gizmo == GizmoMode::Rotate ? "Rotate" : "Scale");
     }
     was_using = using_now;
@@ -1684,16 +1732,35 @@ void draw_entity_details(EditorState& s) {
     }
     if (const Entity parent = w.parent(e); parent.valid()) ImGui::TextDisabled("Attached to %s", w.name(parent));
     if (s.selection_count > 1) ImGui::TextDisabled("%u objects selected: changes apply to all that have the component", s.selection_count);
+    if (g_revert.pending) {  // Revert to Prefab from a property's menu last frame
+        g_revert.pending = false;
+        const Entity root = w.alive(g_revert.object) ? prefab_root(w, g_revert.object) : Entity{};
+        char object_path[64], file[300];
+        if (root.valid() && world::instance_path(w, root, g_revert.object, object_path, sizeof object_path) &&
+            prefab_path(s, w.get<world::PrefabInstance>(root)->prefab, file, sizeof file)) {
+            world::set_override(w, root, object_path, g_revert.component, g_revert.property, false);
+            world::update_instance_from_file(w, root, file);
+            prune_selection(s);
+            // The object itself may be new (children are rebuilt): select it again by path.
+            const Entity again = world::find_in_instance(w, root, object_path);
+            select(s, again.valid() ? again : root);
+            edited(s, "Revert to Prefab");
+            return;
+        }
+    }
     if (const Entity root = prefab_root(w, e); root.valid()) {  // like the Blueprint bar on an actor: apply or revert
         char guid[33];
         std::snprintf(guid, sizeof guid, "%s", w.get<world::PrefabInstance>(root)->prefab);
+        const u32 override_count = w.get<world::PrefabInstance>(root)->overrides.count;
         char path[300];
         if (!prefab_path(s, guid, path, sizeof path)) {
             ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.4f, 1.0f), "Prefab asset missing: pick one in PrefabInstance");
         } else {
-            ImGui::TextDisabled(root == e ? "Prefab instance" : "Part of prefab instance %s", w.name(root));
+            if (root == e) ImGui::TextDisabled("Prefab instance, %u override%s (gold *)", override_count, override_count == 1 ? "" : "s");
+            else ImGui::TextDisabled("Part of prefab instance %s, %u override%s", w.name(root), override_count, override_count == 1 ? "" : "s");
             if (ImGui::Button("Apply to Prefab") && !s.playing) {
                 world::save_prefab_file(w, root, path);
+                w.get<world::PrefabInstance>(root)->overrides.count = 0;  // its values are the prefab's now
                 const u32 others = refresh_instances(s, guid, root);
                 std::snprintf(s.status, sizeof s.status, "Saved the prefab; updated %u other instance%s", others, others == 1 ? "" : "s");
                 edited(s, "Apply Prefab");
@@ -1701,11 +1768,12 @@ void draw_entity_details(EditorState& s) {
             ImGui::SetItemTooltip("Saves this instance's children and components to the prefab and updates every other instance in the level");
             ImGui::SameLine();
             if (ImGui::Button("Revert") && !s.playing) {
+                w.get<world::PrefabInstance>(root)->overrides.count = 0;
                 world::update_instance_from_file(w, root, path);
                 prune_selection(s);
                 edited(s, "Revert Prefab");
             }
-            ImGui::SetItemTooltip("Throws away changes to this instance (except its placement) and reloads it from the prefab");
+            ImGui::SetItemTooltip("Throws away every change to this instance (except its placement) and reloads it from the prefab. One value: right-click it > Revert to Prefab");
             ImGui::SameLine();
             if (ImGui::Button("Browse")) {
                 select(s, {});
@@ -1721,7 +1789,9 @@ void draw_entity_details(EditorState& s) {
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##details_search", "Search details", filter, sizeof filter);
     ImGui::BeginChild("DetailsRows");
-    const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, filter, details_widget, &s};
+    DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, filter, details_widget, &s};
+    style.is_overridden = details_is_overridden;
+    style.revert = details_revert;
     u32 type_count = 0;
     const reflect::TypeInfo* const* types = world::component_types(type_count);
     for (u32 i = 0; i < type_count; ++i) {
@@ -1730,8 +1800,9 @@ void draw_entity_details(EditorState& s) {
         ImGui::PushID(types[i]->name);
         bool keep = true;
         if (ImGui::CollapsingHeader(types[i]->name, i == 0 ? nullptr : &keep, ImGuiTreeNodeFlags_DefaultOpen)) {
-            u8 before[512];
+            static u8 before[8192];  // PrefabInstance with its override list is ~4 KB
             LSD_ASSERT(types[i]->size <= sizeof before);
+            g_details_type = types[i];
             std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
             if (types[i] == &reflect::type_of<world::Spline>()) {  // point tools; points are moved in the viewport
@@ -1759,7 +1830,9 @@ void draw_entity_details(EditorState& s) {
                 ImGui::TextDisabled(has_point ? "Point %d selected" : "Click a point in the viewport", s.spline_point);
             }
             draw_properties(*types[i], component, &style);
+            g_details_type = nullptr;
             if (std::memcmp(before, component, types[i]->size) != 0) {
+                note_changed_overrides(s, e, *types[i], before, static_cast<const u8*>(component));
                 // Multi-edit: only the values that changed go to the other selected objects.
                 for (u32 k = 0; k < s.selection_count; ++k) {
                     if (s.selection[k] == e) continue;

@@ -310,9 +310,10 @@ bool has_tag(const World& world, Entity entity, const char* query) {
     return tags && tags_match(tags->tags, query);
 }
 
-Entity copy_entity(const World& from, Entity source, World& to, Entity parent) {
+Entity copy_entity(const World& from, Entity source, World& to, Entity parent, bool unique_names) {
     char name[64];
-    to.unique_name(from.name(source), name, sizeof name);
+    if (unique_names) to.unique_name(from.name(source), name, sizeof name);
+    else std::snprintf(name, sizeof name, "%s", from.name(source));
     const Entity copy = to.create(name);
     u32 type_count = 0;
     const reflect::TypeInfo* const* types = component_types(type_count);
@@ -324,7 +325,7 @@ Entity copy_entity(const World& from, Entity source, World& to, Entity parent) {
     to.set_parent(copy, parent, false);
     for (u32 slot = 0; slot < from.slot_count(); ++slot) {  // children too (slot order keeps them stable)
         const Entity child = from.entity_at_slot(slot);
-        if (child.valid() && child != copy && from.parent(child) == source) copy_entity(from, child, to, copy);
+        if (child.valid() && child != copy && from.parent(child) == source) copy_entity(from, child, to, copy, unique_names);
     }
     return copy;
 }

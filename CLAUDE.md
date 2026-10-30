@@ -146,7 +146,9 @@ and run by the Script component like any Lua file. Physics Joint
 component (fixed / hinge / ball / slider, limits, motors). Data tables
 (.csv assets, grid editor, `lsd.table`). Input
 triggers (Hold, Tap...). Splines + Spline Follower (moving platforms). Curves (Curve
-data asset with a graph editor, `lsd.curve`). Next: prefab overrides, Player Controller.
+data asset with a graph editor, `lsd.curve`). Prefab
+per-instance overrides (PrefabInstance.overrides, Revert to Prefab). Next: Player Controller / State,
+Lua debugger, user-defined structs and enums.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
