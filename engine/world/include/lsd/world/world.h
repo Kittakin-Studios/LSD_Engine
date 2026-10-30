@@ -112,4 +112,8 @@ private:
     WorldSettings settings_;
 };
 
+// Copies an entity and its children from one world into another (or the same one), under `parent`.
+// The copy gets a unique name in `to`; returns it.
+Entity copy_entity(const World& from, Entity source, World& to, Entity parent);
+
 } // namespace lsd::world

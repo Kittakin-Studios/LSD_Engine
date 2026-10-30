@@ -1,6 +1,7 @@
 // World tests: entities, component pools, hierarchy, level text round trip, transform math.
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
+#include "lsd/world/prefab.h"
 
 #include <cmath>
 #include <cstdio>
@@ -111,10 +112,58 @@ static void test_level_round_trip() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+static void test_prefab() {
+    HeapAllocator heap("prefab");
+    {
+        World w(heap);
+        const Entity car = w.create("Car");
+        w.get<Transform>(car)->position = {5, 6, 7};
+        w.get<Transform>(car)->scale = {2, 2, 2};
+        w.add<StaticMesh>(car)->color = LinearColor::hex(0xFF0000);
+        const Entity wheel = w.create("Wheel");
+        w.get<Transform>(wheel)->position = {1, 0, 0};
+        w.set_parent(wheel, car, false);
+        Array<char> text(heap);
+        save_prefab(w, car, text);
+
+        // A placed instance: its own placement and name stay, the rest comes from the prefab.
+        const Entity placed = w.create("MyCar");
+        w.get<Transform>(placed)->position = {-3, 0, 0};
+        w.add<PrefabInstance>(placed);
+        w.add<KillVolume>(placed);  // not in the prefab: removed
+        CHECK(update_instance(w, placed, text.data(), text.size()));
+        CHECK(w.get<Transform>(placed)->position.x == -3.0f && std::strcmp(w.name(placed), "MyCar") == 0);
+        CHECK(w.get<Transform>(placed)->scale.x == 1.0f);  // an existing instance keeps its placement...
+        const Entity fresh = w.create("Fresh");
+        w.get<Transform>(fresh)->position = {9, 0, 0};
+        CHECK(update_instance(w, fresh, text.data(), text.size(), true));
+        CHECK(w.get<Transform>(fresh)->scale.x == 2.0f && w.get<Transform>(fresh)->position.x == 9.0f);  // ...a new one takes the prefab's scale
+        CHECK(w.get<StaticMesh>(placed) && w.get<PrefabInstance>(placed) && !w.get<KillVolume>(placed));
+        u32 children = 0;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const Entity e = w.entity_at_slot(slot);
+            if (e.valid() && w.parent(e) == placed) {
+                ++children;
+                CHECK(w.get<Transform>(e)->position.x == 1.0f);
+            }
+        }
+        CHECK(children == 1);
+        // Updating again replaces the children instead of adding more.
+        CHECK(update_instance(w, placed, text.data(), text.size()));
+        children = 0;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) children += w.entity_at_slot(slot).valid() && w.parent(w.entity_at_slot(slot)) == placed;
+        CHECK(children == 1);
+        const char empty[] = "{\"lsd_level\": 1, \"entities\": []}";
+        CHECK(!update_instance(w, placed, empty, sizeof empty - 1) && w.get<StaticMesh>(placed));
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
     test_math();
     test_entities();
     test_level_round_trip();
+    test_prefab();
     if (g_failures == 0) std::printf("All world tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

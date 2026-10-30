@@ -81,6 +81,14 @@ struct Character {
     LSD_PROPERTY(Edit) bool invert_look_y = false;
 };
 
+// Root of a placed prefab (Unreal's Blueprint actor / Packed Level Actor). Its children and its
+// other components come from the prefab asset: Apply writes them back to it, Revert reloads them.
+LSD_STRUCT(Component, Category = "Prefab")
+struct PrefabInstance {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Prefab") char prefab[33] = "";
+};
+
 // Per-level settings (Unreal's World Settings), saved in the level file.
 LSD_STRUCT(Category = "World")
 struct WorldSettings {

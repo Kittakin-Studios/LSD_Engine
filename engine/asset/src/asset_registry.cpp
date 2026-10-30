@@ -40,6 +40,7 @@ const char* to_string(AssetType type) {
         case AssetType::Mesh: return "Mesh";
         case AssetType::Level: return "Level";
         case AssetType::Data: return "Data";
+        case AssetType::Prefab: return "Prefab";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -51,6 +52,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".fbx") == 0 || std::strcmp(lower, ".gltf") == 0 || std::strcmp(lower, ".glb") == 0) return AssetType::Mesh;
     if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
     if (std::strcmp(lower, ".lsdasset") == 0) return AssetType::Data;
+    if (std::strcmp(lower, ".lsdprefab") == 0) return AssetType::Prefab;
     return AssetType::Unknown;
 }
 

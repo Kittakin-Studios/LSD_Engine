@@ -132,7 +132,8 @@ Details, groups, hide/lock, Message Log, 2x2 viewport layout. Remaining mileston
 (`Choice:`, `Asset:<Type>`, `Key`); data assets (`.lsdasset`, `engine/asset/data_asset.h`); Enhanced
 Input-style Input Actions + Mapping Contexts (`engine/input`); Jolt physics (`engine/physics`: static
 level collision, RigidBody, CharacterVirtual); Character component possessed in Play with its input
-wired in Details. Next: prefabs, gameplay tags, Lua, visual scripting, game framework classes.
+wired in Details. Prefabs (`.lsdprefab`, `engine/world/prefab.h`: create, place, apply, revert; no
+per-instance overrides yet). Next: gameplay tags, Lua, visual scripting, game framework classes.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

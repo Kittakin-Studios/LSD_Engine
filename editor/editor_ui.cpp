@@ -11,6 +11,7 @@
 #include "lsd/foundation/log.h"
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
+#include "lsd/world/prefab.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -172,25 +173,7 @@ u32 selection_roots(const EditorState& s, Entity* out) {
     return n;
 }
 
-// Copies an entity and its children from one world into another (or the same one), under `parent`.
-Entity copy_entity(const world::World& from, Entity source, world::World& to, Entity parent) {
-    char name[64];
-    to.unique_name(from.name(source), name, sizeof name);
-    const Entity copy = to.create(name);
-    u32 type_count = 0;
-    const reflect::TypeInfo* const* types = world::component_types(type_count);
-    for (u32 t = 0; t < type_count; ++t) {
-        if (const void* data = from.get(source, *types[t])) std::memcpy(to.add(copy, *types[t]), data, types[t]->size);
-    }
-    to.set_parent(copy, parent, false);
-    for (u32 slot = 0; slot < from.slot_count(); ++slot) {  // children too (slot order keeps them stable)
-        const Entity child = from.entity_at_slot(slot);
-        if (child.valid() && child != copy && from.parent(child) == source) copy_entity(from, child, to, copy);
-    }
-    return copy;
-}
-
-Entity duplicate(world::World& w, Entity source, Entity parent) { return copy_entity(w, source, w, parent); }
+Entity duplicate(world::World& w, Entity source, Entity parent) { return world::copy_entity(w, source, w, parent); }
 
 // Ctrl+C: the selection (with children) as level text on the clipboard, so it pastes into any level
 // or a text editor.
@@ -199,7 +182,7 @@ void copy_selection(EditorState& s) {
     world::World clip(default_allocator());
     Entity roots[EditorState::kMaxSelection];
     const u32 count = selection_roots(s, roots);
-    for (u32 i = 0; i < count; ++i) copy_entity(*s.world, roots[i], clip, {});
+    for (u32 i = 0; i < count; ++i) world::copy_entity(*s.world, roots[i], clip, {});
     Array<char> text(default_allocator());
     world::save_level(clip, text);
     text.push_back('\0');
@@ -218,7 +201,7 @@ void paste(EditorState& s) {
     select(s, {});
     for (u32 slot = 0; slot < clip.slot_count(); ++slot) {
         const Entity e = clip.entity_at_slot(slot);
-        if (e.valid() && !clip.parent(e).valid()) add_to_selection(s, copy_entity(clip, e, *s.world, {}), false);
+        if (e.valid() && !clip.parent(e).valid()) add_to_selection(s, world::copy_entity(clip, e, *s.world, {}), false);
     }
     if (s.selection_count) edited(s, "Paste");
 }
@@ -236,6 +219,71 @@ Entity place(EditorState& s, const char* name, const char* mesh, const char* com
     std::snprintf(label, sizeof label, "Place %s", unique);
     edited(s, label);
     return e;
+}
+
+// ---- Prefabs ----
+
+bool prefab_path(const EditorState& s, const char* guid_text, char* path, usize capacity) {
+    asset::Guid guid;
+    const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? s.registry->find(guid) : nullptr;
+    if (!r || r->type != asset::AssetType::Prefab) return false;
+    s.registry->source_path(*r, path, capacity);
+    return true;
+}
+
+// The prefab instance an object belongs to: itself or its nearest ancestor with a PrefabInstance.
+Entity prefab_root(const world::World& w, Entity e) {
+    for (; e.valid(); e = w.parent(e)) {
+        if (w.get<world::PrefabInstance>(e)) return e;
+    }
+    return {};
+}
+
+// Brings the instances of one prefab (every prefab if `guid_text` is null) in line with the asset,
+// except `skip`. Returns how many were updated.
+u32 refresh_instances(EditorState& s, const char* guid_text, Entity skip) {
+    const reflect::TypeInfo& type = reflect::type_of<world::PrefabInstance>();
+    Array<Entity> instances(default_allocator());  // collected first: updating changes the pools
+    for (u32 i = 0; i < s.world->count(type); ++i) instances.push_back(s.world->owner(type, i));
+    u32 updated = 0;
+    for (const Entity e : instances) {
+        const auto* instance = s.world->get<world::PrefabInstance>(e);  // null if an earlier update removed it (nested)
+        if (e == skip || !instance || (guid_text && std::strcmp(instance->prefab, guid_text) != 0)) continue;
+        char path[300];
+        if (prefab_path(s, instance->prefab, path, sizeof path) && world::update_instance_from_file(*s.world, e, path)) ++updated;
+    }
+    prune_selection(s);
+    return updated;
+}
+
+Entity place_prefab(EditorState& s, const asset::AssetRecord& r, Vec3 position) {
+    const Entity e = place(s, r.name, nullptr, "PrefabInstance", position);
+    auto* instance = s.world->get<world::PrefabInstance>(e);
+    asset::to_string(r.guid, instance->prefab);
+    char path[300];
+    s.registry->source_path(r, path, sizeof path);
+    if (!world::update_instance_from_file(*s.world, e, path, true)) std::snprintf(s.status, sizeof s.status, "Could not read prefab %s", r.path);
+    return e;
+}
+
+std::string new_asset_path(EditorState& s, const char* base, const char* extension);
+const asset::AssetRecord* record_at(EditorState& s, const std::string& path);
+
+// Outliner > Create Prefab: saves the object and its children as a prefab in the open Content
+// Browser folder; the object becomes its first instance.
+void create_prefab(EditorState& s, Entity root) {
+    const std::string path = new_asset_path(s, s.world->name(root), world::kPrefabExtension);
+    if (!world::save_prefab_file(*s.world, root, path.c_str())) {
+        std::snprintf(s.status, sizeof s.status, "Could not save %s", path.c_str());
+        return;
+    }
+    s.registry->scan();
+    if (const asset::AssetRecord* r = record_at(s, path)) {
+        asset::to_string(r->guid, s.world->add<world::PrefabInstance>(root)->prefab);
+        edited(s, "Create Prefab");
+    }
+    std::snprintf(s.status, sizeof s.status, "Created prefab %s", path.c_str());
+    LSD_LOG_INFO("editor", "%s", s.status);
 }
 
 void delete_selected(EditorState& s) {
@@ -834,6 +882,8 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                 char key[33];
                 asset::to_string(guid, key);
                 place(s, record->name, key, nullptr, drop_point(s, ray));
+            } else if (record && record->type == asset::AssetType::Prefab) {
+                place_prefab(s, *record, drop_point(s, ray));
             }
         }
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPlacePayload)) {
@@ -1041,6 +1091,9 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
                 edited(s, "Detach");
             }
             if (ImGui::MenuItem("Delete", "Delete")) delete_selected(s);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Create Prefab", nullptr, false, !s.playing)) create_prefab(s, e);
+            ImGui::SetItemTooltip("Saves this object and its children as a prefab in the open Content Browser folder");
             ImGui::EndPopup();
         }
         {  // after the row's menus (they attach to the Selectable): eye (hide in editor) and lock (no viewport selection or gizmo), like Unreal's Outliner
@@ -1126,6 +1179,7 @@ void start_rename(EditorState& s, asset::Guid guid, const char* folder, const ch
 bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
+    if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
 
@@ -1268,13 +1322,13 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     ImGui::EndChild();
 }
 
-// Path of a new file in the current folder: Content/<folder>/<base>.lsdasset, numbered if taken.
-std::string new_asset_path(EditorState& s, const char* base) {
+// Path of a new file in the current folder: Content/<folder>/<base><extension>, numbered if taken.
+std::string new_asset_path(EditorState& s, const char* base, const char* extension = asset::kDataAssetExtension) {
     const std::filesystem::path folder = std::filesystem::path(kContentDir) / s.content_folder;
     std::error_code error;
     std::filesystem::create_directories(folder, error);
-    std::filesystem::path path = folder / (std::string(base) + asset::kDataAssetExtension);
-    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + asset::kDataAssetExtension);
+    std::filesystem::path path = folder / (std::string(base) + extension);
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + extension);
     return path.generic_string();
 }
 
@@ -1411,6 +1465,38 @@ void draw_entity_details(EditorState& s) {
     }
     if (const Entity parent = w.parent(e); parent.valid()) ImGui::TextDisabled("Attached to %s", w.name(parent));
     if (s.selection_count > 1) ImGui::TextDisabled("%u objects selected: changes apply to all that have the component", s.selection_count);
+    if (const Entity root = prefab_root(w, e); root.valid()) {  // like the Blueprint bar on an actor: apply or revert
+        char guid[33];
+        std::snprintf(guid, sizeof guid, "%s", w.get<world::PrefabInstance>(root)->prefab);
+        char path[300];
+        if (!prefab_path(s, guid, path, sizeof path)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.76f, 0.4f, 1.0f), "Prefab asset missing: pick one in PrefabInstance");
+        } else {
+            ImGui::TextDisabled(root == e ? "Prefab instance" : "Part of prefab instance %s", w.name(root));
+            if (ImGui::Button("Apply to Prefab") && !s.playing) {
+                world::save_prefab_file(w, root, path);
+                const u32 others = refresh_instances(s, guid, root);
+                std::snprintf(s.status, sizeof s.status, "Saved the prefab; updated %u other instance%s", others, others == 1 ? "" : "s");
+                edited(s, "Apply Prefab");
+            }
+            ImGui::SetItemTooltip("Saves this instance's children and components to the prefab and updates every other instance in the level");
+            ImGui::SameLine();
+            if (ImGui::Button("Revert") && !s.playing) {
+                world::update_instance_from_file(w, root, path);
+                prune_selection(s);
+                edited(s, "Revert Prefab");
+            }
+            ImGui::SetItemTooltip("Throws away changes to this instance (except its placement) and reloads it from the prefab");
+            ImGui::SameLine();
+            if (ImGui::Button("Browse")) {
+                select(s, {});
+                asset::Guid id;
+                if (asset::parse_guid(guid, id)) s.selected_asset = id;
+            }
+            ImGui::SetItemTooltip("Selects the prefab in the Content Browser");
+        }
+        if (!s.world->alive(s.selected)) return;  // reverting removed the selected child
+    }
 
     static char filter[64] = "";
     ImGui::SetNextItemWidth(-1.0f);
@@ -1669,7 +1755,7 @@ void draw_asset_grid(EditorState& s) {
     ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0");
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0");
     ImGui::SameLine();
     ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
@@ -1677,7 +1763,7 @@ void draw_asset_grid(EditorState& s) {
 
     static usize hits[1024];
     const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : s.type_filter == 2 ? asset::AssetType::Level
-                                : s.type_filter == 3 ? asset::AssetType::Data : asset::AssetType::Unknown;
+                                : s.type_filter == 3 ? asset::AssetType::Data : s.type_filter == 4 ? asset::AssetType::Prefab : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
@@ -2369,6 +2455,8 @@ void handle_shortcuts(EditorState& s) {
 void set_layout(EditorState& s, bool quad) { set_quad_view(s, quad); }
 
 void create_input_setup(EditorState& s) { create_default_input(s); }
+
+u32 refresh_prefabs(EditorState& s) { return refresh_instances(s, nullptr, {}); }
 
 bool select_asset(EditorState& s, const char* name) {
     usize hit = 0;

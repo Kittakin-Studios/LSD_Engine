@@ -222,6 +222,7 @@ bool open_level(EditorState& s, const char* path) {
     }
     std::snprintf(s.level_path, sizeof s.level_path, "%s", fs::path(path).generic_string().c_str());
     s.selected = {};
+    lsd::editor::refresh_prefabs(s);  // prefabs edited since the level was saved show their latest version
     s.history->reset(*s.world, "Open Level");
     std::snprintf(s.status, sizeof s.status, "Opened %s", s.level_path);
     LSD_LOG_INFO("editor", "%s", s.status);

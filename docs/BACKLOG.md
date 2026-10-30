@@ -101,7 +101,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 ### Prefabs and components
 
-- [ ] Prefabs with per-instance overrides (bold) and per-property revert; nested prefabs [Blueprint instances, Level Instances]
+- [~] Prefabs (`.lsdprefab`, `engine/world/prefab.h`): Outliner > Create Prefab, drag from the Content Browser to place, Apply to Prefab (updates every instance in the level), Revert, instances refresh when a level opens; needs per-instance overrides (bold) and per-property revert (today edits inside an instance are replaced on Revert or reopen), nested prefab updates [Blueprint instances, Level Instances]
 - [ ] Prefab editor window with its own viewport and component tree [Blueprint Editor viewport]
 - [ ] Components added from a list: mesh, light, camera, spring arm, audio, collision, movement, script, spline [Actor Components]
 - [ ] Exposed properties per instance with ranges and tooltips [EditAnywhere]

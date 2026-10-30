@@ -126,6 +126,8 @@ struct EditorState {
 void set_view(EditorState& state, ViewType view);
 // Creates IA_Move, IA_Look, IA_Jump and IMC_Default in the open Content Browser folder.
 void create_input_setup(EditorState& state);
+// Reloads every prefab instance in the level from its asset (after opening a level).
+u32 refresh_prefabs(EditorState& state);
 // Selects the first asset whose name matches (for scripted screenshots and the console).
 bool select_asset(EditorState& state, const char* name);
 

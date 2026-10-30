@@ -15,6 +15,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<KillVolume>(),
         &reflect::type_of<RigidBody>(),
         &reflect::type_of<Character>(),
+        &reflect::type_of<PrefabInstance>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);
@@ -279,6 +280,25 @@ void* World::at(const reflect::TypeInfo& type, u32 i) {
 Entity World::entity_at_slot(u32 slot) const {
     const Record& r = records_[slot];
     return r.alive ? Entity::make(slot, r.generation) : Entity{};
+}
+
+Entity copy_entity(const World& from, Entity source, World& to, Entity parent) {
+    char name[64];
+    to.unique_name(from.name(source), name, sizeof name);
+    const Entity copy = to.create(name);
+    u32 type_count = 0;
+    const reflect::TypeInfo* const* types = component_types(type_count);
+    for (u32 t = 0; t < type_count; ++t) {
+        if (const void* data = from.get(source, *types[t])) std::memcpy(to.add(copy, *types[t]), data, types[t]->size);
+    }
+    to.set_hidden(copy, from.hidden(source));
+    to.set_locked(copy, from.locked(source));
+    to.set_parent(copy, parent, false);
+    for (u32 slot = 0; slot < from.slot_count(); ++slot) {  // children too (slot order keeps them stable)
+        const Entity child = from.entity_at_slot(slot);
+        if (child.valid() && child != copy && from.parent(child) == source) copy_entity(from, child, to, copy);
+    }
+    return copy;
 }
 
 } // namespace lsd::world
