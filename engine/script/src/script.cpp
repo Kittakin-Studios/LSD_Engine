@@ -527,6 +527,16 @@ struct Api {
         lua_pushstring(L, text);
         return 1;
     }
+    static int ui_follow(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.ui_follow) host.ui_follow(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), live_entity(L, 3), static_cast<f32>(luaL_optnumber(L, 4, 2.0)));
+        return 0;
+    }
+    static int ui_unfollow(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.ui_follow) host.ui_follow(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), world::Entity{}, 0.0f);
+        return 0;
+    }
     static int ui_show_cursor(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.ui_show_cursor) host.ui_show_cursor(host.user, lua_toboolean(L, 1) != 0);
@@ -858,7 +868,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
-        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor},
+        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},

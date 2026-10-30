@@ -398,6 +398,25 @@ void register_console(EditorState& s) {
             LSD_LOG_WARN("editor", "ui.Open: no UI document or style named like '%s'", args);
         }
     }, &s, "Open a UI document (.rml) or style (.rcss) in the UI window");
+    console::add_command("ui.Keys", [](void*, const char* args) {  // tests: "down down enter", 0.8 s later
+        static char keys[128];
+        std::snprintf(keys, sizeof keys, "%s", args);
+        SDL_AddTimer(800, [](void*, SDL_TimerID, Uint32) -> Uint32 {
+            char copy[128];
+            std::snprintf(copy, sizeof copy, "%s", keys);
+            for (char* word = std::strtok(copy, " "); word; word = std::strtok(nullptr, " ")) {
+                const SDL_Keycode k = std::strcmp(word, "down") == 0 ? SDLK_DOWN : std::strcmp(word, "up") == 0 ? SDLK_UP : std::strcmp(word, "enter") == 0 ? SDLK_RETURN : SDLK_UNKNOWN;
+                for (const SDL_EventType type : {SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_UP}) {
+                    SDL_Event e{};
+                    e.type = type;
+                    e.key.key = k;
+                    e.key.down = type == SDL_EVENT_KEY_DOWN;
+                    SDL_PushEvent(&e);
+                }
+            }
+            return 0;
+        }, nullptr);
+    }, &s, "ui.Keys <down|up|enter ...>: keys for the game UI, 0.8 s later (tests)");
     console::add_command("ui.Click", [](void*, const char* args) {  // tests: a real click through SDL's queue
         static float at[2];
         if (std::sscanf(args, "%f %f", &at[0], &at[1]) != 2) return;
@@ -766,7 +785,19 @@ int main(int argc, char** argv) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
-            if (state.playing && !state.ejected && play.ui_cursor()) game_ui->process_event(event);  // a menu has the mouse and keys
+            if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A
+                game_ui->process_event(event);
+                if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                    switch (event.gbutton.button) {
+                        case SDL_GAMEPAD_BUTTON_DPAD_UP: game_ui->navigate(0, -1); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: game_ui->navigate(0, 1); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: game_ui->navigate(-1, 0); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: game_ui->navigate(1, 0); break;
+                        case SDL_GAMEPAD_BUTTON_SOUTH: game_ui->activate(); break;
+                        default: break;
+                    }
+                }
+            }
             switch (event.type) {
                 case SDL_EVENT_QUIT:
                     if (history.dirty() && !state.playing && max_frames < 0) state.quit_requested = true;
@@ -995,6 +1026,7 @@ int main(int argc, char** argv) {
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
             if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
+                play.place_ui_followers(world, view_proj, pixels);
                 game_ui->update(pixels);
                 game_ui->render(*device);
             }

@@ -194,8 +194,8 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 ### UI
 
 - [~] UI designer (RmlUi + QuickJS): `engine/ui` on RmlUi 6 + FreeType drawn by `draw_ui` (D3D12 / OpenGL); `.rml` UI documents and `.rcss` styles in Content (New UI Document with a starter panel), the UI window with the Code tab and a live 1280x720 preview; fonts from Content/Fonts plus the system font as `sans`; in Play `lsd.ui_open` / `ui_close` / `ui_set_text` / `ui_set` / `ui_value` / `ui_show_cursor`, Open UI / Close UI / Set UI Text / Show Mouse Cursor nodes, the Game Mode's HUD (and Show Cursor for menus), on<event>="fn" calls fn(self, element_id) in Lua; needs the drag-and-drop canvas in two-way sync with the code, QuickJS scripting, data bindings, anchors / safe zones, Vulkan [UMG]
-- [ ] Gamepad / keyboard focus navigation (moved up from v2: needed for a menu on a controller) [Common UI]
-- [ ] HUD helpers: health bars, prompts, damage numbers in world space anchored to entities
+- [x] Gamepad / keyboard focus navigation (moved up from v2: needed for a menu on a controller) [Common UI]: arrows / D-pad move the focus (RCSS `nav: auto`), Enter / Space / gamepad A press the focused element, `autofocus` picks the first; the starter document uses it
+- [~] HUD helpers: health bars, prompts, damage numbers in world space anchored to entities: `lsd.ui_follow(doc, id, e, height)` keeps an element over an object (hidden behind the camera), `lsd.ui_unfollow`; needs ready-made health bar / damage number widgets
 
 ### AI
 

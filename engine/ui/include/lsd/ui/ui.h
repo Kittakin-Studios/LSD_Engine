@@ -45,6 +45,12 @@ public:
     bool set_rml(DocumentId document, const char* element_id, const char* rml);
     bool set_attribute(DocumentId document, const char* element_id, const char* name, const char* value);
     bool get_value(DocumentId document, const char* element_id, char* out, usize capacity) const;  // inputs
+    // One style property ("left", "120px"), leaving the element's other styles alone.
+    bool set_property(DocumentId document, const char* element_id, const char* name, const char* value);
+
+    // Gamepad / keyboard menus: move the focus (RCSS nav: auto) and press the focused element.
+    void navigate(i32 dx, i32 dy);
+    void activate();
 
     // `viewport`: x, y, width, height in window pixels (where it is drawn; input is relative to it).
     void update(const f32 viewport[4]);

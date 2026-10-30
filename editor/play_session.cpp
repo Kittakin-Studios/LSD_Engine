@@ -250,6 +250,7 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 void PlaySession::stop() {
     if (ui_) ui_->close_all();
     ui_cursor_ = false;
+    ui_follower_count_ = 0;
     scripts_.stop();
     nav_.clear();
     agent_count_ = 0;
@@ -463,6 +464,26 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return ui && ui->get_value(doc, id, out, capacity);
     };
     host.ui_show_cursor = [](void* user, bool on) { static_cast<PlaySession*>(user)->ui_cursor_ = on; };
+    host.ui_follow = [](void* user, i32 doc, const char* id, world::Entity e, f32 height) {
+        auto& self = *static_cast<PlaySession*>(user);
+        for (u32 i = 0; i < self.ui_follower_count_; ++i) {  // replace (or drop) an existing one
+            UiFollower& f = self.ui_followers_[i];
+            if (f.doc != doc || std::strcmp(f.id, id) != 0) continue;
+            if (e.valid()) {
+                f.entity = e;
+                f.height = height;
+            } else {
+                self.ui_followers_[i] = self.ui_followers_[--self.ui_follower_count_];
+            }
+            return;
+        }
+        if (!e.valid() || self.ui_follower_count_ == sizeof self.ui_followers_ / sizeof self.ui_followers_[0]) return;
+        UiFollower& f = self.ui_followers_[self.ui_follower_count_++];
+        f.doc = doc;
+        std::snprintf(f.id, sizeof f.id, "%s", id);
+        f.entity = e;
+        f.height = height;
+    };
     host.settings = [](void* user, const reflect::TypeInfo** type) -> void* {
         auto& self = *static_cast<PlaySession*>(user);
         *type = &reflect::type_of<GameUserSettings>();
@@ -686,6 +707,33 @@ void PlaySession::start_game_mode(world::World& world) {
         if (ui_->open(path) < 0) LSD_LOG_WARN("play", "Game Mode: could not open the HUD %s", path);
     }
     ui_cursor_ = mode.show_cursor;
+}
+
+void PlaySession::place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]) {
+    if (!ui_) return;
+    for (u32 i = 0; i < ui_follower_count_;) {
+        const UiFollower& f = ui_followers_[i];
+        if (!world.alive(f.entity) || !ui_->is_open(f.doc)) {
+            ui_followers_[i] = ui_followers_[--ui_follower_count_];
+            continue;
+        }
+        const Mat4 m = world.world_matrix(f.entity);
+        const Vec3 p{m.at(0, 3), m.at(1, 3), m.at(2, 3) + f.height};
+        const f32 x = view_proj.at(0, 0) * p.x + view_proj.at(0, 1) * p.y + view_proj.at(0, 2) * p.z + view_proj.at(0, 3);
+        const f32 y = view_proj.at(1, 0) * p.x + view_proj.at(1, 1) * p.y + view_proj.at(1, 2) * p.z + view_proj.at(1, 3);
+        const f32 w = view_proj.at(3, 0) * p.x + view_proj.at(3, 1) * p.y + view_proj.at(3, 2) * p.z + view_proj.at(3, 3);
+        if (w <= 0.05f) {
+            ui_->set_property(f.doc, f.id, "visibility", "hidden");  // behind the camera
+        } else {
+            char left[32], top[32];
+            std::snprintf(left, sizeof left, "%.1fpx", static_cast<f64>((x / w * 0.5f + 0.5f) * viewport[2]));
+            std::snprintf(top, sizeof top, "%.1fpx", static_cast<f64>((0.5f - y / w * 0.5f) * viewport[3]));
+            ui_->set_property(f.doc, f.id, "left", left);
+            ui_->set_property(f.doc, f.id, "top", top);
+            ui_->set_property(f.doc, f.id, "visibility", "visible");
+        }
+        ++i;
+    }
 }
 
 void PlaySession::set_ui(ui::UiContext* ui) {

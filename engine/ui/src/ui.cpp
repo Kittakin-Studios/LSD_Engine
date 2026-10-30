@@ -354,6 +354,34 @@ bool UiContext::get_value(DocumentId d, const char* id, char* out, usize capacit
     return true;
 }
 
+bool UiContext::set_property(DocumentId d, const char* id, const char* name, const char* value) {
+    Rml::Element* e = impl_->element(d, id);
+    if (e) e->SetProperty(name, value);
+    return e != nullptr;
+}
+
+void UiContext::navigate(i32 dx, i32 dy) {
+    if (!impl_->context) return;
+    using namespace Rml::Input;
+    const KeyIdentifier key = dy < 0 ? KI_UP : dy > 0 ? KI_DOWN : dx < 0 ? KI_LEFT : KI_RIGHT;
+    impl_->context->ProcessKeyDown(key, 0);
+    impl_->context->ProcessKeyUp(key, 0);
+}
+
+namespace {
+// Text fields keep Enter and Space for typing.
+bool typing_into(const Rml::Element* e) {
+    if (!e) return false;
+    const Rml::String& tag = e->GetTagName();
+    return tag == "textarea" || tag == "select" || (tag == "input" && e->GetAttribute<Rml::String>("type", "text") == "text");
+}
+} // namespace
+
+void UiContext::activate() {
+    Rml::Element* focus = impl_->context ? impl_->context->GetFocusElement() : nullptr;
+    if (focus && focus->GetTagName() != "body" && !typing_into(focus)) focus->Click();
+}
+
 void UiContext::update(const f32 viewport[4]) {
     if (!impl_->context) return;
     std::memcpy(impl_->viewport, viewport, sizeof impl_->viewport);
@@ -388,7 +416,16 @@ bool UiContext::process_event(const SDL_Event& event) {
             break;
         }
         case SDL_EVENT_MOUSE_WHEEL: passed = c->ProcessMouseWheel(Rml::Vector2f{0.0f, -event.wheel.y}, modifiers()); break;
-        case SDL_EVENT_KEY_DOWN: passed = c->ProcessKeyDown(key_of(event.key.key), modifiers()); break;
+        case SDL_EVENT_KEY_DOWN: {
+            const SDL_Keycode k = event.key.key;
+            const Rml::Element* focus = c->GetFocusElement();
+            if ((k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) && focus && focus->GetTagName() != "body" && !typing_into(focus)) {
+                activate();  // a focused button, as if clicked
+                return true;
+            }
+            passed = c->ProcessKeyDown(key_of(k), modifiers());
+            break;
+        }
         case SDL_EVENT_KEY_UP: passed = c->ProcessKeyUp(key_of(event.key.key), modifiers()); break;
         case SDL_EVENT_TEXT_INPUT: passed = c->ProcessTextInput(Rml::String(event.text.text)); break;
         default: break;

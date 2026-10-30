@@ -39,6 +39,8 @@
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
 //   lsd.ui_value(doc, id) -> text         a text field's value
 //   lsd.ui_show_cursor(on)                a menu: the mouse moves a cursor instead of the player
+//   lsd.ui_follow(doc, id, e [, height])  keeps that element over the object (name tags, health bars);
+//                                         hidden when it is behind the camera; lsd.ui_unfollow(doc, id)
 //   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
 //                          mouse_sensitivity, invert_look}   the player's settings (options menus)
 //   lsd.set_settings({quality = 1, ...})  changes those given, applies and saves them
@@ -96,6 +98,7 @@ struct ScriptHost {
     bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text
     bool (*ui_value)(void* user, i32 doc, const char* id, char* out, usize capacity) = nullptr;
     void (*ui_show_cursor)(void* user, bool on) = nullptr;
+    void (*ui_follow)(void* user, i32 doc, const char* id, world::Entity e, f32 height) = nullptr;  // e invalid: stop
     // The player's settings: a reflected struct, and a call after Lua changed it.
     void* (*settings)(void* user, const reflect::TypeInfo** type) = nullptr;
     void (*settings_changed)(void* user) = nullptr;

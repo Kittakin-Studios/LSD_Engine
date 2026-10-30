@@ -54,6 +54,8 @@ public:
     // The player's settings Lua reads and changes; `changed` tells main.cpp to apply and save them.
     void set_user_settings(GameUserSettings* settings) { user_settings_ = settings; }
     bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
+    // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
+    void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
     // the graph window's live debugging.
     u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;
@@ -109,6 +111,14 @@ private:
     AnimationPlayer* animations_ = nullptr;
     ui::UiContext* ui_ = nullptr;
     GameUserSettings* user_settings_ = nullptr;
+    struct UiFollower {
+        i32 doc;
+        char id[64];
+        world::Entity entity;
+        f32 height;
+    };
+    UiFollower ui_followers_[128];
+    u32 ui_follower_count_ = 0;
     bool settings_changed_ = false;
     bool ui_cursor_ = false;
     // Nav Agents walking on the navmesh.

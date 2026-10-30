@@ -29,8 +29,9 @@ div { display: block; }
          color: #FFE51A; font-size: 26px; }
 #title { font-size: 38px; font-weight: bold; color: #ffffff; margin-bottom: 8px; }
 button { display: block; margin-top: 14px; padding: 8px 20px; background-color: #025291;
-         color: #ffffff; font-size: 22px; border-radius: 6px; text-align: center; }
-button:hover { background-color: #EEA70E; }
+         color: #ffffff; font-size: 22px; border-radius: 6px; text-align: center;
+         nav: auto; tab-index: auto; focus: auto; }   /* arrows / D-pad move between buttons */
+button:hover, button:focus { background-color: #EEA70E; }
 </style>
 </head>
 <body>
@@ -38,7 +39,8 @@ button:hover { background-color: #EEA70E; }
   <div id="title">Title</div>
   Score: <span id="score">0</span>
   <!-- onclick calls a Lua function of that name on every script that has one -->
-  <button id="play" onclick="start_game">Play</button>
+  <button id="play" onclick="start_game" autofocus>Play</button>
+  <button id="quit" onclick="quit_game">Quit</button>
 </div>
 </body>
 </rml>
