@@ -111,10 +111,10 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 - [~] Lua scripting (LuaJIT, `engine/script`): Script component, on_start / on_update per object with its own `self`, `lsd` API (log, find, position / rotation, tags, input, time, destroy), hot reload on save while playing, errors with stack in the Output Log, New Lua Script + double-click to edit, `lua` console command; any component from Lua through reflection (`lsd.get` / `set` / `add` / `remove` / `has`), timers (`lsd.after` / `every` / `cancel`), overlap events from Trigger Volumes; `on_hit` from physics contacts, `lsd.spawn`, `lsd.raycast`; needs sandboxing
 - [ ] Lua debugger in the editor: breakpoints, step, watch, call stack **(S)**
-- [ ] Visual scripting: events, variables, functions, macros, flow control, calls into C++/Lua [Blueprints]
+- [~] Visual scripting (`.lsdgraph`, `engine/script/graph.h`, editor/graph_editor): Blueprint-style canvas (nodes, exec + typed data wires, typed pin values, node menu with search, pan), compiled to Lua so it shares events, timers, hot reload and errors with Lua scripts; ~45 nodes (events, Branch, Sequence, Delay, Do Once, Set Timer, transform, spawn / destroy, colour, tags, input, variables, math); needs functions, macros, local variables of any type, reroute nodes, comments, zoom, copy / paste, undo inside the graph [Blueprints]
 - [ ] Level script: a visual-script graph owned by the level for one-off events **(S)** [Level Blueprint]
 - [ ] Visual-script debugging: breakpoints, live wire flow, watch values [Blueprint Debugger]
-- [ ] Custom visual-script nodes declared from C++ (`LSD_FUNCTION`) and from Lua
+- [ ] Custom visual-script nodes declared from C++ (`LSD_FUNCTION`) and from Lua (today: the node table in engine/script/src/graph.cpp)
 - [~] Game rules framework: Game Mode data asset picked in World Settings (player prefab spawned at the Player Start, game script on a GameMode object); needs Player Controller, Player State, Game Instance, subsystems
 - [ ] Timers, event dispatchers, interfaces, latent actions (Delay)
 

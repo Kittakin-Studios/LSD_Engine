@@ -83,7 +83,8 @@ engine/world/       entities (generational handles), packed component pools per 
                     hierarchy, built-in components (Transform, StaticMesh, PlayerStart), .lsdlevel text files
 engine/input/       Input Action / Mapping Context data assets and the InputSystem (keys, mouse, gamepad)
 engine/physics/     Jolt behind a small API: bodies (box/sphere/capsule) and the player's CharacterVirtual
-engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload
+engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload;
+                    graph.h: visual-script graphs and their compiler to Lua
 engine/audio, ui    placeholders
 editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
                     camera), Outliner, Details (components), Content Browser + Place, undo history
@@ -139,7 +140,9 @@ built from source by third_party/CMakeLists.txt with its own minilua/buildvm too
 component through reflection (`lsd.get/set/add`), has timers, and gets overlap events from Trigger
 Volumes. Lua can spawn
 (`lsd.spawn`), raycast and gets `on_hit`; Game Mode data asset in World Settings; third-person spring
-arm on the Character (`camera_distance`). Next: visual scripting, Player Controller, constraints.
+arm on the Character (`camera_distance`). Visual scripting:
+`.lsdgraph` node graphs edited in the Visual Script window, compiled to Lua (Saved/Graphs/<guid>.lua)
+and run by the Script component like any Lua file. Next: Player Controller, constraints, splines.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

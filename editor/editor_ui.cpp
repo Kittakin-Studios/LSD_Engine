@@ -1,4 +1,5 @@
 #include "editor_ui.h"
+#include "graph_editor.h"
 
 #include "mesh_cache.h"
 #include "thumbnails.h"
@@ -1182,7 +1183,7 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
-    if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script;
+    if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
 
@@ -1795,7 +1796,7 @@ void draw_asset_grid(EditorState& s) {
     ImGui::InputTextWithHint("##search", "Search assets", s.search, sizeof s.search);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0");
+    ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0Visual Scripts\0");
     ImGui::SameLine();
     ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
@@ -1804,7 +1805,8 @@ void draw_asset_grid(EditorState& s) {
     static usize hits[1024];
     const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : s.type_filter == 2 ? asset::AssetType::Level
                                 : s.type_filter == 3 ? asset::AssetType::Data : s.type_filter == 4 ? asset::AssetType::Prefab
-                                : s.type_filter == 5 ? asset::AssetType::Script : asset::AssetType::Unknown;
+                                : s.type_filter == 5 ? asset::AssetType::Script
+                                : s.type_filter == 6 ? asset::AssetType::Graph : asset::AssetType::Unknown;
     const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
@@ -1837,6 +1839,16 @@ void draw_asset_grid(EditorState& s) {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem("New Visual Script")) {
+            const std::string path = create_graph_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "NewVisualScript");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
+        ImGui::SetItemTooltip("A node graph (like a Blueprint event graph); double-click to edit, pick it in a Script component");
         if (ImGui::MenuItem("New Lua Script")) create_script(s);
         ImGui::SetItemTooltip("A .lua file with on_start / on_update; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
@@ -1912,6 +1924,7 @@ void draw_asset_grid(EditorState& s) {
                 request_open(s, path);
             }
             if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
+            if (r.type == asset::AssetType::Graph && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_graph(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
             if (level && ImGui::MenuItem("Open Level")) {
@@ -1920,6 +1933,7 @@ void draw_asset_grid(EditorState& s) {
                 request_open(s, path);
             }
             if (r.type == asset::AssetType::Script && ImGui::MenuItem("Edit Script")) open_external(s, r);
+            if (r.type == asset::AssetType::Graph && ImGui::MenuItem("Edit Visual Script")) open_graph(s, r);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem("Delete...")) {
                 s.delete_asset = r.guid;
@@ -2560,6 +2574,7 @@ void draw_editor(EditorState& s) {
     draw_message_log(s);
     draw_project_settings(s);
     draw_level_dialogs(s);
+    draw_graph_editor(s);
     handle_shortcuts(s);
 
     // The central node is left empty and transparent: the 3D viewport shows through it.

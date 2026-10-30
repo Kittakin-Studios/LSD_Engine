@@ -1,5 +1,6 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
+#include "graph_editor.h"
 #include "mesh_cache.h"
 #include "play_session.h"
 #include "thumbnails.h"
@@ -136,6 +137,12 @@ void register_console(EditorState& s) {
     console::add_command("asset.Select", [](void* user, const char* args) {
         if (!lsd::editor::select_asset(*static_cast<EditorState*>(user), args)) LSD_LOG_WARN("console", "asset.Select: no asset named like '%s'", args);
     }, &s, "asset.Select <name>: select an asset and show it in Details");
+    console::add_command("graph.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hit = 0;
+        if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1) lsd::editor::open_graph(st, st.registry->get(hit));
+        else LSD_LOG_WARN("editor", "graph.Open: no visual script named like '%s'", args);
+    }, &s, "Open a visual script in the graph editor");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"lit", "unlit", "wireframe"};

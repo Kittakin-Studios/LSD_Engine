@@ -1,5 +1,6 @@
 ﻿// Script tests: a Lua file moves its object, finds others, reads tags and input, survives errors
 // and reloads when the file changes.
+#include "lsd/script/graph.h"
 #include "lsd/script/script.h"
 
 #include <cmath>
@@ -15,6 +16,7 @@ using namespace lsd::world;
 
 static const char kMover[] = LSD_TEST_TEMP_DIR "/mover.lua";
 static const char kBroken[] = LSD_TEST_TEMP_DIR "/broken.lua";
+static const char kGraphLua[] = LSD_TEST_TEMP_DIR "/graph.lua";
 
 static void write(const char* path, const char* text) {
     FILE* f = std::fopen(path, "wb");
@@ -23,7 +25,7 @@ static void write(const char* path, const char* text) {
 }
 
 static bool path_of(void*, const char* guid, char* out, usize capacity) {
-    std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : kBroken);
+    std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : std::strcmp(guid, "graph") == 0 ? kGraphLua : kBroken);
     return true;
 }
 
@@ -45,7 +47,91 @@ static bool raycast(void*, Vec3 origin, Vec3, f32, Entity& hit, Vec3& point, Vec
     return origin.z > 0;
 }
 
+// A visual script: Start moves the object; Update spins it while it is tagged Enemy, else prints its name.
+static void test_graph() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 set = g.add("SetPosition", 200, 0)->id;
+    const u32 make = g.add("MakeVector", 0, 100)->id;
+    std::snprintf(g.find(make)->values[0], 64, "1");
+    std::snprintf(g.find(make)->values[1], 64, "2.5");
+    std::snprintf(g.find(make)->values[2], 64, "oops");  // not a number: 0
+    CHECK(g.connect(start, 0, set, 0));
+    CHECK(g.connect(make, 0, set, 2));
+    CHECK(!g.connect(make, 0, set, 1));  // a Vector is not an object
+    CHECK(!g.connect(start, 0, set, 2)); // exec into data
+
+    const u32 update = g.add("OnUpdate", 0, 300)->id;
+    const u32 branch = g.add("Branch", 200, 300)->id;
+    const u32 tag = g.add("HasTag", 0, 400)->id;
+    const u32 spin = g.add("AddRotation", 400, 300)->id;
+    const u32 scale = g.add("VectorScale", 200, 450)->id;
+    const u32 print = g.add("PrintString", 400, 450)->id;
+    const u32 name = g.add("GetName", 200, 550)->id;
+    CHECK(g.connect(update, 0, branch, 0) && g.connect(tag, 0, branch, 1));
+    CHECK(g.connect(branch, 0, spin, 0) && g.connect(branch, 1, print, 0));
+    std::snprintf(g.find(scale)->values[0], 64, "0, 0, 90");
+    CHECK(g.connect(update, 1, scale, 1) && g.connect(scale, 0, spin, 2));  // 90 deg/s * dt
+    CHECK(g.connect(name, 0, print, 1));
+    const u32 every = g.add("SetTimer", 600, 0)->id;  // Start then: a timer counting into a variable
+    const u32 add = g.add("Add", 600, 100)->id;
+    const u32 get = g.add("GetVariable", 400, 100)->id;
+    const u32 store = g.add("SetVariable", 800, 0)->id;
+    std::snprintf(g.find(every)->values[1], 64, "0.5");
+    std::snprintf(g.find(add)->values[1], 64, "1");
+    std::snprintf(g.find(get)->values[0], 64, "ticks");
+    std::snprintf(g.find(store)->values[1], 64, "ticks");
+    CHECK(g.connect(set, 0, every, 0) && g.connect(every, 1, store, 0) && g.connect(get, 0, add, 0) && g.connect(add, 0, store, 2));
+
+    // Save, load, save again: same text.
+    Array<char> text(default_allocator()), again(default_allocator());
+    save_graph(g, text);
+    Graph loaded(default_allocator());
+    CHECK(load_graph(loaded, text.data(), text.size()));
+    save_graph(loaded, again);
+    CHECK(text.size() == again.size() && std::memcmp(text.data(), again.data(), text.size()) == 0);
+    CHECK(loaded.nodes.size() == g.nodes.size() && loaded.links.size() == g.links.size() && loaded.next_id == g.next_id);
+
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(loaded, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+
+    HeapAllocator heap("graph");
+    {
+        World w(heap);
+        const Entity e = w.create("Drone");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "graph");
+        std::snprintf(w.add<Tags>(e)->tags, sizeof(Tags::tags), "Enemy");
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        CHECK(scripts.error_count() == 0);
+        const Vec3 p = w.get<Transform>(e)->position;
+        CHECK(p.x == 1.0f && p.y == 2.5f && p.z == 0.0f);
+        for (int i = 0; i < 10; ++i) scripts.update(0.1f);
+        CHECK(std::fabs(w.get<Transform>(e)->rotation.z - 90.0f) < 0.01f);  // 1 s at 90 deg/s
+        CHECK(scripts.run("assert(true)"));
+        w.get<Tags>(e)->tags[0] = '\0';  // not an Enemy: prints instead of spinning
+        scripts.update(0.1f);
+        CHECK(std::fabs(w.get<Transform>(e)->rotation.z - 90.0f) < 0.01f && scripts.error_count() == 0);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+
+    // Problems are reported with the node.
+    const u32 a = g.add("Sequence", 0, 700)->id, b = g.add("Sequence", 200, 700)->id;
+    CHECK(g.connect(a, 0, b, 0) && g.connect(b, 0, a, 0) && g.connect(start, 0, a, 0));
+    CHECK(!compile_graph(g, lua, error, sizeof error) && std::strstr(error, "loop"));
+    g.remove(a);
+    CHECK(g.link_into(b, 0) == nullptr);
+    g.add("OnStart", 0, 900);
+    CHECK(!compile_graph(g, lua, error, sizeof error) && std::strstr(error, "twice"));
+}
+
 int main() {
+    test_graph();
     write(kMover, R"(
 function on_start(self)
   self.target = lsd.find("Target")

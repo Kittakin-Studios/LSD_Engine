@@ -1,5 +1,7 @@
 #include "play_session.h"
 
+#include "graph_editor.h"
+
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/prefab.h"
@@ -100,6 +102,7 @@ bool PlaySession::script_path(void* user, const char* guid_text, char* out, usiz
     const auto& registry = *static_cast<const asset::AssetRegistry*>(user);
     asset::Guid guid;
     const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
+    if (r && r->type == asset::AssetType::Graph) return graph_lua(registry, *r, out, capacity);  // visual scripts run as compiled Lua
     if (!r || r->type != asset::AssetType::Script) return false;
     registry.source_path(*r, out, capacity);
     return true;
