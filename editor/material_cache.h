@@ -48,11 +48,14 @@ public:
 private:
     struct Entry {
         char guid[33];
-        render::Material material;
+        render::Material material;  // an instance's parent with its overrides applied
         i64 modified;
+        char parent[33];             // instances: the parent material, reloaded when it changes
+        i64 parent_modified;
         bool failed;
     };
     Entry* find(const char* guid);
+    void load(Entry& entry);
 
     TextureCache& textures_;
     const asset::AssetRegistry& registry_;

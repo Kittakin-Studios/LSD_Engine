@@ -3,6 +3,7 @@
 #include "graph_editor.h"
 #include "table_editor.h"
 #include "mesh_cache.h"
+#include "lighting.h"
 #include "material_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
@@ -71,6 +72,7 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::Vec3 eye, lsd::world::World& world, lsd::editor::MeshCache& meshes,
                 lsd::editor::MaterialCache& materials, EditorState& stats) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
+    device.set_lights(lsd::editor::world_lights(world, eye, !stats.playing || stats.ejected));
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
@@ -366,6 +368,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundAttenuation>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundConcurrency>());

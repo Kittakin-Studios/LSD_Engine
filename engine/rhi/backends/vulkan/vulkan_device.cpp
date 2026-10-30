@@ -203,6 +203,7 @@ public:
     void destroy_texture(TextureHandle) override {}
     void set_render_target(TextureHandle, const f32*) override {}
     u64 debug_ui_texture(TextureHandle) override { return 0; }
+    void set_lights(const LightSetup&) override {}
     void draw_mesh(const MeshDraw&) override {}
     void draw_lines(BufferHandle, u32, const f32*) override {}
 

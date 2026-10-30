@@ -30,7 +30,9 @@ constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use
 constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
-constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 3 texture tables: 55 of 64 DWORDs)
+constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 3 texture tables + lights CBV: 57 of 64 DWORDs)
+constexpr u32 kLightSlot = 1280;     // LightSetup rounded up to the 256-byte CBV alignment
+constexpr u32 kLightSlots = 64;      // set_lights calls per frame before the ring wraps
 
 // shortcut: runtime HLSL compile via d3dcompiler_47 (ships with Windows); move to DXC + the data
 // compiler once shaders become assets.
@@ -54,12 +56,13 @@ float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 // Lit mesh, physically based (metal / roughness, GGX): one sun plus sky / ground ambient. Constants
 // match rhi::MeshDraw; n0.w carries the unlit flag, n1.w "has a normal map". Output is encoded to
 // sRGB by hand (the swapchain is UNORM so the UI keeps its exact colours).
-// shortcut: the sun and sky are fixed here until light components arrive (milestone 5 lighting).
 constexpr char kMeshHlsl[] = R"(
 cbuffer Draw : register(b0) {
     float4x4 mvp; float4 n0; float4 n1; float4 n2; float4 w0; float4 w1; float4 w2;
     float4 color; float4 mat0; float4 mat1;  // mat0: metallic, roughness, emissive.rg; mat1: emissive.b, camera.xyz
 };
+struct Light { float4 pos_type; float4 dir_range; float4 color_inner; float4 spot; };
+cbuffer Lights : register(b1) { float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16]; };
 Texture2D base_tex : register(t0);
 Texture2D normal_tex : register(t1);
 Texture2D orm_tex : register(t2);
@@ -96,23 +99,42 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
     const float ao = orm.r;
     const float3 v = normalize(mat1.yzw - i.wpos);
-    const float3 l = normalize(float3(-0.5, -0.35, 0.8));
-    const float3 h = normalize(v + l);
-    const float ndl = saturate(dot(n, l)), ndv = max(dot(n, v), 1e-4), ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
+    const float ndv = max(dot(n, v), 1e-4);
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
     const float a2 = roughness * roughness * roughness * roughness;
-    const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
     const float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    const float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
-    const float3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-    const float3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
-    const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
-    const float3 sun = float3(1.0, 0.96, 0.9) * 2.8;
-    const float3 sky = lerp(float3(0.16, 0.15, 0.14), float3(0.30, 0.36, 0.45), n.z * 0.5 + 0.5);
+    float3 lit = 0;
+    for (uint li = 0; li < light_count; ++li) {
+        const Light L = lights[li];
+        float3 l;
+        float atten = 1.0;
+        if (L.pos_type.w < 0.5) {
+            l = -L.dir_range.xyz;
+        } else {
+            const float3 to = L.pos_type.xyz - i.wpos;
+            const float dist2 = max(dot(to, to), 1e-4);
+            l = to * rsqrt(dist2);
+            const float r = dist2 / (L.dir_range.w * L.dir_range.w);  // smooth window to zero at the range (Karis)
+            const float window = saturate(1.0 - r * r);
+            atten = window * window / dist2;
+            if (L.pos_type.w > 1.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
+        }
+        const float ndl = saturate(dot(n, l));
+        if (ndl <= 0.0 || atten <= 0.0) continue;
+        const float3 h = normalize(v + l);
+        const float ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
+        const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
+        const float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+        const float3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+        const float3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+        const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
+        lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
+    }
+    const float3 sky = lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
-    const float3 ambient = (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
-    const float3 lit = (diffuse + specular) * sun * ndl + ambient + float3(mat0.zw, mat1.x);
-    return float4(to_srgb(lit), base.a);
+    lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
+    lit += float3(mat0.zw, mat1.x);
+    return float4(to_srgb(lit * exposure), base.a);
 }
 )";
 
@@ -531,6 +553,7 @@ public:
         list_->SetGraphicsRootDescriptorTable(1, (base ? base : &textures_[white_])->srv_gpu);
         list_->SetGraphicsRootDescriptorTable(2, (normal ? normal : &textures_[flat_normal_])->srv_gpu);
         list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
+        list_->SetGraphicsRootConstantBufferView(4, current_lights_);
         list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
@@ -538,6 +561,14 @@ public:
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->IASetIndexBuffer(&ibv);
         list_->DrawIndexedInstanced(draw.index_count, 1, 0, 0, 0);
+    }
+
+    void set_lights(const LightSetup& lights) override {
+        // Each call takes the next slot of this frame's buffer, so earlier draws keep their lights.
+        if (light_offset_ + kLightSlot > kLightSlot * kLightSlots) light_offset_ = 0;
+        std::memcpy(light_mapped_[frame_] + light_offset_, &lights, sizeof lights);
+        current_lights_ = light_buffers_[frame_]->GetGPUVirtualAddress() + light_offset_;
+        light_offset_ += kLightSlot;
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -568,6 +599,8 @@ public:
         const D3D12_RECT scissor{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
         list_->RSSetViewports(1, &viewport);
         list_->RSSetScissorRects(1, &scissor);
+        light_offset_ = 0;
+        set_lights(default_lights());
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
@@ -777,7 +810,10 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[4]{};
+        D3D12_ROOT_PARAMETER params[5]{};
+        params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b1: lights
+        params[4].Descriptor.ShaderRegister = 1;
+        params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         params[0].Constants.Num32BitValues = kRootConstants;
         params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -798,7 +834,7 @@ private:
         sampler.MaxLOD = D3D12_FLOAT32_MAX;
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 4;
+        rs_desc.NumParameters = 5;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 1;
         rs_desc.pStaticSamplers = &sampler;
@@ -806,6 +842,23 @@ private:
         ComPtr<ID3DBlob> rs_blob, error;
         if (!check(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &error), "D3D12SerializeRootSignature")) return false;
         if (!check(device_->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(), IID_PPV_ARGS(&root_signature_)), "CreateRootSignature")) return false;
+        // Light buffers: one persistently mapped upload buffer per frame in flight.
+        for (u32 i = 0; i < kBackBufferCount; ++i) {
+            D3D12_HEAP_PROPERTIES heap{};
+            heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            desc.Width = kLightSlot * kLightSlots;
+            desc.Height = 1;
+            desc.DepthOrArraySize = 1;
+            desc.MipLevels = 1;
+            desc.SampleDesc.Count = 1;
+            desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                        IID_PPV_ARGS(&light_buffers_[i])), "CreateCommittedResource (lights)")) return false;
+            const D3D12_RANGE no_read{0, 0};
+            light_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&light_mapped_[i]));
+        }
 
         static const D3D12_INPUT_ELEMENT_DESC mesh_layout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -923,6 +976,10 @@ private:
     Target targets_[kMaxTargets];
     Texture textures_[kMaxTextures];
     u32 white_ = 0, flat_normal_ = 0;  // default textures (slots in textures_)
+    ComPtr<ID3D12Resource> light_buffers_[kBackBufferCount];
+    u8* light_mapped_[kBackBufferCount] = {};
+    u32 light_offset_ = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS current_lights_ = 0;
     ComPtr<ID3D12CommandAllocator> upload_allocator_;
     ComPtr<ID3D12GraphicsCommandList> upload_list_;
     i32 current_target_ = -1;  // slot being rendered to, -1 = the window

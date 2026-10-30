@@ -77,6 +77,34 @@ struct MeshDraw {
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
 };
 
+// Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
+// colour = linear colour x intensity (lux for directional; candela, i.e. lumens / 4 pi, for point
+// and spot). The shader multiplies everything by `exposure` and encodes to sRGB.
+enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2 };
+constexpr u32 kMaxLights = 16;
+struct GpuLight {
+    f32 position[3];
+    f32 type;          // LightType as a float (the shader reads it from a float4)
+    f32 direction[3];  // where the light travels (directional, spot)
+    f32 range;         // point / spot: no light beyond this (smooth falloff)
+    f32 color[3];
+    f32 spot_inner_cos;
+    f32 spot_outer_cos;
+    f32 pad[3];
+};
+struct LightSetup {
+    f32 exposure = 1.0f;
+    u32 count = 0;
+    f32 pad0[2] = {};
+    f32 sky[4] = {0.30f, 0.36f, 0.45f, 0.0f};    // ambient from above (radiance, before exposure)
+    f32 ground[4] = {0.16f, 0.15f, 0.14f, 0.0f}; // ambient from below
+    GpuLight lights[kMaxLights] = {};
+};
+static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64, "matches the shader's light buffer");
+
+// The look before any light is placed (and of thumbnails): one sun, sky and ground ambient.
+LightSetup default_lights();
+
 struct DeviceDesc {
     Backend backend = Backend::Auto;
     i32 adapter_override = -1;  // -1 = pick automatically (-gpu=<index> on the command line)
@@ -116,6 +144,9 @@ public:
     virtual void set_render_target(TextureHandle target, const f32 clear_color[4]) = 0;
     // Pixel rectangle that following draws render into (default: the whole window each frame).
     virtual void set_viewport(f32 x, f32 y, f32 width, f32 height) = 0;
+    // Lights for the following draw_mesh calls (until the next set_lights; begin_frame resets to
+    // default_lights()). Call between begin_frame and end_frame.
+    virtual void set_lights(const LightSetup& lights) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;

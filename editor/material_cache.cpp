@@ -87,10 +87,31 @@ MaterialCache::Entry* MaterialCache::find(const char* guid) {
     Entry& e = entries_[count_++];
     e = Entry{};
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);
-    char path[300];
-    e.failed = !path_of(registry_, guid, path, sizeof path) || !asset::load_data_asset(path, e.material);
-    e.modified = e.failed ? 0 : file_time(path);
+    load(e);
     return &e;
+}
+
+void MaterialCache::load(Entry& e) {
+    e.material = render::Material{};
+    e.parent[0] = '\0';
+    e.parent_modified = 0;
+    char path[300], type[32] = "";
+    e.failed = !path_of(registry_, e.guid, path, sizeof path) || !asset::read_data_asset_type(path, type, sizeof type);
+    e.modified = e.failed ? 0 : file_time(path);
+    if (e.failed) return;
+    if (std::strcmp(type, "MaterialInstance") == 0) {
+        render::MaterialInstance instance;
+        char parent_path[300];
+        render::Material parent;
+        e.failed = !asset::load_data_asset(path, instance) || !path_of(registry_, instance.parent, parent_path, sizeof parent_path) ||
+                   !asset::load_data_asset(parent_path, parent);
+        if (e.failed) return;
+        std::snprintf(e.parent, sizeof e.parent, "%s", instance.parent);
+        e.parent_modified = file_time(parent_path);
+        e.material = render::resolve(parent, instance);
+        return;
+    }
+    e.failed = !asset::load_data_asset(path, e.material);
 }
 
 void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
@@ -114,11 +135,10 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
 void MaterialCache::check_files() {
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];
-        char path[300];
-        if (!path_of(registry_, e.guid, path, sizeof path) || file_time(path) == e.modified) continue;
-        e.material = render::Material{};
-        e.failed = !asset::load_data_asset(path, e.material);
-        e.modified = file_time(path);
+        char path[300], parent_path[300];
+        if (!path_of(registry_, e.guid, path, sizeof path)) continue;
+        const bool parent_changed = e.parent[0] && path_of(registry_, e.parent, parent_path, sizeof parent_path) && file_time(parent_path) != e.parent_modified;
+        if (file_time(path) != e.modified || parent_changed) load(e);
     }
 }
 

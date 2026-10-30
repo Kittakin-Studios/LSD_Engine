@@ -193,12 +193,59 @@ struct PrefabInstance {
     LSD_PROPERTY(Save) List<PrefabOverride, 32> overrides;
 };
 
+// ---- Lights (physical units, like Unreal). Each points along its object's forward axis (+X). ----
+
+// The sun (Unreal's Directional Light): parallel light from far away.
+LSD_STRUCT(Component, Category = "Lights")
+struct DirectionalLight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "lux", Min = 0, Tooltip = "Light on a surface facing it (10 = Unreal's default sun)") f32 intensity = 10.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Use the colour temperature instead of the colour") bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "1900 candle, 3200 tungsten, 5500 noon sun, 6500 overcast") f32 temperature = 6500.0f;
+};
+
+// A bulb (Unreal's Point Light): shines in every direction.
+LSD_STRUCT(Component, Category = "Lights")
+struct PointLight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "lm", Min = 0, Tooltip = "Total light: 800 is a household bulb") f32 intensity = 1000.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 10.0f;
+    LSD_PROPERTY(Edit) bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000) f32 temperature = 3200.0f;
+};
+
+// A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
+LSD_STRUCT(Component, Category = "Lights")
+struct SpotLight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "lm", Min = 0) f32 intensity = 1000.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01) f32 attenuation_radius = 10.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Full brightness inside this angle from the centre") f32 inner_angle = 20.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 1, Max = 89, Tooltip = "No light outside this angle from the centre") f32 outer_angle = 35.0f;
+    LSD_PROPERTY(Edit) bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000) f32 temperature = 3200.0f;
+};
+
+// Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).
+LSD_STRUCT(Component, Category = "Lights")
+struct SkyLight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) LinearColor sky_color = LinearColor::hex(0x4D5C73);
+    LSD_PROPERTY(Edit) LinearColor ground_color = LinearColor::hex(0x292624);
+    LSD_PROPERTY(Edit, Min = 0, Max = 20, Tooltip = "1 = the editor's default ambient") f32 intensity = 1.0f;
+};
+
 // Per-level settings (Unreal's World Settings), saved in the level file.
 LSD_STRUCT(Category = "World")
 struct WorldSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "m", Tooltip = "Falling below this height respawns the player") f32 kill_z = -50.0f;
     LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 gravity = 9.81f;
+    LSD_PROPERTY(Edit, Min = -10, Max = 20, Tooltip = "Fixed camera exposure (EV100) once the level has lights: higher is darker. 1.5 suits the default 10 lux sun; a 100000 lux real sun wants about 15")
+    f32 exposure_ev100 = 1.5f;
     LSD_PROPERTY(Edit, Widget = "Asset:GameMode", Tooltip = "Rules for Play: player prefab and game script") char game_mode[33] = "";
 };
 

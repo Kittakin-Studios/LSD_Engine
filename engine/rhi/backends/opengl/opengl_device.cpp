@@ -65,6 +65,8 @@ constexpr char kMeshFragmentShader[] = R"(#version 460 core
 uniform vec4 u_color;
 uniform vec4 u_mat[2];   // metallic, roughness, emissive.rg | emissive.b, camera.xyz
 uniform vec2 u_flags;    // unlit, has normal map
+struct Light { vec4 pos_type; vec4 dir_range; vec4 color_inner; vec4 spot; };
+layout(std140, binding = 1) uniform Lights { float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16]; };
 layout(binding = 0) uniform sampler2D base_tex;
 layout(binding = 1) uniform sampler2D normal_tex;
 layout(binding = 2) uniform sampler2D orm_tex;
@@ -93,23 +95,42 @@ void main() {
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
     vec3 v = normalize(u_mat[1].yzw - v_wpos);
-    vec3 l = normalize(vec3(-0.5, -0.35, 0.8));
-    vec3 h = normalize(v + l);
-    float ndl = clamp(dot(n, l), 0.0, 1.0), ndv = max(dot(n, v), 1e-4), ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
+    float ndv = max(dot(n, v), 1e-4);
     vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
     float a2 = roughness * roughness * roughness * roughness;
-    float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
     float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
-    vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-    vec3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
-    vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
-    vec3 sun = vec3(1.0, 0.96, 0.9) * 2.8;
-    vec3 sky = mix(vec3(0.16, 0.15, 0.14), vec3(0.30, 0.36, 0.45), n.z * 0.5 + 0.5);
+    vec3 lit = vec3(0.0);
+    for (uint li = 0u; li < light_count; ++li) {
+        Light L = lights[li];
+        vec3 l;
+        float atten = 1.0;
+        if (L.pos_type.w < 0.5) {
+            l = -L.dir_range.xyz;
+        } else {
+            vec3 to = L.pos_type.xyz - v_wpos;
+            float dist2 = max(dot(to, to), 1e-4);
+            l = to * inversesqrt(dist2);
+            float r = dist2 / (L.dir_range.w * L.dir_range.w);
+            float window = clamp(1.0 - r * r, 0.0, 1.0);
+            atten = window * window / dist2;
+            if (L.pos_type.w > 1.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+        }
+        float ndl = clamp(dot(n, l), 0.0, 1.0);
+        if (ndl <= 0.0 || atten <= 0.0) continue;
+        vec3 h = normalize(v + l);
+        float ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
+        float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
+        float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+        vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+        vec3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+        vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
+        lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
+    }
+    vec3 sky = mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
-    vec3 ambient = (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
-    vec3 lit = (diffuse + specular) * sun * ndl + ambient + vec3(u_mat[0].zw, u_mat[1].x);
-    o_color = vec4(to_srgb(lit), base.a);
+    lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
+    lit += vec3(u_mat[0].zw, u_mat[1].x);
+    o_color = vec4(to_srgb(lit * exposure), base.a);
 }
 )";
 
@@ -187,7 +208,9 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLTEXTURESUBIMAGE2DPROC, glTextureSubImage2D)              \
     X(PFNGLBINDTEXTUREUNITPROC, glBindTextureUnit)                  \
     X(PFNGLUNIFORM2FPROC, glUniform2f)                              \
-    X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)
+    X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)              \
+    X(PFNGLNAMEDBUFFERSUBDATAPROC, glNamedBufferSubData)            \
+    X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -352,6 +375,7 @@ public:
         glDepthMask(GL_TRUE);
         glClearDepth(1.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        set_lights(default_lights());
     }
 
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
@@ -478,6 +502,11 @@ public:
         gl_.glBindVertexArray(mesh_vao_);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
+
+    void set_lights(const LightSetup& lights) override {
+        gl_.glNamedBufferSubData(light_ubo_, 0, sizeof lights, &lights);  // GL keeps earlier draws' data
+        gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 1, light_ubo_);
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -652,6 +681,9 @@ private:
         const void* flat_mip[1] = {&flat};
         white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
         flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
+        gl_.glCreateBuffers(1, &light_ubo_);
+        const LightSetup defaults = default_lights();
+        gl_.glNamedBufferStorage(light_ubo_, sizeof defaults, &defaults, GL_DYNAMIC_STORAGE_BIT);
         line_mvp_ = gl_.glGetUniformLocation(line_program_, "u_mvp");
 
         gl_.glCreateVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
@@ -686,6 +718,7 @@ private:
     Target targets_[kMaxTargets];
     Texture textures_[kMaxTextures];
     u32 white_ = 0, flat_normal_ = 0;  // default textures (slots in textures_)
+    GLuint light_ubo_ = 0;
     u32 target_height_ = 0;  // height of what is being drawn to, for set_viewport's Y flip
     GLint params_location_ = -1;
     u32 width_ = 0;

@@ -1,5 +1,6 @@
 #include "editor_ui.h"
 #include "graph_editor.h"
+#include "lighting.h"
 #include "material_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
@@ -61,7 +62,8 @@ struct PlaceItem {
 constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
-    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Audio Volume", nullptr, "AudioVolume"}, {"Empty", nullptr, nullptr},
+    {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Audio Volume", nullptr, "AudioVolume"},
+    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Empty", nullptr, nullptr},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
@@ -222,12 +224,20 @@ Entity place(EditorState& s, const char* name, const char* mesh, const char* com
     if (mesh) std::snprintf(s.world->add<world::StaticMesh>(e)->mesh, sizeof(world::StaticMesh::mesh), "%s", mesh);
     if (const reflect::TypeInfo* type = component ? world::find_component_type(component) : nullptr) s.world->add(e, *type);
     if (is_volume(*s.world, e)) s.world->get<world::Transform>(e)->scale = {4, 4, 3};  // a useful size to start
+    if (s.world->get<world::DirectionalLight>(e)) s.world->get<world::Transform>(e)->rotation = {0, 50, 30};  // aimed down at the scene
+    if (s.world->get<world::SpotLight>(e)) {
+        s.world->get<world::Transform>(e)->rotation = {0, 90, 0};  // pointing straight down from up here
+        s.world->get<world::Transform>(e)->position.z += 3.0f;
+    }
+    if (s.world->get<world::PointLight>(e)) s.world->get<world::Transform>(e)->position.z += 1.5f;
     select(s, e);
     char label[96];
     std::snprintf(label, sizeof label, "Place %s", unique);
     edited(s, label);
     return e;
 }
+
+bool asset_matches(const asset::AssetRecord& r, const char* type);  // "Mesh", "Material", a data type...
 
 // ---- Prefabs ----
 
@@ -812,6 +822,35 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
             dl->AddRect(ImVec2(p.x - 6, p.y - 6), ImVec2(p.x + 6, p.y + 6), color, 0.0f, 0, 2.0f);
         }
     }
+    // Lights: directional and spot lights show where they point; a selected point / spot light its range.
+    for (const reflect::TypeInfo* type : {&reflect::type_of<world::DirectionalLight>(), &reflect::type_of<world::SpotLight>(), &reflect::type_of<world::PointLight>()}) {
+        for (u32 i = 0; i < s.world->count(*type); ++i) {
+            const Entity e = s.world->owner(*type, i);
+            if (s.world->hidden_in_hierarchy(e)) continue;
+            const Mat4 m = s.world->world_matrix(e);
+            const Vec3 origin{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+            Vec3 forward{m.at(0, 0), m.at(1, 0), m.at(2, 0)};
+            const f32 len = length(forward);
+            forward = len > 0.0f ? forward * (1.0f / len) : Vec3{1, 0, 0};
+            ImVec2 a, b;
+            const ImU32 color = s.is_selected(e) ? u32_color(t.details_tab_active) : IM_COL32(255, 220, 90, 230);
+            if (!project(view_proj, origin, pos, size, a)) continue;
+            if (type != &reflect::type_of<world::PointLight>() && project(view_proj, origin + forward * 1.5f, pos, size, b)) {
+                dl->AddLine(a, b, color, 2.0f);
+                dl->AddCircleFilled(b, 3.0f, color);
+            }
+            if (s.is_selected(e) && type != &reflect::type_of<world::DirectionalLight>()) {  // attenuation radius as a ring in the view plane
+                const f32 radius = type == &reflect::type_of<world::PointLight>() ? s.world->get<world::PointLight>(e)->attenuation_radius
+                                                                                 : s.world->get<world::SpotLight>(e)->attenuation_radius;
+                const Vec3 side = cross(camera_forward(s.camera), Vec3{0, 0, 1});
+                const f32 side_len = length(side);
+                if (project(view_proj, origin + (side_len > 0.01f ? side * (radius / side_len) : Vec3{radius, 0, 0}), pos, size, b)) {
+                    const f32 r = std::sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+                    dl->AddCircle(a, r, IM_COL32(255, 220, 90, 120), 48, 1.0f);
+                }
+            }
+        }
+    }
     // Physics Joints: a ring at the pivot and a line along the axis.
     const reflect::TypeInfo& joint_type = reflect::type_of<world::PhysicsJoint>();
     for (u32 i = 0; i < s.world->count(joint_type); ++i) {
@@ -1038,7 +1077,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                 place(s, record->name, key, nullptr, drop_point(s, ray));
             } else if (record && record->type == asset::AssetType::Prefab) {
                 place_prefab(s, *record, drop_point(s, ray));
-            } else if (record && record->type == asset::AssetType::Data && std::strcmp(record->data_type, "Material") == 0) {
+            } else if (record && asset_matches(*record, "Material")) {
                 // Onto the object under the mouse, like dropping a material on an actor in Unreal.
                 Entity hit;
                 f32 hit_t = 0.0f;
@@ -1354,6 +1393,9 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     if (std::strcmp(type, "Script") == 0) return r.type == asset::AssetType::Script || r.type == asset::AssetType::Graph;  // Lua or visual
     if (std::strcmp(type, "Sound") == 0) return r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue;  // a wave or a cue
+    if (std::strcmp(type, "Material") == 0) {  // a material or an instance of one
+        return r.type == asset::AssetType::Data && (std::strcmp(r.data_type, "Material") == 0 || std::strcmp(r.data_type, "MaterialInstance") == 0);
+    }
     return r.type == asset::AssetType::Data && std::strcmp(r.data_type, type) == 0;
 }
 
@@ -2291,6 +2333,21 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Edit Data Table")) open_table(s, r);
             if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
             if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
+            if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && ImGui::MenuItem("Create Material Instance")) {
+                render::MaterialInstance instance;
+                asset::to_string(r.guid, instance.parent);
+                char base[64];
+                std::snprintf(base, sizeof base, "MI_%s", r.name[0] == 'M' && r.name[1] == '_' ? r.name + 2 : r.name);
+                const std::string path = new_asset_path(s, base);
+                if (asset::save_data_asset(path.c_str(), reflect::type_of<render::MaterialInstance>(), &instance)) {
+                    s.registry->scan();
+                    if (const asset::AssetRecord* created = record_at(s, path)) {
+                        select(s, {});
+                        s.selected_asset = created->guid;
+                        load_selected_data(s, *created);
+                    }
+                }
+            }
             if (r.type == asset::AssetType::Texture && ImGui::MenuItem("Create Material")) {  // like Unreal: a material using this texture
                 render::Material m;
                 asset::to_string(r.guid, m.base_color_texture);

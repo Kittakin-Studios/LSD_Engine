@@ -147,9 +147,9 @@ visual-script sounds, `stat audio`.
 
 - [ ] Shader pipeline: HLSL → DXIL / SPIR-V (DXC) / GLSL (SPIRV-Cross) as assets; replaces the hand-written test shaders; shader hot reload
 - [~] Physically based shading (metal / rough, GGX, sun + sky ambient, sRGB output) on D3D12 and OpenGL with base colour, normal (derivative tangent frame) and ORM textures, emissive; Material data asset (New Material, Create Material from a texture, drag onto an object, StaticMesh material slot, live edits); needs masked / translucent, image-based lighting, Vulkan meshes (needs the Vulkan SDK)
-- [ ] Material graph with live preview; material instances; material functions (moved up from v2) [Material Editor, Material Instance, Material Function]
+- [~] Material instances (MaterialInstance data asset: parent + ticked overrides, follows parent edits live; Create Material Instance on a material); needs the material graph with live preview, material functions (moved up from v2) [Material Editor, Material Instance, Material Function]
 - [ ] Decals (moved up from v2: blockout and set dressing need them) [Decal Actor]
-- [ ] Lights: directional, point, spot, rect, disc/sphere, sky, emissive; physical units; IES; light functions; mobility
+- [~] Lights: Directional (lux), Point and Spot (lumens, attenuation radius, cone angles), Sky Light (ambient), colour temperature in Kelvin, World Settings exposure (EV100), 16 per frame (nearest local lights), Place tab entries, direction / range markers; needs shadows, rect / disc / sphere area lights (LTC), IES, light functions, mobility
 - [ ] Shadows: cascaded for the sun, shadow maps for local lights, quality per light, contact shadows
 - [ ] Reflections: capture probes, screen-space reflections
 - [ ] Sky, atmosphere, height fog; sun angle drives sky colour; environment asset that bundles sky, fog and post settings **(S)**
