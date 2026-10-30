@@ -244,6 +244,28 @@ struct Api {
         world(L).remove(e, component_type(L, 2));
         return 0;
     }
+    static int spawn(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const char* name = luaL_checkstring(L, 1);
+        const world::Entity e = host.spawn ? host.spawn(host.user, name, check_vec3(L, 2)) : world::Entity{};
+        if (e.valid()) lua_pushnumber(L, e.value);
+        else lua_pushnil(L);
+        return 1;
+    }
+    static int raycast(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        world::Entity hit;
+        Vec3 point, normal;
+        if (!host.raycast || !host.raycast(host.user, check_vec3(L, 1), check_vec3(L, 4), static_cast<f32>(luaL_checknumber(L, 7)), hit, point, normal)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        if (hit.valid()) lua_pushnumber(L, hit.value);
+        else lua_pushboolean(L, true);  // something without an object (should not happen)
+        push_vec3(L, point);
+        push_vec3(L, normal);
+        return 7;
+    }
     static int has(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
         lua_pushboolean(L, world(L).get(e, component_type(L, 2)) != nullptr);
@@ -332,6 +354,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     stop();
     world_ = &world;
     host_ = host;
+    path_of_ = path_of;
+    path_user_ = path_user;
     // shortcut: Lua's own allocator and the full standard library (io, os); give it an Allocator and a sandbox before shipping mods.
     lua_ = luaL_newstate();
     luaL_openlibs(lua_);
@@ -341,7 +365,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"position", Api::position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
-        {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has},
+        {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {
@@ -355,37 +379,57 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     run(kPrelude, "=lsd prelude");
 
     const reflect::TypeInfo& type = reflect::type_of<world::Script>();
-    for (u32 i = 0; i < world.count(type) && count_ < sizeof instances_ / sizeof instances_[0]; ++i) {
-        const auto* component = static_cast<const world::Script*>(world.at(type, i));
-        if (!component->script[0]) continue;
-        Instance& instance = instances_[count_];
-        instance = Instance{};
-        instance.entity = world.owner(type, i);
-        if (!path_of || !path_of(path_user, component->script, instance.path, sizeof instance.path)) {
-            LSD_LOG_WARN("script", "%s: its Script asset is missing", world.name(instance.entity));
-            continue;
-        }
-        ++count_;
-        // Its self table: { entity = <handle>, name = "<name>" }.
-        lua_newtable(lua_);
-        lua_pushnumber(lua_, instance.entity.value);
-        lua_setfield(lua_, -2, "entity");
-        lua_pushstring(lua_, world.name(instance.entity));
-        lua_setfield(lua_, -2, "name");
-        instance.self = luaL_ref(lua_, LUA_REGISTRYINDEX);
-        // Its environment: own globals, falling back to the shared ones (lsd, math, string...).
-        lua_newtable(lua_);
-        lua_newtable(lua_);
-        lua_pushvalue(lua_, LUA_GLOBALSINDEX);
-        lua_setfield(lua_, -2, "__index");
-        lua_setmetatable(lua_, -2);
-        instance.env = luaL_ref(lua_, LUA_REGISTRYINDEX);
-        load(instance);
-    }
+    for (u32 i = 0; i < world.count(type); ++i) add_instance(world.owner(type, i), static_cast<const world::Script*>(world.at(type, i))->script);
     // on_start after every script is loaded, so lsd.find sees them all.
     for (u32 i = 0; i < count_; ++i) {
         if (!instances_[i].failed) call(instances_[i], "on_start", nullptr, 0);
     }
+}
+
+void ScriptSystem::attach(world::Entity root) {
+    if (!lua_) return;
+    const u32 first = count_;
+    const reflect::TypeInfo& type = reflect::type_of<world::Script>();
+    for (u32 i = 0; i < world_->count(type); ++i) {
+        const world::Entity e = world_->owner(type, i);
+        bool inside = false;
+        for (world::Entity p = e; p.valid() && !inside; p = world_->parent(p)) inside = p == root;
+        if (inside) add_instance(e, static_cast<const world::Script*>(world_->at(type, i))->script);
+    }
+    for (u32 i = first; i < count_; ++i) {
+        if (!instances_[i].failed) call(instances_[i], "on_start", nullptr, 0);
+    }
+}
+
+void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
+    if (!guid[0]) return;
+    if (count_ == sizeof instances_ / sizeof instances_[0]) {
+        LSD_LOG_WARN("script", "Too many scripts: %s does not run", world_->name(entity));
+        return;
+    }
+    Instance& instance = instances_[count_];
+    instance = Instance{};
+    instance.entity = entity;
+    if (!path_of_ || !path_of_(path_user_, guid, instance.path, sizeof instance.path)) {
+        LSD_LOG_WARN("script", "%s: its Script asset is missing", world_->name(entity));
+        return;
+    }
+    ++count_;
+    // Its self table: { entity = <handle>, name = "<name>" }.
+    lua_newtable(lua_);
+    lua_pushnumber(lua_, entity.value);
+    lua_setfield(lua_, -2, "entity");
+    lua_pushstring(lua_, world_->name(entity));
+    lua_setfield(lua_, -2, "name");
+    instance.self = luaL_ref(lua_, LUA_REGISTRYINDEX);
+    // Its environment: own globals, falling back to the shared ones (lsd, math, string...).
+    lua_newtable(lua_);
+    lua_newtable(lua_);
+    lua_pushvalue(lua_, LUA_GLOBALSINDEX);
+    lua_setfield(lua_, -2, "__index");
+    lua_setmetatable(lua_, -2);
+    instance.env = luaL_ref(lua_, LUA_REGISTRYINDEX);
+    load(instance);
 }
 
 bool ScriptSystem::load(Instance& instance) {

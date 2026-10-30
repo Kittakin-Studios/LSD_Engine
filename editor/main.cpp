@@ -331,6 +331,7 @@ int main(int argc, char** argv) {
     // Types that can be created as data assets (Content Browser > New Data Asset).
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputAction>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);

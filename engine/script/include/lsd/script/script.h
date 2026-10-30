@@ -18,6 +18,8 @@
 //   lsd.input(action) -> x, y             value of an Input Action, by asset name
 //   lsd.pressed(action)                   true on the frame the action went down
 //   lsd.log_error(...)                    print as an error
+//   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset or built-in shape ("Cube") by name; nil if none
+//   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
 //
 // Any component, through reflection (field names as in Details; structs are tables):
 //   lsd.get(e, "Character")               a copy of the component as a table, or nil
@@ -27,7 +29,8 @@
 // Timers (callbacks run before on_update):
 //   lsd.after(seconds, fn) -> id, lsd.every(seconds, fn) -> id, lsd.cancel(id)
 //
-// Events sent by the game: on_overlap_begin(self, other), on_overlap_end(self, other) (Trigger Volumes).
+// Events sent by the game: on_overlap_begin(self, other), on_overlap_end(self, other) (Trigger Volumes),
+// on_hit(self, other) (physics contact began; the player counts as its Character).
 //
 // Saving a script while playing reloads it; `self` keeps its fields. A script that errors stops
 // running (the error and stack go to the Output Log) until it is fixed and saved.
@@ -43,6 +46,8 @@ struct ScriptHost {
     void* user = nullptr;
     Vec3 (*input)(void* user, const char* action) = nullptr;   // x, y (z unused)
     bool (*pressed)(void* user, const char* action) = nullptr;
+    world::Entity (*spawn)(void* user, const char* name, Vec3 position) = nullptr;
+    bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
 };
 
 class ScriptSystem {
@@ -57,6 +62,8 @@ public:
     void start(world::World& world, const ScriptHost& host, PathFn path_of, void* path_user);
     void update(f32 dt);  // reloads changed files, then calls on_update
     void stop();
+    // Starts the scripts on `root` and its children (objects spawned during Play).
+    void attach(world::Entity root);
 
     u32 script_count() const { return count_; }
     u32 error_count() const;  // scripts stopped by an error
@@ -75,12 +82,15 @@ private:
         int self = 0;
         bool failed = false;
     };
+    void add_instance(world::Entity entity, const char* guid);
     bool load(Instance& instance);
     bool call(Instance& instance, const char* function, const f64* args, int arg_count);
 
     lua_State* lua_ = nullptr;
     world::World* world_ = nullptr;
     ScriptHost host_;
+    PathFn path_of_ = nullptr;
+    void* path_user_ = nullptr;
     f64 time_ = 0;
     Instance instances_[256];
     u32 count_ = 0;

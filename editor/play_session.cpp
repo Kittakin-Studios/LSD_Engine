@@ -2,6 +2,7 @@
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
+#include "lsd/world/prefab.h"
 
 #include <cmath>
 #include <cstdio>
@@ -68,7 +69,8 @@ bool inside_volume(const world::World& world, world::Entity volume, Vec3 point) 
     return p.x >= kUnitLo.x && p.x <= kUnitHi.x && p.y >= kUnitLo.y && p.y <= kUnitHi.y && p.z >= kUnitLo.z && p.z <= kUnitHi.z;
 }
 
-bool load_context(const asset::AssetRegistry& registry, const char* guid_text, input::InputMappingContext& out) {
+template <typename T>
+bool load_asset(const asset::AssetRegistry& registry, const char* guid_text, T& out) {
     asset::Guid guid;
     const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
     if (!r) return false;
@@ -120,42 +122,17 @@ bool PlaySession::action_guid(const asset::AssetRegistry& registry, const char* 
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch) {
     stop();
     registry_ = &registry;
+    world_ = &world;
+    meshes_ = &meshes;
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
+    start_game_mode(world);  // may spawn the player and a GameMode object first
 
-    // Level geometry: meshes with collision (unless simulated) and Blocking Volumes are static.
-    Vec3 scale, centre;
-    const reflect::TypeInfo& mesh_type = reflect::type_of<world::StaticMesh>();
-    for (u32 i = 0; i < world.count(mesh_type); ++i) {
-        const world::Entity e = world.owner(mesh_type, i);
-        const auto* mesh = static_cast<const world::StaticMesh*>(world.at(mesh_type, i));
-        const CachedMesh* cached = meshes.get(mesh->mesh);
-        if (!mesh->collision || !cached || world.get<world::RigidBody>(e)) continue;
-        physics_->add_body(fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre));
+    // Level geometry is static; RigidBody objects are simulated.
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {
+        if (const world::Entity e = world.entity_at_slot(slot); e.valid()) add_entity_bodies(world, e);
     }
-    const reflect::TypeInfo& blocking = reflect::type_of<world::BlockingVolume>();
-    for (u32 i = 0; i < world.count(blocking); ++i) {
-        if (!static_cast<const world::BlockingVolume*>(world.at(blocking, i))->enabled) continue;
-        physics_->add_body(fitted_body(world.world_matrix(world.owner(blocking, i)), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
-    }
-    // Simulated objects.
-    const reflect::TypeInfo& rigid_type = reflect::type_of<world::RigidBody>();
-    for (u32 i = 0; i < world.count(rigid_type) && simulated_count_ < sizeof simulated_ / sizeof simulated_[0]; ++i) {
-        const world::Entity e = world.owner(rigid_type, i);
-        const auto* rigid = static_cast<const world::RigidBody*>(world.at(rigid_type, i));
-        Vec3 lo = kUnitLo, hi = kUnitHi;
-        if (const auto* mesh = world.get<world::StaticMesh>(e)) {
-            if (const CachedMesh* cached = meshes.get(mesh->mesh)) {
-                lo = cached->bounds_min;
-                hi = cached->bounds_max;
-            }
-        }
-        physics::BodyDesc d = fitted_body(world.world_matrix(e), lo, hi, rigid->shape, physics::Motion::Dynamic, scale, centre);
-        d.mass = rigid->mass;
-        d.friction = rigid->friction;
-        d.restitution = rigid->bounciness;
-        simulated_[simulated_count_++] = {e, physics_->add_body(d), scale, centre};
-    }
+    Vec3 scale;
 
     // The player: the first Character, else a default walker at the Player Start or the camera.
     const reflect::TypeInfo& character_type = reflect::type_of<world::Character>();
@@ -171,7 +148,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         yaw_ = radians(rotation.z);
         pitch_ = 0.0f;
         input::InputMappingContext context;
-        if (load_context(registry, settings_.mapping_context, context)) {
+        if (load_asset(registry, settings_.mapping_context, context)) {
             input_.add_context(context);
             wired_ = true;
         } else {
@@ -210,6 +187,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     desc.max_slope_degrees = settings_.max_slope;
     desc.step_height = settings_.step_height;
     physics_->create_character(desc);
+    eye_ = feet_ + Vec3{0, 0, settings_.eye_height};
 
     script::ScriptHost host;
     host.user = this;
@@ -225,7 +203,135 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         char guid[33];
         return action_guid(*self.registry_, action, guid) && self.input_.pressed(guid);
     };
+    host.spawn = [](void* user, const char* name, Vec3 position) { return static_cast<PlaySession*>(user)->spawn(name, position); };
+    host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        physics::RayHit ray;
+        if (!self.physics_->raycast(origin, direction, distance, ray)) return false;
+        hit = self.body_entity(ray.body);
+        point = ray.point;
+        normal = ray.normal;
+        return true;
+    };
     scripts_.start(world, host, script_path, const_cast<asset::AssetRegistry*>(&registry));
+}
+
+const asset::AssetRecord* PlaySession::find_asset(asset::AssetType type, const char* name) const {
+    usize hits[16];
+    const usize n = registry_->search(name, type, nullptr, hits, 16);
+    for (usize i = 0; i < n; ++i) {
+        if (std::strcmp(registry_->get(hits[i]).name, name) == 0) return &registry_->get(hits[i]);
+    }
+    return nullptr;
+}
+
+u32 PlaySession::add_body(world::Entity e, const physics::BodyDesc& desc) {
+    const u32 body = physics_->add_body(desc);
+    if (body < kMaxBodies) body_entities_[body] = e;
+    return body;
+}
+
+world::Entity PlaySession::body_entity(u32 body) const {
+    if (body == physics::kCharacterBody) return character_;
+    return body < kMaxBodies ? body_entities_[body] : world::Entity{};
+}
+
+// Meshes with collision and Blocking Volumes become static bodies, RigidBody objects dynamic ones.
+void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) {
+    if (world.get<world::Character>(e)) return;  // the player is the character controller, not a body
+    Vec3 scale, centre;
+    const auto* mesh = world.get<world::StaticMesh>(e);
+    const CachedMesh* cached = mesh ? meshes_->get(mesh->mesh) : nullptr;
+    if (const auto* rigid = world.get<world::RigidBody>(e)) {
+        if (simulated_count_ == sizeof simulated_ / sizeof simulated_[0]) return;
+        physics::BodyDesc d = fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi,
+                                          rigid->shape, physics::Motion::Dynamic, scale, centre);
+        d.mass = rigid->mass;
+        d.friction = rigid->friction;
+        d.restitution = rigid->bounciness;
+        const u32 body = add_body(e, d);
+        simulated_[simulated_count_++] = {e, body, scale, centre};
+        return;
+    }
+    if (cached && mesh->collision) {
+        add_body(e, fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre));
+    }
+    if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
+        add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
+    }
+}
+
+// A prefab, mesh asset or built-in shape by name, placed at `position` (world objects only).
+world::Entity PlaySession::create_spawn(world::World& world, const char* name, Vec3 position) {
+    const asset::AssetRecord* prefab = find_asset(asset::AssetType::Prefab, name);
+    const asset::AssetRecord* mesh_asset = prefab ? nullptr : find_asset(asset::AssetType::Mesh, name);
+    char key[40];
+    if (mesh_asset) asset::to_string(mesh_asset->guid, key);
+    else std::snprintf(key, sizeof key, "%s", name);  // built-in shapes: Cube, Sphere...
+    if (!prefab && !meshes_->get(key)) return {};
+
+    char unique[64];
+    world.unique_name(name, unique, sizeof unique);
+    const world::Entity e = world.create(unique);
+    world.get<world::Transform>(e)->position = position;
+    if (prefab) {
+        asset::to_string(prefab->guid, world.add<world::PrefabInstance>(e)->prefab);
+        char path[300];
+        registry_->source_path(*prefab, path, sizeof path);
+        world::update_instance_from_file(world, e, path, true);
+    } else {
+        std::snprintf(world.add<world::StaticMesh>(e)->mesh, sizeof(world::StaticMesh::mesh), "%s", key);
+    }
+    return e;
+}
+
+world::Entity PlaySession::spawn(const char* name, Vec3 position) {
+    world::World& world = *world_;
+    const world::Entity root = create_spawn(world, name, position);
+    if (!root.valid()) {
+        LSD_LOG_WARN("play", "spawn: no prefab, mesh or shape named '%s'", name);
+        return {};
+    }
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {
+        const world::Entity e = world.entity_at_slot(slot);
+        bool inside = false;
+        for (world::Entity p = e; p.valid() && !inside; p = world.parent(p)) inside = p == root;
+        if (inside) add_entity_bodies(world, e);
+    }
+    scripts_.attach(root);
+    return root;
+}
+
+// World Settings > Game Mode: spawn the player prefab (when the level has no Character) and the game script.
+void PlaySession::start_game_mode(world::World& world) {
+    if (!world.settings().game_mode[0]) return;
+    world::GameMode mode;
+    if (!load_asset(*registry_, world.settings().game_mode, mode)) {
+        LSD_LOG_WARN("play", "World Settings: the Game Mode asset is missing");
+        return;
+    }
+    const reflect::TypeInfo& start_type = reflect::type_of<world::PlayerStart>();
+    if (mode.player_prefab[0] && world.count(reflect::type_of<world::Character>()) == 0) {
+        asset::Guid guid;
+        const asset::AssetRecord* r = asset::parse_guid(mode.player_prefab, guid) ? registry_->find(guid) : nullptr;
+        Vec3 at, rotation, scale;
+        if (world.count(start_type) > 0) decompose_trs(world.world_matrix(world.owner(start_type, 0)), at, rotation, scale);
+        const world::Entity player = r ? create_spawn(world, r->name, at) : world::Entity{};
+        if (player.valid()) world.get<world::Transform>(player)->rotation.z = rotation.z;
+        if (!player.valid() || !world.get<world::Character>(player)) LSD_LOG_WARN("play", "Game Mode: the player prefab is missing or has no Character component");
+    }
+    if (mode.script[0]) std::snprintf(world.add<world::Script>(world.create("GameMode"))->script, sizeof(world::Script::script), "%s", mode.script);
+}
+
+void PlaySession::send_hits() {
+    physics::Contact contacts[256];
+    const u32 n = physics_->take_contacts(contacts, 256);
+    for (u32 i = 0; i < n; ++i) {
+        const world::Entity a = body_entity(contacts[i].a), b = body_entity(contacts[i].b);
+        if (!a.valid() || !b.valid()) continue;
+        scripts_.send(a, "on_hit", b);
+        scripts_.send(b, "on_hit", a);
+    }
 }
 
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
@@ -247,6 +353,13 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     physics_->move_character(velocity * settings_.walk_speed, jump, settings_.jump_speed, dt);
     physics_->step(dt);
     feet_ = physics_->character_feet();
+    // Objects scripts destroyed leave the simulation.
+    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
+        if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {
+            physics_->remove_body(b);
+            body_entities_[b] = {};
+        }
+    }
 
     // Kill Z and Kill Volumes.
     bool killed = feet_.z < world.settings().kill_z;
@@ -272,6 +385,17 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         decompose_trs(world.world_matrix(character_), t, r, scale);
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
+    // Camera: the head, or behind it on the spring arm, pulled in when a wall is in the way.
+    const Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height};
+    eye_ = head;
+    if (settings_.camera_distance > 0.0f) {
+        const Vec3 back = forward() * -1.0f;
+        f32 arm = settings_.camera_distance;
+        physics::RayHit hit;
+        if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
+        eye_ = head + back * arm;
+    }
+    send_hits();
     update_triggers(world);
     scripts_.update(dt);
 }

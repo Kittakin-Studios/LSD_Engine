@@ -87,6 +87,16 @@ struct Character {
     LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 eye_height = 1.65f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Tooltip = "Turn per unit of Look (per pixel for the mouse)") f32 look_sensitivity = 0.15f;
     LSD_PROPERTY(Edit) bool invert_look_y = false;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Spring arm length behind the head: 0 = first person") f32 camera_distance = 0.0f;
+};
+
+// Rules of a game (Unreal's Game Mode), a data asset picked in World Settings: who the player is
+// and a script that runs for the whole game.
+LSD_STRUCT(Category = "Game")
+struct GameMode {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Prefab", Tooltip = "Spawned at the Player Start when the level has no Character; should contain one") char player_prefab[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "Runs on an object named GameMode for the whole game") char script[33] = "";
 };
 
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".
@@ -118,6 +128,7 @@ struct WorldSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "m", Tooltip = "Falling below this height respawns the player") f32 kill_z = -50.0f;
     LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 gravity = 9.81f;
+    LSD_PROPERTY(Edit, Widget = "Asset:GameMode", Tooltip = "Rules for Play: player prefab and game script") char game_mode[33] = "";
 };
 
 } // namespace lsd::world

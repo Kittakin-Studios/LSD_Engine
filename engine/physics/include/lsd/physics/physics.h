@@ -26,6 +26,20 @@ struct CharacterDesc {
     f32 step_height = 0.4f;      // stairs up to this high are walked up
 };
 
+constexpr u32 kCharacterBody = 0xFFFFFFFFu;  // stands for the player in contacts
+
+struct RayHit {
+    u32 body = 0;      // index from add_body
+    Vec3 point;
+    Vec3 normal;
+    f32 distance = 0;
+};
+
+// Two things started touching during the last step (b may be kCharacterBody).
+struct Contact {
+    u32 a, b;
+};
+
 class PhysicsWorld {
 public:
     PhysicsWorld();
@@ -35,9 +49,16 @@ public:
 
     // Returns the body's index (0, 1, 2... in the order added).
     u32 add_body(const BodyDesc& desc);
-    // Position + rotation of a body's centre after the last step.
+    // Takes a body out of the simulation; its index is not reused.
+    void remove_body(u32 body);
+    // Position + rotation of a body's centre after the last step (identity once removed).
     Mat4 body_transform(u32 body) const;
     u32 body_count() const;
+
+    // Nearest body along the ray (direction need not be unit length; the player is not hit).
+    bool raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit) const;
+    // Contacts that began since the previous call (bodies with each other and with the player).
+    u32 take_contacts(Contact* out, u32 capacity);
 
     void set_gravity(f32 metres_per_second2);
     void step(f32 dt);

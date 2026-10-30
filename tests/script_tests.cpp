@@ -30,6 +30,21 @@ static bool path_of(void*, const char* guid, char* out, usize capacity) {
 static Vec3 input(void*, const char* action) { return std::strcmp(action, "IA_Move") == 0 ? Vec3{0.5f, 1.0f, 0} : Vec3{}; }
 static bool pressed(void*, const char* action) { return std::strcmp(action, "IA_Jump") == 0; }
 
+static World* g_world = nullptr;
+static Entity spawn(void*, const char* name, Vec3 position) {
+    if (std::strcmp(name, "Mover") != 0) return {};
+    const Entity e = g_world->create("Spawned");
+    g_world->get<Transform>(e)->position = position;
+    std::snprintf(g_world->add<Script>(e)->script, sizeof(Script::script), "mover");
+    return e;
+}
+static bool raycast(void*, Vec3 origin, Vec3, f32, Entity& hit, Vec3& point, Vec3& normal) {
+    hit = g_world->entity_at_slot(0);
+    point = origin;
+    normal = {0, 0, 1};
+    return origin.z > 0;
+}
+
 int main() {
     write(kMover, R"(
 function on_start(self)
@@ -63,6 +78,9 @@ end
         script::ScriptHost host;
         host.input = input;
         host.pressed = pressed;
+        host.spawn = spawn;
+        host.raycast = raycast;
+        g_world = &w;
         scripts.start(w, host, path_of, nullptr);
         CHECK(scripts.script_count() == 2 && scripts.error_count() == 0);
         CHECK(w.get<Transform>(mover)->position.z == 10.0f);  // on_start ran
@@ -119,6 +137,24 @@ id = lsd.every(0.1, function() many = many + 1; if many == 3 then lsd.cancel(id)
         scripts.send(mover, "on_overlap_begin", target);
         scripts.send(mover, "on_not_defined", target);  // fine: scripts need not handle every event
         CHECK(scripts.run("assert(hit == 'Target', hit)") && w.get<Transform>(mover)->position.x == 0.0f);
+
+        // Spawning: the new object's script starts (its on_overlap_begin is defined, on_start is not: fine).
+        write(kMover, "function on_start(self) _G.started = self.name end\n");
+        std::filesystem::last_write_time(kMover, std::filesystem::last_write_time(kMover) + std::chrono::seconds(15));
+        scripts.update(0.5f);
+        CHECK(scripts.run(R"(
+local e = lsd.spawn("Mover", 1, 2, 3)
+assert(e and lsd.name(e) == "Spawned" and select(3, lsd.position(e)) == 3)
+assert(lsd.spawn("Nothing", 0, 0, 0) == nil)
+)"));
+        const u32 before = scripts.script_count();
+        scripts.attach(w.entity_at_slot(w.slot_count() - 1));
+        CHECK(scripts.script_count() == before + 1 && scripts.run("assert(started == 'Spawned', started)"));
+        CHECK(scripts.run(R"(
+local e, x, y, z, nx, ny, nz = lsd.raycast(0, 0, 5, 0, 0, -1, 10)
+assert(e == lsd.find("Mover") and z == 5 and nz == 1)
+assert(lsd.raycast(0, 0, -5, 0, 0, -1, 10) == nil)
+)"));
         scripts.stop();
     }
     CHECK(heap.allocated_bytes() == 0);

@@ -137,7 +137,9 @@ wired in Details. Prefabs (`.lsdprefab`, `engine/world/prefab.h`: create, place,
 per-instance overrides yet). Gameplay tags (Tags component). Lua scripts (`engine/script`, LuaJIT
 built from source by third_party/CMakeLists.txt with its own minilua/buildvm tools). Lua reaches any
 component through reflection (`lsd.get/set/add`), has timers, and gets overlap events from Trigger
-Volumes. Next: visual scripting, game framework classes, spawning from Lua, hit events.
+Volumes. Lua can spawn
+(`lsd.spawn`), raycast and gets `on_hit`; Game Mode data asset in World Settings; third-person spring
+arm on the Character (`camera_distance`). Next: visual scripting, Player Controller, constraints.
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

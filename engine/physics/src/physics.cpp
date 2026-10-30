@@ -8,6 +8,10 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -90,6 +94,26 @@ JPH::RefConst<JPH::Shape> z_capsule(f32 half_height, f32 radius, JPH::Vec3 offse
     return settings.Create().Get();
 }
 
+// Collects new contacts from Jolt's job threads (bodies) and from the character update (main thread).
+class Contacts final : public JPH::ContactListener, public JPH::CharacterContactListener {
+public:
+    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&, JPH::ContactSettings&) override {
+        add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()));
+    }
+    void OnContactAdded(const JPH::CharacterVirtual*, const JPH::CharacterContact& contact, JPH::CharacterContactSettings&) override {
+        if (contact.mBodyB.IsInvalid() || !system) return;
+        JPH::BodyLockRead lock(system->GetBodyLockInterfaceNoLock(), contact.mBodyB);
+        if (lock.Succeeded()) add(static_cast<u32>(lock.GetBody().GetUserData()), kCharacterBody);
+    }
+    void add(u32 a, u32 b) {
+        std::lock_guard<std::mutex> guard(mutex);
+        if (pending.size() < 4096) pending.push_back({a, b});
+    }
+    JPH::PhysicsSystem* system = nullptr;
+    std::mutex mutex;
+    std::vector<Contact> pending;
+};
+
 } // namespace
 
 struct PhysicsWorld::Impl {
@@ -102,6 +126,7 @@ struct PhysicsWorld::Impl {
     JPH::PhysicsSystem system;
     std::vector<JPH::BodyID> bodies;
     JPH::Ref<JPH::CharacterVirtual> character;
+    Contacts contacts;
     f32 step_height = 0.4f;
 };
 
@@ -109,12 +134,15 @@ PhysicsWorld::PhysicsWorld() {
     init_jolt();
     impl_ = new Impl();
     impl_->system.Init(16384, 0, 16384, 8192, impl_->broad_phase_layers, impl_->object_vs_broad_phase, impl_->object_pairs);
+    impl_->contacts.system = &impl_->system;
+    impl_->system.SetContactListener(&impl_->contacts);
     set_gravity(9.81f);
 }
 
 PhysicsWorld::~PhysicsWorld() {
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     for (const JPH::BodyID id : impl_->bodies) {
+        if (id.IsInvalid()) continue;  // removed
         bodies.RemoveBody(id);
         bodies.DestroyBody(id);
     }
@@ -141,6 +169,7 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
                                                                    : JPH::EMotionType::Kinematic;
     JPH::BodyCreationSettings settings(shape, position, rotation, motion, desc.motion == Motion::Static ? kStaticLayer : kMovingLayer);
     settings.mFriction = desc.friction;
+    settings.mUserData = impl_->bodies.size();  // our index, for contacts and ray hits
     settings.mRestitution = desc.restitution;
     if (desc.motion == Motion::Dynamic) {
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
@@ -155,7 +184,42 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
 
 u32 PhysicsWorld::body_count() const { return static_cast<u32>(impl_->bodies.size()); }
 
+void PhysicsWorld::remove_body(u32 body) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    bodies.RemoveBody(impl_->bodies[body]);
+    bodies.DestroyBody(impl_->bodies[body]);
+    impl_->bodies[body] = JPH::BodyID();
+}
+
+bool PhysicsWorld::raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit) const {
+    const f32 length = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+    if (length <= 0.0f || max_distance <= 0.0f) return false;
+    const JPH::Vec3 span = to_jolt(direction) * (max_distance / length);
+    const JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), span);
+    JPH::RayCastResult result;
+    if (!impl_->system.GetNarrowPhaseQuery().CastRay(ray, result)) return false;
+    const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+    JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID);
+    if (!lock.Succeeded()) return false;
+    const JPH::Vec3 normal = lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
+    hit.body = static_cast<u32>(lock.GetBody().GetUserData());
+    hit.point = {static_cast<f32>(point.GetX()), static_cast<f32>(point.GetY()), static_cast<f32>(point.GetZ())};
+    hit.normal = {normal.GetX(), normal.GetY(), normal.GetZ()};
+    hit.distance = result.mFraction * max_distance;
+    return true;
+}
+
+u32 PhysicsWorld::take_contacts(Contact* out, u32 capacity) {
+    std::lock_guard<std::mutex> guard(impl_->contacts.mutex);
+    const u32 n = static_cast<u32>(impl_->contacts.pending.size() < capacity ? impl_->contacts.pending.size() : capacity);
+    for (u32 i = 0; i < n; ++i) out[i] = impl_->contacts.pending[i];
+    impl_->contacts.pending.clear();
+    return n;
+}
+
 Mat4 PhysicsWorld::body_transform(u32 body) const {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return Mat4{};
     const JPH::RMat44 m = impl_->system.GetBodyInterface().GetWorldTransform(impl_->bodies[body]);
     Mat4 out;
     for (int c = 0; c < 4; ++c) {
@@ -180,6 +244,7 @@ void PhysicsWorld::create_character(const CharacterDesc& desc) {
     settings.mShape = z_capsule(half_height, desc.radius, JPH::Vec3(0, 0, half_height + desc.radius));  // origin at the feet
     settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisZ(), -desc.radius);  // ground contacts are below the lower sphere's centre
     impl_->character = new JPH::CharacterVirtual(&settings, JPH::RVec3(desc.feet.x, desc.feet.y, desc.feet.z), JPH::Quat::sIdentity(), 0, &impl_->system);
+    impl_->character->SetListener(&impl_->contacts);
     impl_->step_height = desc.step_height;
 }
 

@@ -105,17 +105,17 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 - [ ] Prefab editor window with its own viewport and component tree [Blueprint Editor viewport]
 - [ ] Components added from a list: mesh, light, camera, spring arm, audio, collision, movement, script, spline [Actor Components]
 - [ ] Exposed properties per instance with ranges and tooltips [EditAnywhere]
-- [ ] Spawn / destroy at runtime, object pools
+- [~] Spawn / destroy at runtime: `lsd.spawn(name, x, y, z)` (prefab, mesh asset or built-in shape; gets physics and scripts), `lsd.destroy`; needs object pools
 
 ### Scripting
 
-- [~] Lua scripting (LuaJIT, `engine/script`): Script component, on_start / on_update per object with its own `self`, `lsd` API (log, find, position / rotation, tags, input, time, destroy), hot reload on save while playing, errors with stack in the Output Log, New Lua Script + double-click to edit, `lua` console command; any component from Lua through reflection (`lsd.get` / `set` / `add` / `remove` / `has`), timers (`lsd.after` / `every` / `cancel`), overlap events from Trigger Volumes; needs hit events, spawning objects and prefabs from Lua, sandboxing
+- [~] Lua scripting (LuaJIT, `engine/script`): Script component, on_start / on_update per object with its own `self`, `lsd` API (log, find, position / rotation, tags, input, time, destroy), hot reload on save while playing, errors with stack in the Output Log, New Lua Script + double-click to edit, `lua` console command; any component from Lua through reflection (`lsd.get` / `set` / `add` / `remove` / `has`), timers (`lsd.after` / `every` / `cancel`), overlap events from Trigger Volumes; `on_hit` from physics contacts, `lsd.spawn`, `lsd.raycast`; needs sandboxing
 - [ ] Lua debugger in the editor: breakpoints, step, watch, call stack **(S)**
 - [ ] Visual scripting: events, variables, functions, macros, flow control, calls into C++/Lua [Blueprints]
 - [ ] Level script: a visual-script graph owned by the level for one-off events **(S)** [Level Blueprint]
 - [ ] Visual-script debugging: breakpoints, live wire flow, watch values [Blueprint Debugger]
 - [ ] Custom visual-script nodes declared from C++ (`LSD_FUNCTION`) and from Lua
-- [ ] Game rules framework: Game Mode, Player Controller, Pawn/Character, Player State, Game Instance, subsystems
+- [~] Game rules framework: Game Mode data asset picked in World Settings (player prefab spawned at the Player Start, game script on a GameMode object); needs Player Controller, Player State, Game Instance, subsystems
 - [ ] Timers, event dispatchers, interfaces, latent actions (Delay)
 
 ### Input, physics, movement
@@ -123,9 +123,9 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 - [~] Input Actions (Button / Axis 1D / Axis 2D) and Mapping Contexts (swizzle, scale, priority with key consumption); keyboard, mouse, gamepad with dead zones; New Input Setup template; needs triggers (hold, tap, chord), more modifiers, player rebinding [Enhanced Input]
 - [~] Physics (Jolt 5.6, `engine/physics`): static collision from meshes and Blocking Volumes, RigidBody component (box / sphere / capsule fitted to the mesh, mass, friction, bounciness), simulated in Play; needs convex / mesh shapes, channels + presets, physical materials, kinematic bodies in the editor
 - [ ] Constraints and joints (hinge, ball, slider) (moved up from v2: doors and chains are blockout staples)
-- [ ] Traces and overlaps (line, sphere, box, capsule), also as visual-script nodes
+- [~] Traces: line trace (`PhysicsWorld::raycast`, `lsd.raycast`); needs sphere / box / capsule sweeps and overlaps, visual-script nodes
 - [~] Character component: Jolt CharacterVirtual (walk, slopes, stairs, jump, fall), input asset wiring, first-person camera, possessed in Play (else a default walker at the Player Start); needs crouch, swim, moving platforms, third-person camera [Character Movement Component]
-- [ ] Cameras: spring arm with collision, camera shake, blend between cameras [Camera Manager]
+- [~] Cameras: Character `camera_distance` spring arm (third person) pulled in by walls; needs camera shake, blends, camera components [Camera Manager]
 - [ ] Splines: editable curves in the viewport, follow-spline movement, spline-placed meshes [Spline Component, Spline Mesh]
 
 ## Milestone 5 — Content editors

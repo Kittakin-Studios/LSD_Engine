@@ -2389,7 +2389,7 @@ void draw_world_settings_window(EditorState& s) {
     if (!s.show_world_settings) return;
     ImGui::SetNextWindowSize(ImVec2(380, 200), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("World Settings", &s.show_world_settings)) {
-        const DetailsStyle style{{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}};
+        const DetailsStyle style{{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}, "", details_widget, &s};  // asset pickers
         if (draw_properties(reflect::type_of<world::WorldSettings>(), &s.world->settings(), &style)) edited(s, "Edit World Settings");
     }
     ImGui::End();
