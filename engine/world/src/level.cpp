@@ -58,8 +58,11 @@ bool read_integer(reflect::JsonReader& r, long long& out) {
 void save_level(const World& world, Array<char>& out) {
     out.clear();
     char line[128];
-    std::snprintf(line, sizeof line, "{\n  \"lsd_level\": %d,\n  \"entities\": [", kLevelVersion);
+    std::snprintf(line, sizeof line, "{\n  \"lsd_level\": %d", kLevelVersion);
     append(out, line);
+    append(out, ",\n  \"world_settings\": ");
+    append_component(out, reflect::type_of<WorldSettings>(), &world.settings());
+    append(out, ",\n  \"entities\": [");
     u32 type_count = 0;
     const reflect::TypeInfo* const* types = component_types(type_count);
     bool first = true;
@@ -100,6 +103,8 @@ bool load_level(World& world, const char* text, usize length) {
         if (std::strcmp(key, "lsd_level") == 0) {
             long long version = 0;
             if (read_integer(r, version) && version > kLevelVersion) r.fail("level saved by a newer editor");
+        } else if (std::strcmp(key, "world_settings") == 0) {
+            reflect::read_object(r, reflect::type_of<WorldSettings>(), &world.settings());
         } else if (std::strcmp(key, "entities") == 0) {
             r.expect('[');
             while (r.ok && !r.peek(']')) {

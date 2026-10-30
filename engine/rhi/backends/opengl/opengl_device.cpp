@@ -56,9 +56,11 @@ void main() {
 
 constexpr char kMeshFragmentShader[] = R"(#version 460 core
 uniform vec4 u_color;
+uniform float u_unlit;
 in vec3 v_normal;
 out vec4 o_color;
 void main() {
+    if (u_unlit > 0.5) { o_color = u_color; return; }
     vec3 n = normalize(v_normal);
     vec3 sun = normalize(vec3(-0.5, -0.35, 0.8));
     float ambient = 0.25 + 0.1 * n.z;
@@ -105,6 +107,7 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLUSEPROGRAMPROC, glUseProgram)                            \
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation)            \
     X(PFNGLUNIFORM3FPROC, glUniform3f)                              \
+    X(PFNGLUNIFORM1FPROC, glUniform1f)                              \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays)                  \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray)                  \
     X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays)            \
@@ -376,10 +379,13 @@ public:
         gl_.glUniformMatrix4fv(mesh_mvp_, 1, GL_FALSE, draw.mvp);
         gl_.glUniform4fv(mesh_rot_, 3, draw.world_rotation);
         gl_.glUniform4fv(mesh_color_, 1, draw.color);
+        gl_.glUniform1f(mesh_unlit_, draw.unlit || draw.wireframe ? 1.0f : 0.0f);
+        glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
         gl_.glBindVertexArray(mesh_vao_);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -533,6 +539,7 @@ private:
         mesh_mvp_ = gl_.glGetUniformLocation(mesh_program_, "u_mvp");
         mesh_rot_ = gl_.glGetUniformLocation(mesh_program_, "u_rot");
         mesh_color_ = gl_.glGetUniformLocation(mesh_program_, "u_color");
+        mesh_unlit_ = gl_.glGetUniformLocation(mesh_program_, "u_unlit");
         line_mvp_ = gl_.glGetUniformLocation(line_program_, "u_mvp");
 
         gl_.glCreateVertexArrays(1, &vao_);  // core profile needs a bound VAO even without vertex buffers
@@ -557,6 +564,7 @@ private:
     GLint mesh_mvp_ = -1;
     GLint mesh_rot_ = -1;
     GLint mesh_color_ = -1;
+    GLint mesh_unlit_ = -1;
     GLuint line_program_ = 0;
     GLuint line_vao_ = 0;
     GLint line_mvp_ = -1;

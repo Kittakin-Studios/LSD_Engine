@@ -9,6 +9,8 @@ namespace lsd::log {
 namespace {
 std::atomic<Level> g_min_level{Level::Info};
 std::mutex g_mutex;
+Sink g_sink = nullptr;
+void* g_sink_user = nullptr;
 
 const char* level_name(Level level) {
     switch (level) {
@@ -24,6 +26,12 @@ const char* level_name(Level level) {
 
 void set_min_level(Level level) { g_min_level.store(level); }
 
+void set_sink(Sink sink, void* user) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_sink = sink;
+    g_sink_user = user;
+}
+
 void write(Level level, const char* channel, const char* file, int line, const char* message) {
     if (level < g_min_level.load()) return;
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -34,6 +42,7 @@ void write(Level level, const char* channel, const char* file, int line, const c
         std::fprintf(out, "[%s][%s] %s\n", level_name(level), channel, message);
     }
     std::fflush(out);
+    if (g_sink) g_sink(g_sink_user, level, channel, message);
 }
 
 } // namespace lsd::log

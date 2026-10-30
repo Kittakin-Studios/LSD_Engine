@@ -59,6 +59,8 @@ struct MeshDraw {
     f32 mvp[16];          // projection * view * world
     f32 world_rotation[12];  // world matrix 3x3 as three float4 columns (w unused), for normals
     f32 color[4];         // base colour, linear
+    bool unlit = false;      // colour only, no lighting (Unlit view mode)
+    bool wireframe = false;  // triangle edges only (Wireframe view mode)
 };
 
 struct DeviceDesc {

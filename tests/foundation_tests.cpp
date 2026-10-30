@@ -1,5 +1,7 @@
 // Minimal self-contained tests (no framework yet). Each CHECK failure is counted and reported.
+#include "lsd/core/console.h"
 #include "lsd/core/job_system.h"
+#include "lsd/foundation/log.h"
 #include "lsd/foundation/allocator.h"
 #include "lsd/foundation/handle.h"
 #include "lsd/foundation/hash_id.h"
@@ -9,6 +11,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -94,7 +97,45 @@ static void test_job_system() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+static int g_sink_lines = 0;
+static void count_sink(void*, lsd::log::Level, const char*, const char*) { ++g_sink_lines; }
+
+static void test_console() {
+    namespace console = lsd::console;
+    console::remove_all();
+    bool grid = true;
+    lsd::i32 count = 3;
+    lsd::f32 speed = 1.0f;
+    int called = 0;
+    char got[64] = "";
+    struct Ctx { int* called; char* got; } ctx{&called, got};
+    console::add_variable("r.Grid", &grid, "Draw the grid");
+    console::add_variable("r.Count", &count, "Count");
+    console::add_variable("cam.Speed", &speed, "Speed");
+    console::add_command("stat", [](void* user, const char* args) {
+        auto* c = static_cast<Ctx*>(user);
+        ++*c->called;
+        std::snprintf(c->got, 64, "%s", args);
+    }, &ctx, "Toggle a stat");
+    lsd::log::set_sink(count_sink, nullptr);
+    CHECK(console::execute("r.grid 0") && !grid);  // names are case-insensitive
+    CHECK(console::execute("  r.Count   -7  ") && count == -7);
+    CHECK(console::execute("cam.Speed 2.5") && speed == 2.5f);
+    CHECK(!console::execute("cam.Speed fast") && speed == 2.5f);
+    CHECK(!console::execute("r.Grid maybe") && !grid);
+    CHECK(console::execute("stat fps ") && called == 1 && std::strcmp(got, "fps") == 0);
+    CHECK(!console::execute("nope 1"));
+    CHECK(console::execute("r.Grid"));  // prints the value
+    CHECK(g_sink_lines >= 5);
+    lsd::log::set_sink(nullptr, nullptr);
+    const char* names[8];
+    CHECK(console::complete("r.", names, 8) == 2);
+    CHECK(console::help("STAT") && std::strcmp(console::help("stat"), "Toggle a stat") == 0);
+    console::remove_all();
+}
+
 int main() {
+    test_console();
     test_hash_id();
     test_handle();
     test_heap_allocator();

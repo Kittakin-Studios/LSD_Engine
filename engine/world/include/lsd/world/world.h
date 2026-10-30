@@ -7,6 +7,7 @@
 #include "lsd/foundation/handle.h"
 #include "lsd/foundation/math.h"
 #include "lsd/reflect/reflect.h"
+#include "lsd/world/components.h"
 
 namespace lsd::world {
 
@@ -62,6 +63,9 @@ public:
     void* at(const reflect::TypeInfo& type, u32 i);
     const void* at(const reflect::TypeInfo& type, u32 i) const { return const_cast<World*>(this)->at(type, i); }
 
+    WorldSettings& settings() { return settings_; }
+    const WorldSettings& settings() const { return settings_; }
+
     // All live entities in slot order (stable: the Outliner and level files use it).
     u32 slot_count() const { return static_cast<u32>(records_.size()); }
     Entity entity_at_slot(u32 slot) const;  // invalid if the slot is free
@@ -95,6 +99,7 @@ private:
     Array<u32> free_slots_;
     Pool pools_[kMaxComponentTypes];
     u32 pool_count_ = 0;
+    WorldSettings settings_;
 };
 
 } // namespace lsd::world

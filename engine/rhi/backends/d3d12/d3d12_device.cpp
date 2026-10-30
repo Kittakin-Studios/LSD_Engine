@@ -50,7 +50,8 @@ VsOut vs_main(uint id : SV_VertexID) {
 float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 )";
 
-// Lit mesh: one directional light plus sky/ground ambient. Constants match rhi::MeshDraw.
+// Lit mesh: one directional light plus sky/ground ambient. Constants match rhi::MeshDraw;
+// rot0.w (unused by the normal transform) carries the unlit flag.
 constexpr char kMeshHlsl[] = R"(
 cbuffer Draw : register(b0) { float4x4 mvp; float4 rot0; float4 rot1; float4 rot2; float4 color; };
 struct VsIn { float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
@@ -62,6 +63,7 @@ VsOut vs_main(VsIn i) {
     return o;
 }
 float4 ps_main(VsOut i) : SV_Target {
+    if (rot0.w > 0.5) return color;
     const float3 n = normalize(i.normal);
     const float3 sun = normalize(float3(-0.5, -0.35, 0.8));
     const float ambient = 0.25 + 0.1 * n.z;
@@ -369,9 +371,10 @@ public:
         std::memcpy(constants, draw.mvp, sizeof draw.mvp);
         std::memcpy(constants + 16, draw.world_rotation, sizeof draw.world_rotation);
         std::memcpy(constants + 28, draw.color, sizeof draw.color);
+        constants[19] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, kRootConstants, constants, 0);
-        list_->SetPipelineState(mesh_pipeline_.Get());
+        list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : mesh_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
@@ -619,11 +622,12 @@ private:
         };
         return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
                create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_);
     }
 
     bool create_pipeline(const char* source, usize source_size, D3D12_INPUT_LAYOUT_DESC layout, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
-                         bool depth_test, ComPtr<ID3D12PipelineState>& out) {
+                         bool depth_test, ComPtr<ID3D12PipelineState>& out, bool wireframe = false) {
         ComPtr<ID3DBlob> vs, ps;
         if (!compile(source, source_size - 1, "vs_main", "vs_5_0", vs) || !compile(source, source_size - 1, "ps_main", "ps_5_0", ps)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
@@ -633,7 +637,7 @@ private:
         pso.InputLayout = layout;
         pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         pso.SampleMask = UINT_MAX;
-        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso.RasterizerState.FillMode = wireframe ? D3D12_FILL_MODE_WIREFRAME : D3D12_FILL_MODE_SOLID;
         pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  // shortcut: no culling until imported winding is verified
         pso.RasterizerState.DepthClipEnable = TRUE;
         pso.DepthStencilState.DepthEnable = depth_test;
@@ -714,6 +718,7 @@ private:
     ComPtr<ID3D12RootSignature> root_signature_;
     ComPtr<ID3D12PipelineState> triangle_pipeline_;
     ComPtr<ID3D12PipelineState> mesh_pipeline_;
+    ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> line_pipeline_;
     Buffer buffers_[kMaxBuffers];
     ComPtr<ID3D12DescriptorHeap> target_rtv_heap_;

@@ -5,6 +5,7 @@
 #include "thumbnails.h"
 #include "transactions.h"
 
+#include "lsd/core/console.h"
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
 #include "lsd/foundation/system_info.h"
@@ -23,6 +24,7 @@
 #include <cstring>
 #include <filesystem>
 #include <new>
+#include <string>
 
 namespace {
 
@@ -32,6 +34,13 @@ using lsd::editor::EditorState;
 constexpr char kContentDir[] = "Content";
 constexpr char kDataDir[] = "DerivedData";
 constexpr char kSettingsPath[] = "Saved/editor_settings.json";
+constexpr char kLockPath[] = "Saved/editor.lock";  // exists while the editor runs; left behind by a crash
+constexpr char kAutosaveDir[] = "Saved/Autosaves";
+
+// Saved/Autosaves/<level name>.lsdlevel ("Untitled" before the first save).
+std::string autosave_path(const char* level_path) {
+    return std::string(kAutosaveDir) + "/" + (level_path[0] ? fs::path(level_path).stem().string() : std::string("Untitled")) + lsd::world::kLevelExtension;
+}
 
 void to_rgba(const lsd::LinearColor& c, lsd::f32 out[4]) {
     out[0] = c.r;
@@ -49,10 +58,12 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
     return colors;
 }
 
-// Every StaticMesh in the world, selection tinted.
+// Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::world::World& world, lsd::editor::MeshCache& meshes,
-                lsd::world::Entity selected) {
+                EditorState& stats) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
+    stats.stat_draws = 0;
+    stats.stat_triangles = 0;
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
@@ -71,13 +82,73 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, lsd::world
             draw.world_rotation[c * 4 + 3] = 0.0f;
         }
         to_rgba(component->color, draw.color);
-        if (e == selected) {  // shortcut: selection tint until the outline post-process exists
+        const bool editor_view = !stats.playing || stats.ejected;
+        draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
+        draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+        if ((!stats.playing || stats.ejected) && stats.is_selected(e)) {  // shortcut: selection tint until the outline post-process exists
             draw.color[0] = 1.0f;
             draw.color[1] = 0.85f;
             draw.color[2] = 0.25f;
         }
         device.draw_mesh(draw);
+        ++stats.stat_draws;
+        stats.stat_triangles += mesh->gpu.index_count / 3;
     }
+}
+
+// Console commands and variables (Output Log tab), like Unreal's exec commands and CVars.
+void register_console(EditorState& s) {
+    namespace console = lsd::console;
+    console::add_variable("r.Grid", &s.show_grid, "Draw the floor grid");
+    console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
+    console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
+    console::add_variable("editor.Snap", &s.settings.snap, "Snap gizmo moves, rotations and scales");
+    console::add_variable("editor.OrthoHeight", &s.camera.ortho_height, "Metres visible top to bottom in the orthographic views");
+    console::add_variable("editor.SnapMove", &s.settings.snap_move, "Move snap step in metres");
+    console::add_variable("editor.SnapAngle", &s.settings.snap_angle, "Rotate snap step in degrees");
+    console::add_command("help", [](void*, const char* args) {
+        const char* names[128];
+        const lsd::u32 n = console::complete(args, names, 128);
+        for (lsd::u32 i = 0; i < n; ++i) LSD_LOG_INFO("console", "  %-22s %s", names[i], console::help(names[i]));
+    }, &s, "List commands and variables (help <prefix> filters)");
+    console::add_command("clear", [](void*, const char*) { lsd::editor::clear_output_log(); }, &s, "Clear the Output Log");
+    console::add_command("stat", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        if (std::strcmp(args, "fps") == 0 || std::strcmp(args, "unit") == 0) st.show_stats = !st.show_stats;
+        else LSD_LOG_WARN("console", "stat: try 'stat fps'");
+    }, &s, "stat fps: toggle the fps / draw call overlay");
+    console::add_command("view", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        static const char* const names[] = {"perspective", "top", "front", "right"};
+        for (int v = 0; v < 4; ++v) {
+            if (std::strcmp(args, names[v]) == 0) return lsd::editor::set_view(st, static_cast<lsd::editor::ViewType>(v));
+        }
+        LSD_LOG_WARN("console", "view: perspective, top, front or right");
+    }, &s, "view perspective|top|front|right");
+    console::add_command("viewmode", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        static const char* const names[] = {"lit", "unlit", "wireframe"};
+        for (int m = 0; m < 3; ++m) {
+            if (std::strcmp(args, names[m]) == 0) {
+                st.view_mode = static_cast<lsd::editor::ViewMode>(m);
+                return;
+            }
+        }
+        LSD_LOG_WARN("console", "viewmode: lit, unlit or wireframe");
+    }, &s, "viewmode lit|unlit|wireframe");
+    console::add_command("play", [](void* user, const char*) { static_cast<EditorState*>(user)->play_requested = true; }, &s, "Start Play-in-Editor");
+    console::add_command("stop", [](void* user, const char*) { static_cast<EditorState*>(user)->stop_requested = true; }, &s, "Stop Play-in-Editor");
+    console::add_command("save", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        if (st.level_path[0]) st.save_requested = true;
+        else LSD_LOG_WARN("console", "save: the level has no file yet; use File > Save Level As");
+    }, &s, "Save the current level");
+    console::add_command("open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hit = 0;
+        if (st.registry->search(args, lsd::asset::AssetType::Level, nullptr, &hit, 1) == 1) st.registry->source_path(st.registry->get(hit), st.open_level_requested, sizeof st.open_level_requested);
+        else LSD_LOG_WARN("console", "open: no level named like '%s'", args);
+    }, &s, "open <level name>: open a level (discards unsaved changes)");
 }
 
 // Copies a file dropped from Explorer into Content/<folder>/, renaming on clash ("Chair_1.fbx").
@@ -165,6 +236,7 @@ bool save_level(EditorState& s, const char* path) {
 } // namespace
 
 int main(int argc, char** argv) {
+    lsd::editor::install_output_log();
     // shortcut: startup mirrors runtime/main.cpp; fold both into a shared app layer when a third exe needs it.
     lsd::rhi::DeviceDesc desc{};
     long max_frames = -1;
@@ -174,6 +246,8 @@ int main(int argc, char** argv) {
     const char* level_arg = nullptr;   // -level=<path>: open this level instead of the last one
     bool play_arg = false;             // -play: start Play-in-Editor right away
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
+    const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
+    int exec_count = 0;
     for (int i = 1; i < argc; ++i) {
         if (std::strncmp(argv[i], "-gpu=", 5) == 0) desc.adapter_override = std::atoi(argv[i] + 5);
         else if (std::strcmp(argv[i], "-rhi=d3d12") == 0) desc.backend = lsd::rhi::Backend::D3D12;
@@ -187,6 +261,7 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-level=", 7) == 0) level_arg = argv[i] + 7;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
+        else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
         else LSD_LOG_WARN("editor", "Unknown argument: %s", argv[i]);
     }
 
@@ -259,6 +334,16 @@ int main(int argc, char** argv) {
 
     const char* startup_level = level_arg ? level_arg : state.settings.last_level;
     if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
+
+    // Crash recovery: a lock file left behind means the last session did not exit cleanly.
+    if (fs::exists(kLockPath)) {
+        const std::string autosave = autosave_path(state.level_path);
+        std::error_code error;
+        const bool newer = fs::exists(autosave) && (!state.level_path[0] || fs::last_write_time(autosave, error) > fs::last_write_time(state.level_path, error));
+        if (newer && max_frames < 0) std::snprintf(state.recovery_path, sizeof state.recovery_path, "%s", autosave.c_str());
+    }
+    if (FILE* lock = std::fopen(kLockPath, "wb")) std::fclose(lock);
+    lsd::u64 last_autosave = SDL_GetTicks();
     if (place_arg) {
         lsd::usize hit = 0;
         if (registry.search(place_arg, lsd::asset::AssetType::Mesh, nullptr, &hit, 1) == 1) {
@@ -274,9 +359,14 @@ int main(int argc, char** argv) {
         }
     }
     state.play_requested = play_arg;
+    register_console(state);
+    for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
     for (lsd::u32 slot = 0; select_arg && slot < world.slot_count(); ++slot) {
         const lsd::world::Entity e = world.entity_at_slot(slot);
-        if (e.valid() && std::strcmp(world.name(e), select_arg) == 0) state.selected = e;
+        if (e.valid() && std::strcmp(world.name(e), select_arg) == 0) {
+            state.selected = e;
+            state.selection[state.selection_count++] = e;
+        }
     }
 
     lsd::render::GridColors current_grid = grid_colors(state.theme);
@@ -353,13 +443,31 @@ int main(int argc, char** argv) {
             state.save_as_requested[0] = '\0';
         }
         if (state.quit_confirmed || (state.quit_after_save && saved)) running = false;
+        if (state.restore_requested) {
+            state.restore_requested = false;
+            if (lsd::world::load_level_file(world, state.recovery_path)) {
+                history.reset(world, "Restore Autosave");
+                history.commit(world, "Restored autosave");  // unsaved until the user saves
+                std::snprintf(state.status, sizeof state.status, "Restored %s", state.recovery_path);
+            }
+            state.recovery_path[0] = '\0';
+        }
+        const lsd::f32 autosave_ms = state.settings.autosave_minutes * 60000.0f;
+        if (autosave_ms > 0.0f && SDL_GetTicks() - last_autosave > static_cast<lsd::u64>(autosave_ms)) {
+            last_autosave = SDL_GetTicks();
+            if (history.dirty() && !state.playing) {
+                fs::create_directories(kAutosaveDir, ignored);
+                const std::string path = autosave_path(state.level_path);
+                if (lsd::world::save_level_file(world, path.c_str())) LSD_LOG_INFO("editor", "Autosaved to %s", path.c_str());
+            }
+        }
 
         if (state.play_requested && !state.playing) {
             lsd::world::save_level(world, play_snapshot);
             play.start(world, state.camera.position, state.camera.yaw, state.camera.pitch);
             state.playing = true;
             state.mouse_captured = true;
-            state.selected = {};
+            state.paused = state.ejected = false;
             LSD_LOG_INFO("editor", "Play");
         }
         state.play_requested = false;
@@ -367,19 +475,22 @@ int main(int argc, char** argv) {
             lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size());  // Play changes revert, like Unreal's PIE
             state.playing = false;
             state.mouse_captured = false;
+            state.paused = state.ejected = false;
             LSD_LOG_INFO("editor", "Stop");
         }
         state.stop_requested = false;
-        SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured);
+        SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
 
         if (state.playing) {
             const bool* keys = SDL_GetKeyboardState(nullptr);
             lsd::editor::PlayInput input{};
-            if (state.mouse_captured) {
+            if (state.mouse_captured && !state.ejected) {
                 input = {keys[SDL_SCANCODE_W], keys[SDL_SCANCODE_S], keys[SDL_SCANCODE_A], keys[SDL_SCANCODE_D], keys[SDL_SCANCODE_SPACE],
                          keys[SDL_SCANCODE_LSHIFT], mouse_dx, mouse_dy};
             }
-            play.update(world, meshes, input, dt);
+            if (!state.paused || state.step_requested) play.update(world, meshes, input, state.paused ? 1.0f / 60.0f : dt);
+            state.step_requested = false;
+            state.player_feet = play.feet();
         }
         mouse_dx = mouse_dy = 0.0f;
 
@@ -410,11 +521,13 @@ int main(int argc, char** argv) {
             // ImGui works in window points; the swapchain is in pixels (differs on high-DPI screens).
             const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
             device->set_viewport(rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y);
-            const lsd::Mat4 proj = lsd::editor::camera_projection(state.camera, rect[2] / rect[3]);
-            const lsd::Mat4 view = state.playing ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(state.camera);
+            lsd::editor::EditorCamera lens = state.camera;
+            if (state.playing && !state.ejected) lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
+            const lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
+            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(state.camera);
             const lsd::Mat4 view_proj = proj * view;
             if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
-            draw_world(*device, view_proj, world, meshes, state.playing ? lsd::world::Entity{} : state.selected);
+            draw_world(*device, view_proj, world, meshes, state);
         }
         device->render_debug_ui();
         if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
@@ -424,6 +537,9 @@ int main(int argc, char** argv) {
         ++frame;
     }
 
+    fs::remove(kLockPath, ignored);
+    lsd::console::remove_all();  // the registrations point into state
+    lsd::log::set_sink(nullptr, nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     lsd::reflect::save_file(state.settings, kSettingsPath);
     SDL_SetWindowRelativeMouseMode(window, false);

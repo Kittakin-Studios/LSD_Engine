@@ -9,6 +9,11 @@ enum class Level { Trace, Info, Warning, Error, Fatal };
 // Minimum level that is printed. Defaults to Info.
 void set_min_level(Level level);
 
+// Extra receiver for every printed message (the editor's Output Log). Called under the log lock,
+// from any thread; keep it short. One sink; pass nullptr to remove it.
+using Sink = void (*)(void* user, Level level, const char* channel, const char* message);
+void set_sink(Sink sink, void* user);
+
 // Low-level entry point; prefer the LSD_LOG_* macros.
 void write(Level level, const char* channel, const char* file, int line, const char* message);
 

@@ -11,6 +11,8 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<Transform>(),
         &reflect::type_of<StaticMesh>(),
         &reflect::type_of<PlayerStart>(),
+        &reflect::type_of<BlockingVolume>(),
+        &reflect::type_of<KillVolume>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);
@@ -119,6 +121,7 @@ void World::destroy(Entity e) {
 }
 
 void World::clear() {
+    settings_ = WorldSettings{};
     records_.clear();
     free_slots_.clear();
     for (u32 p = 0; p < pool_count_; ++p) pools_[p].count = 0;

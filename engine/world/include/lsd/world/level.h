@@ -5,6 +5,7 @@
 //
 //   {
 //     "lsd_level": 1,
+//     "world_settings": {"kill_z": -50, "gravity": 9.81},
 //     "entities": [
 //       {"id": 0, "name": "Floor", "parent": -1,
 //        "Transform": {...}, "StaticMesh": {...}}

@@ -179,4 +179,14 @@ inline Mat4 perspective(f32 fov_y_radians, f32 aspect, f32 near_z, f32 far_z) {
     return r;
 }
 
+// Right-handed orthographic projection with 0..1 depth; width and height in world units.
+inline Mat4 orthographic(f32 width, f32 height, f32 near_z, f32 far_z) {
+    Mat4 r;
+    r.at(0, 0) = 2.0f / width;
+    r.at(1, 1) = 2.0f / height;
+    r.at(2, 2) = 1.0f / (near_z - far_z);
+    r.at(2, 3) = near_z / (near_z - far_z);
+    return r;
+}
+
 } // namespace lsd

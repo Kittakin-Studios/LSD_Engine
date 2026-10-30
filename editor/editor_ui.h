@@ -15,8 +15,14 @@ class MeshCache;
 class ThumbnailCache;
 class Transactions;
 
-// Unreal-style viewport camera: a position and a look direction.
+enum class ViewType : u8 { Perspective, Top, Front, Right };  // ortho views look like Blender's numpad views
+enum class ViewMode : u8 { Lit, Unlit, Wireframe };
+
+// Unreal-style viewport camera: a position and a look direction. In the orthographic views
+// `position` is the centre of the view and `ortho_height` how many metres fit vertically.
 struct EditorCamera {
+    ViewType view = ViewType::Perspective;
+    f32 ortho_height = 20.0f;
     Vec3 position{-4.65f, -4.26f, 3.04f};
     f32 yaw = 0.74f;     // radians around +Z; 0 looks along +X
     f32 pitch = -0.45f;  // radians; negative looks down
@@ -33,8 +39,15 @@ struct EditorState {
     bool show_grid = true;
     bool show_axis_gizmo = true;
     bool game_view = false;  // G: hide grid, gizmos and icons
+    ViewMode view_mode = ViewMode::Lit;
+    EditorCamera perspective_camera;  // restored when leaving an orthographic view
     bool show_history = false;
     bool show_preferences = false;
+    bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
+    u32 stat_draws = 0;       // set by main.cpp after drawing
+    u32 stat_triangles = 0;
+    EditorCamera bookmarks[10];  // Ctrl+0..9 stores, 0..9 jumps (like Unreal)
+    bool bookmark_set[10] = {};
     int details_tab = 0;
     char status[160] = "";
 
@@ -42,7 +55,18 @@ struct EditorState {
     world::World* world = nullptr;
     MeshCache* meshes = nullptr;
     Transactions* history = nullptr;
+    // Selection: `selected` is the primary (last clicked: Details and the gizmo pivot follow it);
+    // `selection` holds every selected entity, primary included.
     world::Entity selected;
+    static constexpr u32 kMaxSelection = 1024;
+    world::Entity selection[kMaxSelection];
+    u32 selection_count = 0;
+    bool is_selected(world::Entity e) const {
+        for (u32 i = 0; i < selection_count; ++i) {
+            if (selection[i] == e) return true;
+        }
+        return false;
+    }
     GizmoMode gizmo = GizmoMode::Translate;
     bool gizmo_local = false;
     char level_path[260] = "";  // "" = never saved
@@ -77,13 +101,27 @@ struct EditorState {
     bool quit_requested = false;   // window closed with unsaved changes: the UI asks first
     bool quit_confirmed = false;
     bool quit_after_save = false;
+    char recovery_path[260] = "";  // autosave left by a crash: the UI offers to restore it
+    bool restore_requested = false;
     bool mouse_captured = false;  // Play: mouse drives the player's view
+    bool paused = false;          // Play: Pause key; frame step with ] while paused
+    bool step_requested = false;
+    bool ejected = false;         // Play: F8 frees the editor camera (select and inspect) while the game runs
+    Vec3 player_feet;             // Play: where the player is, for the ejected view
+    bool show_world_settings = false;
     f32 viewport_rect[4] = {};  // x, y, width, height in window pixels, set by draw_editor
 };
+
+// Perspective <-> orthographic; restores the perspective camera when coming back.
+void set_view(EditorState& state, ViewType view);
 
 Vec3 camera_forward(const EditorCamera& camera);
 Mat4 camera_view(const EditorCamera& camera);
 Mat4 camera_projection(const EditorCamera& camera, f32 aspect);
+
+// Starts capturing log lines for the Output Log tab. Call once before anything logs that should show.
+void install_output_log();
+void clear_output_log();
 
 // Loads Config/editor_theme.json into theme if it exists.
 void load_theme(EditorTheme& theme);

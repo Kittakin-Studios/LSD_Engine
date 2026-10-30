@@ -24,6 +24,23 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Tooltip = "Blocks the player in Play") bool collision = true;
 };
 
+// Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),
+// drawn only in the editor.
+
+// Invisible wall: blocks the player (Unreal's Blocking Volume).
+LSD_STRUCT(Component, Category = "Volumes")
+struct BlockingVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
+};
+
+// Sends the player back to the start when entered (Unreal's Kill Z Volume).
+LSD_STRUCT(Component, Category = "Volumes")
+struct KillVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
+};
+
 // Where Play puts the player; facing = the entity's Z rotation.
 LSD_STRUCT(Component, Category = "Gameplay")
 struct PlayerStart {
@@ -31,6 +48,13 @@ struct PlayerStart {
     LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 eye_height = 1.7f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 walk_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 jump_speed = 5.0f;
+};
+
+// Per-level settings (Unreal's World Settings), saved in the level file.
+LSD_STRUCT(Category = "World")
+struct WorldSettings {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Falling below this height respawns the player") f32 kill_z = -50.0f;
     LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 gravity = 9.81f;
 };
 

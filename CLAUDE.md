@@ -71,7 +71,7 @@ blue `#0040FF` → `#5C8DFF`, VFX orange on red → `#FFC266`.
 ```
 engine/foundation/  types, logging, asserts, heap + arena allocators, generational handles,
                     constexpr hashed IDs (FNV-1a 64), system info (CPU, cores, SIMD, RAM)
-engine/core/        job system (worker threads, counters, wait-by-helping)
+engine/core/        job system (worker threads, counters, wait-by-helping), console variables/commands
 engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON save/load,
                     save_file/load_file, LinearColor (Color flag -> colour picker)
 engine/debug_ui/    ImGui Details panel generated from TypeInfo (runtime overlay + editor v1)
@@ -119,13 +119,16 @@ milestone 4, texture/audio import to milestone 5.
 **Milestone 3 — in progress, exit test works.** World (entities + component pools + hierarchy),
 `.lsdlevel` levels (new/open/save/save as, reopen last), move/rotate/scale gizmos with snapping,
 picking, Unreal camera controls, Outliner tree with drag-to-attach, component Details, Place panel,
-undo/redo with history, Play-in-Editor (first-person walk/jump with box collision until Jolt).
-Remaining milestone 3 items are listed in `docs/BACKLOG.md` (multi-select, ortho views, view modes,
-Output Log + console, volumes, autosave...).
+undo/redo with history, Play-in-Editor (first-person walk/jump with box collision until Jolt; pause,
+step, eject), multi-select + box select, copy/paste, ortho views, Lit/Unlit/Wireframe, Output Log +
+console (`engine/core/console`), stats, camera bookmarks, autosave + crash recovery, Blocking/Kill
+volumes, World Settings. Remaining milestone 3 items are in `docs/BACKLOG.md` (Message Log, multi-edit
+in Details, viewport layouts, Simulate, play in new window...).
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
-`-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`.
+`-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`,
+`-exec="<console line>"` (repeatable, e.g. `-exec="view top" -exec="viewmode wireframe"`).
 
 Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
 `LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no
