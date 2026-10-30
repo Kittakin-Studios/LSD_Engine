@@ -1,6 +1,7 @@
 #pragma once
 // Material (a data asset, "Material"): physically based surface settings, metal / roughness like
 // Unreal's default lit material and glTF. Picked on a StaticMesh; textures are optional.
+#include "lsd/foundation/math.h"
 #include "lsd/reflect/color.h"
 
 namespace lsd::render {
@@ -19,8 +20,17 @@ struct Material {
     LSD_PROPERTY(Edit, Min = 0, Max = 100) f32 emissive_strength = 1.0f;
 };
 
+// One Scalar / Vector Parameter of a Material Graph set by an instance (scalars use X).
+LSD_STRUCT()
+struct MaterialParameter {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The parameter node's Name") char name[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Scalar parameters use X") Vec3 value = {1.0f, 1.0f, 1.0f};
+};
+
 // A Material with some values changed (Unreal's Material Instance): tick a value to override it;
-// the rest follow the parent, also when the parent changes.
+// the rest follow the parent, also when the parent changes. With a Material Graph as the parent,
+// its Scalar / Vector Parameters are set by name in Parameters (no recompile).
 LSD_STRUCT(Category = "Rendering")
 struct MaterialInstance {
     LSD_GENERATED()
@@ -38,6 +48,7 @@ struct MaterialInstance {
     LSD_PROPERTY(Edit) bool override_emissive = false;
     LSD_PROPERTY(Edit) LinearColor emissive = LinearColor::hex(0x000000);
     LSD_PROPERTY(Edit, Min = 0, Max = 100) f32 emissive_strength = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Material Graph parents: parameter values by name") List<MaterialParameter, 16> parameters;
 };
 
 // The instance's parent with its overrides applied.

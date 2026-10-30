@@ -63,6 +63,11 @@ private:
         char texture_guids[3][33];
         bool texture_srgb[3];
         u32 texture_count;
+        // Graphs: their parameters' defaults; instances of a graph: those with the instance's values.
+        f32 params[16][4];
+        char param_names[16][32];
+        u32 param_count;
+        bool graph_instance;  // a MaterialInstance whose parent (`parent`) is a Material Graph
     };
     void load_graph(Entry& entry, const char* path);
     void resolve_textures(Entry& entry);

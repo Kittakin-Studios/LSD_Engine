@@ -171,7 +171,8 @@ test now passes fully. CPU particles (ParticleSystem data asset, ParticleEffect 
 preview, alpha / additive sprites on D3D12 and OpenGL) and the Particle Editor window (preview, timeline,
 per-emitter stats). Material Graphs (`.lsdmatgraph` on the graph canvas, compiled to shader code built
 into the lit-mesh pipelines on D3D12 / OpenGL; used like a Material). The graph window previews
-materials live. Next: material parameters + instances, sky / fog / post, timeline.
+materials live. Scalar / Vector Parameters set
+by Material Instances of a graph. Next: milestone 6 (packaging, save game, fog / post, AI, UI).
 
 Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
 `-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),

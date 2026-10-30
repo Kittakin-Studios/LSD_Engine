@@ -13,10 +13,18 @@ namespace lsd::script {
 
 constexpr char kMaterialGraphExtension[] = ".lsdmatgraph";
 constexpr u32 kMaxMaterialTextures = 3;  // the lit-mesh shader's three texture slots
+constexpr u32 kMaxMaterialParams = 16;   // rhi::kMaxMaterialParams
 
 struct MaterialTextureSlot {
     char name[64];  // texture asset name, as typed on the node
     bool srgb;      // Color: sRGB; Normal and Data: linear
+};
+
+// A Scalar / Vector Parameter: read from lsd_params[slot] (scalars in x), set per material.
+struct MaterialParam {
+    char name[32];
+    f32 value[4];  // the node's default
+    bool vector;
 };
 
 struct MaterialCode {
@@ -24,10 +32,12 @@ struct MaterialCode {
     Array<char> code;  // NUL-terminated
     MaterialTextureSlot textures[kMaxMaterialTextures] = {};
     u32 texture_count = 0;
+    MaterialParam params[kMaxMaterialParams] = {};  // slot order; same name = same slot
+    u32 param_count = 0;
 };
 
 // False with a message naming the problem: no (or two) Material Output, a loop, a Texture Sample
-// without a texture, more than kMaxMaterialTextures textures.
+// without a texture, more than kMaxMaterialTextures textures or kMaxMaterialParams parameters.
 bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, usize error_capacity);
 
 } // namespace lsd::script

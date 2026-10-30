@@ -7,6 +7,8 @@
 #include "table_editor.h"
 #include "particle_editor.h"
 
+#include "lsd/script/material_graph.h"
+
 #include "mesh_cache.h"
 #include "thumbnails.h"
 #include "transactions.h"
@@ -1629,6 +1631,42 @@ bool draw_curve_editor(world::Curve& curve) {
 
 } // namespace
 
+namespace {
+
+// An instance of a Material Graph: a button adding the graph's parameters (at their defaults) to its list.
+bool fill_graph_parameters(EditorState& s, render::MaterialInstance& instance) {
+    asset::Guid guid;
+    const asset::AssetRecord* parent = asset::parse_guid(instance.parent, guid) ? s.registry->find(guid) : nullptr;
+    if (!parent || parent->type != asset::AssetType::MaterialGraph) return false;
+    if (!ImGui::Button("Add the graph's parameters")) {
+        ImGui::SetItemTooltip("Lists the parent graph's Scalar / Vector Parameters below (the base settings above are not used by graphs)");
+        return false;
+    }
+    char path[300];
+    s.registry->source_path(*parent, path, sizeof path);
+    script::Graph graph(default_allocator());
+    script::MaterialCode code(default_allocator());
+    char error[256] = "";
+    if (!script::load_graph_file(graph, path) || !script::compile_material_graph(graph, code, error, sizeof error)) {
+        std::snprintf(s.status, sizeof s.status, "%s: %s", parent->name, error[0] ? error : "could not read the graph");
+        return false;
+    }
+    bool added = false;
+    for (u32 i = 0; i < code.param_count; ++i) {
+        bool present = false;
+        for (const render::MaterialParameter& p : instance.parameters) present = present || std::strcmp(p.name, code.params[i].name) == 0;
+        if (present || instance.parameters.count == instance.parameters.capacity()) continue;
+        render::MaterialParameter& p = instance.parameters[instance.parameters.count++];
+        std::snprintf(p.name, sizeof p.name, "%s", code.params[i].name);
+        p.value = {code.params[i].value[0], code.params[i].value[1], code.params[i].value[2]};
+        added = true;
+    }
+    std::snprintf(s.status, sizeof s.status, added ? "Added %s's parameters" : "%s has no other parameters", parent->name);
+    return added;
+}
+
+} // namespace
+
 void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type) {
     return g_data_type == &type && g_data_guid == guid ? g_data : nullptr;
 }
@@ -1660,6 +1698,7 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     ImGui::BeginChild("DataRows");
     const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
     if (g_data_type == &reflect::type_of<world::Curve>() && draw_curve_editor(*reinterpret_cast<world::Curve*>(g_data))) g_data_dirty = true;
+    if (g_data_type == &reflect::type_of<render::MaterialInstance>() && fill_graph_parameters(s, *reinterpret_cast<render::MaterialInstance*>(g_data))) g_data_dirty = true;
     if (draw_properties(*g_data_type, g_data, &style)) g_data_dirty = true;
     ImGui::EndChild();
 }

@@ -102,7 +102,10 @@ struct MeshDraw {
     // textures 0 / 1 / 2. `time` feeds its Time node.
     MaterialShaderHandle material_shader;
     f32 time = 0.0f;
+    const f32* material_params = nullptr;  // its parameters, 4 floats each (copied; unset ones are 0)
+    u32 material_param_count = 0;
 };
+constexpr u32 kMaxMaterialParams = 16;
 
 // Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
 // colour = linear colour x intensity (lux for directional; candela, i.e. lumens / 4 pi, for point

@@ -231,6 +231,7 @@ float3 lsd_v3(float x) { return float3(x, x, x); }
 float4 lsd_tex0(float3 uv) { return base_tex.Sample(samp, uv.xy); }
 float4 lsd_tex1(float3 uv) { return normal_tex.Sample(samp, uv.xy); }
 float4 lsd_tex2(float3 uv) { return orm_tex.Sample(samp, uv.xy); }
+cbuffer MaterialParams : register(b3) { float4 lsd_params[16]; };
 )";
 
 // Shadow casters: depth only (SKINNED: skinned first).
@@ -684,7 +685,10 @@ public:
 
     // Copies skinning rows into this frame's ring and returns their GPU address (0 if full).
     D3D12_GPU_VIRTUAL_ADDRESS upload_joints(const f32* rows, u32 count) {
-        const u32 bytes = (count < kMaxJoints ? count : kMaxJoints) * 48;
+        return upload_constants(rows, (count < kMaxJoints ? count : kMaxJoints) * 48);
+    }
+    // Any constants (skinning rows, material parameters) into this frame's ring; 0 if full.
+    D3D12_GPU_VIRTUAL_ADDRESS upload_constants(const void* rows, u32 bytes) {
         const u32 aligned = (bytes + 255u) & ~255u;
         if (joint_offset_ + aligned > kJointRingBytes) {
             LSD_LOG_WARN("d3d12", "Too many skinned draws this frame: some are skipped");
@@ -729,6 +733,14 @@ public:
         list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
         list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
         const bool skinned = draw.joint_rows && draw.joint_count;
+        if (material) {  // its parameters: 16 float4, unset ones 0 (through the joint ring: 4 rows of 48 bytes = 192 + room)
+            f32 values[kMaxMaterialParams * 4] = {};
+            const u32 count = draw.material_param_count < kMaxMaterialParams ? draw.material_param_count : kMaxMaterialParams;
+            if (draw.material_params) std::memcpy(values, draw.material_params, count * 16);
+            const D3D12_GPU_VIRTUAL_ADDRESS address = upload_constants(values, sizeof values);
+            if (!address) return;
+            list_->SetGraphicsRootConstantBufferView(8, address);
+        }
         if (skinned) {
             const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(draw.joint_rows, draw.joint_count);
             if (!joints) return;
@@ -1159,7 +1171,10 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[8]{};
+        D3D12_ROOT_PARAMETER params[9]{};
+        params[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b3: material graph parameters (63 of 64 DWORDs)
+        params[8].Descriptor.ShaderRegister = 3;
+        params[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b2: skinning matrices
         params[7].Descriptor.ShaderRegister = 2;
         params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
@@ -1203,7 +1218,7 @@ private:
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 8;
+        rs_desc.NumParameters = 9;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 2;
         rs_desc.pStaticSamplers = samplers;

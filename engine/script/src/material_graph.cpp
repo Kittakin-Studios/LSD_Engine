@@ -91,6 +91,24 @@ struct Compiler {
         return true;
     }
 
+    // The parameter slot of a Scalar / Vector Parameter (one per name).
+    bool param_slot(const GraphNode& node, bool vector, u32& slot) {
+        if (!node.values[0][0]) return fail("A parameter needs a Name", &node);
+        for (slot = 0; slot < out.param_count; ++slot) {
+            if (std::strcmp(out.params[slot].name, node.values[0]) == 0) return true;
+        }
+        if (out.param_count == kMaxMaterialParams) return fail("More than 16 parameters in one material", &node);
+        MaterialParam& p = out.params[slot];
+        std::snprintf(p.name, sizeof p.name, "%s", node.values[0]);
+        p.value[0] = p.value[1] = p.value[2] = 0.0f;
+        p.value[3] = 1.0f;
+        const int n = std::sscanf(node.values[1], "%f , %f , %f", &p.value[0], &p.value[1], &p.value[2]);
+        if (n == 1) p.value[1] = p.value[2] = p.value[0];
+        p.vector = vector;
+        ++out.param_count;
+        return true;
+    }
+
     // Declares a node's outputs as float3 temporaries (its inputs first).
     bool declare(u32 id) {
         if (contains(done, id)) return true;
@@ -102,8 +120,10 @@ struct Compiler {
         u32 slot = 0;
         const bool texture = std::strcmp(def->id, "MatTexture") == 0;
         if (texture && !texture_slot(*node, slot)) return false;
+        const bool scalar_param = std::strcmp(def->id, "MatScalarParam") == 0, vector_param = std::strcmp(def->id, "MatVectorParam") == 0;
+        if ((scalar_param || vector_param) && !param_slot(*node, vector_param, slot)) return false;
         std::string inputs[6];
-        for (u32 i = 0; i < def->input_count; ++i) {
+        for (u32 i = 0; i < def->input_count && !scalar_param && !vector_param; ++i) {  // parameters: the default is data, not code
             if (def->inputs[i].type == PinType::String) continue;  // settings, not values
             if (!input(*node, *def, i, inputs[i])) return false;
         }
@@ -118,7 +138,7 @@ struct Compiler {
                     body += inputs[c[1] - '0'];
                     ++c;
                 } else if (*c == '@') {
-                    body += static_cast<char>('0' + slot);
+                    body += std::to_string(slot);
                 } else {
                     body += *c;
                 }
@@ -137,6 +157,7 @@ struct Compiler {
 bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, usize error_capacity) {
     out.code.clear();
     out.texture_count = 0;
+    out.param_count = 0;
     const GraphNode* output = nullptr;
     for (const GraphNode& n : graph.nodes) {
         if (std::strcmp(n.type, "MatOutput") != 0) continue;

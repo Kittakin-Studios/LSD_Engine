@@ -183,6 +183,19 @@ static void test_material_graph() {
     CHECK(std::strstr(code.code.data(), "(lsd_tex1(mi.uv).rgb * 2.0 - lsd_v3(1.0))"));
     CHECK(std::strstr(code.code.data(), "s.roughness = (v"));
 
+    // Parameters: one slot per name, defaults kept for the instances.
+    GraphNode* bright = g.add("MatScalarParam", 0, 700);
+    std::snprintf(bright->values[1], sizeof bright->values[1], "2.5");
+    const u32 bright_id = bright->id;
+    GraphNode* tint_param = g.add("MatVectorParam", 0, 800);
+    std::snprintf(tint_param->values[1], sizeof tint_param->values[1], "0.1,0.2,0.3");
+    const u32 tint_param_id = tint_param->id;
+    CHECK(g.connect(bright_id, 0, out, 1) && g.connect(tint_param_id, 0, mul, 1));
+    CHECK(compile_material_graph(g, code, error, sizeof error));
+    CHECK(code.param_count == 2 && std::strcmp(code.params[0].name, "Tint") == 0 && code.params[0].vector && code.params[0].value[2] == 0.3f);
+    CHECK(std::strcmp(code.params[1].name, "Brightness") == 0 && code.params[1].value[0] == 2.5f && code.params[1].value[2] == 2.5f);
+    CHECK(std::strstr(code.code.data(), "lsd_params[0].xyz") && std::strstr(code.code.data(), "lsd_v3(lsd_params[1].x)"));
+
     // A loop and a texture without a name are reported.
     const u32 a = g.add("MatAdd", 0, 400)->id, b = g.add("MatAdd", 0, 500)->id;
     CHECK(g.connect(a, 0, b, 0) && g.connect(b, 0, a, 0) && g.connect(b, 0, out, 3));

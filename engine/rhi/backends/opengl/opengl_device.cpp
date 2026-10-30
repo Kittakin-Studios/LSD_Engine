@@ -237,6 +237,7 @@ vec3 lsd_v3(float x) { return vec3(x); }
 vec4 lsd_tex0(vec3 uv) { return texture(base_tex, uv.xy); }
 vec4 lsd_tex1(vec3 uv) { return texture(normal_tex, uv.xy); }
 vec4 lsd_tex2(vec3 uv) { return texture(orm_tex, uv.xy); }
+layout(std140, binding = 3) uniform MaterialParams { vec4 lsd_params[16]; };
 )";
 
 constexpr char kShadowVertexShader[] = R"(#version 460 core
@@ -418,6 +419,7 @@ public:
             if (program) gl_.glDeleteProgram(program);
         }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
+        if (param_ubo_) gl_.glDeleteBuffers(1, &param_ubo_);
         for (MaterialShader& m : material_shaders_) {
             if (m.mesh.id) gl_.glDeleteProgram(m.mesh.id);
             if (m.skinned.id) gl_.glDeleteProgram(m.skinned.id);
@@ -710,6 +712,13 @@ public:
         const Texture* orm = lookup_texture(draw.orm_texture);
         gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : 0.0f, normal ? 1.0f : 0.0f);
         if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
+        if (graph) {
+            f32 values[kMaxMaterialParams * 4] = {};
+            const u32 count = draw.material_param_count < kMaxMaterialParams ? draw.material_param_count : kMaxMaterialParams;
+            if (draw.material_params) std::memcpy(values, draw.material_params, count * 16);
+            gl_.glNamedBufferSubData(param_ubo_, 0, sizeof values, values);  // GL keeps earlier draws' data
+            gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 3, param_ubo_);
+        }
         gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
@@ -1039,6 +1048,8 @@ private:
         gl_.glEnableVertexArrayAttrib(skinned_vao_, 4);
         gl_.glVertexArrayAttribFormat(skinned_vao_, 4, 4, GL_UNSIGNED_BYTE, GL_TRUE, offsetof(SkinnedVertex, weights));
         gl_.glVertexArrayAttribBinding(skinned_vao_, 4, 0);
+        gl_.glCreateBuffers(1, &param_ubo_);
+        gl_.glNamedBufferStorage(param_ubo_, kMaxMaterialParams * 16, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateBuffers(1, &joint_ubo_);
         gl_.glNamedBufferStorage(joint_ubo_, kMaxJoints * 48, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateVertexArrays(1, &line_vao_);
@@ -1074,6 +1085,7 @@ private:
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint joint_ubo_ = 0;
+    GLuint param_ubo_ = 0;
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
     GLint particle_mvp_ = -1;
     u32 particle_offset_ = 0;

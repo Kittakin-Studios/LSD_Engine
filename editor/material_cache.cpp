@@ -126,6 +126,11 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
         e.failed = true;
         return;
     }
+    e.param_count = code.param_count;
+    for (u32 i = 0; i < code.param_count; ++i) {
+        std::snprintf(e.param_names[i], sizeof e.param_names[i], "%s", code.params[i].name);
+        std::memcpy(e.params[i], code.params[i].value, sizeof e.params[i]);
+    }
     e.texture_count = code.texture_count;
     for (u32 i = 0; i < code.texture_count; ++i) {
         std::snprintf(e.textures[i], sizeof e.textures[i], "%s", code.textures[i].name);
@@ -142,6 +147,8 @@ void MaterialCache::load(Entry& e) {
     if (e.shader.valid()) device_.destroy_material_shader(e.shader);
     e.shader = {};
     e.texture_count = 0;
+    e.param_count = 0;
+    e.graph_instance = false;
     char path[300], type[32] = "";
     asset::Guid guid;
     const asset::AssetRecord* record = asset::parse_guid(e.guid, guid) ? registry_.find(guid) : nullptr;
@@ -158,6 +165,30 @@ void MaterialCache::load(Entry& e) {
         render::MaterialInstance instance;
         char parent_path[300];
         render::Material parent;
+        asset::Guid parent_guid;
+        const asset::AssetRecord* parent_record = asset::load_data_asset(path, instance) && asset::parse_guid(instance.parent, parent_guid) ? registry_.find(parent_guid) : nullptr;
+        if (parent_record && parent_record->type == asset::AssetType::MaterialGraph && path_of(registry_, instance.parent, parent_path, sizeof parent_path)) {
+            // An instance of a graph: the graph's shader with these parameter values.
+            Entry* graph = find(instance.parent);
+            if (graph && graph->modified != file_time(parent_path)) load(*graph);  // the graph changed: its defaults first
+            e.failed = !graph || graph->failed;
+            if (e.failed) return;
+            std::snprintf(e.parent, sizeof e.parent, "%s", instance.parent);
+            e.parent_modified = file_time(parent_path);
+            e.graph_instance = true;
+            e.param_count = graph->param_count;
+            std::memcpy(e.params, graph->params, sizeof e.params);
+            std::memcpy(e.param_names, graph->param_names, sizeof e.param_names);
+            for (const render::MaterialParameter& p : instance.parameters) {
+                for (u32 i = 0; i < e.param_count; ++i) {
+                    if (std::strcmp(e.param_names[i], p.name) != 0) continue;
+                    e.params[i][0] = p.value.x;
+                    e.params[i][1] = p.value.y;
+                    e.params[i][2] = p.value.z;
+                }
+            }
+            return;
+        }
         e.failed = !asset::load_data_asset(path, instance) || !path_of(registry_, instance.parent, parent_path, sizeof parent_path) ||
                    !asset::load_data_asset(parent_path, parent);
         if (e.failed) return;
@@ -172,10 +203,16 @@ void MaterialCache::load(Entry& e) {
 void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
     const Entry* e = guid && guid[0] ? find(guid) : nullptr;
     if (!e || e->failed) return;
-    if (e->shader.valid()) {
-        draw.material_shader = e->shader;
+    if (e->shader.valid() || e->graph_instance) {
+        const Entry* graph = e->graph_instance ? find(e->parent) : e;  // an instance draws with its graph's shader and textures
+        if (!graph || graph->failed || !graph->shader.valid()) return;
+        draw.material_shader = graph->shader;
+        draw.material_params = &e->params[0][0];
+        draw.material_param_count = e->param_count;
         rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
-        for (u32 i = 0; i < e->texture_count; ++i) *slots[i] = e->texture_guids[i][0] ? textures_.get(e->texture_guids[i], e->texture_srgb[i]) : rhi::TextureHandle{};
+        for (u32 i = 0; i < graph->texture_count; ++i) {
+            *slots[i] = graph->texture_guids[i][0] ? textures_.get(graph->texture_guids[i], graph->texture_srgb[i]) : rhi::TextureHandle{};
+        }
         return;
     }
     const render::Material& m = e->material;

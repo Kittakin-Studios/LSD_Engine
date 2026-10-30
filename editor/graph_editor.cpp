@@ -60,6 +60,8 @@ struct GraphWindow {
     char preview_textures[3][33] = {};
     bool preview_srgb[3] = {};
     u32 preview_texture_count = 0;
+    f32 preview_params[16][4] = {};
+    u32 preview_param_count = 0;
     std::string preview_source;  // the graph as text when last compiled
     u64 changed_at = 0;          // ms; 0 = up to date
     bool preview_cube = false;
@@ -399,6 +401,8 @@ void update_preview(EditorState& s, GraphWindow& w) {
     if (w.preview_shader.valid()) s.device->destroy_material_shader(w.preview_shader);
     w.preview_shader = shader;
     w.preview_error[0] = '\0';
+    w.preview_param_count = code.param_count;
+    for (u32 i = 0; i < code.param_count; ++i) std::memcpy(w.preview_params[i], code.params[i].value, sizeof w.preview_params[i]);
     w.preview_texture_count = code.texture_count;
     for (u32 i = 0; i < code.texture_count; ++i) {
         find_texture_guid(*s.registry, code.textures[i].name, w.preview_textures[i]);
@@ -454,6 +458,8 @@ void render_graph_preview(EditorState& s, const f32 background[4]) {
     std::memcpy(draw.color, white, sizeof white);
     draw.material_shader = w.preview_shader;
     draw.time = time;
+    draw.material_params = &w.preview_params[0][0];  // parameters at their defaults
+    draw.material_param_count = w.preview_param_count;
     rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
     for (u32 i = 0; i < w.preview_texture_count; ++i) *slots[i] = w.preview_textures[i][0] && s.textures ? s.textures->get(w.preview_textures[i], w.preview_srgb[i]) : rhi::TextureHandle{};
     device.draw_mesh(draw);
