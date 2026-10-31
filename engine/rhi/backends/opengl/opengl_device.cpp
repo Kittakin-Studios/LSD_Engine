@@ -14,6 +14,7 @@
 #include <cstring>
 #include <new>
 #include <string>
+#include <vector>
 
 namespace lsd::rhi {
 
@@ -511,6 +512,7 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLNAMEDBUFFERSUBDATAPROC, glNamedBufferSubData)            \
     X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)                    \
     X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate) \
+    X(PFNGLGETTEXTUREIMAGEPROC, glGetTextureImage) \
     X(PFNGLNAMEDFRAMEBUFFERDRAWBUFFERPROC, glNamedFramebufferDrawBuffer) \
     X(PFNGLNAMEDFRAMEBUFFERREADBUFFERPROC, glNamedFramebufferReadBuffer) \
     X(PFNGLVERTEXARRAYATTRIBIFORMATPROC, glVertexArrayAttribIFormat)
@@ -1111,6 +1113,23 @@ public:
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
 
+    bool read_render_target(TextureHandle handle, u8* rgba) override {
+        const Target* t = lookup(handle);
+        if (!t) return false;
+        const usize row = static_cast<usize>(t->width) * 4;
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        gl_.glGetTextureImage(t->color, 0, GL_RGBA, GL_UNSIGNED_BYTE, static_cast<GLsizei>(row * t->height), rgba);
+        std::vector<u8> swap(row);  // GL rows run bottom-up: flip to top-down
+        for (u32 y = 0; y < t->height / 2; ++y) {
+            u8* a = rgba + y * row;
+            u8* b = rgba + (t->height - 1 - y) * row;
+            std::memcpy(swap.data(), a, row);
+            std::memcpy(a, b, row);
+            std::memcpy(b, swap.data(), row);
+        }
+        return true;
+    }
+
     void draw_post(const PostDraw& p) override {
         const Target* scene = lookup(p.scene);
         if (!scene) return;
@@ -1146,11 +1165,11 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
-        post_pass(3, p.fxaa ? c.ldr : TextureHandle{}, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
+        post_pass(3, p.fxaa ? c.ldr : p.output, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
         if (p.fxaa) {
             f32 f[16] = {};
             size(c.ldr, f);
-            post_pass(4, {}, p.viewport, c.ldr, {}, f);
+            post_pass(4, p.output, p.viewport, c.ldr, {}, f);
         }
         glEnable(GL_DEPTH_TEST);
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);

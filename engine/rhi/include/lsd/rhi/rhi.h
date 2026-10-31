@@ -187,6 +187,7 @@ struct PostDraw {
     f32 contrast = 1.0f;
     f32 vignette = 0.0f;
     bool fxaa = true;
+    TextureHandle output;          // a render target to write into instead of the window (screenshots)
 };
 
 // A gradient sky with a sun disc behind everything (display colours; fog and post-processing apply).
@@ -270,6 +271,9 @@ public:
     virtual void draw_ui(const UiDraw& draw) = 0;
     // Bloom, tonemap, grading and FXAA from a scene target into the window (see PostDraw).
     virtual void draw_post(const PostDraw& post) = 0;
+    // A render target's pixels (RGBA8, rows top to bottom, width * height * 4 bytes). Call after
+    // end_frame: it waits for the GPU. False if the handle is not a render target.
+    virtual bool read_render_target(TextureHandle target, u8* rgba) = 0;
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
     // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
     // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.

@@ -1179,6 +1179,63 @@ public:
         list_->DrawInstanced(3, 1, 0, 0);
     }
 
+    bool read_render_target(TextureHandle handle, u8* rgba) override {
+        Target* t = lookup(handle);
+        if (!t) return false;
+        wait_for_gpu();
+        D3D12_RESOURCE_DESC desc = t->color->GetDesc();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+        UINT rows = 0;
+        UINT64 row_bytes = 0, total = 0;
+        device_->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rows, &row_bytes, &total);
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC buffer{};
+        buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buffer.Width = total;
+        buffer.Height = 1;
+        buffer.DepthOrArraySize = 1;
+        buffer.MipLevels = 1;
+        buffer.SampleDesc.Count = 1;
+        buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> readback;
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback)),
+                   "CreateCommittedResource (readback)")) return false;
+        if (!upload_list_) {
+            device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&upload_allocator_));
+            device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, upload_allocator_.Get(), nullptr, IID_PPV_ARGS(&upload_list_));
+        } else {
+            upload_allocator_->Reset();
+            upload_list_->Reset(upload_allocator_.Get(), nullptr);
+        }
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = t->color.Get();
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        upload_list_->ResourceBarrier(1, &barrier);
+        D3D12_TEXTURE_COPY_LOCATION from{}, to{};
+        from.pResource = t->color.Get();
+        from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        to.pResource = readback.Get();
+        to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        to.PlacedFootprint = footprint;
+        upload_list_->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+        std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+        upload_list_->ResourceBarrier(1, &barrier);
+        upload_list_->Close();
+        ID3D12CommandList* lists[] = {upload_list_.Get()};
+        queue_->ExecuteCommandLists(1, lists);
+        wait_for_gpu();
+        u8* mapped = nullptr;
+        if (FAILED(readback->Map(0, nullptr, reinterpret_cast<void**>(&mapped)))) return false;
+        for (u32 y = 0; y < t->height; ++y) std::memcpy(rgba + static_cast<usize>(y) * t->width * 4, mapped + footprint.Offset + y * footprint.Footprint.RowPitch, t->width * 4);
+        const D3D12_RANGE nothing{0, 0};
+        readback->Unmap(0, &nothing);
+        return true;
+    }
+
     void draw_post(const PostDraw& p) override {
         const Target* scene = lookup(p.scene);
         if (!scene) return;
@@ -1215,11 +1272,11 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
-        post_pass(post_composite_.Get(), p.fxaa ? c.ldr : TextureHandle{}, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
+        post_pass(post_composite_.Get(), p.fxaa ? c.ldr : p.output, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
         if (p.fxaa) {
             f32 f[16] = {};
             size(c.ldr, f);
-            post_pass(post_fxaa_.Get(), {}, p.viewport, c.ldr, {}, f);
+            post_pass(post_fxaa_.Get(), p.output, p.viewport, c.ldr, {}, f);
         }
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
     }
@@ -1713,6 +1770,7 @@ private:
         pso.SampleMask = UINT_MAX;
         pso.RasterizerState.FillMode = wireframe ? D3D12_FILL_MODE_WIREFRAME : D3D12_FILL_MODE_SOLID;
         pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  // shortcut: no culling until imported winding is verified
+        pso.RasterizerState.FrontCounterClockwise = TRUE;  // as in OpenGL: SV_IsFrontFace must agree for two-sided lighting
         pso.RasterizerState.DepthClipEnable = TRUE;
         pso.DepthStencilState.DepthEnable = depth_test;
         pso.DepthStencilState.DepthWriteMask = depth_test ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;

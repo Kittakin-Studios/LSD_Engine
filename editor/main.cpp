@@ -45,6 +45,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <vector>
 #include <filesystem>
 #include <new>
 #include <string>
@@ -200,7 +201,7 @@ struct FrameTimer {
 
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
                 lsd::rhi::TextureHandle shadow_atlas, lsd::rhi::TextureHandle local_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
-                EditorState& stats, lsd::rhi::TextureHandle scene_target = {}, const lsd::f32* scene_clear = nullptr) {
+                EditorState& stats, lsd::rhi::TextureHandle scene_target = {}, const lsd::f32* scene_clear = nullptr, bool hdr = true) {
     LSD_PROFILE_SCOPE("draw_world");
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
@@ -212,7 +213,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden);
     if (scene_target.valid()) {  // the post pass reads it: draw into the scene target (after the shadow passes)
         device.set_render_target(scene_target, scene_clear);
-        lights.output[0] = 1.0f;
+        lights.output[0] = hdr ? 1.0f : 0.0f;
     } else if (sun_shadows || local_shadows) {
         device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     }
@@ -397,6 +398,10 @@ void register_console(EditorState& s) {
         }
         LSD_LOG_WARN("console", "viewmode: lit, unlit or wireframe");
     }, &s, "viewmode lit|unlit|wireframe");
+    console::add_command("HighResShot", [](void* user, const char* args) {
+        const int n = std::atoi(args);
+        static_cast<EditorState*>(user)->high_res_shot = static_cast<lsd::u32>(n >= 1 && n <= 8 ? n : 2);
+    }, &s, "HighResShot <1-8>: the main view at that many times its size, saved to Saved/Screenshots (PNG)");
     console::add_command("test.Smoke", [](void* user, const char* args) {
         const float seconds = static_cast<float>(std::atof(args));
         static_cast<EditorState*>(user)->smoke_test_seconds = seconds > 0.0f ? seconds : 5.0f;
@@ -839,6 +844,8 @@ int main(int argc, char** argv) {
 
     bool running = true;
     bool minimized = false;
+    lsd::rhi::TextureHandle shot_target, shot_scene;  // HighResShot, read back after the frame
+    lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
     for (long frame = 0; running && frame != max_frames;) {
@@ -1128,6 +1135,39 @@ int main(int argc, char** argv) {
             // Post-processing (a Post Process Volume applies): the scene goes into a target the post pass reads.
             lsd::rhi::PostDraw post;
             const bool use_post = !state.view_mode_unlit_or_wire() && lsd::editor::world_post(world, light_view.eye, !state.playing || state.ejected, post);
+            if (v == 0 && state.high_res_shot) {  // HighResShot: this view again, bigger, into targets read after the frame
+                const lsd::u32 n = state.high_res_shot;
+                state.high_res_shot = 0;
+                lsd::u32 w = static_cast<lsd::u32>(pixels[2]) * n, h = static_cast<lsd::u32>(pixels[3]) * n;
+                while (w > 8192 || h > 8192) {
+                    w /= 2;
+                    h /= 2;
+                }
+                const lsd::f32 full[4] = {0.0f, 0.0f, static_cast<lsd::f32>(w), static_cast<lsd::f32>(h)};
+                shot_target = device->create_render_target(w, h);
+                shot_size[0] = static_cast<lsd::f32>(w);
+                shot_size[1] = static_cast<lsd::f32>(h);
+                if (shot_target.valid() && use_post) {
+                    shot_scene = device->create_render_target(w, h);
+                    lsd::f32 encoded[4] = {0, 0, 0, 1};
+                    for (int c = 0; c < 3; ++c) {
+                        const lsd::f32 lin = clear_color[c] <= 0.04045f ? clear_color[c] / 12.92f : std::pow((clear_color[c] + 0.055f) / 1.055f, 2.4f);
+                        encoded[c] = std::sqrt(lin / (1.0f + lin));
+                    }
+                    draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_scene, encoded, true);
+                    effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
+                    lsd::rhi::PostDraw shot = post;
+                    shot.scene = shot_scene;
+                    shot.output = shot_target;
+                    for (int c = 0; c < 4; ++c) shot.viewport[c] = full[c];
+                    device->draw_post(shot);
+                } else if (shot_target.valid()) {
+                    draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_target, clear_color, false);
+                    effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
+                }
+                device->set_render_target({}, nullptr);
+                device->set_viewport(pixels[0], pixels[1], pixels[2], pixels[3]);
+            }
             const lsd::rhi::TextureHandle scene = use_post ? scene_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3])) : lsd::rhi::TextureHandle{};
             lsd::f32 scene_clear[4] = {0, 0, 0, 1};
             for (int c = 0; c < 3; ++c) {  // the background, as the scene target stores colour (linear, range-compressed)
@@ -1157,6 +1197,25 @@ int main(int argc, char** argv) {
         }
         device->end_frame();
         ++frame;
+        if (shot_target.valid()) {  // HighResShot: read back, save, free
+            const lsd::u32 w = static_cast<lsd::u32>(shot_size[0]), h = static_cast<lsd::u32>(shot_size[1]);
+            std::vector<lsd::u8> rgba(static_cast<size_t>(w) * h * 4);
+            fs::create_directories("Saved/Screenshots", ignored);
+            char path[128];
+            std::snprintf(path, sizeof path, "Saved/Screenshots/HighResShot_%llu.png", static_cast<unsigned long long>(SDL_GetTicks()));
+            if (device->read_render_target(shot_target, rgba.data())) {
+                for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;  // opaque (the post pass keeps luma in alpha)
+                if (lsd::asset::write_png(path, w, h, rgba.data())) {
+                    LSD_LOG_INFO("editor", "Screenshot: %s (%u x %u)", path, w, h);
+                    std::snprintf(state.status, sizeof state.status, "Screenshot saved: %s", path);
+                }
+            } else {
+                LSD_LOG_WARN("editor", "HighResShot: this graphics backend cannot read targets back");
+            }
+            device->destroy_texture(shot_target);
+            if (shot_scene.valid()) device->destroy_texture(shot_scene);
+            shot_target = shot_scene = {};
+        }
     }
 
     if (unit_tests.joinable()) unit_tests.join();

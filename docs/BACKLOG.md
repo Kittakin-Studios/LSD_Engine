@@ -189,7 +189,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [~] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes: frustum culling of static and skeletal meshes (the count in `stat fps`); needs LODs, occlusion and distance culling
 - [~] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]: the quality setting scales shadows (none / sun only, nearer / as set / further); needs more features per level, device profiles
 - [ ] VRAM-budget scaling: texture streaming, shadow and render-target sizes follow `query_memory_budget()`
-- [ ] Render to screenshot at high resolution [HighResShot]
+- [x] Render to screenshot at high resolution [HighResShot]: console `HighResShot <1-8>` renders the main view at that multiple (up to 8192 px, with the post pass) into a target, reads it back (`read_render_target`, D3D12 + OpenGL) and saves Saved/Screenshots/HighResShot_<time>.png
 
 ### UI
 

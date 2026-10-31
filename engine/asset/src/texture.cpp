@@ -3,6 +3,7 @@
 #include "lsd/foundation/log.h"
 
 #include <stb_image.h>
+#include <stb_image_write.h>
 
 #include <cmath>
 #include <cstring>
@@ -104,6 +105,10 @@ bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out) {
     const bool ok = build_texture(pixels, static_cast<u32>(w), static_cast<u32>(h), srgb, max_size, out);
     stbi_image_free(pixels);
     return ok;
+}
+
+bool write_png(const char* path, u32 width, u32 height, const u8* rgba) {
+    return stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, rgba, static_cast<int>(width * 4)) != 0;
 }
 
 bool texture_size(const char* path, u32& width, u32& height) {

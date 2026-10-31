@@ -214,6 +214,7 @@ public:
     void draw_sky(const SkyDraw&) override {}
     void draw_ui(const UiDraw&) override {}
     void draw_post(const PostDraw&) override {}
+    bool read_render_target(TextureHandle, u8*) override { return false; }
     void draw_particles(const ParticleVertex*, u32, const f32*, TextureHandle, bool) override {}
     MaterialShaderHandle create_material_shader(const char*) override { return {}; }
     void destroy_material_shader(MaterialShaderHandle) override {}

@@ -21,6 +21,8 @@ struct TextureData {
 bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out);
 // The image's size from its header only (no decoding); false if it is not a readable image.
 bool texture_size(const char* path, u32& width, u32& height);
+// RGBA8 pixels (rows top to bottom) to a PNG file.
+bool write_png(const char* path, u32 width, u32 height, const u8* rgba);
 // Same from RGBA8 pixels in memory (tests, generated textures).
 bool build_texture(const u8* rgba, u32 width, u32 height, bool srgb, u32 max_size, TextureData& out);
 
