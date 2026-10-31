@@ -31,9 +31,51 @@ MeshCache::MeshCache(rhi::Device& device, Allocator& allocator, asset::AssetRegi
     std::snprintf(data_dir_, sizeof data_dir_, "%s", data_dir);
 }
 
+namespace {
+
+void destroy_lods(rhi::Device& device, CachedMesh& m) {
+    for (u32 i = 1; i < m.lod_count; ++i) device.destroy_buffer(m.lod_indices[i]);
+    m.lod_count = 1;
+}
+
+} // namespace
+
+u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const {
+    if (force_lod >= 0) return static_cast<u32>(force_lod) < lod_count ? static_cast<u32>(force_lod) : lod_count - 1;
+    // shortcut: fixed angular sizes (about half, a quarter, an eighth of the screen at 60 degrees), add per-mesh screen sizes when a project needs them
+    const f32 kSizes[] = {0.12f, 0.06f, 0.03f};
+    u32 lod = 0;
+    while (lod + 1 < lod_count && radius_over_distance < kSizes[lod]) ++lod;
+    return lod;
+}
+
+namespace {
+
+// Simpler LODs for meshes with enough triangles to gain from them.
+void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m) {
+    m.lod_count = 1;
+    constexpr u32 kMinTriangles = 512;
+    if (data.index_count / 3 < kMinTriangles) return;
+    u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count, alignof(u32)));
+    u32 previous = data.index_count;
+    f32 ratio = 0.5f;
+    for (u32 lod = 1; lod < CachedMesh::kMaxLods; ++lod, ratio *= 0.5f) {
+        const u32 count = asset::simplify_mesh(data, ratio, indices);
+        if (count == 0 || count > previous * 3 / 4) break;  // the shape will not get simpler: stop
+        m.lod_indices[lod] = device.create_buffer(rhi::BufferUsage::Index, indices, sizeof(u32) * count);
+        m.lod_index_count[lod] = count;
+        m.lod_count = lod + 1;
+        previous = count;
+    }
+    allocator.deallocate(indices);
+}
+
+} // namespace
+
 MeshCache::~MeshCache() {
     for (CachedMesh& m : meshes_) {
         if (m.gpu.index_count) render::destroy_mesh(device_, m.gpu);
+        destroy_lods(device_, m);
     }
 }
 
@@ -56,7 +98,9 @@ bool MeshCache::load(CachedMesh& entry) {
         entry.compiled_time = time;
     }
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
+    destroy_lods(device_, entry);
     entry.gpu = render::upload_mesh(device_, data);
+    build_lods(device_, allocator_, data, entry);
     entry.bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry.bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
     render::free_mesh(allocator_, data);
@@ -68,6 +112,7 @@ const CachedMesh* MeshCache::get(const char* key) {
         if (std::strcmp(m.key, key) == 0) return m.failed ? nullptr : &m;
     }
     CachedMesh entry{};
+    entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
     entry.failed = !load(entry);
     if (entry.failed) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", key);

@@ -129,7 +129,9 @@ forward shaders tonemap and grade directly, as before.
 
 The editor builds the light setup each frame (`editor/lighting.cpp`): lights from components (the
 nearest local lights first), cascades fitted to the camera, the camera's Post Process Volume, the
-fog, and the player's quality setting. Meshes outside the camera's frustum are culled first.
+fog, and the player's quality setting. Meshes outside the camera's frustum are culled first. Static meshes of 512+ triangles get up to
+three simpler LODs when they load (meshoptimizer simplify, sharing the LOD 0 vertices); the draw picks
+one from the mesh's bounding radius over its distance (`r.ForceLOD n` to inspect one).
 
 ### Material graphs
 

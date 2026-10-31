@@ -241,6 +241,18 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.vertices = mesh->gpu.vertices;
         draw.indices = mesh->gpu.indices;
         draw.index_count = mesh->gpu.index_count;
+        if (mesh->lod_count > 1) {  // distant meshes draw a simpler LOD
+            const lsd::Vec3 half = (mesh->bounds_max - mesh->bounds_min) * 0.5f;
+            const lsd::f32 scale = std::fmax(lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}),
+                                             std::fmax(lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}), lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})));
+            const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
+            const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f);
+            const lsd::u32 lod = mesh->pick_lod(lsd::length(half) * scale / distance, stats.force_lod);
+            if (lod > 0) {
+                draw.indices = mesh->lod_indices[lod];
+                draw.index_count = mesh->lod_index_count[lod];
+            }
+        }
         std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
         for (int c = 0; c < 3; ++c) {
             for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
@@ -265,7 +277,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         }
         device.draw_mesh(draw);
         ++stats.stat_draws;
-        stats.stat_triangles += mesh->gpu.index_count / 3;
+        stats.stat_triangles += draw.index_count / 3;
     }
     // Skeletal meshes: same material path, skinned on the GPU with their current pose.
     const lsd::reflect::TypeInfo& skinned_type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
@@ -324,6 +336,7 @@ void register_console(EditorState& s) {
     namespace console = lsd::console;
     console::add_variable("r.Grid", &s.show_grid, "Draw the floor grid");
     console::add_variable("show.Navigation", &s.show_navigation, "Draw the navmesh (P)");
+    console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
     console::add_variable("editor.Snap", &s.settings.snap, "Snap gizmo moves, rotations and scales");
