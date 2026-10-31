@@ -318,7 +318,10 @@ void edited(EditorState& s, const char* label) { std::snprintf(s.pending_edit, s
 
 // Replaces the selection with `e` (or clears it).
 void select(EditorState& s, Entity e) {
-    if (e != s.selected) s.spline_point = -1;
+    if (e != s.selected) {
+        s.spline_point = -1;
+        s.joint_pivot = false;
+    }
     s.selected = e;
     s.selection_count = 0;
     if (e.valid()) {
@@ -950,10 +953,41 @@ bool draw_spline_point_gizmo(EditorState& s, const Mat4& view, const Mat4& proj,
     return busy;
 }
 
-bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
-    if (s.spline_point >= 0 && s.world->alive(s.selected) && !s.world->locked(s.selected) && !s.game_view && !(s.playing && !s.ejected)) {
-        return draw_spline_point_gizmo(s, view, proj, pos, size, index);
+// Is the mouse on the selected object's Physics Joint pivot marker?
+bool joint_pivot_at(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVec2 mouse) {
+    const auto* joint = s.world->alive(s.selected) ? s.world->get<world::PhysicsJoint>(s.selected) : nullptr;
+    ImVec2 p;
+    return joint && project(view_proj, transform_point(s.world->world_matrix(s.selected), joint->pivot), pos, size, p) &&
+           (p.x - mouse.x) * (p.x - mouse.x) + (p.y - mouse.y) * (p.y - mouse.y) < 81.0f;
+}
+
+// Moves the selected object's Physics Joint pivot with a move gizmo (Unreal's constraint frame widget).
+bool draw_joint_pivot_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+    auto* joint = s.world->get<world::PhysicsJoint>(s.selected);
+    if (!joint) {
+        s.joint_pivot = false;
+        return false;
     }
+    const Mat4 world = s.world->world_matrix(s.selected);
+    Mat4 m = translation(transform_point(world, joint->pivot));
+    const f32 snap[3] = {s.settings.snap_move, s.settings.snap_move, s.settings.snap_move};
+    ImGuizmo::SetOrthographic(s.camera.view != ViewType::Perspective);
+    ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+    ImGuizmo::SetRect(pos.x, pos.y, size.x, size.y);
+    ImGui::PushID(index + 200);
+    if (ImGuizmo::Manipulate(view.m, proj.m, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, m.m, nullptr, s.settings.snap ? snap : nullptr)) {
+        joint->pivot = transform_point(affine_inverse(world), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        edited(s, "Move Joint Pivot");
+    }
+    const bool busy = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+    ImGui::PopID();
+    return busy;
+}
+
+bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+    const bool editable = s.world->alive(s.selected) && !s.world->locked(s.selected) && !s.game_view && !(s.playing && !s.ejected);
+    if (s.spline_point >= 0 && editable) return draw_spline_point_gizmo(s, view, proj, pos, size, index);
+    if (s.joint_pivot && editable) return draw_joint_pivot_gizmo(s, view, proj, pos, size, index);
     bool& was_using = g_was_using_gizmo[index];
     bool& alt_duplicated = g_alt_duplicated[index];
     if (!s.world->alive(s.selected) || s.world->locked(s.selected) || s.game_view || (s.playing && !s.ejected)) {
@@ -1102,6 +1136,7 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
         if (!project(view_proj, pivot, pos, size, a)) continue;
         const ImU32 color = IM_COL32(255, 230, 40, 255);
         dl->AddCircle(a, 7.0f, color, 16, 2.0f);
+        if (s.joint_pivot && e == s.selected) dl->AddCircleFilled(a, 4.0f, color);  // the gizmo is on it
         if (joint->type != 0 && joint->type != 2 && axis_length > 0.0f && project(view_proj, pivot + axis * (0.75f / axis_length), pos, size, b)) {
             dl->AddLine(a, b, color, 2.0f);
         }
@@ -1278,9 +1313,12 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     bool& marquee = marquee_by_view[index];
     ImVec2& marquee_start = marquee_start_by_view[index];
     const i32 clicked_point = ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy ? spline_point_at(s, view_proj, pos, size, io.MousePos) : -1;
+    const bool clicked_pivot = clicked_point < 0 && ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy && joint_pivot_at(s, view_proj, pos, size, io.MousePos);
     if (clicked_point >= 0) s.spline_point = clicked_point;  // the gizmo now moves that point
+    else if (clicked_pivot) s.joint_pivot = true;          // the gizmo now moves the joint's pivot
     else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy) {
         const Entity hit = pick(s, view_proj, pos, size, io.MousePos);
+        s.joint_pivot = false;  // a click elsewhere: the gizmo goes back to the object
         if (io.KeyCtrl) add_to_selection(s, hit, true);
         else if (io.KeyShift) add_to_selection(s, hit, false);
         else select(s, hit);

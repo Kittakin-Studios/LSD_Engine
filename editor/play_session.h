@@ -88,6 +88,8 @@ private:
     };
 
     static constexpr u32 kMaxBodies = 8192;
+    static constexpr u32 kMaxJoints = 1024;
+    world::Entity joint_owners_[kMaxJoints];  // the object whose Physics Joint made each joint
 
     static bool script_path(void* user, const char* guid, char* out, usize capacity);
     const asset::AssetRecord* find_asset(asset::AssetType type, const char* name) const;

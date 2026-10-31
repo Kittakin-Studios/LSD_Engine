@@ -124,7 +124,9 @@ struct PhysicalMaterial {
 LSD_STRUCT(Component, Category = "Physics")
 struct PhysicsJoint {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Choice:Fixed,Hinge,Ball,Slider", Tooltip = "Fixed: welded. Hinge: turns about the axis. Ball: turns any way. Slider: moves along the axis") u32 type = 1;
+    LSD_PROPERTY(Edit, Widget = "Choice:Fixed,Hinge,Ball,Slider,Cone",
+                 Tooltip = "Fixed: welded. Hinge: turns about the axis. Ball: turns any way. Slider: moves along the axis. Cone: swings within Cone Angle of the axis, twist limited (ragdolls, lamps)")
+    u32 type = 1;
     LSD_PROPERTY(Edit, Tooltip = "Name of the object to hold on to; empty = the world") char other[64] = "";
     LSD_PROPERTY(Edit, Tooltip = "Where it turns, local") Vec3 pivot;
     LSD_PROPERTY(Edit, Tooltip = "Hinge or slider axis, local") Vec3 axis = {0, 0, 1};
@@ -133,6 +135,10 @@ struct PhysicsJoint {
     LSD_PROPERTY(Edit, Tooltip = "Degrees (hinge) or metres (slider) from where it starts") f32 limit_max = 45.0f;
     LSD_PROPERTY(Edit, Tooltip = "Hinge deg/s or slider m/s; 0 = no motor") f32 motor_speed = 0.0f;
     LSD_PROPERTY(Edit, Min = 0, Tooltip = "N m (hinge) or N (slider)") f32 motor_strength = 1000.0f;
+    LSD_PROPERTY(Edit, Units = "Hz", Min = 0, Tooltip = "Limits give like a spring this many times a second (hinge, slider); 0 = hard stops") f32 spring_frequency = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 bounces forever, 1 settles without overshoot") f32 spring_damping = 0.5f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 179, Tooltip = "Cone: how far it swings from the axis; the limits bound its twist") f32 cone_angle = 45.0f;
+    LSD_PROPERTY(Edit, Units = "N", Min = 0, Tooltip = "Snaps when pulled harder than this (scripts get on_joint_break); 0 = never") f32 break_force = 0.0f;
 };
 
 // The player's character (Unreal's Character + Character Movement + its input setup). In Play the

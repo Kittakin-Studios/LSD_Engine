@@ -57,7 +57,8 @@ struct Contact {
     u32 a, b;
 };
 
-enum class JointType : u8 { Fixed, Hinge, Ball, Slider };
+// Cone: a ball joint whose swing stays inside a cone and whose twist is limited (ragdoll shoulders, hanging lamps).
+enum class JointType : u8 { Fixed, Hinge, Ball, Slider, Cone };
 constexpr u32 kWorldBody = 0xFFFFFFFEu;  // a joint's second body: the static world
 
 // Holds two bodies together (Unreal's Physics Constraint). Pivot and axis are in world space at
@@ -73,6 +74,10 @@ struct JointDesc {
     f32 limit_max = 45.0f;
     f32 motor_speed = 0.0f;  // hinge deg/s or slider m/s; 0 = no motor
     f32 motor_strength = 1000.0f;  // N m (hinge) or N (slider)
+    f32 spring_frequency = 0.0f;   // Hz: the limits give like a spring (hinge, slider); 0 = hard stops
+    f32 spring_damping = 0.5f;     // 0 bounces forever, 1 settles without overshoot
+    f32 cone_angle = 45.0f;        // Cone: how far it may swing from the axis (degrees); limit_min / max limit its twist
+    f32 break_force = 0.0f;        // N: the joint snaps when pulled harder (Unreal's breakable constraint); 0 = never
 };
 
 class PhysicsWorld {
@@ -105,6 +110,8 @@ public:
     // Returns the joint's index; joints on a removed body go with it.
     u32 add_joint(const JointDesc& desc);
     u32 joint_count() const;
+    // Joints that snapped (break_force) since the last call, by add_joint index.
+    u32 take_broken_joints(u32* out, u32 capacity);
 
     void set_gravity(f32 metres_per_second2);
     void step(f32 dt);

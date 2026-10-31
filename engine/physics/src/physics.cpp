@@ -21,6 +21,7 @@
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
@@ -30,6 +31,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -147,7 +149,10 @@ struct PhysicsWorld::Impl {
     struct Joint {
         JPH::Ref<JPH::Constraint> constraint;
         u32 a, b;
+        JointType type = JointType::Hinge;
+        f32 break_force = 0.0f;
     };
+    std::vector<u32> broken;  // joints snapped since take_broken_joints
     std::vector<Joint> joints;
     f32 step_height = 0.4f;
     f32 character_radius = 0.35f;
@@ -372,8 +377,21 @@ u32 PhysicsWorld::add_joint(const JointDesc& desc) {
             if (desc.limited) {
                 s->mLimitsMin = JPH::DegreesToRadians(std::fmin(desc.limit_min, 0.0f));
                 s->mLimitsMax = JPH::DegreesToRadians(std::fmax(desc.limit_max, 0.0f));
+                if (desc.spring_frequency > 0.0f) s->mLimitsSpringSettings = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, desc.spring_frequency, desc.spring_damping);
             }
             s->mMotorSettings = JPH::MotorSettings(10.0f, 1.0f, 0.0f, desc.motor_strength);
+            settings = s;
+            break;
+        }
+        case JointType::Cone: {
+            auto* s = new JPH::SwingTwistConstraintSettings();
+            s->mPosition1 = s->mPosition2 = pivot;
+            s->mTwistAxis1 = s->mTwistAxis2 = axis;
+            s->mPlaneAxis1 = s->mPlaneAxis2 = normal;
+            const f32 cone = JPH::DegreesToRadians(std::clamp(desc.cone_angle, 0.0f, 179.0f));
+            s->mNormalHalfConeAngle = s->mPlaneHalfConeAngle = cone;
+            s->mTwistMinAngle = desc.limited ? JPH::DegreesToRadians(std::clamp(desc.limit_min, -179.0f, 0.0f)) : -JPH::JPH_PI;
+            s->mTwistMaxAngle = desc.limited ? JPH::DegreesToRadians(std::clamp(desc.limit_max, 0.0f, 179.0f)) : JPH::JPH_PI;
             settings = s;
             break;
         }
@@ -385,6 +403,7 @@ u32 PhysicsWorld::add_joint(const JointDesc& desc) {
             if (desc.limited) {
                 s->mLimitsMin = std::fmin(desc.limit_min, 0.0f);
                 s->mLimitsMax = std::fmax(desc.limit_max, 0.0f);
+                if (desc.spring_frequency > 0.0f) s->mLimitsSpringSettings = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, desc.spring_frequency, desc.spring_damping);
             }
             s->mMotorSettings = JPH::MotorSettings(10.0f, 1.0f, desc.motor_strength, 0.0f);
             settings = s;
@@ -408,11 +427,18 @@ u32 PhysicsWorld::add_joint(const JointDesc& desc) {
     } else {
         LSD_LOG_WARN("physics", "A joint needs at least one body");
     }
-    impl_->joints.push_back({constraint, desc.body_a, desc.body_b});
+    impl_->joints.push_back({constraint, desc.body_a, desc.body_b, desc.type, desc.break_force});
     return static_cast<u32>(impl_->joints.size() - 1);
 }
 
 u32 PhysicsWorld::joint_count() const { return static_cast<u32>(impl_->joints.size()); }
+
+u32 PhysicsWorld::take_broken_joints(u32* out, u32 capacity) {
+    const u32 n = static_cast<u32>(impl_->broken.size() < capacity ? impl_->broken.size() : capacity);
+    for (u32 i = 0; i < n; ++i) out[i] = impl_->broken[i];
+    impl_->broken.clear();
+    return n;
+}
 
 Mat4 PhysicsWorld::body_transform(u32 body) const {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return Mat4{};
@@ -430,6 +456,24 @@ void PhysicsWorld::set_gravity(f32 g) { impl_->system.SetGravity(JPH::Vec3(0, 0,
 void PhysicsWorld::step(f32 dt) {
     if (dt <= 0.0f) return;
     impl_->system.Update(dt, 1, &impl_->temp, &impl_->jobs);
+    // Breakable joints: the impulse holding the pivot together this step, over dt, is the force.
+    for (u32 i = 0; i < impl_->joints.size(); ++i) {
+        Impl::Joint& j = impl_->joints[i];
+        if (!j.constraint || j.break_force <= 0.0f) continue;
+        JPH::Constraint* c = j.constraint.GetPtr();
+        f32 impulse = 0.0f;
+        switch (j.type) {
+            case JointType::Fixed: impulse = static_cast<JPH::FixedConstraint*>(c)->GetTotalLambdaPosition().Length(); break;
+            case JointType::Ball: impulse = static_cast<JPH::PointConstraint*>(c)->GetTotalLambdaPosition().Length(); break;
+            case JointType::Hinge: impulse = static_cast<JPH::HingeConstraint*>(c)->GetTotalLambdaPosition().Length(); break;
+            case JointType::Slider: impulse = static_cast<JPH::SliderConstraint*>(c)->GetTotalLambdaPosition().Length(); break;
+            case JointType::Cone: impulse = static_cast<JPH::SwingTwistConstraint*>(c)->GetTotalLambdaPosition().Length(); break;
+        }
+        if (impulse / dt <= j.break_force) continue;
+        impl_->system.RemoveConstraint(j.constraint);
+        j.constraint = nullptr;
+        impl_->broken.push_back(i);
+    }
 }
 
 void PhysicsWorld::create_character(const CharacterDesc& desc) {

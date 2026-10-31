@@ -362,8 +362,10 @@ bounciness) picked on a mesh or Rigid Body sets its surface: ice, rubber, mud. R
 **Collision Preset**: Block All, or **Debris** (hits only the static level: not the player or other
 objects). **Kinematic** Rigid Bodies follow their Transform (scripts, timelines) and push what they
 meet without being pushed. **Physics
-Joint** links two objects (fixed, hinge, ball, slider; limits; motors: doors, chains, rotating
-platforms). Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
+Joint** links two objects (fixed, hinge, ball, slider, **cone**: swings within a cone, twist limited; limits;
+motors: doors, chains, rotating platforms). **Spring Frequency** makes hinge / slider limits give like a
+spring; **Break Force** makes it snap when pulled harder (the object's scripts get `on_joint_break`).
+Select the object and click the joint's yellow ring in the viewport to move its pivot with the gizmo. Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
 capsule (`lsd.sphere_trace` / `box_trace` / `capsule_trace`) or list what overlaps a shape
 (`lsd.overlap_sphere` / `overlap_box`). Visual scripts have **Line Trace**, **Sphere Trace**, **Capsule
 Trace** and **Sphere Overlap** (its Loop Body runs once per object found), like Unreal's traces.

@@ -937,7 +937,12 @@ void PlaySession::add_joints(const world::World& world, world::Entity root) {
         d.limit_max = joint->limit_max;
         d.motor_speed = joint->motor_speed;
         d.motor_strength = joint->motor_strength;
-        physics_->add_joint(d);
+        d.spring_frequency = joint->spring_frequency;
+        d.spring_damping = joint->spring_damping;
+        d.cone_angle = joint->cone_angle;
+        d.break_force = joint->break_force;
+        const u32 index = physics_->add_joint(d);
+        if (index < kMaxJoints) joint_owners_[index] = e;
     }
 }
 
@@ -1133,6 +1138,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
     }
     physics_->step(dt);
+    u32 broken[16];  // breakable joints that snapped: tell the object that owned the joint
+    for (u32 n = physics_->take_broken_joints(broken, 16), k = 0; k < n; ++k) {
+        if (broken[k] < kMaxJoints && world.alive(joint_owners_[broken[k]])) scripts_.send(joint_owners_[broken[k]], "on_joint_break", {});
+    }
     const Vec3 moved = physics_->character_feet() - feet_;
     feet_ = physics_->character_feet();
     if (animations_ && character_.valid() && dt > 0.0f) {

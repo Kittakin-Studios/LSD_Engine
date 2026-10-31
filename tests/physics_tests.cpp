@@ -103,6 +103,50 @@ static void test_joints() {
     w.step(dt);
 }
 
+// A weak weld snaps under its weight; a cone joint keeps its swing inside the cone; a sprung slider holds.
+static void test_joint_extras() {
+    PhysicsWorld w;
+    const f32 dt = 1.0f / 60.0f;
+    const u32 sign = w.add_body(box({0, 0, 10}, {0.3f, 0.3f, 0.3f}, Motion::Dynamic));  // 10 kg: ~98 N of weight
+    JointDesc weld;
+    weld.type = JointType::Fixed;
+    weld.body_a = sign;
+    weld.break_force = 20.0f;
+    const u32 weld_index = w.add_joint(weld);
+
+    const u32 lamp = w.add_body(box({12, 0, 10}, {0.1f, 0.1f, 0.1f}, Motion::Dynamic));  // 2 m out along +X from its pivot
+    JointDesc cone;
+    cone.type = JointType::Cone;
+    cone.body_a = lamp;
+    cone.pivot = {10, 0, 10};
+    cone.axis = {1, 0, 0};  // swing measured from +X
+    cone.cone_angle = 30.0f;
+    w.add_joint(cone);
+
+    const u32 bouncer = w.add_body(box({20, 0, 10}, {0.3f, 0.3f, 0.3f}, Motion::Dynamic));
+    JointDesc spring;
+    spring.type = JointType::Slider;
+    spring.body_a = bouncer;
+    spring.pivot = {20, 0, 10};
+    spring.limited = true;
+    spring.limit_min = 0.0f;
+    spring.limit_max = 0.0f;
+    spring.spring_frequency = 2.0f;
+    w.add_joint(spring);
+
+    u32 broken[4];
+    u32 broken_count = 0;
+    for (int i = 0; i < 180; ++i) {
+        w.step(dt);
+        broken_count += w.take_broken_joints(broken + broken_count, 4 - broken_count);
+    }
+    CHECK(broken_count == 1 && broken[0] == weld_index);
+    CHECK(centre(w, sign).z < 5.0f);  // fell once the weld snapped
+    const Vec3 hang = centre(w, lamp) - Vec3{10, 0, 10};
+    CHECK(std::atan2(-hang.z, hang.x) < 0.8f);  // held near the 30 degree cone (it still swings a little past it), not hanging straight down
+    CHECK(centre(w, bouncer).z < 10.0f && centre(w, bouncer).z > 8.0f);  // sagged on the spring, not dropped
+}
+
 // Mesh collision (a ramp's triangles), a convex hull falling onto it, and debris passing through bodies.
 static void test_shapes() {
     PhysicsWorld w;
@@ -258,6 +302,7 @@ int main() {
 
     test_joints();
     test_shapes();
+    test_joint_extras();
     if (g_failures == 0) std::printf("All physics tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }
