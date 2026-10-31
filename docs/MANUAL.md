@@ -201,6 +201,11 @@ Save with **Ctrl+S**. Levels live in `Content/` like any asset.
 
 ---
 
+**Prefab editor**: double-click a prefab to edit it on its own (Unreal's Blueprint editor viewport):
+drag the preview to turn it, pick objects in the tree, **+ Child** adds a part, **Delete** removes
+one, edit components on the right (+ Add Component, X to remove). **Save** updates every copy in
+the level; what a copy overrides stays its own.
+
 ## 5. Lighting, sky and post-processing
 
 Lights use physical units, like Unreal:

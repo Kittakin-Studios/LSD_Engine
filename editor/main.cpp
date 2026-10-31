@@ -13,6 +13,7 @@
 #include "ui_editor.h"
 #include "timeline_editor.h"
 #include "mesh_editor.h"
+#include "prefab_editor.h"
 
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/profile.h"
@@ -580,6 +581,12 @@ void register_console(EditorState& s) {
         if (st.registry->search(args, lsd::asset::AssetType::Mesh, nullptr, &hit, 1) == 1) lsd::editor::open_mesh_editor(st, st.registry->get(hit));
         else LSD_LOG_WARN("editor", "mesh.Open: no mesh named like '%s'", args);
     }, &s, "Open a mesh in the Mesh Editor");
+    console::add_command("prefab.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hit = 0;
+        if (st.registry->search(args, lsd::asset::AssetType::Prefab, nullptr, &hit, 1) == 1) lsd::editor::open_prefab_editor(st, st.registry->get(hit));
+        else LSD_LOG_WARN("editor", "prefab.Open: no prefab named like '%s'", args);
+    }, &s, "Open a prefab in the Prefab editor");
     console::add_command("timeline.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hits[16];
@@ -1488,6 +1495,7 @@ int main(int argc, char** argv) {
         lsd::editor::render_graph_preview(state, clear_color);
         lsd::editor::render_ui_editor(*device, clear_color);
         lsd::editor::render_mesh_editor(*device, clear_color);
+        lsd::editor::render_prefab_editor(*device, clear_color);
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
@@ -1643,6 +1651,7 @@ int main(int argc, char** argv) {
         if (t.valid()) device->destroy_texture(t);
     }
     lsd::editor::shutdown_mesh_editor();
+    lsd::editor::shutdown_prefab_editor();
     lsd::editor::source_control::stop();
     if (g_lighting_build) {  // let a running bake finish (it cannot be interrupted)
         g_lighting_build->thread.join();

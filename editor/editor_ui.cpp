@@ -16,6 +16,7 @@
 #include "references.h"
 #include "remote_console.h"
 #include "mesh_editor.h"
+#include "prefab_editor.h"
 #include "timeline_editor.h"
 #include "source_control.h"
 #include "thumbnails.h"
@@ -3060,6 +3061,7 @@ void draw_asset_grid(EditorState& s) {
             if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) s.particle_editor->open(s, r);
             if (asset_matches(r, "Timeline") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_timeline_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_mesh_editor(s, r);
+            if (r.type == asset::AssetType::Prefab && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_prefab_editor(s, r);
             if ((r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_ui_editor(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
@@ -3111,6 +3113,7 @@ void draw_asset_grid(EditorState& s) {
             if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
             if (asset_matches(r, "Timeline") && ImGui::MenuItem("Edit Timeline")) open_timeline_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Open Mesh Editor")) open_mesh_editor(s, r);
+            if (r.type == asset::AssetType::Prefab && ImGui::MenuItem("Edit Prefab")) open_prefab_editor(s, r);
             if (ImGui::MenuItem("Reference Viewer...")) open_reference_viewer(s, r.guid);
             if (ImGui::MenuItem("Duplicate")) duplicate_asset(s, r);
             if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Texture || r.type == asset::AssetType::Sound) && ImGui::MenuItem("Reimport")) {
@@ -3926,6 +3929,7 @@ void draw_editor(EditorState& s) {
     draw_reference_viewer(s);
     draw_timeline_editor(s);
     draw_mesh_editor(s);
+    draw_prefab_editor(s);
     draw_memory_window(s);
     draw_ui_editor(s);
     handle_shortcuts(s);
