@@ -184,6 +184,15 @@ struct InstancedStaticMesh {
     LSD_PROPERTY(Edit) List<MeshInstance, 1024> instances;
 };
 
+// Keeps this object on a socket of another object's Skeletal Mesh (Unreal's Attach to Socket): a
+// sword in a hand follows the animation. The socket comes from the mesh (Mesh Editor > Sockets).
+LSD_STRUCT(Component, Category = "Animation")
+struct AttachToSocket {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The object with the Skeletal Mesh, by name") char target[64] = "";
+    LSD_PROPERTY(Edit) char socket[32] = "";
+};
+
 // Plants a Skeletal Mesh's feet on the ground under them while playing (Unreal's foot IK): each
 // foot is raised onto steps and slopes with two-bone IK. Bones by name, as in the imported skeleton.
 LSD_STRUCT(Component, Category = "Animation")

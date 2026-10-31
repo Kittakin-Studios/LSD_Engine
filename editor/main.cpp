@@ -12,6 +12,7 @@
 #include "navigation.h"
 #include "ui_editor.h"
 #include "timeline_editor.h"
+#include "mesh_editor.h"
 
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/profile.h"
@@ -573,6 +574,12 @@ void register_console(EditorState& s) {
         volatile int* nowhere = nullptr;
         *nowhere = 1;
     }, &s, "Crash on purpose (writes a crash report to Saved/Crashes)");
+    console::add_command("mesh.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hit = 0;
+        if (st.registry->search(args, lsd::asset::AssetType::Mesh, nullptr, &hit, 1) == 1) lsd::editor::open_mesh_editor(st, st.registry->get(hit));
+        else LSD_LOG_WARN("editor", "mesh.Open: no mesh named like '%s'", args);
+    }, &s, "Open a mesh in the Mesh Editor");
     console::add_command("timeline.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hits[16];
@@ -1098,6 +1105,7 @@ int main(int argc, char** argv) {
     play.set_localization(&localization);
     lsd::ui::set_translator([](void* user, const char* text) { return static_cast<const lsd::asset::Localization*>(user)->find(text); }, &localization);
     play.set_animations(animations);
+    play.set_skinned(skinned_cache);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
@@ -1444,6 +1452,7 @@ int main(int argc, char** argv) {
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
                            state.playing && !state.paused ? &sounds : nullptr);
+        animations->attach_to_sockets(world, *skinned_cache);  // weapons in hands follow this frame's pose
         effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : dt, state.playing);
         // The ears: the player's camera in Play, else the editor camera.
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.view_forward());
@@ -1478,6 +1487,7 @@ int main(int argc, char** argv) {
         particle_editor->render(*device, clear_color);
         lsd::editor::render_graph_preview(state, clear_color);
         lsd::editor::render_ui_editor(*device, clear_color);
+        lsd::editor::render_mesh_editor(*device, clear_color);
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
@@ -1632,6 +1642,7 @@ int main(int argc, char** argv) {
     for (const lsd::rhi::TextureHandle t : scene_targets.target) {
         if (t.valid()) device->destroy_texture(t);
     }
+    lsd::editor::shutdown_mesh_editor();
     lsd::editor::source_control::stop();
     if (g_lighting_build) {  // let a running bake finish (it cannot be interrupted)
         g_lighting_build->thread.join();

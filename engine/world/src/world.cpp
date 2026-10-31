@@ -43,6 +43,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<FootIK>(),
         &reflect::type_of<InstancedStaticMesh>(),
         &reflect::type_of<Decal>(),
+        &reflect::type_of<AttachToSocket>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);

@@ -76,6 +76,9 @@
 // Timelines (cutscenes): lsd.play_timeline(name [, loop]) -> ok, lsd.stop_timeline(name); when one
 // ends, on_timeline_finished(self, name) runs on every script that has it.
 //
+// Sockets: lsd.socket(e, name) -> x, y, z, fx, fy, fz   a socket on e's skeletal mesh (or its child's) in
+// the world, and its +X; nil if there is none (muzzle flashes, thrown objects).
+//
 // Cameras: lsd.set_view(e) looks through e's Camera component (blends are not done: a cut);
 // lsd.set_view(nil) goes back to the player.
 //
@@ -146,6 +149,7 @@ struct ScriptHost {
     void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
     void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
     bool (*timeline)(void* user, int what, const char* name, bool loop) = nullptr;           // 0 play, 1 stop
+    bool (*socket)(void* user, world::Entity e, const char* name, Vec3& position, Vec3& forward) = nullptr;
     bool (*data_path)(void* user, const char* data_type, const char* name, char* out, usize capacity) = nullptr;  // a data asset by type and name
     // shape: 0 line a-b, 1 sphere at a (radius), 2 box at a (half size b), 3 text at a.
     void (*draw_debug)(void* user, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) = nullptr;

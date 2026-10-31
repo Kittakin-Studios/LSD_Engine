@@ -26,6 +26,8 @@ class UiContext;
 
 namespace lsd::editor {
 
+class SkinnedCache;
+
 class AnimationPlayer;
 
 class PlaySession {
@@ -54,6 +56,7 @@ public:
     void set_sounds(SoundPlayer* sounds) { sounds_ = sounds; }
     // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
     void set_animations(AnimationPlayer* animations) { animations_ = animations; }
+    void set_skinned(SkinnedCache* skinned) { skinned_ = skinned; }
     const ai::NavMesh& navmesh() const { return nav_; }  // built when Play starts
     // The game's UI (documents opened by scripts and the Game Mode's HUD). Its actions call Lua.
     void set_ui(ui::UiContext* ui);
@@ -138,6 +141,7 @@ private:
     };
     SoundPlayer* sounds_ = nullptr;
     AnimationPlayer* animations_ = nullptr;
+    SkinnedCache* skinned_ = nullptr;
     ui::UiContext* ui_ = nullptr;
     GameUserSettings* user_settings_ = nullptr;
     asset::Localization* localization_ = nullptr;

@@ -2,6 +2,7 @@
 
 #include "animation_player.h"
 #include "debug_draw.h"
+#include "skinned_cache.h"
 #include "timeline_player.h"
 #include "behavior.h"
 
@@ -483,6 +484,20 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             return true;
         }, this);
     }
+    host.socket = [](void* user, world::Entity e, const char* name, Vec3& position, Vec3& forward) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (!self.animations_ || !self.skinned_) return false;
+        Mat4 m;
+        bool ok = self.animations_->socket(*self.world_, *self.skinned_, e, name, m);
+        for (u32 i = 0; !ok && i < self.world_->count(reflect::type_of<world::SkeletalMesh>()); ++i) {  // a Character's mesh child
+            const world::Entity child = self.world_->owner(reflect::type_of<world::SkeletalMesh>(), i);
+            if (self.world_->parent(child) == e) ok = self.animations_->socket(*self.world_, *self.skinned_, child, name, m);
+        }
+        if (!ok) return false;
+        position = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        forward = normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+        return true;
+    };
     host.timeline = [](void* user, int what, const char* name, bool loop) {
         auto& self = *static_cast<PlaySession*>(user);
         if (what == 0) return self.play_timeline(name, loop);

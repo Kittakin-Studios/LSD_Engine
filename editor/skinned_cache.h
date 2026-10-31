@@ -41,6 +41,7 @@ public:
     const ClipSet* clips(const char* mesh_guid, const char* anim_guid);
     const anim::AnimGraph* graph(const char* guid);  // an AnimGraph data asset; nullptr if missing
     void check_files();  // about once a second: reload changed files and notifies
+    const asset::AssetRegistry& registry() const { return registry_; }
 
 private:
     bool load(SkinnedEntry& e);

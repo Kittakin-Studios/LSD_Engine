@@ -1,6 +1,9 @@
 #include "animation_player.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
 
 namespace lsd::editor {
 
@@ -80,6 +83,60 @@ void AnimationPlayer::apply_ik(world::World& world, State& state, const anim::Sk
         const Vec3 target = transform_point(to_model, ik.target);
         if (ik.aim) state.pose.aim_ik(model, static_cast<u32>(j), target, ik.forward, ik.weight);
         else state.pose.two_bone_ik(model, static_cast<u32>(j), target, ik.weight);
+    }
+}
+
+bool AnimationPlayer::socket(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* name, Mat4& out) {
+    const auto* mesh = world.alive(e) ? world.get<world::SkeletalMesh>(e) : nullptr;
+    const anim::Pose* p = mesh ? pose(e) : nullptr;
+    asset::Guid guid;
+    const asset::AssetRecord* r = p && asset::parse_guid(mesh->mesh, guid) ? cache.registry().find(guid) : nullptr;
+    if (!r) return false;
+    Sockets* found = nullptr;
+    for (Sockets& s : sockets_) {
+        if (std::strcmp(s.guid, mesh->mesh) == 0) found = &s;
+    }
+    if (!found) {
+        sockets_.push_back({});
+        found = &sockets_.back();
+        std::snprintf(found->guid, sizeof found->guid, "%s", mesh->mesh);
+        found->modified = -1;
+    }
+    char meta_path[300];
+    cache.registry().source_path(*r, meta_path, sizeof meta_path);
+    std::error_code error;
+    const i64 modified = static_cast<i64>(std::filesystem::last_write_time(std::string(meta_path) + ".meta", error).time_since_epoch().count());
+    if (modified != found->modified) {
+        found->meta = asset::AssetMeta{};
+        cache.registry().load_meta(*r, found->meta);
+        found->modified = modified;
+    }
+    for (const asset::MeshSocket& s : found->meta.sockets) {
+        if (std::strcmp(s.name, name) != 0) continue;
+        const SkinnedEntry* model = const_cast<SkinnedCache&>(cache).get(mesh->mesh);
+        const i32 j = model && model->model ? model->model->find_joint(s.bone) : -1;
+        if (j < 0) return false;
+        out = world.world_matrix(e) * p->joint_model(static_cast<u32>(j)) * trs(s.position, s.rotation, Vec3{1, 1, 1});
+        return true;
+    }
+    return false;
+}
+
+void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache& cache) {
+    const reflect::TypeInfo& type = reflect::type_of<world::AttachToSocket>();
+    for (u32 i = 0; i < world.count(type); ++i) {
+        const auto* a = static_cast<const world::AttachToSocket*>(world.at(type, i));
+        world::Entity target;
+        for (u32 slot = 0; slot < world.slot_count() && !target.valid(); ++slot) {
+            const world::Entity e = world.entity_at_slot(slot);
+            if (e.valid() && std::strcmp(world.name(e), a->target) == 0) target = e;
+        }
+        Mat4 m;
+        if (!target.valid() || !socket(world, cache, target, a->socket, m)) continue;
+        const world::Entity self = world.owner(type, i);
+        Vec3 t, r, scale;
+        decompose_trs(world.world_matrix(self), t, r, scale);  // keeps its own size
+        world.set_world_matrix(self, m * scaling(scale));
     }
 }
 

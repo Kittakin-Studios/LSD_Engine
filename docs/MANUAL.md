@@ -397,6 +397,12 @@ Table, Curve), Audio, Animation, AI, UI, Save Game, Utilities (Print String, Gam
 
 ## 11. Animation
 
+**Mesh Editor**: double-click a mesh. Drag the preview to turn it (wheel: zoom); the side shows its
+size, triangles and LODs, and its import settings (Save / Reimport). For rigged meshes: the bone
+tree (click a bone to see it in the preview) and **Sockets**: select a bone, **+ Socket**, move it
+with Offset / Turn, Save. Then give a prop **Attach To Socket** (the character's object name and
+the socket) to carry it, or ask a script: `lsd.socket(e, "Hand_R")` -> x, y, z, fx, fy, fz.
+
 Drop a rigged FBX into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
 same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip**. Animations
 play in the editor too.
@@ -635,6 +641,7 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e)` / `lsd.set_view(nil)` switch views) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
 | Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision) |
+| Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |
 | Animation | Foot IK (feet planted on steps and slopes in Play; foot bone names, max step, ankle height) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |

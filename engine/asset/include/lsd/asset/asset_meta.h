@@ -1,6 +1,7 @@
 #pragma once
 // Contents of the <source file>.meta sidecar written next to every asset in Content/.
 // Reflected, so it saves as JSON and shows in the Details panel when the asset is selected.
+#include "lsd/foundation/math.h"
 #include "lsd/reflect/reflect.h"
 
 namespace lsd::asset {
@@ -12,6 +13,17 @@ struct AnimNotify {
     LSD_PROPERTY(Edit, Tooltip = "Which animation in the file (0 = the first)") u32 clip = 0;
     LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 time = 0.0f;
     LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Played at the object (a footstep on the frame the foot lands)") char sound[33] = "";
+};
+
+// A named point on a bone of a skinned mesh (Unreal's Skeletal Mesh Socket): weapons in hands, hats
+// on heads. Edited in the Mesh Editor; Attach To Socket puts an object there.
+LSD_STRUCT()
+struct MeshSocket {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char name[32] = "";
+    LSD_PROPERTY(Edit) char bone[48] = "";
+    LSD_PROPERTY(Edit, Units = "m") Vec3 position;
+    LSD_PROPERTY(Edit, Units = "deg") Vec3 rotation;
 };
 
 LSD_STRUCT(Category = "Asset")
@@ -29,6 +41,7 @@ struct AssetMeta {
 
     // Animation files (FBX with takes): notifies, edited in Details, played in Play.
     LSD_PROPERTY(Edit, Category = "Animation") List<AnimNotify, 16> notifies;
+    LSD_PROPERTY(Edit, Category = "Skeleton") List<MeshSocket, 16> sockets;
 
     // Textures. Colour vs data (sRGB vs linear) is decided by the material slot that uses them.
     LSD_PROPERTY(Edit, Category = "Texture", Min = 1, Max = 8192, Tooltip = "Larger images are halved until they fit (Unreal's Maximum Texture Size)")
