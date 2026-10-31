@@ -19,10 +19,18 @@ struct CollectionEntry {
     LSD_PROPERTY(Edit) char guid[33] = "";
 };
 
+// A level opened or saved lately (File > Recent Levels), newest first.
+LSD_STRUCT()
+struct RecentLevel {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char path[260] = "";
+};
+
 LSD_STRUCT()
 struct EditorSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Category = "Startup", Tooltip = "Opened when the editor starts") char last_level[260] = "";
+    LSD_PROPERTY(Edit, Category = "Startup") List<RecentLevel, 10> recent_levels;
     LSD_PROPERTY(Edit, Category = "Startup", Units = "min", Min = 0, Tooltip = "Autosave unsaved levels to Saved/Autosaves (0 = off)") f32 autosave_minutes = 5.0f;
     LSD_PROPERTY(Edit, Category = "Viewport", Units = "m/s", Min = 0.1, Max = 100) f32 camera_speed = 6.0f;
     LSD_PROPERTY(Edit, Category = "Snapping") bool snap = true;

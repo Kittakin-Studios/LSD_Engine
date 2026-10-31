@@ -75,9 +75,10 @@ editor reopens the last level you had open. The project lives next to the execut
 | Details / World Partition | Bottom-right | Details panel |
 | Content Browser, Place, Output Log | Bottom | Content Browser, Place Actors, Output Log |
 
-The menu bar has **File** (levels, Validate Assets, Package Project), **Edit** (undo, copy, Project
+The menu bar has **File** (levels, Recent Levels, Validate Assets, Package Project), **Edit** (undo, copy, Project
 Settings, Editor Preferences), **Tools** (smoke test, unit tests) and **Window** (Undo History, World
-Settings, Message Log). While playing it shows **Stop / Pause / Eject**.
+Settings, Message Log, **Layout**). While playing it shows **Stop / Pause / Eject**. Window > Layout
+saves the panel arrangement under a name (Unreal's Save Layout As), loads one back, or resets to the default.
 
 ### Moving around the viewport
 

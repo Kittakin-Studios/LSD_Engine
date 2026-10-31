@@ -1257,6 +1257,8 @@ int main(int argc, char** argv) {
         was_showing = state.show_navigation;
 
         FrameTimer timer;
+        if (state.load_layout[0]) lsd::editor::apply_layout_file(state.load_layout, state.status, sizeof state.status);
+        state.load_layout[0] = '\0';
         device->debug_ui_new_frame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();

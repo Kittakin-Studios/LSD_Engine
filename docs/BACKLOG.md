@@ -48,7 +48,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 ### World and levels
 
 - [x] World: entities as generational handles, one packed pool per reflected component type, transforms + parent/child hierarchy (`engine/world`)
-- [~] Levels: new / open / save / save as (`.lsdlevel` JSON text in Content/Levels), last level reopens on start, unsaved-changes prompts; needs sub-levels, recent list
+- [~] Levels: new / open / save / save as (`.lsdlevel` JSON text in Content/Levels), last level reopens on start, unsaved-changes prompts, File > Recent Levels (10, newest first); needs sub-levels
 - [x] Autosave and crash recovery: asks to save on quit, autosaves unsaved levels to Saved/Autosaves (default every 5 min), offers to restore after a crash
 - [x] Duplicate (Ctrl+D, Alt+drag with the gizmo), Cut / Copy / Paste (Ctrl+X/C/V) as level text, also between levels and to a text editor
 - [x] Groups: Ctrl+G puts the selection under a new "Group" empty, Shift+G ungroups [Group Actors]
@@ -75,7 +75,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [x] World Settings (Window menu; Kill Z, gravity; saved in the level) and Project Settings (Edit menu; name, company, game default level, editor startup level; `Config/project.json`)
 - [x] Output Log tab with filters + console (`engine/core` console: variables and commands, Tab completion, history; `help` lists them; `-exec=` runs lines at startup) [Output Log, CVars]
 - [~] Message Log (Window menu): warnings and errors only, unread count in the menu bar; needs click-to-asset [Message Log]
-- [~] Editor preferences window (Edit menu): theme (`Config/editor_theme.json`) + per-user settings (`Saved/editor_settings.json`: snapping, camera speed, last level); needs keymap editor, autosave interval, saved layouts
+- [~] Editor preferences window (Edit menu): theme (`Config/editor_theme.json`) + per-user settings (`Saved/editor_settings.json`: snapping, camera speed, last level, autosave interval), named layouts (Window > Layout: Save Layout As, load, Reset to Default; `Saved/Layouts/*.ini`); needs a keymap editor
 - [~] Menu bar: File (New / Open / Save / Save As), Edit (Undo / Redo / Duplicate / Delete / Drop to Floor), Window (Undo History), Play / Stop; needs Simulate, build buttons, platform/quality dropdown
 
 ### Editing

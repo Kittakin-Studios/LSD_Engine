@@ -144,6 +144,8 @@ struct EditorState {
     bool show_message_log = false;
     bool show_remote_console = false;  // Tools > Remote Console
     bool show_memory = false;          // Window > Memory (memreport)
+    char load_layout[260] = "";        // Window > Layout > a saved layout: applied before the next frame
+    bool reset_layout = false;         // Window > Layout > Reset to Default
     bool show_debugger = false;        // Tools > Lua Debugger
     static constexpr u32 kMaxKept = 64;
     world::Entity kept[kMaxKept];             // Keep Simulation Changes: copied back into the level when Play stops
@@ -190,6 +192,9 @@ void load_theme(EditorTheme& theme);
 
 // Pushes theme colours and font size into the ImGui style. Call when the theme changes.
 void apply_theme(const EditorTheme& theme);
+
+// Loads a layout saved with Window > Layout > Save Layout As (an ImGui .ini). Call between frames.
+void apply_layout_file(const char* path, char* status, usize status_capacity);
 
 // Draws the whole editor for this frame (between ImGui::NewFrame and ImGui::Render).
 void draw_editor(EditorState& state);

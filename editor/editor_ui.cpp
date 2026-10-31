@@ -768,6 +768,9 @@ void focus_selected(EditorState& s) {
 
 // ---- Layout ----
 
+constexpr char kLayoutDir[] = "Saved/Layouts";
+
+
 void build_default_layout(ImGuiID dockspace, ImVec2 size) {
     ImGui::DockBuilderRemoveNode(dockspace);
     ImGui::DockBuilderAddNode(dockspace, static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_DockSpace) | ImGuiDockNodeFlags_PassthruCentralNode);
@@ -3477,7 +3480,22 @@ void draw_content_browser(EditorState& s) {
 
 // ---- Menus and windows ----
 
+// Keeps File > Recent Levels in step with the level being edited (opened, saved as, or new then saved).
+static void note_recent_level(EditorState& s) {
+    auto& recent = s.settings.recent_levels;
+    if (!s.level_path[0] || (recent.count && std::strcmp(recent[0].path, s.level_path) == 0)) return;
+    for (u32 i = 0; i < recent.count; ++i) {
+        if (std::strcmp(recent[i].path, s.level_path) == 0) recent.remove(i--);
+    }
+    if (recent.count == recent.capacity()) recent.remove(recent.count - 1);
+    RecentLevel entry;
+    std::snprintf(entry.path, sizeof entry.path, "%s", s.level_path);
+    recent.push_back(entry);
+    for (u32 i = recent.count - 1; i > 0; --i) std::swap(recent[i], recent[i - 1]);  // newest first
+}
+
 void draw_menu_bar(EditorState& s) {
+    note_recent_level(s);
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Level", "Ctrl+N", false, !s.playing)) request_new(s);
@@ -3496,6 +3514,16 @@ void draw_menu_bar(EditorState& s) {
                 ImGui::PopID();
             }
             if (!any) ImGui::TextDisabled("No levels yet: File > Save Level As");
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Recent Levels", !s.playing && s.settings.recent_levels.count > 0)) {
+            for (u32 i = 0; i < s.settings.recent_levels.count; ++i) {
+                const char* path = s.settings.recent_levels[i].path;
+                ImGui::PushID(static_cast<int>(i));
+                const bool exists = std::filesystem::exists(path);
+                if (ImGui::MenuItem(std::filesystem::path(path).stem().string().c_str(), path, false, exists)) request_open(s, path);
+                ImGui::PopID();
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -3559,6 +3587,28 @@ void draw_menu_bar(EditorState& s) {
         ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings);
         ImGui::MenuItem("Message Log", nullptr, &s.show_message_log);
         ImGui::MenuItem("Memory", nullptr, &s.show_memory);
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Layout")) {  // Unreal's Window > Load Layout / Save Layout
+            static char name[64] = "My Layout";
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::InputText("##layout_name", name, sizeof name);
+            ImGui::SameLine();
+            if (ImGui::Button("Save Layout As") && asset::valid_name(name)) {
+                std::error_code ec;
+                std::filesystem::create_directories(kLayoutDir, ec);
+                const std::string path = std::string(kLayoutDir) + "/" + name + ".ini";
+                ImGui::SaveIniSettingsToDisk(path.c_str());
+                std::snprintf(s.status, sizeof s.status, "Saved layout %s", name);
+            }
+            ImGui::Separator();
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(kLayoutDir, ec)) {
+                if (entry.path().extension() != ".ini") continue;
+                if (ImGui::MenuItem(entry.path().stem().string().c_str())) std::snprintf(s.load_layout, sizeof s.load_layout, "%s", entry.path().generic_string().c_str());
+            }
+            if (ImGui::MenuItem("Reset to Default")) s.reset_layout = true;
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
     // Play / Stop, like Unreal's main toolbar.
@@ -3912,7 +3962,8 @@ void draw_editor(EditorState& s) {
     const ImGuiViewport* main = ImGui::GetMainViewport();
     const ImGuiID dockspace = ImHashStr("EditorDockspace");
     const ImGuiDockNode* existing = ImGui::DockBuilderGetNode(dockspace);
-    if (!existing || !existing->IsSplitNode()) build_default_layout(dockspace, main->WorkSize);
+    if (!existing || !existing->IsSplitNode() || s.reset_layout) build_default_layout(dockspace, main->WorkSize);
+    s.reset_layout = false;
     ImGui::DockSpaceOverViewport(dockspace, main, ImGuiDockNodeFlags_PassthruCentralNode);
 
     draw_outliner(s);
@@ -4009,6 +4060,26 @@ void make_default_level(world::World& w) {
     t->scale = {20, 20, 0.2f};
     w.add<world::StaticMesh>(floor)->color = LinearColor::hex(0x8A8A8E);
     w.add<world::PlayerStart>(w.create("PlayerStart"));
+}
+
+void apply_layout_file(const char* path, char* status, usize status_capacity) {
+    if (!std::filesystem::exists(path)) {
+        std::snprintf(status, status_capacity, "Layout %s not found", path);
+        return;
+    }
+    ImGui::LoadIniSettingsFromDisk(path);
+    // Settings only reach windows when they are created, so move the open windows to their saved nodes.
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    for (ImGuiWindowSettings* ws = g.SettingsWindows.begin(); ws != nullptr; ws = g.SettingsWindows.next_chunk(ws)) {
+        ImGuiWindow* window = ImGui::FindWindowByID(ws->ID);
+        if (!window) continue;
+        if (ws->DockId) ImGui::DockBuilderDockWindow(window->Name, ws->DockId);
+        else {
+            ImGui::SetWindowPos(window, ImVec2(static_cast<f32>(ws->Pos.x), static_cast<f32>(ws->Pos.y)));
+            ImGui::SetWindowSize(window, ImVec2(static_cast<f32>(ws->Size.x), static_cast<f32>(ws->Size.y)));
+        }
+    }
+    std::snprintf(status, status_capacity, "Loaded layout %s", std::filesystem::path(path).stem().string().c_str());
 }
 
 } // namespace lsd::editor
