@@ -28,6 +28,15 @@ struct CharacterDesc {
 
 constexpr u32 kCharacterBody = 0xFFFFFFFFu;  // stands for the player in contacts
 
+// A shape for sweeps and overlaps.
+struct QueryShape {
+    enum Kind : u8 { Sphere, Box, Capsule };
+    Kind kind = Sphere;
+    f32 radius = 0.5f;                     // sphere, capsule
+    f32 half_height = 0.5f;                // capsule: half the straight part between its caps
+    Vec3 half_extents{0.5f, 0.5f, 0.5f};   // box
+};
+
 struct RayHit {
     u32 body = 0;      // index from add_body
     Vec3 point;
@@ -77,6 +86,11 @@ public:
 
     // Nearest body along the ray (direction need not be unit length; the player is not hit).
     bool raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit) const;
+    // The first body a shape touches moving from `from` to `to` (Unreal's Sphere / Box / Capsule Trace);
+    // hit.distance is how far the shape's centre got. Boxes stay axis-aligned, capsules stand along Z.
+    bool sweep(const QueryShape& shape, Vec3 from, Vec3 to, RayHit& hit) const;
+    // Bodies the shape overlaps when placed at `at` (Unreal's Sphere / Box Overlap Actors). Returns how many were written.
+    u32 overlap(const QueryShape& shape, Vec3 at, u32* bodies, u32 capacity) const;
     // Contacts that began since the previous call (bodies with each other and with the player).
     u32 take_contacts(Contact* out, u32 capacity);
 

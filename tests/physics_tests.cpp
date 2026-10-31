@@ -127,6 +127,30 @@ int main() {
         CHECK(world.raycast({0, 0, 1}, {2, 0, 0}, 100, hit) && hit.body == 1 && std::fabs(hit.distance - 4.5f) < 0.05f && hit.normal.x < -0.9f);
         CHECK(!world.raycast({0, 0, 1}, {0, 0, 1}, 100, hit));
         CHECK(!world.raycast({0, 0, 1}, {2, 0, 0}, 3, hit));  // wall beyond reach
+
+        // Sweeps: a 0.5 m sphere down onto the crate stops with its centre 0.5 m above the top.
+        QueryShape ball;
+        ball.radius = 0.5f;
+        CHECK(world.sweep(ball, {0, 3, 10}, {0, 3, -5}, hit) && hit.body == crate && std::fabs(hit.distance - 8.5f) < 0.1f && hit.normal.z > 0.9f);
+        QueryShape crate_box;
+        crate_box.kind = QueryShape::Box;
+        crate_box.half_extents = {0.25f, 0.25f, 0.25f};
+        CHECK(world.sweep(crate_box, {0, 0, 1}, {9, 0, 1}, hit) && hit.body == 1 && std::fabs(hit.distance - 4.25f) < 0.1f && hit.normal.x < -0.9f);
+        QueryShape pill;
+        pill.kind = QueryShape::Capsule;
+        pill.radius = 0.3f;
+        pill.half_height = 0.6f;
+        CHECK(!world.sweep(pill, {0, 0, 2}, {0, 0, 6}, hit));  // up into nothing
+        // Overlaps: a sphere around the crate finds it (and the floor under it), not the far wall.
+        u32 found[8];
+        const u32 n = world.overlap(ball, {0, 3, 1.2f}, found, 8);
+        bool has_crate = false, has_wall = false;
+        for (u32 k = 0; k < n; ++k) {
+            has_crate = has_crate || found[k] == crate;
+            has_wall = has_wall || found[k] == 1;
+        }
+        CHECK(has_crate && !has_wall);
+        CHECK(world.overlap(ball, {0, 0, 30}, found, 8) == 0);
     }
     CHECK(std::fabs(rest.at(2, 3) - 0.5f) < 0.05f);  // centre half a metre above the floor
 

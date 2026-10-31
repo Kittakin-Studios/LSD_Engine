@@ -77,6 +77,23 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "__color($1, $2)", {}},
     {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
+    // ---- Collision (Unreal's Line / Sphere / Box Trace and Overlap Actors) ----
+    {"LineTrace", "Line Trace", "Collision", "The first object along a line from Start to End",
+     {kExecIn, {"Start", PinType::Vector, "0,0,1"}, {"End", PinType::Vector, "10,0,1"}}, 0,
+     {kExecOut, {"Hit", PinType::Bool, ""}, {"Hit Object", PinType::Entity, ""}, {"Location", PinType::Vector, ""}, {"Normal", PinType::Vector, ""}}, 0,
+     "local $o1, $o2, $o3, $o4 = __trace(0, $1, $2, 0, 0)", {}},
+    {"SphereTrace", "Sphere Trace", "Collision", "A sphere swept from Start to End: the first object it touches",
+     {kExecIn, {"Start", PinType::Vector, "0,0,1"}, {"End", PinType::Vector, "10,0,1"}, {"Radius", PinType::Float, "0.5"}}, 0,
+     {kExecOut, {"Hit", PinType::Bool, ""}, {"Hit Object", PinType::Entity, ""}, {"Location", PinType::Vector, ""}, {"Normal", PinType::Vector, ""}}, 0,
+     "local $o1, $o2, $o3, $o4 = __trace(1, $1, $2, $3, 0)", {}},
+    {"CapsuleTrace", "Capsule Trace", "Collision", "An upright capsule (a body's size) swept from Start to End",
+     {kExecIn, {"Start", PinType::Vector, "0,0,1"}, {"End", PinType::Vector, "10,0,1"}, {"Radius", PinType::Float, "0.4"}, {"Half Height", PinType::Float, "0.5"}}, 0,
+     {kExecOut, {"Hit", PinType::Bool, ""}, {"Hit Object", PinType::Entity, ""}, {"Location", PinType::Vector, ""}, {"Normal", PinType::Vector, ""}}, 0,
+     "local $o1, $o2, $o3, $o4 = __trace(2, $1, $2, $3, $4)", {}},
+    {"SphereOverlap", "Sphere Overlap", "Collision", "Runs Loop Body for every object within Radius of Center, then Completed",
+     {kExecIn, {"Center", PinType::Vector, "0,0,1"}, {"Radius", PinType::Float, "2"}}, 0,
+     {{"Completed", PinType::Exec, ""}, {"Loop Body", PinType::Exec, ""}, {"Object", PinType::Entity, ""}, {"Count", PinType::Float, ""}}, 0,
+     "do local __c = $1 local __list = lsd.overlap_sphere(__c.x, __c.y, __c.z, $2)\nfor _, $o2 in ipairs(__list) do\n#1\nend\nlocal $o3 = #__list\n#0\nend", {}},
     {"PlayTimeline", "Play Timeline", "Cinematics", "Plays a Timeline (cutscene) by name; Custom Event on_timeline_finished runs when it ends",
      {kExecIn, {"Timeline", PinType::String, "TL_Intro"}, {"Loop", PinType::Bool, "false"}}, 0, {kExecOut}, 0, "lsd.play_timeline($1, $2)", {}},
     {"StopTimeline", "Stop Timeline", "Cinematics", "Stops a playing Timeline where it is", {kExecIn, {"Timeline", PinType::String, "TL_Intro"}}, 0, {kExecOut}, 0,
@@ -290,6 +307,16 @@ local function __addrot(e, v) local x, y, z = lsd.rotation(e) lsd.set_rotation(e
 local function __spawn(name, v) return lsd.spawn(name, v.x, v.y, v.z) end
 local function __color(e, v) lsd.set(e, "StaticMesh", {color = {r = v.x, g = v.y, b = v.z}}) end
 local function __sound(name, v) return lsd.play_sound(name, v.x, v.y, v.z) end
+local function __trace(kind, a, b, r, h)
+  local e, px, py, pz, nx, ny, nz
+  if kind == 0 then
+    local dx, dy, dz = b.x - a.x, b.y - a.y, b.z - a.z
+    e, px, py, pz, nx, ny, nz = lsd.raycast(a.x, a.y, a.z, dx, dy, dz, math.sqrt(dx * dx + dy * dy + dz * dz))
+  elseif kind == 1 then e, px, py, pz, nx, ny, nz = lsd.sphere_trace(a.x, a.y, a.z, b.x, b.y, b.z, r)
+  else e, px, py, pz, nx, ny, nz = lsd.capsule_trace(a.x, a.y, a.z, b.x, b.y, b.z, r, h) end
+  if not e then return false, nil, __vec(b.x, b.y, b.z), __vec(0, 0, 0) end
+  return true, e, __vec(px, py, pz), __vec(nx, ny, nz)
+end
 local function __save_value(slot, key, value) local t = lsd.load_game(slot) if type(t) ~= "table" then t = {} end t[key] = value lsd.save_game(slot, t) end
 local function __load_value(slot, key, default) local t = lsd.load_game(slot) local v = type(t) == "table" and t[key] if v == nil then return default end return v end
 local function __cell(t, r, c) local d = lsd.table(t) local row = d and d[r] return row and row[c] end
@@ -493,7 +520,7 @@ void register_node(const NodeDef& def) {
     }
     for (auto& code : copy.output_code) code = keep(code);
     copy.input_count = count_pins(copy.inputs, 6);
-    copy.output_count = count_pins(copy.outputs, 4);
+    copy.output_count = count_pins(copy.outputs, kMaxNodeOutputs);
     for (NodeDef& existing : g_script_nodes) {
         if (std::strcmp(existing.id, copy.id) == 0) {
             existing = copy;
@@ -514,19 +541,19 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
     static const bool counted = [] {
         for (NodeDef& d : g_defs) {
             d.input_count = count_pins(d.inputs, 6);
-            d.output_count = count_pins(d.outputs, 4);
+            d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         for (NodeDef& d : g_cue_defs) {
             d.input_count = count_pins(d.inputs, 6);
-            d.output_count = count_pins(d.outputs, 4);
+            d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         for (NodeDef& d : g_bt_defs) {
             d.input_count = count_pins(d.inputs, 6);
-            d.output_count = count_pins(d.outputs, 4);
+            d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         for (NodeDef& d : g_material_defs) {
             d.input_count = count_pins(d.inputs, 6);
-            d.output_count = count_pins(d.outputs, 4);
+            d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         g_script_nodes.assign(std::begin(g_defs), std::end(g_defs));
         return true;

@@ -10,8 +10,11 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
@@ -234,6 +237,66 @@ bool PhysicsWorld::raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit
     hit.normal = {normal.GetX(), normal.GetY(), normal.GetZ()};
     hit.distance = result.mFraction * max_distance;
     return true;
+}
+
+namespace {
+
+// The query shape in Jolt's terms; capsules turned from Jolt's Y axis to our Z (as in add_body).
+JPH::ShapeRefC query_shape(const QueryShape& s) {
+    switch (s.kind) {
+        case QueryShape::Box: {
+            const JPH::Vec3 half(std::fmax(s.half_extents.x, 0.01f), std::fmax(s.half_extents.y, 0.01f), std::fmax(s.half_extents.z, 0.01f));
+            return new JPH::BoxShape(half, std::fmin(0.05f, half.ReduceMin() * 0.5f));
+        }
+        case QueryShape::Capsule: {
+            JPH::RotatedTranslatedShapeSettings settings(JPH::Vec3::sZero(), JPH::Quat::sRotation(JPH::Vec3::sAxisX(), 0.5f * JPH::JPH_PI),
+                                                         new JPH::CapsuleShape(std::fmax(s.half_height, 0.001f), std::fmax(s.radius, 0.01f)));
+            return settings.Create().Get();
+        }
+        case QueryShape::Sphere: break;
+    }
+    return new JPH::SphereShape(std::fmax(s.radius, 0.01f));
+}
+
+} // namespace
+
+bool PhysicsWorld::sweep(const QueryShape& shape, Vec3 from, Vec3 to, RayHit& hit) const {
+    const JPH::Vec3 span = to_jolt(to - from);
+    if (span.LengthSq() <= 0.0f) return false;
+    const JPH::ShapeRefC jolt_shape = query_shape(shape);
+    const JPH::RShapeCast cast(jolt_shape, JPH::Vec3::sReplicate(1.0f), JPH::RMat44::sTranslation(JPH::RVec3(from.x, from.y, from.z)), span);
+    JPH::ShapeCastSettings settings;
+    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;  // start-inside hits count, like Unreal
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    impl_->system.GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), collector);
+    if (!collector.HadHit()) return false;
+    const JPH::ShapeCastResult& result = collector.mHit;
+    JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID2);
+    if (!lock.Succeeded()) return false;
+    const JPH::Vec3 normal = -result.mPenetrationAxis.NormalizedOr(JPH::Vec3::sAxisZ());  // from the body towards the shape
+    hit.body = static_cast<u32>(lock.GetBody().GetUserData());
+    hit.point = {result.mContactPointOn2.GetX(), result.mContactPointOn2.GetY(), result.mContactPointOn2.GetZ()};
+    hit.normal = {normal.GetX(), normal.GetY(), normal.GetZ()};
+    hit.distance = result.mFraction * span.Length();
+    return true;
+}
+
+u32 PhysicsWorld::overlap(const QueryShape& shape, Vec3 at, u32* bodies, u32 capacity) const {
+    const JPH::ShapeRefC jolt_shape = query_shape(shape);
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    impl_->system.GetNarrowPhaseQuery().CollideShape(jolt_shape, JPH::Vec3::sReplicate(1.0f), JPH::RMat44::sTranslation(JPH::RVec3(at.x, at.y, at.z)), settings,
+                                                    JPH::RVec3::sZero(), collector);
+    u32 n = 0;
+    for (const JPH::CollideShapeResult& result : collector.mHits) {
+        JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID2);
+        if (!lock.Succeeded()) continue;
+        const u32 body = static_cast<u32>(lock.GetBody().GetUserData());
+        bool seen = false;  // a body touching with several sub-shapes is listed once
+        for (u32 k = 0; k < n; ++k) seen = seen || bodies[k] == body;
+        if (!seen && n < capacity) bodies[n++] = body;
+    }
+    return n;
 }
 
 u32 PhysicsWorld::take_contacts(Contact* out, u32 capacity) {

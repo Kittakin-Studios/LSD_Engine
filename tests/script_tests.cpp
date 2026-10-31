@@ -152,6 +152,54 @@ static void test_graph() {
 
 static void write(const char* path, const char* text);
 
+static u32 g_sweeps = 0;
+static bool sweep(void*, int, Vec3, Vec3 from, Vec3, Entity& hit, Vec3& point, Vec3& normal) {
+    ++g_sweeps;
+    hit = g_world->entity_at_slot(0);
+    point = from;
+    normal = {0, 0, 1};
+    return true;
+}
+static u32 overlap(void*, int, Vec3, Vec3, Entity* out, u32 capacity) {  // every object in the world
+    u32 n = 0;
+    for (u32 slot = 0; slot < g_world->slot_count() && n < capacity; ++slot) {
+        if (g_world->entity_at_slot(slot).valid()) out[n++] = g_world->entity_at_slot(slot);
+    }
+    return n;
+}
+
+// Collision nodes: Sphere Trace, then Sphere Overlap's Loop Body moves every object it found up 1 m.
+static void test_traces() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 trace = g.add("SphereTrace", 200, 0)->id;
+    const u32 around = g.add("SphereOverlap", 400, 0)->id;
+    const u32 lift = g.add("AddOffset", 600, 0)->id;
+    CHECK(g.connect(start, 0, trace, 0) && g.connect(trace, 0, around, 0) && g.connect(around, 1, lift, 0) && g.connect(around, 2, lift, 1));
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("traces");
+    {
+        World w(heap);
+        const Entity a = w.create("A"), b = w.create("B");
+        std::snprintf(w.add<Script>(a)->script, sizeof(Script::script), "graph");
+        script::ScriptHost host;
+        host.sweep = sweep;
+        host.overlap = overlap;
+        g_world = &w;
+        script::ScriptSystem scripts;
+        scripts.start(w, host, path_of, nullptr);
+        CHECK(scripts.error_count() == 0 && g_sweeps == 1);
+        CHECK(w.get<Transform>(a)->position.z == 1.0f && w.get<Transform>(b)->position.z == 1.0f);
+        CHECK(scripts.run("local hits = lsd.overlap_box(0, 0, 0, 1, 1, 1) assert(#hits == 2) assert(lsd.capsule_trace(0, 0, 0, 1, 0, 0, 0.3, 0.5))"));
+        scripts.stop();
+    }
+}
+
 // Event dispatchers: Call Event reaches every object's Custom Event; lsd.call reaches one.
 static void test_events() {
     using namespace lsd::script;
@@ -472,6 +520,7 @@ int main() {
     test_data_table();
     test_graph();
     test_events();
+    test_traces();
     test_properties();
     test_user_types();
     test_custom_nodes();

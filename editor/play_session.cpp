@@ -96,6 +96,16 @@ bool load_asset(const asset::AssetRegistry& registry, const char* guid_text, T& 
     return asset::load_data_asset(path, out);
 }
 
+// The script host's shape numbers (0 sphere, 1 box, 2 capsule) as a physics query shape.
+physics::QueryShape query_shape(int shape, Vec3 size) {
+    physics::QueryShape q;
+    q.kind = shape == 1 ? physics::QueryShape::Box : shape == 2 ? physics::QueryShape::Capsule : physics::QueryShape::Sphere;
+    q.radius = size.x;
+    q.half_height = size.y;
+    q.half_extents = size;
+    return q;
+}
+
 } // namespace
 
 PlaySession::~PlaySession() { stop(); }
@@ -553,6 +563,26 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         point = ray.point;
         normal = ray.normal;
         return true;
+    };
+    host.sweep = [](void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        physics::RayHit result;
+        if (!self.physics_->sweep(query_shape(shape, size), from, to, result)) return false;
+        hit = self.body_entity(result.body);
+        point = result.point;
+        normal = result.normal;
+        return true;
+    };
+    host.overlap = [](void* user, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        u32 bodies[64];
+        const u32 n = self.physics_->overlap(query_shape(shape, size), at, bodies, capacity < 64 ? capacity : 64);
+        u32 written = 0;
+        for (u32 i = 0; i < n; ++i) {
+            const world::Entity e = self.body_entity(bodies[i]);
+            if (e.valid()) out[written++] = e;
+        }
+        return written;
     };
     host.table_path = [](void* user, const char* name, char* out, usize capacity) {
         const auto& self = *static_cast<const PlaySession*>(user);

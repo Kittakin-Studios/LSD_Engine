@@ -22,6 +22,8 @@ struct PinDef {
     const char* default_value;  // as typed on the node; Entity "self" means the script's own object
 };
 
+constexpr u32 kMaxNodeOutputs = 6;  // exec + data outputs on one node (a trace: exec, Hit, Object, Location, Normal)
+
 struct NodeDef {
     const char* id;        // saved in the graph: "SetPosition"
     const char* title;     // shown: "Set Position"
@@ -29,13 +31,13 @@ struct NodeDef {
     const char* tooltip;
     PinDef inputs[6];
     u32 input_count;
-    PinDef outputs[4];
+    PinDef outputs[kMaxNodeOutputs];
     u32 output_count;
     // Lua for the node. Events: the function header. Exec nodes: a statement where $0.. are the
     // data inputs, $o0.. the node's output variables and #0.. where each exec output's chain goes
     // (a single "#0" is appended when absent). Pure nodes: unused, see output_code.
     const char* code;
-    const char* output_code[4];  // pure nodes and events: the Lua expression of each data output
+    const char* output_code[kMaxNodeOutputs];  // pure nodes and events: the Lua expression of each data output
                                  // (material nodes: the shader expression, see material_graph.h)
 };
 

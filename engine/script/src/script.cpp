@@ -441,6 +441,38 @@ struct Api {
         push_vec3(L, normal);
         return 7;
     }
+    // Sweeps: from (1-3) to (4-6), then the shape's size; results like raycast.
+    static int trace(lua_State* L, int shape, Vec3 size) {
+        const ScriptHost& host = system(L).host_;
+        world::Entity hit;
+        Vec3 point, normal;
+        if (!host.sweep || !host.sweep(host.user, shape, size, check_vec3(L, 1), check_vec3(L, 4), hit, point, normal)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        if (hit.valid()) lua_pushnumber(L, hit.value);
+        else lua_pushboolean(L, true);
+        push_vec3(L, point);
+        push_vec3(L, normal);
+        return 7;
+    }
+    static int sphere_trace(lua_State* L) { return trace(L, 0, {static_cast<f32>(luaL_checknumber(L, 7)), 0, 0}); }
+    static int box_trace(lua_State* L) { return trace(L, 1, check_vec3(L, 7)); }
+    static int capsule_trace(lua_State* L) { return trace(L, 2, {static_cast<f32>(luaL_checknumber(L, 7)), static_cast<f32>(luaL_checknumber(L, 8)), 0}); }
+    // Overlaps: a list of the objects touching the shape at (1-3).
+    static int overlap(lua_State* L, int shape, Vec3 size) {
+        const ScriptHost& host = system(L).host_;
+        world::Entity found[64];
+        const u32 n = host.overlap ? host.overlap(host.user, shape, size, check_vec3(L, 1), found, 64) : 0;
+        lua_createtable(L, static_cast<int>(n), 0);
+        for (u32 i = 0; i < n; ++i) {
+            lua_pushnumber(L, found[i].value);
+            lua_rawseti(L, -2, static_cast<int>(i + 1));
+        }
+        return 1;
+    }
+    static int overlap_sphere(lua_State* L) { return overlap(L, 0, {static_cast<f32>(luaL_checknumber(L, 4)), 0, 0}); }
+    static int overlap_box(lua_State* L) { return overlap(L, 1, check_vec3(L, 4)); }
     // The Spline's points in world space; 0 if the object has none.
     static u32 spline_points(lua_State* L, Vec3* out, bool& closed) {
         const world::Entity e = live_entity(L, 1);
@@ -1077,6 +1109,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
+        {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},

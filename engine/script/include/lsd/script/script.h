@@ -20,6 +20,9 @@
 //   lsd.log_error(...)                    print as an error
 //   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset or built-in shape ("Cube") by name; nil if none
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
+//   lsd.sphere_trace(x1, y1, z1, x2, y2, z2, radius) -> e, px, py, pz, nx, ny, nz   a sphere swept from 1 to 2
+//   lsd.box_trace(x1, y1, z1, x2, y2, z2, hx, hy, hz)  /  lsd.capsule_trace(..., radius, half_height)   the same
+//   lsd.overlap_sphere(x, y, z, radius) -> {e, ...}  /  lsd.overlap_box(x, y, z, hx, hy, hz) -> {e, ...}
 //   lsd.spline_point(e, distance) -> x, y, z, dx, dy, dz   world point and direction along e's Spline
 //   lsd.spline_length(e)                  metres
 //   lsd.play_sound(name [, x, y, z]) -> id   a sound asset by name, 2D or at a position; 0 if none
@@ -142,6 +145,9 @@ struct ScriptHost {
     bool (*pressed)(void* user, const char* action) = nullptr;
     world::Entity (*spawn)(void* user, const char* name, Vec3 position) = nullptr;
     bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
+    // shape: 0 sphere (size.x = radius), 1 box (size = half extents), 2 capsule (size.x = radius, size.y = half height).
+    bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
+    u32 (*overlap)(void* user, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) = nullptr;
     bool (*table_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Data Table file by asset name
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name
     u32 (*play_sound)(void* user, const char* name, bool spatial, Vec3 position) = nullptr;  // voice, 0 if none

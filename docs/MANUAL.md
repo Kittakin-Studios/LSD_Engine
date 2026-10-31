@@ -340,7 +340,10 @@ and **Show Cursor** for menus.
 Jolt Physics. Meshes with **Collision** ticked and Blocking Volumes are static; add a **Rigid Body**
 component to simulate an object (box, sphere or capsule; mass, friction, bounciness). **Physics
 Joint** links two objects (fixed, hinge, ball, slider; limits; motors: doors, chains, rotating
-platforms). Scripts get `on_hit` when contacts begin and can `lsd.raycast`.
+platforms). Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
+capsule (`lsd.sphere_trace` / `box_trace` / `capsule_trace`) or list what overlaps a shape
+(`lsd.overlap_sphere` / `overlap_box`). Visual scripts have **Line Trace**, **Sphere Trace**, **Capsule
+Trace** and **Sphere Overlap** (its Loop Body runs once per object found), like Unreal's traces.
 
 ---
 
@@ -694,6 +697,8 @@ Objects and transforms
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |
 | `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil |
+| `lsd.sphere_trace(x1, y1, z1, x2, y2, z2, r)` (also `box_trace(..., hx, hy, hz)`, `capsule_trace(..., r, half_h)`) | first hit like raycast, or nil |
+| `lsd.overlap_sphere(x, y, z, r)` / `lsd.overlap_box(x, y, z, hx, hy, hz)` | `{e, ...}` the objects touching it |
 | `lsd.spline_point(e, d)`, `lsd.spline_length(e)` | |
 
 Time, input, logging, data
