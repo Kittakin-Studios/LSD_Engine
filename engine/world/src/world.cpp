@@ -97,6 +97,7 @@ void World::init_record(u32 slot, u32 generation, const char* name) {
     r.alive = true;
     r.hidden = r.locked = false;
     std::snprintf(r.name, sizeof r.name, "%s", name);
+    r.folder[0] = '\0';
     r.parent = {};
     for (u32& c : r.component) c = kNone;
     add(Entity::make(slot, generation), reflect::type_of<Transform>());
@@ -194,6 +195,15 @@ void World::set_hidden(Entity e, bool value) {
 
 void World::set_locked(Entity e, bool value) {
     if (Record* r = record(e)) r->locked = value;
+}
+
+const char* World::folder(Entity e) const {
+    const Record* r = record(e);
+    return r ? r->folder : "";
+}
+
+void World::set_folder(Entity e, const char* folder) {
+    if (Record* r = record(e)) std::snprintf(r->folder, sizeof r->folder, "%s", folder ? folder : "");
 }
 
 bool World::hidden_in_hierarchy(Entity e) const {
@@ -344,6 +354,7 @@ Entity copy_entity(const World& from, Entity source, World& to, Entity parent, b
     }
     to.set_hidden(copy, from.hidden(source));
     to.set_locked(copy, from.locked(source));
+    to.set_folder(copy, from.folder(source));
     to.set_parent(copy, parent, false);
     for (u32 slot = 0; slot < from.slot_count(); ++slot) {  // children too (slot order keeps them stable)
         const Entity child = from.entity_at_slot(slot);

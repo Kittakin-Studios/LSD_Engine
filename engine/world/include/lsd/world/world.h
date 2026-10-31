@@ -47,6 +47,9 @@ public:
     void set_hidden(Entity entity, bool hidden);
     void set_locked(Entity entity, bool locked);
     bool hidden_in_hierarchy(Entity entity) const;  // it or any parent is hidden
+    // Outliner folder (Unreal's Outliner folders): editor-only grouping with no transform, "" = none.
+    const char* folder(Entity entity) const;
+    void set_folder(Entity entity, const char* folder);
 
     // Hierarchy. set_parent refuses cycles; by default the child keeps its world placement
     // (its Transform is rewritten relative to the new parent), like dragging in Unreal's Outliner.
@@ -85,6 +88,7 @@ private:
         bool hidden;
         bool locked;
         char name[64];
+        char folder[64];
         Entity parent;
         u32 component[kMaxComponentTypes];  // index into each pool, kNone if absent
     };

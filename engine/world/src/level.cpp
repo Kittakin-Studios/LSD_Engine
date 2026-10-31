@@ -77,6 +77,10 @@ void save_level(const World& world, Array<char>& out) {
         append(out, line);
         if (world.hidden(e)) append(out, ", \"hidden\": true");
         if (world.locked(e)) append(out, ", \"locked\": true");
+        if (world.folder(e)[0]) {
+            append(out, ", \"folder\": ");
+            append_string(out, world.folder(e));
+        }
         for (u32 t = 0; t < type_count; ++t) {
             const void* component = world.get(e, *types[t]);
             if (!component) continue;
@@ -130,6 +134,10 @@ bool load_level(World& world, const char* text, usize length) {
                         const bool on = std::strcmp(token, "true") == 0;
                         if (field[0] == 'h') world.set_hidden(e, on);
                         else world.set_locked(e, on);
+                    } else if (std::strcmp(field, "folder") == 0) {
+                        char folder[64] = "";
+                        r.read_string(folder, sizeof folder);
+                        world.set_folder(e, folder);
                     } else if (std::strcmp(field, "parent") == 0) {
                         if (read_integer(r, value) && value >= 0) links.push_back({e, value});
                     } else if (const reflect::TypeInfo* type = find_component_type(field); type && world.alive(e)) {

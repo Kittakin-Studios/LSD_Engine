@@ -97,6 +97,10 @@ gizmo to move / rotate / scale; **Ctrl+`** toggles local / world space; Snap (to
 steps from Editor Preferences. **End** drops the selection to the floor, **Delete** removes it,
 **Ctrl+D** duplicates, **Ctrl+G / Shift+G** group / ungroup, **Ctrl+C / X / V** copy, cut, paste.
 Drag one object onto another in the Outliner to attach it (children follow their parent).
+**Folders** (Hierarchy tab, like Unreal's Outliner folders): right-click objects > Move to Folder > New
+Folder, then type its name. Click a folder to fold it, drop objects on it to file them, right-click it to
+rename or delete it (its objects stay). Folders only organise the Outliner; they have no transform.
+The Outline tab's **type filter** lists only objects with a chosen component (StaticMesh, PointLight...).
 
 ### Details
 

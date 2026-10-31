@@ -69,7 +69,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 
 ### Panels
 
-- [~] Outliner: Outline tab (flat, search) and Hierarchy tab (tree, drag to attach, drop on empty space to detach), right-click Focus / Duplicate / Detach / Delete, hide (eye) and lock buttons saved in the level; needs folders, type filter
+- [x] Outliner: Outline tab (flat, search) and Hierarchy tab (tree, drag to attach, drop on empty space to detach), right-click Focus / Duplicate / Detach / Delete, hide (eye) and lock buttons saved in the level; folders (right-click > Move to Folder / New Folder; fold, rename, delete, drop objects on them; saved in the level), type filter on the Outline tab
 - [x] Details: entity name, one section per component, Add / remove component, mesh slot (shapes + mesh assets, drag-drop), search field, multi-edit (only changed values go to every selected object), right-click Reset to Default / Copy / Paste
 - [~] Place panel (tab next to Content): Cube, Sphere, Plane, Player Start, Blocking Volume, Kill Volume, Trigger Volume, Empty, by drag or double-click; lights, cameras, sounds when they exist [Place Actors]
 - [x] World Settings (Window menu; Kill Z, gravity; saved in the level) and Project Settings (Edit menu; name, company, game default level, editor startup level; `Config/project.json`)

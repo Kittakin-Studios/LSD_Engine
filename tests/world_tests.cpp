@@ -81,6 +81,7 @@ static void test_level_round_trip() {
         w.settings().kill_z = -12.5f;
         w.set_hidden(start, true);
         w.set_locked(floor, true);
+        w.set_folder(floor, "Blockout/Ground");
         w.add<KillVolume>(floor)->enabled = false;
         const Entity last = w.create("Last");
 
@@ -96,6 +97,7 @@ static void test_level_round_trip() {
         CHECK(!loaded.get<StaticMesh>(start));
         CHECK(loaded.hidden(start) && !loaded.hidden(floor) && loaded.locked(floor) && !loaded.locked(start));
         CHECK(loaded.hidden_in_hierarchy(start));
+        CHECK(std::strcmp(loaded.folder(floor), "Blockout/Ground") == 0 && loaded.folder(start)[0] == '\0');
         CHECK(loaded.settings().kill_z == -12.5f && loaded.get<KillVolume>(floor) && !loaded.get<KillVolume>(floor)->enabled);
         save_level(loaded, again);
         CHECK(text.size() == again.size() && std::memcmp(text.data(), again.data(), text.size()) == 0);

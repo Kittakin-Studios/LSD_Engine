@@ -49,7 +49,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -1493,6 +1495,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
 struct OutlineRow {
     Entity entity;
     int depth;
+    const char* folder = nullptr;  // set on a folder's header row (then `entity` is invalid)
 };
 
 void collect_rows(const world::World& w, Entity parent, int depth, OutlineRow* rows, int& count, int max) {
@@ -1503,6 +1506,115 @@ void collect_rows(const world::World& w, Entity parent, int depth, OutlineRow* r
         rows[count++] = {e, depth};
         collect_rows(w, e, depth + 1, rows, count, max);
     }
+}
+
+std::set<std::string> g_closed_folders;  // Outliner folders folded shut (this session)
+char g_renaming_folder[64] = "";         // the folder whose name is being edited in place
+char g_folder_name[64] = "";
+
+// Hierarchy tab: folders (A-Z) with their root objects inside, then the objects in no folder.
+void collect_hierarchy(const world::World& w, OutlineRow* rows, int& count, int max) {
+    std::map<std::string, const char*> folders;  // name -> a record's copy, stable for this frame
+    for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+        const Entity e = w.entity_at_slot(slot);
+        if (e.valid() && !w.parent(e).valid() && w.folder(e)[0]) folders.emplace(w.folder(e), w.folder(e));
+    }
+    for (const auto& [name, label] : folders) {
+        if (count >= max) return;
+        rows[count++] = {{}, 0, label};
+        if (g_closed_folders.count(name)) continue;
+        for (u32 slot = 0; slot < w.slot_count() && count < max; ++slot) {
+            const Entity e = w.entity_at_slot(slot);
+            if (!e.valid() || w.parent(e).valid() || name != w.folder(e)) continue;
+            rows[count++] = {e, 1};
+            collect_rows(w, e, 2, rows, count, max);
+        }
+    }
+    for (u32 slot = 0; slot < w.slot_count() && count < max; ++slot) {
+        const Entity e = w.entity_at_slot(slot);
+        if (!e.valid() || w.parent(e).valid() || w.folder(e)[0]) continue;
+        rows[count++] = {e, 0};
+        collect_rows(w, e, 1, rows, count, max);
+    }
+}
+
+// Puts the selected objects (their top-most selected ancestors) into `folder` ("" = out of folders).
+// Children follow their parent, so a selected child is detached first, like Unreal.
+void move_selection_to_folder(EditorState& s, const char* folder) {
+    Entity roots[EditorState::kMaxSelection];
+    const u32 n = selection_roots(s, roots);
+    for (u32 i = 0; i < n; ++i) {
+        if (s.world->parent(roots[i]).valid()) s.world->set_parent(roots[i], {});
+        s.world->set_folder(roots[i], folder);
+    }
+    char label[96];
+    std::snprintf(label, sizeof label, folder[0] ? "Move to folder %s" : "Remove from folder%s", folder);
+    edited(s, label);
+}
+
+// Renames a folder: every object in it moves to the new name.
+void rename_folder(EditorState& s, const char* from, const char* to) {
+    char old_name[64];
+    std::snprintf(old_name, sizeof old_name, "%s", from);  // `from` may point into a record we rewrite
+    for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
+        const Entity e = s.world->entity_at_slot(slot);
+        if (e.valid() && std::strcmp(s.world->folder(e), old_name) == 0) s.world->set_folder(e, to);
+    }
+    if (g_closed_folders.erase(old_name) && to[0]) g_closed_folders.insert(to);
+    edited(s, to[0] ? "Rename folder" : "Delete folder");
+}
+
+// One folder header row: click folds it, drop objects on it to file them, right-click to rename or delete.
+void draw_folder_row(EditorState& s, const char* folder, f32 row_height, ImDrawList* dl) {
+    const EditorTheme& t = s.theme;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool closed = g_closed_folders.count(folder) != 0;
+    const ImU32 color = u32_color(t.details_tab_active);
+    const f32 cy = p.y + row_height * 0.5f;  // a folder glyph: tab and body, filled when folded shut
+    dl->AddRectFilled(ImVec2(p.x + 4, cy - 6), ImVec2(p.x + 10, cy - 4), color);
+    if (closed) dl->AddRectFilled(ImVec2(p.x + 4, cy - 4), ImVec2(p.x + 18, cy + 5), color, 1.0f);
+    else dl->AddRect(ImVec2(p.x + 4, cy - 4), ImVec2(p.x + 18, cy + 5), color, 1.0f, 0, 1.5f);
+    ImGui::PushID(folder);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 24.0f);
+    if (std::strcmp(g_renaming_folder, folder) == 0) {
+        if (ImGui::IsWindowAppearing() || !ImGui::IsAnyItemActive()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(-60.0f);
+        if (ImGui::InputText("##rename", g_folder_name, sizeof g_folder_name, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+            if (g_folder_name[0] && std::strcmp(g_folder_name, folder) != 0) rename_folder(s, folder, g_folder_name);
+            g_renaming_folder[0] = '\0';
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            g_renaming_folder[0] = '\0';
+        }
+        ImGui::PopID();
+        return;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.details_tab_active));
+    if (ImGui::Selectable(folder, false, ImGuiSelectableFlags_SpanAvailWidth, ImVec2(0, row_height - ImGui::GetStyle().ItemSpacing.y))) {
+        if (closed) g_closed_folders.erase(folder);
+        else g_closed_folders.insert(folder);
+    }
+    ImGui::PopStyleColor();
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload)) {
+            Entity dropped;
+            std::memcpy(&dropped, payload->Data, sizeof dropped);
+            if (!s.is_selected(dropped)) select(s, dropped);
+            char name[64];
+            std::snprintf(name, sizeof name, "%s", folder);
+            move_selection_to_folder(s, name);
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopupContextItem("folder_row_menu")) {
+        if (ImGui::MenuItem("Rename")) {
+            std::snprintf(g_renaming_folder, sizeof g_renaming_folder, "%s", folder);
+            std::snprintf(g_folder_name, sizeof g_folder_name, "%s", folder);
+        }
+        if (ImGui::MenuItem("Delete Folder")) rename_folder(s, folder, "");  // its objects stay, out of any folder
+        ImGui::SetItemTooltip("Removes the folder; the objects in it stay in the level");
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
 }
 
 bool contains_ignore_case(const char* text, const char* needle) {
@@ -1531,6 +1643,10 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
         dl->AddRectFilled(ImVec2(left, p.y), ImVec2(right, p.y + row_height), u32_color((i & 1) ? t.outline_row_b : t.outline_row_a));
         if (i >= row_count) { ImGui::Dummy(ImVec2(0, row_height - ImGui::GetStyle().ItemSpacing.y)); continue; }
         const OutlineRow& row = rows[i];
+        if (row.folder) {
+            draw_folder_row(s, row.folder, row_height, dl);
+            continue;
+        }
         const Entity e = row.entity;
         const LinearColor& text = s.world->get<world::StaticMesh>(e) ? t.text_mesh : s.world->get<world::PlayerStart>(e) ? t.text_blueprint : t.text_component;
         const int depth = tree ? row.depth : 0;
@@ -1557,7 +1673,9 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
                 for (int r = 0; r < row_count; ++r) from = rows[r].entity == s.selected ? r : from;
                 if (from < 0) from = i;
                 const int lo = from < i ? from : i, hi = from < i ? i : from;
-                for (int r = lo; r <= hi; ++r) add_to_selection(s, rows[r].entity, false);
+                for (int r = lo; r <= hi; ++r) {
+                    if (rows[r].entity.valid()) add_to_selection(s, rows[r].entity, false);  // folder rows have none
+                }
                 add_to_selection(s, e, false);
             } else {
                 select(s, e);
@@ -1596,6 +1714,26 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
                 edited(s, "Detach");
             }
             if (ImGui::MenuItem("Delete", "Delete")) delete_selected(s);
+            if (ImGui::BeginMenu("Move to Folder", !s.playing)) {
+                std::set<std::string> folders;
+                for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
+                    const Entity other = s.world->entity_at_slot(slot);
+                    if (other.valid() && s.world->folder(other)[0]) folders.insert(s.world->folder(other));
+                }
+                for (const std::string& f : folders) {
+                    if (ImGui::MenuItem(f.c_str())) move_selection_to_folder(s, f.c_str());
+                }
+                if (!folders.empty()) ImGui::Separator();
+                if (ImGui::MenuItem("New Folder")) {
+                    char name[64] = "NewFolder";
+                    for (int n = 2; folders.count(name); ++n) std::snprintf(name, sizeof name, "NewFolder%d", n);
+                    move_selection_to_folder(s, name);
+                    std::snprintf(g_renaming_folder, sizeof g_renaming_folder, "%s", name);  // name it at once, like Unreal
+                    std::snprintf(g_folder_name, sizeof g_folder_name, "%s", name);
+                }
+                if (s.world->folder(e)[0] && ImGui::MenuItem("Remove from Folder")) move_selection_to_folder(s, "");
+                ImGui::EndMenu();
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Create Prefab", nullptr, false, !s.playing)) create_prefab(s, e);
             ImGui::SetItemTooltip("Saves this object and its children as a prefab in the open Content Browser folder");
@@ -1640,6 +1778,10 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             Entity child;
             std::memcpy(&child, payload->Data, sizeof child);
             if (s.world->parent(child).valid() && s.world->set_parent(child, {})) edited(s, "Detach");
+            else if (s.world->folder(child)[0]) {  // a filed root object: out of its folder
+                s.world->set_folder(child, "");
+                edited(s, "Remove from folder");
+            }
         }
         ImGui::EndDragDropTarget();
     }
@@ -1652,21 +1794,40 @@ void draw_outliner(EditorState& s) {
     static char filter[64] = "";
     static OutlineRow rows[4096];
     if (!begin_panel(kOutlinerWindow)) { ImGui::End(); return; }
+    static bool first_frame = true;  // ImGui opens the first tab; start on the one active_tab names
+    const int wanted = first_frame ? active_tab : -1;  // read before the tabs below overwrite active_tab
+    first_frame = false;
     if (ImGui::BeginTabBar("OutlinerTabs")) {
-        if (themed_tab("Outline", 0, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF))) {
+        if (themed_tab("Outline", 0, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF), wanted == 0)) {
+            // Type filter (Unreal's Outliner filter by class): component types the level uses.
+            static const reflect::TypeInfo* type_filter = nullptr;
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::BeginCombo("##type", type_filter ? type_filter->name : "All types")) {
+                if (ImGui::Selectable("All types", !type_filter)) type_filter = nullptr;
+                u32 n_types = 0;
+                const reflect::TypeInfo* const* types = world::component_types(n_types);
+                for (u32 i = 0; i < n_types; ++i) {
+                    if (std::strcmp(types[i]->name, "Transform") == 0 || !s.world->count(*types[i])) continue;
+                    if (ImGui::Selectable(types[i]->name, type_filter == types[i])) type_filter = types[i];
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::InputTextWithHint("##filter", "Search objects", filter, sizeof filter);
             int count = 0;
             for (u32 slot = 0; slot < s.world->slot_count() && count < 4096; ++slot) {
                 const Entity e = s.world->entity_at_slot(slot);
-                if (e.valid() && contains_ignore_case(s.world->name(e), filter)) rows[count++] = {e, 0};
+                if (!e.valid() || !contains_ignore_case(s.world->name(e), filter)) continue;
+                if (type_filter && !s.world->get(e, *type_filter)) continue;
+                rows[count++] = {e, 0};
             }
             draw_rows(s, rows, count, false);
             ImGui::EndTabItem();
         }
-        if (themed_tab("Hierarchy", 1, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF))) {
+        if (themed_tab("Hierarchy", 1, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF), wanted == 1)) {
             int count = 0;
-            collect_rows(*s.world, {}, 0, rows, count, 4096);
+            collect_hierarchy(*s.world, rows, count, 4096);
             draw_rows(s, rows, count, true);
             ImGui::EndTabItem();
         }
