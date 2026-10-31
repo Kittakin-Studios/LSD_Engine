@@ -188,7 +188,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [ ] Baked lightmaps + probes; light build button with progress; lightmap density view; volumetric fog [Lightmass]
 - [~] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes: frustum culling of static and skeletal meshes (the count in `stat fps`); needs LODs, occlusion and distance culling
 - [~] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]: the quality setting scales shadows (none / sun only, nearer / as set / further); needs more features per level, device profiles
-- [ ] VRAM-budget scaling: texture streaming, shadow and render-target sizes follow `query_memory_budget()`
+- [~] VRAM-budget scaling: texture streaming, shadow and render-target sizes follow `query_memory_budget()`: at startup the budget caps texture size (under 2.5 GB: 1024 and 2048 shadow atlases; under 5 GB: 2048), logged; `-vram=<MB>` pretends for tests; needs streaming (load mips on demand) and adapting while running
 - [x] Render to screenshot at high resolution [HighResShot]: console `HighResShot <1-8>` renders the main view at that multiple (up to 8192 px, with the post pass) into a target, reads it back (`read_render_target`, D3D12 + OpenGL) and saves Saved/Screenshots/HighResShot_<time>.png
 
 ### UI

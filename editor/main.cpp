@@ -113,7 +113,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
                   lsd::editor::MeshCache& meshes, bool skip_hidden) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     device.begin_shadow_pass(atlas);
-    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::kShadowAtlasSize);
+    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]); ++c) {
         device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
         lsd::Mat4 vp;
@@ -136,7 +136,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                         lsd::editor::MeshCache& meshes, bool skip_hidden) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     device.begin_shadow_pass(atlas);
-    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::kShadowAtlasSize);
+    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     for (lsd::u32 li = 0; li < lights.count; ++li) {
         const lsd::rhi::GpuLight& light = lights.lights[li];
         if (light.shadow_tile < 0.0f) continue;
@@ -583,6 +583,7 @@ int main(int argc, char** argv) {
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     float smoke_arg = 0.0f;            // -smoketest=<seconds>: play the level that long, exit 0 if no errors (CI)
+    long vram_arg = 0;                 // -vram=<MB>: pretend the card has that much video memory (tests the scaling)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
     int exec_count = 0;
     for (int i = 1; i < argc; ++i) {
@@ -599,6 +600,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-nosound") == 0) no_sound = true;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
+        else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
         else if (std::strncmp(argv[i], "-smoketest=", 11) == 0) smoke_arg = static_cast<float>(std::atof(argv[i] + 11));
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
@@ -713,8 +715,21 @@ int main(int argc, char** argv) {
     auto* mesh_memory = allocator.allocate(sizeof(lsd::editor::MeshCache), alignof(lsd::editor::MeshCache));
     lsd::editor::MeshCache& meshes = *new (mesh_memory) lsd::editor::MeshCache(*device, allocator, registry, kDataDir);
     auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
-    const lsd::rhi::TextureHandle shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
-    const lsd::rhi::TextureHandle local_shadow_atlas = device->create_shadow_map(lsd::editor::kShadowAtlasSize);
+    // Video memory: smaller textures and shadow atlases on cards with little of it (instead of failing).
+    {
+        const lsd::u64 budget = vram_arg > 0 ? static_cast<lsd::u64>(vram_arg) * 1024ull * 1024ull : device->query_memory_budget().budget_bytes;
+        const lsd::u64 gib = 1024ull * 1024ull * 1024ull;
+        if (budget && budget < gib * 5 / 2) {
+            texture_cache->set_size_cap(1024);
+            lsd::editor::set_shadow_atlas_size(2048);
+        } else if (budget && budget < gib * 5) {
+            texture_cache->set_size_cap(2048);
+        }
+        LSD_LOG_INFO("editor", "Video memory budget %.1f GB: textures up to %s, shadow atlas %u", static_cast<double>(budget) / static_cast<double>(gib),
+                     budget && budget < gib * 5 / 2 ? "1024" : budget && budget < gib * 5 ? "2048" : "full size", lsd::editor::shadow_atlas_size());
+    }
+    const lsd::rhi::TextureHandle shadow_atlas = device->create_shadow_map(lsd::editor::shadow_atlas_size());
+    const lsd::rhi::TextureHandle local_shadow_atlas = device->create_shadow_map(lsd::editor::shadow_atlas_size());
     lsd::editor::MaterialCache materials(*texture_cache, registry);
     auto* skinned_cache = new lsd::editor::SkinnedCache(*device, registry);  // deleted before the device
     auto* animations = new lsd::editor::AnimationPlayer();

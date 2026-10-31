@@ -169,6 +169,7 @@ struct LightSetup {
     f32 viewport[4] = {};
     // x = 1: the draws go into a scene target for draw_post: they write exposed colour (fog applied)
     // range-compressed into 8 bits, sqrt(c / (1 + c)), and the post pass does tonemap and grading.
+    // y = the local shadow atlas's texel size (1 / its size; 0: 4096).
     f32 output[4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96, "matches the shader's light buffer");

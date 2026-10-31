@@ -23,6 +23,8 @@ public:
     rhi::TextureHandle get(const char* guid, bool srgb);
     void check_files();
     rhi::Device& device() { return device_; }
+    // The largest side any texture loads at (0: as each asset says); video memory sets it.
+    void set_size_cap(u32 size) { size_cap_ = size; }
 
 private:
     struct Entry {
@@ -36,6 +38,7 @@ private:
 
     rhi::Device& device_;
     const asset::AssetRegistry& registry_;
+    u32 size_cap_ = 0;
     Entry entries_[512];
     u32 count_ = 0;
 };

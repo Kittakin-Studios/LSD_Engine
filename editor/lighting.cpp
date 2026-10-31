@@ -56,7 +56,7 @@ namespace {
 void fit_cascades(rhi::LightSetup& s, u32 light_index, Vec3 travel, const LightView& view, f32 distance) {
     const u32 count = 4;
     const f32 near_z = 0.1f, far_z = distance;
-    const f32 tile = 0.5f, tile_texels = static_cast<f32>(kShadowAtlasSize) * tile;
+    const f32 tile = 0.5f, tile_texels = static_cast<f32>(shadow_atlas_size()) * tile;
     const f32 tan_y = std::tan(view.fov_y * 0.5f), tan_x = tan_y * view.aspect;
     const Vec3 up = std::fabs(travel.z) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 0, 1};
     const Vec3 side = normalize(cross(travel, up));  // the light view's basis (same as look_at builds)
@@ -91,7 +91,7 @@ void fit_cascades(rhi::LightSetup& s, u32 light_index, Vec3 travel, const LightV
     }
     s.shadow_info[0] = static_cast<f32>(count);
     s.shadow_info[1] = static_cast<f32>(light_index);
-    s.shadow_info[2] = 1.0f / static_cast<f32>(kShadowAtlasSize);
+    s.shadow_info[2] = 1.0f / static_cast<f32>(shadow_atlas_size());
     s.shadow_info[3] = texel0 * 1.5f;  // normal offset
 }
 
@@ -142,14 +142,18 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
 rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden);
 
 u32 g_quality = 2;
+u32 g_atlas_size = 4096;
 
 } // namespace
 
 void set_shadow_quality(u32 quality) { g_quality = quality < 3 ? quality : 3; }
+u32 shadow_atlas_size() { return g_atlas_size; }
+void set_shadow_atlas_size(u32 size) { g_atlas_size = size; }
 
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
     rhi::LightSetup s = lights_only(w, view, skip_hidden);
     add_atmosphere(w, view.eye, skip_hidden, s);
+    s.output[1] = 1.0f / static_cast<f32>(g_atlas_size);  // the local atlas's texel, for its filtering
     return s;
 }
 
@@ -291,7 +295,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         s.local_tiles[t][1] = static_cast<f32>(t / 4) * 0.25f;
         s.local_tiles[t][2] = 0.25f;
     };
-    const f32 tile_texels = static_cast<f32>(kShadowAtlasSize) * 0.25f;
+    const f32 tile_texels = static_cast<f32>(shadow_atlas_size()) * 0.25f;
     for (u32 i = 0; i < w.count(dir_type) && s.count < rhi::kMaxLights; ++i) {
         const world::Entity e = w.owner(dir_type, i);
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;

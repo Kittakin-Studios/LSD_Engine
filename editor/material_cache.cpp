@@ -48,7 +48,9 @@ bool TextureCache::load(Entry& e) {
     asset::AssetMeta meta;
     if (const asset::AssetRecord* r = registry_.find(guid)) registry_.load_meta(*r, meta);
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture(path, e.srgb, meta.max_size, data)) return false;
+    u32 max_size = meta.max_size;
+    if (size_cap_ && (!max_size || max_size > size_cap_)) max_size = size_cap_;  // little video memory: smaller mips
+    if (!asset::load_texture(path, e.srgb, max_size, data)) return false;
     const void* mips[asset::kMaxTextureMips];
     for (u32 m = 0; m < data.mip_count; ++m) mips[m] = data.mip(m);
     e.texture = device_.create_texture(data.width, data.height, data.mip_count, e.srgb ? rhi::TextureFormat::RGBA8_sRGB : rhi::TextureFormat::RGBA8, mips);

@@ -17,7 +17,10 @@ struct LightView {
     f32 aspect = 1.0f;
 };
 
-constexpr u32 kShadowAtlasSize = 4096;  // sun: 2 x 2 cascades of 2048; local lights: 4 x 4 tiles of 1024
+// Shadow atlas size (both atlases): 4096 normally (sun: 2 x 2 cascades of 2048; local lights:
+// 4 x 4 tiles of 1024), 2048 on cards with little video memory. Set once, before the atlases exist.
+u32 shadow_atlas_size();
+void set_shadow_atlas_size(u32 size);
 
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);

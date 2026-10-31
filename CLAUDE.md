@@ -48,7 +48,7 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
 (quit after n frames), `-screenshot=<n>` (OpenGL: Saved/screenshot.bmp; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
-(repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged).
+(repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory).
 Test-only console commands: `ui.Click x y`, `ui.Keys down enter` (real SDL events, 0.8 s later),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 

@@ -132,7 +132,7 @@ float local_shadow(Light L, vec3 wpos, vec3 n) {
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0 || s.z < 0.0) return 1.0;
     vec2 origin = vec2(local_tile[tile].x, 1.0 - local_tile[tile].y - local_tile[tile].z);
     uv = origin + uv * local_tile[tile].z;
-    float texel = 1.0 / 4096.0;
+    float texel = hdr_out.y > 0.0 ? hdr_out.y : 1.0 / 4096.0;
     vec2 lo = origin + texel, hi = origin + local_tile[tile].z - texel;
     float lit = 0.0;
     for (int y = -1; y <= 1; ++y)

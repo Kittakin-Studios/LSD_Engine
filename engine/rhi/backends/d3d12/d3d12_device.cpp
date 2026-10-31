@@ -104,7 +104,7 @@ float local_shadow(Light L, float3 wpos, float3 n) {
     float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
     if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0 || s.z < 0.0) return 1.0;
     uv = local_tile[tile].xy + uv * local_tile[tile].z;
-    const float texel = 1.0 / 4096.0;
+    const float texel = hdr_out.y > 0.0 ? hdr_out.y : 1.0 / 4096.0;  // the atlas's texel (its size follows video memory)
     const float2 lo = local_tile[tile].xy + texel, hi = local_tile[tile].xy + local_tile[tile].z - texel;
     float lit = 0.0;
     [unroll] for (int y = -1; y <= 1; ++y)
