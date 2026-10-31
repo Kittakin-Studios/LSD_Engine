@@ -1,5 +1,7 @@
 #include "graph_editor.h"
 
+#include "lua_debugger.h"
+
 #include "lsd/foundation/log.h"
 #include "sound_cue.h"
 
@@ -20,6 +22,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <cstdlib>
+#include <vector>
+#include <fstream>
 #include <string>
 
 namespace lsd::editor {
@@ -225,6 +230,39 @@ bool value_widget(const script::PinDef& pin, char* value, usize capacity) {
     return changed;
 }
 
+// The node each line of a compiled visual script belongs to (its "--@node N" markers); 0 = none.
+struct LineMap {
+    std::string path;
+    std::filesystem::file_time_type time;
+    std::vector<u32> node_of_line;  // [line]
+};
+LineMap g_lines;
+
+const std::vector<u32>& node_lines(const std::string& path) {
+    std::error_code error;
+    const auto time = std::filesystem::last_write_time(path, error);
+    if (g_lines.path == path && !error && time == g_lines.time) return g_lines.node_of_line;
+    g_lines.path = path;
+    g_lines.time = time;
+    g_lines.node_of_line.assign(1, 0);
+    std::ifstream file(path);
+    u32 current = 0;
+    for (std::string line; std::getline(file, line);) {
+        if (line.rfind("--@node ", 0) == 0) current = static_cast<u32>(std::strtoul(line.c_str() + 8, nullptr, 10));
+        g_lines.node_of_line.push_back(current);
+    }
+    return g_lines.node_of_line;
+}
+
+// The first line of a node's own code (just after its marker), 0 if it is not in the file.
+i32 node_first_line(const std::string& path, u32 node) {
+    const std::vector<u32>& lines = node_lines(path);
+    for (size_t i = 1; i < lines.size(); ++i) {  // lines[i] is its marker (a comment): the code starts on the next line
+        if (lines[i] == node) return static_cast<i32>(i + 1 < lines.size() && lines[i + 1] == node ? i + 1 : i);
+    }
+    return 0;
+}
+
 std::string lua_path_for(const asset::Guid& guid) {
     char text[33];
     asset::to_string(guid, text);
@@ -394,7 +432,14 @@ bool graph_lua(const asset::AssetRegistry& registry, const asset::AssetRecord& r
     std::snprintf(lua_path, capacity, "%s", lua.c_str());
     std::error_code error;
     const auto lua_time = std::filesystem::last_write_time(lua, error);
-    if (!error && lua_time >= std::filesystem::last_write_time(path, error) && !error) return true;  // up to date
+    if (!error && lua_time >= std::filesystem::last_write_time(path, error) && !error) {
+        std::ifstream compiled(lua);
+        std::string first, second;
+        std::getline(compiled, first);
+        for (std::string line; std::getline(compiled, line);) {
+            if (line.rfind("--@node", 0) == 0) return true;  // up to date (with the debugger's node markers)
+        }
+    }
     std::filesystem::create_directories(kGraphLuaDir, error);
     char problem[256];
     if (script::compile_graph_file(path, lua.c_str(), problem, sizeof problem)) return true;
@@ -621,6 +666,27 @@ void draw_graph_editor(EditorState& s) {
                 if (g_active[a] == n.id) dl->AddRect(ImVec2(p.x - 3, p.y - 3), ImVec2(p.x + width + 3, p.y + height + 3), IM_COL32(80, 255, 120, 255), 8.0f, 0, 3.0f);
             }
         }
+        if (w.kind == script::GraphKind::Script) {  // debugging: breakpoints, the stop, live flow
+            const std::string lua = lua_path_for(w.guid);
+            const i32 line = node_first_line(lua, n.id);
+            if (line > 0 && debugger::has(lua.c_str(), line)) dl->AddCircleFilled(ImVec2(p.x - 7, p.y + kHeader * 0.5f), 5.0f, IM_COL32(230, 40, 40, 255));
+            const script::DebugStop* stop = debugger::stop();
+            if (stop && stop->frame_count && std::strcmp(stop->frames[0].source, lua.c_str()) == 0) {
+                const std::vector<u32>& lines = node_lines(lua);
+                const i32 at = stop->frames[0].line;
+                if (at > 0 && static_cast<size_t>(at) < lines.size() && lines[static_cast<size_t>(at)] == n.id)
+                    dl->AddRect(ImVec2(p.x - 4, p.y - 4), ImVec2(p.x + width + 4, p.y + height + 4), IM_COL32(255, 60, 60, 255), 8.0f, 0, 3.5f);
+            }
+            f64 since = 1e9;
+            const std::vector<u32>& lines = node_lines(lua);
+            for (size_t k = 1; k < lines.size(); ++k) {
+                if (lines[k] == n.id) since = std::fmin(since, debugger::seconds_since(static_cast<i32>(k)));
+            }
+            if (since < 0.6) {  // ran just now: an orange glow that fades (Blueprint's execution flow)
+                const int alpha = static_cast<int>(255.0 * (1.0 - since / 0.6));
+                dl->AddRect(ImVec2(p.x - 3, p.y - 3), ImVec2(p.x + width + 3, p.y + height + 3), IM_COL32(238, 167, 14, alpha), 8.0f, 0, 3.0f);
+            }
+        }
         dl->AddText(ImVec2(p.x + 8, p.y + 4), IM_COL32_WHITE, def->title);
 
         // Header: select and drag.
@@ -637,6 +703,10 @@ void draw_graph_editor(EditorState& s) {
             w.dirty = true;
         }
         if (ImGui::BeginPopupContextItem("node_menu")) {
+            if (w.kind == script::GraphKind::Script && ImGui::MenuItem("Toggle Breakpoint", "F9")) {
+                const std::string lua = lua_path_for(w.guid);
+                if (const i32 line = node_first_line(lua, n.id)) debugger::toggle(lua.c_str(), line);
+            }
             if (ImGui::MenuItem("Delete", "Delete")) {
                 const u32 id = n.id;
                 ImGui::EndPopup();
@@ -738,6 +808,14 @@ void draw_graph_editor(EditorState& s) {
     if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) w.selected = 0;
     node_menu(w);
 
+    if (w.kind == script::GraphKind::Script) {
+        const std::string lua = lua_path_for(w.guid);
+        debugger::trace_source(s.playing ? lua.c_str() : "");  // live flow while playing
+        if (focused && w.selected && ImGui::IsKeyPressed(ImGuiKey_F9)) {
+            if (const i32 line = node_first_line(lua, w.selected)) debugger::toggle(lua.c_str(), line);
+            else std::snprintf(s.status, sizeof s.status, "Save the graph first (the breakpoint goes on its compiled Lua)");
+        }
+    }
     if (focused && !ImGui::IsAnyItemActive() && w.selected && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
         g.remove(w.selected);
         w.selected = 0;

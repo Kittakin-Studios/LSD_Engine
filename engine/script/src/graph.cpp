@@ -456,7 +456,8 @@ struct Compiler {
         }
         std::string code = def->code;
         if (code.find('#') == std::string::npos) code += "\n#0";
-        return substitute(node, *def, code.c_str(), depth, true);
+        // A marker before each node's Lua: the debugger maps lines back to nodes (breakpoints, live flow).
+        return "--@node " + std::to_string(node.id) + "\n" + substitute(node, *def, code.c_str(), depth, true);
     }
 };
 
@@ -803,6 +804,7 @@ bool compile_graph(const Graph& graph, Array<char>& lua, char* error, usize erro
         }
         const std::string body = c.chain(node, 0, 0);
         append(lua, "\n");
+        append(lua, ("--@node " + std::to_string(node.id) + "\n").c_str());
         append(lua, c.substitute(node, *def, def->code, 0, false).c_str());  // a Custom Event's header carries its name
         append(lua, "\n");
         append(lua, body.c_str());

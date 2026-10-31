@@ -377,6 +377,17 @@ The full `lsd` API is listed in [section 19](#lua-api).
 
 ---
 
+### Debugging scripts
+
+**Tools > Lua Debugger** (Visual Studio style): pick a script, click a line number (or hover a line
+and press F9) for a breakpoint, then Play. When the line runs the game freezes and the debugger
+shows where it stopped, the call stack (click a frame), its locals and `self`'s fields, and a watch
+list. **Continue** (F5), **Step Over** (F10), **Step Into** (F11), **Step Out** (Shift+F11).
+
+Visual scripts: right-click a node > **Toggle Breakpoint** (or select it and press F9; save the graph
+first). While playing, nodes that run glow orange (Blueprint's execution flow); at a breakpoint the
+node is outlined red and the Lua Debugger shows the values (node outputs are named `n<node>_<pin>`).
+
 ## 10. Visual scripting
 
 **Your own nodes** (Blueprint function libraries): New Data Asset > **ScriptNode**. Name the asset

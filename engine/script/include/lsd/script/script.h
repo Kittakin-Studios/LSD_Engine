@@ -109,8 +109,31 @@
 #include "lsd/world/curve.h"
 
 struct lua_State;
+struct lua_Debug;
 
 namespace lsd::script {
+
+// ---- Debugging (the editor's Lua debugger) ----
+struct DebugVariable {
+    char name[64];
+    char value[128];
+};
+struct DebugFrame {
+    char function[64];
+    char source[260];  // the file ("Content/Scripts/door.lua", or a visual script's compiled .lua)
+    i32 line;
+    DebugVariable locals[40];  // its locals, then self's fields as "self.name"
+    u32 local_count;
+};
+struct DebugStop {
+    DebugFrame frames[12];  // [0] is where it stopped
+    u32 frame_count;
+};
+enum class DebugAction : u8 { Continue, StepInto, StepOver, StepOut };
+// Runs while the script waits at a breakpoint / step (the editor shows its debugger meanwhile).
+using DebugHandler = DebugAction (*)(void* user, const DebugStop& stop);
+// Every line a script runs, while set (visual-script live flow); keep it cheap.
+using LineTrace = void (*)(void* user, const char* source, i32 line);
 
 // What the game provides to scripts besides the world.
 struct ScriptHost {
@@ -192,6 +215,14 @@ public:
     // Calls `function(self, text)` on every script that defines it (UI actions). Returns how many.
     u32 broadcast(const char* function, const char* text);
 
+    // Debugging. Breakpoints by file and line (any script loaded from that file); the handler is
+    // called when one is hit or a step ends, and its answer resumes. A trace sees every line run.
+    void set_debugger(DebugHandler handler, void* user);
+    void set_breakpoint(const char* source, i32 line, bool on);
+    void clear_breakpoints();
+    bool has_breakpoint(const char* source, i32 line) const;
+    void set_line_trace(LineTrace trace, void* user);
+
 private:
     char save_dir_[260] = "Saved/SaveGames";
     struct Instance {
@@ -206,6 +237,21 @@ private:
     bool load(Instance& instance);  // false if it failed
     bool call(Instance& instance, const char* function, const f64* args, int arg_count);
 
+    void update_hook();
+    static void hook(lua_State* L, lua_Debug* ar);
+    struct Breakpoint {
+        char source[260];
+        i32 line;
+    };
+    Breakpoint breakpoints_[64];
+    u32 breakpoint_count_ = 0;
+    DebugHandler debugger_ = nullptr;
+    void* debugger_user_ = nullptr;
+    LineTrace trace_ = nullptr;
+    void* trace_user_ = nullptr;
+    DebugAction stepping_ = DebugAction::Continue;
+    i32 step_depth_ = 0;
+    bool in_debugger_ = false;
     lua_State* lua_ = nullptr;
     world::World* world_ = nullptr;
     ScriptHost host_;

@@ -194,6 +194,8 @@ int traceback(lua_State* L) {
 }
 
 // pcall with a stack trace; logs and returns false on error. The function and its args are on the stack.
+ScriptSystem* g_debugged = nullptr;  // the system whose line hook is set (one Lua state in Play)
+
 bool protected_call(lua_State* L, int args, const char* what) {
     const int handler = lua_gettop(L) - args;
     lua_pushcfunction(L, traceback);
@@ -1039,6 +1041,8 @@ struct Api {
 ScriptSystem::~ScriptSystem() { stop(); }
 
 void ScriptSystem::stop() {
+    if (g_debugged == this) g_debugged = nullptr;
+    stepping_ = DebugAction::Continue;
     if (lua_) lua_close(lua_);
     lua_ = nullptr;
     world_ = nullptr;
@@ -1093,6 +1097,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     lua_setglobal(lua_, "print");  // print() goes to the Output Log too
     lua_setglobal(lua_, "lsd");
     run(kPrelude, "=lsd prelude");
+    update_hook();  // breakpoints set before Play
 
     const reflect::TypeInfo& type = reflect::type_of<world::Script>();
     for (u32 i = 0; i < world.count(type); ++i) add_instance(world.owner(type, i), static_cast<const world::Script*>(world.at(type, i))->script);
@@ -1171,6 +1176,162 @@ void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
         }
     }
     lua_pop(lua_, 1);
+}
+
+// ---- Debugging ----
+
+namespace {
+
+bool same_source(const char* a, const char* b) {  // paths as the hook and the editor write them
+    for (; *a && *b; ++a, ++b) {
+        const char x = *a == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(*a)));
+        const char y = *b == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(*b)));
+        if (x != y) return false;
+    }
+    return *a == *b;
+}
+
+i32 stack_depth(lua_State* L) {
+    lua_Debug ar;
+    i32 depth = 0;
+    while (lua_getstack(L, depth, &ar)) ++depth;
+    return depth;
+}
+
+void describe(lua_State* L, int index, char* out, usize capacity) {
+    switch (lua_type(L, index)) {
+        case LUA_TNIL: std::snprintf(out, capacity, "nil"); break;
+        case LUA_TBOOLEAN: std::snprintf(out, capacity, "%s", lua_toboolean(L, index) ? "true" : "false"); break;
+        case LUA_TNUMBER: std::snprintf(out, capacity, "%.6g", lua_tonumber(L, index)); break;
+        case LUA_TSTRING: std::snprintf(out, capacity, "\"%s\"", lua_tostring(L, index)); break;
+        case LUA_TTABLE: {
+            lua_getfield(L, index, "x");
+            const bool vec = lua_isnumber(L, -1) != 0;
+            lua_pop(L, 1);
+            if (vec) {
+                lua_getfield(L, index, "x");
+                lua_getfield(L, index > 0 ? index : index - 1, "y");
+                lua_getfield(L, index > 0 ? index : index - 2, "z");
+                std::snprintf(out, capacity, "(%.4g, %.4g, %.4g)", lua_tonumber(L, -3), lua_tonumber(L, -2), lua_tonumber(L, -1));
+                lua_pop(L, 3);
+            } else {
+                std::snprintf(out, capacity, "table (%d items)", static_cast<int>(lua_objlen(L, index)));
+            }
+            break;
+        }
+        case LUA_TFUNCTION: std::snprintf(out, capacity, "function"); break;
+        default: std::snprintf(out, capacity, "%s", lua_typename(L, lua_type(L, index))); break;
+    }
+}
+
+void fill_stop(lua_State* L, DebugStop& stop) {
+    stop.frame_count = 0;
+    lua_Debug ar;
+    for (int level = 0; stop.frame_count < 12 && lua_getstack(L, level, &ar); ++level) {
+        lua_getinfo(L, "nSl", &ar);
+        if (ar.currentline < 0) continue;  // C functions
+        DebugFrame& f = stop.frames[stop.frame_count++];
+        std::snprintf(f.function, sizeof f.function, "%s", ar.name ? ar.name : (ar.what && std::strcmp(ar.what, "main") == 0 ? "(file)" : "(function)"));
+        std::snprintf(f.source, sizeof f.source, "%s", ar.source[0] == '@' ? ar.source + 1 : ar.source);
+        f.line = ar.currentline;
+        f.local_count = 0;
+        for (int i = 1; f.local_count < 40; ++i) {
+            const char* name = lua_getlocal(L, &ar, i);
+            if (!name) break;
+            if (name[0] == '(') {  // temporaries
+                lua_pop(L, 1);
+                continue;
+            }
+            DebugVariable& v = f.locals[f.local_count++];
+            std::snprintf(v.name, sizeof v.name, "%s", name);
+            describe(L, -1, v.value, sizeof v.value);
+            if (std::strcmp(name, "self") == 0 && lua_istable(L, -1)) {  // its fields, like Blueprint variables
+                lua_pushnil(L);
+                while (lua_next(L, -2) && f.local_count < 40) {
+                    if (lua_type(L, -2) == LUA_TSTRING) {
+                        DebugVariable& field = f.locals[f.local_count++];
+                        std::snprintf(field.name, sizeof field.name, "self.%s", lua_tostring(L, -2));
+                        describe(L, -1, field.value, sizeof field.value);
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+    }
+}
+
+} // namespace
+
+void ScriptSystem::hook(lua_State* L, lua_Debug* ar) {
+    ScriptSystem* self = g_debugged;
+    if (!self || self->in_debugger_ || ar->event != LUA_HOOKLINE) return;
+    lua_getinfo(L, "S", ar);
+    const char* source = ar->source[0] == '@' ? ar->source + 1 : ar->source;
+    if (self->trace_) self->trace_(self->trace_user_, source, ar->currentline);
+    if (!self->debugger_) return;
+    bool stop = false;
+    if (self->stepping_ == DebugAction::StepInto) stop = true;
+    else if (self->stepping_ == DebugAction::StepOver) stop = stack_depth(L) <= self->step_depth_;
+    else if (self->stepping_ == DebugAction::StepOut) stop = stack_depth(L) < self->step_depth_;
+    for (u32 i = 0; i < self->breakpoint_count_ && !stop; ++i) {
+        stop = self->breakpoints_[i].line == ar->currentline && same_source(self->breakpoints_[i].source, source);
+    }
+    if (!stop) return;
+    static DebugStop info;  // large; one stop at a time
+    fill_stop(L, info);
+    self->in_debugger_ = true;
+    const DebugAction action = self->debugger_(self->debugger_user_, info);
+    self->in_debugger_ = false;
+    self->stepping_ = action;
+    self->step_depth_ = stack_depth(L);
+    self->update_hook();
+}
+
+void ScriptSystem::update_hook() {
+    if (!lua_) return;
+    const bool on = trace_ || (debugger_ && (breakpoint_count_ || stepping_ != DebugAction::Continue));
+    g_debugged = on ? this : (g_debugged == this ? nullptr : g_debugged);
+    lua_sethook(lua_, on ? hook : nullptr, on ? LUA_MASKLINE : 0, 0);  // shortcut: line hooks keep LuaJIT in its interpreter while debugging
+}
+
+void ScriptSystem::set_debugger(DebugHandler handler, void* user) {
+    debugger_ = handler;
+    debugger_user_ = user;
+    update_hook();
+}
+
+void ScriptSystem::set_breakpoint(const char* source, i32 line, bool on) {
+    for (u32 i = 0; i < breakpoint_count_; ++i) {
+        if (breakpoints_[i].line == line && same_source(breakpoints_[i].source, source)) {
+            if (!on) breakpoints_[i] = breakpoints_[--breakpoint_count_];
+            update_hook();
+            return;
+        }
+    }
+    if (on && breakpoint_count_ < sizeof breakpoints_ / sizeof breakpoints_[0]) {
+        std::snprintf(breakpoints_[breakpoint_count_].source, sizeof breakpoints_[0].source, "%s", source);
+        breakpoints_[breakpoint_count_++].line = line;
+    }
+    update_hook();
+}
+
+void ScriptSystem::clear_breakpoints() {
+    breakpoint_count_ = 0;
+    update_hook();
+}
+
+bool ScriptSystem::has_breakpoint(const char* source, i32 line) const {
+    for (u32 i = 0; i < breakpoint_count_; ++i) {
+        if (breakpoints_[i].line == line && same_source(breakpoints_[i].source, source)) return true;
+    }
+    return false;
+}
+
+void ScriptSystem::set_line_trace(LineTrace trace, void* user) {
+    trace_ = trace;
+    trace_user_ = user;
+    update_hook();
 }
 
 bool ScriptSystem::load(Instance& instance) {

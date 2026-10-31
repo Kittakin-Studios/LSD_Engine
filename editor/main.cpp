@@ -13,6 +13,7 @@
 #include "ui_editor.h"
 #include "timeline_editor.h"
 #include "mesh_editor.h"
+#include "lua_debugger.h"
 #include "prefab_editor.h"
 
 #include "lsd/asset/texture.h"
@@ -575,6 +576,12 @@ void register_console(EditorState& s) {
         volatile int* nowhere = nullptr;
         *nowhere = 1;
     }, &s, "Crash on purpose (writes a crash report to Saved/Crashes)");
+    console::add_command("debug.Break", [](void*, const char* args) {  // a Lua breakpoint from the console: debug.Break Content/x.lua 12
+        char file[260];
+        int line = 0;
+        if (std::sscanf(args, "%259s %d", file, &line) == 2) lsd::editor::debugger::toggle(file, line);
+        else LSD_LOG_WARN("console", "debug.Break <file> <line>");
+    }, &s, "Toggle a Lua breakpoint (Tools > Lua Debugger shows them)");
     console::add_command("mesh.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -613,11 +620,18 @@ void register_console(EditorState& s) {
             char copy[128];
             std::snprintf(copy, sizeof copy, "%s", keys);
             for (char* word = std::strtok(copy, " "); word; word = std::strtok(nullptr, " ")) {
-                const SDL_Keycode k = std::strcmp(word, "down") == 0 ? SDLK_DOWN : std::strcmp(word, "up") == 0 ? SDLK_UP : std::strcmp(word, "enter") == 0 ? SDLK_RETURN : SDLK_UNKNOWN;
+                const SDL_Keycode k = std::strcmp(word, "down") == 0 ? SDLK_DOWN : std::strcmp(word, "up") == 0 ? SDLK_UP : std::strcmp(word, "enter") == 0 ? SDLK_RETURN
+                                    : std::strcmp(word, "f5") == 0 ? SDLK_F5 : std::strcmp(word, "f10") == 0 ? SDLK_F10 : SDLK_UNKNOWN;
+                int window_count = 0;
+                SDL_Window** windows = SDL_GetWindows(&window_count);
+                const SDL_WindowID window = windows && window_count > 0 ? SDL_GetWindowID(windows[0]) : 0;  // ImGui ignores keys for no window
+                SDL_free(windows);
                 for (const SDL_EventType type : {SDL_EVENT_KEY_DOWN, SDL_EVENT_KEY_UP}) {
                     SDL_Event e{};
                     e.type = type;
+                    e.key.windowID = window;
                     e.key.key = k;
+                    e.key.scancode = SDL_GetScancodeFromKey(k, nullptr);
                     e.key.down = type == SDL_EVENT_KEY_DOWN;
                     SDL_PushEvent(&e);
                 }
@@ -767,6 +781,37 @@ void SDLCALL on_import_chosen(void*, const char* const* files, int) {
     if (!files) return;  // cancelled or failed
     std::lock_guard<std::mutex> lock(g_import_mutex);
     for (const char* const* f = files; *f; ++f) g_import_queue.emplace_back(*f);
+}
+
+
+// While a script waits at a breakpoint: keep the window alive and draw the debugger (and the graph
+// editor, to show the stopped node) until it resumes. The game is frozen meanwhile.
+struct DebugFrameContext {
+    lsd::rhi::Device* device;
+    SDL_Window* window;
+    EditorState* state;
+};
+void debug_frame(void* user) {
+    auto& c = *static_cast<DebugFrameContext*>(user);
+    SDL_SetWindowRelativeMouseMode(c.window, false);  // a captured mouse could not reach the buttons
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        ImGui_ImplSDL3_ProcessEvent(&event);
+        if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+            c.state->stop_requested = true;
+            lsd::editor::debugger::resume(lsd::script::DebugAction::Continue);
+        }
+    }
+    c.device->debug_ui_new_frame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    lsd::editor::debugger::draw_window(*c.state, &c.state->show_debugger);
+    lsd::editor::draw_graph_editor(*c.state);
+    ImGui::Render();
+    const lsd::f32 clear[4] = {0.05f, 0.02f, 0.02f, 1.0f};
+    c.device->begin_frame(clear);
+    c.device->render_debug_ui();
+    c.device->end_frame();
 }
 
 // ---- Level files ----
@@ -1113,6 +1158,10 @@ int main(int argc, char** argv) {
     lsd::ui::set_translator([](void* user, const char* text) { return static_cast<const lsd::asset::Localization*>(user)->find(text); }, &localization);
     play.set_animations(animations);
     play.set_skinned(skinned_cache);
+    static DebugFrameContext debug_context;
+    debug_context = {device, window, &state};
+    lsd::editor::debugger::attach(play.scripts());
+    lsd::editor::debugger::set_frame_callback(debug_frame, &debug_context);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");

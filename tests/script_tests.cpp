@@ -22,6 +22,7 @@ static const char kMover[] = LSD_TEST_TEMP_DIR "/mover.lua";
 static const char kBroken[] = LSD_TEST_TEMP_DIR "/broken.lua";
 static const char kGraphLua[] = LSD_TEST_TEMP_DIR "/graph.lua";
 static const char kPropsLua[] = LSD_TEST_TEMP_DIR "/props.lua";
+static const char kDebugLua[] = LSD_TEST_TEMP_DIR "/debugged.lua";
 static const char kTable[] = LSD_TEST_TEMP_DIR "/DT_Weapons.csv";
 static const char kCurve[] = LSD_TEST_TEMP_DIR "/C_Ramp.lsdasset";
 
@@ -44,7 +45,7 @@ static void write(const char* path, const char* text) {
 }
 
 static bool path_of(void*, const char* guid, char* out, usize capacity) {
-    std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : std::strcmp(guid, "graph") == 0 ? kGraphLua : std::strcmp(guid, "props") == 0 ? kPropsLua : kBroken);
+    std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : std::strcmp(guid, "graph") == 0 ? kGraphLua : std::strcmp(guid, "props") == 0 ? kPropsLua : std::strcmp(guid, "debugged") == 0 ? kDebugLua : kBroken);
     return true;
 }
 
@@ -313,6 +314,41 @@ static void test_custom_nodes() {
     CHECK(find_node_def("Custom_Twice") == nullptr && find_node_def("OnStart") != nullptr);
 }
 
+// The Lua debugger: a breakpoint stops with the locals, a step goes to the next line.
+struct DebugLog {
+    i32 lines[8];
+    u32 count = 0;
+    bool saw_local = false;
+};
+static script::DebugAction on_stop(void* user, const script::DebugStop& stop) {
+    auto& log = *static_cast<DebugLog*>(user);
+    if (log.count < 8) log.lines[log.count++] = stop.frames[0].line;
+    for (u32 i = 0; i < stop.frames[0].local_count; ++i) {
+        if (std::strcmp(stop.frames[0].locals[i].name, "a") == 0 && std::strcmp(stop.frames[0].locals[i].value, "41") == 0) log.saw_local = true;
+    }
+    return log.count == 1 ? script::DebugAction::StepOver : script::DebugAction::Continue;
+}
+
+static void test_debugger() {
+    write(kDebugLua, "function on_start(self)\n  local a = 41\n  a = a + 1\n  self.answer = a\nend\n");
+    HeapAllocator heap("debugger");
+    {
+        World w(heap);
+        const Entity e = w.create("E");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "debugged");
+        DebugLog log;
+        script::ScriptSystem scripts;
+        scripts.set_debugger(on_stop, &log);
+        scripts.set_breakpoint(kDebugLua, 3, true);
+        CHECK(scripts.has_breakpoint(kDebugLua, 3) && !scripts.has_breakpoint(kDebugLua, 2));
+        scripts.start(w, {}, path_of, nullptr);
+        CHECK(log.count == 2 && log.lines[0] == 3 && log.lines[1] == 4 && log.saw_local);  // stopped at 3, stepped to 4
+        CHECK(scripts.run("assert(true)") && scripts.error_count() == 0);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Material graphs compile to one shader function; problems name the node.
 static void test_material_graph() {
     using namespace lsd::script;
@@ -439,6 +475,7 @@ int main() {
     test_properties();
     test_user_types();
     test_custom_nodes();
+    test_debugger();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

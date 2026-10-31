@@ -15,6 +15,7 @@
 #include "debug_draw.h"
 #include "references.h"
 #include "remote_console.h"
+#include "lua_debugger.h"
 #include "mesh_editor.h"
 #include "prefab_editor.h"
 #include "timeline_editor.h"
@@ -3542,6 +3543,8 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Plays this level for 5 seconds and reports any errors it logs (Unreal's automation smoke test)");
         if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
+        ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
+        ImGui::SetItemTooltip("Breakpoints, stepping, call stack, locals and watch for Lua scripts (visual scripts: breakpoints on nodes)");
         ImGui::MenuItem("Remote Console", nullptr, &s.show_remote_console);
         ImGui::SetItemTooltip("Sends console commands to a game running on this PC with -remote");
         ImGui::EndMenu();
@@ -3930,6 +3933,7 @@ void draw_editor(EditorState& s) {
     draw_timeline_editor(s);
     draw_mesh_editor(s);
     draw_prefab_editor(s);
+    debugger::draw_window(s, &s.show_debugger);
     draw_memory_window(s);
     draw_ui_editor(s);
     handle_shortcuts(s);
