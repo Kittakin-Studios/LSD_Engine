@@ -153,7 +153,7 @@ visual-script sounds, `stat audio`.
 - [~] Shadows: cascaded sun shadows (4 cascades in a 4096 atlas, practical splits, stable spheres snapped to texels, 3x3 hardware PCF, slope bias + normal offset, pancaking; Cast Shadows / Shadow Distance on the Directional Light) on D3D12 and OpenGL; spot and point light shadows (a second 4096 atlas of 16 tiles: 1 per spot light, 6 cube faces per point light, nearest lights first, casters culled by range, Cast Shadows per light); needs quality per light, contact shadows, sun caster culling, shadow caching for static lights
 - [ ] Reflections: capture probes, screen-space reflections
 - [~] Sky, atmosphere, height fog: Sky component (zenith / horizon / ground gradient, sun disc from the first Directional Light; `draw_sky`), Height Fog component (exponential, height falloff integrated along the view ray, start distance, max opacity) on lit meshes, material graphs and the sky; needs sun angle driving the sky colour (scattering), fog on particles, an environment asset bundling sky / fog / post **(S)**
-- [ ] Instanced meshes (many copies, one draw) [Instanced Static Mesh]
+- [x] Instanced meshes (many copies, one draw) [Instanced Static Mesh]: Instanced Static Mesh component (up to 1024 copies, Scatter / Clear in Details), `MeshDraw::instance_rows` drawn with an INSTANCED shader variant on D3D12 / OpenGL in batches of 256; shadows per copy, no collision or per-copy picking yet, Material Graphs draw copy by copy
 
 ### Animation
 

@@ -120,6 +120,12 @@ struct MeshDraw {
     f32 time = 0.0f;
     const f32* material_params = nullptr;  // its parameters, 4 floats each (copied; unset ones are 0)
     u32 material_param_count = 0;
+    // Instancing (Unreal's Instanced Static Mesh): when set, the mesh is drawn once per instance in
+    // one call; each instance's world matrix is given as its first three rows (12 floats). mvp is
+    // then the view-projection; world / normal_matrix are unused. Built-in material only (no Material
+    // Graph, no skinning); normals assume uniform scale per instance.
+    const f32* instance_rows = nullptr;
+    u32 instance_count = 0;
 };
 constexpr u32 kMaxMaterialParams = 16;
 

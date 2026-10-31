@@ -41,6 +41,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<RotatingMovement>(),
         &reflect::type_of<ProjectileMovement>(),
         &reflect::type_of<FootIK>(),
+        &reflect::type_of<InstancedStaticMesh>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);

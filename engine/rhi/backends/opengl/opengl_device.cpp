@@ -75,8 +75,21 @@ uniform vec4 u_world[3];
 out vec3 v_normal;
 out vec3 v_wpos;
 out vec2 v_uv;
+#ifdef INSTANCED
+layout(std140, binding = 2) uniform Instances { vec4 instance_rows[768]; };  // 3 rows per instance: its world matrix
+#endif
 void main() {
     vec3 position = a_pos, normal = a_normal;
+#ifdef INSTANCED
+    vec4 r0 = instance_rows[gl_InstanceID * 3], r1 = instance_rows[gl_InstanceID * 3 + 1], r2 = instance_rows[gl_InstanceID * 3 + 2];
+    vec4 local_pos = vec4(position, 1.0);
+    vec3 world_pos = vec3(dot(r0, local_pos), dot(r1, local_pos), dot(r2, local_pos));
+    gl_Position = u_mvp * vec4(world_pos, 1.0);  // u_mvp is the view-projection here
+    v_normal = vec3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+    v_wpos = world_pos;
+    v_uv = a_uv;
+    return;
+#endif
     skin(position, normal);
     gl_Position = u_mvp * vec4(position, 1.0);
     v_normal = u_normal[0].xyz * normal.x + u_normal[1].xyz * normal.y + u_normal[2].xyz * normal.z;
@@ -597,6 +610,7 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLGETSTRINGIPROC, glGetStringi)                            \
     X(PFNGLDEBUGMESSAGECALLBACKPROC, glDebugMessageCallback)    \
     X(PFNGLCLIPCONTROLPROC, glClipControl)                          \
+    X(PFNGLDRAWELEMENTSINSTANCEDPROC, glDrawElementsInstanced)      \
     X(PFNGLCREATEBUFFERSPROC, glCreateBuffers)                      \
     X(PFNGLNAMEDBUFFERSTORAGEPROC, glNamedBufferStorage)            \
     X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers)                      \
@@ -990,8 +1004,9 @@ public:
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         const bool skinned = draw.joint_rows && draw.joint_count;
-        const MaterialShader* graph = draw.wireframe ? nullptr : lookup_material(draw.material_shader);
-        const MeshProgram& program = graph ? (skinned ? graph->skinned : graph->mesh) : skinned ? skinned_program_ : mesh_;
+        const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
+        const MaterialShader* graph = draw.wireframe || instanced ? nullptr : lookup_material(draw.material_shader);
+        const MeshProgram& program = instanced ? instanced_program_ : graph ? (skinned ? graph->skinned : graph->mesh) : skinned ? skinned_program_ : mesh_;
         if (skinned) upload_joints(draw.joint_rows, draw.joint_count);
         gl_.glUseProgram(program.id);
         gl_.glUniformMatrix4fv(program.mvp, 1, GL_FALSE, draw.mvp);
@@ -1023,7 +1038,15 @@ public:
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(vao, ib->id);
         gl_.glBindVertexArray(vao);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
+        if (instanced) {  // batches of kMaxJoints instances through the joint buffer
+            for (u32 first = 0; first < draw.instance_count; first += kMaxJoints) {
+                const u32 n = draw.instance_count - first < kMaxJoints ? draw.instance_count - first : kMaxJoints;
+                upload_joints(draw.instance_rows + first * 12, n);
+                gl_.glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(n));
+            }
+        } else {
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
+        }
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
 
@@ -1506,16 +1529,21 @@ private:
         program_ = link(kVertexShader, kFragmentShader);
         mesh_.id = link(with_skinning(kMeshVertexShader, false).c_str(), kMeshFragmentShader);
         skinned_program_.id = link(with_skinning(kMeshVertexShader, true).c_str(), kMeshFragmentShader);
+        {
+            std::string instanced = with_skinning(kMeshVertexShader, false);
+            instanced.insert(instanced.find('\n') + 1, "#define INSTANCED\n");
+            instanced_program_.id = link(instanced.c_str(), kMeshFragmentShader);
+        }
         mesh_program_ = mesh_.id;
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
         shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
         skinned_shadow_program_ = link(with_skinning(kShadowVertexShader, true).c_str(), kShadowFragmentShader);
         skinned_shadow_mvp_ = gl_.glGetUniformLocation(skinned_shadow_program_, "u_mvp");
-        if (!skinned_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
+        if (!skinned_program_.id || !instanced_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
-        for (MeshProgram* p : {&mesh_, &skinned_program_}) locate(*p);
+        for (MeshProgram* p : {&mesh_, &skinned_program_, &instanced_program_}) locate(*p);
         // Defaults for meshes without textures: white (colour, occlusion / roughness / metallic) and a flat normal.
         const u32 white = 0xFFFFFFFFu, flat = 0xFFFF8080u;  // RGBA bytes, little-endian
         const void* white_mip[1] = {&white};
@@ -1608,7 +1636,7 @@ private:
         return s;
     }
     GLuint mesh_program_ = 0;  // == mesh_.id
-    MeshProgram mesh_, skinned_program_;
+    MeshProgram mesh_, skinned_program_, instanced_program_;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint joint_ubo_ = 0;

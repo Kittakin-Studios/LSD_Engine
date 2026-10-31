@@ -139,6 +139,41 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
 }
 
 // The sun's shadow cascades: every visible mesh into each tile of the atlas, then back to the window.
+// Each copy's world matrix as three rows (rhi::MeshDraw::instance_rows); also the full matrices.
+void instance_rows(const lsd::world::World& world, lsd::world::Entity e, const lsd::world::InstancedStaticMesh& ism, std::vector<lsd::f32>& rows,
+                   std::vector<lsd::Mat4>* matrices = nullptr) {
+    const lsd::Mat4 base = world.world_matrix(e);
+    rows.resize(static_cast<size_t>(ism.instances.count) * 12);
+    if (matrices) matrices->resize(ism.instances.count);
+    for (lsd::u32 k = 0; k < ism.instances.count; ++k) {
+        const lsd::world::MeshInstance& in = ism.instances[k];
+        const lsd::Mat4 m = base * lsd::trs(in.position, in.rotation, in.scale);  // degrees, like Transform
+        for (int row = 0; row < 3; ++row) {
+            for (int c = 0; c < 4; ++c) rows[k * 12 + static_cast<size_t>(row * 4 + c)] = m.at(row, c);
+        }
+        if (matrices) (*matrices)[k] = m;
+    }
+}
+
+// Instanced Static Meshes into a shadow map (one caster per copy).
+void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, lsd::editor::MeshCache& meshes, bool skip_hidden) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::InstancedStaticMesh>();
+    static std::vector<lsd::f32> rows;
+    static std::vector<lsd::Mat4> matrices;
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        const auto* ism = static_cast<const lsd::world::InstancedStaticMesh*>(world.at(type, i));
+        if (!ism->cast_shadows || (skip_hidden && world.hidden_in_hierarchy(e))) continue;
+        const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
+        if (!mesh) continue;
+        instance_rows(world, e, *ism, rows, &matrices);
+        for (const lsd::Mat4& m : matrices) {
+            const lsd::Mat4 mvp = vp * m;
+            device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);  // shortcut: one call per copy in shadow maps
+        }
+    }
+}
+
 void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                   lsd::editor::MeshCache& meshes, bool skip_hidden) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
@@ -157,6 +192,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
         }
         draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
+        draw_instanced_casters(device, vp, world, meshes, skip_hidden);
     }
     device.end_shadow_pass();
 }
@@ -191,6 +227,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
             }
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
+            draw_instanced_casters(device, vp, world, meshes, skip_hidden);
         }
     }
     device.end_shadow_pass();
@@ -308,6 +345,61 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         device.draw_mesh(draw);
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3;
+    }
+    // Instanced Static Meshes: every copy in one draw (a Material Graph draws them one by one).
+    {
+        const lsd::reflect::TypeInfo& ism_type = lsd::reflect::type_of<lsd::world::InstancedStaticMesh>();
+        static std::vector<lsd::f32> rows;
+        static std::vector<lsd::Mat4> matrices;
+        for (lsd::u32 i = 0; i < world.count(ism_type); ++i) {
+            const auto* ism = static_cast<const lsd::world::InstancedStaticMesh*>(world.at(ism_type, i));
+            const lsd::world::Entity e = world.owner(ism_type, i);
+            if (((!stats.playing || stats.ejected) && world.hidden_in_hierarchy(e)) || !ism->instances.count) continue;
+            const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
+            if (!mesh) continue;
+            instance_rows(world, e, *ism, rows, &matrices);
+            lsd::rhi::MeshDraw draw{};
+            draw.vertices = mesh->gpu.vertices;
+            draw.indices = mesh->gpu.indices;
+            draw.index_count = mesh->gpu.index_count;
+            draw.camera_position[0] = eye.x;
+            draw.camera_position[1] = eye.y;
+            draw.camera_position[2] = eye.z;
+            to_rgba(ism->color, draw.color);
+            draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
+            materials.apply(ism->material, draw);
+            const bool editor_view = !stats.playing || stats.ejected;
+            draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
+            draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+            if (editor_view && stats.is_selected(e)) {
+                draw.color[0] = 1.0f;
+                draw.color[1] = 0.85f;
+                draw.color[2] = 0.25f;
+            }
+            if (!draw.material_shader.valid() || draw.wireframe) {
+                std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+                draw.instance_rows = rows.data();
+                draw.instance_count = ism->instances.count;
+                device.draw_mesh(draw);
+                ++stats.stat_draws;
+            } else {
+                for (const lsd::Mat4& m : matrices) {  // Material Graphs have no instanced variant
+                    const lsd::Mat4 mvp = view_proj * m;
+                    const lsd::Mat4 inv = lsd::affine_inverse(m);
+                    std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
+                    for (int c = 0; c < 3; ++c) {
+                        for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
+                        draw.normal_matrix[c * 4 + 3] = 0.0f;
+                    }
+                    for (int r = 0; r < 3; ++r) {
+                        for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
+                    }
+                    device.draw_mesh(draw);
+                    ++stats.stat_draws;
+                }
+            }
+            stats.stat_triangles += mesh->gpu.index_count / 3 * ism->instances.count;
+        }
     }
     // Skeletal meshes: same material path, skinned on the GPU with their current pose.
     const lsd::reflect::TypeInfo& skinned_type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();

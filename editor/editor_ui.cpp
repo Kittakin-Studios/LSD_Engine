@@ -98,6 +98,37 @@ std::vector<std::pair<std::string, std::string>> script_property_defaults(const 
     return out;
 }
 
+// Instanced Static Mesh > Scatter: copies at random over a circle (random turn and size), replacing the list.
+void draw_scatter(world::InstancedStaticMesh& ism) {
+    static int count = 100;
+    static float radius = 10.0f, min_scale = 0.8f, max_scale = 1.2f;
+    ImGui::SeparatorText("Scatter");
+    ImGui::DragInt("Count", &count, 1.0f, 1, static_cast<int>(ism.instances.capacity()));
+    ImGui::DragFloat("Radius (m)", &radius, 0.1f, 0.1f, 1000.0f);
+    ImGui::DragFloatRange2("Scale", &min_scale, &max_scale, 0.01f, 0.05f, 10.0f);
+    if (ImGui::Button("Scatter")) {  // the edit is undoable like any Details change
+        u32 seed = 0x9E3779B9u ^ static_cast<u32>(ism.instances.count * 7919u + static_cast<u32>(count));
+        auto random = [&seed] {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            return static_cast<f32>(seed & 0xFFFFFF) / static_cast<f32>(0xFFFFFF);
+        };
+        ism.instances.count = 0;
+        for (int k = 0; k < count && ism.instances.count < ism.instances.capacity(); ++k) {
+            const f32 angle = random() * 6.2831853f, distance = std::sqrt(random()) * radius;  // even over the disc
+            world::MeshInstance in;
+            in.position = {std::cos(angle) * distance, std::sin(angle) * distance, 0.0f};
+            in.rotation = {0.0f, 0.0f, random() * 360.0f};
+            const f32 size = min_scale + (max_scale - min_scale) * random();
+            in.scale = {size, size, size};
+            ism.instances.push_back(in);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) ism.instances.count = 0;
+}
+
 // Details for a Script's exposed properties: the script's defaults, changed per object.
 void draw_script_properties(EditorState& s, world::Script& script) {
     asset::Guid guid;
@@ -2138,6 +2169,7 @@ void draw_entity_details(EditorState& s) {
             }
             draw_properties(*types[i], component, &style);
             if (types[i] == &reflect::type_of<world::Script>()) draw_script_properties(s, *static_cast<world::Script*>(component));
+            if (types[i] == &reflect::type_of<world::InstancedStaticMesh>()) draw_scatter(*static_cast<world::InstancedStaticMesh*>(component));
             g_details_type = nullptr;
             if (std::memcmp(before, component, types[i]->size) != 0) {
                 note_changed_overrides(s, e, *types[i], before, static_cast<const u8*>(component));

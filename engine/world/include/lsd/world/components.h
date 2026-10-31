@@ -151,6 +151,29 @@ struct Camera {
     LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
 };
 
+// One copy in an Instanced Static Mesh, relative to the object.
+LSD_STRUCT()
+struct MeshInstance {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m") Vec3 position;
+    LSD_PROPERTY(Edit, Units = "deg") Vec3 rotation;
+    LSD_PROPERTY(Edit) Vec3 scale{1.0f, 1.0f, 1.0f};
+};
+
+// Many copies of one mesh drawn in a single call (Unreal's Instanced Static Mesh): rocks, grass,
+// fences, crowds of props. Details > Scatter fills it at random over a circle.
+// shortcut: no collision and no per-instance picking; built-in Materials only (a Material Graph
+// draws each copy on its own).
+LSD_STRUCT(Component, Category = "Rendering")
+struct InstancedStaticMesh {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit) bool cast_shadows = true;
+    LSD_PROPERTY(Edit) List<MeshInstance, 1024> instances;
+};
+
 // Plants a Skeletal Mesh's feet on the ground under them while playing (Unreal's foot IK): each
 // foot is raised onto steps and slopes with two-bone IK. Bones by name, as in the imported skeleton.
 LSD_STRUCT(Component, Category = "Animation")

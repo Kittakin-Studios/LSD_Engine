@@ -147,14 +147,30 @@ struct VsIn {
 #ifdef SKINNED
     uint4 joints : BLENDINDICES; float4 weights : BLENDWEIGHT;
 #endif
+#ifdef INSTANCED
+    uint instance : SV_InstanceID;
+#endif
 };
 struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float3 wpos : TEXCOORD1; float2 uv : TEXCOORD0; };
 #ifdef SKINNED
 cbuffer Joints : register(b2) { float4 joint_rows[768]; };  // 3 rows per joint
 #endif
+#ifdef INSTANCED
+cbuffer Instances : register(b2) { float4 instance_rows[768]; };  // 3 rows per instance: its world matrix
+#endif
 VsOut vs_main(VsIn i) {
     VsOut o;
     float3 position = i.pos, normal = i.normal;
+#ifdef INSTANCED
+    const float4 r0 = instance_rows[i.instance * 3], r1 = instance_rows[i.instance * 3 + 1], r2 = instance_rows[i.instance * 3 + 2];
+    const float4 local = float4(position, 1);
+    const float3 world_pos = float3(dot(r0, local), dot(r1, local), dot(r2, local));
+    o.pos = mul(mvp, float4(world_pos, 1));  // mvp is the view-projection here
+    o.normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+    o.wpos = world_pos;
+    o.uv = i.uv;
+    return o;
+#endif
 #ifdef SKINNED
     float4 r0 = 0, r1 = 0, r2 = 0;
     [unroll] for (int k = 0; k < 4; ++k) {
@@ -375,6 +391,7 @@ const D3D12_INPUT_ELEMENT_DESC kSkinnedLayout[] = {
     {"BLENDWEIGHT", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 };
 const D3D_SHADER_MACRO kSkinnedDefines[] = {{"SKINNED", "1"}, {nullptr, nullptr}};
+const D3D_SHADER_MACRO kInstancedDefines[] = {{"INSTANCED", "1"}, {nullptr, nullptr}};
 
 constexpr char kUiHlsl[] = R"(
 cbuffer Draw : register(b0) { float2 translation; float2 to_clip; };  // to_clip = 2 / viewport size
@@ -1009,6 +1026,23 @@ public:
         list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
         list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
         const bool skinned = draw.joint_rows && draw.joint_count;
+        const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
+        if (instanced) {  // batches of kMaxJoints instances through the joint ring
+            list_->SetPipelineState(draw.wireframe ? instanced_wire_pipeline_.Get() : instanced_pipeline_.Get());
+            list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
+            const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
+            list_->IASetVertexBuffers(0, 1, &vbv);
+            list_->IASetIndexBuffer(&ibv);
+            for (u32 first = 0; first < draw.instance_count; first += kMaxJoints) {
+                const u32 n = draw.instance_count - first < kMaxJoints ? draw.instance_count - first : kMaxJoints;
+                const D3D12_GPU_VIRTUAL_ADDRESS rows = upload_joints(draw.instance_rows + first * 12, n);
+                if (!rows) return;
+                list_->SetGraphicsRootConstantBufferView(7, rows);
+                list_->DrawIndexedInstanced(draw.index_count, n, 0, 0, 0);
+            }
+            return;
+        }
         if (material) {  // its parameters: 16 float4, unset ones 0 (through the joint ring: 4 rows of 48 bytes = 192 + room)
             f32 values[kMaxMaterialParams * 4] = {};
             const u32 count = draw.material_param_count < kMaxMaterialParams ? draw.material_param_count : kMaxMaterialParams;
@@ -1807,6 +1841,8 @@ private:
         return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_pipeline_, false, kInstancedDefines) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_wire_pipeline_, true, kInstancedDefines) &&
                create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_pipeline_, false, skinned_defines) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
@@ -2058,6 +2094,7 @@ private:
     ComPtr<ID3D12PipelineState> triangle_pipeline_;
     ComPtr<ID3D12PipelineState> mesh_pipeline_;
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
+    ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_pipeline_;
