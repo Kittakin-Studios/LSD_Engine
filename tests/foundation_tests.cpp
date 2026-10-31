@@ -43,7 +43,12 @@ static void test_heap_allocator() {
     CHECK(reinterpret_cast<std::uintptr_t>(p) % 64 == 0);
     CHECK(heap.allocated_bytes() == 100);
     heap.deallocate(p);
-    CHECK(heap.allocated_bytes() == 0);
+    CHECK(heap.allocated_bytes() == 0 && heap.peak_bytes() == 100 && heap.live_allocations() == 0);
+    lsd::AllocatorStats stats[64];
+    const lsd::u32 n = lsd::allocator_stats(stats, 64);
+    bool found = false;
+    for (lsd::u32 i = 0; i < n; ++i) found = found || (std::strcmp(stats[i].name, "test") == 0 && stats[i].peak == 100 && !stats[i].arena);
+    CHECK(found);  // listed for the memory report
 }
 
 static void test_arena_allocator() {

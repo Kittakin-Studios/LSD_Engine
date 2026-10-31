@@ -22,7 +22,7 @@ everything later depends on. Anything a small team does not need to ship a first
 - [x] Details panel generated from reflection, colour pickers
 - [ ] Linux / Clang build verified (`linux-clang` preset never run since milestone 0)
 - [~] Reflection: Vec3 (one-row X/Y/Z), type defaults (new components, later reset-to-default) done; needs enums (dropdowns), arrays, asset references, Quat
-- [ ] Memory tracking per allocator shown in a debug panel [memreport]
+- [x] Memory tracking per allocator shown in a debug panel [memreport]: every heap / arena allocator registers itself (in use, peak or capacity, live blocks), Window > Memory (sortable, plus process RAM and the video memory budget), `memreport` to the log
 
 ## Milestone 2 — Assets + Content Browser (done)
 

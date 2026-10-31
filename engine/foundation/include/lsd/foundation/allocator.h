@@ -19,15 +19,18 @@ public:
 // General-purpose allocator backed by the system heap, with per-instance tracking.
 class HeapAllocator final : public Allocator {
 public:
-    explicit HeapAllocator(const char* name) : name_(name) {}
+    explicit HeapAllocator(const char* name);
     ~HeapAllocator() override;
     void* allocate(usize size, usize alignment) override;
     void  deallocate(void* ptr) override;
     usize allocated_bytes() const override { return allocated_.load(std::memory_order_relaxed); }
     const char* name() const override { return name_; }
+    usize peak_bytes() const { return peak_.load(std::memory_order_relaxed); }
+    usize live_allocations() const { return live_allocations_.load(std::memory_order_relaxed); }
 private:
     const char* name_;
     std::atomic<usize> allocated_{0};
+    std::atomic<usize> peak_{0};
     std::atomic<usize> live_allocations_{0};
 };
 
@@ -53,5 +56,15 @@ private:
 
 // Process-wide default heap allocator.
 Allocator& default_allocator();
+
+// Every heap and arena allocator alive, for memory reports (Unreal's memreport / stat memory).
+struct AllocatorStats {
+    const char* name;
+    usize bytes;
+    usize peak;         // heap: highest seen; arena: its capacity
+    usize allocations;  // heap: live blocks; arena: 0
+    bool arena;
+};
+u32 allocator_stats(AllocatorStats* out, u32 capacity);
 
 } // namespace lsd

@@ -137,6 +137,7 @@ struct EditorState {
     bool show_world_settings = false;
     bool show_message_log = false;
     bool show_remote_console = false;  // Tools > Remote Console
+    bool show_memory = false;          // Window > Memory (memreport)
     bool show_project_settings = false;
     ProjectSettings project;
     // Viewports: one, or a 2x2 layout (perspective, top, front, right). `camera` always belongs to the

@@ -7,6 +7,7 @@
 #if defined(LSD_PLATFORM_WINDOWS)
   #include <windows.h>
   #include <intrin.h>
+  #include <psapi.h>
 #elif defined(LSD_PLATFORM_LINUX)
   #include <sys/sysinfo.h>
   #if defined(__x86_64__) || defined(__i386__)
@@ -98,6 +99,19 @@ void log_system_info(const SystemInfo& info) {
     LSD_LOG_INFO("system", "RAM: %.1f GiB total, %.1f GiB available",
                  static_cast<double>(info.total_ram_bytes) / static_cast<double>(GiB),
                  static_cast<double>(info.available_ram_bytes) / static_cast<double>(GiB));
+}
+
+void process_memory(u64& bytes, u64& peak_bytes) {
+    bytes = peak_bytes = 0;
+#if defined(LSD_PLATFORM_WINDOWS)
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof counters)) {
+        bytes = counters.WorkingSetSize;
+        peak_bytes = counters.PeakWorkingSetSize;
+    }
+#else
+    // shortcut: Linux reads nothing yet; /proc/self/statm when the Linux build is verified
+#endif
 }
 
 } // namespace lsd

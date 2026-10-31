@@ -426,6 +426,18 @@ void register_console(EditorState& s) {
         if (st.registry->search(args, lsd::asset::AssetType::Table, nullptr, &hit, 1) == 1) lsd::editor::open_table(st, st.registry->get(hit));
         else LSD_LOG_WARN("editor", "table.Open: no data table named like '%s'", args);
     }, &s, "Open a data table in the table editor");
+    console::add_command("memreport", [](void*, const char*) {  // every allocator to the log, biggest first
+        lsd::AllocatorStats stats[128];
+        const lsd::u32 n = lsd::allocator_stats(stats, 128);
+        std::sort(stats, stats + n, [](const lsd::AllocatorStats& a, const lsd::AllocatorStats& b) { return a.bytes > b.bytes; });
+        lsd::u64 process = 0, peak = 0;
+        lsd::process_memory(process, peak);
+        LSD_LOG_INFO("memory", "Process: %.1f MiB (peak %.1f MiB); %u allocators:", static_cast<double>(process) / 1048576.0, static_cast<double>(peak) / 1048576.0, n);
+        for (lsd::u32 i = 0; i < n; ++i) {
+            LSD_LOG_INFO("memory", "  %-24s %10.1f KiB in use, %10.1f KiB %s, %zu blocks", stats[i].name, static_cast<double>(stats[i].bytes) / 1024.0,
+                         static_cast<double>(stats[i].peak) / 1024.0, stats[i].arena ? "capacity" : "peak", stats[i].allocations);
+        }
+    }, &s, "Every allocator's memory to the Output Log (Window > Memory shows it live)");
     console::add_command("BuildLighting", [](void* user, const char*) { static_cast<EditorState*>(user)->build_lighting_requested = true; }, &s,
                          "Build > Build Lighting: bake the level's light probes");
     console::add_command("viewmode", [](void* user, const char* args) {

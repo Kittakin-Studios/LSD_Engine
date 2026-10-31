@@ -4,6 +4,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <vector>
 
 namespace lsd {
 
@@ -14,9 +16,59 @@ struct BlockHeader {
     void* original;
     usize size;
 };
+
+// The live allocators, for allocator_stats. A function-local static: allocators made during static
+// initialisation (default_allocator) register safely.
+struct Registry {
+    std::mutex mutex;
+    std::vector<Allocator*> list;
+};
+Registry& registry() {
+    static Registry r;
+    return r;
+}
+void add(Allocator* a) {
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    registry().list.push_back(a);
+}
+void remove(Allocator* a) {
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    auto& list = registry().list;
+    for (usize i = 0; i < list.size(); ++i) {
+        if (list[i] == a) {
+            list.erase(list.begin() + static_cast<std::ptrdiff_t>(i));
+            break;
+        }
+    }
+}
 } // namespace
 
+u32 allocator_stats(AllocatorStats* out, u32 capacity) {
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    u32 n = 0;
+    for (Allocator* a : registry().list) {
+        if (n == capacity) break;
+        AllocatorStats& s = out[n++];
+        s.name = a->name();
+        s.bytes = a->allocated_bytes();
+        if (auto* heap = dynamic_cast<HeapAllocator*>(a)) {
+            s.peak = heap->peak_bytes();
+            s.allocations = heap->live_allocations();
+            s.arena = false;
+        } else {
+            auto* arena = dynamic_cast<ArenaAllocator*>(a);
+            s.peak = arena ? arena->capacity() : s.bytes;
+            s.allocations = 0;
+            s.arena = arena != nullptr;
+        }
+    }
+    return n;
+}
+
+HeapAllocator::HeapAllocator(const char* name) : name_(name) { add(this); }
+
 HeapAllocator::~HeapAllocator() {
+    remove(this);
     const usize live = live_allocations_.load();
     if (live != 0) {
         LSD_LOG_WARN("memory", "Allocator '%s' destroyed with %zu live allocations (%zu bytes)",
@@ -34,7 +86,9 @@ void* HeapAllocator::allocate(usize size, usize alignment) {
     auto* header = reinterpret_cast<BlockHeader*>(aligned - sizeof(BlockHeader));
     header->original = original;
     header->size = size;
-    allocated_.fetch_add(size, std::memory_order_relaxed);
+    const usize now = allocated_.fetch_add(size, std::memory_order_relaxed) + size;
+    usize peak = peak_.load(std::memory_order_relaxed);
+    while (now > peak && !peak_.compare_exchange_weak(peak, now, std::memory_order_relaxed)) {}
     live_allocations_.fetch_add(1, std::memory_order_relaxed);
     return reinterpret_cast<void*>(aligned);
 }
@@ -51,9 +105,13 @@ ArenaAllocator::ArenaAllocator(const char* name, Allocator& backing, usize capac
     : name_(name), backing_(backing), capacity_(capacity) {
     memory_ = static_cast<u8*>(backing_.allocate(capacity, 64));
     LSD_ASSERT(memory_ != nullptr);
+    add(this);
 }
 
-ArenaAllocator::~ArenaAllocator() { backing_.deallocate(memory_); }
+ArenaAllocator::~ArenaAllocator() {
+    remove(this);
+    backing_.deallocate(memory_);
+}
 
 void* ArenaAllocator::allocate(usize size, usize alignment) {
     const usize start = align_up(offset_, alignment);

@@ -544,6 +544,7 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).
+- **Window > Memory** / **memreport** (console): memory per allocator, the process's RAM and the video memory budget.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
 - **Tracy** (Unreal Insights): configure with `-DLSD_TRACY=ON`, build, run, and connect the Tracy

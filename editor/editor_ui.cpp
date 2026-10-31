@@ -23,6 +23,7 @@
 #include "lsd/input/input.h"
 #include "lsd/debug_ui/details_panel.h"
 #include "lsd/foundation/log.h"
+#include "lsd/foundation/system_info.h"
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
@@ -2166,6 +2167,58 @@ void request_save(EditorState& s, bool save_as) {
     g_open_save_as = true;
 }
 
+// Window > Memory (Unreal's memreport / stat memory): every allocator, the process and the GPU.
+void draw_memory_window(EditorState& s) {
+    if (!s.show_memory) return;
+    ImGui::SetNextWindowSize(ImVec2(560, 420), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Memory", &s.show_memory)) {
+        ImGui::End();
+        return;
+    }
+    const f64 mib = 1024.0 * 1024.0;
+    u64 process = 0, process_peak = 0;
+    process_memory(process, process_peak);
+    if (process) ImGui::Text("Process (RAM in use): %.1f MiB, peak %.1f MiB", static_cast<f64>(process) / mib, static_cast<f64>(process_peak) / mib);
+    if (s.device) {
+        const rhi::MemoryBudget gpu = s.device->query_memory_budget();
+        ImGui::Text("Video memory: %.1f MiB used of a %.1f MiB budget", static_cast<f64>(gpu.usage_bytes) / mib, static_cast<f64>(gpu.budget_bytes) / mib);
+    }
+    AllocatorStats stats[128];
+    const u32 n = allocator_stats(stats, 128);
+    if (ImGui::BeginTable("allocators", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Sortable | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("Allocator");
+        ImGui::TableSetupColumn("In use (KiB)", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending);
+        ImGui::TableSetupColumn("Peak / capacity (KiB)");
+        ImGui::TableSetupColumn("Blocks");
+        ImGui::TableHeadersRow();
+        u32 order[128];
+        for (u32 i = 0; i < n; ++i) order[i] = i;
+        const ImGuiTableSortSpecs* sort = ImGui::TableGetSortSpecs();
+        const int column = sort && sort->SpecsCount ? sort->Specs[0].ColumnIndex : 1;
+        const bool descending = !sort || !sort->SpecsCount || sort->Specs[0].SortDirection == ImGuiSortDirection_Descending;
+        std::sort(order, order + n, [&](u32 a, u32 b) {
+            const AllocatorStats &x = stats[a], &y = stats[b];
+            const bool less = column == 0 ? std::strcmp(x.name, y.name) < 0 : column == 2 ? x.peak < y.peak : column == 3 ? x.allocations < y.allocations : x.bytes < y.bytes;
+            const bool greater = column == 0 ? std::strcmp(x.name, y.name) > 0 : column == 2 ? x.peak > y.peak : column == 3 ? x.allocations > y.allocations : x.bytes > y.bytes;
+            return descending ? greater : less;
+        });
+        for (u32 k = 0; k < n; ++k) {
+            const AllocatorStats& a = stats[order[k]];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s%s", a.name, a.arena ? " (arena)" : "");
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", static_cast<f64>(a.bytes) / 1024.0);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", static_cast<f64>(a.peak) / 1024.0);
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", a.allocations);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
 // Rename and delete confirmation dialogs; actions happen on OK.
 void draw_file_dialogs(EditorState& s) {
     if (s.open_rename) ImGui::OpenPopup("Rename");
@@ -2872,6 +2925,7 @@ void draw_menu_bar(EditorState& s) {
         ImGui::MenuItem("Undo History", nullptr, &s.show_history);
         ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings);
         ImGui::MenuItem("Message Log", nullptr, &s.show_message_log);
+        ImGui::MenuItem("Memory", nullptr, &s.show_memory);
         ImGui::EndMenu();
     }
     // Play / Stop, like Unreal's main toolbar.
@@ -3234,6 +3288,7 @@ void draw_editor(EditorState& s) {
     if (s.particle_editor) s.particle_editor->draw(s);
     source_control::draw();
     remote::draw_window(&s.show_remote_console);
+    draw_memory_window(s);
     draw_ui_editor(s);
     handle_shortcuts(s);
 
