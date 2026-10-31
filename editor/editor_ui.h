@@ -143,6 +143,9 @@ struct EditorState {
     bool show_message_log = false;
     bool show_remote_console = false;  // Tools > Remote Console
     bool show_memory = false;          // Window > Memory (memreport)
+    static constexpr u32 kMaxKept = 64;
+    world::Entity kept[kMaxKept];             // Keep Simulation Changes: copied back into the level when Play stops
+    u32 kept_count = 0;
     bool show_project_settings = false;
     ProjectSettings project;
     // Viewports: one, or a 2x2 layout (perspective, top, front, right). `camera` always belongs to the

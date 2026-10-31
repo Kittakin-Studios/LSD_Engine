@@ -1160,7 +1160,43 @@ int main(int argc, char** argv) {
         }
         state.play_requested = false;
         if (state.stop_requested && state.playing) {
+            // Keep Simulation Changes: copy the kept objects' components before the level reverts.
+            struct Kept {
+                lsd::world::Entity entity;
+                std::string name;
+                std::vector<std::pair<const lsd::reflect::TypeInfo*, std::vector<lsd::u8>>> components;
+            };
+            std::vector<Kept> kept;
+            for (lsd::u32 k = 0; k < state.kept_count; ++k) {
+                const lsd::world::Entity e = state.kept[k];
+                if (!world.alive(e)) continue;  // destroyed in Play: nothing to keep
+                Kept item{e, world.name(e), {}};
+                lsd::u32 type_count = 0;
+                const lsd::reflect::TypeInfo* const* types = lsd::world::component_types(type_count);
+                for (lsd::u32 t = 0; t < type_count; ++t) {
+                    if (const void* c = world.get(e, *types[t])) {
+                        const auto* bytes = static_cast<const lsd::u8*>(c);
+                        item.components.emplace_back(types[t], std::vector<lsd::u8>(bytes, bytes + types[t]->size));
+                    }
+                }
+                kept.push_back(std::move(item));
+            }
+            state.kept_count = 0;
             lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size());  // Play changes revert, like Unreal's PIE
+            lsd::u32 applied = 0;
+            for (const Kept& item : kept) {  // levels reload objects at their saved ids: the same handle is the same object
+                if (!world.alive(item.entity) || item.name != world.name(item.entity)) continue;  // spawned in Play: not in the level
+                for (const auto& [type, bytes] : item.components) {
+                    void* c = world.get(item.entity, *type);
+                    if (!c) c = world.add(item.entity, *type);
+                    if (c) std::memcpy(c, bytes.data(), bytes.size());  // components are plain structs
+                }
+                ++applied;
+            }
+            if (applied) {
+                state.history->commit(world, "Keep Simulation Changes");
+                LSD_LOG_INFO("editor", "Kept the Play changes of %u object%s", applied, applied == 1 ? "" : "s");
+            }
             state.playing = false;
             lsd::editor::debug_draw::clear();
             state.mouse_captured = false;

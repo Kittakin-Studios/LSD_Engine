@@ -55,6 +55,23 @@ namespace {
 
 bool asset_selected(const EditorState& s, asset::Guid g);
 extern ReferenceIndex g_references;
+
+// Unreal's Keep Simulation Changes: the selected objects are copied back into the level on Stop.
+void keep_simulation_changes(EditorState& s) {
+    u32 added = 0;
+    for (u32 i = 0; i < s.selection_count + 1; ++i) {
+        const world::Entity e = i < s.selection_count ? s.selection[i] : s.selected;
+        if (!s.world->alive(e)) continue;
+        bool known = false;
+        for (u32 k = 0; k < s.kept_count; ++k) known = known || s.kept[k] == e;
+        if (!known && s.kept_count < EditorState::kMaxKept) {
+            s.kept[s.kept_count++] = e;
+            ++added;
+        }
+    }
+    std::snprintf(s.status, sizeof s.status, "%u object%s will keep their Play changes when you stop", s.kept_count, s.kept_count == 1 ? "" : "s");
+    (void)added;
+}
 void find_in_content_browser(EditorState& s, asset::Guid guid);
 
 using world::Entity;
@@ -1355,6 +1372,8 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
         if (ImGui::BeginPopupContextItem("row_menu")) {
             if (!s.is_selected(e)) select(s, e);
             if (ImGui::MenuItem("Focus", "F")) focus_selected(s);
+            if (s.playing && ImGui::MenuItem("Keep Simulation Changes", "K")) keep_simulation_changes(s);
+            if (s.playing) ImGui::SetItemTooltip("When Play stops, the selected objects keep what they have now (where physics left them...)");
             asset::Guid used;  // the object's mesh (or script, sound) asset
             if (const auto* m = s.world->get<world::StaticMesh>(e)) asset::parse_guid(m->mesh, used);
             if (const auto* m = s.world->get<world::SkeletalMesh>(e); m && !used.valid()) asset::parse_guid(m->mesh, used);
@@ -3638,6 +3657,7 @@ void handle_shortcuts(EditorState& s) {
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) paste(s);
     if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_D)) duplicate_selected(s);
+    if (!ctrl && s.playing && s.ejected && has && ImGui::IsKeyPressed(ImGuiKey_K)) keep_simulation_changes(s);
     if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_B)) {  // Find in Content Browser: the selected object's asset
         asset::Guid used;
         if (const auto* m = s.world->get<world::StaticMesh>(s.selected)) asset::parse_guid(m->mesh, used);

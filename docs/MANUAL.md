@@ -278,6 +278,10 @@ lists the graph's parameters (button **Add the graph's parameters**) to set per 
 
 ## 7. Playing and the player
 
+**Keep Simulation Changes**: while playing, right-click objects in the Outliner (or press K when
+ejected with F8) to keep what Play did to them (where physics dropped them, changed properties):
+when you stop, they keep it, as one undo step.
+
 Press **Play** (or **Alt+P**). **Esc** stops; **Pause** pauses (`]` steps a frame); **F8** ejects to
 fly around the running game; **Shift+F1** frees the mouse. Changes made while playing are undone
 when Play stops, like Unreal's PIE.
