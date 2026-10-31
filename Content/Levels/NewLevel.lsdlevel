@@ -1,0 +1,249 @@
+{
+  "lsd_level": 1,
+  "world_settings": {
+      "kill_z": -50,
+      "gravity": 9.81000042,
+      "exposure_ev100": 1.5,
+      "game_mode": "",
+      "navigation": {
+        "agent_radius": 0.400000006,
+        "agent_height": 1.79999995,
+        "max_step_height": 0.449999988,
+        "max_slope": 45,
+        "cell_size": 0.150000006
+      }
+    },
+  "entities": [
+    {"id": 0, "name": "Floor", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": -0.200000003
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 20,
+        "y": 20,
+        "z": 0.200000003
+      }
+    },
+     "StaticMesh": {
+      "mesh": "Cube",
+      "material": "",
+      "color": {
+        "r": 0.541176498,
+        "g": 0.541176498,
+        "b": 0.556862772,
+        "a": 1
+      },
+      "collision": true
+    }},
+    {"id": 1, "name": "PlayerStart", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": -160.649994
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "PlayerStart": {
+      "eye_height": 1.70000005,
+      "walk_speed": 5,
+      "jump_speed": 5
+    }},
+    {"id": 2, "name": "Sphere", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -7.24300003,
+        "y": -4.03900003,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "Sphere",
+      "material": "",
+      "color": {
+        "r": 0.127816468,
+        "g": 0.945945919,
+        "b": 0.0365230106,
+        "a": 1
+      },
+      "collision": true
+    }},
+    {"id": 4194307, "name": "Sky Light", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 3.91741753,
+        "y": -6.89985085,
+        "z": 7.55000019
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 4.3499999
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SkyLight": {
+      "sky_color": {
+        "r": 0.176470593,
+        "g": 0.43921569,
+        "b": 0.839215696,
+        "a": 0.956862748
+      },
+      "ground_color": {
+        "r": 0.160784319,
+        "g": 0.149019614,
+        "b": 0.141176477,
+        "a": 0.925490201
+      },
+      "intensity": 3.35800004
+    }},
+    {"id": 4, "name": "Cube", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -3.80699992,
+        "y": -8.07999992,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "b400a445885d50b9205a057d8e2f4319",
+      "material": "",
+      "color": {
+        "r": 0.280987829,
+        "g": 0.113638744,
+        "b": 0.297297299,
+        "a": 1
+      },
+      "collision": true
+    }},
+    {"id": 5, "name": "Kill Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -8.8419857,
+        "y": -0.119999997,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 2.1500001,
+        "y": 18.8999996,
+        "z": 3
+      }
+    },
+     "KillVolume": {
+      "enabled": true
+    }},
+    {"id": 6, "name": "Blocking Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -4.07470798,
+        "y": -8.35063934,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 4,
+        "y": -1.50600004,
+        "z": 3
+      }
+    },
+     "BlockingVolume": {
+      "enabled": true
+    }},
+    {"id": 7, "name": "Sound Emitter", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.81869411,
+        "y": -6.26304102,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SoundEmitter": {
+      "sound": "",
+      "auto_play": true
+    }},
+    {"id": 8, "name": "AI Controller", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 3.22336674,
+        "y": -6.48621416,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "AIController": {
+      "behavior_tree": "",
+      "sight_range": 15,
+      "sight_angle": 120,
+      "hearing_range": 12
+    }}
+  ]
+}

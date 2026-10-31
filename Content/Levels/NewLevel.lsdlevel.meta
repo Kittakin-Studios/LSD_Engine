@@ -1,0 +1,15 @@
+{
+  "guid": "2340247ee4a35057f590932a31244db6",
+  "type": "Level",
+  "import_scale": 1,
+  "notifies": [],
+  "max_size": 4096,
+  "volume": 1,
+  "pitch": 1,
+  "looping": false,
+  "stream": false,
+  "sound_class": "",
+  "attenuation": "",
+  "concurrency": "",
+  "subtitle": ""
+}
