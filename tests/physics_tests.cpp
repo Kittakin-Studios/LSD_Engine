@@ -198,6 +198,26 @@ int main() {
     }
     CHECK(world.character_feet().z > 0.8f && !world.character_on_ground());
 
+    // Crouch under a 1.4 m ceiling: shrinking works, standing up there is refused, and works again in the open.
+    world.add_body(box({-10, 0, 1.5f}, {1, 1, 0.1f}, Motion::Static));
+    world.teleport_character({-14, 0, 0.05f});
+    CHECK(world.set_character_height(1.1f));
+    world.teleport_character({-10, 0, 0.05f});
+    for (int i = 0; i < 30; ++i) {
+        world.move_character({}, false, 5.0f, 1.0f / 60.0f);
+        world.step(1.0f / 60.0f);
+    }
+    CHECK(!world.set_character_height(1.8f));
+    world.teleport_character({-14, 0, 0.05f});
+    CHECK(world.set_character_height(1.8f));
+    // Swimming: no gravity, velocity.z lifts.
+    const f32 before = world.character_feet().z;
+    for (int i = 0; i < 30; ++i) {
+        world.move_character({0, 0, 2}, false, 0.0f, 1.0f / 60.0f, true);
+        world.step(1.0f / 60.0f);
+    }
+    CHECK(world.character_feet().z > before + 0.8f);
+
     test_joints();
     if (g_failures == 0) std::printf("All physics tests passed.\n");
     return g_failures == 0 ? 0 : 1;

@@ -140,6 +140,7 @@ struct PhysicsWorld::Impl {
     };
     std::vector<Joint> joints;
     f32 step_height = 0.4f;
+    f32 character_radius = 0.35f;
 };
 
 PhysicsWorld::PhysicsWorld() {
@@ -405,11 +406,29 @@ void PhysicsWorld::create_character(const CharacterDesc& desc) {
     impl_->character = new JPH::CharacterVirtual(&settings, JPH::RVec3(desc.feet.x, desc.feet.y, desc.feet.z), JPH::Quat::sIdentity(), 0, &impl_->system);
     impl_->character->SetListener(&impl_->contacts);
     impl_->step_height = desc.step_height;
+    impl_->character_radius = desc.radius;
 }
 
-void PhysicsWorld::move_character(Vec3 velocity, bool jump, f32 jump_speed, f32 dt) {
+bool PhysicsWorld::set_character_height(f32 height) {
+    JPH::CharacterVirtual* c = impl_->character.GetPtr();
+    if (!c) return false;
+    const f32 radius = impl_->character_radius;
+    const f32 half_height = std::fmax(height * 0.5f - radius, 0.05f);
+    const JPH::RefConst<JPH::Shape> shape = z_capsule(half_height, radius, JPH::Vec3(0, 0, half_height + radius));
+    // SetShape refuses (keeps the old capsule) when the new one would sink into something above.
+    return c->SetShape(shape, 1.5f * impl_->system.GetPhysicsSettings().mPenetrationSlop, impl_->system.GetDefaultBroadPhaseLayerFilter(kMovingLayer),
+                       impl_->system.GetDefaultLayerFilter(kMovingLayer), {}, {}, impl_->temp);
+}
+
+void PhysicsWorld::move_character(Vec3 velocity, bool jump, f32 jump_speed, f32 dt, bool swimming) {
     JPH::CharacterVirtual* c = impl_->character.GetPtr();
     if (!c || dt <= 0.0f) return;
+    if (swimming) {  // water: steer in 3D, no gravity, no stairs
+        c->SetLinearVelocity(JPH::Vec3(velocity.x, velocity.y, velocity.z));
+        c->ExtendedUpdate(dt, JPH::Vec3::sZero(), {}, impl_->system.GetDefaultBroadPhaseLayerFilter(kMovingLayer), impl_->system.GetDefaultLayerFilter(kMovingLayer),
+                          {}, {}, impl_->temp);
+        return;
+    }
     c->UpdateGroundVelocity();
     const JPH::Vec3 ground = c->GetGroundVelocity();
     const JPH::Vec3 vertical(0, 0, c->GetLinearVelocity().GetZ());

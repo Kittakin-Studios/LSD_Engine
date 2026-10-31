@@ -404,6 +404,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     const reflect::TypeInfo& start_type = reflect::type_of<world::PlayerStart>();
     settings_ = world::Character{};
     character_ = {};
+    crouched_ = swimming_ = false;
     wired_ = false;
     Vec3 rotation;
     if (world.count(character_type) > 0) {
@@ -1075,14 +1076,35 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
-    physics_->move_character(velocity * settings_.walk_speed, jump, settings_.jump_speed, dt);
+
+    // Swimming: the chest inside a Water Volume. Move where you look; Jump (held) rises.
+    const Vec3 chest = feet_ + Vec3{0, 0, settings_.height * 0.6f};
+    const reflect::TypeInfo& water_type = reflect::type_of<world::WaterVolume>();
+    swimming_ = false;
+    for (u32 i = 0; i < world.count(water_type) && !swimming_; ++i) {
+        swimming_ = static_cast<const world::WaterVolume*>(world.at(water_type, i))->enabled && inside_volume(world, world.owner(water_type, i), chest);
+    }
+    // Crouching while the crouch action is held; standing up waits until there is room overhead.
+    const bool want_crouch = settings_.crouch_action[0] && input_.down(settings_.crouch_action) && !swimming_;
+    if (want_crouch != crouched_ && physics_->set_character_height(want_crouch ? settings_.crouch_height : settings_.height)) crouched_ = want_crouch;
+    if (swimming_) {
+        Vec3 swim = forward() * move.y + right * move.x;
+        if (input_.down(settings_.jump_action)) swim.z += 1.0f;
+        const f32 n = length(swim);
+        if (n > 1.0f) swim = swim * (1.0f / n);
+        physics_->move_character(swim * settings_.swim_speed, false, 0.0f, dt, true);
+    } else {
+        physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
+    }
     physics_->step(dt);
     const Vec3 moved = physics_->character_feet() - feet_;
     feet_ = physics_->character_feet();
     if (animations_ && character_.valid() && dt > 0.0f) {
         animations_->set_param(world, character_, "Speed", std::sqrt(moved.x * moved.x + moved.y * moved.y) / dt);
         animations_->set_param(world, character_, "VerticalSpeed", moved.z / dt);
-        animations_->set_param(world, character_, "InAir", physics_->character_on_ground() ? 0.0f : 1.0f);
+        animations_->set_param(world, character_, "InAir", physics_->character_on_ground() || swimming_ ? 0.0f : 1.0f);
+        animations_->set_param(world, character_, "Crouching", crouched_ ? 1.0f : 0.0f);
+        animations_->set_param(world, character_, "Swimming", swimming_ ? 1.0f : 0.0f);
     }
     // Objects scripts destroyed leave the simulation.
     for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
@@ -1117,7 +1139,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
     // Camera: the head, or behind it on the spring arm, pulled in when a wall is in the way.
-    const Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height};
+    const Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height * (crouched_ ? settings_.crouch_height / settings_.height : 1.0f)};
     eye_ = head;
     if (settings_.camera_distance > 0.0f) {
         const Vec3 back = forward() * -1.0f;

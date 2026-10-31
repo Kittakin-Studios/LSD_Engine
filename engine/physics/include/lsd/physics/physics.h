@@ -103,7 +103,10 @@ public:
 
     // The player. Velocity is horizontal (x, y); jump starts a jump if on the ground.
     void create_character(const CharacterDesc& desc);
-    void move_character(Vec3 velocity, bool jump, f32 jump_speed, f32 dt);
+    // `swimming`: no gravity and no ground; velocity.z moves up and down (water).
+    void move_character(Vec3 velocity, bool jump, f32 jump_speed, f32 dt, bool swimming = false);
+    // Changes the capsule's height, feet staying put (crouching). False, and unchanged, if it would not fit (a ceiling).
+    bool set_character_height(f32 height);
     void teleport_character(Vec3 feet);
     Vec3 character_feet() const;
     bool character_on_ground() const;

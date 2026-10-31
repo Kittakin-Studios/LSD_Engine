@@ -314,7 +314,10 @@ Engine Scalability** sets the graphics quality (Low to Epic), saved with the pla
 
 The player is the first object with a **Character** component; without one, a default walker
 appears at the Player Start (or the camera). A Character walks, jumps, climbs steps and slopes, and
-can have a third-person camera (**Camera Distance**).
+can have a third-person camera (**Camera Distance**). Give it a **Crouch Action** (an Input Action,
+held) to crouch to **Crouch Height** at **Crouch Speed**; it stands up again only where there is room.
+Inside a **Water Volume** (Place tab) it swims at **Swim Speed** where you look, Jump rising. Animation
+Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Speed, VerticalSpeed and InAir.
 
 ### Input (Enhanced Input)
 

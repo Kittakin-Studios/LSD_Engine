@@ -136,6 +136,8 @@ private:
     char level_request_[300] = "";
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker
+    bool crouched_ = false;    // the capsule is at crouch_height
+    bool swimming_ = false;    // the chest is in a Water Volume
     bool wired_ = false;
     struct Overlap {
         world::Entity trigger, other;

@@ -139,6 +139,18 @@ struct Character {
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Tooltip = "Turn per unit of Look (per pixel for the mouse)") f32 look_sensitivity = 0.15f;
     LSD_PROPERTY(Edit) bool invert_look_y = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Spring arm length behind the head: 0 = first person") f32 camera_distance = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Crouch", Widget = "Asset:InputAction", Tooltip = "Held: crouch (stands up again when there is room)") char crouch_action[33] = "";
+    LSD_PROPERTY(Edit, Category = "Crouch", Units = "m", Min = 0.3) f32 crouch_height = 1.1f;
+    LSD_PROPERTY(Edit, Category = "Crouch", Units = "m/s", Min = 0) f32 crouch_speed = 2.5f;
+    LSD_PROPERTY(Edit, Category = "Swim", Units = "m/s", Min = 0, Tooltip = "Inside a Water Volume: moves where you look, Jump rises") f32 swim_speed = 3.0f;
+};
+
+// Water the Character swims in (Unreal's Physics Volume with Water Volume on): the unit cube scaled
+// by the transform, like the other volumes. Swimming starts when the chest is under.
+LSD_STRUCT(Component, Category = "Gameplay")
+struct WaterVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
 };
 
 // A camera the game can look through (Unreal's Camera Component / Camera Actor): along its +X.
