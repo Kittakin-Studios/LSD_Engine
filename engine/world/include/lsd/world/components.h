@@ -433,6 +433,14 @@ struct NavMeshBounds {
     LSD_PROPERTY(Edit) bool enabled = true;
 };
 
+// Cuts its box out of the navmesh (Unreal's Nav Modifier Volume with the Null area): agents path
+// around it though nothing blocks there (a no-go zone, a hole the player can cross but AI must not).
+LSD_STRUCT(Component, Category = "AI")
+struct NavModifierVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
+};
+
 // Walks on the navmesh in Play, steering round other agents (an AI-controlled pawn): Lua
 // lsd.move_to(e, x, y, z) or the AI Move To node sends it somewhere.
 LSD_STRUCT(Component, Category = "AI")

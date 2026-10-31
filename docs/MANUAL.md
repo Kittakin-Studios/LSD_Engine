@@ -196,7 +196,7 @@ Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `
 - Drop a Material onto an object in the viewport to apply it.
 - **Volumes** are the unit cube scaled by their transform: **Blocking Volume** (invisible wall),
   **Kill Volume** (respawns the player), **Trigger Volume** (tells scripts when something enters),
-  **Audio Volume** (reverb inside), **Post Process Volume**, **Nav Mesh Bounds**.
+  **Audio Volume** (reverb inside), **Post Process Volume**, **Nav Mesh Bounds**, **Nav Modifier Volume** (cut out of the navmesh).
 - **Prefabs** are reusable objects: right-click an object in the Outliner > Create Prefab (it takes
   its children too), then drag the prefab in as often as you like. Edit one copy and **Apply to
   Prefab** (Details) to update the prefab; per-copy changes are
@@ -501,7 +501,8 @@ follows unsaved changes. Drag the system into the viewport to place a **Particle
 
 1. Place a **Nav Mesh Bounds** volume around the walkable area (optional: without one the whole
    level is used). Press **P** to see the navmesh in green. World Settings > Navigation sets agent
-   radius / height, step height, slope and cell size.
+   radius / height, step height, slope and cell size. A **Nav Modifier Volume** cuts its box out of the
+   navmesh (Unreal's Nav Modifier with the Null area): AI paths round it though nothing blocks there.
 2. Give an enemy a **Nav Agent** (speed, radius, height): it can walk with `lsd.move_to` or the AI
    Move To node, steering round other agents.
 3. Give it an **AI Controller** with a **Behavior Tree** (New Behavior Tree; Unreal's Behavior Tree
@@ -676,7 +677,7 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Physics | Rigid Body, Physics Joint |
 | Gameplay | Player Start, Character, Script, Tags, Spline, Spline Follower |
 | Audio / Effects | Sound Emitter, Particle Effect |
-| AI | Nav Mesh Bounds, Nav Agent, AI Controller |
+| AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller |
 | Prefab | Prefab Instance (added for you) |
 
 ### Lua API

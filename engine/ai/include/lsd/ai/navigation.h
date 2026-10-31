@@ -18,6 +18,14 @@ struct NavSettings {
 
 constexpr u32 kMaxAgents = 128;
 
+// An area cut out of the navmesh (Unreal's Nav Modifier Volume with the Null area): a footprint of
+// 4 world-space corners in order (a box seen from above, turned any way about Z) between two heights.
+struct NavCutout {
+    Vec3 corners[4];
+    f32 z_min = 0.0f;
+    f32 z_max = 0.0f;
+};
+
 class NavMesh {
 public:
     NavMesh();
@@ -25,10 +33,10 @@ public:
     NavMesh(const NavMesh&) = delete;
     NavMesh& operator=(const NavMesh&) = delete;
 
-    // Builds from world-space triangles (xyz per vertex, three indices per triangle) inside the box.
-    // Replaces the previous mesh and its agents. False (and empty) if nothing is walkable.
+    // Builds from world-space triangles (xyz per vertex, three indices per triangle) inside the box,
+    // minus the cutouts. Replaces the previous mesh and its agents. False (and empty) if nothing is walkable.
     bool build(const f32* vertices, u32 vertex_count, const u32* indices, u32 triangle_count, Vec3 bounds_min, Vec3 bounds_max,
-               const NavSettings& settings);
+               const NavSettings& settings, const NavCutout* cutouts = nullptr, u32 cutout_count = 0);
     bool valid() const;
     void clear();
 

@@ -56,7 +56,7 @@ bool NavMesh::valid() const { return impl_->query != nullptr; }
 void NavMesh::clear() { impl_->release(); }
 
 bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u32 triangle_count, Vec3 bounds_min, Vec3 bounds_max,
-                    const NavSettings& s) {
+                    const NavSettings& s, const NavCutout* cutouts, u32 cutout_count) {
     impl_->release();
     if (!vertex_count || !triangle_count) return false;
     // shortcut: one tile, built in one go (Recast's "solo mesh"); tile the build for big worlds.
@@ -106,8 +106,13 @@ bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u
         rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *solid);
         rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid);
         rcFilterWalkableLowHeightSpans(&ctx, cfg.walkableHeight, *solid);
-        ok = rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid, *chf) && rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf) &&
-             rcBuildDistanceField(&ctx, *chf) && rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea) &&
+        ok = rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid, *chf) && rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf);
+        for (u32 i = 0; ok && i < cutout_count; ++i) {  // Recast's height axis is our Z
+            f32 footprint[12];
+            for (int c = 0; c < 4; ++c) to_recast(cutouts[i].corners[c], &footprint[c * 3]);
+            rcMarkConvexPolyArea(&ctx, footprint, 4, cutouts[i].z_min, cutouts[i].z_max, RC_NULL_AREA, *chf);
+        }
+        ok = ok && rcBuildDistanceField(&ctx, *chf) && rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea) &&
              rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *contours) && rcBuildPolyMesh(&ctx, *contours, cfg.maxVertsPerPoly, *poly) &&
              rcBuildPolyMeshDetail(&ctx, *poly, *chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *detail);
     }

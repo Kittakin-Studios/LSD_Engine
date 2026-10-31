@@ -75,7 +75,22 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
     settings.max_climb = s.max_step_height;
     settings.max_slope = s.max_slope;
     settings.cell_size = s.cell_size;
-    return out.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), lo, hi, settings);
+    // Nav Modifier Volumes cut their footprint out (the unit cube under the transform; tilt is ignored).
+    std::vector<ai::NavCutout> cutouts;
+    const reflect::TypeInfo& modifier_type = reflect::type_of<world::NavModifierVolume>();
+    for (u32 i = 0; i < world.count(modifier_type); ++i) {
+        if (!static_cast<const world::NavModifierVolume*>(world.at(modifier_type, i))->enabled) continue;
+        const Mat4 m = world.world_matrix(world.owner(modifier_type, i));
+        ai::NavCutout cut;
+        const Vec3 footprint[4] = {{kUnitLo.x, kUnitLo.y, 0}, {kUnitHi.x, kUnitLo.y, 0}, {kUnitHi.x, kUnitHi.y, 0}, {kUnitLo.x, kUnitHi.y, 0}};
+        for (int c = 0; c < 4; ++c) cut.corners[c] = transform_point(m, footprint[c]);
+        cut.z_min = transform_point(m, {0, 0, kUnitLo.z}).z;
+        cut.z_max = transform_point(m, {0, 0, kUnitHi.z}).z;
+        if (cut.z_min > cut.z_max) std::swap(cut.z_min, cut.z_max);
+        cutouts.push_back(cut);
+    }
+    return out.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), lo, hi, settings, cutouts.data(),
+                     static_cast<u32>(cutouts.size()));
 }
 
 } // namespace lsd::editor

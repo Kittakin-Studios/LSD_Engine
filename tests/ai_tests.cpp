@@ -161,6 +161,30 @@ int main() {
     CHECK(crossed_wall_y > 5.5f);  // went round the end of the wall
     CHECK(!nav.agent_moving(agent));
 
+    // A Nav Modifier cutout (turned 45 degrees) over the floor's middle: paths go round it.
+    {
+        std::vector<f32> floor_verts;
+        std::vector<u32> floor_idx;
+        add_box(floor_verts, floor_idx, {-10, -10, -0.2f}, {10, 10, 0});
+        ai::NavCutout cut;
+        cut.corners[0] = {0, -3, 0};
+        cut.corners[1] = {3, 0, 0};
+        cut.corners[2] = {0, 3, 0};
+        cut.corners[3] = {-3, 0, 0};
+        cut.z_min = -1.0f;
+        cut.z_max = 2.0f;
+        ai::NavMesh holed;
+        CHECK(holed.build(floor_verts.data(), static_cast<u32>(floor_verts.size() / 3), floor_idx.data(), static_cast<u32>(floor_idx.size() / 3), {-11, -11, -1}, {11, 11, 4},
+                          {}, &cut, 1));
+        Vec3 on;
+        CHECK(holed.nearest_point({0, 0, 0}, on) && std::fabs(on.x) + std::fabs(on.y) > 2.5f);  // the centre is cut out
+        Vec3 route[32];
+        const u32 m = holed.find_path({-6, 0, 0}, {6, 0, 0}, route, 32);
+        f32 off_axis = 0;
+        for (u32 i = 0; i < m; ++i) off_axis = std::fmax(off_axis, std::fabs(route[i].y));
+        CHECK(m >= 3 && off_axis > 2.5f);  // round the diamond, not through it
+    }
+
     if (g_failures == 0) std::printf("All AI tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }
