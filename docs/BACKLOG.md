@@ -36,7 +36,7 @@ Exit test: import a Blender FBX and find it by search. **Passes** (automated in 
 - [x] Mesh importers: FBX (ufbx), glTF (cgltf), meshoptimizer (merged mesh, Z-up metres)
 - [x] Thumbnails (render-to-texture, re-rendered when the source changes)
 - [x] Content Browser: folder tree and tiles, thumbnails, search, type filter, import by drop, drag to place, drag onto folders to move, right-click menus
-- [ ] Thumbnail cache on disk (today they re-render every editor start)
+- [x] Thumbnail cache on disk (today they re-render every editor start): DerivedData/Thumbnails/<guid>-<source time>.png, saved the frame after rendering, loaded at start; a changed source re-renders and replaces it
 - [ ] Content Browser extras: list view, sort, tile size slider, multi-select, favourites, collections, Duplicate, Reimport, "Find in Content Browser" [Collections]
 - [ ] Asset editor windows: double-click opens a tab per asset (mesh viewer with stats, import settings, preview) [Static Mesh Editor]
 

@@ -1,11 +1,14 @@
 #include "thumbnails.h"
 
 #include "lsd/asset/mesh_import.h"
+#include "lsd/asset/texture.h"
 #include "lsd/foundation/math.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -32,13 +35,68 @@ u64 ThumbnailCache::get(asset::Guid guid) {
     }
     Entry e;
     e.guid = guid;
+    if (record && load_cached(e, record->source_time)) {
+        entries_.push_back(e);
+        return device_.debug_ui_texture(e.texture);
+    }
     entries_.push_back(e);
     return 0;
+}
+
+std::string ThumbnailCache::cache_path(asset::Guid guid, i64 source_time) const {
+    char name[33];
+    asset::to_string(guid, name);
+    return std::string(data_dir_) + "/Thumbnails/" + name + "-" + std::to_string(source_time) + ".png";
+}
+
+bool ThumbnailCache::load_cached(Entry& e, i64 source_time) {
+    const std::string path = cache_path(e.guid, source_time);
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) return false;
+    asset::TextureData data(allocator_);
+    if (!asset::load_texture(path.c_str(), false, 0, data) || data.width != kThumbnailSize || data.height != kThumbnailSize) return false;
+    // Saved top row first; render targets are shown flipped on some backends, so match them.
+    if (device_.render_targets_flipped()) {
+        const usize row = static_cast<usize>(data.width) * 4;
+        std::vector<u8> swap(row);
+        for (u32 y = 0; y < data.height / 2; ++y) {
+            u8* a = data.pixels.data() + y * row;
+            u8* b = data.pixels.data() + (data.height - 1 - y) * row;
+            std::memcpy(swap.data(), a, row);
+            std::memcpy(a, b, row);
+            std::memcpy(b, swap.data(), row);
+        }
+    }
+    const void* mips[1] = {data.pixels.data()};
+    const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, 1, rhi::TextureFormat::RGBA8, mips);
+    if (!texture.valid()) return false;
+    if (e.texture.valid()) device_.destroy_texture(e.texture);
+    e.texture = texture;
+    e.from_disk = true;
+    e.ready = true;
+    e.source_time = source_time;
+    return true;
 }
 
 void ThumbnailCache::release_temporaries() {
     for (render::GpuMesh& m : temporaries_) render::destroy_mesh(device_, m);
     temporaries_.clear();
+    // Last frame's renders to disk (the GPU has finished them by now).
+    for (Entry& e : entries_) {
+        if (!e.save) continue;
+        e.save = false;
+        std::vector<u8> pixels(static_cast<usize>(kThumbnailSize) * kThumbnailSize * 4);
+        if (!device_.read_render_target(e.texture, pixels.data())) continue;
+        std::error_code error;
+        const std::filesystem::path folder = std::filesystem::path(data_dir_) / "Thumbnails";
+        std::filesystem::create_directories(folder, error);
+        char name[33];
+        asset::to_string(e.guid, name);
+        for (const auto& old : std::filesystem::directory_iterator(folder, error)) {  // the thumbnail of an older version
+            if (old.path().filename().string().rfind(std::string(name) + "-", 0) == 0) std::filesystem::remove(old.path(), error);
+        }
+        asset::write_png(cache_path(e.guid, e.source_time).c_str(), kThumbnailSize, kThumbnailSize, pixels.data());
+    }
 }
 
 void ThumbnailCache::render(const f32 background[4], u32 budget) {
@@ -47,8 +105,10 @@ void ThumbnailCache::render(const f32 background[4], u32 budget) {
         if (budget == 0) break;
         if (e.ready || e.failed) continue;
         if (const asset::AssetRecord* r = registry_.find(e.guid)) e.source_time = r->source_time;  // also on failure: retry only after a change
+        if (load_cached(e, e.source_time)) continue;  // another start saved this version already
         e.failed = !render_one(e, background);
         e.ready = !e.failed;
+        e.save = e.ready;
         rendered = true;
         --budget;
     }
@@ -66,6 +126,11 @@ bool ThumbnailCache::render_one(Entry& entry, const f32 background[4]) {
     const render::GpuMesh mesh = render::upload_mesh(device_, data);
     render::free_mesh(allocator_, data);
     temporaries_.push_back(mesh);  // the GPU reads it this frame; freed next frame
+    if (entry.from_disk) {  // a cached picture of an older version: render into a target now
+        device_.destroy_texture(entry.texture);
+        entry.texture = {};
+        entry.from_disk = false;
+    }
     if (!entry.texture.valid()) entry.texture = device_.create_render_target(kThumbnailSize, kThumbnailSize);
     if (!entry.texture.valid()) return false;
 

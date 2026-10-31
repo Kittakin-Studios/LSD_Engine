@@ -1,9 +1,11 @@
 #pragma once
-// Content Browser thumbnails: each mesh asset rendered once into a small render target.
-// shortcut: kept in GPU memory only; save them next to DerivedData when projects get large.
+// Content Browser thumbnails: each mesh asset rendered once into a small render target, then saved
+// to DerivedData/Thumbnails/<guid>-<source time>.png so the next editor start loads it instead.
 #include "lsd/asset/asset_registry.h"
 #include "lsd/foundation/array.h"
 #include "lsd/render/mesh.h"
+
+#include <string>
 
 namespace lsd::editor {
 
@@ -32,9 +34,13 @@ private:
         i64 source_time = 0;
         bool ready = false;
         bool failed = false;
+        bool from_disk = false;  // `texture` is a plain texture loaded from the cache, not a render target
+        bool save = false;       // rendered this frame: read back and saved before the next one
     };
 
     bool render_one(Entry& entry, const f32 background[4]);
+    bool load_cached(Entry& entry, i64 source_time);
+    std::string cache_path(asset::Guid guid, i64 source_time) const;
 
     rhi::Device& device_;
     Allocator& allocator_;
