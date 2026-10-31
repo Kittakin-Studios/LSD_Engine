@@ -461,6 +461,22 @@ button:focus, button:hover { background-color: #EEA70E; }
 - Show it from Lua (`local doc = lsd.ui_open("UI_HUD")`) or as the Game Mode's HUD.
 - Change it: `lsd.ui_set_text(doc, "score", 1250)`, `lsd.ui_set(doc, "bar", "style", "width: 40%")`.
 - **Events**: `onclick="start_game"` calls `start_game(self, element_id)` in every script that has it.
+- **The document's own script** (a Widget Blueprint's event graph, in JavaScript): put `Menu.js` next
+  to `Menu.rml`. It runs when the document opens; its functions answer the document's events before
+  Lua does, so UI-only logic (tabs, toggles, text) stays with the UI:
+
+  ```js
+  function onOpen() { ui.setText("title", "Ready?"); }      // runs once the document is up
+  function start_game(id) {
+    ui.setText(id, "Loading...");
+    ui.send("begin_level", id);   // passes it on to Lua: begin_level(self, element_id)
+    ui.close();                   // closes this document
+  }
+  ```
+
+  `ui.setText(id, text)`, `ui.setAttribute(id, name, value)`, `ui.setProperty(id, name, value)`,
+  `ui.value(id)`, `ui.close()`, `ui.send(action, id)`, `console.log(...)` / `console.error(...)`.
+  A function that runs over half a second is stopped (an endless loop cannot freeze the game).
 - **Menus**: `lsd.ui_show_cursor(true)` frees the mouse for the UI. Arrow keys / D-pad move the
   focus between elements with `nav: auto`; Enter / Space / gamepad A press it.
 - **Over objects**: `lsd.ui_follow(doc, "tag", enemy, 2.2)` keeps an element above an object.

@@ -1,5 +1,7 @@
 #include "lsd/ui/ui.h"
 
+#include "ui_script.h"
+
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
 
@@ -248,6 +250,7 @@ void set_translator(Translator translator, void* user) {
 }
 
 void shutdown() {
+    shutdown_scripts();
     if (!g_render) return;
     Rml::Shutdown();
     delete g_instancer;
@@ -272,6 +275,7 @@ struct UiContext::Impl {
         Rml::String text;  // a document in memory with `path` as its base
     };
     std::vector<Source> sources;  // what each document was opened from (reload_all)
+    std::vector<DocumentScript*> scripts;  // by DocumentId: its .js, or nullptr
     ActionHandler actions = nullptr;
     void* user = nullptr;
     f32 viewport[4] = {0, 0, 1, 1};
@@ -291,6 +295,12 @@ struct UiContext::Impl {
         documents.push_back(doc);
         return static_cast<DocumentId>(documents.size() - 1);
     }
+    void attach_script(UiContext& ui, DocumentId d, const char* document_path) {
+        if (scripts.size() < documents.size()) scripts.resize(documents.size(), nullptr);
+        delete scripts[d];
+        scripts[d] = DocumentScript::load(script_path_for(document_path), ui, d);
+        if (scripts[d] && scripts[d]->close_requested) ui.close(d);  // onOpen() closed it
+    }
 };
 
 namespace {
@@ -301,12 +311,18 @@ void ActionListener::ProcessEvent(Rml::Event& event) {
     if (!g_contexts || found == g_contexts->end()) return;
     UiContext& ui = *found->second.first;
     UiContext::Impl& impl = *found->second.second;
-    if (!impl.actions) return;
     DocumentId doc = -1;
     for (usize i = 0; i < impl.documents.size(); ++i) {
         if (impl.documents[i] && impl.documents[i] == target->GetOwnerDocument()) doc = static_cast<DocumentId>(i);
     }
-    impl.actions(impl.user, ui, doc, action_.c_str(), target->GetId().c_str());
+    // The document's own script first (Menu.js), then the game's Lua.
+    DocumentScript* script = doc >= 0 && static_cast<usize>(doc) < impl.scripts.size() ? impl.scripts[doc] : nullptr;
+    if (script && script->has(action_.c_str())) {
+        script->call(action_.c_str(), target->GetId().c_str());
+        if (script->close_requested) ui.close(doc);
+        return;
+    }
+    if (impl.actions) impl.actions(impl.user, ui, doc, action_.c_str(), target->GetId().c_str());
 }
 } // namespace
 
@@ -316,6 +332,7 @@ UiContext::UiContext(const char* name) : impl_(new Impl()) {
 }
 
 UiContext::~UiContext() {
+    for (DocumentScript* s : impl_->scripts) delete s;
     if (impl_->context) {
         g_contexts->erase(impl_->context);
         Rml::RemoveContext(impl_->context->GetName());
@@ -333,6 +350,7 @@ DocumentId UiContext::open(const char* path) {
     if (d >= 0) {
         impl_->sources.resize(impl_->documents.size());
         impl_->sources[d] = {path, ""};
+        impl_->attach_script(*this, d, path);
     }
     return d;
 }
@@ -342,6 +360,7 @@ DocumentId UiContext::open_text(const char* rml, const char* base_path) {
     if (d >= 0) {
         impl_->sources.resize(impl_->documents.size());
         impl_->sources[d] = {base_path, rml};
+        impl_->attach_script(*this, d, base_path);
     }
     return d;
 }
@@ -355,13 +374,22 @@ void UiContext::reload_all() {
         Rml::ElementDocument* doc = s.text.empty() ? impl_->context->LoadDocument(s.path) : impl_->context->LoadDocumentFromMemory(s.text, s.path);
         if (doc) doc->Show();
         impl_->documents[i] = doc;
+        if (doc) impl_->attach_script(*this, static_cast<DocumentId>(i), s.path.c_str());
     }
+}
+
+void UiContext::send_action(DocumentId d, const char* action, const char* element_id) {
+    if (impl_->actions) impl_->actions(impl_->user, *this, d, action, element_id);
 }
 
 void UiContext::close(DocumentId d) {
     if (d < 0 || static_cast<usize>(d) >= impl_->documents.size() || !impl_->documents[d]) return;
     impl_->documents[d]->Close();
     impl_->documents[d] = nullptr;
+    if (static_cast<usize>(d) < impl_->scripts.size()) {
+        delete impl_->scripts[d];
+        impl_->scripts[d] = nullptr;
+    }
 }
 
 void UiContext::close_all() {

@@ -15,4 +15,5 @@ Fetched by `CMakeLists.txt` at configure time, pinned to a tag. Only permissive 
 | Recast & Detour (recastnavigation) | v1.6.0 | zlib | navmesh, path finding, crowd avoidance |
 | FreeType | VER-2-13-3 | FreeType Licence (BSD-style) | font rasterising for game UI |
 | RmlUi | 6.0 | MIT | game UI: HTML / CSS documents |
+| QuickJS-ng | v0.16.2 | MIT | JavaScript for UI documents' scripts |
 | Tracy | v0.11.1 | BSD-3-Clause | CPU profiler client, only with -DLSD_TRACY=ON |

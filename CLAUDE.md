@@ -68,8 +68,8 @@ before linking `lsd_editor.exe` (the exe is locked while it runs).
 | Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
 | Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
-| UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); QuickJS still to come |
-| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, Tracy (optional) |
+| UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); a document's own `.js` runs on QuickJS-ng (`engine/ui/src/ui_script.*`) |
+| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
 
 ## Editor look
 
@@ -124,14 +124,15 @@ comments for the *why*. A known limitation gets `// shortcut: <limit>, <when to 
 | 3 | Editor shell: viewport, gizmos, Outliner, Details, undo, Play-in-Editor | Done (smaller items open) |
 | 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Exit test works |
 | 5 | Content editors: materials + material graphs, animation + anim graphs, audio, particles | Exit test works |
-| 6 | Vertical slice | Exit test works on this PC (package runs from another folder) |
+| 6 | Vertical slice | Done: exit test works on this PC (package runs from another folder); every planned item in, some partial (BACKLOG [~]) |
 
 Milestone 6 has: packaging + game mode, save games, sky / height fog / post-process volume, navmesh +
 Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,
-world-anchored elements, UI window with code + live preview), game user settings, localisation, crash
-reports, frustum culling, asset validation, platform settings, Tracy / `stat unit`, smoke tests.
-Post pass: bloom + FXAA (draw_post) when a Post Process Volume applies.
-Post also has SSAO, TAA and depth of field.
-Build > Build Lighting bakes light probes (`editor/light_bake.*`).
-Still open (see BACKLOG): lightmap textures,
-QuickJS, remote console to other machines, Perforce / LFS locking.
+world-anchored elements, the UI window with a designer canvas, documents' own JavaScript on
+QuickJS-ng), game user settings with key rebinding, localisation, crash reports, frustum culling, auto
+LODs, asset validation, platform settings, Tracy / `stat unit`, smoke tests, Git source control in the
+Content Browser, a remote console (`-remote`), video-memory scaling.
+Post pass (draw_post, when a Post Process Volume applies): SSAO, TAA, depth of field, bloom, ACES,
+grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).
+Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
+LFS locking, UI resize handles and data bindings, per-mesh LOD screen sizes.

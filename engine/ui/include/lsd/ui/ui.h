@@ -7,7 +7,9 @@
 // also there as "sans", so a document always has something to draw text with.
 //
 // Events: an inline attribute such as onclick="start_game" (also onchange, onsubmit, onmouseover...)
-// calls the context's action handler with "start_game", which the game sends to Lua.
+// calls the context's action handler with "start_game", which the game sends to Lua. A document
+// can also have its own JavaScript beside it (Menu.rml + Menu.js, QuickJS): its functions answer
+// first; see src/ui_script.h for its API.
 #include "lsd/rhi/rhi.h"
 
 union SDL_Event;
@@ -60,6 +62,9 @@ public:
     bool element_at(f32 x, f32 y, char* element_id, usize capacity) const;
     bool element_box(DocumentId document, const char* element_id, f32 box[4]) const;
     bool get_property(DocumentId document, const char* element_id, const char* name, char* out, usize capacity) const;
+
+    // An action as if an element's on<event> fired it (a document script's ui.send): to the handler.
+    void send_action(DocumentId document, const char* action, const char* element_id);
 
     // Gamepad / keyboard menus: move the focus (RCSS nav: auto) and press the focused element.
     void navigate(i32 dx, i32 dy);

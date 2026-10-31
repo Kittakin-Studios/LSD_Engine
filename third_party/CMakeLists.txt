@@ -280,6 +280,26 @@ FetchContent_Declare(rmlui
 )
 FetchContent_MakeAvailable(rmlui)
 
+# QuickJS-ng (MIT): JavaScript for UI documents' own scripts. Built from its C sources only (no
+# libc module, no tools); the maintained fork, which builds with MSVC.
+FetchContent_Declare(quickjs
+  GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
+  GIT_TAG v0.16.2
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(quickjs)
+add_library(quickjs STATIC ${quickjs_SOURCE_DIR}/dtoa.c ${quickjs_SOURCE_DIR}/libregexp.c ${quickjs_SOURCE_DIR}/libunicode.c ${quickjs_SOURCE_DIR}/quickjs.c)
+set_target_properties(quickjs PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+target_include_directories(quickjs SYSTEM PUBLIC ${quickjs_SOURCE_DIR})
+target_compile_definitions(quickjs PRIVATE _GNU_SOURCE $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601 _CRT_SECURE_NO_WARNINGS>)
+if(MSVC)
+  target_compile_options(quickjs PRIVATE /w /experimental:c11atomics)
+else()
+  target_compile_options(quickjs PRIVATE -w)
+  target_link_libraries(quickjs PUBLIC m)
+endif()
+
 # Tracy: the CPU profiler client (BSD-3), only with -DLSD_TRACY=ON (it listens on a network port).
 if(LSD_TRACY)
   set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)  # costs nothing until the profiler connects
