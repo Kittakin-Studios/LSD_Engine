@@ -367,6 +367,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
     start_game_mode(world);  // may spawn the player and a GameMode object first
+    if (world.settings().level_script[0]) {  // the Level Blueprint: a script on an object of its own
+        std::snprintf(world.add<world::Script>(world.create("LevelScript"))->script, sizeof(world::Script::script), "%s", world.settings().level_script);
+    }
 
     // Level geometry is static; RigidBody objects are simulated.
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {

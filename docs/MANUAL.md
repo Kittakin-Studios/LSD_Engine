@@ -356,6 +356,10 @@ The full `lsd` API is listed in [section 19](#lua-api).
 
 ## 10. Visual scripting
 
+**Level script** (Unreal's Level Blueprint): Window > World Settings > **Level Script** picks a
+visual script (or Lua file) that belongs to the level: Event Start, Custom Events, timers for that
+level's one-off moments. It runs on an object named LevelScript while the level plays.
+
 **New Visual Script** makes a Blueprint-style event graph. White exec wires set the order; coloured
 wires carry values. **Save + Compile** (Ctrl+S) turns it into Lua; pick the graph on a Script
 component exactly like a `.lua` file. Playing objects pick up changes within half a second.
