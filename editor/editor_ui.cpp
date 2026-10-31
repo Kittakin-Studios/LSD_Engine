@@ -13,6 +13,7 @@
 
 #include "mesh_cache.h"
 #include "debug_draw.h"
+#include "references.h"
 #include "remote_console.h"
 #include "source_control.h"
 #include "thumbnails.h"
@@ -53,6 +54,7 @@ namespace lsd::editor {
 namespace {
 
 bool asset_selected(const EditorState& s, asset::Guid g);
+extern ReferenceIndex g_references;
 void find_in_content_browser(EditorState& s, asset::Guid guid);
 
 using world::Entity;
@@ -2280,6 +2282,31 @@ void draw_file_dialogs(EditorState& s) {
         const bool many = r && s.asset_selection_count > 1 && asset_selected(s, s.delete_asset);
         if (many) ImGui::Text("Delete the %u selected assets?\nObjects using them in levels will show nothing.", s.asset_selection_count);
         else if (r) ImGui::Text("Delete Content/%s?\nObjects using it in levels will show nothing.", r->path);
+        if (r && ImGui::IsWindowAppearing()) g_references.build(*s.registry);
+        if (r) {  // what still uses it (Unreal warns the same way)
+            std::vector<std::string> users;
+            for (u32 k = 0; k < (many ? s.asset_selection_count : 1u); ++k) {
+                char g[33];
+                asset::to_string(many ? s.asset_selection[k] : s.delete_asset, g);
+                for (std::string& u : g_references.used_by(g)) {
+                    asset::Guid ug;
+                    asset::parse_guid(u.c_str(), ug);
+                    bool doomed = false;  // assets being deleted together do not count
+                    for (u32 j = 0; j < s.asset_selection_count && many; ++j) doomed = doomed || s.asset_selection[j] == ug;
+                    if (!doomed) users.push_back(std::move(u));
+                }
+            }
+            if (!users.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Still used by %zu asset%s:", users.size(), users.size() == 1 ? "" : "s");
+                for (size_t k = 0; k < users.size() && k < 8; ++k) {
+                    asset::Guid ug;
+                    asset::parse_guid(users[k].c_str(), ug);
+                    const asset::AssetRecord* user = s.registry->find(ug);
+                    ImGui::BulletText("%s", user ? user->path : users[k].c_str());
+                }
+                if (users.size() > 8) ImGui::BulletText("... and %zu more", users.size() - 8);
+            }
+        }
         else ImGui::Text("Delete the empty folder Content/%s?", s.delete_folder);
         if (ImGui::Button("Delete")) {
             char error[200] = "";
@@ -2484,6 +2511,110 @@ u32 collection_names(const EditorState& s, const char* out[64]) {
         if (!seen && n < 64) out[n++] = e.collection;
     }
     return n;
+}
+
+// ---- Reference Viewer ----
+ReferenceIndex g_references;
+std::string g_reference_target;  // the asset shown in the middle
+bool g_reference_open = false;
+
+void open_reference_viewer(EditorState& s, asset::Guid guid) {
+    g_references.build(*s.registry);
+    char text[33];
+    asset::to_string(guid, text);
+    g_reference_target = text;
+    g_reference_open = true;
+}
+
+// An asset row: its name and type (or "Missing"), click to centre the viewer on it.
+void reference_row(EditorState& s, const std::string& guid, bool missing_ok) {
+    asset::Guid g;
+    asset::parse_guid(guid.c_str(), g);
+    const asset::AssetRecord* r = s.registry->find(g);
+    ImGui::PushID(guid.c_str());
+    if (!r) {
+        if (!missing_ok) {
+            ImGui::PopID();
+            return;
+        }
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "Missing %s", guid.c_str());
+        ImGui::SameLine();
+        const asset::AssetRecord* pick = s.selected_asset.valid() ? s.registry->find(s.selected_asset) : nullptr;
+        ImGui::BeginDisabled(!pick);
+        if (ImGui::SmallButton("Replace with selected")) {  // fix a broken reference with the Content Browser's selection
+            char to[33];
+            asset::to_string(pick->guid, to);
+            const u32 n = replace_references(*s.registry, guid, to);
+            std::snprintf(s.status, sizeof s.status, "Replaced a missing asset with %s in %u file%s (reopen the level to see it)", pick->name, n, n == 1 ? "" : "s");
+            s.registry->scan();
+            g_references.build(*s.registry);
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Points every reference to this missing asset at the asset selected in the Content Browser");
+    } else {
+        char label[160];
+        const char* type = r->type == asset::AssetType::Data && r->data_type[0] ? r->data_type : asset::to_string(r->type);
+        std::snprintf(label, sizeof label, "%s  (%s)", r->name, type);
+        if (ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) find_in_content_browser(s, r->guid);
+            else g_reference_target = guid;
+        }
+        ImGui::SetItemTooltip("Content/%s\nClick: show its references. Double-click: find it in the Content Browser", r->path);
+    }
+    ImGui::PopID();
+}
+
+void draw_reference_viewer(EditorState& s) {
+    if (!g_reference_open || !s.registry) return;
+    ImGui::SetNextWindowSize(ImVec2(820, 420), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Reference Viewer", &g_reference_open)) {
+        ImGui::End();
+        return;
+    }
+    asset::Guid target;
+    asset::parse_guid(g_reference_target.c_str(), target);
+    const asset::AssetRecord* r = s.registry->find(target);
+    if (ImGui::Button("Refresh")) g_references.build(*s.registry);
+    ImGui::SameLine();
+    if (!r) {
+        ImGui::TextDisabled("The asset is gone.");
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("%s  -  Content/%s", r->name, r->path);
+    const auto& uses = g_references.uses(g_reference_target);
+    const auto used_by = g_references.used_by(g_reference_target);
+    const asset::AssetRecord* pick = s.selected_asset.valid() && s.selected_asset != target ? s.registry->find(s.selected_asset) : nullptr;
+    ImGui::BeginDisabled(!pick || used_by.empty());
+    char replace[200];
+    std::snprintf(replace, sizeof replace, "Replace its %zu reference%s with %s", used_by.size(), used_by.size() == 1 ? "" : "s", pick ? pick->name : "the selected asset");
+    if (ImGui::Button(replace) && pick) {  // Unreal's Replace References / Consolidate
+        char to[33];
+        asset::to_string(pick->guid, to);
+        const u32 n = replace_references(*s.registry, g_reference_target, to);
+        std::snprintf(s.status, sizeof s.status, "%s now used instead of %s in %u file%s (reopen the level to see it)", pick->name, r->name, n, n == 1 ? "" : "s");
+        s.registry->scan();
+        g_references.build(*s.registry);
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Every asset that uses this one uses the Content Browser's selected asset instead (then this one can be deleted)");
+    ImGui::Separator();
+    if (ImGui::BeginTable("refs", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY)) {
+        char heading[64];
+        std::snprintf(heading, sizeof heading, "Used by (%zu)", used_by.size());
+        ImGui::TableSetupColumn(heading);
+        std::snprintf(heading, sizeof heading, "Uses (%zu)", uses.size());
+        ImGui::TableSetupColumn(heading);
+        ImGui::TableHeadersRow();
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        for (const std::string& g : used_by) reference_row(s, g, false);
+        if (used_by.empty()) ImGui::TextDisabled("Nothing: safe to delete");
+        ImGui::TableNextColumn();
+        for (const std::string& g : uses) reference_row(s, g, true);
+        ImGui::EndTable();
+    }
+    ImGui::End();
 }
 
 char g_new_collection[48] = "";
@@ -2817,6 +2948,7 @@ void draw_asset_grid(EditorState& s) {
             }
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
             if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
+            if (ImGui::MenuItem("Reference Viewer...")) open_reference_viewer(s, r.guid);
             if (ImGui::MenuItem("Duplicate")) duplicate_asset(s, r);
             if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Texture || r.type == asset::AssetType::Sound) && ImGui::MenuItem("Reimport")) {
                 for (u32 k = 0; k < s.asset_selection_count; ++k) {
@@ -3625,6 +3757,7 @@ void draw_editor(EditorState& s) {
     if (s.particle_editor) s.particle_editor->draw(s);
     source_control::draw();
     remote::draw_window(&s.show_remote_console);
+    draw_reference_viewer(s);
     draw_memory_window(s);
     draw_ui_editor(s);
     handle_shortcuts(s);

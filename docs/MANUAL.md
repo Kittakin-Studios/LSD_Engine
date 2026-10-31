@@ -152,6 +152,12 @@ Collections). Both appear above the folder tree. Right-click an asset > **Duplic
 with its import settings; **Reimport** reads the source file again. In the Outliner, right-click an
 object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 
+**References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
+(click to follow, double-click to find in the Content Browser). Deleting warns about anything that
+still uses the asset. A missing reference shows in red with **Replace with selected**; **Replace its
+references with...** points everything at the asset selected in the Content Browser instead
+(Unreal's Replace References). Reopen the level afterwards to see the change.
+
 **Source control** (Unreal's Source Control, Git only). When the project folder is a Git repository,
 asset tiles get a badge: yellow **M** changed, green **A** new, blue **R** renamed (the `.meta`
 counts too). Right-click an asset > **Source Control**: **History** (its last 50 commits), **Diff

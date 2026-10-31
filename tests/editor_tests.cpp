@@ -1,5 +1,11 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "light_bake.h"
+#include "references.h"
+
+#include "lsd/asset/asset_registry.h"
+
+#include <filesystem>
+#include <fstream>
 #include "rml_edit.h"
 #include "sound_cue.h"
 #include "transactions.h"
@@ -150,8 +156,35 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
 }
 
+static void test_references() {  // Reference Viewer: who uses what, and Replace References
+    using namespace lsd;
+    CHECK(editor::find_guids("x 0123456789abcdef0123456789ABCDEF y 0123").size() == 1);
+    CHECK(editor::find_guids("00112233445566778899aabbccddeeff0").empty());  // 33 digits is not a GUID
+    const std::filesystem::path dir = std::filesystem::path(LSD_TEST_TEMP_DIR) / "RefContent";
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+    std::filesystem::create_directories(dir, error);
+    for (const char* name : {"A", "B", "C"}) std::ofstream(dir / (std::string(name) + ".lsdlevel")) << "{}";
+    asset::AssetRegistry registry(default_allocator(), dir.generic_string().c_str());
+    registry.scan();
+    char a[33] = "", b[33] = "", c[33] = "";
+    for (usize i = 0; i < registry.count(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        asset::to_string(r.guid, std::strcmp(r.name, "A") == 0 ? a : std::strcmp(r.name, "B") == 0 ? b : c);
+    }
+    std::ofstream(dir / "A.lsdlevel") << "{\"mesh\": \"" << b << "\", \"gone\": \"ffffffffffffffffffffffffffffffff\"}";
+    editor::ReferenceIndex index;
+    index.build(registry);
+    CHECK(index.uses(a).size() == 2 && index.used_by(b).size() == 1 && index.used_by(b)[0] == a && index.used_by(c).empty());
+    CHECK(editor::replace_references(registry, b, c) == 1);
+    index.build(registry);
+    CHECK(index.used_by(b).empty() && index.used_by(c).size() == 1);
+    std::filesystem::remove_all(dir, error);
+}
+
 int main() {
     test_undo_redo();
+    test_references();
     test_light_bake();
     test_rml_edit();
     test_sound_cue();

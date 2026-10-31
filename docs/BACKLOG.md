@@ -52,7 +52,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [x] Autosave and crash recovery: asks to save on quit, autosaves unsaved levels to Saved/Autosaves (default every 5 min), offers to restore after a crash
 - [x] Duplicate (Ctrl+D, Alt+drag with the gizmo), Cut / Copy / Paste (Ctrl+X/C/V) as level text, also between levels and to a text editor
 - [x] Groups: Ctrl+G puts the selection under a new "Group" empty, Shift+G ungroups [Group Actors]
-- [ ] Reference Viewer and dependency lists; "used by" before delete; fix broken references [Reference Viewer]
+- [x] Reference Viewer and dependency lists; "used by" before delete; fix broken references [Reference Viewer]: right-click > Reference Viewer (Used by / Uses, from the GUIDs in text assets and .meta files), Delete lists what still uses the asset, missing references "Replace with selected", Replace References to swap one asset for another everywhere
 
 ### Viewport
 
