@@ -1,210 +1,133 @@
 # CLAUDE.md — LSD_Engine briefing
 
-Read this first. It summarises every decision made so far for LSD_Engine.
+Read this first. It is the short, current summary of how LSD_Engine is built and how to work on it.
+The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to use the engine),
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
+examples), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
 
 ## What this is
 
-**LSD_Engine** is a proprietary 3D game engine by **Kittakin Studios** (owner: Charlize Pauli).
-It is inspired by the *public ideas* behind Bitsquid/Stingray (data-oriented, data-driven, Lua
-gameplay) but has an **editor-first workflow like Unreal Engine**: designers import a file, find it
-in the Content Browser, open it in its own editor and wire it up by clicking. Code is only for new
-behaviour, never for hooking up content.
+**LSD_Engine** is a proprietary 3D game engine by **Kittakin Studios** (owner: Charlize Pauli). It
+takes the *public ideas* behind Bitsquid/Stingray (data-oriented, data-driven, Lua gameplay) and gives
+them an **editor-first workflow like Unreal Engine**: import a file, find it in the Content Browser,
+open it in its own editor, wire it up by clicking. Code is for new behaviour, never for hooking up content.
 
-- Repo: `github.com/Kittakin-Studios/LSD_Engine` (private)
-- License: **Proprietary, all rights reserved** (see `LICENSE`). Never add GPL code; LGPL only as a
-  separately linked library. Third-party code goes in `third_party/` with its licence file.
-- Full plan doc (architecture, feature spec, editor look, roadmap):
-  https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW
+- Repo: `github.com/Kittakin-Studios/LSD_Engine` (private). Work happens on branch `milestone-1`.
+- License: **proprietary, all rights reserved** (`LICENSE`). Never add GPL code; LGPL only as a
+  separately linked library. Third-party code is fetched by `third_party/CMakeLists.txt`, pinned, and
+  listed with its licence in `third_party/README.md` (MIT / BSD / zlib / FreeType licence only).
+- Plan doc (architecture, spec, editor look, roadmap): <https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW>
 
 ## Hard rule: clean room
 
 Read `docs/CLEAN_ROOM.md`. Never use Stingray/Bitsquid binaries, decompiled output, leaked source,
-licensee-only docs, or code shown on screen in talks/videos (Niklas Gray's YouTube Stingray
-walkthroughs show proprietary source — ideas only). Use our own names, formats and APIs.
+licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own names, formats and APIs.
 
-## Developer environment
+## Working with Charlize
 
-- Windows, AMD Ryzen 7 7800X3D (16 threads, AVX2 + AVX-512), 31 GiB RAM
-- Repo at `E:\LSD_Engine\LSD_Engine` (repo root = project root)
-- VS Code + CMake Tools + C/C++ extensions, MSVC compiler, preset **`windows-msvc`**
-  (Ninja Multi-Config). Also builds on Linux with preset `linux-clang`.
-- Build: `cmake --preset windows-msvc` → `cmake --build --preset windows-msvc`
-- Run game: `build\windows-msvc\runtime\Debug\lsd_runtime.exe [-rhi=d3d12|vulkan|opengl] [-gpu=<n>]`
-- Run editor: `build\windows-msvc\editor\Debug\lsd_editor.exe` (same flags)
-- Tests: `ctest --preset windows-msvc`
-
-## How Charlize likes to work
-
-- Concise, direct answers. Step-by-step instructions for anything in the IDE or terminal.
-- She debugs by sharing screenshots — ask for one when something fails.
-- She is an experienced Unreal 5 developer and technical artist; map new concepts to their
-  Unreal equivalents (Content Browser, Details panel, Blueprints, UMG, Niagara, Sequencer…).
+- Concise, direct answers; step-by-step instructions for anything in the IDE or terminal.
+- She debugs by sharing screenshots: ask for one when something fails.
+- She is an experienced Unreal 5 developer and technical artist: map every concept to its Unreal
+  equivalent (Content Browser, Details, Blueprints, UMG, Niagara, Sequencer...).
 - Keep this engine separate from her other game projects.
+- Commit and push after each finished chunk (explicit pathspecs, message ends with the
+  `Co-Authored-By` line); `gh` is not logged in, so no pull requests.
+
+## Build, run, test
+
+- Windows, MSVC, VS Code + CMake Tools, preset **`windows-msvc`** (Ninja Multi-Config). Linux: `linux-clang`.
+- `cmake --preset windows-msvc` then `cmake --build --preset windows-msvc` (Debug);
+  Release: `cmake --build --preset windows-msvc --config Release` (packaging uses it).
+- Tests: `ctest --preset windows-msvc` (14 suites, framework-free, in `tests/`). Keep them passing.
+- Editor: `build\windows-msvc\editor\Debug\lsd_editor.exe`. The same exe is the game (`-game`, or a
+  folder with `game.json` from File > Package Project).
+- Both Debug and Release build with **0 warnings**; keep it that way (`/W4`, `-Wall -Wextra -Wpedantic
+  -Wshadow -Wconversion`). Third-party code gets its warnings silenced where it is built.
+
+**Automated runs must be silent**: always pass `-nosound` (test audio once reached her speakers).
+Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
+(quit after n frames), `-screenshot=<n>` (OpenGL: Saved/screenshot.bmp; does not quit by itself),
+`-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
+(repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged).
+Test-only console commands: `ui.Click x y`, `ui.Keys down enter` (real SDL events, 0.8 s later),
+`debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
+
+Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
+`\n` / `\0` escapes); the scratchpad has `build.bat` (configure + build + ctest), `build_editor.bat`,
+`build_target.bat <targets>`, `build_release.bat`, `configure.bat`. Close Charlize's running editor
+before linking `lsd_editor.exe` (the exe is locked while it runs).
 
 ## Key decisions
 
 | Area | Decision |
 | --- | --- |
-| Language | C++20 runtime and tools; LuaJIT for gameplay; visual scripting (Blueprint-like) generated from the same reflection layer |
-| Graphics | One RHI interface, three backends: **Direct3D 12** (Windows default), **Vulkan 1.3** (Linux/Steam Deck), **OpenGL 4.6** (fallback). Shaders in HLSL → DXIL / SPIR-V / GLSL (SPIRV-Cross) |
-| GPU vendors | NVIDIA, AMD, Intel via standard drivers. Game compute = D3D12/Vulkan compute shaders. **CUDA / ROCm(HIP)** only as optional plugins for editor/offline tools (baking, denoising, ML), never required by the shipped game |
-| Scaling | Auto-select best GPU (discrete > integrated, VRAM, features); read live VRAM budget (`QueryVideoMemoryInfo` / `VK_EXT_memory_budget`) and system RAM; size texture streaming, shadows and render targets to the budget; degrade quality instead of crashing; auto Low/Medium/High/Epic preset; job workers = logical cores − 1; SIMD chosen at runtime |
-| Architecture | Data-oriented: entities are handles, components live in SoA managers, systems loop over arrays. Data compiler turns text source into binary blobs; hot reload everywhere |
-| Editor foundation | Reflection (code generator from C++ annotations) → Details panel, serialization, undo, visual-script nodes and Lua bindings all generated. Asset registry with GUIDs, safe renames, reference viewer. Transactions for undo/redo. Editor-only data stripped at packaging |
-| UI system | UMG-style widget designer **plus** HTML/CSS/JS: a Code tab with HTML, CSS and JS editors kept in two-way sync with the designer. Rich text accepts inline HTML/CSS. Responsive via anchors, flexbox, media queries, DPI curve, safe zones. Runtime: **RmlUi + QuickJS** (both MIT); Ultralight is the alternative if full web compatibility is ever needed |
-| Libraries | SDL3 (window/input), Jolt (physics), ozz-animation, miniaudio, Recast/Detour, ufbx + cgltf + meshoptimizer (import), RmlUi + QuickJS (game UI), Dear ImGui (debug/editor v1), Tracy (profiling) |
-| Lighting | Directional, point, spot, rect (area), disc/sphere area, sky light, emissive; physical units (lux, lumens, candela, Kelvin); IES profiles; light functions; mobility Static/Stationary/Movable; LTC for area lights; baked GI + probes in v1, dynamic GI in v2; volumetric fog; post-process volumes |
+| Language | C++20 engine and editor; LuaJIT gameplay; visual scripts compiled to Lua |
+| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (UI only until the Vulkan SDK is installed). Built-in shaders are HLSL + a GLSL mirror kept in step |
+| Architecture | Data-oriented: entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets, hot reload everywhere |
+| Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
+| World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
+| Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
+| UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; QuickJS and the designer canvas still to come |
+| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, Tracy (optional) |
 
-## Editor look (default layout)
+## Editor look
 
-Large **3D viewport** top-left (near-black `#0D0404`, perspective grid floor with a major line every
-5 units, red X / green Y axis lines, axis gizmo bottom-left, toolbar: Perspective, Lit, Show, Grid).
-**Outline/Hierarchy** panel top-right (striped rows `#3C3838` / `#242855`, per-type text colours,
-yellow scroll thumb `#FFE51A`). **Details / World Partition** bottom-right (gold active tab `#F3C312`,
-rows `#596CC1` / `#3C3838`). **Content Browser** along the bottom (orange tab `#EEA70E`, blue bar
-`#025291`, area `#2D2D30`, folder tree black with lime border `#9BE11F`, yellow text `#FBF800`).
-All colours live in a theme asset. Fix contrast before shipping: folder text on tan row, prefab
-blue `#0040FF` → `#5C8DFF`, VFX orange on red → `#FFC266`.
+3D viewport top-left (near-black `#0D0404`, grid, red X / green Y axes, axis gizmo bottom-left);
+Outliner top-right (rows `#3C3838` / `#242855`, yellow scroll thumb `#FFE51A`); Details / World
+Partition bottom-right (gold active tab `#F3C312`, rows `#596CC1` / `#3C3838`); Content Browser along
+the bottom (orange tab `#EEA70E`, blue bar `#025291`, folder tree black with lime border `#9BE11F`,
+yellow text `#FBF800`). All colours come from the theme asset (`Config/`).
 
 ## Repository layout
 
-```
-engine/foundation/  types, logging, asserts, heap + arena allocators, generational handles,
-                    constexpr hashed IDs (FNV-1a 64), system info (CPU, cores, SIMD, RAM)
-engine/core/        job system (worker threads, counters, wait-by-helping), console variables/commands
-engine/reflect/     reflection tables (LSD_STRUCT/LSD_PROPERTY/LSD_GENERATED), JSON save/load,
-                    save_file/load_file, LinearColor (Color flag -> colour picker)
-engine/debug_ui/    ImGui Details panel generated from TypeInfo (runtime overlay + editor v1)
-engine/render/      mesh data, built-in shapes, GPU upload, grid lines
-engine/asset/       GUIDs, .meta sidecars, AssetRegistry, FBX/glTF import, .lsdmesh compiled format
-engine/rhi/         RHI interface, adapter scoring/selection, quality presets, create_device();
-                    backends/d3d12, backends/vulkan, backends/opengl (each also renders ImGui)
-engine/world/       entities (generational handles), packed component pools per reflected type,
-                    hierarchy, built-in components (Transform, StaticMesh, PlayerStart), .lsdlevel text files
-engine/input/       Input Action / Mapping Context data assets and the InputSystem (keys, mouse, gamepad)
-engine/physics/     Jolt behind a small API: bodies (box/sphere/capsule) and the player's CharacterVirtual
-engine/script/      LuaJIT gameplay scripts: Script component -> on_start / on_update, `lsd` API, hot reload;
-                    graph.h: visual-script graphs and their compiler to Lua; material_graph.h: material
-                    graphs compiled to shader code
-engine/animation/   ozz-animation behind SkinnedModel / Clip / Pose: FBX skin + clip import, GPU skinning matrices
-engine/audio/       miniaudio behind AudioSystem: voices, Sound Class groups, attenuation, concurrency
-engine/ai/          Recast & Detour behind NavMesh: build from triangles, find_path, crowd agents
-engine/particles/   ParticleSystem data asset (emitter stack) and its CPU simulation, sprites for rhi draw_particles
-engine/ui/          RmlUi game UI: UiContext (documents, input, actions), drawn by rhi draw_ui
-editor/             lsd_editor: level editor. Menu bar, Viewport (gizmos via ImGuizmo, picking, Unreal
-                    camera), Outliner, Details (components), Content Browser + Place, undo history
-                    (whole-level snapshots), Play-in-Editor; theme in Config/, user settings in Saved/
-tools/data_compiler/ CLI stub: --source-dir / --data-dir
-tools/reflect/      lsd_reflect_gen: header -> .gen.cpp; CMake: lsd_reflect(<target> <headers>)
-runtime/            game exe; hardware report, SDL3 window, triangle, reflected Details panel
-third_party/        fetched dependencies, pinned tags (SDL3, Dear ImGui, ImGuizmo, Vulkan-Headers, volk,
-                    ufbx, cgltf, meshoptimizer, Jolt Physics, LuaJIT built by our CMake, miniaudio, stb, ozz-animation,
-                    recastnavigation, FreeType, RmlUi)
-tests/              framework-free unit tests (CTest)
-docs/               ROADMAP.md, CLEAN_ROOM.md, BACKLOG.md (every spec feature by milestone, ticked when done)
+```text
+engine/foundation/  types, log (+ log file, error count), allocators, handles, hashed ids, system info, math,
+                    profile.h (Tracy zones when built with -DLSD_TRACY=ON)
+engine/core/        job system, console variables / commands, crash reporting (minidump + log)
+engine/reflect/     reflection tables, JSON save / load, List<T, N>, LinearColor
+engine/rhi/         RHI interface + D3D12 / OpenGL / Vulkan: meshes (PBR, skinned, material graphs),
+                    shadows, sky, particles, UI, lines, render targets
+engine/render/      mesh data, built-in shapes, grid, Material / MaterialInstance data
+engine/asset/       GUIDs, .meta, AssetRegistry, FBX / glTF import, textures, data assets, data tables,
+                    localization (string tables)
+engine/world/       World (entities, component pools, hierarchy), components.h (every component),
+                    levels, prefabs, splines, curves
+engine/input/       Input Actions, Mapping Contexts, triggers, InputSystem
+engine/physics/     Jolt: bodies, character, joints, raycasts
+engine/script/      LuaJIT ScriptSystem and the lsd API; graph.h (all node libraries: visual scripts,
+                    sound cues, materials, behaviour trees) and their compilers (Lua, shader code)
+engine/animation/   ozz: skinned models, clips, poses, blending, animation graphs
+engine/audio/       miniaudio: voices, sound classes, submixes, attenuation, concurrency, mixes
+engine/particles/   ParticleSystem data and CPU simulation
+engine/ai/          Recast & Detour navmesh + crowd; behaviour trees and blackboards
+engine/ui/          RmlUi contexts (documents, input, actions, translation)
+engine/debug_ui/    ImGui Details panel generated from reflection
+editor/             lsd_editor (also the game): main.cpp (loop, rendering), editor_ui.cpp (panels),
+                    play_session (Play: physics, scripts, AI, UI, audio), caches (mesh, texture, material,
+                    skinned), graph / particle / UI / table editors, packaging, navigation, behaviour trees
+runtime/            minimal runtime exe (hardware report, triangle); the shipped game is lsd_editor -game
+tools/              lsd_reflect_gen (reflection code generator), data_compiler
+tests/              unit tests (CTest)
+docs/               MANUAL, ARCHITECTURE, EXAMPLES, BACKLOG, ROADMAP, CLEAN_ROOM
 ```
 
-Conventions: namespace `lsd`, snake_case functions, `PascalCase` types, every system takes an
-`Allocator&`, no STL in hot paths, `LSD_LOG_*` macros, warnings as clean as possible (`/W4`,
-`-Wall -Wextra -Wpedantic -Wshadow -Wconversion`).
+Conventions: namespace `lsd`, snake_case functions, PascalCase types, systems take an `Allocator&`,
+no STL in hot paths (editor-time code may use it, marked `shortcut:`), `LSD_LOG_*` macros, one-line
+comments for the *why*. A known limitation gets `// shortcut: <limit>, <when to upgrade>`.
 
 ## Status
 
-Work is on branch `milestone-1` (not merged to `main` yet). Full checklist: `docs/BACKLOG.md`.
-
-**Milestone 0 — done.** Builds on MSVC; tests pass (Linux/Clang not re-checked since).
-
-**Milestone 1 — done.** Job system; SDL3 window; RHI with D3D12, Vulkan 1.3 (volk, dynamic
-rendering, VK_EXT_memory_budget) and OpenGL 4.6; reflection generator + JSON/binary save/load;
-runtime Details panel from reflection. Vulkan draws only clear + UI until the **Vulkan SDK** is
-installed (its DXC compiles HLSL to SPIR-V; it also brings validation layers).
-
-**Milestone 2 — done.** Renderer basics (buffers, depth, lit-mesh and line pipelines, render
-targets) on D3D12 and OpenGL; asset registry with GUID `.meta` sidecars; FBX/glTF import; compiled
-`.lsdmesh` + data compiler; editor (`lsd_editor.exe`) with themed dock layout, GPU grid viewport,
-Content Browser (thumbnails, search, import by drop, rename/move/delete, folders, drag to place),
-Outliner of placed objects, Details for the selected asset or the theme. Data assets moved to
-milestone 4, texture/audio import to milestone 5.
-
-**Milestone 3 — in progress, exit test works.** World (entities + component pools + hierarchy),
-`.lsdlevel` levels (new/open/save/save as, reopen last), move/rotate/scale gizmos with snapping,
-picking, Unreal camera controls, Outliner tree with drag-to-attach, component Details, Place panel,
-undo/redo with history, Play-in-Editor (first-person walk/jump with box collision until Jolt; pause,
-step, eject), multi-select + box select, copy/paste, ortho views, Lit/Unlit/Wireframe, Output Log +
-console (`engine/core/console`), stats, camera bookmarks, autosave + crash recovery, Blocking/Kill
-volumes, World Settings, Project Settings (`Config/project.json`), multi-edit + Reset to Default in
-Details, groups, hide/lock, Message Log, 2x2 viewport layout. Remaining milestone 3 items are in
-`docs/BACKLOG.md` (Simulate, play in new window, pivot editing, vertex snap, Reference Viewer...).
-
-**Milestone 4 — in progress, exit test works.** Reflection lists (`List<T, N>`) and Widget hints
-(`Choice:`, `Asset:<Type>`, `Key`); data assets (`.lsdasset`, `engine/asset/data_asset.h`); Enhanced
-Input-style Input Actions + Mapping Contexts (`engine/input`); Jolt physics (`engine/physics`: static
-level collision, RigidBody, CharacterVirtual); Character component possessed in Play with its input
-wired in Details. Prefabs (`.lsdprefab`, `engine/world/prefab.h`: create, place, apply, revert; no
-per-instance overrides yet). Gameplay tags (Tags component). Lua scripts (`engine/script`, LuaJIT
-built from source by third_party/CMakeLists.txt with its own minilua/buildvm tools). Lua reaches any
-component through reflection (`lsd.get/set/add`), has timers, and gets overlap events from Trigger
-Volumes. Lua can spawn
-(`lsd.spawn`), raycast and gets `on_hit`; Game Mode data asset in World Settings; third-person spring
-arm on the Character (`camera_distance`). Visual scripting:
-`.lsdgraph` node graphs edited in the Visual Script window, compiled to Lua (Saved/Graphs/<guid>.lua)
-and run by the Script component like any Lua file. Physics Joint
-component (fixed / hinge / ball / slider, limits, motors). Data tables
-(.csv assets, grid editor, `lsd.table`). Input
-triggers (Hold, Tap...). Splines + Spline Follower (moving platforms). Curves (Curve
-data asset with a graph editor, `lsd.curve`). Prefab
-per-instance overrides (PrefabInstance.overrides, Revert to Prefab). Left for later: Player Controller /
-State, Lua debugger, user-defined structs and enums.
-
-**Milestone 5 — in progress.** Audio foundation on miniaudio (`engine/audio`): Sound assets with .meta
-settings, Sound Class / Attenuation / Concurrency data assets, Sound Emitter, trigger sounds, Lua and
-node playback, `stat audio`. Sound Cues (`.lsdcue`, same graph canvas as visual scripts, evaluated by
-editor/sound_cue.cpp) and Sound Mixes (push / pop with fades). Submixes (effect chains
-on Sound Classes, incl. our own compressor node) and Audio Volumes (reverb + muffling). The audio worked
-example works except the animation notify. Rendering: textures (`engine/asset/texture.h`, stb_image),
-`rhi::Device::create_texture`, PBR mesh shading with Material data assets (`engine/render/material.h`,
-editor/material_cache), Material Instances, light components (editor/lighting.cpp -> rhi::LightSetup,
-up to 16 per frame) with World Settings exposure, cascaded sun shadows (rhi shadow maps + passes,
-cascades fitted in editor/lighting.cpp), spot / point light shadows (16-tile local atlas). Skeletal
-animation on ozz (`engine/animation`, editor/skinned_cache + animation_player, SkeletalMesh component,
-notifies). Animation graph (AnimGraph data asset: states, 1D blend spaces, transitions with
-crossfades; Character drives Speed / VerticalSpeed / InAir; `lsd.set_anim_param`). The audio exit
-test now passes fully. CPU particles (ParticleSystem data asset, ParticleEffect component, editor
-preview, alpha / additive sprites on D3D12 and OpenGL) and the Particle Editor window (preview, timeline,
-per-emitter stats). Material Graphs (`.lsdmatgraph` on the graph canvas, compiled to shader code built
-into the lit-mesh pipelines on D3D12 / OpenGL; used like a Material). The graph window previews
-materials live. Scalar / Vector Parameters set
-by Material Instances of a graph. 
-
-**Milestone 6 — in progress, exit test works on this PC.** File > Package Project (editor/packaging.cpp)
-writes Build/<Project>/ (Release exe + Content + Config + VC++ runtime + game.json); the exe in a
-folder with game.json (or `-game`) runs as the game. Save games (`lsd.save_game` / `load_game`, Save / Load Value nodes). Sky, Height Fog and Post Process Volume components
-(forward: fog / grading in the lit shader, `draw_sky`). Navmesh + Nav Agents (`engine/ai` on Recast & Detour, `lsd.move_to`). Behaviour trees (`.lsdbt`, `ai::BtRunner`, AI
-Controller with sight / hearing, live debugging in the graph window). Game UI on RmlUi (`engine/ui`, `.rml` / `.rcss`, the UI window
-with code + live preview, `lsd.ui_*`, Game Mode HUD). Next: UI designer canvas, settings, profiling.
-
-Debug flags (runtime and editor): `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation`,
-`-frames=<n>`; editor only: `-screenshot=<n>` (OpenGL, saves `Saved/screenshot.bmp`),
-`-import=<file>`, `-place=<asset name>`, `-level=<path>`, `-play`, `-select=<object name>`,
-`-exec="<console line>"` (repeatable, e.g. `-exec="view top" -exec="viewmode wireframe"`),
-`-nosound` (no audio device: use it for every automated run so test sounds never play on the speakers),
-`-game` (run as the packaged game), console `package`, `validate`, `stat unit`, `test.Smoke`, `test.Unit`; `-smoketest=<seconds>` (CI: exit 1 on errors). Tracy profiling: configure with
-`-DLSD_TRACY=ON` and connect the Tracy v0.11.1 profiler. Release build: `cmake --build --preset windows-msvc --config Release`.
-
-Reflection decisions: annotation macros `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_FUNCTION` plus
-`LSD_GENERATED()` in the body (like `GENERATED_BODY()`); reflected types are plain structs, no
-inheritance (composition only); strings are fixed `char name[N]`; source assets save as JSON text,
-binary only after the data compiler. World is Z-up, right-handed (like Blender), metres. Rotations
-are Euler degrees X then Y then Z (Blender's XYZ Euler). Components are reflected plain structs; the
-world stores them by TypeInfo, so Details, level files, undo and Play copies need no per-component code.
-
-## Roadmap (editor-first)
-
-| # | Milestone | Exit test |
+| # | Milestone | State |
 | --- | --- | --- |
-| 1 | Core + reflection: job system, SDL3 window, first RHI backend (D3D12) drawing a triangle, then Vulkan and OpenGL; reflection code generator; serialization | A reflected object saves, loads and shows its properties in a debug panel |
-| 2 | Assets + Content Browser: asset registry, importers, data compiler, thumbnails | Import a Blender FBX and find it by search |
-| 3 | Editor shell: viewport with grid + gizmos, Outliner, Details, undo, Play-in-Editor | Block out a level and play it |
-| 4 | Gameplay: prefabs, components, Lua + visual scripting, input assets, physics, character movement | A character runs; input wired with no code |
-| 5 | Content editors: material graph, animation graph + blend spaces, audio (Sound Cue/Class/Mix/Attenuation/Submix), particle editor | The audio walkthrough in the plan doc works end to end |
-| 6 | Vertical slice: lighting + post, UI designer, navmesh + behaviour trees, save game, packaging | A packaged level runs on another PC |
+| 0–2 | Core, RHI, reflection, assets, Content Browser | Done |
+| 3 | Editor shell: viewport, gizmos, Outliner, Details, undo, Play-in-Editor | Done (smaller items open) |
+| 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Exit test works |
+| 5 | Content editors: materials + material graphs, animation + anim graphs, audio, particles | Exit test works |
+| 6 | Vertical slice | Exit test works on this PC (package runs from another folder) |
+
+Milestone 6 has: packaging + game mode, save games, sky / height fog / post-process volume, navmesh +
+Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,
+world-anchored elements, UI window with code + live preview), game user settings, localisation, crash
+reports, frustum culling, asset validation, platform settings, Tracy / `stat unit`, smoke tests.
+Still open (see BACKLOG): HDR post pass (bloom, AA, DOF, AO), baked lighting, LODs, VRAM scaling,
+UI designer canvas + QuickJS, key rebinding, remote console, source control.
