@@ -4,6 +4,8 @@
 #include "lsd/script/graph.h"
 #include "lsd/script/material_graph.h"
 #include "lsd/script/script.h"
+#include "lsd/world/user_types.h"
+#include "lsd/asset/data_asset.h"
 
 #include <cmath>
 #include <cstdio>
@@ -222,6 +224,47 @@ end
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Editor-made enums and structs (data assets) from Lua.
+static bool user_type_path(void*, const char* type, const char* name, char* out, usize capacity) {
+    if (std::strcmp(type, "UserEnum") == 0 && std::strcmp(name, "E_Weapon") == 0) std::snprintf(out, capacity, "%s", LSD_TEST_TEMP_DIR "/E_Weapon.lsdasset");
+    else if (std::strcmp(type, "UserStruct") == 0 && std::strcmp(name, "S_Item") == 0) std::snprintf(out, capacity, "%s", LSD_TEST_TEMP_DIR "/S_Item.lsdasset");
+    else return false;
+    return true;
+}
+
+static void test_user_types() {
+    world::UserEnum e;
+    for (const char* n : {"Sword", "Bow"}) {
+        world::EnumEntry entry;
+        std::snprintf(entry.name, sizeof entry.name, "%s", n);
+        e.values.push_back(entry);
+    }
+    CHECK(asset::save_data_asset(LSD_TEST_TEMP_DIR "/E_Weapon.lsdasset", reflect::type_of<world::UserEnum>(), &e));
+    world::UserStruct st;
+    const char* fields[4][2] = {{"damage", "12.5"}, {"magic", "true"}, {"label", "Axe"}, {"offset", "1, 2, 3"}};
+    for (u32 i = 0; i < 4; ++i) {
+        world::StructField f;
+        std::snprintf(f.name, sizeof f.name, "%s", fields[i][0]);
+        std::snprintf(f.default_value, sizeof f.default_value, "%s", fields[i][1]);
+        f.type = i;
+        st.fields.push_back(f);
+    }
+    CHECK(asset::save_data_asset(LSD_TEST_TEMP_DIR "/S_Item.lsdasset", reflect::type_of<world::UserStruct>(), &st));
+    HeapAllocator heap("types");
+    {
+        World w(heap);
+        script::ScriptHost host;
+        host.data_path = user_type_path;
+        script::ScriptSystem scripts;
+        scripts.start(w, host, path_of, nullptr);
+        CHECK(scripts.run("local E = lsd.enum('E_Weapon') assert(E.Sword == 0 and E.Bow == 1 and E[1] == 'Bow' and lsd.enum('nope') == nil)"));
+        CHECK(scripts.run("local a, b = lsd.struct('S_Item'), lsd.struct('S_Item') a.damage = 1 "
+                          "assert(b.damage == 12.5 and b.magic == true and b.label == 'Axe' and b.offset.z == 3)"));  // each call: a fresh copy
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Material graphs compile to one shader function; problems name the node.
 static void test_material_graph() {
     using namespace lsd::script;
@@ -346,6 +389,7 @@ int main() {
     test_graph();
     test_events();
     test_properties();
+    test_user_types();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

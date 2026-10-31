@@ -32,6 +32,7 @@
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/curve.h"
+#include "lsd/world/user_types.h"
 #include "lsd/render/material.h"
 #include "lsd/audio/audio.h"
 #include "lsd/foundation/system_info.h"
@@ -749,6 +750,8 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserEnum>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());

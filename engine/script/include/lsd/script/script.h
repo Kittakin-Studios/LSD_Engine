@@ -63,6 +63,9 @@
 //   lsd.set(e, "Character", {walk_speed = 8})          writes only the fields given
 //   lsd.add(e, "RigidBody" [, fields]), lsd.remove(e, "RigidBody"), lsd.has(e, "RigidBody")
 //
+// Editor-made types (data assets): lsd.enum(name) -> {Sword = 0, Bow = 1, [0] = "Sword", ...};
+// lsd.struct(name) -> a new table with the struct's fields at their defaults; nil if there is none.
+//
 // Cameras: lsd.set_view(e) looks through e's Camera component (blends are not done: a cut);
 // lsd.set_view(nil) goes back to the player.
 //
@@ -130,6 +133,7 @@ struct ScriptHost {
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;
     void (*set_view)(void* user, world::Entity camera) = nullptr;  // invalid: back to the player
+    bool (*data_path)(void* user, const char* data_type, const char* name, char* out, usize capacity) = nullptr;  // a data asset by type and name
     // shape: 0 line a-b, 1 sphere at a (radius), 2 box at a (half size b), 3 text at a.
     void (*draw_debug)(void* user, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) = nullptr;
     u32 (*bindings)(void* user, const char* action, const char** out, u32 capacity) = nullptr;

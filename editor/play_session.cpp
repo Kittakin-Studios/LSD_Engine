@@ -644,6 +644,13 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             emitters_[emitter_count_++] = {e, sounds_->play(emitter->sound, true, {m.at(0, 3), m.at(1, 3), m.at(2, 3)})};
         }
     }
+    host.data_path = [](void* user, const char* data_type, const char* name, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        const asset::AssetRecord* r = self.find_asset(asset::AssetType::Data, name);
+        const bool ok = r && std::strcmp(r->data_type, data_type) == 0;
+        if (ok) self.registry_->source_path(*r, out, capacity);
+        return ok;
+    };
     host.curve_path = [](void* user, const char* name, char* out, usize capacity) {
         const auto& self = *static_cast<const PlaySession*>(user);
         const asset::AssetRecord* r = self.find_asset(asset::AssetType::Data, name);

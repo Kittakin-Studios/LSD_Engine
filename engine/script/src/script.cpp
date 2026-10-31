@@ -4,6 +4,7 @@
 #include "lsd/asset/data_table.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/spline.h"
+#include "lsd/world/user_types.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -528,6 +529,54 @@ struct Api {
     static int draw_sphere(lua_State* L) { return debug_shape(L, 1, 4); }
     static int draw_box(lua_State* L) { return debug_shape(L, 2, 6); }
     static int draw_text(lua_State* L) { return debug_shape(L, 3, 3); }
+    static int user_enum(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        char path[260];
+        world::UserEnum e;
+        if (!host.data_path || !host.data_path(host.user, "UserEnum", luaL_checkstring(L, 1), path, sizeof path) || !asset::load_data_asset(path, e)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        lua_createtable(L, static_cast<int>(e.values.count), static_cast<int>(e.values.count));
+        for (u32 i = 0; i < e.values.count; ++i) {
+            lua_pushnumber(L, i);
+            lua_setfield(L, -2, e.values[i].name);
+            lua_pushstring(L, e.values[i].name);
+            lua_rawseti(L, -2, static_cast<int>(i));
+        }
+        return 1;
+    }
+    static int user_struct(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        char path[260];
+        world::UserStruct st;
+        if (!host.data_path || !host.data_path(host.user, "UserStruct", luaL_checkstring(L, 1), path, sizeof path) || !asset::load_data_asset(path, st)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        lua_createtable(L, 0, static_cast<int>(st.fields.count));
+        for (const world::StructField& f : st.fields) {
+            if (f.type == 0) {
+                lua_pushnumber(L, std::strtod(f.default_value, nullptr));
+            } else if (f.type == 1) {
+                lua_pushboolean(L, std::strcmp(f.default_value, "true") == 0);
+            } else if (f.type == 2) {
+                lua_pushstring(L, f.default_value);
+            } else {
+                double v[3] = {0, 0, 0};
+                std::sscanf(f.default_value, "%lf , %lf , %lf", &v[0], &v[1], &v[2]);
+                lua_createtable(L, 0, 3);
+                lua_pushnumber(L, v[0]);
+                lua_setfield(L, -2, "x");
+                lua_pushnumber(L, v[1]);
+                lua_setfield(L, -2, "y");
+                lua_pushnumber(L, v[2]);
+                lua_setfield(L, -2, "z");
+            }
+            lua_setfield(L, -2, f.name);
+        }
+        return 1;
+    }
     static int set_view(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const world::Entity e = lua_isnoneornil(L, 1) ? world::Entity{} : entity(L, 1);
@@ -982,7 +1031,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
