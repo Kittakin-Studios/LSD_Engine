@@ -36,6 +36,9 @@ struct AssetMeta {
     LSD_PROPERTY(Visible, Category = "Asset")
     char type[16] = "";
 
+    LSD_PROPERTY(Edit, Category = "Asset", Tooltip = "Comma-separated words the Content Browser search also matches (Unreal's asset metadata tags)")
+    char tags[96] = "";
+
     LSD_PROPERTY(Edit, Category = "Import", Min = 0.001, Max = 1000, Tooltip = "Uniform scale applied on import (after unit conversion to metres)")
     f32 import_scale = 1.0f;
 

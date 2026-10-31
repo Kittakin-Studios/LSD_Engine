@@ -1,7 +1,8 @@
 #pragma once
 // Asset registry: every importable file under Content/ with its GUID, type, path and folder.
 // Each source file gets a <file>.meta sidecar (AssetMeta) on first scan; the GUID in it is the
-// asset's permanent identity. Like Unreal's Asset Registry, minus tags/dependencies (later).
+// asset's permanent identity. Like Unreal's Asset Registry; dependencies come from the editor's
+// reference index (Reference Viewer), tags from the .meta.
 #include "lsd/asset/asset_meta.h"
 #include "lsd/asset/guid.h"
 #include "lsd/foundation/array.h"
@@ -20,8 +21,10 @@ struct AssetRecord {
     char folder[256] = "";  // "Props" ("" for the root)
     char name[96] = "";     // file name without extension, e.g. "Chair"
     char data_type[32] = "";  // Data assets: the reflected type inside, e.g. "InputAction"
+    char tags[96] = "";     // from the .meta, comma-separated
     u64 source_size = 0;
     i64 source_time = 0;    // last write time, for the data compiler's up-to-date check
+    i64 meta_time = 0;      // .meta last write time: tags are re-read when it changes
 };
 
 // True for a usable file or folder name: non-empty, not "." / "..", no \ / : * ? \" < > | or control characters.
@@ -30,19 +33,27 @@ bool valid_name(const char* name);
 class AssetRegistry {
 public:
     AssetRegistry(Allocator& allocator, const char* content_dir);
+    ~AssetRegistry();
+    AssetRegistry(const AssetRegistry&) = delete;
+    AssetRegistry& operator=(const AssetRegistry&) = delete;
 
     // Re-reads Content/: adds new files (writing their .meta), drops deleted ones, refreshes
-    // sizes and times. Returns true if anything changed.
-    // shortcut: synchronous full scan; move to a background job with file-change notifications
-    // when projects reach thousands of assets.
+    // sizes, times and tags. Returns true if anything changed.
     bool scan();
+
+    // The same, with the folder walk on a background thread: the first call starts a walk and
+    // returns false; a later call applies the finished walk (and starts the next one). For the
+    // editor's once-a-second refresh, so big Content/ folders do not stall frames. A sync scan()
+    // in between makes the pending walk stale, and it is dropped.
+    // shortcut: polling walk; switch to OS file-change notifications if walks get slow.
+    bool scan_async();
 
     usize count() const { return records_.size(); }
     const AssetRecord& get(usize i) const { return records_[i]; }
     const AssetRecord* find(Guid guid) const;
     const char* content_dir() const { return content_dir_; }
 
-    // Indices of assets whose name contains `text` (case-insensitive) and whose type matches
+    // Indices of assets whose name or tags contain `text` (case-insensitive) and whose type matches
     // (Unknown = any). With empty text, only assets directly in `folder` match.
     usize search(const char* text, AssetType type, const char* folder, usize* out, usize max) const;
 
@@ -58,11 +69,18 @@ public:
     bool delete_asset(AssetRecord record, char* error, usize error_capacity);
 
     bool load_meta(const AssetRecord& record, AssetMeta& out) const;
-    bool save_meta(const AssetRecord& record, const AssetMeta& meta) const;
+    bool save_meta(const AssetRecord& record, const AssetMeta& meta);  // also refreshes the record's tags
+
+    struct Walk;  // one folder walk's results (asset_registry.cpp)
 
 private:
+    bool apply(const Walk& walk);
+
+    struct Async;
     Array<AssetRecord> records_;
     char content_dir_[256] = "";
+    Async* async_ = nullptr;
+    u32 sync_scans_ = 0;  // bumped by scan(): an async walk started before it is stale
 };
 
 } // namespace lsd::asset

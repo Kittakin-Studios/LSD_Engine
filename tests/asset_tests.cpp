@@ -6,10 +6,12 @@
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/array.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <thread>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -60,6 +62,27 @@ static void test_blender_fbx(const fs::path& root) {
     CHECK(registry.search("", asset::AssetType::Unknown, "Props", hits, 8) == 1);
     CHECK(registry.search("", asset::AssetType::Unknown, "", hits, 8) == 0);
     CHECK(registry.search("chair", asset::AssetType::Unknown, nullptr, hits, 8) == 0);
+
+    // Tags in the .meta are searchable; a later async walk picks up a new file.
+    {
+        asset::AssetMeta meta;
+        CHECK(registry.load_meta(registry.get(0), meta));
+        std::snprintf(meta.tags, sizeof meta.tags, "sports, round");
+        CHECK(registry.save_meta(registry.get(0), meta));
+        CHECK(registry.search("ROUND", asset::AssetType::Unknown, nullptr, hits, 8) == 1);
+        asset::AssetRegistry tagged(heap, content.generic_string().c_str());
+        CHECK(tagged.scan() && std::strcmp(tagged.get(0).tags, "sports, round") == 0);
+        fs::copy_file(content / "Props" / "Ball.fbx", content / "Props" / "Async.fbx");
+        CHECK(!tagged.scan_async());  // starts the walk
+        bool applied = false;
+        for (int tries = 0; tries < 500 && !applied; ++tries) {
+            applied = tagged.scan_async();
+            if (!applied) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        CHECK(applied && tagged.count() == 2);
+        fs::remove(content / "Props" / "Async.fbx");
+        fs::remove(content / "Props" / "Async.fbx.meta");
+    }
 
     // The GUID survives a fresh registry (it lives in the .meta).
     const asset::Guid guid = ball.guid;

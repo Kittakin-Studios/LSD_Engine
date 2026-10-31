@@ -21,7 +21,7 @@ everything later depends on. Anything a small team does not need to ship a first
 - [x] Text serialization with versioning (missing keys keep defaults, unknown keys skipped)
 - [x] Details panel generated from reflection, colour pickers
 - [ ] Linux / Clang build verified (`linux-clang` preset never run since milestone 0)
-- [~] Reflection: Vec3 (one-row X/Y/Z), type defaults (new components, later reset-to-default) done; needs enums (dropdowns), arrays, asset references, Quat
+- [x] Reflection: Vec3 (one-row X/Y/Z), type defaults (new components, later reset-to-default), enums as dropdowns (`Widget = "Choice:..."`), arrays (`List<T, N>`), asset references (`Widget = "Asset:<Type>"`); no Quat: rotations are Euler degrees by design
 - [x] Memory tracking per allocator shown in a debug panel [memreport]: every heap / arena allocator registers itself (in use, peak or capacity, live blocks), Window > Memory (sortable, plus process RAM and the video memory budget), `memreport` to the log
 
 ## Milestone 2 — Assets + Content Browser (done)
@@ -29,7 +29,7 @@ everything later depends on. Anything a small team does not need to ship a first
 Exit test: import a Blender FBX and find it by search. **Passes** (automated in `tests/asset_tests.cpp` and in the editor).
 
 - [~] Renderer basics: buffers, depth, lit mesh + line pipelines, camera math, built-in cube/sphere/plane, GPU grid done on D3D12 and OpenGL; Vulkan waits for the SDK
-- [~] Asset registry: GUIDs in `.meta` sidecars, type, path, folder, search, duplicate-GUID repair done; needs tags, dependency list, background indexing [Asset Registry]
+- [x] Asset registry: GUIDs in `.meta` sidecars, type, path, folder, search, duplicate-GUID repair; tags in the .meta matched by search; dependencies and users in the Reference Viewer; the editor's once-a-second rescan walks Content/ on a background thread (`scan_async`) [Asset Registry]
 - [x] Safe rename / move / delete in the editor (the .meta travels, GUIDs survive); folders: new, rename, delete
 - [x] Binary serialization for reflected objects (name-hash keyed, versioned) and compiled meshes [cooked data]
 - [x] Data compiler: Content → DerivedData, incremental (source size/time + import settings), editor hot reload of meshes

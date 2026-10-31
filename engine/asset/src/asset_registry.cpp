@@ -2,10 +2,15 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 
 namespace lsd::asset {
 
@@ -103,59 +108,136 @@ bool AssetRegistry::load_meta(const AssetRecord& record, AssetMeta& out) const {
     return reflect::load_file(out, path);
 }
 
-bool AssetRegistry::save_meta(const AssetRecord& record, const AssetMeta& meta) const {
+bool AssetRegistry::save_meta(const AssetRecord& record, const AssetMeta& meta) {
     char path[300];
     meta_path(record, path, sizeof path);
-    return reflect::save_file(meta, path);
+    if (!reflect::save_file(meta, path)) return false;
+    for (AssetRecord& r : records_) {
+        if (std::strcmp(r.path, record.path) != 0) continue;
+        copy_string(r.tags, sizeof r.tags, meta.tags);
+        r.meta_time = write_time(path);
+    }
+    return true;
+}
+
+// shortcut: std containers here (editor-time file walking, not a hot path).
+struct AssetRegistry::Walk {
+    struct File {
+        std::string relative;  // '/' separators
+        AssetType type;
+        u64 size;
+        i64 time;
+        i64 meta_time;
+    };
+    bool ok = false;  // false when Content/ is missing: then nothing is dropped
+    std::vector<File> files;
+};
+
+struct AssetRegistry::Async {
+    std::thread thread;
+    std::atomic<bool> done{false};
+    u32 generation = 0;  // sync_scans_ when the walk started
+    Walk walk;
+};
+
+namespace {
+
+// Only touches the file system and its own result, so it is safe on a worker thread.
+void walk_content(const char* content_dir, AssetRegistry::Walk& out) {
+    std::error_code error;
+    if (!fs::is_directory(content_dir, error)) return;
+    out.ok = true;
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(content_dir, error)) {
+        if (!entry.is_regular_file(error)) continue;
+        const AssetType type = type_from_extension(entry.path().extension().string().c_str());
+        if (type == AssetType::Unknown) continue;
+        const fs::path meta = fs::path(entry.path().string() + ".meta");
+        out.files.push_back({fs::relative(entry.path(), content_dir, error).generic_string(), type, static_cast<u64>(entry.file_size(error)),
+                             write_time(entry.path()), fs::exists(meta, error) ? write_time(meta) : 0});
+    }
+}
+
+} // namespace
+
+AssetRegistry::~AssetRegistry() {
+    if (async_ && async_->thread.joinable()) async_->thread.join();
+    delete async_;
 }
 
 bool AssetRegistry::scan() {
-    std::error_code error;
-    if (!fs::is_directory(content_dir_, error)) return false;
+    ++sync_scans_;
+    Walk walk;
+    walk_content(content_dir_, walk);
+    return apply(walk);
+}
+
+bool AssetRegistry::scan_async() {
+    bool changed = false;
+    if (async_) {
+        if (!async_->done.load(std::memory_order_acquire)) return false;  // still walking
+        async_->thread.join();
+        if (async_->generation == sync_scans_) changed = apply(async_->walk);
+        delete async_;
+        async_ = nullptr;
+    }
+    async_ = new Async();
+    async_->generation = sync_scans_;
+    async_->thread = std::thread([a = async_, dir = std::string(content_dir_)] {
+        walk_content(dir.c_str(), a->walk);
+        a->done.store(true, std::memory_order_release);
+    });
+    return changed;
+}
+
+bool AssetRegistry::apply(const Walk& walk) {
+    if (!walk.ok) return false;
     bool changed = false;
 
-    // Drop records whose source file is gone.
+    std::unordered_map<std::string, const Walk::File*> on_disk;
+    on_disk.reserve(walk.files.size());
+    for (const Walk::File& f : walk.files) on_disk.emplace(f.relative, &f);
+
+    // Drop records whose source file is gone; refresh the rest.
+    std::unordered_map<std::string, usize> known;
     for (usize i = records_.size(); i-- > 0;) {
-        char path[300];
-        source_path(records_[i], path, sizeof path);
-        if (!fs::exists(path, error)) {
+        if (!on_disk.count(records_[i].path)) {
             records_.remove_swap(i);
             changed = true;
         }
     }
+    for (usize i = 0; i < records_.size(); ++i) known.emplace(records_[i].path, i);
 
-    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(content_dir_, error)) {
-        if (!entry.is_regular_file(error)) continue;
-        const AssetType type = type_from_extension(entry.path().extension().string().c_str());
-        if (type == AssetType::Unknown) continue;
-
-        const std::string relative = fs::relative(entry.path(), content_dir_, error).generic_string();
-        const u64 size = static_cast<u64>(entry.file_size(error));
-        const i64 time = write_time(entry.path());
-
-        AssetRecord* existing = nullptr;
-        for (AssetRecord& r : records_) {
-            if (std::strcmp(r.path, relative.c_str()) == 0) existing = &r;
-        }
-        if (existing) {
-            if (existing->source_size != size || existing->source_time != time) {
-                existing->source_size = size;
-                existing->source_time = time;
-                if (type == AssetType::Data) read_data_asset_type(entry.path().string().c_str(), existing->data_type, sizeof existing->data_type);
+    for (const Walk::File& f : walk.files) {
+        char full[300];
+        std::snprintf(full, sizeof full, "%s/%s", content_dir_, f.relative.c_str());
+        const auto it = known.find(f.relative);
+        if (it != known.end()) {
+            AssetRecord& existing = records_[it->second];
+            if (existing.source_size != f.size || existing.source_time != f.time) {
+                existing.source_size = f.size;
+                existing.source_time = f.time;
+                if (f.type == AssetType::Data) read_data_asset_type(full, existing.data_type, sizeof existing.data_type);
+                changed = true;
+            }
+            if (existing.meta_time != f.meta_time) {  // edited by hand or by another tool
+                existing.meta_time = f.meta_time;
+                AssetMeta meta;
+                if (load_meta(existing, meta)) copy_string(existing.tags, sizeof existing.tags, meta.tags);
                 changed = true;
             }
             continue;
         }
 
         AssetRecord record;
-        record.type = type;
-        record.source_size = size;
-        record.source_time = time;
-        copy_string(record.path, sizeof record.path, relative.c_str());
-        copy_string(record.folder, sizeof record.folder, fs::path(relative).parent_path().generic_string().c_str());
-        copy_string(record.name, sizeof record.name, entry.path().stem().string().c_str());
-        if (type == AssetType::Data && !read_data_asset_type(entry.path().string().c_str(), record.data_type, sizeof record.data_type)) {
-            LSD_LOG_WARN("asset", "%s is not a valid data asset", relative.c_str());
+        record.type = f.type;
+        record.source_size = f.size;
+        record.source_time = f.time;
+        record.meta_time = f.meta_time;
+        copy_string(record.path, sizeof record.path, f.relative.c_str());
+        copy_string(record.folder, sizeof record.folder, fs::path(f.relative).parent_path().generic_string().c_str());
+        copy_string(record.name, sizeof record.name, fs::path(f.relative).stem().string().c_str());
+        if (f.type == AssetType::Data && !read_data_asset_type(full, record.data_type, sizeof record.data_type)) {
+            LSD_LOG_WARN("asset", "%s is not a valid data asset", f.relative.c_str());
         }
 
         // Read the GUID from the .meta; create one if missing, invalid, or already taken
@@ -166,10 +248,15 @@ bool AssetRegistry::scan() {
         if (!guid_ok) {
             record.guid = new_guid();
             to_string(record.guid, meta.guid);
-            copy_string(meta.type, sizeof meta.type, to_string(type));
-            if (!save_meta(record, meta)) LSD_LOG_WARN("asset", "Could not write %s.meta", record.path);
+            copy_string(meta.type, sizeof meta.type, to_string(f.type));
+            char path[300];
+            meta_path(record, path, sizeof path);
+            if (!reflect::save_file(meta, path)) LSD_LOG_WARN("asset", "Could not write %s.meta", record.path);
+            else record.meta_time = write_time(path);
             if (had_meta) LSD_LOG_INFO("asset", "%s had a duplicate or invalid GUID; assigned a new one.", record.path);
         }
+        copy_string(record.tags, sizeof record.tags, meta.tags);
+        known.emplace(f.relative, records_.size());
         records_.push_back(record);
         changed = true;
     }
@@ -255,7 +342,7 @@ usize AssetRegistry::search(const char* text, AssetType type, const char* folder
         const AssetRecord& r = records_[i];
         if (type != AssetType::Unknown && r.type != type) continue;
         if (text && *text) {
-            if (!contains_ignore_case(r.name, text)) continue;
+            if (!contains_ignore_case(r.name, text) && !contains_ignore_case(r.tags, text)) continue;
         } else if (folder && std::strcmp(r.folder, folder) != 0) {
             continue;
         }

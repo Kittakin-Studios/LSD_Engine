@@ -119,7 +119,8 @@ The **Output Log** tab has a console line at the bottom. Type `help` to list eve
 Drop files from Explorer onto the editor window to import them into the open Content Browser folder.
 Every asset gets a `.meta` file next to it holding its GUID (its permanent identity) and import
 settings. Rename and move assets in the Content Browser: references keep working because they point
-at the GUID, not the file name.
+at the GUID, not the file name. Select an asset and type words into **Tags** in Details (comma-separated,
+like Unreal's asset metadata): the Content Browser search box matches tags as well as names.
 
 | You drop / create | It becomes | Opens in | Unreal |
 | --- | --- | --- | --- |
