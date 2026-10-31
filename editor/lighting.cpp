@@ -190,6 +190,8 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.taa = best->temporal_aa;
     out.ao_intensity = best->ao_intensity;
     out.ao_radius = best->ao_radius;
+    out.ssr_intensity = best->ssr_intensity;
+    out.ssr_max_distance = best->ssr_max_distance;
     out.dof_focal_distance = best->dof_focal_distance;
     out.dof_focal_region = best->dof_focal_region;
     out.dof_transition = best->dof_transition;

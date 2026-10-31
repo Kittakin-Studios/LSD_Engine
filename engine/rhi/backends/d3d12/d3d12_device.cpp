@@ -320,7 +320,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), base.a);
+    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), hdr_out.x > 0.5 ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR)
 }
 
 // The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
@@ -540,6 +540,53 @@ float4 ps_dof(VsOut i) : SV_Target {
         }
     }
     return float4(encode(sum / weight), 1.0);
+}
+// Screen-space reflections: the view ray mirrored about the surface, marched through the depth buffer;
+// where it passes just behind a surface, that pixel's colour is reflected. The mesh pass wrote how
+// mirror-like each pixel is into alpha (smooth = 1).
+float4 ps_ssr(VsOut i) : SV_Target {
+    const float4 scene = t0.SampleLevel(clamp_linear, i.uv, 0);
+    float3 c = decode(scene.rgb);
+    if (scene.a < 0.02 || depth_at(i.uv) >= 0.99999) return float4(encode(c), 1.0);
+    const float3 p = view_pos(i.uv);
+    const float2 px = texel.xy;
+    const float3 l = view_pos(i.uv - float2(px.x, 0)), r = view_pos(i.uv + float2(px.x, 0));
+    const float3 b = view_pos(i.uv - float2(0, px.y)), t = view_pos(i.uv + float2(0, px.y));
+    const float3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l;
+    const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
+    float3 n = normalize(cross(dx, dy));
+    if (dot(n, p) > 0.0) n = -n;
+    const float3 ray = reflect(normalize(p), n);
+    if (ray.z > 0.4) return float4(encode(c), 1.0);  // back towards the camera: nothing on screen to show
+    const float reach = ao_p.w;
+    const float noise = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));  // hides the steps (TAA smooths it)
+    float before = 0.0, was_behind = -1.0;
+    for (int k = 1; k <= 32; ++k) {
+        const float f = (k - 1 + noise) / 32.0;
+        const float along = reach * f * f + 0.05;
+        const float3 q = p + ray * along;
+        if (q.z > -0.05) break;
+        const float2 uv = to_uv(float2(q.x * proj.x / -q.z, q.y * proj.y / -q.z));
+        if (any(uv < 0.0) || any(uv > 1.0)) break;
+        const float behind = -q.z - view_distance(depth_at(uv));
+        if (behind > 0.02 && was_behind <= 0.02 && behind < 1.0 + along * 0.15) {  // crossed into a surface: refine
+            float lo = before, hi = along;  // bisect to the surface
+            float2 hit = uv;
+            for (int s = 0; s < 4; ++s) {
+                const float mid = (lo + hi) * 0.5;
+                const float3 m = p + ray * mid;
+                const float2 muv = to_uv(float2(m.x * proj.x / -m.z, m.y * proj.y / -m.z));
+                if (-m.z - view_distance(depth_at(muv)) > 0.0) { hi = mid; hit = muv; } else { lo = mid; }
+            }
+            const float2 edge = min(hit, 1.0 - hit);
+            const float fade = saturate(min(edge.x, edge.y) * 10.0) * (1.0 - f) * saturate((0.4 - ray.z) * 2.5);
+            c = lerp(c, tap(t0, hit), saturate(scene.a * ao_p.z * fade));
+            break;
+        }
+        before = along;
+        was_behind = behind;
+    }
+    return float4(encode(c), 1.0);
 }
 float4 ps_prefilter(VsOut i) : SV_Target {  // bright parts only, with a soft knee
     const float3 c = box4(t0, i.uv, texel.xy);
@@ -1326,6 +1373,7 @@ public:
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
         TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        TextureHandle ssr;                   // the scene with reflections
         u32 taa_index = 0;
         bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
     };
@@ -1340,6 +1388,7 @@ public:
         destroy_texture(c.ao);
         destroy_texture(c.lit);
         destroy_texture(c.dof);
+        destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         c = PostChain{};
         c.width = width;
@@ -1353,6 +1402,7 @@ public:
         c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
+        c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
         return c;
@@ -1452,11 +1502,14 @@ public:
         const bool ao = depth_effects && p.ao_intensity > 0.0f;
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
         const bool taa = depth_effects && p.taa;
+        const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
         if (!taa) c.history_valid = false;
         f32 k[48] = {};  // the constants every pass reads (see the shaders' u_post / cbuffer Post)
         for (int i = 0; i < 4; ++i) k[16 + i] = p.proj[i];
         k[20] = p.ao_radius > 0.01f ? p.ao_radius : 0.01f;
         k[21] = p.ao_intensity;
+        k[22] = p.ssr_intensity;
+        k[23] = p.ssr_max_distance > 0.5f ? p.ssr_max_distance : 0.5f;
         k[24] = p.dof_focal_distance;
         k[25] = p.dof_focal_region;
         k[26] = p.dof_max_blur;
@@ -1468,9 +1521,13 @@ public:
         }
         size(p.scene, k);
         // The scene's depth is read by the passes below: a shader resource until they are done.
-        const bool read_depth = ao || dof || taa;
+        const bool read_depth = ao || dof || taa || ssr;
         if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         TextureHandle src = p.scene;
+        if (ssr) {  // first: it reads the scene's alpha (reflectivity)
+            post_pass(post_ssr_.Get(), c.ssr, nullptr, p.scene, {}, p.scene, k);
+            src = c.ssr;
+        }
         if (ao) {
             post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, k);
             post_pass(post_ao_apply_.Get(), c.lit, nullptr, src, c.ao, p.scene, k);
@@ -1896,7 +1953,7 @@ private:
             ComPtr<ID3D12PipelineState>* out;
         };
         const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
-                                 {"ps_fxaa", &post_fxaa_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}};
+                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
@@ -2146,7 +2203,7 @@ private:
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
-    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_;
+    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

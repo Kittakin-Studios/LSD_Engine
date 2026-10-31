@@ -217,6 +217,8 @@ struct PostDraw {
     f32 proj[4] = {};               // projection [0][0], [1][1], [2][2], [2][3]: view distance = proj[3] / (depth + proj[2])
     f32 ao_intensity = 0.0f;        // screen-space ambient occlusion; 0 = off
     f32 ao_radius = 1.0f;           // metres
+    f32 ssr_intensity = 0.0f;       // screen-space reflections on smooth surfaces; 0 = off
+    f32 ssr_max_distance = 20.0f;   // metres a reflection ray travels
     f32 dof_focal_distance = 0.0f;  // metres; 0 = no depth of field
     f32 dof_focal_region = 0.0f;    // metres around it that stay sharp
     f32 dof_transition = 5.0f;      // metres from sharp to fully blurred

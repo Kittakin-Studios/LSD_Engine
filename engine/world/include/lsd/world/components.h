@@ -417,6 +417,8 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Tooltip = "Temporal AA instead of FXAA: smoother edges and less shimmer, a little softer; can ghost on fast motion") bool temporal_aa = false;
     LSD_PROPERTY(Edit, Category = "Ambient Occlusion", Min = 0, Max = 2, Tooltip = "Darkens creases and contact points (screen space); 0 = off") f32 ao_intensity = 0.5f;
     LSD_PROPERTY(Edit, Category = "Ambient Occlusion", Units = "m", Min = 0.05, Max = 5, Tooltip = "How far around each point it looks") f32 ao_radius = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Reflections", Min = 0, Max = 1, Tooltip = "Screen-space reflections on smooth surfaces (low roughness); 0 = off") f32 ssr_intensity = 0.8f;
+    LSD_PROPERTY(Edit, Category = "Reflections", Units = "m", Min = 1, Max = 200, Tooltip = "How far reflections look") f32 ssr_max_distance = 20.0f;
     LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0, Max = 1000, Tooltip = "Distance that is in focus; 0 = no depth of field") f32 dof_focal_distance = 0.0f;
     LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0, Max = 1000, Tooltip = "Distance either side of it that stays fully sharp") f32 dof_focal_region = 0.0f;
     LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0.01, Max = 1000, Tooltip = "Distance from sharp to fully blurred") f32 dof_transition = 5.0f;

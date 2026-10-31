@@ -230,6 +230,7 @@ Atmosphere:
   wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
   **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA, or
   **Temporal AA**: smoother and steadier, a little softer, can ghost on fast motion).
+  **Reflections** (screen-space: smooth surfaces mirror what is on screen; intensity, distance),
   **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
   buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
   transition, max blur in pixels; focal distance 0 = off).

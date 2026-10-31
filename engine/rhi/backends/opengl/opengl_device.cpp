@@ -313,7 +313,7 @@ void main() {
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), base.a);
+    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), hdr_out.x > 0.5 ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR)
 }
 #else
 // The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
@@ -504,6 +504,52 @@ void main() {
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
     vec3 s = to_srgb(c);
     o_color = vec4(s, dot(s, vec3(0.299, 0.587, 0.114)));
+#elif defined(SSR)
+    // Screen-space reflections: the view ray mirrored about the surface, marched through the depth
+    // buffer; the mesh pass wrote how mirror-like each pixel is into alpha (smooth = 1).
+    vec4 scene = textureLod(t0, v_uv, 0.0);
+    vec3 c = decode(scene.rgb);
+    vec4 ao_p = u_post[5];
+    if (scene.a < 0.02 || depth_at(v_uv) >= 0.99999) { o_color = vec4(encode(c), 1.0); return; }
+    vec3 p = view_pos(v_uv);
+    vec2 px = texel.xy;
+    vec3 l = view_pos(v_uv - vec2(px.x, 0.0)), r = view_pos(v_uv + vec2(px.x, 0.0));
+    vec3 b = view_pos(v_uv - vec2(0.0, px.y)), t = view_pos(v_uv + vec2(0.0, px.y));
+    vec3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l;
+    vec3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
+    vec3 n = normalize(cross(dx, dy));
+    if (dot(n, p) > 0.0) n = -n;
+    vec3 ray = reflect(normalize(p), n);
+    if (ray.z > 0.4) { o_color = vec4(encode(c), 1.0); return; }
+    float reach = ao_p.w;
+    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float before = 0.0, was_behind = -1.0;
+    for (int k = 1; k <= 32; ++k) {
+        float f = (float(k - 1) + noise) / 32.0;
+        float along = reach * f * f + 0.05;
+        vec3 q = p + ray * along;
+        if (q.z > -0.05) break;
+        vec2 uv = to_uv(vec2(q.x * u_post[4].x / -q.z, q.y * u_post[4].y / -q.z));
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+        float behind = -q.z - view_distance(depth_at(uv));
+        if (behind > 0.02 && was_behind <= 0.02 && behind < 1.0 + along * 0.15) {
+            float lo = before, hi = along;
+            vec2 hit = uv;
+            for (int s = 0; s < 4; ++s) {
+                float mid = (lo + hi) * 0.5;
+                vec3 m = p + ray * mid;
+                vec2 muv = to_uv(vec2(m.x * u_post[4].x / -m.z, m.y * u_post[4].y / -m.z));
+                if (-m.z - view_distance(depth_at(muv)) > 0.0) { hi = mid; hit = muv; } else { lo = mid; }
+            }
+            vec2 edge = min(hit, 1.0 - hit);
+            float fade = clamp(min(edge.x, edge.y) * 10.0, 0.0, 1.0) * (1.0 - f) * clamp((0.4 - ray.z) * 2.5, 0.0, 1.0);
+            c = mix(c, tap(t0, hit), clamp(scene.a * ao_p.z * fade, 0.0, 1.0));
+            break;
+        }
+        before = along;
+        was_behind = behind;
+    }
+    o_color = vec4(encode(c), 1.0);
 #elif defined(AO)
     // Scalable ambient obscurance from depth alone; the normal from the nearer neighbour on each axis.
     vec4 ao_p = u_post[5];
@@ -701,6 +747,7 @@ class OpenGLDevice final : public Device {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
         TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        TextureHandle ssr;                   // the scene with reflections
         u32 taa_index = 0;
         bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
     };
@@ -1257,6 +1304,7 @@ public:
         destroy_texture(c.ao);
         destroy_texture(c.lit);
         destroy_texture(c.dof);
+        destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         c = PostChain{};
         c.width = width;
@@ -1270,6 +1318,7 @@ public:
         c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
+        c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
         return c;
@@ -1327,11 +1376,14 @@ public:
         const bool ao = depth_effects && p.ao_intensity > 0.0f;
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
         const bool taa = depth_effects && p.taa;
+        const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
         if (!taa) c.history_valid = false;
         f32 k[48] = {};  // the constants every pass reads (see the shaders' u_post / cbuffer Post)
         for (int i = 0; i < 4; ++i) k[16 + i] = p.proj[i];
         k[20] = p.ao_radius > 0.01f ? p.ao_radius : 0.01f;
         k[21] = p.ao_intensity;
+        k[22] = p.ssr_intensity;
+        k[23] = p.ssr_max_distance > 0.5f ? p.ssr_max_distance : 0.5f;
         k[24] = p.dof_focal_distance;
         k[25] = p.dof_focal_region;
         k[26] = p.dof_max_blur;
@@ -1343,6 +1395,10 @@ public:
         }
         size(p.scene, k);
         TextureHandle src = p.scene;
+        if (ssr) {  // first: it reads the scene's alpha (reflectivity)
+            post_pass(9, c.ssr, nullptr, p.scene, {}, p.scene, k);
+            src = c.ssr;
+        }
         if (ao) {
             post_pass(5, c.ao, nullptr, {}, {}, p.scene, k);
             post_pass(6, c.lit, nullptr, src, c.ao, p.scene, k);
@@ -1632,7 +1688,7 @@ private:
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
         particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
         const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
-                                                   "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n"};
+                                                   "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n"};
         for (u32 i = 0; i < kPostPrograms; ++i) {
             std::string fragment = kPostFragmentShader;
             fragment.insert(fragment.find('\n') + 1, post_defines[i]);
@@ -1679,7 +1735,7 @@ private:
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
     GLint particle_mvp_ = -1, particle_hdr_ = -1;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
-    static constexpr u32 kPostPrograms = 9;
+    static constexpr u32 kPostPrograms = 10;
     GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof
     GLint post_uniforms_[kPostPrograms] = {};
     PostChain post_chains_[4];
