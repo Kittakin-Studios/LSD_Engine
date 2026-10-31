@@ -12,6 +12,7 @@
 #include "lsd/script/material_graph.h"
 
 #include "mesh_cache.h"
+#include "source_control.h"
 #include "thumbnails.h"
 #include "transactions.h"
 
@@ -2495,6 +2496,7 @@ void draw_asset_grid(EditorState& s) {
                 }
             }
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
+            source_control::asset_menu(r.path);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem("Delete...")) {
                 s.delete_asset = r.guid;
@@ -2532,6 +2534,13 @@ void draw_asset_grid(EditorState& s) {
             dl->PopClipRect();
         }
         dl->AddRect(lo, hi, u32_color(selected ? t.details_tab_active : t.text_mesh), 4.0f, 0, 2.0f);
+        if (const char code = source_control::status(r.path)) {  // Git: M changed, A new, R renamed
+            const ImVec2 c(hi.x - 9, lo.y + 9);
+            dl->AddCircleFilled(c, 8.0f, code == 'A' ? IM_COL32(155, 225, 31, 255) : code == 'R' ? IM_COL32(89, 108, 193, 255) : IM_COL32(243, 195, 18, 255));
+            const char text[2] = {code, 0};
+            const ImVec2 size = ImGui::CalcTextSize(text);
+            dl->AddText(ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), IM_COL32(0, 0, 0, 255), text);
+        }
         dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
         dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), r.name);
         dl->PopClipRect();
@@ -3207,6 +3216,7 @@ void draw_editor(EditorState& s) {
     draw_graph_editor(s);
     draw_table_editor(s);
     if (s.particle_editor) s.particle_editor->draw(s);
+    source_control::draw();
     draw_ui_editor(s);
     handle_shortcuts(s);
 

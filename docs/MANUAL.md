@@ -144,6 +144,12 @@ Particle System.
 
 All text assets (levels, graphs, data assets, UI) are plain text: they merge and diff in Git.
 
+**Source control** (Unreal's Source Control, Git only). When the project folder is a Git repository,
+asset tiles get a badge: yellow **M** changed, green **A** new, blue **R** renamed (the `.meta`
+counts too). Right-click an asset > **Source Control**: **History** (its last 50 commits), **Diff
+Against Last Commit**, **Submit...** (commits the asset and its `.meta` with your description; push
+from your Git tool to share it), **Refresh Status**. Status is re-read every few seconds.
+
 **File > Validate Assets** reports references to missing assets, oversize textures and (optional,
 Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `UI_`.
 
@@ -251,6 +257,8 @@ can have a third-person camera (**Camera Distance**).
 - Pick the context and the Move / Look / Jump actions on the Character. Content Browser > **New
   Input Setup** creates a ready set (WASD, mouse, Space, gamepad).
 - A Character with no context set uses the built-in WASD / mouse / Space controls.
+- Players rebind keys from your options menu with `lsd.bindings`, `lsd.rebind` and `lsd.key_pressed`
+  (Lua API); rebinds are saved in `Saved/GameUserSettings.json` and applied every time Play starts.
 
 ### Game Mode
 

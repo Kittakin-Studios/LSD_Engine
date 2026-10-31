@@ -19,6 +19,7 @@
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
+#include "source_control.h"
 #include "thumbnails.h"
 #include "transactions.h"
 
@@ -755,6 +756,7 @@ int main(int argc, char** argv) {
     state.history = &history;
     state.meshes = &meshes;
     state.thumbnails = &thumbnails;
+    if (!game_mode) lsd::editor::source_control::start();  // Git badges in the Content Browser
     state.textures = texture_cache;
     state.skinned = skinned_cache;
     state.device = device;
@@ -1262,6 +1264,7 @@ int main(int argc, char** argv) {
     for (const lsd::rhi::TextureHandle t : scene_targets.target) {
         if (t.valid()) device->destroy_texture(t);
     }
+    lsd::editor::source_control::stop();
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;

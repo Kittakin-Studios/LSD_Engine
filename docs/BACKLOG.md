@@ -218,7 +218,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [x] Asset validation before packaging: missing references, oversize textures, naming rules [Data Validation]: File > Validate Assets / `validate` and before every Package: GUIDs in levels, prefabs, data assets and graphs that name no asset, textures over Project Settings > Validation > Max Texture Size, optional name prefixes (SM_, T_, M_, MI_, BT_, UI_...), all in the Message Log
 - [x] Crash reporting: minidump + log saved, shown on next start (moved up from v2): the log always goes to Saved/Logs/Editor.log (or Game.log, the last one kept as -previous); a crash writes Saved/Crashes/<date-time>/crash.dmp + log.txt and the next start warns in the Message Log (`lsd::install_crash_reporting`, console `debug.Crash` to try it)
 - [x] Automated tests run from the editor: unit tests + "play this level for N seconds" smoke tests [Automation]: Tools > Smoke Test Level / `test.Smoke [s]` plays the level and reports the errors it logs; `-smoketest=<s>` does it headless for CI (exit code 0 / 1); Tools > Run Unit Tests / `test.Unit` runs ctest in the background into Saved/Logs/UnitTests.log
-- [ ] Source control from the Content Browser (Git LFS, Perforce): check out, diff, history
+- [~] Source control from the Content Browser (Git LFS, Perforce): check out, diff, history: Git status badges (M / A / R), History, Diff Against Last Commit, Submit (asset + .meta); needs Perforce, check out / locking (Git LFS locks), revert, a changelist window
 
 ## v2 (after the vertical slice)
 
