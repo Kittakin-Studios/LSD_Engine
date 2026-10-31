@@ -14,6 +14,7 @@
 //   lsd.position(e) / lsd.set_position(e, x, y, z)     local Transform, metres
 //   lsd.rotation(e) / lsd.set_rotation(e, x, y, z)     local Transform, degrees
 //   lsd.has_tag(e, tag)                   gameplay tags ("Damage" matches "Damage.Fire")
+//   lsd.has_any_tag(e, "A, B") / lsd.has_all_tags(e, "A, B") / lsd.has_no_tag(e, "A, B")   several at once
 //   lsd.time()                            seconds since Play started
 //   lsd.input(action) -> x, y             value of an Input Action, by asset name
 //   lsd.pressed(action)                   true on the frame the action fires (its Trigger: pressed, hold, tap...)

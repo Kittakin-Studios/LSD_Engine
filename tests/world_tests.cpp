@@ -198,6 +198,12 @@ static void test_tags() {
     CHECK(!tags_match("Enemy, Damage.Fire", "Dam"));
     CHECK(!tags_match("Enemy, Damage.Fire", "Damage.Fire.Big"));
     CHECK(!tags_match("", "Enemy") && !tags_match("Enemy", ""));
+    CHECK(tags_query("Enemy, Damage.Fire", "Boss, Damage", TagQuery::Any));
+    CHECK(!tags_query("Enemy, Damage.Fire", "Boss, Flying", TagQuery::Any));
+    CHECK(tags_query("Enemy, Damage.Fire", "Enemy , Damage.Fire", TagQuery::All));
+    CHECK(!tags_query("Enemy, Damage.Fire", "Enemy, Boss", TagQuery::All));
+    CHECK(!tags_query("Enemy", "", TagQuery::All));  // nothing asked for
+    CHECK(tags_query("Enemy", "Boss, Friendly", TagQuery::None) && !tags_query("Enemy", "Boss, Enemy", TagQuery::None));
     HeapAllocator heap("tags");
     {
         World w(heap);

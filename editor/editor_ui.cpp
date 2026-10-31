@@ -1945,9 +1945,54 @@ bool key_picker(char* key, usize capacity) {
     return changed;
 }
 
+// True if the comma-separated list holds exactly `tag` (not just a child or parent of it).
+bool has_exact_tag(const char* tags, const char* tag) {
+    const usize n = std::strlen(tag);
+    for (const char* p = tags; *p;) {
+        while (*p == ' ' || *p == ',') ++p;
+        const char* end = p;
+        while (*end && *end != ',') ++end;
+        const char* last = end;
+        while (last > p && last[-1] == ' ') --last;
+        if (static_cast<usize>(last - p) == n && std::strncmp(p, tag, n) == 0) return true;
+        p = end;
+    }
+    return false;
+}
+
+// Gameplay tags: the text (typed freely), plus a "+" menu of the project's tags not on it yet.
+bool tag_picker(EditorState& s, char* tags, usize capacity) {
+    bool changed = false;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 28.0f);
+    changed |= ImGui::InputText("##tags", tags, capacity);
+    ImGui::SameLine();
+    if (ImGui::Button("+", ImVec2(-1.0f, 0))) ImGui::OpenPopup("tag_menu");
+    ImGui::SetItemTooltip("Add a tag from Project Settings > Gameplay Tags");
+    if (ImGui::BeginPopup("tag_menu")) {
+        u32 offered = 0;
+        for (const GameplayTagDef& def : s.project.gameplay_tags) {
+            if (!def.tag[0] || has_exact_tag(tags, def.tag)) continue;  // already there
+            ++offered;
+            if (ImGui::MenuItem(def.tag)) {
+                const usize used = std::strlen(tags);
+                std::snprintf(tags + used, capacity - used, "%s%s", used ? ", " : "", def.tag);
+                changed = true;
+            }
+            if (def.comment[0]) ImGui::SetItemTooltip("%s", def.comment);
+        }
+        if (!offered) ImGui::TextDisabled(s.project.gameplay_tags.count ? "Every project tag is on it" : "No tags yet: add them in Project Settings > Gameplay Tags");
+        ImGui::EndPopup();
+    }
+    return changed;
+}
+
 bool details_widget(void* user, const reflect::Property& p, u8* field, bool& changed) {
     auto& s = *static_cast<EditorState*>(user);
     if (p.type != reflect::FieldType::String) return false;
+    if (std::strcmp(p.widget, "Tags") == 0) {
+        changed |= tag_picker(s, reinterpret_cast<char*>(field), p.size);
+        return true;
+    }
     if (std::strncmp(p.widget, "Asset:", 6) == 0) {
         changed |= asset_picker(s, p.widget + 6, reinterpret_cast<char*>(field), p.size);
         return true;

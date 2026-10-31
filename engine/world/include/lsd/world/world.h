@@ -120,6 +120,10 @@ private:
 // ("Damage.Fire" matches "Damage" and "Damage.Fire", not "Dam" or "Fire").
 bool tags_match(const char* tags, const char* query);
 bool has_tag(const World& world, Entity entity, const char* query);
+// Several queries at once, comma-separated (Unreal's HasAny / HasAll / tag query None).
+enum class TagQuery : u8 { Any, All, None };
+bool tags_query(const char* tags, const char* queries, TagQuery mode);
+bool has_tags(const World& world, Entity entity, const char* queries, TagQuery mode);
 
 // Copies an entity and its children from one world into another (or the same one), under `parent`.
 // The copy gets a unique name in `to` (or keeps its name); returns it.

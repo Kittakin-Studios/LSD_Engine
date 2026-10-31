@@ -1048,6 +1048,18 @@ struct Api {
         world(L).get<world::Transform>(live_entity(L, 1))->rotation = check_vec3(L, 2);
         return 0;
     }
+    static int has_any_tag(lua_State* L) {
+        lua_pushboolean(L, world::has_tags(world(L), live_entity(L, 1), luaL_checkstring(L, 2), world::TagQuery::Any));
+        return 1;
+    }
+    static int has_all_tags(lua_State* L) {
+        lua_pushboolean(L, world::has_tags(world(L), live_entity(L, 1), luaL_checkstring(L, 2), world::TagQuery::All));
+        return 1;
+    }
+    static int has_no_tag(lua_State* L) {
+        lua_pushboolean(L, world::has_tags(world(L), live_entity(L, 1), luaL_checkstring(L, 2), world::TagQuery::None));
+        return 1;
+    }
     static int has_tag(lua_State* L) {
         lua_pushboolean(L, world::has_tag(world(L), live_entity(L, 1), luaL_checkstring(L, 2)));
         return 1;
@@ -1106,7 +1118,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     const luaL_Reg api[] = {
         {"log", Api::log}, {"find", Api::find}, {"name", Api::name}, {"alive", Api::alive}, {"destroy", Api::destroy},
         {"position", Api::position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
-        {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag}, {"time", Api::time}, {"input", Api::input},
+        {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
+        {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},

@@ -678,7 +678,7 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
 | Physics | Rigid Body, Physics Joint |
-| Gameplay | Player Start, Character, Script, Tags, Spline, Spline Follower |
+| Gameplay | Player Start, Character, Script, Tags (the **+** button picks from Project Settings > Gameplay Tags), Spline, Spline Follower |
 | Audio / Effects | Sound Emitter, Particle Effect |
 | AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller |
 | Prefab | Prefab Instance (added for you) |
@@ -696,6 +696,7 @@ Objects and transforms
 | `lsd.spawn(name, x, y, z)` | a prefab, mesh asset or shape ("Cube"); the new entity |
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |
+| `lsd.has_any_tag(e, "A, B")` / `has_all_tags` / `has_no_tag` | several tags at once (Has Any Tag / Has All Tags nodes) |
 | `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil |
 | `lsd.sphere_trace(x1, y1, z1, x2, y2, z2, r)` (also `box_trace(..., hx, hy, hz)`, `capsule_trace(..., r, half_h)`) | first hit like raycast, or nil |
 | `lsd.overlap_sphere(x, y, z, r)` / `lsd.overlap_box(x, y, z, hx, hy, hz)` | `{e, ...}` the objects touching it |

@@ -74,6 +74,14 @@ struct GameUserSettings {
     LSD_PROPERTY(Edit, Category = "Language", Tooltip = "A column of the project's string table (en, fr...); empty: the project's default") char language[16] = "";
 };
 
+// One entry of the project's gameplay tag list (Unreal's Gameplay Tag Manager), e.g. "Damage.Fire".
+LSD_STRUCT()
+struct GameplayTagDef {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char tag[64] = "";
+    LSD_PROPERTY(Edit) char comment[96] = "";
+};
+
 // Project-wide settings shared by the team, saved to Config/project.json (Unreal's Project Settings).
 LSD_STRUCT()
 struct ProjectSettings {
@@ -88,6 +96,8 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Localization", Tooltip = "The language the game starts in (a column of the string table)") char default_language[16] = "en";
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Validate Assets also checks name prefixes (SM_, T_, M_, MI_, BT_, UI_...)") bool check_naming = false;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Textures larger than this on a side are reported") u32 max_texture_size = 4096;
+    LSD_PROPERTY(Edit, Category = "Gameplay Tags", Tooltip = "The tags the Details tag picker offers (dotted: Damage.Fire is under Damage)")
+    List<GameplayTagDef, 128> gameplay_tags;
 };
 
 } // namespace lsd::editor

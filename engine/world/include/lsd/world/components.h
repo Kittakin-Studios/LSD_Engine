@@ -251,11 +251,12 @@ struct SkeletalMesh {
 };
 
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".
-// shortcut: free text, no project-wide tag list or picker yet; add one with the tag editor in Project Settings.
+// Picked from the project's tag list (Project Settings > Gameplay Tags) or typed. Any data asset field
+// with Widget = "Tags" gets the same picker (a tag container).
 LSD_STRUCT(Component, Category = "Gameplay")
 struct Tags {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Tooltip = "Comma-separated, e.g. Enemy, Damage.Fire") char tags[256] = "";
+    LSD_PROPERTY(Edit, Widget = "Tags", Tooltip = "Comma-separated, e.g. Enemy, Damage.Fire") char tags[256] = "";
 };
 
 // Runs a Lua file in Play: on_start(self) once, on_update(self, dt) every frame (see engine/script).

@@ -342,6 +342,37 @@ bool has_tag(const World& world, Entity entity, const char* query) {
     return tags && tags_match(tags->tags, query);
 }
 
+bool tags_query(const char* tags, const char* queries, TagQuery mode) {
+    bool any = false, all = true, empty = true;
+    for (const char* p = queries; *p;) {
+        while (*p == ' ' || *p == ',') ++p;
+        const char* end = p;
+        while (*end && *end != ',') ++end;
+        const char* last = end;
+        while (last > p && last[-1] == ' ') --last;
+        if (last > p) {
+            char query[64];
+            std::snprintf(query, sizeof query, "%.*s", static_cast<int>(last - p), p);
+            const bool hit = tags_match(tags, query);
+            any = any || hit;
+            all = all && hit;
+            empty = false;
+        }
+        p = end;
+    }
+    switch (mode) {
+        case TagQuery::Any: return any;
+        case TagQuery::All: return all && !empty;  // nothing asked: not "has all"
+        case TagQuery::None: return !any;
+    }
+    return false;
+}
+
+bool has_tags(const World& world, Entity entity, const char* queries, TagQuery mode) {
+    const Tags* tags = world.get<Tags>(entity);
+    return tags_query(tags ? tags->tags : "", queries, mode);
+}
+
 Entity copy_entity(const World& from, Entity source, World& to, Entity parent, bool unique_names) {
     char name[64];
     if (unique_names) to.unique_name(from.name(source), name, sizeof name);
