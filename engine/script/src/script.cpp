@@ -206,6 +206,25 @@ bool protected_call(lua_State* L, int args, const char* what) {
     return status == 0;
 }
 
+// The sandbox (run before any game script): scripts are content, possibly from mods, so they get no
+// files, no processes and no native code. Saving goes through lsd.save_game; modules come from Content/.
+constexpr char kSandbox[] = R"(
+io = nil
+os = {time = os.time, clock = os.clock, date = os.date, difftime = os.difftime}
+debug = {traceback = debug.traceback}
+dofile, loadfile = nil, nil
+string.dump = nil
+local raw_load = load
+function load(chunk, name, mode, env) return raw_load(chunk, name, "t", env) end  -- text only: no bytecode tricks
+loadstring = function(text, name) return raw_load(text, name, "t") end
+package.loadlib = nil
+package.cpath = ""
+package.path = "Content/?.lua;Content/Scripts/?.lua"
+package.loaded.io, package.loaded.os, package.loaded.debug, package.loaded.ffi = nil, os, debug, nil
+package.preload.ffi = nil
+for i = #package.loaders, 3, -1 do package.loaders[i] = nil end  -- keep preload and Lua files; drop C module searchers
+)";
+
 // Timers live in Lua: closures keep each script's environment, and errors stay per callback.
 constexpr char kPrelude[] = R"(
 local timers, next_id = {}, 0
@@ -1164,7 +1183,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     host_ = host;
     path_of_ = path_of;
     path_user_ = path_user;
-    // shortcut: Lua's own allocator and the full standard library (io, os); give it an Allocator and a sandbox before shipping mods.
+    // shortcut: Lua's own allocator (no memory cap per script); give it an Allocator with a budget before shipping mods.
     lua_ = luaL_newstate();
     curves_ = new CachedCurve[kMaxCurves];
     luaL_openlibs(lua_);
@@ -1204,6 +1223,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     lua_setfield(lua_, -2, "__persist");
     lua_setglobal(lua_, "lsd");
     run(kPrelude, "=lsd prelude");
+    run(kSandbox, "=lsd sandbox");
     update_hook();  // breakpoints set before Play
 
     const reflect::TypeInfo& type = reflect::type_of<world::Script>();

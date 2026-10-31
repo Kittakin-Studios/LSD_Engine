@@ -407,6 +407,10 @@ end
 while playing reloads it and keeps `self`. Errors stop that script and show in the Output Log with
 the line.
 
+Scripts run **sandboxed**: no `io`, no `os.execute` / `os.remove` (only `os.time`, `os.clock`,
+`os.date`), no native modules or FFI, no bytecode (`load` takes text only). Save data with
+`lsd.save_game`; share code with `require("Module")`, which looks in `Content/` and `Content/Scripts/`.
+
 Any component can be read and written by name, with the field names you see in Details:
 
 ```lua

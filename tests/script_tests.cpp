@@ -211,6 +211,10 @@ static void test_game_instance() {
     scripts.start(w, {}, path_of, nullptr);  // the next level
     CHECK(scripts.run("assert(lsd.game_instance().score == 5 and lsd.player_state().name == 'Ada' and #lsd.subsystem('Quests').done == 2)"));
     CHECK(scripts.run("assert(lsd.player() == nil and lsd.open_level('Nowhere') == false)"));  // no host: no player, no levels
+    // The sandbox: no files, processes, native code or bytecode; the harmless parts remain.
+    CHECK(scripts.run("assert(io == nil and os.execute == nil and os.remove == nil and dofile == nil and string.dump == nil)"));
+    CHECK(scripts.run("assert(package.loadlib == nil and not pcall(require, 'ffi') and type(os.time()) == 'number')"));
+    CHECK(scripts.run("assert(load('return 1 + 1')() == 2 and type(debug.traceback) == 'function' and debug.sethook == nil)"));
     scripts.stop();
     scripts.clear_persistent();  // a new Play
     scripts.start(w, {}, path_of, nullptr);
