@@ -33,6 +33,7 @@
 #include "lsd/foundation/log.h"
 #include "lsd/world/curve.h"
 #include "lsd/world/user_types.h"
+#include "lsd/script/graph.h"
 #include "lsd/render/material.h"
 #include "lsd/audio/audio.h"
 #include "lsd/foundation/system_info.h"
@@ -590,6 +591,32 @@ void load_editor_font() {
 #endif
 }
 
+
+// ScriptNode data assets into the visual-script node library (after every scan that changed something).
+void register_script_nodes(const lsd::asset::AssetRegistry& registry) {
+    lsd::script::clear_custom_nodes();
+    for (lsd::usize i = 0; i < registry.count(); ++i) {
+        const lsd::asset::AssetRecord& r = registry.get(i);
+        if (r.type != lsd::asset::AssetType::Data || std::strcmp(r.data_type, "ScriptNode") != 0) continue;
+        char path[300];
+        registry.source_path(r, path, sizeof path);
+        lsd::world::ScriptNode node;
+        if (!lsd::asset::load_data_asset(path, node)) continue;
+        lsd::script::NodeDef def{};
+        char id[128];
+        std::snprintf(id, sizeof id, "Custom_%s", r.name);  // saved in graphs: renaming the asset breaks them, like a C++ rename
+        def.id = id;
+        def.title = r.name;
+        def.category = node.category[0] ? node.category : "Custom";
+        def.tooltip = node.tooltip;
+        for (lsd::u32 k = 0; k < node.inputs.count && k < 6; ++k) def.inputs[k] = {node.inputs[k].name, static_cast<lsd::script::PinType>(node.inputs[k].type), node.inputs[k].default_value};
+        for (lsd::u32 k = 0; k < node.outputs.count && k < 4; ++k) def.outputs[k] = {node.outputs[k].name, static_cast<lsd::script::PinType>(node.outputs[k].type), ""};
+        def.code = node.code[0] ? node.code : "";
+        def.output_code[0] = node.expression[0] ? node.expression : nullptr;
+        lsd::script::register_node(def);
+    }
+}
+
 // ---- Level files ----
 
 void new_level(EditorState& s) {
@@ -752,6 +779,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserEnum>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::ScriptNode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
@@ -765,6 +793,7 @@ int main(int argc, char** argv) {
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
+    register_script_nodes(registry);
     // The window icon (Project Settings > Platform), editor and game alike.
     lsd::asset::Guid icon_guid;
     if (const lsd::asset::AssetRecord* icon = state.project.icon[0] && lsd::asset::parse_guid(state.project.icon, icon_guid) ? registry.find(icon_guid) : nullptr) {
@@ -1000,7 +1029,7 @@ int main(int argc, char** argv) {
 
         // Pick up new, changed and deleted files once a second; recompile what changed.
         if (SDL_GetTicks() - last_scan > 1000) {
-            registry.scan();
+            if (registry.scan()) register_script_nodes(registry);
             meshes.hot_reload();
             texture_cache->check_files();
             skinned_cache->check_files();

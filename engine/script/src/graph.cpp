@@ -4,6 +4,10 @@
 #include "lsd/reflect/json.h"
 
 #include <cctype>
+#include <deque>
+#include <iterator>
+#include <string>
+#include <vector>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -449,6 +453,53 @@ struct Compiler {
 
 } // namespace
 
+// Built-in Script nodes plus registered ones, with the registered nodes' strings.
+std::vector<NodeDef> g_script_nodes;
+std::deque<std::string> g_custom_strings;
+u32 g_custom_count = 0;
+
+const char* keep(const char* text) {
+    if (!text) return nullptr;
+    g_custom_strings.emplace_back(text);
+    return g_custom_strings.back().c_str();
+}
+
+void register_node(const NodeDef& def) {
+    u32 count = 0;
+    node_defs(count);  // fills the built-ins first
+    NodeDef copy = def;
+    copy.id = keep(def.id);
+    copy.title = keep(def.title);
+    copy.category = keep(def.category);
+    copy.tooltip = keep(def.tooltip);
+    copy.code = keep(def.code);
+    for (auto& pin : copy.inputs) {
+        pin.name = keep(pin.name);
+        pin.default_value = keep(pin.default_value);
+    }
+    for (auto& pin : copy.outputs) {
+        pin.name = keep(pin.name);
+        pin.default_value = keep(pin.default_value);
+    }
+    for (auto& code : copy.output_code) code = keep(code);
+    copy.input_count = count_pins(copy.inputs, 6);
+    copy.output_count = count_pins(copy.outputs, 4);
+    for (NodeDef& existing : g_script_nodes) {
+        if (std::strcmp(existing.id, copy.id) == 0) {
+            existing = copy;
+            return;
+        }
+    }
+    g_script_nodes.push_back(copy);
+    ++g_custom_count;
+}
+
+void clear_custom_nodes() {
+    g_script_nodes.resize(g_script_nodes.size() - g_custom_count);
+    g_custom_count = 0;
+    g_custom_strings.clear();  // shortcut: replaced nodes' old strings live until the next clear
+}
+
 const NodeDef* node_defs(u32& count, GraphKind kind) {
     static const bool counted = [] {
         for (NodeDef& d : g_defs) {
@@ -467,6 +518,7 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
             d.input_count = count_pins(d.inputs, 6);
             d.output_count = count_pins(d.outputs, 4);
         }
+        g_script_nodes.assign(std::begin(g_defs), std::end(g_defs));
         return true;
     }();
     (void)counted;
@@ -482,8 +534,8 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
         count = static_cast<u32>(sizeof g_bt_defs / sizeof g_bt_defs[0]);
         return g_bt_defs;
     }
-    count = static_cast<u32>(sizeof g_defs / sizeof g_defs[0]);
-    return g_defs;
+    count = static_cast<u32>(g_script_nodes.size());
+    return g_script_nodes.data();
 }
 
 const NodeDef* find_node_def(const char* id) {

@@ -365,6 +365,13 @@ The full `lsd` API is listed in [section 19](#lua-api).
 
 ## 10. Visual scripting
 
+**Your own nodes** (Blueprint function libraries): New Data Asset > **ScriptNode**. Name the asset
+what the node is called, pick a Category, add input and output pins, and write the Lua it becomes:
+`$1`, `$2`... are the inputs by position (the white Exec pin counts as 0), `$o0` the first output's
+variable, `#0` where the next node's code goes. Without Exec pins the node is pure and
+**Expression** is its output, e.g. `($0 * 2)`. It appears in the node menu once saved. C++ code can
+add nodes the same way with `lsd::script::register_node`.
+
 **Level script** (Unreal's Level Blueprint): Window > World Settings > **Level Script** picks a
 visual script (or Lua file) that belongs to the level: Event Start, Custom Events, timers for that
 level's one-off moments. It runs on an object named LevelScript while the level plays.

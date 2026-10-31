@@ -41,6 +41,13 @@ struct NodeDef {
 
 const NodeDef* node_defs(u32& count, GraphKind kind = GraphKind::Script);
 const NodeDef* find_node_def(const char* id);  // in either library
+
+// Custom visual-script nodes, added to the Script library: from C++ (an engine or game module calls
+// register_node at start) or from ScriptNode data assets (the editor registers those). The strings
+// are copied; a node with the same id is replaced. Pointers from node_defs / find_node_def stay
+// valid until the next register / clear.
+void register_node(const NodeDef& def);
+void clear_custom_nodes();
 bool is_event(const NodeDef& def);
 bool is_pure(const NodeDef& def);  // no exec pins
 bool is_material_node(const NodeDef& def);

@@ -265,6 +265,54 @@ static void test_user_types() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Custom nodes registered from C++ (ScriptNode assets use the same call).
+static void test_custom_nodes() {
+    using namespace lsd::script;
+    NodeDef twice{};
+    twice.id = "Custom_Twice";
+    twice.title = "Twice";
+    twice.category = "Custom";
+    twice.tooltip = "";
+    twice.inputs[0] = {"Value", PinType::Float, "3"};
+    twice.outputs[0] = {"Result", PinType::Float, ""};
+    twice.output_code[0] = "($0 * 2)";
+    register_node(twice);
+    NodeDef move{};
+    move.id = "Custom_MoveUp";
+    move.title = "Move Up";
+    move.category = "Custom";
+    move.tooltip = "";
+    move.inputs[0] = {"In", PinType::Exec, ""};
+    move.inputs[1] = {"Height", PinType::Float, "1"};
+    move.outputs[0] = {"Out", PinType::Exec, ""};
+    move.code = "do local x, y, z = lsd.position(self.entity) lsd.set_position(self.entity, x, y, z + $1) end";
+    register_node(move);
+    CHECK(find_node_def("Custom_Twice") && find_node_def("Custom_Twice")->input_count == 1 && find_node_def("Custom_MoveUp")->output_count == 1);
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 up = g.add("Custom_MoveUp", 200, 0)->id;
+    const u32 dbl = g.add("Custom_Twice", 0, 200)->id;
+    std::snprintf(g.find(dbl)->values[0], 64, "4");
+    CHECK(g.connect(start, 0, up, 0) && g.connect(dbl, 0, up, 1));
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("nodes");
+    {
+        World w(heap);
+        const Entity e = w.create("E");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "graph");
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        CHECK(scripts.error_count() == 0 && w.get<Transform>(e)->position.z == 8.0f);
+        scripts.stop();
+    }
+    clear_custom_nodes();
+    CHECK(find_node_def("Custom_Twice") == nullptr && find_node_def("OnStart") != nullptr);
+}
+
 // Material graphs compile to one shader function; problems name the node.
 static void test_material_graph() {
     using namespace lsd::script;
@@ -390,6 +438,7 @@ int main() {
     test_events();
     test_properties();
     test_user_types();
+    test_custom_nodes();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

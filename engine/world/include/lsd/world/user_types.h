@@ -33,4 +33,27 @@ struct UserStruct {
     LSD_PROPERTY(Edit) List<StructField, 32> fields;
 };
 
+LSD_STRUCT()
+struct NodePin {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char name[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Exec,Number,Boolean,Text,Vector,Object") u32 type = 1;
+    LSD_PROPERTY(Edit, Tooltip = "Inputs: the value when nothing is wired (Object: self)") char default_value[48] = "";
+};
+
+// A visual-script node made in the editor (Unreal's Blueprint function libraries): it shows in the
+// node menu under Category, named after the asset. Code is the Lua it becomes: $1, $2... are the
+// inputs (by position, the white Exec pin counts), $o0 is the first output's variable, #0 is where
+// the next node's code goes. A node without Exec pins is pure: Expression is its output's Lua.
+LSD_STRUCT(Category = "Data")
+struct ScriptNode {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char category[32] = "Custom";
+    LSD_PROPERTY(Edit) char tooltip[128] = "";
+    LSD_PROPERTY(Edit) List<NodePin, 6> inputs;
+    LSD_PROPERTY(Edit) List<NodePin, 4> outputs;
+    LSD_PROPERTY(Edit, Tooltip = "Exec nodes: Lua with $1.. (inputs), $o0.. (outputs), #0 (what comes next)") char code[512] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Pure nodes: the first output's Lua expression, e.g. ($1 * $2)") char expression[256] = "";
+};
+
 } // namespace lsd::world
