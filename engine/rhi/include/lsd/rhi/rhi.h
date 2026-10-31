@@ -135,7 +135,8 @@ constexpr u32 kMaxMaterialParams = 16;
 enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2 };
 constexpr u32 kMaxLights = 16;
 constexpr u32 kMaxShadowTiles = 16;
-constexpr u32 kMaxProbes = 512;  // baked light probes (Build Lighting) in one grid  // spot / point light shadow tiles per frame
+constexpr u32 kMaxProbes = 512;  // baked light probes (Build Lighting) in one grid
+constexpr u32 kMaxDecals = 16;   // decals the mesh shaders blend in at once  // spot / point light shadow tiles per frame
 struct GpuLight {
     f32 position[3];
     f32 type;          // LightType as a float (the shader reads it from a float4)
@@ -186,9 +187,15 @@ struct LightSetup {
     f32 probe_cell[4] = {};
     u32 probe_dims[4] = {};
     f32 probes[kMaxProbes * 3][4] = {};
+    // Decals (Unreal's Decal Actor), blended into the base colour of whatever is inside their box.
+    // decal_info.x = count. Per decal: 3 rows of world -> box space (box = -0.5..0.5 on each axis,
+    // projected along its -Z), the decal's rectangle in the decal atlas (x, y, w, h in 0..1) and a
+    // tint (rgb, a = opacity).
+    f32 decal_info[4] = {};
+    f32 decals[kMaxDecals * 5][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
@@ -289,6 +296,8 @@ public:
                                     const f32* joint_rows = nullptr, u32 joint_count = 0) = 0;  // joints: a skinned caster
     virtual void end_shadow_pass() = 0;
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
+    // The decal atlas the LightSetup's decal rectangles point into (an sRGB texture); for draw_mesh.
+    virtual void set_decal_atlas(TextureHandle atlas) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Material Graph code (lsd/script/material_graph.h: `Surface material_main(MaterialIn mi)`) built
     // into the lit-mesh pipelines, static and skinned. Invalid if it does not compile (the shader

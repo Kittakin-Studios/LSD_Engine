@@ -112,6 +112,7 @@ layout(std140, binding = 1) uniform Lights {
     mat4 local_vp[16]; vec4 local_tile[16];
     vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px; vec4 hdr_out;
     vec4 probe_origin; vec4 probe_cell; uvec4 probe_dims; vec4 probes[1536];
+    vec4 decal_info; vec4 decals[80];
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -182,6 +183,25 @@ float local_shadow(Light L, vec3 wpos, vec3 n) {
 layout(binding = 0) uniform sampler2D base_tex;
 layout(binding = 1) uniform sampler2D normal_tex;
 layout(binding = 2) uniform sampler2D orm_tex;
+// Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
+// not face along the box's +Z and towards its top and bottom.
+layout(binding = 5) uniform sampler2D decal_tex;
+vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
+    uint count = uint(decal_info.x);
+    for (uint d = 0u; d < count; ++d) {
+        vec4 p = vec4(wpos, 1.0);
+        vec3 l = vec3(dot(decals[d * 5u], p), dot(decals[d * 5u + 1u], p), dot(decals[d * 5u + 2u], p));
+        if (any(greaterThan(abs(l), vec3(0.5)))) continue;
+        float facing = dot(n, normalize(decals[d * 5u + 2u].xyz));
+        float fade = clamp((facing - 0.1) * 4.0, 0.0, 1.0) * clamp((0.5 - abs(l.z)) * 8.0, 0.0, 1.0);
+        vec4 rect = decals[d * 5u + 3u], tint = decals[d * 5u + 4u];
+        vec2 uv = rect.xy + clamp(vec2(l.x + 0.5, 0.5 - l.y), vec2(0.004), vec2(0.996)) * rect.zw;
+        vec4 t = textureLod(decal_tex, uv, 0.0);
+        c = mix(c, t.rgb * tint.rgb, clamp(t.a * tint.a * fade, 0.0, 1.0));
+    }
+    return c;
+}
+
 in vec3 v_normal;
 in vec3 v_wpos;
 in vec2 v_uv;
@@ -254,6 +274,7 @@ void main() {
     float ao = orm.r;
     vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x);
 #endif
+    base.rgb = apply_decals(base.rgb, v_wpos, n);
     vec3 v = normalize(u_mat[1].yzw - v_wpos);
     float ndv = max(dot(n, v), 1e-4);
     vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
@@ -1033,6 +1054,7 @@ public:
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
         gl_.glBindTextureUnit(3, shadow_texture_);
         gl_.glBindTextureUnit(4, local_shadow_texture_);
+        gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
@@ -1117,6 +1139,11 @@ public:
         glDisable(GL_POLYGON_OFFSET_FILL);
         glDisable(GL_DEPTH_CLAMP);
         set_render_target({}, nullptr);  // back to the window
+    }
+
+    void set_decal_atlas(TextureHandle atlas) override {
+        const Texture* t = lookup_texture(atlas);
+        decal_texture_ = t ? t->id : 0;
     }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
@@ -1637,6 +1664,7 @@ private:
     }
     GLuint mesh_program_ = 0;  // == mesh_.id
     MeshProgram mesh_, skinned_program_, instanced_program_;
+    GLuint decal_texture_ = 0;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint joint_ubo_ = 0;

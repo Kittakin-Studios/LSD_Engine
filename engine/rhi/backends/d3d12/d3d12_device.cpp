@@ -71,6 +71,7 @@ cbuffer Lights : register(b1) {
     float4x4 local_vp[16]; float4 local_tile[16];
     float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px; float4 hdr_out;
     float4 probe_origin; float4 probe_cell; uint4 probe_dims; float4 probes[1536];
+    float4 decal_info; float4 decals[80];
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -141,6 +142,26 @@ float local_shadow(Light L, float3 wpos, float3 n) {
 Texture2D base_tex : register(t0);
 Texture2D normal_tex : register(t1);
 Texture2D orm_tex : register(t2);
+// Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
+// not face along the box's +Z and towards its top and bottom.
+Texture2D decal_tex : register(t5);
+SamplerState decal_samp : register(s2);
+float3 apply_decals(float3 c, float3 wpos, float3 n) {
+    const uint count = (uint)decal_info.x;
+    for (uint d = 0; d < count; ++d) {
+        const float4 p = float4(wpos, 1.0);
+        const float3 l = float3(dot(decals[d * 5], p), dot(decals[d * 5 + 1], p), dot(decals[d * 5 + 2], p));
+        if (any(abs(l) > 0.5)) continue;
+        const float facing = dot(n, normalize(decals[d * 5 + 2].xyz));
+        const float fade = saturate((facing - 0.1) * 4.0) * saturate((0.5 - abs(l.z)) * 8.0);
+        const float4 rect = decals[d * 5 + 3], tint = decals[d * 5 + 4];
+        const float2 uv = rect.xy + clamp(float2(l.x + 0.5, 0.5 - l.y), 0.004, 0.996) * rect.zw;
+        const float4 t = decal_tex.SampleLevel(decal_samp, uv, 0);
+        c = lerp(c, t.rgb * tint.rgb, saturate(t.a * tint.a * fade));
+    }
+    return c;
+}
+
 SamplerState samp : register(s0);
 struct VsIn {
     float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0;
@@ -243,7 +264,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     MaterialIn mi;
     mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
     const Surface surf = material_main(mi);
-    const float4 base = float4(surf.base_color * color.rgb, color.a);
+    float4 base = float4(surf.base_color * color.rgb, color.a);
     if (n0.w > 0.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     n = perturb_normal(n, i.wpos, i.uv, surf.normal);
     const float metallic = saturate(surf.metallic);
@@ -251,7 +272,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float ao = saturate(surf.ao);
     const float3 emissive = surf.emissive;
 #else
-    const float4 base = color * base_tex.Sample(samp, i.uv);
+    float4 base = color * base_tex.Sample(samp, i.uv);
     if (n0.w > 0.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     if (n1.w > 0.5) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
     const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
@@ -260,6 +281,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float ao = orm.r;
     const float3 emissive = float3(mat0.zw, mat1.x);
 #endif
+    base.rgb = apply_decals(base.rgb, i.wpos, n);
     const float3 v = normalize(mat1.yzw - i.wpos);
     const float ndv = max(dot(n, v), 1e-4);
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
@@ -1025,6 +1047,7 @@ public:
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
         list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
         list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
+        list_->SetGraphicsRootDescriptorTable(9, decal_srv_.ptr ? decal_srv_ : textures_[white_].srv_gpu);
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         if (instanced) {  // batches of kMaxJoints instances through the joint ring
@@ -1194,6 +1217,11 @@ public:
         transition(shadow_maps_[shadow_pass_].resource.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         shadow_pass_ = -1;
         set_render_target({}, nullptr);  // back to the window
+    }
+
+    void set_decal_atlas(TextureHandle atlas) override {
+        const Texture* t = lookup_texture(atlas);
+        decal_srv_ = t ? t->srv_gpu : textures_[white_].srv_gpu;
     }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
@@ -1745,7 +1773,15 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[9]{};
+        D3D12_ROOT_PARAMETER params[10]{};
+        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas (64 of 64 DWORDs)
+        decal_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        decal_range.NumDescriptors = 1;
+        decal_range.BaseShaderRegister = 5;
+        params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[9].DescriptorTable.NumDescriptorRanges = 1;
+        params[9].DescriptorTable.pDescriptorRanges = &decal_range;
+        params[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b3: material graph parameters (63 of 64 DWORDs)
         params[8].Descriptor.ShaderRegister = 3;
         params[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1797,7 +1833,7 @@ private:
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 9;
+        rs_desc.NumParameters = 10;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 3;
         rs_desc.pStaticSamplers = samplers;
@@ -2095,6 +2131,7 @@ private:
     ComPtr<ID3D12PipelineState> mesh_pipeline_;
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
+    D3D12_GPU_DESCRIPTOR_HANDLE decal_srv_{};
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_pipeline_;

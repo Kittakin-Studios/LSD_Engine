@@ -18,6 +18,7 @@
 #include "lsd/ui/ui.h"
 #include "skinned_cache.h"
 #include "play_session.h"
+#include "decals.h"
 #include "light_bake.h"
 #include "live_link.h"
 #include "sound_player.h"
@@ -95,6 +96,7 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 // Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
 // Skinned meshes for drawing and shadows: their model and current pose (set up by main()).
 lsd::editor::SkinnedCache* g_skinned = nullptr;
+lsd::editor::DecalAtlas* g_decals = nullptr;  // decal textures for draw_world
 lsd::editor::AnimationPlayer* g_animations = nullptr;
 lsd::editor::BakedLighting g_level_lighting;  // the open level's Build Lighting result
 
@@ -274,6 +276,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
     lsd::rhi::LightSetup lights = lsd::editor::world_lights(world, light_view, skip_hidden);
+    if (g_decals) g_decals->apply(world, skip_hidden, light_view.eye, lights);
     const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
     const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
     if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden);
@@ -959,6 +962,8 @@ int main(int argc, char** argv) {
     auto* animations = new lsd::editor::AnimationPlayer();
     auto* effects = new lsd::editor::ParticlePlayer(*device, allocator, registry, *texture_cache);  // deleted before the textures
     g_skinned = skinned_cache;
+    auto* decal_atlas = new lsd::editor::DecalAtlas(*device, allocator, registry);  // deleted before the device
+    g_decals = decal_atlas;
     g_animations = animations;
     auto* thumbnail_memory = allocator.allocate(sizeof(lsd::editor::ThumbnailCache), alignof(lsd::editor::ThumbnailCache));
     lsd::editor::ThumbnailCache& thumbnails = *new (thumbnail_memory) lsd::editor::ThumbnailCache(*device, allocator, registry, kDataDir);
@@ -1454,6 +1459,7 @@ int main(int argc, char** argv) {
         const lsd::LinearColor& bg = state.theme.viewport_background;
         const lsd::f32 clear_color[4] = {bg.r, bg.g, bg.b, 1.0f};
         thumbnails.release_temporaries();
+        decal_atlas->update(world);  // before the frame: the atlas may be rebuilt
         device->begin_frame(clear_color);
         thumbnails.render(clear_color);
         particle_editor->render(*device, clear_color);
@@ -1632,6 +1638,8 @@ int main(int argc, char** argv) {
     delete animations;
     delete effects;
     delete skinned_cache;
+    g_decals = nullptr;
+    delete decal_atlas;
     delete texture_cache;
     device->destroy_texture(shadow_atlas);
     device->destroy_texture(local_shadow_atlas);

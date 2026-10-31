@@ -151,6 +151,16 @@ struct Camera {
     LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
 };
 
+// A picture projected onto whatever is inside its box (Unreal's Decal Actor): blood, dirt, cracks,
+// signs, road markings. The box is the unit cube scaled by the transform (like the volumes); it
+// projects down its local -Z onto surfaces facing up its +Z. The texture's alpha cuts it out.
+LSD_STRUCT(Component, Category = "Rendering")
+struct Decal {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char texture[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Multiplies the texture; alpha = opacity") LinearColor tint = LinearColor::hex(0xFFFFFF);
+};
+
 // One copy in an Instanced Static Mesh, relative to the object.
 LSD_STRUCT()
 struct MeshInstance {
