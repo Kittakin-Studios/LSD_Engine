@@ -18,6 +18,7 @@
 #include "lsd/ui/ui.h"
 #include "skinned_cache.h"
 #include "play_session.h"
+#include "light_bake.h"
 #include "sound_player.h"
 #include "remote_console.h"
 #include "source_control.h"
@@ -43,6 +44,7 @@
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -89,6 +91,27 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 // Skinned meshes for drawing and shadows: their model and current pose (set up by main()).
 lsd::editor::SkinnedCache* g_skinned = nullptr;
 lsd::editor::AnimationPlayer* g_animations = nullptr;
+lsd::editor::BakedLighting g_level_lighting;  // the open level's Build Lighting result
+
+// Build Lighting runs on its own thread; the editor keeps working and shows its progress.
+struct LightingBuild {
+    std::thread thread;
+    std::atomic<lsd::u32> done{0};
+    std::atomic<bool> finished{false};
+    std::atomic<lsd::u32> total{0};
+    lsd::u64 started = 0;
+    char path[300] = "";
+    lsd::editor::BakeScene scene;
+    lsd::editor::BakedLighting result;
+};
+LightingBuild* g_lighting_build = nullptr;
+
+// The level's baked lighting from its _BuiltData file (none: the Sky Light's flat ambient).
+void load_level_lighting(const char* level_path) {
+    const bool found = level_path && level_path[0] && lsd::editor::load_baked_lighting(lsd::editor::baked_lighting_path(level_path).c_str(), g_level_lighting);
+    if (!found) g_level_lighting = {};
+    lsd::editor::set_baked_lighting(found ? &g_level_lighting : nullptr);
+}
 
 // Skinned shadow casters (within `range` of `light` when range > 0).
 void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range) {
@@ -402,6 +425,8 @@ void register_console(EditorState& s) {
         if (st.registry->search(args, lsd::asset::AssetType::Table, nullptr, &hit, 1) == 1) lsd::editor::open_table(st, st.registry->get(hit));
         else LSD_LOG_WARN("editor", "table.Open: no data table named like '%s'", args);
     }, &s, "Open a data table in the table editor");
+    console::add_command("BuildLighting", [](void* user, const char*) { static_cast<EditorState*>(user)->build_lighting_requested = true; }, &s,
+                         "Build > Build Lighting: bake the level's light probes");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"lit", "unlit", "wireframe"};
@@ -556,6 +581,7 @@ void load_editor_font() {
 void new_level(EditorState& s) {
     lsd::editor::make_default_level(*s.world);
     s.level_path[0] = '\0';
+    load_level_lighting(nullptr);
     s.selected = {};
     s.history->reset(*s.world, "New Level");
     s.history->commit(*s.world, "Default objects");  // so the untitled level counts as unsaved
@@ -569,6 +595,7 @@ bool open_level(EditorState& s, const char* path) {
         return false;
     }
     std::snprintf(s.level_path, sizeof s.level_path, "%s", fs::path(path).generic_string().c_str());
+    load_level_lighting(s.level_path);
     s.selected = {};
     lsd::editor::refresh_prefabs(s);  // prefabs edited since the level was saved show their latest version
     s.history->reset(*s.world, "Open Level");
@@ -993,6 +1020,46 @@ int main(int argc, char** argv) {
             state.package_requested = false;
             lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
         }
+        if (state.build_lighting_requested) {  // Build > Build Lighting: gather here, trace on a thread
+            state.build_lighting_requested = false;
+            if (!state.level_path[0]) {
+                std::snprintf(state.status, sizeof state.status, "Build Lighting: save the level first (the result goes next to it)");
+            } else {
+                auto* build = new LightingBuild;
+                if (!lsd::editor::gather_bake_scene(world, registry, kDataDir, allocator, build->scene)) {
+                    std::snprintf(state.status, sizeof state.status, "Build Lighting: the level has no static meshes to bake against");
+                    delete build;
+                } else {
+                    std::snprintf(build->path, sizeof build->path, "%s", lsd::editor::baked_lighting_path(state.level_path).c_str());
+                    build->started = SDL_GetTicks();
+                    LSD_LOG_INFO("lighting", "Building lighting: %zu triangles", build->scene.positions.size() / 3);
+                    build->thread = std::thread([build] {
+                        lsd::editor::bake_lighting(build->scene, build->result, &build->done, &build->total);
+                        build->finished = true;
+                    });
+                    g_lighting_build = build;
+                    state.build_lighting_progress = 0.0f;
+                }
+            }
+        }
+        if (g_lighting_build) {
+            LightingBuild& build = *g_lighting_build;
+            const lsd::u32 total = build.total.load() ? build.total.load() : 1u;
+            state.build_lighting_progress = static_cast<float>(build.done.load()) / static_cast<float>(total);
+            std::snprintf(state.status, sizeof state.status, "Building lighting... %d%%", static_cast<int>(state.build_lighting_progress * 100.0f));
+            if (build.finished) {
+                build.thread.join();
+                g_level_lighting = std::move(build.result);
+                lsd::editor::set_baked_lighting(&g_level_lighting);
+                const bool saved = lsd::editor::save_baked_lighting(build.path, g_level_lighting);
+                std::snprintf(state.status, sizeof state.status, saved ? "Lighting built: %u probes in %.1f s (%s)" : "Lighting built (%u probes, %.1f s) but %s could not be written",
+                              g_level_lighting.probe_count(), static_cast<double>(SDL_GetTicks() - build.started) / 1000.0, build.path);
+                LSD_LOG_INFO("lighting", "%s", state.status);
+                delete g_lighting_build;
+                g_lighting_build = nullptr;
+                state.build_lighting_progress = -1.0f;
+            }
+        }
 
         // ---- Requests from the UI ----
         if (state.smoke_test_seconds > 0.0f && !smoke_started && !state.playing) {
@@ -1317,6 +1384,12 @@ int main(int argc, char** argv) {
         if (t.valid()) device->destroy_texture(t);
     }
     lsd::editor::source_control::stop();
+    if (g_lighting_build) {  // let a running bake finish (it cannot be interrupted)
+        g_lighting_build->thread.join();
+        delete g_lighting_build;
+        g_lighting_build = nullptr;
+    }
+    lsd::editor::set_baked_lighting(nullptr);
     lsd::editor::remote::close();
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);

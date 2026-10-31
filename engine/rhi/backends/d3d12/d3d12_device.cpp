@@ -32,7 +32,7 @@ constexpr u32 kMaxTargets = 256;
 constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D32_FLOAT;
 constexpr u32 kMaxBuffers = 4096;
 constexpr u32 kRootConstants = 52;  // one root-constant block shared by every built-in pipeline (+ 5 texture tables + lights and joints CBVs: 61 of 64 DWORDs)
-constexpr u32 kLightSlot = 2816;     // LightSetup rounded up to the 256-byte CBV alignment
+constexpr u32 kLightSlot = static_cast<u32>((sizeof(lsd::rhi::LightSetup) + 255) & ~static_cast<size_t>(255));  // rounded up to the CBV alignment
 constexpr u32 kMaxShadowMaps = 8;    // handles kMaxTargets + kMaxTextures..
 constexpr u32 kLightSlots = 64;      // set_lights calls per frame before the ring wraps
 constexpr u32 kJointRingBytes = 4 * 1024 * 1024;  // skinning matrices per frame (about 340 characters at 256 joints)
@@ -70,7 +70,34 @@ cbuffer Lights : register(b1) {
     float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
     float4x4 local_vp[16]; float4 local_tile[16];
     float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px; float4 hdr_out;
+    float4 probe_origin; float4 probe_cell; uint4 probe_dims; float4 probes[1536];
 };
+// The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
+// light over a cell outside the grid), or the sky / ground colours.
+float3 probe_light(uint index, float3 n) {
+    const float4 basis = float4(0.886227, 1.023328 * n);  // L1 irradiance
+    return max(float3(dot(probes[index * 3], basis), dot(probes[index * 3 + 1], basis), dot(probes[index * 3 + 2], basis)), 0.0) * 0.318310;
+}
+float3 ambient_light(float3 wpos, float3 n) {
+    const float3 sky = lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
+    if (probe_origin.w < 0.5) return sky;
+    const float3 last = float3(probe_dims.xyz) - 1.0;
+    float3 g = (wpos - probe_origin.xyz) / probe_cell.xyz;
+    const float3 outside = max(max(-g, g - last), 0.0);
+    const float fade = saturate(1.0 - max(outside.x, max(outside.y, outside.z)));
+    g = clamp(g, 0.0, last);
+    const uint3 c = min(uint3(g), probe_dims.xyz - 2);
+    const float3 f = g - float3(c);
+    float3 baked = 0;
+    for (uint k = 0; k < 8; ++k) {
+        const uint3 o = uint3(k & 1, (k >> 1) & 1, k >> 2);
+        const float3 w3 = lerp(1.0 - f, f, float3(o));
+        const uint3 p = c + o;
+        baked += probe_light(p.x + p.y * probe_dims.x + p.z * probe_dims.x * probe_dims.y, n) * (w3.x * w3.y * w3.z);
+    }
+    return lerp(sky, baked, fade);
+}
+
 Texture2D<float> shadow_tex : register(t3);
 Texture2D<float> local_shadow_tex : register(t4);
 SamplerComparisonState shadow_samp : register(s1);
@@ -251,7 +278,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
         lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
     }
-    const float3 sky = lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
+    const float3 sky = ambient_light(i.wpos, n);
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;

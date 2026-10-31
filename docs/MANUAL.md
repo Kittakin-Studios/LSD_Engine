@@ -211,6 +211,24 @@ Atmosphere:
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
 
+### Baked lighting (Build Lighting)
+
+Without baking, the Sky Light's ambient is the same everywhere, so the inside of a closed room is
+as bright as a field. **Build > Build Lighting** (Unreal's Lightmass with a Volumetric Lightmap)
+fixes that:
+
+1. Save the level (the result goes next to it as `<Level>_BuiltData.lsdlight`, loaded with it and
+   packaged with it).
+2. Optional: place a **Lightmass Importance Volume** (Place tab or Add Component) around the
+   playable area. Without one, probes cover all the static meshes up to 30 m high. Its **Probe
+   Spacing** sets the distance between probes (0: as fine as the 512-probe budget allows).
+3. Build > Build Lighting. The status bar shows the progress; the editor stays usable.
+
+Each probe records the sky it can see and the light bounced once off the surfaces around it (from
+the sun, local lights and sky; colours from the object's Color and its Material's base colour).
+Static and moving objects use it for their ambient light: rooms get darker, colours bleed onto
+neighbours. Direct light and shadows stay real-time. Rebuild after moving walls or lights.
+
 ---
 
 ## 6. Materials
@@ -529,7 +547,7 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Rendering | Static Mesh |
 | Animation | Skeletal Mesh |
 | Lights | Directional, Point, Spot, Sky Light |
-| Environment | Sky, Height Fog, Post Process Volume |
+| Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
 | Physics | Rigid Body, Physics Joint |
 | Gameplay | Player Start, Character, Script, Tags, Spline, Spline Follower |

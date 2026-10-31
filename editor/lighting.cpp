@@ -1,5 +1,7 @@
 #include "lighting.h"
 
+#include "light_bake.h"
+
 #include <cmath>
 
 namespace lsd::editor {
@@ -147,13 +149,17 @@ u32 g_atlas_size = 4096;
 } // namespace
 
 void set_shadow_quality(u32 quality) { g_quality = quality < 3 ? quality : 3; }
+const BakedLighting* g_baked = nullptr;
 u32 shadow_atlas_size() { return g_atlas_size; }
+void set_baked_lighting(const BakedLighting* lighting) { g_baked = lighting; }
+rhi::LightSetup level_lights(const world::World& w, const LightView& view) { return lights_only(w, view, true); }
 void set_shadow_atlas_size(u32 size) { g_atlas_size = size; }
 
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
     rhi::LightSetup s = lights_only(w, view, skip_hidden);
     add_atmosphere(w, view.eye, skip_hidden, s);
     s.output[1] = 1.0f / static_cast<f32>(g_atlas_size);  // the local atlas's texel, for its filtering
+    if (g_baked) apply_baked_lighting(*g_baked, s);
     return s;
 }
 

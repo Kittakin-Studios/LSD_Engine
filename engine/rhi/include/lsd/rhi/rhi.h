@@ -128,7 +128,8 @@ constexpr u32 kMaxMaterialParams = 16;
 // and spot). The shader multiplies everything by `exposure` and encodes to sRGB.
 enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2 };
 constexpr u32 kMaxLights = 16;
-constexpr u32 kMaxShadowTiles = 16;  // spot / point light shadow tiles per frame
+constexpr u32 kMaxShadowTiles = 16;
+constexpr u32 kMaxProbes = 512;  // baked light probes (Build Lighting) in one grid  // spot / point light shadow tiles per frame
 struct GpuLight {
     f32 position[3];
     f32 type;          // LightType as a float (the shader reads it from a float4)
@@ -171,8 +172,18 @@ struct LightSetup {
     // range-compressed into 8 bits, sqrt(c / (1 + c)), and the post pass does tonemap and grading.
     // y = the local shadow atlas's texel size (1 / its size; 0: 4096).
     f32 output[4] = {};
+    // Baked indirect light (Build Lighting): a grid of probes replacing the sky / ground ambient
+    // inside it. probe_origin = the first probe's position, w = 1 when there is a grid; probe_cell =
+    // metres between probes; probe_dims = probes per axis (x fastest). Each probe: 3 rows (r, g, b)
+    // of L1 spherical harmonics (L0, L1x, L1y, L1z) of the radiance arriving there.
+    f32 probe_origin[4] = {};
+    f32 probe_cell[4] = {};
+    u32 probe_dims[4] = {};
+    f32 probes[kMaxProbes * 3][4] = {};
 };
-static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96, "matches the shader's light buffer");
+static_assert(sizeof(GpuLight) == 64 &&
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48,
+              "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
 // LightSetup.output on, adds bloom, tonemaps and grades, smooths edges (FXAA), and writes the

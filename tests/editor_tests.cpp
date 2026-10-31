@@ -1,4 +1,5 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
+#include "light_bake.h"
 #include "rml_edit.h"
 #include "sound_cue.h"
 #include "transactions.h"
@@ -124,8 +125,34 @@ static void test_rml_edit() {  // the UI designer's writes into the document tex
     CHECK(!rml_find_tag(rml, "nope", b, e));
 }
 
+static void test_light_bake() {  // Build Lighting: open sky over a black floor
+    using namespace lsd;
+    editor::BakeScene scene;
+    const Vec3 a{-100, -100, 0}, b{100, -100, 0}, c{100, 100, 0}, d{-100, 100, 0};
+    scene.positions = {a, b, c, a, c, d};
+    scene.albedo = {Vec3{}, Vec3{}};
+    for (int i = 0; i < 3; ++i) scene.lights.sky[i] = scene.lights.ground[i] = 1.0f;
+    scene.lights.count = 0;
+    scene.lo = {-1, -1, 1};
+    scene.hi = {1, 1, 2};
+    scene.spacing = 1.0f;
+    editor::BakedLighting baked;
+    editor::bake_lighting(scene, baked);
+    CHECK(baked.probe_count() == 3 * 3 * 2 && baked.sh.size() == baked.probe_count() * 12);
+    auto ambient = [&](u32 probe, f32 nz) {  // what the shader computes for a red normal pointing up / down
+        const f32* r = &baked.sh[probe * 12];
+        return (0.886227f * r[0] + 1.023328f * r[3] * nz) / 3.14159265f;
+    };
+    CHECK(ambient(0, 1.0f) > 0.95f && ambient(0, 1.0f) < 1.05f);  // the whole sky above
+    CHECK(ambient(0, -1.0f) > -0.05f && ambient(0, -1.0f) < 0.05f);  // the black floor below
+    rhi::LightSetup setup;
+    editor::apply_baked_lighting(baked, setup);
+    CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
+}
+
 int main() {
     test_undo_redo();
+    test_light_bake();
     test_rml_edit();
     test_sound_cue();
     if (g_failures == 0) std::printf("All editor tests passed.\n");

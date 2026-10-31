@@ -123,6 +123,8 @@ struct EditorState {
     bool quit_requested = false;   // window closed with unsaved changes: the UI asks first
     bool quit_confirmed = false;
     bool package_requested = false;  // File > Package Project
+    bool build_lighting_requested = false;  // Build > Build Lighting
+    f32 build_lighting_progress = -1.0f;    // 0..1 while baking, -1 otherwise
     bool game_mode = false;          // a packaged game (or -game): Play only, no editor
     bool quit_after_save = false;
     char recovery_path[260] = "";  // autosave left by a crash: the UI offers to restore it

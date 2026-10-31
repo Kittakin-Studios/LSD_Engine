@@ -98,7 +98,34 @@ layout(std140, binding = 1) uniform Lights {
     mat4 shadow_vp[4]; vec4 shadow_tile[4]; vec4 shadow_split; vec4 shadow_info;
     mat4 local_vp[16]; vec4 local_tile[16];
     vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px; vec4 hdr_out;
+    vec4 probe_origin; vec4 probe_cell; uvec4 probe_dims; vec4 probes[1536];
 };
+// The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
+// light over a cell outside the grid), or the sky / ground colours.
+vec3 probe_light(uint index, vec3 n) {
+    vec4 basis = vec4(0.886227, 1.023328 * n);  // L1 irradiance
+    return max(vec3(dot(probes[index * 3u], basis), dot(probes[index * 3u + 1u], basis), dot(probes[index * 3u + 2u], basis)), 0.0) * 0.318310;
+}
+vec3 ambient_light(vec3 wpos, vec3 n) {
+    vec3 sky = mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
+    if (probe_origin.w < 0.5) return sky;
+    vec3 last = vec3(probe_dims.xyz) - 1.0;
+    vec3 g = (wpos - probe_origin.xyz) / probe_cell.xyz;
+    vec3 outside = max(max(-g, g - last), 0.0);
+    float fade = clamp(1.0 - max(outside.x, max(outside.y, outside.z)), 0.0, 1.0);
+    g = clamp(g, vec3(0.0), last);
+    uvec3 c = min(uvec3(g), probe_dims.xyz - 2u);
+    vec3 f = g - vec3(c);
+    vec3 baked = vec3(0.0);
+    for (uint k = 0u; k < 8u; ++k) {
+        uvec3 o = uvec3(k & 1u, (k >> 1) & 1u, k >> 2);
+        vec3 w3 = mix(1.0 - f, f, vec3(o));
+        uvec3 p = c + o;
+        baked += probe_light(p.x + p.y * probe_dims.x + p.z * probe_dims.x * probe_dims.y, n) * (w3.x * w3.y * w3.z);
+    }
+    return mix(sky, baked, fade);
+}
+
 layout(binding = 3) uniform sampler2DShadow shadow_tex;
 layout(binding = 4) uniform sampler2DShadow local_shadow_tex;
 float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
@@ -248,7 +275,7 @@ void main() {
         vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
         lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
     }
-    vec3 sky = mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
+    vec3 sky = ambient_light(v_wpos, n);
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;

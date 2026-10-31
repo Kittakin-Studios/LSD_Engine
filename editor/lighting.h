@@ -8,6 +8,8 @@
 
 namespace lsd::editor {
 
+struct BakedLighting;
+
 // The camera the light list is built for: local lights nearest it, and sun shadow cascades fitted
 // to its view (fov_y in radians).
 struct LightView {
@@ -22,6 +24,10 @@ struct LightView {
 u32 shadow_atlas_size();
 void set_shadow_atlas_size(u32 size);
 
+// The level's baked light probes (Build Lighting), used by world_lights; nullptr: none.
+void set_baked_lighting(const BakedLighting* lighting);
+// Just the light list, sky and ground (what Build Lighting bakes with).
+rhi::LightSetup level_lights(const world::World& world, const LightView& view);
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic

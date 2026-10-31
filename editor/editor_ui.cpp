@@ -71,7 +71,7 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
-    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
+    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
     {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Empty", nullptr, nullptr},
 };
 
@@ -81,7 +81,7 @@ constexpr Vec3 kVolumeLo{-0.5f, -0.5f, 0.0f}, kVolumeHi{0.5f, 0.5f, 1.0f};
 bool is_volume(const world::World& w, world::Entity e) {
     const auto* post = w.get<world::PostProcessVolume>(e);
     return w.get<world::BlockingVolume>(e) || w.get<world::KillVolume>(e) || w.get<world::TriggerVolume>(e) || w.get<world::AudioVolume>(e) || (post && !post->unbound) ||
-           w.get<world::NavMeshBounds>(e);
+           w.get<world::NavMeshBounds>(e) || w.get<world::LightmassImportanceVolume>(e);
 }
 
 // UI-only state for the confirmation dialogs.
@@ -2853,6 +2853,11 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
         ImGui::MenuItem("Remote Console", nullptr, &s.show_remote_console);
         ImGui::SetItemTooltip("Sends console commands to a game running on this PC with -remote");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Build")) {
+        if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
+        ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {

@@ -300,6 +300,14 @@ struct HeightFog {
 // Colour grading and camera effects (Unreal's Post Process Volume): applies while the camera is
 // inside its box (the unit cube scaled by the transform, like the other volumes) or everywhere if
 // Unbound; the highest Priority wins.
+// Where Build Lighting puts its light probes (Unreal's Lightmass Importance Volume): the unit cube
+// scaled by the transform. Without one, probes cover all the static meshes.
+LSD_STRUCT(Component, Category = "Environment")
+struct LightmassImportanceVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 20, Tooltip = "Distance between light probes; 0 = as fine as the probe budget (512) allows") f32 probe_spacing = 0.0f;
+};
+
 LSD_STRUCT(Component, Category = "Environment")
 struct PostProcessVolume {
     LSD_GENERATED()

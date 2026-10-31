@@ -132,5 +132,6 @@ world-anchored elements, UI window with code + live preview), game user settings
 reports, frustum culling, asset validation, platform settings, Tracy / `stat unit`, smoke tests.
 Post pass: bloom + FXAA (draw_post) when a Post Process Volume applies.
 Post also has SSAO, TAA and depth of field.
-Still open (see BACKLOG): baked lighting,
+Build > Build Lighting bakes light probes (`editor/light_bake.*`).
+Still open (see BACKLOG): lightmap textures,
 QuickJS, remote console to other machines, Perforce / LFS locking.
