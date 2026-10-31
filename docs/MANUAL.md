@@ -149,6 +149,10 @@ Import...** to pick several. They go into the Content Browser's current folder. 
 recompile on their own; select an asset to change its import settings in Details (Save writes its
 `.meta`).
 
+**Live Link** (Blender, Maya...): set Edit > Editor Settings > **Live Link Folder** to the folder
+you export to. Every time you export there (FBX, textures, sounds), the editor copies the file into
+`Content/LiveLink/` and it reloads in the level, also while playing.
+
 **Browsing**: **List** / **Tiles** and the size slider change the view; the sort menu orders by name,
 type, last change or size. Ctrl-click and Shift-click select several assets (then right-click:
 Delete Selected, Reimport, Add to Collection). Right-click a folder > **Add to Favourites**; right-

@@ -140,7 +140,7 @@ visual-script sounds, `stat audio`.
 - [~] Texture import (stb_image): PNG, JPG, TGA, BMP, PSD as Texture assets, mips built on load (colour mips averaged in linear light), Max Size per texture, sRGB / linear chosen by the material slot, the image as its Content Browser thumbnail, hot reload on save; needs EXR / HDR, BC compression in the data compiler, streaming
 - [ ] Multiple meshes and materials per imported file; scene import as a prefab; skeletal meshes, skeletons, animations
 - [x] Reimport on source change, import settings per asset, batch import: changed sources recompile on the next scan, right-click > Reimport, each asset's .meta settings in Details (Save / Revert), File > Import... (several files), dropping files or whole folders (sub-folders kept)
-- [ ] Live link to Blender/Maya: re-export pushes into the running editor and game **(S)** [Live Link]
+- [x] Live link to Blender/Maya: re-export pushes into the running editor and game **(S)** [Live Link]: Editor Settings > Live Link Folder is watched each second; new / changed exports are copied into Content/LiveLink and hot-reload in the editor and Play (file based: a DCC add-on would have to be our own code, no GPL)
 
 ### Rendering content
 

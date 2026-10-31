@@ -19,6 +19,7 @@
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "light_bake.h"
+#include "live_link.h"
 #include "sound_player.h"
 #include "debug_draw.h"
 #include "remote_console.h"
@@ -1059,6 +1060,7 @@ int main(int argc, char** argv) {
 
         // Pick up new, changed and deleted files once a second; recompile what changed.
         if (SDL_GetTicks() - last_scan > 1000) {
+            if (!game_mode) lsd::editor::live_link_sync(state.settings.live_link_folder, kContentDir, state.status, sizeof state.status);  // copied files show up in this scan
             if (registry.scan()) register_script_nodes(registry);
             meshes.hot_reload();
             texture_cache->check_files();

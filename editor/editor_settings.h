@@ -34,6 +34,8 @@ struct EditorSettings {
     LSD_PROPERTY(Edit, Category = "Content Browser", Widget = "Choice:Name,Type,Date Modified,Size") u32 sort_by = 0;
     LSD_PROPERTY(Edit, Category = "Content Browser") List<FavouriteFolder, 32> favourites;
     LSD_PROPERTY(Edit, Category = "Content Browser") List<CollectionEntry, 512> collections;
+    LSD_PROPERTY(Edit, Category = "Live Link", Tooltip = "A folder your DCC exports to (Blender, Maya: File > Export > FBX there). New and changed files are copied into Content/LiveLink and reload in the editor and Play; empty = off")
+    char live_link_folder[260] = "";
 };
 
 // A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and
