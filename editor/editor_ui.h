@@ -42,6 +42,8 @@ struct EditorState {
     EditorCamera camera;
     bool show_grid = true;
     bool show_axis_gizmo = true;
+    bool show_bounds = false;     // Show > Bounds: each mesh's world box
+    bool show_collision = false;  // Show > Collision: what blocks in Play
     i32 force_lod = -1;  // r.ForceLOD: every mesh at that LOD (-1: by distance)
     bool show_navigation = false;  // P: the navmesh in green (rebuilt by main.cpp about once a second)
     Vec3 nav_lines[32768];         // line pairs

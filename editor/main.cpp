@@ -466,6 +466,8 @@ void register_console(EditorState& s) {
     namespace console = lsd::console;
     console::add_variable("r.Grid", &s.show_grid, "Draw the floor grid");
     console::add_variable("show.Navigation", &s.show_navigation, "Draw the navmesh (P)");
+    console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
+    console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");

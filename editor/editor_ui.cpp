@@ -553,10 +553,10 @@ void duplicate_selected(EditorState& s) {
 void group_selection(EditorState& s);
 void ungroup_selection(EditorState& s);
 
-// World-space box of an entity's mesh; a small box around the origin when it has none.
-void world_bounds(EditorState& s, Entity e, Vec3& lo, Vec3& hi) {
-    const Mat4 m = s.world->world_matrix(e);
-    Vec3 local_lo{-0.25f, -0.25f, 0.0f}, local_hi{0.25f, 0.25f, 1.8f};
+// Box of an entity's mesh in its own space; a small box around the origin when it has none.
+void local_bounds(EditorState& s, Entity e, Vec3& local_lo, Vec3& local_hi) {
+    local_lo = {-0.25f, -0.25f, 0.0f};
+    local_hi = {0.25f, 0.25f, 1.8f};
     if (is_volume(*s.world, e)) {
         local_lo = kVolumeLo;
         local_hi = kVolumeHi;
@@ -573,6 +573,13 @@ void world_bounds(EditorState& s, Entity e, Vec3& lo, Vec3& hi) {
             local_hi = model->model->bounds_max;
         }
     }
+}
+
+// World-space box of an entity's mesh (local_bounds through its transform).
+void world_bounds(EditorState& s, Entity e, Vec3& lo, Vec3& hi) {
+    const Mat4 m = s.world->world_matrix(e);
+    Vec3 local_lo, local_hi;
+    local_bounds(s, e, local_lo, local_hi);
     lo = {1e30f, 1e30f, 1e30f};
     hi = {-1e30f, -1e30f, -1e30f};
     for (int c = 0; c < 8; ++c) {
@@ -1328,6 +1335,35 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             if (project(view_proj, s.nav_lines[i], pos, size, a) && project(view_proj, s.nav_lines[i + 1], pos, size, b)) dl->AddLine(a, b, IM_COL32(60, 230, 90, 200), 1.5f);
         }
     }
+    if ((s.show_bounds || s.show_collision) && !s.game_view) {  // Unreal's Show > Bounds / Collision
+        // A box through `m`: its 8 corners projected, 12 edges drawn when all are in front of the camera.
+        auto box = [&](const Mat4& m, Vec3 lo, Vec3 hi, ImU32 color) {
+            ImVec2 corner[8];
+            for (int c = 0; c < 8; ++c) {
+                if (!project(view_proj, transform_point(m, {(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z}), pos, size, corner[c])) return;
+            }
+            static const int edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+            for (const auto& edge : edges) dl->AddLine(corner[edge[0]], corner[edge[1]], color, 1.0f);
+        };
+        for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
+            const Entity e = s.world->entity_at_slot(slot);
+            if (!e.valid() || s.world->hidden_in_hierarchy(e)) continue;
+            const auto* mesh = s.world->get<world::StaticMesh>(e);
+            const bool has_mesh = mesh || s.world->get<world::SkeletalMesh>(e);
+            if (s.show_bounds && has_mesh) {
+                Vec3 lo, hi;
+                world_bounds(s, e, lo, hi);
+                box(Mat4{}, lo, hi, IM_COL32(255, 220, 60, 200));
+            }
+            // shortcut: rigid-body spheres and capsules are drawn as their fitted box; draw the real shapes if that misleads.
+            const bool blocks = (mesh && mesh->collision) || s.world->get<world::BlockingVolume>(e) || s.world->get<world::RigidBody>(e);
+            if (s.show_collision && blocks) {
+                Vec3 lo, hi;
+                local_bounds(s, e, lo, hi);
+                box(s.world->world_matrix(e), lo, hi, IM_COL32(80, 220, 255, 230));
+            }
+        }
+    }
     // Axis gizmo, bottom-left: world axes as seen from the camera.
     if (s.show_axis_gizmo && !s.game_view) {
         const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};
@@ -1383,6 +1419,8 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             ImGui::Checkbox("Grid", &s.show_grid);
             ImGui::Checkbox("Axis gizmo", &s.show_axis_gizmo);
             ImGui::Checkbox("Navigation (P)", &s.show_navigation);
+            ImGui::Checkbox("Bounds", &s.show_bounds);
+            ImGui::Checkbox("Collision", &s.show_collision);
             ImGui::Checkbox("Game view (G)", &s.game_view);
             ImGui::Checkbox("Stats (stat fps)", &s.show_stats);
             ImGui::EndPopup();
