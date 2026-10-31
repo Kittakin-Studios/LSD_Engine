@@ -1253,7 +1253,7 @@ int main(int argc, char** argv) {
                            state.playing && !state.paused ? &sounds : nullptr);
         effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : dt, state.playing);
         // The ears: the player's camera in Play, else the editor camera.
-        if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.forward());
+        if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.view_forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
         audio.update(dt);
         mouse_dx = mouse_dy = 0.0f;
@@ -1292,14 +1292,17 @@ int main(int argc, char** argv) {
             const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
             device->set_viewport(rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y);
             lsd::editor::EditorCamera lens = camera;
-            if (state.playing && !state.ejected) lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
+            if (state.playing && !state.ejected) {
+                lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
+                if (play.view_fov() > 0.0f) lens.fov_y = play.view_fov();  // a Camera component's
+            }
             lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
-            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
+            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.view_forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
             lsd::Mat4 view_proj = proj * view;
             state.drawn_view_proj[v] = view_proj;
             lsd::editor::LightView light_view;
             light_view.eye = state.playing && !state.ejected ? play.eye() : camera.position;
-            light_view.forward = state.playing && !state.ejected ? play.forward() : lsd::editor::camera_forward(camera);
+            light_view.forward = state.playing && !state.ejected ? play.view_forward() : lsd::editor::camera_forward(camera);
             light_view.fov_y = lens.fov_y;
             light_view.aspect = rect[2] / rect[3];
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};

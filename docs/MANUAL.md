@@ -583,6 +583,8 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Animation | Skeletal Mesh |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
+| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e)` / `lsd.set_view(nil)` switch views) |
+| Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
 | Physics | Rigid Body, Physics Joint |
 | Gameplay | Player Start, Character, Script, Tags, Spline, Spline Follower |

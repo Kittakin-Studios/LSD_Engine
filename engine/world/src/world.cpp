@@ -25,6 +25,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<Sky>(),
         &reflect::type_of<HeightFog>(),
         &reflect::type_of<PostProcessVolume>(),
+        &reflect::type_of<LightmassImportanceVolume>(),
         &reflect::type_of<NavMeshBounds>(),
         &reflect::type_of<NavAgent>(),
         &reflect::type_of<AIController>(),
@@ -36,6 +37,9 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<Script>(),
         &reflect::type_of<Spline>(),
         &reflect::type_of<SplineFollower>(),
+        &reflect::type_of<Camera>(),
+        &reflect::type_of<RotatingMovement>(),
+        &reflect::type_of<ProjectileMovement>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);

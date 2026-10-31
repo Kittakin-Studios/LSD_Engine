@@ -63,6 +63,9 @@
 //   lsd.set(e, "Character", {walk_speed = 8})          writes only the fields given
 //   lsd.add(e, "RigidBody" [, fields]), lsd.remove(e, "RigidBody"), lsd.has(e, "RigidBody")
 //
+// Cameras: lsd.set_view(e) looks through e's Camera component (blends are not done: a cut);
+// lsd.set_view(nil) goes back to the player.
+//
 // Debug drawing over the viewport (r, g, b 0..1, default red; seconds, default 0 = this frame):
 //   lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])
 //   lsd.draw_sphere(x, y, z, radius [, r, g, b [, seconds]]), lsd.draw_box(x, y, z, hx, hy, hz [, ...])
@@ -122,6 +125,7 @@ struct ScriptHost {
     void (*set_language)(void* user, const char* code) = nullptr;
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;
+    void (*set_view)(void* user, world::Entity camera) = nullptr;  // invalid: back to the player
     // shape: 0 line a-b, 1 sphere at a (radius), 2 box at a (half size b), 3 text at a.
     void (*draw_debug)(void* user, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) = nullptr;
     u32 (*bindings)(void* user, const char* action, const char** out, u32 capacity) = nullptr;

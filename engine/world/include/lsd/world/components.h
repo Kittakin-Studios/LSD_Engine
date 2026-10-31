@@ -141,6 +141,34 @@ struct Character {
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Spring arm length behind the head: 0 = first person") f32 camera_distance = 0.0f;
 };
 
+// A camera the game can look through (Unreal's Camera Component / Camera Actor): along its +X.
+// Auto Activate: Play starts looking through it instead of the player's head; lsd.set_view(e)
+// switches to any camera (0: back to the player), Timelines use them for camera cuts.
+LSD_STRUCT(Component, Category = "Camera")
+struct Camera {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "deg", Min = 10, Max = 170, Tooltip = "Vertical field of view") f32 fov = 60.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
+};
+
+// Turns the object at a steady rate while playing (Unreal's Rotating Movement).
+LSD_STRUCT(Component, Category = "Movement")
+struct RotatingMovement {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "deg/s") Vec3 rate{0.0f, 0.0f, 90.0f};
+};
+
+// Flies the object from its start velocity, pulled down by gravity, until it hits something
+// (Unreal's Projectile Movement): it stops there and both get on_hit.
+LSD_STRUCT(Component, Category = "Movement")
+struct ProjectileMovement {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m/s", Tooltip = "Start velocity along the object's own axes (+X forward)") Vec3 velocity{20.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Times the world's gravity; 0 = flies straight") f32 gravity_scale = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Points along its flight (arrows, rockets)") bool rotation_follows_velocity = true;
+    LSD_PROPERTY(Edit, Tooltip = "Destroyed when it hits something") bool destroy_on_hit = false;
+};
+
 // Rules of a game (Unreal's Game Mode), a data asset picked in World Settings: who the player is
 // and a script that runs for the whole game.
 LSD_STRUCT(Category = "Game")

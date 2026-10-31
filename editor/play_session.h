@@ -41,7 +41,10 @@ public:
     void stop();
 
     Vec3 feet() const { return feet_; }
-    Vec3 eye() const { return eye_; }  // the head, or behind it on the spring arm (camera_distance)
+    Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
+    Vec3 view_forward() const { return view_forward_; }
+    f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
+    void set_view(world::Entity camera) { view_camera_ = camera; }  // invalid: the player again
     Vec3 forward() const;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
@@ -95,6 +98,18 @@ private:
     MeshCache* meshes_ = nullptr;
     world::Entity body_entities_[kMaxBodies];  // which object each physics body belongs to
     input::InputSystem input_;
+    Vec3 view_eye_, view_forward_{1, 0, 0};
+    f32 view_fov_ = 0.0f;
+    world::Entity view_camera_;  // a Camera component the game looks through (lsd.set_view, Auto Activate)
+    struct Projectile {
+        world::Entity entity;
+        Vec3 velocity;  // world space
+        bool flying;
+    };
+    Projectile projectiles_[256];
+    u32 projectile_count_ = 0;
+    void update_movement(world::World& world, f32 dt);
+    void update_view(const world::World& world);
     input::InputMappingContext context_;  // the Character's controls, the player's rebinds applied
     char key_held_[32] = "";
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)

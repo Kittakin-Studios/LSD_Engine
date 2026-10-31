@@ -17,6 +17,7 @@
 
 #include <SDL3/SDL_stdinc.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -269,6 +270,8 @@ void PlaySession::stop() {
     delete physics_;
     physics_ = nullptr;
     simulated_count_ = 0;
+    projectile_count_ = 0;
+    view_camera_ = {};
     overlap_count_ = 0;
     follower_count_ = 0;
     input_.clear();
@@ -445,9 +448,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     desc.step_height = settings_.step_height;
     physics_->create_character(desc);
     eye_ = feet_ + Vec3{0, 0, settings_.eye_height};
+    view_eye_ = eye_;
+    view_forward_ = forward();
 
     script::ScriptHost host;
     host.user = this;
+    host.set_view = [](void* user, world::Entity camera) { static_cast<PlaySession*>(user)->set_view(camera); };
     host.input = [](void* user, const char* action) {
         const auto& self = *static_cast<const PlaySession*>(user);
         char guid[33];
@@ -1002,6 +1008,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
         eye_ = head + back * arm;
     }
+    update_movement(world, dt);
+    update_view(world);
     for (u32 i = 0; i < emitter_count_ && sounds_; ++i) {  // emitters follow their objects
         if (!world.alive(emitters_[i].entity)) {
             sounds_->audio()->stop(emitters_[i].voice);
@@ -1019,6 +1027,82 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     update_brains(world, dt);
     update_agents(world, dt);
+}
+
+// Rotating and Projectile Movement components.
+void PlaySession::update_movement(world::World& world, f32 dt) {
+    const reflect::TypeInfo& rotating = reflect::type_of<world::RotatingMovement>();
+    for (u32 i = 0; i < world.count(rotating); ++i) {
+        const auto* m = static_cast<const world::RotatingMovement*>(world.at(rotating, i));
+        if (auto* t = world.get<world::Transform>(world.owner(rotating, i))) t->rotation = t->rotation + m->rate * dt;
+    }
+    const reflect::TypeInfo& projectile = reflect::type_of<world::ProjectileMovement>();
+    for (u32 i = 0; i < world.count(projectile); ++i) {  // newcomers (placed or spawned) start flying
+        const world::Entity e = world.owner(projectile, i);
+        bool known = false;
+        for (u32 k = 0; k < projectile_count_ && !known; ++k) known = projectiles_[k].entity == e;
+        if (known || projectile_count_ == sizeof projectiles_ / sizeof projectiles_[0]) continue;
+        const auto* p = static_cast<const world::ProjectileMovement*>(world.at(projectile, i));
+        const Mat4 m = world.world_matrix(e);
+        const Vec3 axes[3] = {normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), normalize(Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
+                              normalize(Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
+        projectiles_[projectile_count_++] = {e, axes[0] * p->velocity.x + axes[1] * p->velocity.y + axes[2] * p->velocity.z, true};
+    }
+    const f32 gravity = world.settings().gravity;
+    for (u32 k = 0; k < projectile_count_; ++k) {
+        Projectile& pr = projectiles_[k];
+        const auto* p = world.alive(pr.entity) ? world.get<world::ProjectileMovement>(pr.entity) : nullptr;
+        if (!p) {  // gone or no longer a projectile
+            projectiles_[k--] = projectiles_[--projectile_count_];
+            continue;
+        }
+        if (!pr.flying) continue;
+        pr.velocity.z -= gravity * p->gravity_scale * dt;
+        const Mat4 m = world.world_matrix(pr.entity);
+        const Vec3 from{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        const f32 speed = length(pr.velocity);
+        Vec3 to = from + pr.velocity * dt;
+        physics::RayHit hit;
+        if (speed > 1e-4f && physics_->raycast(from, pr.velocity * (1.0f / speed), speed * dt, hit)) {
+            to = hit.point;
+            pr.flying = false;
+            const world::Entity other = body_entity(hit.body);
+            scripts_.send(pr.entity, "on_hit", other);
+            if (world.alive(other)) scripts_.send(other, "on_hit", pr.entity);
+        }
+        Mat4 moved = m;
+        moved.at(0, 3) = to.x;
+        moved.at(1, 3) = to.y;
+        moved.at(2, 3) = to.z;
+        world.set_world_matrix(pr.entity, moved);
+        if (p->rotation_follows_velocity && speed > 0.1f) {
+            if (auto* t = world.get<world::Transform>(pr.entity)) {
+                t->rotation.y = -degrees(std::asin(std::clamp(pr.velocity.z / speed, -1.0f, 1.0f)));
+                t->rotation.z = degrees(std::atan2(pr.velocity.y, pr.velocity.x));
+            }
+        }
+        if (!pr.flying && p->destroy_on_hit) world.destroy(pr.entity);
+    }
+}
+
+// Where the game is seen from: a Camera picked by lsd.set_view or Auto Activate, else the player.
+void PlaySession::update_view(const world::World& world) {
+    view_eye_ = eye_;
+    view_forward_ = forward();
+    view_fov_ = 0.0f;
+    const reflect::TypeInfo& camera_type = reflect::type_of<world::Camera>();
+    world::Entity camera = view_camera_;
+    if (!world.alive(camera) || !world.get<world::Camera>(camera)) {
+        camera = {};
+        for (u32 i = 0; i < world.count(camera_type) && !camera.valid(); ++i) {
+            if (static_cast<const world::Camera*>(world.at(camera_type, i))->auto_activate) camera = world.owner(camera_type, i);
+        }
+    }
+    if (!camera.valid()) return;
+    const Mat4 m = world.world_matrix(camera);
+    view_eye_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    view_forward_ = normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+    view_fov_ = radians(world.get<world::Camera>(camera)->fov);
 }
 
 // shortcut: point tests (the Character's middle, a body's centre), not shape overlaps; use Jolt sensors for big objects.

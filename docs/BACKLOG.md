@@ -103,7 +103,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 
 - [~] Prefabs (`.lsdprefab`, `engine/world/prefab.h`): Outliner > Create Prefab, drag from the Content Browser to place, Apply to Prefab (updates every instance in the level), Revert, instances refresh when a level opens; per-instance overrides (properties edited in Details or moved with the gizmo inside an instance are kept when the prefab changes, shown gold with *, right-click > Revert to Prefab; up to 32 per instance); needs overrides for added / removed components and children, nested prefab updates [Blueprint instances, Level Instances]
 - [ ] Prefab editor window with its own viewport and component tree [Blueprint Editor viewport]
-- [ ] Components added from a list: mesh, light, camera, spring arm, audio, collision, movement, script, spline [Actor Components]
+- [x] Components added from a list: mesh, light, camera, spring arm, audio, collision, movement, script, spline [Actor Components]: Details > + Add Component lists every type; new Camera (FOV, Auto Activate, `lsd.set_view`), Rotating Movement, Projectile Movement (gravity, follows velocity, on_hit, destroy on hit); spring arm is the Character's Camera Distance
 - [ ] Exposed properties per instance with ranges and tooltips [EditAnywhere]
 - [~] Spawn / destroy at runtime: `lsd.spawn(name, x, y, z)` (prefab, mesh asset or built-in shape; gets physics and scripts), `lsd.destroy`; needs object pools
 
