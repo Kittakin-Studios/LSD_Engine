@@ -1,8 +1,9 @@
 #pragma once
-// The UI window (Unreal's Widget Blueprint editor, code first): a UI document (.rml) or style
-// sheet (.rcss) as text on the right, a live preview on the left that redraws 0.3 s after typing
-// stops. Save writes the file; the game opens it from the next Play.
-// shortcut: code only; the drag-and-drop designer canvas that edits the same text comes next.
+// The UI window (Unreal's Widget Blueprint editor): a UI document (.rml) or style sheet (.rcss) as
+// text on the right, and on the left a designer canvas: a live preview where elements are clicked,
+// dragged and added; their Details and drags are written into the same text (the text stays the
+// source). The preview redraws 0.3 s after typing stops. Save writes the file; the game opens it
+// from the next Play.
 #include "editor_ui.h"
 
 #include "lsd/asset/asset_registry.h"

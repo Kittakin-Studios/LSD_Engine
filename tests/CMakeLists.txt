@@ -33,7 +33,7 @@ lsd_configure_target(lsd_world_tests)
 add_test(NAME world COMMAND lsd_world_tests)
 
 # Editor logic that needs no GPU (undo / redo history).
-add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/transactions.cpp ${PROJECT_SOURCE_DIR}/editor/sound_cue.cpp)
+add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/transactions.cpp ${PROJECT_SOURCE_DIR}/editor/sound_cue.cpp ${PROJECT_SOURCE_DIR}/editor/rml_edit.cpp)
 target_include_directories(lsd_editor_tests PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script)
 lsd_configure_target(lsd_editor_tests)

@@ -1,4 +1,5 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
+#include "rml_edit.h"
 #include "sound_cue.h"
 #include "transactions.h"
 
@@ -6,6 +7,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -101,8 +103,30 @@ static void test_sound_cue() {
     CHECK(evaluate_cue(h, env, v, 16) == 1 && v[0].looping && v[0].delay == 1.0f);
 }
 
+static void test_rml_edit() {  // the UI designer's writes into the document text
+    using namespace lsd::editor;
+    std::string rml = "<rml><body>\n<div id=\"panel\" style=\"left: 40px; color: red;\">\n  <div id=\"title\">Title</div>\n  <button id=\"play\">Play</button>\n</div>\n<img id=\"pic\" src=\"a.png\"/>\n</body></rml>";
+    CHECK(rml_style(rml, "panel", "left") == "40px" && rml_style(rml, "panel", "top").empty());
+    CHECK(rml_set_style(rml, "panel", "left", "120px") && rml_style(rml, "panel", "left") == "120px");
+    CHECK(rml_set_style(rml, "panel", "top", "8px") && rml_style(rml, "panel", "top") == "8px" && rml_style(rml, "panel", "color") == "red");
+    CHECK(rml_set_style(rml, "panel", "color", "") && rml_style(rml, "panel", "color").empty());
+    CHECK(rml_set_style(rml, "title", "font-size", "30px") && rml_attribute(rml, "title", "style") == "font-size: 30px;");
+    CHECK(rml_set_style(rml, "pic", "width", "64px") && rml.find("<img id=\"pic\" src=\"a.png\" style=\"width: 64px;\"/>") != std::string::npos);
+    std::string text;
+    CHECK(rml_text(rml, "title", text) && text == "Title");
+    CHECK(!rml_text(rml, "panel", text));  // has child elements
+    CHECK(rml_set_text(rml, "play", "Start") && rml_text(rml, "play", text) && text == "Start");
+    CHECK(rml_set_attribute(rml, "play", "onclick", "start_game") && rml_attribute(rml, "play", "onclick") == "start_game");
+    CHECK(rml_unique_id(rml, "button") == "button1");
+    CHECK(rml_append_to_body(rml, "<div id=\"text1\">Hi</div>") && rml_text(rml, "text1", text) && text == "Hi");
+    CHECK(rml_remove(rml, "panel") && rml.find("title") == std::string::npos && rml.find("pic") != std::string::npos && rml.find("text1") != std::string::npos);
+    size_t b, e;
+    CHECK(!rml_find_tag(rml, "nope", b, e));
+}
+
 int main() {
     test_undo_redo();
+    test_rml_edit();
     test_sound_cue();
     if (g_failures == 0) std::printf("All editor tests passed.\n");
     return g_failures == 0 ? 0 : 1;

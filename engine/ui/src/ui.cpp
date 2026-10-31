@@ -408,6 +408,38 @@ bool UiContext::set_property(DocumentId d, const char* id, const char* name, con
     return e != nullptr;
 }
 
+bool UiContext::element_at(f32 x, f32 y, char* id, usize capacity) const {
+    if (!impl_->context) return false;
+    for (Rml::Element* e = impl_->context->GetElementAtPoint(Rml::Vector2f(x, y)); e; e = e->GetParentNode()) {
+        if (e->GetTagName() == "body" || e->GetOwnerDocument() == e) return false;
+        if (!e->GetId().empty()) {
+            std::snprintf(id, capacity, "%s", e->GetId().c_str());
+            return true;
+        }
+    }
+    return false;
+}
+
+bool UiContext::element_box(DocumentId d, const char* id, f32 box[4]) const {
+    Rml::Element* e = impl_->element(d, id);
+    if (!e) return false;
+    const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f size = e->GetBox().GetSize(Rml::BoxArea::Border);
+    box[0] = at.x;
+    box[1] = at.y;
+    box[2] = size.x;
+    box[3] = size.y;
+    return true;
+}
+
+bool UiContext::get_property(DocumentId d, const char* id, const char* name, char* out, usize capacity) const {
+    Rml::Element* e = impl_->element(d, id);
+    const Rml::Property* p = e ? e->GetProperty(name) : nullptr;
+    if (!p) return false;
+    std::snprintf(out, capacity, "%s", p->ToString().c_str());
+    return true;
+}
+
 void UiContext::navigate(i32 dx, i32 dy) {
     if (!impl_->context) return;
     using namespace Rml::Input;

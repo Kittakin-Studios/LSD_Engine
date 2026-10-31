@@ -54,6 +54,13 @@ public:
     // One style property ("left", "120px"), leaving the element's other styles alone.
     bool set_property(DocumentId document, const char* element_id, const char* name, const char* value);
 
+    // The UI designer canvas: the element under a point (context pixels) that has an id, or its
+    // nearest ancestor with one (never the body); an element's border box (x, y, width, height in
+    // context pixels); a computed style property as text ("40px", "absolute").
+    bool element_at(f32 x, f32 y, char* element_id, usize capacity) const;
+    bool element_box(DocumentId document, const char* element_id, f32 box[4]) const;
+    bool get_property(DocumentId document, const char* element_id, const char* name, char* out, usize capacity) const;
+
     // Gamepad / keyboard menus: move the focus (RCSS nav: auto) and press the focused element.
     void navigate(i32 dx, i32 dy);
     void activate();

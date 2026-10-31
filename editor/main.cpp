@@ -463,18 +463,29 @@ void register_console(EditorState& s) {
         }, nullptr);
     }, &s, "ui.Keys <down|up|enter ...>: keys for the game UI, 0.8 s later (tests)");
     console::add_command("ui.Click", [](void*, const char* args) {  // tests: a real click through SDL's queue
-        static float at[2];
-        if (std::sscanf(args, "%f %f", &at[0], &at[1]) != 2) return;
-        SDL_AddTimer(800, [](void*, SDL_TimerID, Uint32) -> Uint32 {  // after Play has started and the UI is up
+        float* at = new float[2];  // each click keeps its own position (several can be queued)
+        if (std::sscanf(args, "%f %f", &at[0], &at[1]) != 2) {
+            delete[] at;
+            return;
+        }
+        SDL_AddTimer(800, [](void* user, SDL_TimerID, Uint32) -> Uint32 {  // after Play has started and the UI is up
+        const float* at = static_cast<const float*>(user);
         const float x = at[0], y = at[1];
+        delete[] at;
+        int window_count = 0;
+        SDL_Window** windows = SDL_GetWindows(&window_count);
+        const SDL_WindowID window = windows && window_count > 0 ? SDL_GetWindowID(windows[0]) : 0;  // ImGui ignores events for no window
+        SDL_free(windows);
         SDL_Event e{};
         e.type = SDL_EVENT_MOUSE_MOTION;
+        e.motion.windowID = window;
         e.motion.x = x;
         e.motion.y = y;
         SDL_PushEvent(&e);
         for (const SDL_EventType type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
             e = SDL_Event{};
             e.type = type;
+            e.button.windowID = window;
             e.button.button = SDL_BUTTON_LEFT;
             e.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
             e.button.x = x;
@@ -482,7 +493,7 @@ void register_console(EditorState& s) {
             SDL_PushEvent(&e);
         }
         return 0;
-        }, nullptr);
+        }, at);
     }, &s, "ui.Click <x> <y>: click the game UI at window pixels, 0.8 s later (tests)");
     console::add_command("play", [](void* user, const char*) { static_cast<EditorState*>(user)->play_requested = true; }, &s, "Start Play-in-Editor");
     console::add_command("stop", [](void* user, const char*) { static_cast<EditorState*>(user)->stop_requested = true; }, &s, "Stop Play-in-Editor");

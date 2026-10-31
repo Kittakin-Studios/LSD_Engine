@@ -406,9 +406,20 @@ of sight), **PlayerLocation** (last seen), **NoiseLocation** / **HeardNoise** (f
 
 ## 15. Game UI
 
-Game UI is HTML / CSS (RmlUi) instead of UMG's designer: **New UI Document** creates a `.rml` file
+Game UI is HTML / CSS (RmlUi) with a designer like UMG's: **New UI Document** creates a `.rml` file
 with a starter panel. Double-click it to open the **UI window**: code on the right, a live preview
 on the left. Style sheets (`.rcss`) open in the same window.
+
+The preview is also the **designer canvas** (UMG's Designer tab):
+
+- **+ Text / + Button / + Image / + Panel** add an element (with an id) to the document.
+- **Click** an element in the preview to select it (it needs an `id`; clicking text inside a panel
+  picks the nearest element with one). **Drag** it to move it (Ctrl: 10 px steps); an element in
+  the normal flow becomes `position: relative`. **Delete** removes it.
+- The **Details** tab shows the selection's text, **On Click** (the Lua function it calls) and common
+  style properties. Empty fields come from the style sheet.
+- Everything you do there is written into the code as the element's inline `style` and attributes,
+  so the code and the canvas always agree; edit either.
 
 ```html
 <rml>

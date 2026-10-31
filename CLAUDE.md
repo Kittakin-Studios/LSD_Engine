@@ -68,7 +68,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs).
 | Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
 | Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
-| UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; QuickJS and the designer canvas still to come |
+| UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); QuickJS still to come |
 | Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, Tracy (optional) |
 
 ## Editor look
@@ -133,4 +133,4 @@ reports, frustum culling, asset validation, platform settings, Tracy / `stat uni
 Post pass: bloom + FXAA (draw_post) when a Post Process Volume applies.
 Post also has SSAO, TAA and depth of field.
 Still open (see BACKLOG): baked lighting,
-UI designer canvas + QuickJS, remote console to other machines, Perforce / LFS locking.
+QuickJS, remote console to other machines, Perforce / LFS locking.
