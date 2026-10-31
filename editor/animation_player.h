@@ -19,6 +19,16 @@ public:
     // with its mesh attached under it).
     void set_param(const world::World& world, world::Entity e, const char* name, f32 value);
 
+    // IK for the next update (scripts call it every frame they want it): a bone reaches a world
+    // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
+    void add_ik(world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward = {1, 0, 0});
+    // In Play: finds the ground under a point (Foot IK); nullptr in the editor (no foot IK there).
+    using GroundProbe = bool (*)(void* user, Vec3 from, f32 distance, Vec3& hit);
+    void set_ground_probe(GroundProbe probe, void* user) {
+        probe_ = probe;
+        probe_user_ = user;
+    }
+
 private:
     struct State {
         world::Entity entity;
@@ -30,6 +40,18 @@ private:
         bool used = false;
     };
     State states_[256];
+    struct Ik {
+        world::Entity entity;
+        char bone[48];
+        Vec3 target, forward;
+        f32 weight;
+        bool aim;
+    };
+    Ik iks_[64];
+    u32 ik_count_ = 0;
+    GroundProbe probe_ = nullptr;
+    void* probe_user_ = nullptr;
+    void apply_ik(world::World& world, State& state, const anim::SkinnedModel& model);
 };
 
 } // namespace lsd::editor

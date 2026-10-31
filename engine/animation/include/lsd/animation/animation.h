@@ -22,6 +22,7 @@ struct SkinnedModel {
     u32 joint_count() const;
     const char* joint_name(u32 joint) const;
     i32 joint_parent(u32 joint) const;   // -1 for a root
+    i32 find_joint(const char* name) const;  // -1 if there is none
 
     struct Impl;
     Impl* impl = nullptr;  // the ozz skeleton
@@ -72,7 +73,15 @@ public:
     u32 joint_count() const { return joints_; }
     Mat4 joint_model(u32 joint) const;  // the joint's model-space transform (sockets, attachments)
 
+    // Inverse kinematics on the sampled pose (targets in model space; call after sample). The joint
+    // rows are rebuilt. Two-bone (Unreal's Two Bone IK): `end_joint` reaches `target`, bending at
+    // its parent the way it already bends (knee, elbow). Aim (Look At): `joint`'s `forward` axis
+    // (in its own space) turns toward `target`. weight 0..1 blends with the animation.
+    bool two_bone_ik(const SkinnedModel& model, u32 end_joint, Vec3 target, f32 weight);
+    bool aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forward, f32 weight);
+
 private:
+    bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows
     struct Impl;
     Impl* impl_ = nullptr;
     f32* rows_ = nullptr;

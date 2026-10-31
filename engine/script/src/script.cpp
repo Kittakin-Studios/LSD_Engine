@@ -592,6 +592,18 @@ struct Api {
         if (host.music) host.music(host.user, 2, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_optnumber(L, 3, 1.0)));
         return 0;
     }
+    static int ik(lua_State* L, bool aim) {
+        const ScriptHost& host = system(L).host_;
+        const world::Entity e = live_entity(L, 1);
+        const char* bone = luaL_checkstring(L, 2);
+        const Vec3 target{static_cast<f32>(luaL_checknumber(L, 3)), static_cast<f32>(luaL_checknumber(L, 4)), static_cast<f32>(luaL_checknumber(L, 5))};
+        const f32 weight = static_cast<f32>(luaL_optnumber(L, 6, 1.0));
+        const Vec3 forward{static_cast<f32>(luaL_optnumber(L, 7, 1.0)), static_cast<f32>(luaL_optnumber(L, 8, 0.0)), static_cast<f32>(luaL_optnumber(L, 9, 0.0))};
+        if (host.ik) host.ik(host.user, e, bone, target, weight, aim, forward);
+        return 0;
+    }
+    static int ik_reach(lua_State* L) { return ik(L, false); }
+    static int ik_look_at(lua_State* L) { return ik(L, true); }
     static int set_view(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const world::Entity e = lua_isnoneornil(L, 1) ? world::Entity{} : entity(L, 1);
@@ -1046,7 +1058,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"play_music", Api::play_music}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

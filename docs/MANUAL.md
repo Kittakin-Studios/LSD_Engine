@@ -615,6 +615,7 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
 | Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e)` / `lsd.set_view(nil)` switch views) |
+| Animation | Foot IK (feet planted on steps and slopes in Play; foot bone names, max step, ankle height) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
 | Physics | Rigid Body, Physics Joint |
@@ -681,6 +682,7 @@ UI, saving, settings, languages
 | `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |
 | `lsd.text(key)`, `lsd.set_language(code)`, `lsd.languages()` | localisation |
+| `lsd.ik_reach(e, bone, x, y, z [, weight])`, `lsd.ik_look_at(e, bone, x, y, z [, weight [, fx, fy, fz]])` | IK each frame you call it: a hand on a ledge (two-bone), a head following a target (aim along the bone's own +X unless given) |
 | `lsd.enum(name)`, `lsd.struct(name)` | editor-made types: New Data Asset > UserEnum (names, numbered from 0) / UserStruct (fields with defaults); returns nil if missing |
 | `lsd.broadcast(name, ...)`, `lsd.call(e, name, ...)`, `lsd.implements(e, name)` | events between objects (event dispatchers, interface messages): name(self, ...) on every script, or e's |
 | `lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])`, `lsd.draw_sphere(x, y, z, radius ...)`, `lsd.draw_box(x, y, z, hx, hy, hz ...)`, `lsd.draw_text(x, y, z, text ...)` | debug drawing over the viewport (seconds 0: this frame) |

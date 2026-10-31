@@ -8,10 +8,13 @@
 #include <ozz/animation/offline/skeleton_builder.h>
 #include <ozz/animation/runtime/animation.h>
 #include <ozz/animation/runtime/blending_job.h>
+#include <ozz/animation/runtime/ik_aim_job.h>
+#include <ozz/animation/runtime/ik_two_bone_job.h>
 #include <ozz/animation/runtime/local_to_model_job.h>
 #include <ozz/animation/runtime/sampling_job.h>
 #include <ozz/animation/runtime/skeleton.h>
 #include <ozz/base/maths/simd_math.h>
+#include <ozz/base/maths/simd_quaternion.h>
 #include <ozz/base/maths/soa_transform.h>
 #include <ufbx.h>
 
@@ -82,6 +85,15 @@ SkinnedModel::~SkinnedModel() { delete impl; }
 u32 SkinnedModel::joint_count() const { return impl && impl->skeleton ? static_cast<u32>(impl->skeleton->num_joints()) : 0; }
 const char* SkinnedModel::joint_name(u32 joint) const { return impl->skeleton->joint_names()[joint]; }
 i32 SkinnedModel::joint_parent(u32 joint) const { return impl->skeleton->joint_parents()[joint]; }
+
+i32 SkinnedModel::find_joint(const char* name) const {
+    if (!impl || !impl->skeleton || !name) return -1;
+    const auto names = impl->skeleton->joint_names();
+    for (usize j = 0; j < names.size(); ++j) {
+        if (std::strcmp(names[j], name) == 0) return static_cast<i32>(j);
+    }
+    return -1;
+}
 
 bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity) {
     ufbx_scene* scene = load_scene(path, error, error_capacity);
@@ -395,17 +407,95 @@ void Pose::sample_blend(const SkinnedModel& model, const BlendInput* inputs, u32
         blend.output = ozz::make_span(impl_->locals);
         if (!blend.Run()) return;
     }
+    rebuild(model, -1);
+}
+
+bool Pose::rebuild(const SkinnedModel& model, i32 from) {
     ozz::animation::LocalToModelJob to_model;
-    to_model.skeleton = &skeleton;
+    to_model.skeleton = model.impl->skeleton.get();
     to_model.input = ozz::make_span(impl_->locals);
     to_model.output = ozz::make_span(impl_->models);
-    if (!to_model.Run()) return;
-    for (u32 j = 0; j < joints; ++j) {
+    to_model.from = from < 0 ? ozz::animation::Skeleton::kNoParent : from;
+    if (!to_model.Run()) return false;
+    for (u32 j = 0; j < joints_; ++j) {
         const Mat4 skin = joint_model(j) * model.inverse_bind[j];
         for (int r = 0; r < 3; ++r) {
             for (int c = 0; c < 4; ++c) rows_[j * 12 + r * 4 + c] = skin.at(r, c);
         }
     }
+    return true;
+}
+
+namespace {
+
+// Multiplies one joint's local rotation (inside its SoA group of four) by `q`.
+void rotate_local(std::vector<ozz::math::SoaTransform>& locals, u32 joint, const ozz::math::SimdQuaternion& q) {
+    ozz::math::SoaTransform& soa = locals[joint / 4];
+    ozz::math::SimdQuaternion aos[4];
+    ozz::math::Transpose4x4(&soa.rotation.x, &aos->xyzw);
+    aos[joint & 3] = aos[joint & 3] * q;
+    ozz::math::Transpose4x4(&aos->xyzw, &soa.rotation.x);
+}
+
+ozz::math::SimdFloat4 point(Vec3 v) { return ozz::math::simd_float4::Load(v.x, v.y, v.z, 1.0f); }
+ozz::math::SimdFloat4 direction(Vec3 v) { return ozz::math::simd_float4::Load(v.x, v.y, v.z, 0.0f); }
+Vec3 translation_of(const Mat4& m) { return {m.at(0, 3), m.at(1, 3), m.at(2, 3)}; }
+
+} // namespace
+
+bool Pose::two_bone_ik(const SkinnedModel& model, u32 end, Vec3 target, f32 weight) {
+    if (!impl_ || end >= joints_) return false;
+    const i32 mid = model.joint_parent(end);
+    const i32 start = mid >= 0 ? model.joint_parent(static_cast<u32>(mid)) : -1;
+    if (start < 0) return false;
+    const Vec3 a = translation_of(joint_model(static_cast<u32>(start))), b = translation_of(joint_model(static_cast<u32>(mid))), c = translation_of(joint_model(end));
+    if (length(a - b) < 1e-5f || length(c - b) < 1e-5f) return false;  // a zero-length bone has no bend
+    // The bend axis as the pose already bends (works for any rig), in the mid joint's own space.
+    Vec3 axis = cross(a - b, c - b);
+    if (length(axis) < 1e-6f) axis = cross(a - b, Vec3{0, 0, 1});  // straight: any axis across the chain
+    if (length(axis) < 1e-6f) axis = cross(a - b, Vec3{1, 0, 0});
+    const Mat4 to_mid = inverse(joint_model(static_cast<u32>(mid)));
+    Vec3 local_axis = normalize(Vec3{to_mid.at(0, 0) * axis.x + to_mid.at(0, 1) * axis.y + to_mid.at(0, 2) * axis.z,
+                                     to_mid.at(1, 0) * axis.x + to_mid.at(1, 1) * axis.y + to_mid.at(1, 2) * axis.z,
+                                     to_mid.at(2, 0) * axis.x + to_mid.at(2, 1) * axis.y + to_mid.at(2, 2) * axis.z});
+    Vec3 pole = b - (a + c) * 0.5f;  // keep bending the same way (knees forward)
+    if (length(pole) < 1e-5f) pole = cross(normalize(axis), c - a);  // straight: bend across the axis
+    ozz::math::SimdQuaternion start_fix, mid_fix;
+    bool reached = false;
+    ozz::animation::IKTwoBoneJob job;
+    job.target = point(target);
+    job.pole_vector = direction(normalize(pole));
+    job.mid_axis = direction(local_axis);
+    job.weight = weight < 0.0f ? 0.0f : weight > 1.0f ? 1.0f : weight;
+    job.soften = 0.97f;  // no snapping straight at full reach
+    job.start_joint = &impl_->models[static_cast<usize>(start)];
+    job.mid_joint = &impl_->models[static_cast<usize>(mid)];
+    job.end_joint = &impl_->models[end];
+    job.start_joint_correction = &start_fix;
+    job.mid_joint_correction = &mid_fix;
+    job.reached = &reached;
+    if (!job.Run()) return false;
+    rotate_local(impl_->locals, static_cast<u32>(start), start_fix);
+    rotate_local(impl_->locals, static_cast<u32>(mid), mid_fix);
+    return rebuild(model, start);
+}
+
+bool Pose::aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forward, f32 weight) {
+    if (!impl_ || joint >= joints_) return false;
+    const Vec3 f = normalize(forward);
+    const Vec3 up = std::fabs(f.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{0, 1, 0};
+    ozz::math::SimdQuaternion fix;
+    ozz::animation::IKAimJob job;
+    job.target = point(target);
+    job.forward = direction(f);
+    job.up = direction(up);
+    job.pole_vector = direction(Vec3{0, 0, 1});
+    job.weight = weight < 0.0f ? 0.0f : weight > 1.0f ? 1.0f : weight;
+    job.joint = &impl_->models[joint];
+    job.joint_correction = &fix;
+    if (!job.Run()) return false;
+    rotate_local(impl_->locals, joint, fix);
+    return rebuild(model, static_cast<i32>(joint));
 }
 
 Mat4 Pose::joint_model(u32 joint) const {

@@ -457,6 +457,29 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     script::ScriptHost host;
     host.user = this;
     host.set_view = [](void* user, world::Entity camera) { static_cast<PlaySession*>(user)->set_view(camera); };
+    host.ik = [](void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (!self.animations_ || !self.world_) return;
+        for (world::Entity m = e; m.valid(); m = {}) {  // the object, or its skeletal mesh child (a Character's)
+            if (self.world_->get<world::SkeletalMesh>(m)) {
+                self.animations_->add_ik(m, bone, target, weight, aim, forward);
+                return;
+            }
+        }
+        for (u32 i = 0; i < self.world_->count(reflect::type_of<world::SkeletalMesh>()); ++i) {
+            const world::Entity m = self.world_->owner(reflect::type_of<world::SkeletalMesh>(), i);
+            if (self.world_->parent(m) == e) self.animations_->add_ik(m, bone, target, weight, aim, forward);
+        }
+    };
+    if (animations_) {
+        animations_->set_ground_probe([](void* user, Vec3 from, f32 distance, Vec3& hit) {
+            physics::RayHit ray;
+            auto& self = *static_cast<PlaySession*>(user);
+            if (!self.physics_ || !self.physics_->raycast(from, Vec3{0, 0, -1}, distance, ray)) return false;
+            hit = ray.point;
+            return true;
+        }, this);
+    }
     host.music = [](void* user, int what, const char* name, f32 volume, f32 fade) {
         SoundPlayer* sounds = static_cast<PlaySession*>(user)->sounds_;
         if (!sounds) return;

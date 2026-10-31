@@ -44,6 +44,45 @@ void AnimationPlayer::set_param(const world::World& world, world::Entity e, cons
     }
 }
 
+void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) {
+    if (ik_count_ == sizeof iks_ / sizeof iks_[0]) return;
+    Ik& ik = iks_[ik_count_++];
+    ik.entity = e;
+    std::snprintf(ik.bone, sizeof ik.bone, "%s", bone);
+    ik.target = target;
+    ik.forward = forward;
+    ik.weight = weight;
+    ik.aim = aim;
+}
+
+// After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
+void AnimationPlayer::apply_ik(world::World& world, State& state, const anim::SkinnedModel& model) {
+    const Mat4 to_world = world.world_matrix(state.entity);
+    const Mat4 to_model = inverse(to_world);
+    if (const auto* feet = probe_ ? world.get<world::FootIK>(state.entity) : nullptr) {
+        for (const char* bone : {feet->left_foot, feet->right_foot}) {
+            const i32 j = model.find_joint(bone);
+            if (j < 0) continue;
+            const Mat4 foot = to_world * state.pose.joint_model(static_cast<u32>(j));
+            const Vec3 at{foot.at(0, 3), foot.at(1, 3), foot.at(2, 3)};
+            Vec3 ground;
+            if (!probe_(probe_user_, at + Vec3{0, 0, feet->max_step}, feet->max_step * 2.0f, ground)) continue;
+            const f32 want = ground.z + feet->foot_height;
+            if (want <= at.z + 0.01f) continue;  // shortcut: feet only go up onto steps; lowering needs a pelvis offset
+            state.pose.two_bone_ik(model, static_cast<u32>(j), transform_point(to_model, Vec3{at.x, at.y, want}), 1.0f);
+        }
+    }
+    for (u32 i = 0; i < ik_count_; ++i) {
+        const Ik& ik = iks_[i];
+        if (ik.entity != state.entity) continue;
+        const i32 j = model.find_joint(ik.bone);
+        if (j < 0) continue;
+        const Vec3 target = transform_point(to_model, ik.target);
+        if (ik.aim) state.pose.aim_ik(model, static_cast<u32>(j), target, ik.forward, ik.weight);
+        else state.pose.two_bone_ik(model, static_cast<u32>(j), target, ik.weight);
+    }
+}
+
 void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds) {
     for (State& s : states_) {  // objects deleted or without the component any more
         if (s.used && (!world.alive(s.entity) || !world.get<world::SkeletalMesh>(s.entity))) s.used = false;
@@ -78,6 +117,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             anim::BlendInput inputs[anim::kMaxBlendInputs];
             const u32 n = anim::step_graph(*graph, set ? set->clips : nullptr, set ? set->count : 0, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->pose.sample_blend(*model->model, inputs, n);
+            apply_ik(world, *state, *model->model);
             // Notifies follow the strongest clip (a blend space's feet are in step, so one is enough).
             u32 best = 0;
             for (u32 k = 1; k < n; ++k) {
@@ -99,6 +139,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 before = state->time;
         if (clip && mesh->playing) state->time += dt * mesh->play_rate;
         state->pose.sample(*model->model, clip, state->time, mesh->looping);
+        apply_ik(world, *state, *model->model);
 
         // Notifies whose time this frame's advance crossed (wrapping when looping).
         if (!sounds || !clip || clip->duration <= 0.0f || state->time == before) continue;
@@ -107,6 +148,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 from = local(before), to = local(state->time);
         fire_notifies(*set, mesh->clip, from, to, mesh->looping && to < from, at, *sounds);
     }
+    ik_count_ = 0;  // requests last one frame
 }
 
 } // namespace lsd::editor

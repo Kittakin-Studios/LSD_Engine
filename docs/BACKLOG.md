@@ -160,7 +160,7 @@ visual-script sounds, `stat audio`.
 - [~] Animation (ozz-animation, `engine/animation`): rigged FBX import (skin weights, skeleton, every take sampled at 30 fps, retargeted by bone name so animations can live in other files), GPU skinning on D3D12 / OpenGL incl. shadows, SkeletalMesh component (mesh, material, animation file, clip, rate, loop, plays in the editor), drag a rigged FBX in, Play Sound notifies on the animation's .meta (fire in Play); tested against ufbx's own skinning; needs glTF skins, clip preview / trim, root motion, curves, a clip list in Details
 - [ ] Skeleton editor: sockets, bone preview, retarget base pose [Skeleton Editor]
 - [~] Animation graph (`engine/animation/anim_graph.h`, AnimGraph data asset on the SkeletalMesh): states playing a clip or a 1D blend space (synced phase), transitions on parameters (Greater / Less / True / False / clip Finished) with crossfades, Character fills Speed / VerticalSpeed / InAir, Lua `lsd.set_anim_param` + "Set Anim Parameter" node, notifies follow the strongest clip; needs a node-graph editor (edited in Details for now), 2D blend spaces, montages and slots, sockets, a state readout while playing [Anim Blueprint]
-- [ ] Simple IK: two-bone and look-at (moved up from v2; feet on slopes need it) [Two Bone IK]
+- [x] Simple IK: two-bone and look-at (moved up from v2; feet on slopes need it) [Two Bone IK]: ozz IK jobs on the sampled pose (bend axis from the pose, any rig), Foot IK component (feet raised onto steps and slopes in Play), `lsd.ik_reach` / `lsd.ik_look_at`; lowering feet into dips needs a pelvis offset
 - [ ] Morph targets / blend shapes [Morph Targets]
 
 ### Audio

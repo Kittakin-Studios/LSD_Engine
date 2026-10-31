@@ -151,6 +151,17 @@ struct Camera {
     LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
 };
 
+// Plants a Skeletal Mesh's feet on the ground under them while playing (Unreal's foot IK): each
+// foot is raised onto steps and slopes with two-bone IK. Bones by name, as in the imported skeleton.
+LSD_STRUCT(Component, Category = "Animation")
+struct FootIK {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char left_foot[48] = "foot_l";
+    LSD_PROPERTY(Edit) char right_foot[48] = "foot_r";
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 2, Tooltip = "How high above the animated foot the ground may be") f32 max_step = 0.5f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 0.5, Tooltip = "Ankle height above the ground") f32 foot_height = 0.08f;
+};
+
 // Turns the object at a steady rate while playing (Unreal's Rotating Movement).
 LSD_STRUCT(Component, Category = "Movement")
 struct RotatingMovement {

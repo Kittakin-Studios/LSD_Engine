@@ -69,6 +69,10 @@
 // Editor-made types (data assets): lsd.enum(name) -> {Sword = 0, Bow = 1, [0] = "Sword", ...};
 // lsd.struct(name) -> a new table with the struct's fields at their defaults; nil if there is none.
 //
+// IK (call every frame you want it): lsd.ik_reach(e, bone, x, y, z [, weight]) puts a bone on a
+// world point bending its parent (hands on ledges); lsd.ik_look_at(e, bone, x, y, z [, weight [, fx, fy, fz]])
+// turns a bone's forward axis (its own space, default +X) toward a point (heads, turrets).
+//
 // Cameras: lsd.set_view(e) looks through e's Camera component (blends are not done: a cut);
 // lsd.set_view(nil) goes back to the player.
 //
@@ -136,6 +140,7 @@ struct ScriptHost {
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;
     void (*set_view)(void* user, world::Entity camera) = nullptr;  // invalid: back to the player
+    void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
     void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
     bool (*data_path)(void* user, const char* data_type, const char* name, char* out, usize capacity) = nullptr;  // a data asset by type and name
     // shape: 0 line a-b, 1 sphere at a (radius), 2 box at a (half size b), 3 text at a.

@@ -165,6 +165,27 @@ int main() {
                     clip_count, static_cast<double>(size), static_cast<double>(rest));
         CHECK(model.joint_count() > 1 && model.vertices.size() >= 3 && size > 0.0f);
         CHECK(rest < size * 0.01f);  // weights are bytes: a little rounding is allowed
+        // Two-bone IK: a chain end pulled a little towards its start lands on the target; aim turns a joint.
+        for (u32 j = 0; j < model.joint_count(); ++j) {
+            const i32 mid = model.joint_parent(j), start = mid >= 0 ? model.joint_parent(static_cast<u32>(mid)) : -1;
+            if (start < 0) continue;
+            anim::Pose pose;
+            pose.sample(model, nullptr, 0.0f, false);
+            auto at = [&](u32 k) { const Mat4 m = pose.joint_model(k); return Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}; };
+            const Vec3 a0 = at(static_cast<u32>(start)), c0 = at(j);
+            const f32 reach = length(c0 - a0);
+            if (reach < size * 0.05f || length(at(static_cast<u32>(mid)) - a0) < size * 0.02f || length(c0 - at(static_cast<u32>(mid))) < size * 0.02f) continue;  // tiny or zero-length bones
+            const Vec3 target = a0 + (c0 - a0) * 0.8f + Vec3{0, 0, reach * 0.1f};
+            CHECK(pose.two_bone_ik(model, j, target, 1.0f));
+            CHECK(length(at(j) - target) < reach * 0.05f);
+            CHECK(length(at(static_cast<u32>(start)) - a0) < 1e-4f);  // the chain's root stays put
+            const Vec3 look = at(j) + Vec3{0, 0, reach};
+            CHECK(pose.aim_ik(model, j, look, Vec3{1, 0, 0}, 1.0f));
+            const Mat4 m = pose.joint_model(j);
+            const Vec3 forward = normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+            CHECK(dot(forward, Vec3{0, 0, 1}) > 0.99f);  // its +X now points at the target
+            break;
+        }
         if (clip_count) {
             const f64 t = std::floor(clips[0].duration * 0.5 * 30.0) / 30.0;  // a sampled frame half-way through
             const f32 moving = worst_error(path.c_str(), model, &clips[0], t);
