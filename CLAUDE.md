@@ -131,4 +131,4 @@ world-anchored elements, UI window with code + live preview), game user settings
 reports, frustum culling, asset validation, platform settings, Tracy / `stat unit`, smoke tests.
 Post pass: bloom + FXAA (draw_post) when a Post Process Volume applies.
 Still open (see BACKLOG): DOF, AO, TAA, baked lighting, LODs, VRAM scaling,
-UI designer canvas + QuickJS, key rebinding, remote console, source control.
+UI designer canvas + QuickJS, remote console, source control.

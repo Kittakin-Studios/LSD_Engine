@@ -16,6 +16,16 @@ struct EditorSettings {
     LSD_PROPERTY(Edit, Category = "Snapping", Min = 0.01) f32 snap_scale = 0.25f;
 };
 
+// A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and
+// Jump for the built-in controls), `from` (the key the mapping context has) is replaced by `to`.
+LSD_STRUCT()
+struct KeyBinding {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char action[64] = "";
+    LSD_PROPERTY(Edit) char from[32] = "";
+    LSD_PROPERTY(Edit) char to[32] = "";
+};
+
 // The player's own settings (Unreal's Game User Settings), saved to Saved/GameUserSettings.json and
 // applied at once when changed: the game's options menu edits them from Lua (lsd.get_settings /
 // lsd.set_settings). The first run picks the quality the graphics card suits.
@@ -30,6 +40,7 @@ struct GameUserSettings {
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named SFX") f32 effects_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Controls", Min = 0.1, Max = 5, Tooltip = "Times the Character's look sensitivity") f32 mouse_sensitivity = 1.0f;
     LSD_PROPERTY(Edit, Category = "Controls") bool invert_look = false;
+    LSD_PROPERTY(Edit, Category = "Controls", Tooltip = "Keys the player rebound (lsd.rebind)") List<KeyBinding, 32> key_bindings;
     LSD_PROPERTY(Edit, Category = "Language", Tooltip = "A column of the project's string table (en, fr...); empty: the project's default") char language[16] = "";
 };
 

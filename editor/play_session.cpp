@@ -14,6 +14,8 @@
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 
+#include <SDL3/SDL_stdinc.h>
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -296,7 +298,61 @@ bool PlaySession::action_guid(const asset::AssetRegistry& registry, const char* 
             return true;
         }
     }
+    const char* defaults[][2] = {{"Move", kDefaultMove}, {"Look", kDefaultLook}, {"Jump", kDefaultJump}};  // the built-in controls
+    for (const auto& d : defaults) {
+        if (std::strcmp(name, d[0]) == 0) {
+            std::snprintf(out, 33, "%s", d[1]);
+            return true;
+        }
+    }
     return false;
+}
+
+void PlaySession::apply_input() {
+    input_.clear();
+    input_.add_context(context_);
+    for (const input::KeyMapping& m : context_.mappings) {  // each action's trigger (Hold, Tap...) from its asset
+        input::InputAction action;
+        if (registry_ && load_asset(*registry_, m.action, action)) input_.set_trigger(m.action, static_cast<input::Trigger>(action.trigger), action.trigger_time);
+    }
+}
+
+bool PlaySession::rebind(const char* action, const char* from, const char* to) {
+    char guid[33];
+    if (!registry_ || !action_guid(*registry_, action, guid)) {
+        LSD_LOG_WARN("input", "lsd.rebind: no Input Action named '%s'", action);
+        return false;
+    }
+    if (!input::is_key(to)) {
+        LSD_LOG_WARN("input", "lsd.rebind: unknown key '%s'", to);
+        return false;
+    }
+    bool found = false;
+    for (input::KeyMapping& m : context_.mappings) {
+        if (std::strcmp(m.action, guid) == 0 && SDL_strcasecmp(m.key, from) == 0) {
+            std::snprintf(m.key, sizeof m.key, "%s", to);
+            found = true;
+        }
+    }
+    if (!found) return false;
+    apply_input();
+    if (user_settings_) {  // saved as original key -> new key, so the asset's key stays the reference
+        auto& list = user_settings_->key_bindings;
+        u32 i = 0;
+        while (i < list.count && !(std::strcmp(list[i].action, action) == 0 && SDL_strcasecmp(list[i].to, from) == 0)) ++i;
+        if (i == list.count) {
+            KeyBinding b;
+            std::snprintf(b.action, sizeof b.action, "%s", action);
+            std::snprintf(b.from, sizeof b.from, "%s", from);
+            if (!list.push_back(b)) LSD_LOG_WARN("input", "Too many rebound keys to save (32)");
+        }
+        if (i < list.count) {
+            std::snprintf(list[i].to, sizeof list[i].to, "%s", to);
+            if (SDL_strcasecmp(list[i].from, list[i].to) == 0) list.remove(i);  // back to the default
+        }
+        settings_changed_ = true;
+    }
+    return true;
 }
 
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch) {
@@ -333,27 +389,21 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         decompose_trs(world.world_matrix(character_), feet_, rotation, scale);
         yaw_ = radians(rotation.z);
         pitch_ = 0.0f;
-        input::InputMappingContext context;
-        if (load_asset(registry, settings_.mapping_context, context)) {
-            input_.add_context(context);
-            for (const input::KeyMapping& m : context.mappings) {  // each action's trigger (Hold, Tap...) from its asset
-                input::InputAction action;
-                if (load_asset(registry, m.action, action)) input_.set_trigger(m.action, static_cast<input::Trigger>(action.trigger), action.trigger_time);
-            }
+        if (load_asset(registry, settings_.mapping_context, context_)) {
             wired_ = true;
             if (!settings_.move_action[0] || !settings_.look_action[0] || !settings_.jump_action[0]) {
                 LSD_LOG_WARN("play", "%s: pick its Move, Look and Jump actions in Details to control it", world.name(character_));
             }
         } else {
             // No input set up yet: the built-in controls, so a fresh Character can walk straight away.
-            input_.add_context(default_controls());
+            context_ = default_controls();
             std::snprintf(settings_.move_action, sizeof settings_.move_action, "%s", kDefaultMove);
             std::snprintf(settings_.look_action, sizeof settings_.look_action, "%s", kDefaultLook);
             std::snprintf(settings_.jump_action, sizeof settings_.jump_action, "%s", kDefaultJump);
             LSD_LOG_INFO("play", "%s: no Input Mapping Context, using the built-in WASD / mouse / Space controls", world.name(character_));
         }
     } else {
-        input_.add_context(default_controls());
+        context_ = default_controls();
         std::snprintf(settings_.move_action, sizeof settings_.move_action, "%s", kDefaultMove);
         std::snprintf(settings_.look_action, sizeof settings_.look_action, "%s", kDefaultLook);
         std::snprintf(settings_.jump_action, sizeof settings_.jump_action, "%s", kDefaultJump);
@@ -373,6 +423,17 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             LSD_LOG_INFO("play", "No Character or Player Start in the level: playing from the camera.");
         }
     }
+    if (user_settings_) {  // the player's rebound keys
+        for (const KeyBinding& b : user_settings_->key_bindings) {
+            char guid[33];
+            if (!action_guid(registry, b.action, guid)) continue;
+            for (input::KeyMapping& m : context_.mappings) {
+                if (std::strcmp(m.action, guid) == 0 && SDL_strcasecmp(m.key, b.from) == 0) std::snprintf(m.key, sizeof m.key, "%s", b.to);
+            }
+        }
+    }
+    apply_input();
+    key_held_[0] = key_pressed_[0] = 0;
     spawn_ = feet_;
     spawn_yaw_ = yaw_;
     physics::CharacterDesc desc;
@@ -397,6 +458,21 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const auto& self = *static_cast<const PlaySession*>(user);
         char guid[33];
         return action_guid(*self.registry_, action, guid) && self.input_.fired(guid);
+    };
+    host.rebind = [](void* user, const char* action, const char* from, const char* to) { return static_cast<PlaySession*>(user)->rebind(action, from, to); };
+    host.bindings = [](void* user, const char* action, const char** out, u32 capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        char guid[33];
+        u32 n = 0;
+        if (!action_guid(*self.registry_, action, guid)) return n;
+        for (const input::KeyMapping& m : self.context_.mappings) {
+            if (n < capacity && std::strcmp(m.action, guid) == 0) out[n++] = m.key;
+        }
+        return n;
+    };
+    host.key_pressed = [](void* user) -> const char* {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        return self.key_pressed_[0] ? self.key_pressed_ : nullptr;
     };
     host.spawn = [](void* user, const char* name, Vec3 position) { return static_cast<PlaySession*>(user)->spawn(name, position); };
     host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
@@ -849,6 +925,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     if (!physics_) return;
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
     input_.update(frame, dt);
+    char held[32] = "";
+    input::held_key(frame, held, sizeof held);
+    std::snprintf(key_pressed_, sizeof key_pressed_, "%s", held[0] && std::strcmp(held, key_held_) != 0 ? held : "");
+    std::snprintf(key_held_, sizeof key_held_, "%s", held);
     const input::Value move = input_.value(settings_.move_action);
     const input::Value look = input_.value(settings_.look_action);
     const bool jump = input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...

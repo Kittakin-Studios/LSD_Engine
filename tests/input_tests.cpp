@@ -113,6 +113,22 @@ static void test_mappings() {
     CHECK(!input.fired(kTap));  // once
 }
 
+static void test_held_key() {  // rebinding's "press a key"
+    static bool keys[SDL_SCANCODE_COUNT];
+    InputFrame frame;
+    frame.keys = keys;
+    frame.key_count = SDL_SCANCODE_COUNT;
+    char name[32];
+    CHECK(!held_key(frame, name, sizeof name));
+    frame.mouse_dx = 30.0f;  // moving the mouse is not a key
+    CHECK(!held_key(frame, name, sizeof name));
+    frame.mouse_buttons = 4;
+    CHECK(held_key(frame, name, sizeof name) && std::strcmp(name, "Right Mouse Button") == 0 && is_key(name));
+    keys[SDL_SCANCODE_E] = true;
+    CHECK(held_key(frame, name, sizeof name) && std::strcmp(name, "E") == 0 && is_key(name));
+    CHECK(!is_key("Not A Key") && !is_key(""));
+}
+
 static void test_data_asset() {
     asset::register_data_type(reflect::type_of<InputMappingContext>());
     asset::register_data_type(reflect::type_of<InputAction>());
@@ -139,6 +155,7 @@ static void test_data_asset() {
 
 int main() {
     test_mappings();
+    test_held_key();
     test_data_asset();
     if (g_failures == 0) std::printf("All input tests passed.\n");
     return g_failures == 0 ? 0 : 1;

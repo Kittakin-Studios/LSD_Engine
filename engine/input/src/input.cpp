@@ -104,6 +104,26 @@ bool is_2d_key(const char* key) {
     return s == kMouseXY || s == kLeftStick || s == kRightStick;
 }
 
+bool is_key(const char* key) { return key && key[0] && resolve(key) != kNoSource; }
+
+bool held_key(const InputFrame& frame, char* out, usize capacity) {
+    for (i32 k = 0; frame.keys && k < frame.key_count; ++k) {
+        const char* name = frame.keys[k] ? SDL_GetScancodeName(static_cast<SDL_Scancode>(k)) : nullptr;
+        if (name && name[0]) {
+            SDL_snprintf(out, capacity, "%s", name);
+            return true;
+        }
+    }
+    for (const NamedSource& s : kSpecial) {  // buttons only: sticks and the mouse drift
+        const bool button = (s.source >= kMouseLeft && s.source <= kMouseRight) || s.source >= kGamepadButton;
+        if (button && read(s.source, frame).x > 0.5f) {
+            SDL_snprintf(out, capacity, "%s", s.name);
+            return true;
+        }
+    }
+    return false;
+}
+
 void InputSystem::clear() {
     action_count_ = binding_count_ = context_count_ = 0;
 }

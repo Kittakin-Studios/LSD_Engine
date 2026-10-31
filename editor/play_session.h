@@ -84,6 +84,9 @@ private:
     void add_joints(const world::World& world, world::Entity root);  // all, if root is invalid
     u32 body_of(world::Entity e) const;  // kNoBody if it has none
     static bool action_guid(const asset::AssetRegistry& registry, const char* name, char* out);
+    // Key rebinding (lsd.rebind): changes the live controls and records it in the player's settings.
+    bool rebind(const char* action, const char* from, const char* to);
+    void apply_input();  // context_ into input_, with each action's trigger
 
     physics::PhysicsWorld* physics_ = nullptr;
     script::ScriptSystem scripts_;
@@ -92,6 +95,9 @@ private:
     MeshCache* meshes_ = nullptr;
     world::Entity body_entities_[kMaxBodies];  // which object each physics body belongs to
     input::InputSystem input_;
+    input::InputMappingContext context_;  // the Character's controls, the player's rebinds applied
+    char key_held_[32] = "";
+    char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker
     bool wired_ = false;

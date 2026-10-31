@@ -47,6 +47,9 @@
 //   lsd.text(key) -> text                 the string table's text in the current language (the key if missing)
 //   lsd.set_language(code)                switches (en, fr...): open UI documents are reloaded translated
 //   lsd.languages() -> {"en", "fr", ...}
+//   lsd.bindings(action) -> {"W", "Gamepad Left Stick", ...}   the keys an Input Action listens to
+//   lsd.rebind(action, old_key, new_key) -> ok   swaps a key now and saves it in the player's settings
+//   lsd.key_pressed() -> name | nil       a key / button that went down this frame ("press a key" menus)
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
 // on every script that defines it.
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
@@ -108,6 +111,9 @@ struct ScriptHost {
     const char* (*text)(void* user, const char* key) = nullptr;
     void (*set_language)(void* user, const char* code) = nullptr;
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
+    bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;
+    u32 (*bindings)(void* user, const char* action, const char** out, u32 capacity) = nullptr;
+    const char* (*key_pressed)(void* user) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;

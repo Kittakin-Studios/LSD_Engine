@@ -569,6 +569,7 @@ UI, saving, settings, languages
 | `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |
 | `lsd.text(key)`, `lsd.set_language(code)`, `lsd.languages()` | localisation |
+| `lsd.bindings(action)`, `lsd.rebind(action, old_key, new_key)`, `lsd.key_pressed()` | key rebinding (Enhanced Input's player mappings): saved in GameUserSettings.json, applied every Play; Move / Look / Jump name the built-in controls |
 
 Events a script can define: `on_start(self)`, `on_update(self, dt)`, `on_hit(self, other)`,
 `on_overlap_begin(self, other)`, `on_overlap_end(self, other)`, UI actions `name(self, element_id)`,

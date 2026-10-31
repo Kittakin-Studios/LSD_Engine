@@ -49,6 +49,10 @@ struct InputFrame {
 // Key names offered by the editor's key picker. Keyboard keys use SDL's names ("W", "Space", "Left Shift").
 const char* const* key_names(u32& count);
 bool is_2d_key(const char* key);  // "Mouse XY", "Gamepad Left Stick"...
+bool is_key(const char* key);     // a name the input system understands
+// The name of a key, mouse button or gamepad button held this frame (the first found); false if none.
+// "Press a key" menus use it to rebind.
+bool held_key(const InputFrame& frame, char* out, usize capacity);
 
 struct Value {
     f32 x = 0, y = 0;
