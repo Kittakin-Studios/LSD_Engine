@@ -145,8 +145,33 @@ NodeDef g_defs[] = {
     {"AIIsMoving", "Is Moving", "AI", "True while a Nav Agent is still on its way", {kTarget}, 0, {{"Moving", PinType::Bool, ""}}, 0, nullptr,
      {"lsd.is_moving($0)"}},
     {"Destroy", "Destroy", "Objects", "Removes an object and its children", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.destroy($1)", {}},
-    {"SetVariable", "Set Variable", "Variables", "Stores a number on this object", {kExecIn, {"Name", PinType::String, "health"}, {"Value", PinType::Float, "0"}}, 0,
+    {"SetVariable", "Set Variable", "Variables", "Stores a value (any type) on this object", {kExecIn, {"Name", PinType::String, "health"}, {"Value", PinType::Any, "0"}}, 0,
      {kExecOut}, 0, "self[$1] = $2", {}},
+    {"SetLocal", "Set Local Variable", "Variables", "Inside a Function: a value that lasts for this call only (elsewhere: on the object)",
+     {kExecIn, {"Name", PinType::String, "temp"}, {"Value", PinType::Any, "0"}}, 0, {kExecOut}, 0, "(__L or self)[$1] = $2", {}},
+    // ---- Functions (Unreal's Blueprint functions): an entry with up to 3 arguments, Return, and calls ----
+    {"FunctionEntry", "Function", "Functions", "A function this script can call by name (Call Function); A, B, C are its arguments",
+     {{"Name", PinType::String, "my_function"}}, 0, {kExecOut, {"A", PinType::Any, ""}, {"B", PinType::Any, ""}, {"C", PinType::Any, ""}}, 0,
+     "function $n0(self, a, b, c)\nlocal __L = {}", {nullptr, "a", "b", "c"}},
+    {"Return", "Return", "Functions", "Ends the Function, handing Value back to Call Function", {kExecIn, {"Value", PinType::Any, "0"}}, 0, {}, 0,
+     "do return $1 end", {}},
+    {"CallFunction", "Call Function", "Functions", "Runs a Function of this script by name; Result is what it returned",
+     {kExecIn, {"Name", PinType::String, "my_function"}, {"A", PinType::Any, "0"}, {"B", PinType::Any, "0"}, {"C", PinType::Any, "0"}}, 0,
+     {kExecOut, {"Result", PinType::Any, ""}}, 0, "local $o1 = $n1(self, $2, $3, $4)", {}},
+    // ---- Standard macros (Unreal's ForLoop, WhileLoop, FlipFlop) ----
+    {"ForLoop", "For Loop", "Flow", "Runs Loop Body for each Index from First to Last, then Completed",
+     {kExecIn, {"First", PinType::Float, "0"}, {"Last", PinType::Float, "9"}}, 0,
+     {{"Loop Body", PinType::Exec, ""}, {"Index", PinType::Float, ""}, {"Completed", PinType::Exec, ""}}, 0, "for $o1 = $1, $2 do\n#0\nend\n#2", {}},
+    {"WhileLoop", "While Loop", "Flow", "Runs Loop Body while Condition is true (10000 rounds at most), then Completed",
+     {kExecIn, {"Condition", PinType::Bool, "false"}}, 0, {{"Loop Body", PinType::Exec, ""}, {"Completed", PinType::Exec, ""}}, 0,
+     "do local __n = 0\nwhile $1 and __n < 10000 do\n__n = __n + 1\n#0\nend end\n#1", {}},
+    {"FlipFlop", "Flip Flop", "Flow", "Goes out A, then B, then A again... each time it runs",
+     {kExecIn}, 0, {{"A", PinType::Exec, ""}, {"B", PinType::Exec, ""}, {"Is A", PinType::Bool, ""}}, 0,
+     "self.__flip$id = not self.__flip$id\nlocal $o2 = self.__flip$id\nif $o2 then\n#0\nelse\n#1\nend", {}},
+    // ---- Organising ----
+    {"Reroute", "Reroute", "Utilities", "A bend in a data wire (passes the value through)", {{"", PinType::Any, ""}}, 0, {{"", PinType::Any, ""}}, 0, nullptr, {"$0"}},
+    {"RerouteExec", "Reroute (Exec)", "Utilities", "A bend in a white wire", {kExecIn}, 0, {kExecOut}, 0, "#0", {}},
+    {"Comment", "Comment", "Utilities", "A labelled box behind nodes; drag its corner to size it", {}, 0, {}, 0, nullptr, {}},
     // ---- Pure ----
     {"Self", "Self", "Objects", "The object this script runs on", {}, 0, {{"Self", PinType::Entity, ""}}, 0, nullptr, {"self.entity"}},
     {"FindObject", "Find Object", "Objects", "An object by name (none if missing)", {{"Name", PinType::String, "Floor"}}, 0,
@@ -164,8 +189,10 @@ NodeDef g_defs[] = {
      {kTarget, {"Distance", PinType::Float, "0"}}, 0, {{"Location", PinType::Vector, ""}, {"Direction", PinType::Vector, ""}}, 0, nullptr,
      {"__vec(lsd.spline_point($0, $1))", "__vec(select(4, lsd.spline_point($0, $1)))"}},
     {"SplineLength", "Spline Length", "Transform", "", {kTarget}, 0, {{"Length", PinType::Float, ""}}, 0, nullptr, {"lsd.spline_length($0)"}},
-    {"GetVariable", "Get Variable", "Variables", "A number stored on this object (0 if never set)", {{"Name", PinType::String, "health"}}, 0,
-     {{"Value", PinType::Float, ""}}, 0, nullptr, {"(self[$0] or 0)"}},
+    {"GetVariable", "Get Variable", "Variables", "A value stored on this object (0 if never set)", {{"Name", PinType::String, "health"}}, 0,
+     {{"Value", PinType::Any, ""}}, 0, nullptr, {"(self[$0] or 0)"}},
+    {"GetLocal", "Get Local Variable", "Variables", "A Set Local Variable value of this Function call (0 if never set)", {{"Name", PinType::String, "temp"}}, 0,
+     {{"Value", PinType::Any, ""}}, 0, nullptr, {"((__L or self)[$0] or 0)"}},
     {"InputAxis", "Input Axis", "Input", "Value of an Input Action by asset name", {{"Action", PinType::String, "IA_Move"}}, 0,
      {{"X", PinType::Float, ""}, {"Y", PinType::Float, ""}}, 0, nullptr, {"(lsd.input($0))", "select(2, lsd.input($0))"}},
     {"InputPressed", "Input Pressed", "Input", "True on the frame the action fires (its Trigger: pressed, hold, tap...)", {{"Action", PinType::String, "IA_Jump"}}, 0,
@@ -392,6 +419,13 @@ std::string literal(PinType type, const char* value) {
             return buffer;
         }
         case PinType::Entity: return "self.entity";
+        case PinType::Any: {  // as typed: a number, true / false, or text
+            char* end = nullptr;
+            std::strtod(value, &end);
+            if (*value && end && *end == '\0') return lua_number(value);
+            if (std::strcmp(value, "true") == 0 || std::strcmp(value, "false") == 0) return value;
+            return lua_string(value);
+        }
         case PinType::Exec: break;
     }
     return "nil";
@@ -675,7 +709,8 @@ bool Graph::connect(u32 from, u32 from_pin, u32 to, u32 to_pin) {
     // numbers and vectors mix (all float3 in the shader).
     const bool numeric = is_material_node(*da) && is_material_node(*db) && (out == PinType::Float || out == PinType::Vector) &&
                          (in == PinType::Float || in == PinType::Vector);
-    if (exec != (in == PinType::Exec) || (out != in && !numeric && (in != PinType::String || out == PinType::Audio))) return false;
+    const bool wildcard = (out == PinType::Any || in == PinType::Any) && out != PinType::Audio && in != PinType::Audio;
+    if (exec != (in == PinType::Exec) || (out != in && !numeric && !wildcard && (in != PinType::String || out == PinType::Audio))) return false;
     for (usize i = links.size(); i-- > 0;) {
         const GraphLink& l = links[i];
         // An exec output leads to one place; a data input reads from one place.
@@ -700,7 +735,10 @@ void save_graph(const Graph& graph, Array<char>& out) {
         std::snprintf(line, sizeof line, ", \"x\": %.1f, \"y\": %.1f, \"values\": [", static_cast<double>(n.x), static_cast<double>(n.y));
         append(out, line);
         const NodeDef* def = find_node_def(n.type);
-        const u32 count = def ? (def->input_count < kMaxPinValues ? def->input_count : kMaxPinValues) : 0;
+        u32 count = def ? (def->input_count < kMaxPinValues ? def->input_count : kMaxPinValues) : 0;
+        for (u32 v = count; v < kMaxPinValues; ++v) {  // values past the pins (a Comment's text and size) when set
+            if (n.values[v][0]) count = v + 1;
+        }
         for (u32 v = 0; v < count; ++v) {
             if (v) append(out, ", ");
             append_quoted(out, n.values[v]);
@@ -838,7 +876,8 @@ bool compile_graph(const Graph& graph, Array<char>& lua, char* error, usize erro
         }
         if (!is_event(*def)) continue;
         for (const GraphNode& other : graph.nodes) {
-            const bool same_name = std::strcmp(node.type, "CustomEvent") != 0 || std::strcmp(other.values[0], node.values[0]) == 0;  // Custom Events differ by name
+            const bool named = std::strcmp(node.type, "CustomEvent") == 0 || std::strcmp(node.type, "FunctionEntry") == 0;
+            const bool same_name = !named || std::strcmp(other.values[0], node.values[0]) == 0;  // Custom Events and Functions differ by name
             if (other.id < node.id && std::strcmp(other.type, node.type) == 0 && same_name) c.fail(node, "this event is in the graph twice");
         }
         const std::string body = c.chain(node, 0, 0);

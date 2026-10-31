@@ -200,6 +200,65 @@ static void test_traces() {
     }
 }
 
+// Functions, a For Loop, reroutes and a comment: Start sums add_one(i) for i = 0..2 into the "sum" variable (1 + 2 + 3).
+static void test_functions() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 fn = g.add("FunctionEntry", 0, 300)->id;  // add_one(a) = a + 1
+    std::snprintf(g.find(fn)->values[0], 64, "add_one");
+    const u32 plus = g.add("Add", 200, 300)->id;
+    std::snprintf(g.find(plus)->values[1], 64, "1");
+    const u32 ret = g.add("Return", 400, 300)->id;
+    const u32 reroute = g.add("Reroute", 100, 350)->id;
+    CHECK(g.connect(fn, 0, ret, 0) && g.connect(fn, 1, reroute, 0) && g.connect(reroute, 0, plus, 0) && g.connect(plus, 0, ret, 1));
+
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 loop = g.add("ForLoop", 200, 0)->id;
+    std::snprintf(g.find(loop)->values[2], 64, "2");
+    const u32 call = g.add("CallFunction", 400, 0)->id;
+    std::snprintf(g.find(call)->values[1], 64, "add_one");
+    const u32 get = g.add("GetVariable", 400, 150)->id;
+    std::snprintf(g.find(get)->values[0], 64, "sum");
+    const u32 sum = g.add("Add", 600, 150)->id;
+    const u32 set = g.add("SetVariable", 800, 0)->id;
+    std::snprintf(g.find(set)->values[1], 64, "sum");
+    CHECK(g.connect(start, 0, loop, 0) && g.connect(loop, 0, call, 0) && g.connect(loop, 1, call, 2) && g.connect(call, 0, set, 0));
+    CHECK(g.connect(get, 0, sum, 0) && g.connect(call, 1, sum, 1) && g.connect(sum, 0, set, 2));
+    // Completed: x = sum, so the test can read it.
+    const u32 place = g.add("SetPosition", 400, -150)->id;
+    const u32 make = g.add("MakeVector", 200, -150)->id;
+    const u32 total = g.add("GetVariable", 0, -150)->id;
+    std::snprintf(g.find(total)->values[0], 64, "sum");
+    CHECK(g.connect(loop, 2, place, 0) && g.connect(total, 0, make, 0) && g.connect(make, 0, place, 2));
+    GraphNode* note = g.add("Comment", -50, -50);
+    std::snprintf(note->values[0], 64, "Adds things up");
+    std::snprintf(note->values[1], 64, "900");
+
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    // The comment keeps its text and size through a save.
+    Array<char> text(default_allocator());
+    save_graph(g, text);
+    Graph again(default_allocator());
+    CHECK(load_graph(again, text.data(), text.size()));
+    const GraphNode* kept = nullptr;
+    for (const GraphNode& n : again.nodes) kept = std::strcmp(n.type, "Comment") == 0 ? &n : kept;
+    CHECK(kept && std::strcmp(kept->values[0], "Adds things up") == 0 && std::strcmp(kept->values[1], "900") == 0);
+
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("functions");
+    World w(heap);
+    const Entity a = w.create("A");
+    std::snprintf(w.add<Script>(a)->script, sizeof(Script::script), "graph");
+    script::ScriptSystem scripts;
+    scripts.start(w, {}, path_of, nullptr);
+    CHECK(scripts.error_count() == 0);
+    CHECK(w.get<Transform>(a)->position.x == 6.0f);  // 1 + 2 + 3
+    scripts.stop();
+}
+
 // Game Instance: kept tables survive stop / start (a level change) until a new Play clears them.
 static void test_game_instance() {
     HeapAllocator heap("instance");
@@ -544,6 +603,7 @@ int main() {
     test_events();
     test_traces();
     test_game_instance();
+    test_functions();
     test_properties();
     test_user_types();
     test_custom_nodes();

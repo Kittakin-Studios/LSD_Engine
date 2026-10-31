@@ -439,6 +439,19 @@ node is outlined red and the Lua Debugger shows the values (node outputs are nam
 
 ## 10. Visual scripting
 
+**Editing the graph**: right-click for the node menu; wheel zooms about the mouse; drag on empty space
+to box-select (Ctrl / Shift add); drag a node's title to move the whole selection; **Ctrl+C / X / V /
+D** copy, cut, paste (at the mouse) and duplicate; **Ctrl+Z / Ctrl+Y** undo and redo inside the graph;
+Delete removes the selection. **Comment** (Utilities) is a labelled box: type its title when it is
+selected alone, drag its corner to size it, drag its title to move it with the nodes inside.
+**Reroute** nodes bend wires (any data type; Reroute (Exec) for white wires).
+
+**Functions** (Blueprint functions): a **Function** node (give it a Name) starts one, with up to three
+arguments A, B, C of any type; **Return** hands a value back; **Call Function** runs it by name and
+gives its Result. Inside a Function, **Set / Get Local Variable** keep values for that call only;
+**Set / Get Variable** store any type on the object. Flow has the standard macros **For Loop**,
+**While Loop** (10 000 rounds at most) and **Flip Flop**.
+
 **Your own nodes** (Blueprint function libraries): New Data Asset > **ScriptNode**. Name the asset
 what the node is called, pick a Category, add input and output pins, and write the Lua it becomes:
 `$1`, `$2`... are the inputs by position (the white Exec pin counts as 0), `$o0` the first output's

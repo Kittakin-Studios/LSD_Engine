@@ -17,6 +17,7 @@
 #include "lsd/script/graph.h"
 
 #include <imgui.h>
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -36,9 +37,10 @@ using script::GraphNode;
 using script::NodeDef;
 using script::PinType;
 
-constexpr f32 kHeader = 24.0f;
-constexpr f32 kRow = 24.0f;
-constexpr f32 kPin = 6.0f;
+f32 g_zoom = 1.0f;  // the canvas zoom (mouse wheel); node sizes and positions scale with it
+f32 header() { return 24.0f * g_zoom; }
+f32 row() { return 24.0f * g_zoom; }
+f32 pin_size() { return 6.0f * g_zoom; }
 constexpr char kGraphLuaDir[] = "Saved/Graphs";
 
 struct GraphWindow {
@@ -50,7 +52,14 @@ struct GraphWindow {
     bool open = false;
     bool dirty = false;
     ImVec2 scroll{40.0f, 40.0f};
-    u32 selected = 0;
+    f32 zoom = 1.0f;
+    u32 selected = 0;                // the primary selected node (F9, the Delete key's target with the rest)
+    std::vector<u32> selection;      // every selected node (Ctrl / Shift click, box select)
+    bool boxing = false;             // dragging a selection box on empty canvas
+    ImVec2 box_start;
+    u32 comment_resizing = 0;        // the Comment whose corner is being dragged
+    std::vector<std::string> undo, redo;  // the graph as text before / after each finished edit
+    std::string snapshot;                 // the graph as text after the last finished edit
     // A wire being dragged from a pin.
     bool wiring = false;
     u32 wire_node = 0, wire_pin = 0;
@@ -79,8 +88,70 @@ const asset::AssetRegistry* g_registry = nullptr;  // for the Texture Sample's t
 u32 g_active[64];  // behaviour tree nodes running in Play
 u32 g_active_count = 0;
 
+std::string graph_text(const Graph& g) {
+    Array<char> text(default_allocator());
+    script::save_graph(g, text);
+    return std::string(text.data(), text.size());
+}
+
+bool is_selected(const GraphWindow& w, u32 id) {
+    for (const u32 s : w.selection) {
+        if (s == id) return true;
+    }
+    return false;
+}
+
+void select_only(GraphWindow& w, u32 id) {
+    w.selected = id;
+    w.selection.clear();
+    if (id) w.selection.push_back(id);
+}
+
+// Copies the selected nodes and the wires between them as graph text (Ctrl+C: also to the clipboard).
+std::string copy_selection(const GraphWindow& w) {
+    Graph part(default_allocator());
+    for (const u32 id : w.selection) {
+        if (const GraphNode* n = w.graph->find(id)) part.nodes.push_back(*n);
+    }
+    for (const auto& l : w.graph->links) {
+        if (is_selected(w, l.from_node) && is_selected(w, l.to_node)) part.links.push_back(l);
+    }
+    return graph_text(part);
+}
+
+// Adds a copied part with new ids, its first node at `at` (canvas units), and selects it. False if the text is not a graph.
+bool paste(GraphWindow& w, const char* text, ImVec2 at) {
+    Graph part(default_allocator());
+    if (!text || !script::load_graph(part, text, std::strlen(text)) || part.nodes.size() == 0) return false;
+    const f32 dx = at.x - part.nodes[0].x, dy = at.y - part.nodes[0].y;
+    std::vector<std::pair<u32, u32>> ids;  // old -> new
+    w.selection.clear();
+    for (GraphNode n : part.nodes) {
+        if (!script::find_node_def(n.type)) continue;
+        ids.emplace_back(n.id, w.graph->next_id);
+        n.id = w.graph->next_id++;
+        n.x += dx;
+        n.y += dy;
+        w.graph->nodes.push_back(n);
+        w.selection.push_back(n.id);
+    }
+    auto new_id = [&](u32 old) {
+        for (const auto& [from, to] : ids) {
+            if (from == old) return to;
+        }
+        return 0u;
+    };
+    for (const auto& l : part.links) {
+        if (new_id(l.from_node) && new_id(l.to_node)) w.graph->connect(new_id(l.from_node), l.from_pin, new_id(l.to_node), l.to_pin);
+    }
+    w.selected = w.selection.empty() ? 0 : w.selection[0];
+    w.dirty = true;
+    return true;
+}
+
 ImU32 pin_color(PinType type) {
     switch (type) {
+        case PinType::Any: return IM_COL32(170, 170, 170, 255);
         case PinType::Exec: return IM_COL32(240, 240, 240, 255);
         case PinType::Float: return IM_COL32(150, 230, 90, 255);
         case PinType::Bool: return IM_COL32(220, 50, 50, 255);
@@ -113,19 +184,20 @@ ImU32 header_color(const NodeDef& def) {
 }
 
 f32 node_width(const NodeDef& def) {
+    if (std::strncmp(def.id, "Reroute", 7) == 0) return 60.0f * g_zoom;  // a small knot in the wire
     for (u32 i = 0; i < def.input_count; ++i) {
-        if (def.inputs[i].type == PinType::Vector) return def.output_count > 1 || script::is_pure(def) ? 330.0f : 270.0f;  // room for the output label
+        if (def.inputs[i].type == PinType::Vector) return (def.output_count > 1 || script::is_pure(def) ? 330.0f : 270.0f) * g_zoom;  // room for the output label
     }
-    return 210.0f;
+    return 210.0f * g_zoom;
 }
 
 f32 node_height(const NodeDef& def) {
     const u32 rows = def.input_count > def.output_count ? def.input_count : def.output_count;
-    return kHeader + kRow * static_cast<f32>(rows > 0 ? rows : 1) + 6.0f;
+    return header() + row() * static_cast<f32>(rows > 0 ? rows : 1) + 6.0f * g_zoom;
 }
 
 ImVec2 pin_position(ImVec2 origin, const GraphNode& node, const NodeDef& def, bool output, u32 pin) {
-    return ImVec2(origin.x + node.x + (output ? node_width(def) : 0.0f), origin.y + node.y + kHeader + kRow * (static_cast<f32>(pin) + 0.5f));
+    return ImVec2(origin.x + node.x * g_zoom + (output ? node_width(def) : 0.0f), origin.y + node.y * g_zoom + header() + row() * (static_cast<f32>(pin) + 0.5f));
 }
 
 void wire(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 color) {
@@ -136,13 +208,13 @@ void wire(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 color) {
 void draw_pin(ImDrawList* dl, ImVec2 at, PinType type, bool connected) {
     const ImU32 color = pin_color(type);
     if (type == PinType::Exec) {  // arrow
-        const ImVec2 p[3] = {ImVec2(at.x - kPin, at.y - kPin), ImVec2(at.x + kPin, at.y), ImVec2(at.x - kPin, at.y + kPin)};
+        const ImVec2 p[3] = {ImVec2(at.x - pin_size(), at.y - pin_size()), ImVec2(at.x + pin_size(), at.y), ImVec2(at.x - pin_size(), at.y + pin_size())};
         if (connected) dl->AddTriangleFilled(p[0], p[1], p[2], color);
         else dl->AddTriangle(p[0], p[1], p[2], color, 1.5f);
     } else if (connected) {
-        dl->AddCircleFilled(at, kPin, color);
+        dl->AddCircleFilled(at, pin_size(), color);
     } else {
-        dl->AddCircle(at, kPin, color, 12, 1.5f);
+        dl->AddCircle(at, pin_size(), color, 12, 1.5f);
     }
 }
 
@@ -207,6 +279,10 @@ bool value_widget(const script::PinDef& pin, char* value, usize capacity) {
                 break;
             }
             ImGui::SetNextItemWidth(100.0f);
+            changed = ImGui::InputText("##v", value, capacity);
+            break;
+        case PinType::Any:  // a number, true / false or text, as typed
+            ImGui::SetNextItemWidth(80.0f);
             changed = ImGui::InputText("##v", value, capacity);
             break;
         case PinType::Vector: {
@@ -342,7 +418,7 @@ void node_menu(GraphWindow& w) {
             ImGui::SeparatorText(category);
         }
         if (ImGui::Selectable(d.title)) {
-            if (GraphNode* n = w.graph->add(d.id, w.menu_at.x, w.menu_at.y)) w.selected = n->id;
+            if (GraphNode* n = w.graph->add(d.id, w.menu_at.x, w.menu_at.y)) select_only(w, n->id);
             w.dirty = true;
             ImGui::CloseCurrentPopup();
         }
@@ -466,6 +542,10 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     w.open = true;
     w.dirty = false;
     w.selected = 0;
+    w.selection.clear();
+    w.undo.clear();
+    w.redo.clear();
+    w.snapshot = graph_text(*w.graph);
     w.wiring = false;
     w.message[0] = '\0';
     w.preview_source.clear();  // a new graph: preview it straight away
@@ -617,7 +697,7 @@ void draw_graph_editor(EditorState& s) {
         ImGui::SameLine();
     }
     if (w.message[0]) ImGui::TextColored(w.message_is_error ? ImVec4(1, 0.4f, 0.4f, 1) : ImVec4(0.5f, 1, 0.5f, 1), "%s", w.message);
-    else ImGui::TextDisabled("Right-click: add node. Drag from a pin: wire. Middle or right drag: pan. Delete: remove node.");
+    else ImGui::TextDisabled("Right-click: add node. Drag from a pin: wire. Middle / right drag: pan. Wheel: zoom. Drag on empty space: select. Ctrl+C / V / D / Z / Y.");
 
     const bool material = w.kind == script::GraphKind::Material;
     const f32 preview_width = material ? 300.0f : 0.0f;
@@ -628,11 +708,71 @@ void draw_graph_editor(EditorState& s) {
     const ImVec2 origin(canvas.x + w.scroll.x, canvas.y + w.scroll.y);
     const ImGuiIO& io = ImGui::GetIO();
     const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+    g_zoom = w.zoom;
+    ImGui::SetWindowFontScale(w.zoom);  // labels and the typed values scale with the nodes
+    auto to_canvas = [&](ImVec2 screen) { return ImVec2((screen.x - origin.x) / w.zoom, (screen.y - origin.y) / w.zoom); };
 
     // Grid.
+    const f32 cell = 32.0f * w.zoom;
     dl->AddRectFilled(canvas, ImVec2(canvas.x + size.x, canvas.y + size.y), IM_COL32(28, 28, 32, 255));
-    for (f32 x = std::fmod(w.scroll.x, 32.0f); x < size.x; x += 32.0f) dl->AddLine(ImVec2(canvas.x + x, canvas.y), ImVec2(canvas.x + x, canvas.y + size.y), IM_COL32(45, 45, 52, 255));
-    for (f32 y = std::fmod(w.scroll.y, 32.0f); y < size.y; y += 32.0f) dl->AddLine(ImVec2(canvas.x, canvas.y + y), ImVec2(canvas.x + size.x, canvas.y + y), IM_COL32(45, 45, 52, 255));
+    for (f32 x = std::fmod(w.scroll.x, cell); x < size.x; x += cell) dl->AddLine(ImVec2(canvas.x + x, canvas.y), ImVec2(canvas.x + x, canvas.y + size.y), IM_COL32(45, 45, 52, 255));
+    for (f32 y = std::fmod(w.scroll.y, cell); y < size.y; y += cell) dl->AddLine(ImVec2(canvas.x, canvas.y + y), ImVec2(canvas.x + size.x, canvas.y + y), IM_COL32(45, 45, 52, 255));
+
+    // Comments: labelled boxes behind everything. Dragging the title moves the box and the nodes in it.
+    bool hovered_item = false;
+    for (usize i = 0; i < g.nodes.size(); ++i) {
+        GraphNode& c = g.nodes[i];
+        if (std::strcmp(c.type, "Comment") != 0) continue;
+        const f32 cw = std::atof(c.values[1]) > 40.0 ? static_cast<f32>(std::atof(c.values[1])) : 400.0f;
+        const f32 ch = std::atof(c.values[2]) > 40.0 ? static_cast<f32>(std::atof(c.values[2])) : 200.0f;
+        const ImVec2 p(origin.x + c.x * w.zoom, origin.y + c.y * w.zoom);
+        const ImVec2 q(p.x + cw * w.zoom, p.y + ch * w.zoom);
+        const bool sel = is_selected(w, c.id);
+        dl->AddRectFilled(p, q, IM_COL32(70, 80, 110, 70), 6.0f);
+        dl->AddRectFilled(p, ImVec2(q.x, p.y + header()), IM_COL32(70, 80, 110, 200), 6.0f, ImDrawFlags_RoundCornersTop);
+        dl->AddRect(p, q, sel ? IM_COL32(243, 195, 18, 255) : IM_COL32(110, 120, 160, 200), 6.0f, 0, sel ? 2.0f : 1.0f);
+        ImGui::PushID(static_cast<int>(c.id));
+        ImGui::SetCursorScreenPos(ImVec2(p.x + 6, p.y + 2));
+        if (sel && w.selection.size() == 1) {  // selected alone: its title is editable in place
+            ImGui::SetNextItemWidth(cw * w.zoom - 12.0f);
+            if (ImGui::InputTextWithHint("##text", "Comment", c.values[0], sizeof c.values[0])) w.dirty = true;
+            if (ImGui::IsItemHovered() || ImGui::IsItemActive()) hovered_item = true;
+        } else {
+            dl->AddText(ImVec2(p.x + 8, p.y + 4), IM_COL32_WHITE, c.values[0][0] ? c.values[0] : "Comment");
+            ImGui::InvisibleButton("title", ImVec2(cw * w.zoom, header()));
+            if (ImGui::IsItemHovered()) hovered_item = true;
+            if (ImGui::IsItemActivated()) {
+                if (io.KeyCtrl || io.KeyShift) w.selection.push_back(c.id);
+                else select_only(w, c.id);
+            }
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+                const f32 dx = io.MouseDelta.x / w.zoom, dy = io.MouseDelta.y / w.zoom;
+                for (GraphNode& inside : g.nodes) {  // what sits in the box comes along
+                    if (inside.id != c.id && inside.x >= c.x && inside.y >= c.y && inside.x <= c.x + cw && inside.y <= c.y + ch) {
+                        inside.x += dx;
+                        inside.y += dy;
+                    }
+                }
+                c.x += dx;
+                c.y += dy;
+                w.dirty = true;
+            }
+        }
+        // Corner handle: resize.
+        ImGui::SetCursorScreenPos(ImVec2(q.x - 12, q.y - 12));
+        ImGui::InvisibleButton("corner", ImVec2(12, 12));
+        dl->AddTriangleFilled(ImVec2(q.x - 10, q.y - 2), ImVec2(q.x - 2, q.y - 10), ImVec2(q.x - 2, q.y - 2), IM_COL32(200, 200, 220, 200));
+        if (ImGui::IsItemHovered()) {
+            hovered_item = true;
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+            std::snprintf(c.values[1], sizeof c.values[1], "%g", static_cast<double>(std::fmax(cw + io.MouseDelta.x / w.zoom, 60.0f)));
+            std::snprintf(c.values[2], sizeof c.values[2], "%g", static_cast<double>(std::fmax(ch + io.MouseDelta.y / w.zoom, 60.0f)));
+            w.dirty = true;
+        }
+        ImGui::PopID();
+    }
 
     // Wires behind the nodes.
     dl->ChannelsSplit(2);
@@ -647,20 +787,19 @@ void draw_graph_editor(EditorState& s) {
     }
 
     dl->ChannelsSetCurrent(1);
-    bool hovered_item = false;
     u32 drop_node = 0, drop_pin = 0;
     bool drop_output = false, have_drop = false;
     for (usize i = 0; i < g.nodes.size(); ++i) {
         GraphNode& n = g.nodes[i];
         const NodeDef* def = script::find_node_def(n.type);
-        if (!def) continue;
+        if (!def || std::strcmp(n.type, "Comment") == 0) continue;  // comments are drawn above, behind the wires
         const f32 width = node_width(*def), height = node_height(*def);
-        const ImVec2 p(origin.x + n.x, origin.y + n.y);
+        const ImVec2 p(origin.x + n.x * g_zoom, origin.y + n.y * g_zoom);
         ImGui::PushID(static_cast<int>(n.id));
         dl->AddRectFilled(p, ImVec2(p.x + width, p.y + height), IM_COL32(38, 38, 44, 240), 6.0f);
-        dl->AddRectFilled(p, ImVec2(p.x + width, p.y + kHeader), header_color(*def), 6.0f, ImDrawFlags_RoundCornersTop);
-        dl->AddRect(p, ImVec2(p.x + width, p.y + height), w.selected == n.id ? IM_COL32(243, 195, 18, 255) : IM_COL32(10, 10, 10, 255), 6.0f, 0,
-                    w.selected == n.id ? 2.5f : 1.0f);
+        dl->AddRectFilled(p, ImVec2(p.x + width, p.y + header()), header_color(*def), 6.0f, ImDrawFlags_RoundCornersTop);
+        const bool sel = is_selected(w, n.id);
+        dl->AddRect(p, ImVec2(p.x + width, p.y + height), sel ? IM_COL32(243, 195, 18, 255) : IM_COL32(10, 10, 10, 255), 6.0f, 0, sel ? 2.5f : 1.0f);
         if (w.kind == script::GraphKind::BehaviorTree) {  // running in Play: a green glow (live debugging)
             for (u32 a = 0; a < g_active_count; ++a) {
                 if (g_active[a] == n.id) dl->AddRect(ImVec2(p.x - 3, p.y - 3), ImVec2(p.x + width + 3, p.y + height + 3), IM_COL32(80, 255, 120, 255), 8.0f, 0, 3.0f);
@@ -669,7 +808,7 @@ void draw_graph_editor(EditorState& s) {
         if (w.kind == script::GraphKind::Script) {  // debugging: breakpoints, the stop, live flow
             const std::string lua = lua_path_for(w.guid);
             const i32 line = node_first_line(lua, n.id);
-            if (line > 0 && debugger::has(lua.c_str(), line)) dl->AddCircleFilled(ImVec2(p.x - 7, p.y + kHeader * 0.5f), 5.0f, IM_COL32(230, 40, 40, 255));
+            if (line > 0 && debugger::has(lua.c_str(), line)) dl->AddCircleFilled(ImVec2(p.x - 7, p.y + header() * 0.5f), 5.0f, IM_COL32(230, 40, 40, 255));
             const script::DebugStop* stop = debugger::stop();
             if (stop && stop->frame_count && std::strcmp(stop->frames[0].source, lua.c_str()) == 0) {
                 const std::vector<u32>& lines = node_lines(lua);
@@ -691,15 +830,28 @@ void draw_graph_editor(EditorState& s) {
 
         // Header: select and drag.
         ImGui::SetCursorScreenPos(p);
-        ImGui::InvisibleButton("header", ImVec2(width, kHeader));
+        ImGui::InvisibleButton("header", ImVec2(width, header()));
         if (ImGui::IsItemHovered()) {
             hovered_item = true;
             if (def->tooltip[0]) ImGui::SetTooltip("%s", def->tooltip);
         }
-        if (ImGui::IsItemActivated()) w.selected = n.id;
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
-            n.x += io.MouseDelta.x;
-            n.y += io.MouseDelta.y;
+        if (ImGui::IsItemActivated()) {  // Ctrl / Shift click: add to the selection; a click on an unselected node: just it
+            if (io.KeyCtrl || io.KeyShift) {
+                if (!sel) w.selection.push_back(n.id);
+                w.selected = n.id;
+            } else if (!sel) {
+                select_only(w, n.id);
+            } else {
+                w.selected = n.id;
+            }
+        }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {  // the whole selection moves
+            for (const u32 id : w.selection) {
+                if (GraphNode* moved = g.find(id)) {
+                    moved->x += io.MouseDelta.x / w.zoom;
+                    moved->y += io.MouseDelta.y / w.zoom;
+                }
+            }
             w.dirty = true;
         }
         if (ImGui::BeginPopupContextItem("node_menu")) {
@@ -728,8 +880,8 @@ void draw_graph_editor(EditorState& s) {
                 const bool connected = output ? output_connected(g, n.id, k) : g.link_into(n.id, k) != nullptr;
                 draw_pin(dl, at, pin.type, connected);
                 const ImVec2 label_size = ImGui::CalcTextSize(pin.name);
-                if (output) dl->AddText(ImVec2(at.x - kPin - 6 - label_size.x, at.y - label_size.y * 0.5f), IM_COL32(220, 220, 220, 255), pin.name);
-                else dl->AddText(ImVec2(at.x + kPin + 6, at.y - label_size.y * 0.5f), IM_COL32(220, 220, 220, 255), pin.name);
+                if (output) dl->AddText(ImVec2(at.x - pin_size() - 6 - label_size.x, at.y - label_size.y * 0.5f), IM_COL32(220, 220, 220, 255), pin.name);
+                else dl->AddText(ImVec2(at.x + pin_size() + 6, at.y - label_size.y * 0.5f), IM_COL32(220, 220, 220, 255), pin.name);
                 ImGui::PushID(static_cast<int>(k + (output ? 100u : 0u)));
                 ImGui::SetCursorScreenPos(ImVec2(at.x - 9, at.y - 9));
                 ImGui::InvisibleButton("pin", ImVec2(18, 18));
@@ -757,7 +909,7 @@ void draw_graph_editor(EditorState& s) {
                 }
                 // Typed value for an unconnected data input.
                 if (!output && !connected && pin.type != PinType::Exec && k < script::kMaxPinValues) {
-                    ImGui::SetCursorScreenPos(ImVec2(at.x + kPin + 12 + label_size.x, at.y - ImGui::GetFrameHeight() * 0.5f));
+                    ImGui::SetCursorScreenPos(ImVec2(at.x + pin_size() + 12 + label_size.x, at.y - ImGui::GetFrameHeight() * 0.5f));
                     if (value_widget(pin, n.values[k], sizeof n.values[k])) w.dirty = true;
                     if (ImGui::IsItemHovered()) hovered_item = true;
                 }
@@ -802,11 +954,81 @@ void draw_graph_editor(EditorState& s) {
     }
     if (canvas_hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x == 0.0f &&
         ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y == 0.0f) {
-        w.menu_at = ImVec2(io.MousePos.x - origin.x, io.MousePos.y - origin.y);
+        w.menu_at = to_canvas(io.MousePos);
         ImGui::OpenPopup("AddNode");
     }
-    if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) w.selected = 0;
+    // Wheel: zoom about the mouse (the point under it stays put).
+    if (canvas_hovered && io.MouseWheel != 0.0f) {
+        const ImVec2 under = to_canvas(io.MousePos);
+        w.zoom = std::clamp(w.zoom * (io.MouseWheel > 0.0f ? 1.1f : 1.0f / 1.1f), 0.3f, 2.0f);
+        w.scroll = ImVec2(io.MousePos.x - canvas.x - under.x * w.zoom, io.MousePos.y - canvas.y - under.y * w.zoom);
+    }
+    // Left drag on empty canvas: a selection box (Ctrl / Shift add to the selection); a plain click clears it.
+    if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        w.boxing = true;
+        w.box_start = io.MousePos;
+        if (!io.KeyCtrl && !io.KeyShift) select_only(w, 0);
+    }
+    if (w.boxing) {
+        const ImVec2 a(std::fmin(w.box_start.x, io.MousePos.x), std::fmin(w.box_start.y, io.MousePos.y));
+        const ImVec2 b(std::fmax(w.box_start.x, io.MousePos.x), std::fmax(w.box_start.y, io.MousePos.y));
+        dl->AddRectFilled(a, b, IM_COL32(243, 195, 18, 30));
+        dl->AddRect(a, b, IM_COL32(243, 195, 18, 200));
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            w.boxing = false;
+            for (const GraphNode& n : g.nodes) {
+                const NodeDef* def = script::find_node_def(n.type);
+                if (!def) continue;
+                const ImVec2 p(origin.x + n.x * w.zoom, origin.y + n.y * w.zoom);
+                const ImVec2 q(p.x + node_width(*def), p.y + node_height(*def));
+                if (p.x < b.x && q.x > a.x && p.y < b.y && q.y > a.y && !is_selected(w, n.id)) w.selection.push_back(n.id);
+            }
+            if (!w.selection.empty()) w.selected = w.selection.back();
+        }
+    }
     node_menu(w);
+
+    // Copy / cut / paste / duplicate (the clipboard holds graph text) and undo / redo inside the graph.
+    const bool keys = focused && !ImGui::IsAnyItemActive() && !w.wiring;
+    if (keys && io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_C, false) || ImGui::IsKeyPressed(ImGuiKey_X, false)) && !w.selection.empty()) {
+        ImGui::SetClipboardText(copy_selection(w).c_str());
+        if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+            for (const u32 id : w.selection) g.remove(id);
+            select_only(w, 0);
+            w.dirty = true;
+        }
+    }
+    if (keys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+        if (!paste(w, ImGui::GetClipboardText(), to_canvas(io.MousePos))) std::snprintf(w.message, sizeof w.message, "The clipboard holds no nodes");
+    }
+    if (keys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && !w.selection.empty()) {
+        const GraphNode* first = g.find(w.selection[0]);
+        const std::string part = copy_selection(w);
+        if (first) paste(w, part.c_str(), ImVec2(first->x + 30.0f, first->y + 30.0f));
+    }
+    const bool undo_key = keys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift;
+    const bool redo_key = keys && io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_Y) || (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)));
+    if ((undo_key && !w.undo.empty()) || (redo_key && !w.redo.empty())) {
+        auto& from = undo_key ? w.undo : w.redo;
+        auto& to = undo_key ? w.redo : w.undo;
+        to.push_back(w.snapshot);
+        w.snapshot = from.back();
+        from.pop_back();
+        script::load_graph(g, w.snapshot.data(), w.snapshot.size());
+        select_only(w, 0);
+        w.dirty = true;
+    }
+    // A finished edit (mouse up, no field being typed in): remember the graph as it was before it.
+    // shortcut: compares the whole graph as text each idle frame; keep a changed flag if graphs get huge.
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsAnyItemActive()) {
+        std::string now = graph_text(g);
+        if (now != w.snapshot) {
+            w.undo.push_back(std::move(w.snapshot));
+            if (w.undo.size() > 100) w.undo.erase(w.undo.begin());
+            w.redo.clear();
+            w.snapshot = std::move(now);
+        }
+    }
 
     if (w.kind == script::GraphKind::Script) {
         const std::string lua = lua_path_for(w.guid);
@@ -816,9 +1038,9 @@ void draw_graph_editor(EditorState& s) {
             else std::snprintf(s.status, sizeof s.status, "Save the graph first (the breakpoint goes on its compiled Lua)");
         }
     }
-    if (focused && !ImGui::IsAnyItemActive() && w.selected && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-        g.remove(w.selected);
-        w.selected = 0;
+    if (focused && !ImGui::IsAnyItemActive() && !w.selection.empty() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        for (const u32 id : w.selection) g.remove(id);
+        select_only(w, 0);
         w.dirty = true;
     }
     if (focused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) save_and_compile(s);
