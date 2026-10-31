@@ -314,6 +314,13 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Glow around bright parts (emissive, the sun's highlights); 0 = off") f32 bloom_intensity = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How bright (after exposure) a pixel must be to glow; 1 = white") f32 bloom_threshold = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "FXAA: smooths jagged edges") bool anti_aliasing = true;
+    LSD_PROPERTY(Edit, Tooltip = "Temporal AA instead of FXAA: smoother edges and less shimmer, a little softer; can ghost on fast motion") bool temporal_aa = false;
+    LSD_PROPERTY(Edit, Category = "Ambient Occlusion", Min = 0, Max = 2, Tooltip = "Darkens creases and contact points (screen space); 0 = off") f32 ao_intensity = 0.5f;
+    LSD_PROPERTY(Edit, Category = "Ambient Occlusion", Units = "m", Min = 0.05, Max = 5, Tooltip = "How far around each point it looks") f32 ao_radius = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0, Max = 1000, Tooltip = "Distance that is in focus; 0 = no depth of field") f32 dof_focal_distance = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0, Max = 1000, Tooltip = "Distance either side of it that stays fully sharp") f32 dof_focal_region = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0.01, Max = 1000, Tooltip = "Distance from sharp to fully blurred") f32 dof_transition = 5.0f;
+    LSD_PROPERTY(Edit, Category = "Depth of Field", Min = 0, Max = 32, Tooltip = "Blur radius in pixels") f32 dof_max_blur = 8.0f;
 };
 
 // Where the navmesh is built (Unreal's Nav Mesh Bounds Volume): the unit cube scaled by the

@@ -5,6 +5,7 @@
 #include "lsd/foundation/allocator.h"
 #include "lsd/foundation/handle.h"
 #include "lsd/foundation/hash_id.h"
+#include "lsd/foundation/math.h"
 #include "lsd/foundation/system_info.h"
 #include "lsd/rhi/rhi.h"
 
@@ -134,8 +135,28 @@ static void test_console() {
     console::remove_all();
 }
 
+using lsd::Mat4;
+using lsd::Vec3;
+using lsd::f32;
+using lsd::perspective;
+using lsd::look_at;
+using lsd::inverse;
+
+static void test_inverse() {  // TAA reprojects with it
+    const Mat4 m = perspective(1.0f, 1.6f, 0.05f, 1000.0f) * look_at(Vec3{3, -2, 1.5f}, Vec3{0, 0, 0}, Vec3{0, 0, 1});
+    const Mat4 i = m * inverse(m);
+    f32 worst = 0.0f;
+    for (int k = 0; k < 16; ++k) {
+        const f32 expected = (k % 5 == 0) ? 1.0f : 0.0f;
+        const f32 e = i.m[k] > expected ? i.m[k] - expected : expected - i.m[k];
+        worst = e > worst ? e : worst;
+    }
+    CHECK(worst < 1e-4f);
+}
+
 int main() {
     test_console();
+    test_inverse();
     test_hash_id();
     test_handle();
     test_heap_allocator();

@@ -826,6 +826,11 @@ int main(int argc, char** argv) {
             return target[v];
         }
     } scene_targets;
+    struct TaaHistory {  // per viewport: last frame's view-projection (TAA reprojects into it)
+        lsd::Mat4 view_proj;
+        lsd::u32 frame = 0;
+        bool valid = false;
+    } taa_history[4];
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
     for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
@@ -1159,9 +1164,9 @@ int main(int argc, char** argv) {
             device->set_viewport(rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y);
             lsd::editor::EditorCamera lens = camera;
             if (state.playing && !state.ejected) lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
-            const lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
+            lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
             const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
-            const lsd::Mat4 view_proj = proj * view;
+            lsd::Mat4 view_proj = proj * view;
             lsd::editor::LightView light_view;
             light_view.eye = state.playing && !state.ejected ? play.eye() : camera.position;
             light_view.forward = state.playing && !state.ejected ? play.forward() : lsd::editor::camera_forward(camera);
@@ -1171,6 +1176,35 @@ int main(int argc, char** argv) {
             // Post-processing (a Post Process Volume applies): the scene goes into a target the post pass reads.
             lsd::rhi::PostDraw post;
             const bool use_post = !state.view_mode_unlit_or_wire() && lsd::editor::world_post(world, light_view.eye, !state.playing || state.ejected, post);
+            if (use_post && lens.view == lsd::editor::ViewType::Perspective) {  // depth effects (AO, DOF, TAA) need the projection
+                post.proj[0] = proj.at(0, 0);
+                post.proj[1] = proj.at(1, 1);
+                post.proj[2] = proj.at(2, 2);
+                post.proj[3] = proj.at(2, 3);
+            }
+            const bool taa = post.taa && post.proj[0] != 0.0f && v < 4;
+            if (taa) {
+                // Last frame's clip space from this one's (without the jitter), then a sub-pixel jitter (Halton 2, 3).
+                post.taa_reset = !taa_history[v].valid;
+                const lsd::Mat4 reproject = taa_history[v].view_proj * lsd::inverse(view_proj);
+                std::memcpy(post.reproject, reproject.m, sizeof post.reproject);
+                taa_history[v].view_proj = view_proj;
+                taa_history[v].valid = true;
+                const lsd::u32 n = ++taa_history[v].frame % 8 + 1;
+                auto halton = [](lsd::u32 i, lsd::u32 base) {
+                    lsd::f32 f = 1.0f, r = 0.0f;
+                    for (; i; i /= base) {
+                        f /= static_cast<lsd::f32>(base);
+                        r += f * static_cast<lsd::f32>(i % base);
+                    }
+                    return r;
+                };
+                proj.at(0, 2) += (halton(n, 2) - 0.5f) * 2.0f / pixels[2];
+                proj.at(1, 2) += (halton(n, 3) - 0.5f) * 2.0f / pixels[3];
+                view_proj = proj * view;
+            } else if (v < 4) {
+                taa_history[v].valid = false;
+            }
             if (v == 0 && state.high_res_shot) {  // HighResShot: this view again, bigger, into targets read after the frame
                 const lsd::u32 n = state.high_res_shot;
                 state.high_res_shot = 0;
@@ -1193,6 +1227,7 @@ int main(int argc, char** argv) {
                     draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_scene, encoded, true);
                     effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
                     lsd::rhi::PostDraw shot = post;
+                    shot.taa = false;  // one frame: no history
                     shot.scene = shot_scene;
                     shot.output = shot_target;
                     for (int c = 0; c < 4; ++c) shot.viewport[c] = full[c];

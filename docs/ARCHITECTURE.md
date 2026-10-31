@@ -133,6 +133,13 @@ fog, and the player's quality setting. Meshes outside the camera's frustum are c
 three simpler LODs when they load (meshoptimizer simplify, sharing the LOD 0 vertices); the draw picks
 one from the mesh's bounding radius over its distance (`r.ForceLOD n` to inspect one).
 
+The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
+backends). Its order: ambient occlusion (from depth, then a depth-aware blur, multiplied into the
+scene), TAA (the editor jitters the projection by a Halton offset; each pixel is found in last
+frame's output through `reproject`, clamped to its neighbours and blended 10 % per frame), depth of
+field (a disc gather sized by each pixel's blur), bloom, then the composite (tint, ACES, grading)
+and FXAA when TAA is off. The passes share one 48-float constant block.
+
 ### Material graphs
 
 A material graph is the same node graph format as visual scripts (`script::Graph`) with the material

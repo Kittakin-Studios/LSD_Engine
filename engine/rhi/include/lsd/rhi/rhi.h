@@ -189,6 +189,20 @@ struct PostDraw {
     f32 vignette = 0.0f;
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
+    // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
+    f32 proj[4] = {};               // projection [0][0], [1][1], [2][2], [2][3]: view distance = proj[3] / (depth + proj[2])
+    f32 ao_intensity = 0.0f;        // screen-space ambient occlusion; 0 = off
+    f32 ao_radius = 1.0f;           // metres
+    f32 dof_focal_distance = 0.0f;  // metres; 0 = no depth of field
+    f32 dof_focal_region = 0.0f;    // metres around it that stay sharp
+    f32 dof_transition = 5.0f;      // metres from sharp to fully blurred
+    f32 dof_max_blur = 8.0f;        // blur radius in pixels
+    // Temporal anti-aliasing (instead of FXAA): the draws were jittered by under a pixel; each frame
+    // blends into the last, found again through `reproject` (column-major: this frame's clip space,
+    // without the jitter, to the last frame's). taa_reset: no usable last frame (camera cut, first frame).
+    bool taa = false;
+    bool taa_reset = true;
+    f32 reproject[16] = {};
 };
 
 // A gradient sky with a sun disc behind everything (display colours; fog and post-processing apply).

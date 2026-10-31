@@ -369,9 +369,10 @@ float4 ps_main(VsOut i) : SV_Target { return i.color * tex.Sample(samp, i.uv); }
 constexpr char kPostHlsl[] = R"(
 // Post-process passes over a full-screen triangle. Scene colours arrive range-compressed:
 // e = sqrt(c / (1 + c)), so c = e^2 / (1 - e^2).
-cbuffer Post : register(b0) { float4 texel; float4 bloom; float4 tint_tm; float4 grade; };
+cbuffer Post : register(b0) { float4 texel; float4 bloom; float4 tint_tm; float4 grade; float4 proj; float4 ao_p; float4 dof; float4 taa; float4 reproject[4]; };
 Texture2D t0 : register(t0);
 Texture2D t1 : register(t1);
+Texture2D t2 : register(t2);  // the scene's depth
 SamplerState clamp_linear : register(s2);
 struct VsOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 VsOut vs_full(uint id : SV_VertexID) {
@@ -386,6 +387,93 @@ float3 encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
 float3 tap(Texture2D t, float2 uv) { return decode(t.SampleLevel(clamp_linear, uv, 0).rgb); }
 float3 box4(Texture2D t, float2 uv, float2 px) {  // 4 bilinear taps: a 4x4 texel average
     return 0.25 * (tap(t, uv + px * float2(-1, -1)) + tap(t, uv + px * float2(1, -1)) + tap(t, uv + px * float2(-1, 1)) + tap(t, uv + px * float2(1, 1)));
+}
+float2 to_ndc(float2 uv) { return float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0); }
+float2 to_uv(float2 ndc) { return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5); }
+float depth_at(float2 uv) { return t2.SampleLevel(clamp_linear, uv, 0).r; }
+float view_distance(float d) { return proj.w / (d + proj.z); }
+float3 view_pos(float2 uv) {
+    const float z = view_distance(depth_at(uv));
+    const float2 ndc = to_ndc(uv);
+    return float3(ndc.x * z / proj.x, ndc.y * z / proj.y, -z);
+}
+float coc(float z) { return saturate((abs(z - dof.x) - dof.y) / max(dof.w, 1e-3)) * dof.z; }  // blur radius in pixels
+// Scalable ambient obscurance from depth alone; the normal from the nearer neighbour on each axis.
+float4 ps_ao(VsOut i) : SV_Target {
+    if (depth_at(i.uv) >= 0.99999) return 1.0;
+    const float3 p = view_pos(i.uv);
+    const float2 px = texel.xy;
+    const float3 l = view_pos(i.uv - float2(px.x, 0)), r = view_pos(i.uv + float2(px.x, 0));
+    const float3 b = view_pos(i.uv - float2(0, px.y)), t = view_pos(i.uv + float2(0, px.y));
+    const float3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l;
+    const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
+    float3 n = normalize(cross(dx, dy));
+    if (dot(n, p) > 0.0) n = -n;  // facing the camera
+    const float radius = ao_p.x;
+    const float2 scale = float2(proj.x, proj.y) * 0.5 * radius / -p.z;
+    const float noise = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));
+    float sum = 0.0;
+    for (int k = 0; k < 12; ++k) {
+        const float a = (k + noise) * 2.39996323;
+        const float2 offset = float2(cos(a), sin(a)) * sqrt((k + 0.5) / 12.0) * scale;
+        const float3 v = view_pos(i.uv + offset) - p;
+        const float vv = dot(v, v);
+        const float f = max(radius * radius - vv, 0.0);
+        sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
+    }
+    const float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    return float4(ao, ao, ao, 1.0);
+}
+// The occlusion blurred over 4 x 4 pixels at a similar depth (hides its noise), times the scene.
+float4 ps_ao_apply(VsOut i) : SV_Target {
+    const float z = view_distance(depth_at(i.uv));
+    float total = 0.0, weight = 0.0;
+    for (int y = -2; y <= 1; ++y) {
+        for (int x = -2; x <= 1; ++x) {
+            const float2 uv = i.uv + float2(x, y) * texel.xy;
+            const float w = abs(view_distance(depth_at(uv)) - z) < 0.05 * z ? 1.0 : 0.0;
+            total += t1.SampleLevel(clamp_linear, uv, 0).r * w;
+            weight += w;
+        }
+    }
+    const float ao = weight > 0.0 ? total / weight : 1.0;
+    return float4(encode(tap(t0, i.uv) * ao), 1.0);
+}
+// This frame blended into the last one where this pixel was, clamped to this frame's neighbours.
+float4 ps_taa(VsOut i) : SV_Target {
+    const float3 cur = t0.SampleLevel(clamp_linear, i.uv, 0).rgb;
+    float3 lo = cur, hi = cur;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            const float3 s = t0.SampleLevel(clamp_linear, i.uv + float2(x, y) * texel.xy, 0).rgb;
+            lo = min(lo, s);
+            hi = max(hi, s);
+        }
+    }
+    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
+    const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
+    const float2 prev_uv = to_uv(prev.xy / prev.w);
+    const bool outside = taa.y > 0.5 || prev.w <= 0.0 || any(prev_uv < 0.0) || any(prev_uv > 1.0);
+    const float3 history = clamp(t1.SampleLevel(clamp_linear, prev_uv, 0).rgb, lo, hi);
+    return float4(outside ? cur : lerp(history, cur, taa.x), 1.0);
+}
+// Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
+// (a sharp object in front does not smear into the background behind it).
+float4 ps_dof(VsOut i) : SV_Target {
+    const float radius = coc(view_distance(depth_at(i.uv)));
+    float3 sum = tap(t0, i.uv);
+    float weight = 1.0;
+    if (radius > 0.5) {
+        for (int k = 0; k < 24; ++k) {
+            const float a = k * 2.39996323;
+            const float r = sqrt((k + 0.5) / 24.0) * radius;
+            const float2 uv = i.uv + float2(cos(a), sin(a)) * r * texel.xy;
+            const float w = saturate(coc(view_distance(depth_at(uv))) - r + 1.0);
+            sum += tap(t0, uv) * w;
+            weight += w;
+        }
+    }
+    return float4(encode(sum / weight), 1.0);
 }
 float4 ps_prefilter(VsOut i) : SV_Target {  // bright parts only, with a soft knee
     const float3 c = box4(t0, i.uv, texel.xy);
@@ -749,7 +837,7 @@ public:
         // No optimized clear colour: targets are cleared to varying colours (theme background).
         if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
                                                     IID_PPV_ARGS(&t.color)), "CreateCommittedResource (render target)")) return {};
-        desc.Format = kDepthFormat;
+        desc.Format = DXGI_FORMAT_R32_TYPELESS;  // written as depth, read as a float by the post pass
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         D3D12_CLEAR_VALUE clear{};
         clear.Format = kDepthFormat;
@@ -760,9 +848,19 @@ public:
             return {};
         }
         device_->CreateRenderTargetView(t.color.Get(), nullptr, target_rtv(slot));
-        device_->CreateDepthStencilView(t.depth.Get(), nullptr, target_dsv(slot));
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
+        dsv_desc.Format = kDepthFormat;
+        dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        device_->CreateDepthStencilView(t.depth.Get(), &dsv_desc, target_dsv(slot));
         alloc_srv(t.srv_cpu, t.srv_gpu);
         device_->CreateShaderResourceView(t.color.Get(), nullptr, t.srv_cpu);
+        alloc_srv(t.depth_srv_cpu, t.depth_srv_gpu);
+        D3D12_SHADER_RESOURCE_VIEW_DESC depth_srv{};
+        depth_srv.Format = DXGI_FORMAT_R32_FLOAT;
+        depth_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        depth_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        depth_srv.Texture2D.MipLevels = 1;
+        device_->CreateShaderResourceView(t.depth.Get(), &depth_srv, t.depth_srv_cpu);
         t.width = width;
         t.height = height;
         return TextureHandle::make(slot, t.generation);
@@ -787,6 +885,7 @@ public:
         if (!t) return;
         wait_for_gpu();  // shortcut: stalls; fine for rare destroys (thumbnails, shutdown)
         free_srv(t->srv_cpu);
+        free_srv(t->depth_srv_cpu);
         t->color.Reset();
         t->depth.Reset();
         ++t->generation;
@@ -1137,6 +1236,9 @@ public:
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
+        TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        u32 taa_index = 0;
+        bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
     };
     PostChain& post_chain(u32 width, u32 height) {
         for (PostChain& c : post_chains_) {
@@ -1145,6 +1247,10 @@ public:
         PostChain& c = post_chains_[post_chain_next_++ % 4];
         for (TextureHandle& t : c.down) destroy_texture(t);
         for (TextureHandle& t : c.up) destroy_texture(t);
+        for (TextureHandle& t : c.taa) destroy_texture(t);
+        destroy_texture(c.ao);
+        destroy_texture(c.lit);
+        destroy_texture(c.dof);
         destroy_texture(c.ldr);
         c = PostChain{};
         c.width = width;
@@ -1155,10 +1261,16 @@ public:
             if (i < 4) c.up[i] = create_render_target(w, h);
         }
         c.ldr = create_render_target(width, height);
+        c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
+        c.lit = create_render_target(width, height);
+        c.dof = create_render_target(width, height);
+        c.taa[0] = create_render_target(width, height);
+        c.taa[1] = create_render_target(width, height);
         return c;
     }
     // One full-screen pass into `target` (invalid: the window, in `window_rect`).
-    void post_pass(ID3D12PipelineState* pso, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, const f32 constants[16]) {
+    void post_pass(ID3D12PipelineState* pso, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of,
+                   const f32 constants[48]) {
         const f32 black[4] = {0, 0, 0, 1};
         if (target.valid()) {
             set_render_target(target, black);
@@ -1171,9 +1283,11 @@ public:
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
-        list_->SetGraphicsRoot32BitConstants(0, 16, constants, 0);
+        const Target* d = lookup(depth_of);
+        list_->SetGraphicsRoot32BitConstants(0, 48, constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (a ? a->srv_gpu : textures_[white_].srv_gpu));
         list_->SetGraphicsRootDescriptorTable(2, (b ? b->srv_gpu : textures_[white_].srv_gpu));
+        list_->SetGraphicsRootDescriptorTable(3, (d ? d->depth_srv_gpu : textures_[white_].srv_gpu));
         list_->SetPipelineState(pso);
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);
@@ -1237,33 +1351,70 @@ public:
     }
 
     void draw_post(const PostDraw& p) override {
-        const Target* scene = lookup(p.scene);
+        Target* scene = lookup(p.scene);
         if (!scene) return;
-        const u32 w = scene->width, h = scene->height;
-        PostChain& c = post_chain(w, h);
+        PostChain& c = post_chain(scene->width, scene->height);
         auto size = [&](TextureHandle t, f32* out) {
             const Target* target = lookup(t);
             out[0] = target ? 1.0f / static_cast<f32>(target->width) : 0.0f;
             out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
         };
-        f32 k[16] = {};
+        const bool depth_effects = p.proj[0] != 0.0f;
+        const bool ao = depth_effects && p.ao_intensity > 0.0f;
+        const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool taa = depth_effects && p.taa;
+        if (!taa) c.history_valid = false;
+        f32 k[48] = {};  // the constants every pass reads (see the shaders' u_post / cbuffer Post)
+        for (int i = 0; i < 4; ++i) k[16 + i] = p.proj[i];
+        k[20] = p.ao_radius > 0.01f ? p.ao_radius : 0.01f;
+        k[21] = p.ao_intensity;
+        k[24] = p.dof_focal_distance;
+        k[25] = p.dof_focal_region;
+        k[26] = p.dof_max_blur;
+        k[27] = p.dof_transition;
+        k[28] = 0.1f;  // TAA: how much of this frame goes in
+        k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        for (int r = 0; r < 4; ++r) {
+            for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
+        }
+        size(p.scene, k);
+        // The scene's depth is read by the passes below: a shader resource until they are done.
+        const bool read_depth = ao || dof || taa;
+        if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        TextureHandle src = p.scene;
+        if (ao) {
+            post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, k);
+            post_pass(post_ao_apply_.Get(), c.lit, nullptr, src, c.ao, p.scene, k);
+            src = c.lit;
+        }
+        if (taa) {
+            const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
+            post_pass(post_taa_.Get(), out, nullptr, src, history, p.scene, k);
+            c.taa_index ^= 1u;
+            c.history_valid = true;
+            src = out;
+        }
+        if (dof) {
+            post_pass(post_dof_.Get(), c.dof, nullptr, src, {}, p.scene, k);
+            src = c.dof;
+        }
         const bool bloom = p.bloom_intensity > 0.0f;
         if (bloom) {
             k[4] = p.bloom_threshold;
-            size(p.scene, k);
-            post_pass(post_prefilter_.Get(), c.down[0], nullptr, p.scene, {}, k);
+            size(src, k);
+            post_pass(post_prefilter_.Get(), c.down[0], nullptr, src, {}, {}, k);
             for (u32 i = 1; i < 5; ++i) {
                 size(c.down[i - 1], k);
-                post_pass(post_down_.Get(), c.down[i], nullptr, c.down[i - 1], {}, k);
+                post_pass(post_down_.Get(), c.down[i], nullptr, c.down[i - 1], {}, {}, k);
             }
             for (i32 i = 3; i >= 0; --i) {  // up[i] = down[i] + blur(up[i + 1]); the lowest uses down[4]
                 const TextureHandle below = i == 3 ? c.down[4] : c.up[i + 1];
                 size(c.down[i], k);
                 size(below, k + 2);
-                post_pass(post_up_.Get(), c.up[i], nullptr, c.down[i], below, k);
+                post_pass(post_up_.Get(), c.up[i], nullptr, c.down[i], below, {}, k);
             }
         }
-        f32 g[16] = {};
+        f32 g[48] = {};
         g[5] = bloom ? p.bloom_intensity : 0.0f;
         g[8] = p.tint[0];
         g[9] = p.tint[1];
@@ -1272,12 +1423,15 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
-        post_pass(post_composite_.Get(), p.fxaa ? c.ldr : p.output, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
-        if (p.fxaa) {
-            f32 f[16] = {};
+        const bool fxaa = p.fxaa && !taa;
+        post_pass(post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, {}, g);
+        if (fxaa) {
+            f32 f[48] = {};
             size(c.ldr, f);
-            post_pass(post_fxaa_.Get(), p.output, p.viewport, c.ldr, {}, f);
+            post_pass(post_fxaa_.Get(), p.output, p.viewport, c.ldr, {}, {}, f);
         }
+        set_render_target({}, nullptr);  // the last pass's target back to a shader resource before the depth moves
+        if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
     }
 
@@ -1442,6 +1596,8 @@ private:
         ComPtr<ID3D12Resource> depth;
         D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu{};
         D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu{};
+        D3D12_CPU_DESCRIPTOR_HANDLE depth_srv_cpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE depth_srv_gpu{};
         u32 width = 0;
         u32 height = 0;
         u32 generation = 0;
@@ -1640,7 +1796,8 @@ private:
             const char* name;
             ComPtr<ID3D12PipelineState>* out;
         };
-        const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_}, {"ps_fxaa", &post_fxaa_}};
+        const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
+                                 {"ps_fxaa", &post_fxaa_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
@@ -1888,7 +2045,7 @@ private:
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
-    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_;
+    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

@@ -181,6 +181,13 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.contrast = best->contrast;
     out.vignette = best->vignette;
     out.fxaa = best->anti_aliasing;
+    out.taa = best->temporal_aa;
+    out.ao_intensity = best->ao_intensity;
+    out.ao_radius = best->ao_radius;
+    out.dof_focal_distance = best->dof_focal_distance;
+    out.dof_focal_region = best->dof_focal_region;
+    out.dof_transition = best->dof_transition;
+    out.dof_max_blur = best->dof_max_blur;
     return true;
 }
 

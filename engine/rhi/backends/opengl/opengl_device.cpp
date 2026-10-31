@@ -386,9 +386,10 @@ void main() {
 
 // The same passes as the HLSL in the D3D12 backend (keep them in step); one entry per #define.
 constexpr char kPostFragmentShader[] = R"(#version 460 core
-uniform vec4 u_post[4];  // texel, bloom (threshold, intensity), tint + tonemap, grade (saturation, contrast, vignette)
+uniform vec4 u_post[12];  // texel, bloom, tint + tonemap, grade, proj, ao, dof, taa, reprojection rows
 layout(binding = 0) uniform sampler2D t0;
 layout(binding = 1) uniform sampler2D t1;
+layout(binding = 2) uniform sampler2D t2;  // the scene's depth
 in vec2 v_uv;
 out vec4 o_color;
 vec3 decode(vec3 e) { e = min(e, 0.999); vec3 s = e * e; return s / (1.0 - s); }
@@ -399,6 +400,19 @@ vec3 box4(sampler2D t, vec2 uv, vec2 px) {
 }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+vec2 to_ndc(vec2 uv) { return uv * 2.0 - 1.0; }
+vec2 to_uv(vec2 ndc) { return ndc * 0.5 + 0.5; }
+float depth_at(vec2 uv) { return textureLod(t2, uv, 0.0).r; }
+float view_distance(float d) { return u_post[4].w / (d + u_post[4].z); }
+vec3 view_pos(vec2 uv) {
+    float z = view_distance(depth_at(uv));
+    vec2 ndc = to_ndc(uv);
+    return vec3(ndc.x * z / u_post[4].x, ndc.y * z / u_post[4].y, -z);
+}
+float coc(float z) {  // depth of field blur radius in pixels
+    vec4 dof = u_post[6];
+    return clamp((abs(z - dof.x) - dof.y) / max(dof.w, 1e-3), 0.0, 1.0) * dof.z;
+}
 void main() {
     vec4 texel = u_post[0], bloom = u_post[1], tint_tm = u_post[2], grade = u_post[3];
 #if defined(PREFILTER)
@@ -429,6 +443,80 @@ void main() {
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
     vec3 s = to_srgb(c);
     o_color = vec4(s, dot(s, vec3(0.299, 0.587, 0.114)));
+#elif defined(AO)
+    // Scalable ambient obscurance from depth alone; the normal from the nearer neighbour on each axis.
+    vec4 ao_p = u_post[5];
+    if (depth_at(v_uv) >= 0.99999) { o_color = vec4(1.0); return; }
+    vec3 p = view_pos(v_uv);
+    vec2 px = texel.xy;
+    vec3 l = view_pos(v_uv - vec2(px.x, 0.0)), r = view_pos(v_uv + vec2(px.x, 0.0));
+    vec3 b = view_pos(v_uv - vec2(0.0, px.y)), t = view_pos(v_uv + vec2(0.0, px.y));
+    vec3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l;
+    vec3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
+    vec3 n = normalize(cross(dx, dy));
+    if (dot(n, p) > 0.0) n = -n;  // facing the camera
+    float radius = ao_p.x;
+    vec2 scale = vec2(u_post[4].x, u_post[4].y) * 0.5 * radius / -p.z;
+    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float sum = 0.0;
+    for (int i = 0; i < 12; ++i) {
+        float a = (float(i) + noise) * 2.39996323;
+        vec2 offset = vec2(cos(a), sin(a)) * sqrt((float(i) + 0.5) / 12.0) * scale;
+        vec3 v = view_pos(v_uv + offset) - p;
+        float vv = dot(v, v);
+        float f = max(radius * radius - vv, 0.0);
+        sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
+    }
+    float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    o_color = vec4(ao, ao, ao, 1.0);
+#elif defined(AO_APPLY)
+    // The occlusion blurred over 4 x 4 pixels at a similar depth (hides its noise), times the scene.
+    float z = view_distance(depth_at(v_uv));
+    float total = 0.0, weight = 0.0;
+    for (int y = -2; y <= 1; ++y) {
+        for (int x = -2; x <= 1; ++x) {
+            vec2 uv = v_uv + vec2(x, y) * texel.xy;
+            float w = abs(view_distance(depth_at(uv)) - z) < 0.05 * z ? 1.0 : 0.0;
+            total += textureLod(t1, uv, 0.0).r * w;
+            weight += w;
+        }
+    }
+    float ao = weight > 0.0 ? total / weight : 1.0;
+    o_color = vec4(encode(tap(t0, v_uv) * ao), 1.0);
+#elif defined(TAA)
+    // This frame blended into the last one where this pixel was, clamped to this frame's neighbours.
+    vec3 cur = textureLod(t0, v_uv, 0.0).rgb;
+    vec3 lo = cur, hi = cur;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec3 s = textureLod(t0, v_uv + vec2(x, y) * texel.xy, 0.0).rgb;
+            lo = min(lo, s);
+            hi = max(hi, s);
+        }
+    }
+    vec4 here = vec4(to_ndc(v_uv), depth_at(v_uv), 1.0);
+    vec4 prev = vec4(dot(u_post[8], here), dot(u_post[9], here), dot(u_post[10], here), dot(u_post[11], here));
+    vec2 prev_uv = to_uv(prev.xy / prev.w);
+    bool outside = u_post[7].y > 0.5 || prev.w <= 0.0 || any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)));
+    vec3 history = clamp(textureLod(t1, prev_uv, 0.0).rgb, lo, hi);
+    o_color = vec4(outside ? cur : mix(history, cur, u_post[7].x), 1.0);
+#elif defined(DOF)
+    // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
+    // (a sharp object in front does not smear into the background behind it).
+    float radius = coc(view_distance(depth_at(v_uv)));
+    vec3 sum = tap(t0, v_uv);
+    float weight = 1.0;
+    if (radius > 0.5) {
+        for (int i = 0; i < 24; ++i) {
+            float a = float(i) * 2.39996323;
+            float r = sqrt((float(i) + 0.5) / 24.0) * radius;
+            vec2 uv = v_uv + vec2(cos(a), sin(a)) * r * texel.xy;
+            float w = clamp(coc(view_distance(depth_at(uv))) - r + 1.0, 0.0, 1.0);
+            sum += tap(t0, uv) * w;
+            weight += w;
+        }
+    }
+    o_color = vec4(encode(sum / weight), 1.0);
 #else  // FXAA
     vec2 px = texel.xy;
     float l_nw = textureLod(t0, v_uv + px * vec2(-1, 1), 0.0).a, l_ne = textureLod(t0, v_uv + px * vec2(1, 1), 0.0).a;
@@ -550,6 +638,9 @@ class OpenGLDevice final : public Device {
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
+        TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        u32 taa_index = 0;
+        bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
     };
     struct MeshProgram {
         GLuint id = 0;
@@ -745,11 +836,15 @@ public:
         gl_.glTextureParameteri(t.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         gl_.glTextureParameteri(t.color, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);  // post-process taps stay inside
         gl_.glTextureParameteri(t.color, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        gl_.glCreateRenderbuffers(1, &t.depth);
-        gl_.glNamedRenderbufferStorage(t.depth, GL_DEPTH_COMPONENT24, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        gl_.glCreateTextures(GL_TEXTURE_2D, 1, &t.depth);  // a texture, not a renderbuffer: the post pass reads it
+        gl_.glTextureStorage2D(t.depth, 1, GL_DEPTH_COMPONENT32F, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        gl_.glTextureParameteri(t.depth, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gl_.glTextureParameteri(t.depth, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        gl_.glTextureParameteri(t.depth, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl_.glTextureParameteri(t.depth, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         gl_.glCreateFramebuffers(1, &t.fbo);
         gl_.glNamedFramebufferTexture(t.fbo, GL_COLOR_ATTACHMENT0, t.color, 0);
-        gl_.glNamedFramebufferRenderbuffer(t.fbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
+        gl_.glNamedFramebufferTexture(t.fbo, GL_DEPTH_ATTACHMENT, t.depth, 0);
         if (gl_.glCheckNamedFramebufferStatus(t.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             LSD_LOG_ERROR("opengl", "Render target framebuffer is incomplete.");
             release_target(t);
@@ -1081,6 +1176,10 @@ public:
         PostChain& c = post_chains_[post_chain_next_++ % 4];
         for (TextureHandle& t : c.down) destroy_texture(t);
         for (TextureHandle& t : c.up) destroy_texture(t);
+        for (TextureHandle& t : c.taa) destroy_texture(t);
+        destroy_texture(c.ao);
+        destroy_texture(c.lit);
+        destroy_texture(c.dof);
         destroy_texture(c.ldr);
         c = PostChain{};
         c.width = width;
@@ -1091,9 +1190,15 @@ public:
             if (i < 4) c.up[i] = create_render_target(w, h);
         }
         c.ldr = create_render_target(width, height);
+        c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
+        c.lit = create_render_target(width, height);
+        c.dof = create_render_target(width, height);
+        c.taa[0] = create_render_target(width, height);
+        c.taa[1] = create_render_target(width, height);
         return c;
     }
-    void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, const f32 constants[16]) {
+    // One full-screen pass into `target` (invalid: the window, in `window_rect`); `depth_of`: whose depth is t2.
+    void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of, const f32 constants[48]) {
         const f32 black[4] = {0, 0, 0, 1};
         if (target.valid()) {
             set_render_target(target, black);
@@ -1106,9 +1211,11 @@ public:
         const Target* a = lookup(in0);
         const Target* b = lookup(in1);
         gl_.glUseProgram(post_programs_[program]);
-        gl_.glUniform4fv(post_uniforms_[program], 4, constants);
+        const Target* d = lookup(depth_of);
+        gl_.glUniform4fv(post_uniforms_[program], 12, constants);
         gl_.glBindTextureUnit(0, a ? a->color : textures_[white_].id);
         gl_.glBindTextureUnit(1, b ? b->color : textures_[white_].id);
+        gl_.glBindTextureUnit(2, d ? d->depth : textures_[white_].id);
         gl_.glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
@@ -1131,7 +1238,7 @@ public:
     }
 
     void draw_post(const PostDraw& p) override {
-        const Target* scene = lookup(p.scene);
+        Target* scene = lookup(p.scene);
         if (!scene) return;
         PostChain& c = post_chain(scene->width, scene->height);
         auto size = [&](TextureHandle t, f32* out) {
@@ -1139,24 +1246,59 @@ public:
             out[0] = target ? 1.0f / static_cast<f32>(target->width) : 0.0f;
             out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
         };
-        f32 k[16] = {};
+        const bool depth_effects = p.proj[0] != 0.0f;
+        const bool ao = depth_effects && p.ao_intensity > 0.0f;
+        const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool taa = depth_effects && p.taa;
+        if (!taa) c.history_valid = false;
+        f32 k[48] = {};  // the constants every pass reads (see the shaders' u_post / cbuffer Post)
+        for (int i = 0; i < 4; ++i) k[16 + i] = p.proj[i];
+        k[20] = p.ao_radius > 0.01f ? p.ao_radius : 0.01f;
+        k[21] = p.ao_intensity;
+        k[24] = p.dof_focal_distance;
+        k[25] = p.dof_focal_region;
+        k[26] = p.dof_max_blur;
+        k[27] = p.dof_transition;
+        k[28] = 0.1f;  // TAA: how much of this frame goes in
+        k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        for (int r = 0; r < 4; ++r) {
+            for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
+        }
+        size(p.scene, k);
+        TextureHandle src = p.scene;
+        if (ao) {
+            post_pass(5, c.ao, nullptr, {}, {}, p.scene, k);
+            post_pass(6, c.lit, nullptr, src, c.ao, p.scene, k);
+            src = c.lit;
+        }
+        if (taa) {
+            const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
+            post_pass(7, out, nullptr, src, history, p.scene, k);
+            c.taa_index ^= 1u;
+            c.history_valid = true;
+            src = out;
+        }
+        if (dof) {
+            post_pass(8, c.dof, nullptr, src, {}, p.scene, k);
+            src = c.dof;
+        }
         const bool bloom = p.bloom_intensity > 0.0f;
         if (bloom) {
             k[4] = p.bloom_threshold;
-            size(p.scene, k);
-            post_pass(0, c.down[0], nullptr, p.scene, {}, k);
+            size(src, k);
+            post_pass(0, c.down[0], nullptr, src, {}, {}, k);
             for (u32 i = 1; i < 5; ++i) {
                 size(c.down[i - 1], k);
-                post_pass(1, c.down[i], nullptr, c.down[i - 1], {}, k);
+                post_pass(1, c.down[i], nullptr, c.down[i - 1], {}, {}, k);
             }
-            for (i32 i = 3; i >= 0; --i) {
+            for (i32 i = 3; i >= 0; --i) {  // up[i] = down[i] + blur(up[i + 1]); the lowest uses down[4]
                 const TextureHandle below = i == 3 ? c.down[4] : c.up[i + 1];
                 size(c.down[i], k);
                 size(below, k + 2);
-                post_pass(2, c.up[i], nullptr, c.down[i], below, k);
+                post_pass(2, c.up[i], nullptr, c.down[i], below, {}, k);
             }
         }
-        f32 g[16] = {};
+        f32 g[48] = {};
         g[5] = bloom ? p.bloom_intensity : 0.0f;
         g[8] = p.tint[0];
         g[9] = p.tint[1];
@@ -1165,11 +1307,12 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
-        post_pass(3, p.fxaa ? c.ldr : p.output, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
-        if (p.fxaa) {
-            f32 f[16] = {};
+        const bool fxaa = p.fxaa && !taa;
+        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, {}, g);
+        if (fxaa) {
+            f32 f[48] = {};
             size(c.ldr, f);
-            post_pass(4, p.output, p.viewport, c.ldr, {}, f);
+            post_pass(4, p.output, p.viewport, c.ldr, {}, {}, f);
         }
         glEnable(GL_DEPTH_TEST);
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
@@ -1291,7 +1434,7 @@ private:
 
     void release_target(Target& t) {
         if (t.fbo) gl_.glDeleteFramebuffers(1, &t.fbo);
-        if (t.depth) gl_.glDeleteRenderbuffers(1, &t.depth);
+        if (t.depth) glDeleteTextures(1, &t.depth);
         if (t.color) glDeleteTextures(1, &t.color);
         t.fbo = t.depth = t.color = 0;
     }
@@ -1406,8 +1549,9 @@ private:
         if (!particle_program_) return false;
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
         particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
-        const char* post_defines[5] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n"};
-        for (int i = 0; i < 5; ++i) {
+        const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
+                                                   "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n"};
+        for (u32 i = 0; i < kPostPrograms; ++i) {
             std::string fragment = kPostFragmentShader;
             fragment.insert(fragment.find('\n') + 1, post_defines[i]);
             post_programs_[i] = link(kPostVertexShader, fragment.c_str());
@@ -1452,8 +1596,9 @@ private:
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
     GLint particle_mvp_ = -1, particle_hdr_ = -1;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
-    GLuint post_programs_[5] = {};  // prefilter, down, up, composite, fxaa
-    GLint post_uniforms_[5] = {-1, -1, -1, -1, -1};
+    static constexpr u32 kPostPrograms = 9;
+    GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof
+    GLint post_uniforms_[kPostPrograms] = {};
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     u32 particle_offset_ = 0;

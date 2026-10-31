@@ -200,8 +200,13 @@ Atmosphere:
   falloff, colour, start distance, max opacity.
 - **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in
   wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
-  **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA).
-  With a volume the scene is drawn into a target first and these run as a post-process pass.
+  **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA, or
+  **Temporal AA**: smoother and steadier, a little softer, can ghost on fast motion).
+  **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
+  buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
+  transition, max blur in pixels; focal distance 0 = off).
+  With a volume the scene is drawn into a target first and these run as a post-process pass; AO,
+  DOF and TAA need a perspective view.
 
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
