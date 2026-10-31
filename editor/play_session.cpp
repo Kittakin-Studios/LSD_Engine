@@ -472,7 +472,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
 
     script::ScriptHost host;
     host.user = this;
-    host.set_view = [](void* user, world::Entity camera) { static_cast<PlaySession*>(user)->set_view(camera); };
+    host.set_view = [](void* user, world::Entity camera, f32 blend) { static_cast<PlaySession*>(user)->set_view(camera, blend); };
+    host.camera_shake = [](void* user, f32 strength, f32 seconds, f32 frequency) { static_cast<PlaySession*>(user)->camera_shake(strength, seconds, frequency); };
     host.ik = [](void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) {
         auto& self = *static_cast<PlaySession*>(user);
         if (!self.animations_ || !self.world_) return;
@@ -1127,7 +1128,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     update_timelines(world, dt);
     update_movement(world, dt);
-    update_view(world);
+    update_view(world, dt);
     for (u32 i = 0; i < emitter_count_ && sounds_; ++i) {  // emitters follow their objects
         if (!world.alive(emitters_[i].entity)) {
             sounds_->audio()->stop(emitters_[i].voice);
@@ -1289,8 +1290,47 @@ void PlaySession::update_movement(world::World& world, f32 dt) {
     }
 }
 
-// Where the game is seen from: a Camera picked by lsd.set_view or Auto Activate, else the player.
-void PlaySession::update_view(const world::World& world) {
+void PlaySession::set_view(world::Entity camera, f32 blend_seconds) {
+    view_camera_ = camera;
+    blend_eye_ = view_eye_;  // from what is on screen now (mid-blend too)
+    blend_forward_ = view_forward_;
+    blend_fov_ = view_fov_;
+    blend_time_ = 0.0f;
+    blend_length_ = blend_seconds > 0.0f ? blend_seconds : 0.0f;
+}
+
+void PlaySession::camera_shake(f32 strength, f32 seconds, f32 frequency) {
+    shake_strength_ = strength;
+    shake_time_ = 0.0f;
+    shake_length_ = seconds > 0.0f ? seconds : 0.0f;
+    shake_frequency_ = frequency > 0.0f ? frequency : 12.0f;
+}
+
+// Where the game is seen from: a Camera picked by lsd.set_view or Auto Activate, else the player;
+// then the blend from the previous view and any camera shake on top.
+void PlaySession::update_view(const world::World& world, f32 dt) {
+    find_view(world);
+    view_clock_ += dt;
+    if (blend_time_ < blend_length_) {
+        blend_time_ += dt;
+        const f32 x = blend_time_ >= blend_length_ ? 1.0f : blend_time_ / blend_length_;
+        const f32 t = x * x * (3.0f - 2.0f * x);  // ease in and out
+        view_eye_ = blend_eye_ + (view_eye_ - blend_eye_) * t;
+        view_forward_ = normalize(blend_forward_ + (view_forward_ - blend_forward_) * t);
+        if (blend_fov_ > 0.0f && view_fov_ > 0.0f) view_fov_ = blend_fov_ + (view_fov_ - blend_fov_) * t;  // 0 = the editor's lens: no blend
+    }
+    if (shake_time_ < shake_length_) {
+        shake_time_ += dt;
+        const f32 amount = shake_strength_ * (1.0f - shake_time_ / shake_length_);
+        const f32 w = 6.2831853f * shake_frequency_ * view_clock_;
+        view_eye_ = view_eye_ + Vec3{std::sin(w), std::sin(w * 1.31f + 1.7f), std::sin(w * 0.77f + 3.1f)} * (0.05f * amount);
+        const Vec3 side = normalize(cross(view_forward_, Vec3{0, 0, 1}));
+        const Vec3 up = cross(side, view_forward_);
+        view_forward_ = normalize(view_forward_ + side * (std::sin(w * 1.13f + 0.4f) * 0.0175f * amount) + up * (std::sin(w * 0.91f + 2.2f) * 0.0175f * amount));
+    }
+}
+
+void PlaySession::find_view(const world::World& world) {
     view_eye_ = eye_;
     view_forward_ = forward();
     view_fov_ = 0.0f;

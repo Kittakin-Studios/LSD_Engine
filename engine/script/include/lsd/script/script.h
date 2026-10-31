@@ -83,8 +83,9 @@
 // Sockets: lsd.socket(e, name) -> x, y, z, fx, fy, fz   a socket on e's skeletal mesh (or its child's) in
 // the world, and its +X; nil if there is none (muzzle flashes, thrown objects).
 //
-// Cameras: lsd.set_view(e) looks through e's Camera component (blends are not done: a cut);
-// lsd.set_view(nil) goes back to the player.
+// Cameras: lsd.set_view(e [, blend_seconds]) looks through e's Camera component, cutting or blending
+// (Set View Target with Blend); lsd.set_view(nil [, blend]) goes back to the player.
+// lsd.camera_shake(strength [, seconds = 0.5 [, frequency = 12]]): 1 = a hard hit (5 cm, about 1 degree), fading out.
 //
 // Debug drawing over the viewport (r, g, b 0..1, default red; seconds, default 0 = this frame):
 //   lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])
@@ -182,7 +183,8 @@ struct ScriptHost {
     void (*set_language)(void* user, const char* code) = nullptr;
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;
-    void (*set_view)(void* user, world::Entity camera) = nullptr;  // invalid: back to the player
+    void (*set_view)(void* user, world::Entity camera, f32 blend_seconds) = nullptr;  // invalid: back to the player
+    void (*camera_shake)(void* user, f32 strength, f32 seconds, f32 frequency) = nullptr;
     void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
     void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
     bool (*timeline)(void* user, int what, const char* name, bool loop) = nullptr;           // 0 play, 1 stop

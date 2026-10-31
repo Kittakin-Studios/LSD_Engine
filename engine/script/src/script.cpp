@@ -688,7 +688,14 @@ struct Api {
     static int set_view(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const world::Entity e = lua_isnoneornil(L, 1) ? world::Entity{} : entity(L, 1);
-        if (host.set_view) host.set_view(host.user, e);
+        if (host.set_view) host.set_view(host.user, e, static_cast<f32>(luaL_optnumber(L, 2, 0.0)));
+        return 0;
+    }
+    static int camera_shake(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.camera_shake) {
+            host.camera_shake(host.user, static_cast<f32>(luaL_checknumber(L, 1)), static_cast<f32>(luaL_optnumber(L, 2, 0.5)), static_cast<f32>(luaL_optnumber(L, 3, 12.0)));
+        }
         return 0;
     }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
@@ -1170,7 +1177,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
-        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},

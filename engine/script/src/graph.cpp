@@ -77,6 +77,14 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "__color($1, $2)", {}},
     {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
+    // ---- Camera ----
+    {"SetViewTarget", "Set View Target with Blend", "Camera", "Looks through an object's Camera (unconnected: this object's), blending over Blend Time seconds; Set View Target to Player goes back",
+     {kExecIn, {"Camera", PinType::Entity, ""}, {"Blend Time", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_view($1, $2)", {}},
+    {"SetViewToPlayer", "Set View Target to Player", "Camera", "Back to the player's own view, blending over Blend Time seconds",
+     {kExecIn, {"Blend Time", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_view(nil, $1)", {}},
+    {"CameraShake", "Camera Shake", "Camera", "Shakes the view: Strength 1 is a hard hit, fading out over Duration seconds",
+     {kExecIn, {"Strength", PinType::Float, "0.5"}, {"Duration", PinType::Float, "0.5"}, {"Frequency", PinType::Float, "12"}}, 0, {kExecOut}, 0,
+     "lsd.camera_shake($1, $2, $3)", {}},
     // ---- Collision (Unreal's Line / Sphere / Box Trace and Overlap Actors) ----
     {"LineTrace", "Line Trace", "Collision", "The first object along a line from Start to End",
      {kExecIn, {"Start", PinType::Vector, "0,0,1"}, {"End", PinType::Vector, "10,0,1"}}, 0,

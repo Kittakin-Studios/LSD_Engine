@@ -47,7 +47,10 @@ public:
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
-    void set_view(world::Entity camera) { view_camera_ = camera; }  // invalid: the player again
+    // Looks through `camera` (invalid: the player again), cutting or blending over `blend_seconds`.
+    void set_view(world::Entity camera, f32 blend_seconds = 0.0f);
+    // Unreal's camera shake: strength 1 = 5 cm and about 1 degree of wobble, fading out over `seconds`.
+    void camera_shake(f32 strength, f32 seconds, f32 frequency);
     // Timelines by asset name (lsd.play_timeline): several can play at once.
     bool play_timeline(const char* name, bool loop);
     void stop_timeline(const char* name);
@@ -110,6 +113,9 @@ private:
     input::InputSystem input_;
     Vec3 view_eye_, view_forward_{1, 0, 0};
     f32 view_fov_ = 0.0f;
+    Vec3 blend_eye_, blend_forward_{1, 0, 0};  // the view a blend starts from
+    f32 blend_fov_ = 0.0f, blend_time_ = 0.0f, blend_length_ = 0.0f;
+    f32 shake_strength_ = 0.0f, shake_time_ = 0.0f, shake_length_ = 0.0f, shake_frequency_ = 12.0f, view_clock_ = 0.0f;
     world::Entity view_camera_;  // a Camera component the game looks through (lsd.set_view, Auto Activate)
     struct Projectile {
         world::Entity entity;
@@ -122,7 +128,8 @@ private:
     struct PlayingTimeline;
     PlayingTimeline* timelines_[8] = {};
     void update_timelines(world::World& world, f32 dt);
-    void update_view(const world::World& world);
+    void update_view(const world::World& world, f32 dt);
+    void find_view(const world::World& world);  // the camera to look through, before blends and shakes
     input::InputMappingContext context_;  // the Character's controls, the player's rebinds applied
     char key_held_[32] = "";
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
