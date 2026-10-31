@@ -69,7 +69,7 @@ cbuffer Lights : register(b1) {
     float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16];
     float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
     float4x4 local_vp[16]; float4 local_tile[16];
-    float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px;
+    float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px; float4 hdr_out;
 };
 Texture2D<float> shadow_tex : register(t3);
 Texture2D<float> local_shadow_tex : register(t4);
@@ -169,6 +169,20 @@ float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel) {
     }
     return c;
 }
+// Scene targets for the post pass (LightSetup.output): exposed colour, fog applied, range-compressed.
+float3 hdr_encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
+float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel) {
+    if (hdr_out.x > 0.5) {
+        if (fog.w > 0.0) {
+            const float d = max(length(wpos - cam) - fog_color.w, 0.0);
+            const float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
+            const float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
+            c = lerp(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+        }
+        return hdr_encode(c);
+    }
+    return to_srgb(finish(c, wpos, cam, pixel));
+}
 
 // Normal map without stored tangents: a tangent frame from screen derivatives.
 float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
@@ -187,7 +201,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
     const Surface surf = material_main(mi);
     const float4 base = float4(surf.base_color * color.rgb, color.a);
-    if (n0.w > 0.5) return float4(to_srgb(base.rgb), base.a);
+    if (n0.w > 0.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     n = perturb_normal(n, i.wpos, i.uv, surf.normal);
     const float metallic = saturate(surf.metallic);
     const float roughness = clamp(surf.roughness, 0.04, 1.0);
@@ -195,7 +209,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 emissive = surf.emissive;
 #else
     const float4 base = color * base_tex.Sample(samp, i.uv);
-    if (n0.w > 0.5) return float4(to_srgb(base.rgb), base.a);
+    if (n0.w > 0.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     if (n1.w > 0.5) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
     const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
     const float metallic = saturate(mat0.x * orm.b);
@@ -241,7 +255,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    return float4(to_srgb(finish(lit * exposure, i.wpos, mat1.yzw, i.pos.xy)), base.a);
+    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), base.a);
 }
 
 // The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
@@ -262,7 +276,7 @@ float4 ps_sky(SkyOut i) : SV_Target {
         const float s = dot(d, w0.xyz);
         c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0));  // disc + glow
     }
-    return float4(to_srgb(finish(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy)), 1.0);
+    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy), 1.0);
 }
 )";
 
@@ -307,7 +321,7 @@ float4 ps_main(VsOut i) : SV_Target { return i.color; }
 )";
 
 constexpr char kParticleHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 view_proj; };
+cbuffer Draw : register(b0) { float4x4 view_proj; float4 mode; };  // mode.x = 1: into a scene target (post pass)
 Texture2D sprite : register(t0);
 SamplerState linear_wrap : register(s0);
 struct VsIn { float3 pos : POSITION; float4 color : COLOR; float2 uv : TEXCOORD; };
@@ -316,7 +330,8 @@ VsOut vs_main(VsIn i) { VsOut o; o.pos = mul(view_proj, float4(i.pos, 1)); o.col
 float3 to_srgb(float3 c) { c = saturate(c); return lerp(c * 12.92, 1.055 * pow(c, 1.0 / 2.4) - 0.055, step(0.0031308, c)); }
 float4 ps_main(VsOut i) : SV_Target {
     float4 c = i.color * sprite.Sample(linear_wrap, i.uv);
-    return float4(to_srgb(c.rgb), saturate(c.a));
+    const float3 lin = max(c.rgb, 0.0);
+    return float4(mode.x > 0.5 ? sqrt(lin / (1.0 + lin)) : to_srgb(c.rgb), saturate(c.a));
 }
 )";
 
@@ -349,6 +364,76 @@ VsOut vs_main(VsIn i) {
     return o;
 }
 float4 ps_main(VsOut i) : SV_Target { return i.color * tex.Sample(samp, i.uv); }
+)";
+
+constexpr char kPostHlsl[] = R"(
+// Post-process passes over a full-screen triangle. Scene colours arrive range-compressed:
+// e = sqrt(c / (1 + c)), so c = e^2 / (1 - e^2).
+cbuffer Post : register(b0) { float4 texel; float4 bloom; float4 tint_tm; float4 grade; };
+Texture2D t0 : register(t0);
+Texture2D t1 : register(t1);
+SamplerState clamp_linear : register(s2);
+struct VsOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+VsOut vs_full(uint id : SV_VertexID) {
+    VsOut o;
+    const float2 p = float2((id << 1) & 2, id & 2) * 2.0 - 1.0;
+    o.pos = float4(p, 0.0, 1.0);
+    o.uv = float2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    return o;
+}
+float3 decode(float3 e) { e = min(e, 0.999); const float3 s = e * e; return s / (1.0 - s); }
+float3 encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
+float3 tap(Texture2D t, float2 uv) { return decode(t.SampleLevel(clamp_linear, uv, 0).rgb); }
+float3 box4(Texture2D t, float2 uv, float2 px) {  // 4 bilinear taps: a 4x4 texel average
+    return 0.25 * (tap(t, uv + px * float2(-1, -1)) + tap(t, uv + px * float2(1, -1)) + tap(t, uv + px * float2(-1, 1)) + tap(t, uv + px * float2(1, 1)));
+}
+float4 ps_prefilter(VsOut i) : SV_Target {  // bright parts only, with a soft knee
+    const float3 c = box4(t0, i.uv, texel.xy);
+    const float brightness = max(c.r, max(c.g, c.b));
+    const float knee = bloom.x * 0.5;
+    float soft = clamp(brightness - bloom.x + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 1e-5);
+    const float keep = max(soft, brightness - bloom.x) / max(brightness, 1e-5);
+    return float4(encode(c * keep), 1.0);
+}
+float4 ps_down(VsOut i) : SV_Target { return float4(encode(box4(t0, i.uv, texel.xy)), 1.0); }
+float4 ps_up(VsOut i) : SV_Target {  // this level plus the blurred (tent) level below it
+    const float2 px = texel.zw;
+    float3 c = tap(t1, i.uv) * 4.0;
+    c += (tap(t1, i.uv + float2(-px.x, 0)) + tap(t1, i.uv + float2(px.x, 0)) + tap(t1, i.uv + float2(0, -px.y)) + tap(t1, i.uv + float2(0, px.y))) * 2.0;
+    c += tap(t1, i.uv + px * float2(-1, -1)) + tap(t1, i.uv + px * float2(1, -1)) + tap(t1, i.uv + px * float2(-1, 1)) + tap(t1, i.uv + px * float2(1, 1));
+    return float4(encode(tap(t0, i.uv) + c / 16.0), 1.0);
+}
+float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
+float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+float4 ps_composite(VsOut i) : SV_Target {
+    float3 c = tap(t0, i.uv);
+    if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
+    c *= tint_tm.rgb;
+    if (tint_tm.w > 0.5) c = aces(c);
+    const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    c = max(lerp(luma.xxx, c, grade.x), 0.0);
+    c = max((c - 0.18) * grade.y + 0.18, 0.0);
+    const float2 v = i.uv - 0.5;
+    c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
+    const float3 s = to_srgb(c);
+    return float4(s, dot(s, float3(0.299, 0.587, 0.114)));  // luma in alpha for FXAA
+}
+float4 ps_fxaa(VsOut i) : SV_Target {  // FXAA: blur only across edges, along their direction
+    const float2 px = texel.xy;
+    const float3 m = t0.SampleLevel(clamp_linear, i.uv, 0).rgb;
+    const float l_nw = t0.SampleLevel(clamp_linear, i.uv + px * float2(-1, -1), 0).a, l_ne = t0.SampleLevel(clamp_linear, i.uv + px * float2(1, -1), 0).a;
+    const float l_sw = t0.SampleLevel(clamp_linear, i.uv + px * float2(-1, 1), 0).a, l_se = t0.SampleLevel(clamp_linear, i.uv + px * float2(1, 1), 0).a;
+    const float l_m = t0.SampleLevel(clamp_linear, i.uv, 0).a;
+    const float l_min = min(l_m, min(min(l_nw, l_ne), min(l_sw, l_se))), l_max = max(l_m, max(max(l_nw, l_ne), max(l_sw, l_se)));
+    float2 dir = float2(-((l_nw + l_ne) - (l_sw + l_se)), (l_nw + l_sw) - (l_ne + l_se));
+    const float reduce = max((l_nw + l_ne + l_sw + l_se) * 0.03125, 1.0 / 128.0);
+    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * px;
+    const float3 a = 0.5 * (t0.SampleLevel(clamp_linear, i.uv + dir * (1.0 / 3.0 - 0.5), 0).rgb + t0.SampleLevel(clamp_linear, i.uv + dir * (2.0 / 3.0 - 0.5), 0).rgb);
+    const float3 b = a * 0.5 + 0.25 * (t0.SampleLevel(clamp_linear, i.uv - dir * 0.5, 0).rgb + t0.SampleLevel(clamp_linear, i.uv + dir * 0.5, 0).rgb);
+    const float l_b = dot(b, float3(0.299, 0.587, 0.114));
+    return float4((l_b < l_min || l_b > l_max) ? a : b, 1.0);
+}
 )";
 
 bool check(HRESULT hr, const char* what) {
@@ -857,6 +942,7 @@ public:
         // Each call takes the next slot of this frame's buffer, so earlier draws keep their lights.
         if (light_offset_ + kLightSlot > kLightSlot * kLightSlots) light_offset_ = 0;
         std::memcpy(light_mapped_[frame_] + light_offset_, &lights, sizeof lights);
+        hdr_output_ = lights.output[0] > 0.5f;
         std::memcpy(light_mapped_[frame_] + light_offset_ + offsetof(LightSetup, viewport), viewport_, sizeof viewport_);
         current_lights_ = light_buffers_[frame_]->GetGPUVirtualAddress() + light_offset_;
         light_offset_ += kLightSlot;
@@ -982,7 +1068,10 @@ public:
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
-        list_->SetGraphicsRoot32BitConstants(0, 16, view_proj, 0);
+        f32 particle_constants[20] = {};
+        std::memcpy(particle_constants, view_proj, 16 * sizeof(f32));
+        particle_constants[16] = hdr_output_ ? 1.0f : 0.0f;
+        list_->SetGraphicsRoot32BitConstants(0, 20, particle_constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (t ? t : &textures_[white_])->srv_gpu);
         list_->SetPipelineState(additive ? particle_add_pipeline_.Get() : particle_alpha_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1042,6 +1131,97 @@ public:
         list_->IASetIndexBuffer(&ibv);
         list_->DrawIndexedInstanced(d.index_count, 1, 0, 0, 0);
         set_viewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);  // back to the caller's rectangle
+    }
+
+    // Post-processing: the bloom chain and the FXAA input, one set per scene size (a few kept).
+    struct PostChain {
+        u32 width = 0, height = 0;
+        TextureHandle down[5], up[4], ldr;
+    };
+    PostChain& post_chain(u32 width, u32 height) {
+        for (PostChain& c : post_chains_) {
+            if (c.width == width && c.height == height) return c;
+        }
+        PostChain& c = post_chains_[post_chain_next_++ % 4];
+        for (TextureHandle& t : c.down) destroy_texture(t);
+        for (TextureHandle& t : c.up) destroy_texture(t);
+        destroy_texture(c.ldr);
+        c = PostChain{};
+        c.width = width;
+        c.height = height;
+        for (u32 i = 0; i < 5; ++i) {
+            const u32 w = (width >> (i + 1)) ? (width >> (i + 1)) : 1u, h = (height >> (i + 1)) ? (height >> (i + 1)) : 1u;
+            c.down[i] = create_render_target(w, h);
+            if (i < 4) c.up[i] = create_render_target(w, h);
+        }
+        c.ldr = create_render_target(width, height);
+        return c;
+    }
+    // One full-screen pass into `target` (invalid: the window, in `window_rect`).
+    void post_pass(ID3D12PipelineState* pso, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, const f32 constants[16]) {
+        const f32 black[4] = {0, 0, 0, 1};
+        if (target.valid()) {
+            set_render_target(target, black);
+        } else {
+            set_render_target({}, nullptr);
+            set_viewport(window_rect[0], window_rect[1], window_rect[2], window_rect[3]);
+        }
+        const Target* a = lookup(in0);
+        const Target* b = lookup(in1);
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, 16, constants, 0);
+        list_->SetGraphicsRootDescriptorTable(1, (a ? a->srv_gpu : textures_[white_].srv_gpu));
+        list_->SetGraphicsRootDescriptorTable(2, (b ? b->srv_gpu : textures_[white_].srv_gpu));
+        list_->SetPipelineState(pso);
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list_->DrawInstanced(3, 1, 0, 0);
+    }
+
+    void draw_post(const PostDraw& p) override {
+        const Target* scene = lookup(p.scene);
+        if (!scene) return;
+        const u32 w = scene->width, h = scene->height;
+        PostChain& c = post_chain(w, h);
+        auto size = [&](TextureHandle t, f32* out) {
+            const Target* target = lookup(t);
+            out[0] = target ? 1.0f / static_cast<f32>(target->width) : 0.0f;
+            out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
+        };
+        f32 k[16] = {};
+        const bool bloom = p.bloom_intensity > 0.0f;
+        if (bloom) {
+            k[4] = p.bloom_threshold;
+            size(p.scene, k);
+            post_pass(post_prefilter_.Get(), c.down[0], nullptr, p.scene, {}, k);
+            for (u32 i = 1; i < 5; ++i) {
+                size(c.down[i - 1], k);
+                post_pass(post_down_.Get(), c.down[i], nullptr, c.down[i - 1], {}, k);
+            }
+            for (i32 i = 3; i >= 0; --i) {  // up[i] = down[i] + blur(up[i + 1]); the lowest uses down[4]
+                const TextureHandle below = i == 3 ? c.down[4] : c.up[i + 1];
+                size(c.down[i], k);
+                size(below, k + 2);
+                post_pass(post_up_.Get(), c.up[i], nullptr, c.down[i], below, k);
+            }
+        }
+        f32 g[16] = {};
+        g[5] = bloom ? p.bloom_intensity : 0.0f;
+        g[8] = p.tint[0];
+        g[9] = p.tint[1];
+        g[10] = p.tint[2];
+        g[11] = p.tonemap ? 1.0f : 0.0f;
+        g[12] = p.saturation;
+        g[13] = p.contrast;
+        g[14] = p.vignette;
+        post_pass(post_composite_.Get(), p.fxaa ? c.ldr : TextureHandle{}, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
+        if (p.fxaa) {
+            f32 f[16] = {};
+            size(c.ldr, f);
+            post_pass(post_fxaa_.Get(), {}, p.viewport, c.ldr, {}, f);
+        }
+        set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
     }
 
     void begin_frame(const f32 clear_color[4]) override {
@@ -1330,7 +1510,12 @@ private:
         sampler.MaxAnisotropy = 8;
         sampler.MaxLOD = D3D12_FLOAT32_MAX;
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        D3D12_STATIC_SAMPLER_DESC samplers[2] = {sampler, {}};
+        D3D12_STATIC_SAMPLER_DESC samplers[3] = {sampler, {}, {}};
+        samplers[2].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;  // s2: post-process taps, clamped at the edges
+        samplers[2].AddressU = samplers[2].AddressV = samplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        samplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+        samplers[2].ShaderRegister = 2;
+        samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         samplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;  // s1: 2x2 filtered depth compare
         samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
         samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
@@ -1340,7 +1525,7 @@ private:
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
         rs_desc.NumParameters = 9;
         rs_desc.pParameters = params;
-        rs_desc.NumStaticSamplers = 2;
+        rs_desc.NumStaticSamplers = 3;
         rs_desc.pStaticSamplers = samplers;
         rs_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> rs_blob, error;
@@ -1388,7 +1573,37 @@ private:
                create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
                create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
                create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_) && create_sky_pipeline() &&
-               create_ui_pipeline();
+               create_ui_pipeline() && create_post_pipelines();
+    }
+
+    bool create_post_pipelines() {
+        ComPtr<ID3DBlob> vs;
+        if (!compile(kPostHlsl, sizeof kPostHlsl - 1, "vs_full", "vs_5_0", vs, nullptr)) return false;
+        struct Entry {
+            const char* name;
+            ComPtr<ID3D12PipelineState>* out;
+        };
+        const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_}, {"ps_fxaa", &post_fxaa_}};
+        for (const Entry& e : entries) {
+            ComPtr<ID3DBlob> ps;
+            if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature = root_signature_.Get();
+            pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+            pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+            pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+            pso.SampleMask = UINT_MAX;
+            pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+            pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            pso.DepthStencilState.DepthEnable = FALSE;
+            pso.DSVFormat = kDepthFormat;
+            pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pso.NumRenderTargets = 1;
+            pso.RTVFormats[0] = kBackBufferFormat;
+            pso.SampleDesc.Count = 1;
+            if (!check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(e.out->GetAddressOf())), "CreateGraphicsPipelineState (post)")) return false;
+        }
+        return true;
     }
 
     bool create_ui_pipeline() {
@@ -1615,6 +1830,10 @@ private:
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
+    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_;
+    PostChain post_chains_[4];
+    u32 post_chain_next_ = 0;
+    bool hdr_output_ = false;  // the current LightSetup draws into a scene target
     f32 viewport_[4] = {};  // the last set_viewport, for the shaders' vignette
     MaterialShader material_shaders_[kMaxMaterialShaders];
     ShadowMap shadow_maps_[kMaxShadowMaps];

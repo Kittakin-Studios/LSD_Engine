@@ -184,7 +184,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 
 ### Rendering
 
-- [~] Post-process volume: Post Process Volume component (unbound or a box, priority): exposure compensation, ACES filmic tonemapper, saturation, contrast, tint, vignette, applied in the forward shaders; needs an HDR scene target for bloom, LUT grading, DOF, motion blur, AO, anti-aliasing (TAA / FXAA), blend weights between volumes [Post Process Volume]
+- [~] Post-process volume: Post Process Volume component (unbound or a box, priority): exposure compensation, ACES filmic tonemapper, saturation, contrast, tint, vignette, a post-process pass when a volume applies: the scene goes into a target (exposed colour, fog applied, range-compressed into 8 bits), then bloom (5 downsamples + tent upsamples, soft-knee threshold), tint, ACES, saturation, contrast, vignette and FXAA (`draw_post`, D3D12 / OpenGL); needs LUT grading, DOF, motion blur, AO, TAA, blend weights between volumes, a float scene target [Post Process Volume]
 - [ ] Baked lightmaps + probes; light build button with progress; lightmap density view; volumetric fog [Lightmass]
 - [~] LODs (auto-generated) and frustum/occlusion culling; distance culling volumes: frustum culling of static and skeletal meshes (the count in `stat fps`); needs LODs, occlusion and distance culling
 - [~] Scalability: Low/Medium/High/Epic per feature, per-device profiles [Scalability, Device Profiles]: the quality setting scales shadows (none / sun only, nearer / as set / further); needs more features per level, device profiles

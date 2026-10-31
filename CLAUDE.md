@@ -129,5 +129,6 @@ Milestone 6 has: packaging + game mode, save games, sky / height fog / post-proc
 Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,
 world-anchored elements, UI window with code + live preview), game user settings, localisation, crash
 reports, frustum culling, asset validation, platform settings, Tracy / `stat unit`, smoke tests.
-Still open (see BACKLOG): HDR post pass (bloom, AA, DOF, AO), baked lighting, LODs, VRAM scaling,
+Post pass: bloom + FXAA (draw_post) when a Post Process Volume applies.
+Still open (see BACKLOG): DOF, AO, TAA, baked lighting, LODs, VRAM scaling,
 UI designer canvas + QuickJS, key rebinding, remote console, source control.

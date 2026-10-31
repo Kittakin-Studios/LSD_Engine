@@ -24,6 +24,9 @@ rhi::LightSetup world_lights(const world::World& world, const LightView& view, b
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
 // casts them further.
 void set_shadow_quality(u32 quality);
+// The post-process pass the camera gets from the level's Post Process Volume (bloom, tonemap,
+// grading, FXAA); false if no volume applies (then the forward shaders grade directly).
+bool world_post(const world::World& world, Vec3 eye, bool skip_hidden, rhi::PostDraw& out);
 // The level's Sky, if it has one (sun disc from the first Directional Light).
 bool world_sky(const world::World& world, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out);
 

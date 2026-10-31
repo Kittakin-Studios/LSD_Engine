@@ -193,7 +193,9 @@ Atmosphere:
 - **Height Fog**: exponential fog, thickest at the object's height and thinning upwards; density,
   falloff, colour, start distance, max opacity.
 - **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in
-  wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette.
+  wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
+  **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA).
+  With a volume the scene is drawn into a target first and these run as a post-process pass.
 
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.

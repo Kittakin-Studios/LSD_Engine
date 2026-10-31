@@ -153,6 +153,33 @@ rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool 
     return s;
 }
 
+bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out) {
+    const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
+    const world::PostProcessVolume* best = nullptr;
+    for (u32 i = 0; i < w.count(post_type); ++i) {
+        const world::Entity e = w.owner(post_type, i);
+        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
+        const auto* v = static_cast<const world::PostProcessVolume*>(w.at(post_type, i));
+        if (!v->unbound) {
+            const Vec3 p = transform_point(affine_inverse(w.world_matrix(e)), eye);
+            if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;
+        }
+        if (!best || v->priority > best->priority) best = v;
+    }
+    if (!best) return false;
+    out.bloom_intensity = best->bloom_intensity;
+    out.bloom_threshold = best->bloom_threshold;
+    out.tint[0] = best->tint.r;
+    out.tint[1] = best->tint.g;
+    out.tint[2] = best->tint.b;
+    out.tonemap = best->filmic_tonemapper;
+    out.saturation = best->saturation;
+    out.contrast = best->contrast;
+    out.vignette = best->vignette;
+    out.fxaa = best->anti_aliasing;
+    return true;
+}
+
 bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out) {
     const reflect::TypeInfo& sky_type = reflect::type_of<world::Sky>();
     const world::Sky* sky = nullptr;

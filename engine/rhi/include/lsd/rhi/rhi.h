@@ -167,8 +167,27 @@ struct LightSetup {
     f32 post[4] = {1.0f, 1.0f, 0.0f, 0.0f};
     f32 tint[4] = {1.0f, 1.0f, 1.0f, 0.0f};
     f32 viewport[4] = {};
+    // x = 1: the draws go into a scene target for draw_post: they write exposed colour (fog applied)
+    // range-compressed into 8 bits, sqrt(c / (1 + c)), and the post pass does tonemap and grading.
+    f32 output[4] = {};
 };
-static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 80, "matches the shader's light buffer");
+static_assert(sizeof(GpuLight) == 64 && sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96, "matches the shader's light buffer");
+
+// The post-process pass (Unreal's post-process stack): reads a scene target drawn with
+// LightSetup.output on, adds bloom, tonemaps and grades, smooths edges (FXAA), and writes the
+// result into `viewport` of the window.
+struct PostDraw {
+    TextureHandle scene;
+    f32 viewport[4] = {};          // window pixels
+    f32 bloom_intensity = 0.0f;    // 0: no bloom
+    f32 bloom_threshold = 1.0f;    // exposed brightness where glow starts (1 = white)
+    f32 tint[3] = {1.0f, 1.0f, 1.0f};
+    bool tonemap = true;           // ACES filmic
+    f32 saturation = 1.0f;
+    f32 contrast = 1.0f;
+    f32 vignette = 0.0f;
+    bool fxaa = true;
+};
 
 // A gradient sky with a sun disc behind everything (display colours; fog and post-processing apply).
 struct SkyDraw {
@@ -249,6 +268,8 @@ public:
     virtual void draw_sky(const SkyDraw& sky) = 0;
     // UI triangles over everything (no depth), premultiplied-alpha blending; data is copied.
     virtual void draw_ui(const UiDraw& draw) = 0;
+    // Bloom, tonemap, grading and FXAA from a scene target into the window (see PostDraw).
+    virtual void draw_post(const PostDraw& post) = 0;
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
     // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
     // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.

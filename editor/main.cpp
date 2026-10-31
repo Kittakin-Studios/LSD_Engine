@@ -200,17 +200,22 @@ struct FrameTimer {
 
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
                 lsd::rhi::TextureHandle shadow_atlas, lsd::rhi::TextureHandle local_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
-                EditorState& stats) {
+                EditorState& stats, lsd::rhi::TextureHandle scene_target = {}, const lsd::f32* scene_clear = nullptr) {
     LSD_PROFILE_SCOPE("draw_world");
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
-    const lsd::rhi::LightSetup lights = lsd::editor::world_lights(world, light_view, skip_hidden);
+    lsd::rhi::LightSetup lights = lsd::editor::world_lights(world, light_view, skip_hidden);
     const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
     const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
     if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden);
     if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden);
-    if (sun_shadows || local_shadows) device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    if (scene_target.valid()) {  // the post pass reads it: draw into the scene target (after the shadow passes)
+        device.set_render_target(scene_target, scene_clear);
+        lights.output[0] = 1.0f;
+    } else if (sun_shadows || local_shadows) {
+        device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
     device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
     device.set_lights(lights);
     lsd::rhi::SkyDraw sky;
@@ -767,6 +772,21 @@ int main(int argc, char** argv) {
 
     lsd::render::GridColors current_grid = grid_colors(state.theme);
     lsd::render::GpuLines grid = lsd::render::create_grid(*device, allocator, current_grid);
+    // Scene targets for the post-process pass, one per viewport, remade when its size changes.
+    struct SceneTargets {
+        lsd::rhi::TextureHandle target[4];
+        lsd::u32 size[4][2] = {};
+        lsd::rhi::TextureHandle get(lsd::rhi::Device& d, lsd::u32 v, lsd::u32 w, lsd::u32 h) {
+            if (v >= 4 || !w || !h) return {};
+            if (!target[v].valid() || size[v][0] != w || size[v][1] != h) {
+                if (target[v].valid()) d.destroy_texture(target[v]);
+                target[v] = d.create_render_target(w, h);
+                size[v][0] = w;
+                size[v][1] = h;
+            }
+            return target[v];
+        }
+    } scene_targets;
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
     for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
@@ -1099,15 +1119,30 @@ int main(int argc, char** argv) {
             const lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
             const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
             const lsd::Mat4 view_proj = proj * view;
-            if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
             lsd::editor::LightView light_view;
             light_view.eye = state.playing && !state.ejected ? play.eye() : camera.position;
             light_view.forward = state.playing && !state.ejected ? play.forward() : lsd::editor::camera_forward(camera);
             light_view.fov_y = lens.fov_y;
             light_view.aspect = rect[2] / rect[3];
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
-            draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state);
+            // Post-processing (a Post Process Volume applies): the scene goes into a target the post pass reads.
+            lsd::rhi::PostDraw post;
+            const bool use_post = !state.view_mode_unlit_or_wire() && lsd::editor::world_post(world, light_view.eye, !state.playing || state.ejected, post);
+            const lsd::rhi::TextureHandle scene = use_post ? scene_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3])) : lsd::rhi::TextureHandle{};
+            lsd::f32 scene_clear[4] = {0, 0, 0, 1};
+            for (int c = 0; c < 3; ++c) {  // the background, as the scene target stores colour (linear, range-compressed)
+                const lsd::f32 srgb = clear_color[c];
+                const lsd::f32 lin = srgb <= 0.04045f ? srgb / 12.92f : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
+                scene_clear[c] = std::sqrt(lin / (1.0f + lin));
+            }
+            draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
+            if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
+            if (scene.valid()) {
+                post.scene = scene;
+                for (int c = 0; c < 4; ++c) post.viewport[c] = pixels[c];
+                device->draw_post(post);
+            }
             if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
                 play.place_ui_followers(world, view_proj, pixels);
                 game_ui->update(pixels);
@@ -1137,6 +1172,9 @@ int main(int argc, char** argv) {
     SDL_SetWindowRelativeMouseMode(window, false);
     if (gamepad) SDL_CloseGamepad(gamepad);
     lsd::render::destroy_lines(*device, grid);
+    for (const lsd::rhi::TextureHandle t : scene_targets.target) {
+        if (t.valid()) device->destroy_texture(t);
+    }
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;

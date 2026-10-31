@@ -119,6 +119,14 @@ atlas of 16 tiles (6 per point light). Output is exposed, then `finish()` applie
 tonemapper, exponential height fog (integrated along the view ray), saturation, contrast and
 vignette, and the result is encoded to sRGB by hand.
 
+**Post-processing.** When a Post Process Volume applies, each viewport is drawn into its own scene
+target with `LightSetup.output` on: the shaders then write the exposed colour (fog applied)
+range-compressed into the 8-bit target (`e = sqrt(c / (1 + c))`, so highlights up to a few hundred
+times white survive), and `draw_post` decodes it: a soft-knee bright pass and five half-size
+downsamples, tent-filtered upsamples back up (bloom), then tint, ACES, saturation, contrast and
+vignette into an LDR target with luma in alpha, and FXAA into the window. Without a volume the
+forward shaders tonemap and grade directly, as before.
+
 The editor builds the light setup each frame (`editor/lighting.cpp`): lights from components (the
 nearest local lights first), cascades fitted to the camera, the camera's Post Process Volume, the
 fog, and the player's quality setting. Meshes outside the camera's frustum are culled first.

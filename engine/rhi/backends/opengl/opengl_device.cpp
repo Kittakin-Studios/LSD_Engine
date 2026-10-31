@@ -96,7 +96,7 @@ layout(std140, binding = 1) uniform Lights {
     float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16];
     mat4 shadow_vp[4]; vec4 shadow_tile[4]; vec4 shadow_split; vec4 shadow_info;
     mat4 local_vp[16]; vec4 local_tile[16];
-    vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px;
+    vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px; vec4 hdr_out;
 };
 layout(binding = 3) uniform sampler2DShadow shadow_tex;
 layout(binding = 4) uniform sampler2DShadow local_shadow_tex;
@@ -167,6 +167,19 @@ vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
     }
     return c;
 }
+vec3 hdr_encode(vec3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
+vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
+    if (hdr_out.x > 0.5) {
+        if (fog.w > 0.0) {
+            float d = max(length(wpos - cam) - fog_color.w, 0.0);
+            float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
+            float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
+            c = mix(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+        }
+        return hdr_encode(c);
+    }
+    return to_srgb(finish(c, wpos, cam, pixel));
+}
 vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
     vec3 dp1 = dFdx(wpos), dp2 = dFdy(wpos);
     vec2 duv1 = dFdx(uv), duv2 = dFdy(uv);
@@ -184,7 +197,7 @@ void main() {
     mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time;
     Surface surf = material_main(mi);
     vec4 base = vec4(surf.base_color * u_color.rgb, u_color.a);
-    if (u_flags.x > 0.5) { o_color = vec4(to_srgb(base.rgb), base.a); return; }
+    if (u_flags.x > 0.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
     n = perturb_normal(n, v_wpos, v_uv, surf.normal);
     float metallic = clamp(surf.metallic, 0.0, 1.0);
     float roughness = clamp(surf.roughness, 0.04, 1.0);
@@ -192,7 +205,7 @@ void main() {
     vec3 emissive = surf.emissive;
 #else
     vec4 base = u_color * texture(base_tex, v_uv);
-    if (u_flags.x > 0.5) { o_color = vec4(to_srgb(base.rgb), base.a); return; }
+    if (u_flags.x > 0.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
     if (u_flags.y > 0.5) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
     vec3 orm = texture(orm_tex, v_uv).rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
@@ -238,7 +251,7 @@ void main() {
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    o_color = vec4(to_srgb(finish(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy)), base.a);
+    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), base.a);
 }
 #else
 // The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
@@ -251,7 +264,7 @@ void main() {
         float s = dot(d, u_sky[3].xyz);
         c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0));
     }
-    o_color = vec4(to_srgb(finish(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy)), 1.0);
+    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy), 1.0);
 }
 #endif
 )";
@@ -326,13 +339,15 @@ void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); v_color = a_color; v_uv = 
 
 constexpr char kParticleFragmentShader[] = R"(#version 460 core
 layout(binding = 0) uniform sampler2D u_sprite;
+uniform float u_hdr;  // 1: into a scene target (post pass)
 in vec4 v_color;
 in vec2 v_uv;
 out vec4 o_color;
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 void main() {
     vec4 c = v_color * texture(u_sprite, v_uv);
-    o_color = vec4(to_srgb(c.rgb), clamp(c.a, 0.0, 1.0));
+    vec3 lin = max(c.rgb, 0.0);
+    o_color = vec4(u_hdr > 0.5 ? sqrt(lin / (1.0 + lin)) : to_srgb(c.rgb), clamp(c.a, 0.0, 1.0));
 }
 )";
 
@@ -357,6 +372,78 @@ in vec4 v_color;
 in vec2 v_uv;
 out vec4 o_color;
 void main() { o_color = v_color * texture(u_tex, v_uv); }
+)";
+
+constexpr char kPostVertexShader[] = R"(#version 460 core
+out vec2 v_uv;
+void main() {
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0;
+    gl_Position = vec4(p, 0.0, 1.0);
+    v_uv = p * 0.5 + 0.5;  // GL: rows run bottom-up both when drawing and sampling
+}
+)";
+
+// The same passes as the HLSL in the D3D12 backend (keep them in step); one entry per #define.
+constexpr char kPostFragmentShader[] = R"(#version 460 core
+uniform vec4 u_post[4];  // texel, bloom (threshold, intensity), tint + tonemap, grade (saturation, contrast, vignette)
+layout(binding = 0) uniform sampler2D t0;
+layout(binding = 1) uniform sampler2D t1;
+in vec2 v_uv;
+out vec4 o_color;
+vec3 decode(vec3 e) { e = min(e, 0.999); vec3 s = e * e; return s / (1.0 - s); }
+vec3 encode(vec3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
+vec3 tap(sampler2D t, vec2 uv) { return decode(textureLod(t, uv, 0.0).rgb); }
+vec3 box4(sampler2D t, vec2 uv, vec2 px) {
+    return 0.25 * (tap(t, uv + px * vec2(-1, -1)) + tap(t, uv + px * vec2(1, -1)) + tap(t, uv + px * vec2(-1, 1)) + tap(t, uv + px * vec2(1, 1)));
+}
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+void main() {
+    vec4 texel = u_post[0], bloom = u_post[1], tint_tm = u_post[2], grade = u_post[3];
+#if defined(PREFILTER)
+    vec3 c = box4(t0, v_uv, texel.xy);
+    float brightness = max(c.r, max(c.g, c.b));
+    float knee = bloom.x * 0.5;
+    float soft = clamp(brightness - bloom.x + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 1e-5);
+    float keep = max(soft, brightness - bloom.x) / max(brightness, 1e-5);
+    o_color = vec4(encode(c * keep), 1.0);
+#elif defined(DOWN)
+    o_color = vec4(encode(box4(t0, v_uv, texel.xy)), 1.0);
+#elif defined(UP)
+    vec2 px = texel.zw;
+    vec3 c = tap(t1, v_uv) * 4.0;
+    c += (tap(t1, v_uv + vec2(-px.x, 0)) + tap(t1, v_uv + vec2(px.x, 0)) + tap(t1, v_uv + vec2(0, -px.y)) + tap(t1, v_uv + vec2(0, px.y))) * 2.0;
+    c += tap(t1, v_uv + px * vec2(-1, -1)) + tap(t1, v_uv + px * vec2(1, -1)) + tap(t1, v_uv + px * vec2(-1, 1)) + tap(t1, v_uv + px * vec2(1, 1));
+    o_color = vec4(encode(tap(t0, v_uv) + c / 16.0), 1.0);
+#elif defined(COMPOSITE)
+    vec3 c = tap(t0, v_uv);
+    if (bloom.y > 0.0) c += tap(t1, v_uv) * bloom.y;
+    c *= tint_tm.rgb;
+    if (tint_tm.w > 0.5) c = aces(c);
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = max(mix(vec3(luma), c, grade.x), 0.0);
+    c = max((c - 0.18) * grade.y + 0.18, 0.0);
+    vec2 v = v_uv - 0.5;
+    c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
+    vec3 s = to_srgb(c);
+    o_color = vec4(s, dot(s, vec3(0.299, 0.587, 0.114)));
+#else  // FXAA
+    vec2 px = texel.xy;
+    float l_nw = textureLod(t0, v_uv + px * vec2(-1, 1), 0.0).a, l_ne = textureLod(t0, v_uv + px * vec2(1, 1), 0.0).a;
+    float l_sw = textureLod(t0, v_uv + px * vec2(-1, -1), 0.0).a, l_se = textureLod(t0, v_uv + px * vec2(1, -1), 0.0).a;
+    float l_m = textureLod(t0, v_uv, 0.0).a;
+    float l_min = min(l_m, min(min(l_nw, l_ne), min(l_sw, l_se))), l_max = max(l_m, max(max(l_nw, l_ne), max(l_sw, l_se)));
+    vec2 dir = vec2(-((l_nw + l_ne) - (l_sw + l_se)), (l_nw + l_sw) - (l_ne + l_se));
+    float reduce = max((l_nw + l_ne + l_sw + l_se) * 0.03125, 1.0 / 128.0);
+    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * px;
+    dir.y = -dir.y;  // rows run bottom-up here
+    vec3 a = 0.5 * (textureLod(t0, v_uv + dir * (1.0 / 3.0 - 0.5), 0.0).rgb + textureLod(t0, v_uv + dir * (2.0 / 3.0 - 0.5), 0.0).rgb);
+    vec3 b = a * 0.5 + 0.25 * (textureLod(t0, v_uv - dir * 0.5, 0.0).rgb + textureLod(t0, v_uv + dir * 0.5, 0.0).rgb);
+    float l_b = dot(b, vec3(0.299, 0.587, 0.114));
+    o_color = vec4((l_b < l_min || l_b > l_max) ? a : b, 1.0);
+#endif
+}
 )";
 
 constexpr u32 kMaxBuffers = 4096;
@@ -458,6 +545,10 @@ void APIENTRY debug_callback(GLenum, GLenum type, GLuint, GLenum severity, GLsiz
 }
 
 class OpenGLDevice final : public Device {
+    struct PostChain {
+        u32 width = 0, height = 0;
+        TextureHandle down[5], up[4], ldr;
+    };
     struct MeshProgram {
         GLuint id = 0;
         GLint mvp = -1, normal = -1, world = -1, color = -1, material = -1, flags = -1, time = -1;
@@ -485,7 +576,8 @@ public:
     ~OpenGLDevice() override {
         if (!context_) return;
         if (debug_ui_) ImGui_ImplOpenGL3_Shutdown();
-        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_, sky_program_, ui_program_}) {
+        for (GLuint program : {program_, mesh_.id, skinned_program_.id, line_program_, shadow_program_, skinned_shadow_program_, particle_program_, sky_program_, ui_program_, post_programs_[0], post_programs_[1], post_programs_[2],
+                               post_programs_[3], post_programs_[4]}) {
             if (program) gl_.glDeleteProgram(program);
         }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
@@ -649,6 +741,8 @@ public:
         gl_.glTextureStorage2D(t.color, 1, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         gl_.glTextureParameteri(t.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         gl_.glTextureParameteri(t.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl_.glTextureParameteri(t.color, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);  // post-process taps stay inside
+        gl_.glTextureParameteri(t.color, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         gl_.glCreateRenderbuffers(1, &t.depth);
         gl_.glNamedRenderbufferStorage(t.depth, GL_DEPTH_COMPONENT24, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         gl_.glCreateFramebuffers(1, &t.fbo);
@@ -811,6 +905,7 @@ public:
 
     void set_lights(const LightSetup& lights) override {
         gl_.glNamedBufferSubData(light_ubo_, 0, sizeof lights, &lights);  // GL keeps earlier draws' data
+        hdr_output_ = lights.output[0] > 0.5f;
         gl_.glNamedBufferSubData(light_ubo_, offsetof(LightSetup, viewport), sizeof viewport_, viewport_);
         gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 1, light_ubo_);
     }
@@ -914,6 +1009,7 @@ public:
         gl_.glBlendFuncSeparate(GL_SRC_ALPHA, additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         gl_.glUseProgram(particle_program_);
         gl_.glUniformMatrix4fv(particle_mvp_, 1, GL_FALSE, view_proj);
+        gl_.glUniform1f(particle_hdr_, hdr_output_ ? 1.0f : 0.0f);
         gl_.glBindTextureUnit(0, t ? t->id : textures_[white_].id);
         gl_.glVertexArrayVertexBuffer(particle_vao_, 0, particle_vbo_, particle_offset_, sizeof(ParticleVertex));
         gl_.glBindVertexArray(particle_vao_);
@@ -974,6 +1070,90 @@ public:
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
         set_viewport(viewport_[0], static_cast<f32>(target_height_) - viewport_[1] - viewport_[3], viewport_[2], viewport_[3]);  // the caller's rectangle again
+    }
+
+    PostChain& post_chain(u32 width, u32 height) {
+        for (PostChain& c : post_chains_) {
+            if (c.width == width && c.height == height) return c;
+        }
+        PostChain& c = post_chains_[post_chain_next_++ % 4];
+        for (TextureHandle& t : c.down) destroy_texture(t);
+        for (TextureHandle& t : c.up) destroy_texture(t);
+        destroy_texture(c.ldr);
+        c = PostChain{};
+        c.width = width;
+        c.height = height;
+        for (u32 i = 0; i < 5; ++i) {
+            const u32 w = (width >> (i + 1)) ? (width >> (i + 1)) : 1u, h = (height >> (i + 1)) ? (height >> (i + 1)) : 1u;
+            c.down[i] = create_render_target(w, h);
+            if (i < 4) c.up[i] = create_render_target(w, h);
+        }
+        c.ldr = create_render_target(width, height);
+        return c;
+    }
+    void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, const f32 constants[16]) {
+        const f32 black[4] = {0, 0, 0, 1};
+        if (target.valid()) {
+            set_render_target(target, black);
+        } else {
+            set_render_target({}, nullptr);
+            set_viewport(window_rect[0], window_rect[1], window_rect[2], window_rect[3]);
+        }
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        const Target* a = lookup(in0);
+        const Target* b = lookup(in1);
+        gl_.glUseProgram(post_programs_[program]);
+        gl_.glUniform4fv(post_uniforms_[program], 4, constants);
+        gl_.glBindTextureUnit(0, a ? a->color : textures_[white_].id);
+        gl_.glBindTextureUnit(1, b ? b->color : textures_[white_].id);
+        gl_.glBindVertexArray(vao_);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+
+    void draw_post(const PostDraw& p) override {
+        const Target* scene = lookup(p.scene);
+        if (!scene) return;
+        PostChain& c = post_chain(scene->width, scene->height);
+        auto size = [&](TextureHandle t, f32* out) {
+            const Target* target = lookup(t);
+            out[0] = target ? 1.0f / static_cast<f32>(target->width) : 0.0f;
+            out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
+        };
+        f32 k[16] = {};
+        const bool bloom = p.bloom_intensity > 0.0f;
+        if (bloom) {
+            k[4] = p.bloom_threshold;
+            size(p.scene, k);
+            post_pass(0, c.down[0], nullptr, p.scene, {}, k);
+            for (u32 i = 1; i < 5; ++i) {
+                size(c.down[i - 1], k);
+                post_pass(1, c.down[i], nullptr, c.down[i - 1], {}, k);
+            }
+            for (i32 i = 3; i >= 0; --i) {
+                const TextureHandle below = i == 3 ? c.down[4] : c.up[i + 1];
+                size(c.down[i], k);
+                size(below, k + 2);
+                post_pass(2, c.up[i], nullptr, c.down[i], below, k);
+            }
+        }
+        f32 g[16] = {};
+        g[5] = bloom ? p.bloom_intensity : 0.0f;
+        g[8] = p.tint[0];
+        g[9] = p.tint[1];
+        g[10] = p.tint[2];
+        g[11] = p.tonemap ? 1.0f : 0.0f;
+        g[12] = p.saturation;
+        g[13] = p.contrast;
+        g[14] = p.vignette;
+        post_pass(3, p.fxaa ? c.ldr : TextureHandle{}, p.viewport, p.scene, bloom ? c.up[0] : TextureHandle{}, g);
+        if (p.fxaa) {
+            f32 f[16] = {};
+            size(c.ldr, f);
+            post_pass(4, {}, p.viewport, c.ldr, {}, f);
+        }
+        glEnable(GL_DEPTH_TEST);
+        set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
@@ -1206,6 +1386,15 @@ private:
         particle_program_ = link(kParticleVertexShader, kParticleFragmentShader);
         if (!particle_program_) return false;
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
+        particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
+        const char* post_defines[5] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n"};
+        for (int i = 0; i < 5; ++i) {
+            std::string fragment = kPostFragmentShader;
+            fragment.insert(fragment.find('\n') + 1, post_defines[i]);
+            post_programs_[i] = link(kPostVertexShader, fragment.c_str());
+            if (!post_programs_[i]) return false;
+            post_uniforms_[i] = gl_.glGetUniformLocation(post_programs_[i], "u_post");
+        }
         gl_.glCreateBuffers(1, &particle_vbo_);
         gl_.glNamedBufferStorage(particle_vbo_, kParticleRingBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateVertexArrays(1, &particle_vao_);
@@ -1242,7 +1431,12 @@ private:
     GLint sky_mvp_ = -1, sky_camera_ = -1, sky_values_ = -1;
     f32 viewport_[4] = {};  // the last set_viewport (top-left origin), for the shaders' vignette
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
-    GLint particle_mvp_ = -1;
+    GLint particle_mvp_ = -1, particle_hdr_ = -1;
+    bool hdr_output_ = false;  // the current LightSetup draws into a scene target
+    GLuint post_programs_[5] = {};  // prefilter, down, up, composite, fxaa
+    GLint post_uniforms_[5] = {-1, -1, -1, -1, -1};
+    PostChain post_chains_[4];
+    u32 post_chain_next_ = 0;
     u32 particle_offset_ = 0;
     GLuint skinned_shadow_program_ = 0;
     GLint skinned_shadow_mvp_ = -1;
