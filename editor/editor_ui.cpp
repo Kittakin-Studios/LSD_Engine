@@ -3960,9 +3960,31 @@ void draw_history_window(EditorState& s) {
     ImGui::End();
 }
 
+// The asset a log message is about: a GUID in it, else the longest Content path it mentions.
+asset::Guid asset_in_message(const EditorState& s, const char* text) {
+    asset::Guid guid;
+    for (const char* p = text; *p; ++p) {  // 32 hex digits in a row
+        int n = 0;
+        while (n < 32 && std::isxdigit(static_cast<unsigned char>(p[n]))) ++n;
+        if (n == 32 && !std::isxdigit(static_cast<unsigned char>(p[32])) && asset::parse_guid(std::string(p, 32).c_str(), guid) && s.registry->find(guid)) return guid;
+    }
+    usize best = 0;
+    guid = {};
+    for (usize i = 0; i < s.registry->count(); ++i) {
+        const asset::AssetRecord& r = s.registry->get(i);
+        const usize len = std::strlen(r.path);
+        if (len > best && std::strstr(text, r.path)) {
+            best = len;
+            guid = r.guid;
+        }
+    }
+    return guid;
+}
+
 void draw_message_log(EditorState& s) {
     if (!s.show_message_log) return;
     ImGui::SetNextWindowSize(ImVec2(620, 300), ImGuiCond_FirstUseEver);
+    asset::Guid clicked;
     if (ImGui::Begin("Message Log", &s.show_message_log)) {
         std::lock_guard<std::mutex> lock(g_log_mutex);
         g_unread_errors = g_unread_warnings = 0;  // seen
@@ -3975,14 +3997,23 @@ void draw_message_log(EditorState& s) {
         for (u32 i = g_messages_count; i-- > 0;) {  // newest first
             const LogLine& m = g_messages[(first + i) % kMessages];
             const bool error = m.level >= log::Level::Error;
+            ImGui::PushID(static_cast<int>(i));
+            // The whole row is clickable: it shows the asset the message names (Unreal's Message Log links).
+            const ImVec2 row = ImGui::GetCursorPos();
+            const f32 height = ImGui::CalcTextSize(m.text, nullptr, false, ImGui::GetContentRegionAvail().x - 160.0f).y;
+            if (ImGui::Selectable("##row", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, height))) clicked = asset_in_message(s, m.text);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click: show the asset this message names in the Content Browser");
+            ImGui::SetCursorPos(row);
             ImGui::TextColored(error ? ImVec4(1.0f, 0.42f, 0.38f, 1) : ImVec4(1.0f, 0.82f, 0.35f, 1), "%s", error ? "Error" : "Warning");
             ImGui::SameLine(80.0f);
             ImGui::TextDisabled("[%s]", m.channel);
             ImGui::SameLine();
             ImGui::TextWrapped("%s", m.text);
+            ImGui::PopID();
         }
     }
     ImGui::End();
+    if (clicked.valid()) find_in_content_browser(s, clicked);  // after the log lock: it may log
 }
 
 void draw_project_settings(EditorState& s) {

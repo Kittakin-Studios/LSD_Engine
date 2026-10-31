@@ -74,7 +74,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [~] Place panel (tab next to Content): Cube, Sphere, Plane, Player Start, Blocking Volume, Kill Volume, Trigger Volume, Empty, by drag or double-click; lights, cameras, sounds when they exist [Place Actors]
 - [x] World Settings (Window menu; Kill Z, gravity; saved in the level) and Project Settings (Edit menu; name, company, game default level, editor startup level; `Config/project.json`)
 - [x] Output Log tab with filters + console (`engine/core` console: variables and commands, Tab completion, history; `help` lists them; `-exec=` runs lines at startup) [Output Log, CVars]
-- [~] Message Log (Window menu): warnings and errors only, unread count in the menu bar; needs click-to-asset [Message Log]
+- [x] Message Log (Window menu): warnings and errors only, unread count in the menu bar; click a message to show the asset it names (a GUID or Content path in the text) in the Content Browser [Message Log]
 - [~] Editor preferences window (Edit menu): theme (`Config/editor_theme.json`) + per-user settings (`Saved/editor_settings.json`: snapping, camera speed, last level, autosave interval), named layouts (Window > Layout: Save Layout As, load, Reset to Default; `Saved/Layouts/*.ini`); needs a keymap editor
 - [~] Menu bar: File (New / Open / Save / Save As), Edit (Undo / Redo / Duplicate / Delete / Drop to Floor), Window (Undo History), Play / Stop; needs Simulate, build buttons, platform/quality dropdown
 
