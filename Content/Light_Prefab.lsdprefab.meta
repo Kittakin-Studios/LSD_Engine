@@ -1,0 +1,16 @@
+{
+  "guid": "f27fa176711ee35d436dc866f655c705",
+  "type": "Prefab",
+  "import_scale": 1,
+  "notifies": [],
+  "sockets": [],
+  "max_size": 4096,
+  "volume": 1,
+  "pitch": 1,
+  "looping": false,
+  "stream": false,
+  "sound_class": "",
+  "attenuation": "",
+  "concurrency": "",
+  "subtitle": ""
+}

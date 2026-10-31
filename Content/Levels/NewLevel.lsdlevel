@@ -5,6 +5,7 @@
       "gravity": 9.81000042,
       "exposure_ev100": 1.5,
       "game_mode": "",
+      "level_script": "",
       "navigation": {
         "agent_radius": 0.400000006,
         "agent_height": 1.79999995,
@@ -65,6 +66,12 @@
       "eye_height": 1.70000005,
       "walk_speed": 5,
       "jump_speed": 5
+    },
+     "FootIK": {
+      "left_foot": "foot_l",
+      "right_foot": "foot_r",
+      "max_step": 0.5,
+      "foot_height": 0.0799999982
     }},
     {"id": 2, "name": "Sphere", "parent": -1,
      "Transform": {
@@ -100,18 +107,31 @@
       "position": {
         "x": 3.91741753,
         "y": -6.89985085,
-        "z": 7.55000019
+        "z": 6.05000019
       },
       "rotation": {
         "x": 0,
         "y": 0,
-        "z": 4.3499999
+        "z": 41.7999992
       },
       "scale": {
         "x": 1,
         "y": 1,
         "z": 1
       }
+    },
+     "DirectionalLight": {
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+      },
+      "intensity": 83.9000015,
+      "use_temperature": false,
+      "temperature": 6500,
+      "cast_shadows": true,
+      "shadow_distance": 110.906998
     },
      "SkyLight": {
       "sky_color": {
@@ -126,7 +146,82 @@
         "b": 0.141176477,
         "a": 0.925490201
       },
-      "intensity": 3.35800004
+      "intensity": 3.00900006
+    },
+     "Sky": {
+      "zenith": {
+        "r": 0.184313729,
+        "g": 0.435294122,
+        "b": 0.768627465,
+        "a": 1
+      },
+      "horizon": {
+        "r": 0.076176554,
+        "g": 0.329692274,
+        "b": 0.563706577,
+        "a": 1
+      },
+      "ground": {
+        "r": 0.290196091,
+        "g": 0.274509817,
+        "b": 0.250980407,
+        "a": 1
+      },
+      "brightness": 1.39499998,
+      "sun_disc": true,
+      "sun_size": 4.19799995,
+      "sun_color": {
+        "r": 0.228291199,
+        "g": 0.390730739,
+        "b": 0.953667939,
+        "a": 1
+      }
+    },
+     "HeightFog": {
+      "density": 0.340000004,
+      "height_falloff": 0.391000003,
+      "color": {
+        "r": 0.721568644,
+        "g": 0.823529422,
+        "b": 0.917647064,
+        "a": 1
+      },
+      "start_distance": 0,
+      "max_opacity": 0.540000021
+    },
+     "PostProcessVolume": {
+      "unbound": true,
+      "priority": 0,
+      "exposure_compensation": -2.65100002,
+      "filmic_tonemapper": true,
+      "saturation": 1,
+      "contrast": 1.21399999,
+      "tint": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+      },
+      "vignette": 0.463,
+      "bloom_intensity": 1.54200006,
+      "bloom_threshold": 1.69799995,
+      "anti_aliasing": true,
+      "temporal_aa": true,
+      "ao_intensity": 1.28100002,
+      "ao_radius": 0.653999984,
+      "ssr_intensity": 0.809000015,
+      "ssr_max_distance": 101.450996,
+      "dof_focal_distance": 0,
+      "dof_focal_region": 0,
+      "dof_transition": 5,
+      "dof_max_blur": 0
+    },
+     "LightmassImportanceVolume": {
+      "probe_spacing": 8.93000031
+    },
+     "PrefabInstance": {
+      "prefab": "f27fa176711ee35d436dc866f655c705",
+      "overrides": []
     }},
     {"id": 4, "name": "Cube", "parent": -1,
      "Transform": {
@@ -244,6 +339,148 @@
       "sight_range": 15,
       "sight_angle": 120,
       "hearing_range": 12
+    }},
+    {"id": 4194313, "name": "Male_Base_SDiv1", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 2.5391171,
+        "y": -4.92060566,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "b400a445885d50b9205a057d8e2f4319",
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "collision": true
+    },
+     "SkeletalMesh": {
+      "mesh": "b400a445885d50b9205a057d8e2f4319",
+      "material": "",
+      "color": {
+        "r": 0.225190431,
+        "g": 0.22519055,
+        "b": 0.702702701,
+        "a": 1
+      },
+      "animation": "b400a445885d50b9205a057d8e2f4319",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": ""
+    },
+     "FootIK": {
+      "left_foot": "foot_l",
+      "right_foot": "foot_r",
+      "max_step": 0.5,
+      "foot_height": 0.0799999982
+    }},
+    {"id": 10, "name": "Decal", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 5.9033823,
+        "y": -5.99983978,
+        "z": 2.38418579e-07
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 4,
+        "y": 4,
+        "z": 3
+      }
+    },
+     "Decal": {
+      "texture": "",
+      "tint": {
+        "r": 0.377398491,
+        "g": 0.903474927,
+        "b": 0.0244182274,
+        "a": 1
+      }
+    }},
+    {"id": 11, "name": "Cube2", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 2.26562786,
+        "y": 5.73643112,
+        "z": 0.100000001
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "Cube",
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "collision": true
+    }},
+    {"id": 16777228, "name": "Nav Agent", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 3.29933023,
+        "y": 1.0058682,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "Cube",
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "collision": true
+    },
+     "NavAgent": {
+      "max_speed": 3.5,
+      "radius": 0.400000006,
+      "height": 1.79999995,
+      "face_movement": true
     }}
   ]
 }

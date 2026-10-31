@@ -1,0 +1,136 @@
+{
+  "lsd_level": 1,
+  "world_settings": {
+      "kill_z": -50,
+      "gravity": 9.81000042,
+      "exposure_ev100": 1.5,
+      "game_mode": "",
+      "level_script": "",
+      "navigation": {
+        "agent_radius": 0.400000006,
+        "agent_height": 1.79999995,
+        "max_step_height": 0.449999988,
+        "max_slope": 45,
+        "cell_size": 0.150000006
+      }
+    },
+  "entities": [
+    {"id": 0, "name": "Sky Light", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 41.7999992
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "DirectionalLight": {
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+      },
+      "intensity": 83.9000015,
+      "use_temperature": false,
+      "temperature": 6500,
+      "cast_shadows": true,
+      "shadow_distance": 110.906998
+    },
+     "SkyLight": {
+      "sky_color": {
+        "r": 0.176470593,
+        "g": 0.43921569,
+        "b": 0.839215696,
+        "a": 0.956862748
+      },
+      "ground_color": {
+        "r": 0.160784319,
+        "g": 0.149019614,
+        "b": 0.141176477,
+        "a": 0.925490201
+      },
+      "intensity": 3.00900006
+    },
+     "Sky": {
+      "zenith": {
+        "r": 0.184313729,
+        "g": 0.435294122,
+        "b": 0.768627465,
+        "a": 1
+      },
+      "horizon": {
+        "r": 0.076176554,
+        "g": 0.329692274,
+        "b": 0.563706577,
+        "a": 1
+      },
+      "ground": {
+        "r": 0.290196091,
+        "g": 0.274509817,
+        "b": 0.250980407,
+        "a": 1
+      },
+      "brightness": 1.39499998,
+      "sun_disc": true,
+      "sun_size": 4.19799995,
+      "sun_color": {
+        "r": 0.228291199,
+        "g": 0.390730739,
+        "b": 0.953667939,
+        "a": 1
+      }
+    },
+     "HeightFog": {
+      "density": 0.340000004,
+      "height_falloff": 0.391000003,
+      "color": {
+        "r": 0.721568644,
+        "g": 0.823529422,
+        "b": 0.917647064,
+        "a": 1
+      },
+      "start_distance": 0,
+      "max_opacity": 0.540000021
+    },
+     "PostProcessVolume": {
+      "unbound": true,
+      "priority": 0,
+      "exposure_compensation": -2.65100002,
+      "filmic_tonemapper": true,
+      "saturation": 1,
+      "contrast": 1.21399999,
+      "tint": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+      },
+      "vignette": 0.463,
+      "bloom_intensity": 1.54200006,
+      "bloom_threshold": 1.69799995,
+      "anti_aliasing": true,
+      "temporal_aa": true,
+      "ao_intensity": 1.28100002,
+      "ao_radius": 0.653999984,
+      "ssr_intensity": 0.809000015,
+      "ssr_max_distance": 101.450996,
+      "dof_focal_distance": 0,
+      "dof_focal_region": 0,
+      "dof_transition": 5,
+      "dof_max_blur": 0
+    },
+     "LightmassImportanceVolume": {
+      "probe_spacing": 8.93000031
+    }}
+  ]
+}
