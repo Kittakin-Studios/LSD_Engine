@@ -98,6 +98,11 @@
 //
 // Timers (callbacks run before on_update):
 //   lsd.after(seconds, fn) -> id, lsd.every(seconds, fn) -> id, lsd.cancel(id)
+//   lsd.game_instance() -> table          kept across level changes for the whole Play (Game Instance)
+//   lsd.player_state() -> table           the same, for the player's own data (Player State)
+//   lsd.subsystem(name) -> table          one kept table per name (Game Instance Subsystems)
+//   lsd.open_level(name) -> ok            loads another level (by asset name) after this frame; kept tables travel
+//   lsd.player() -> e                     the player's Character (possessed), or nil
 //
 // Events sent by the game: on_overlap_begin(self, other), on_overlap_end(self, other) (Trigger Volumes),
 // on_hit(self, other) (physics contact began; the player counts as its Character).
@@ -149,6 +154,8 @@ struct ScriptHost {
     // shape: 0 sphere (size.x = radius), 1 box (size = half extents), 2 capsule (size.x = radius, size.y = half height).
     bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
     u32 (*overlap)(void* user, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) = nullptr;
+    bool (*open_level)(void* user, const char* name) = nullptr;  // false if there is no such level
+    world::Entity (*player)(void* user) = nullptr;
     bool (*table_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Data Table file by asset name
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name
     u32 (*play_sound)(void* user, const char* name, bool spatial, Vec3 position) = nullptr;  // voice, 0 if none
@@ -206,6 +213,9 @@ public:
     void stop();
     // Starts the scripts on `root` and its children (objects spawned during Play).
     void attach(world::Entity root);
+    // lsd.game_instance() / player_state() / subsystem(name) live across stop / start (a level change)
+    // as JSON; a new Play clears them (Unreal's Game Instance, Player State, Game Instance Subsystems).
+    void clear_persistent();
 
     u32 script_count() const { return count_; }
     u32 error_count() const;  // scripts stopped by an error
@@ -232,6 +242,7 @@ public:
 
 private:
     char save_dir_[260] = "Saved/SaveGames";
+    char* persistent_ = nullptr;  // lsd.__persist as JSON between stop and the next start (heap, NUL-terminated)
     struct Instance {
         world::Entity entity;
         char path[260];

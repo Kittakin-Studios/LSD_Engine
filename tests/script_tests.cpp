@@ -200,6 +200,24 @@ static void test_traces() {
     }
 }
 
+// Game Instance: kept tables survive stop / start (a level change) until a new Play clears them.
+static void test_game_instance() {
+    HeapAllocator heap("instance");
+    World w(heap);
+    script::ScriptSystem scripts;
+    scripts.start(w, {}, path_of, nullptr);
+    CHECK(scripts.run("lsd.game_instance().score = 5 lsd.player_state().name = 'Ada' lsd.subsystem('Quests').done = {1, 2}"));
+    scripts.stop();
+    scripts.start(w, {}, path_of, nullptr);  // the next level
+    CHECK(scripts.run("assert(lsd.game_instance().score == 5 and lsd.player_state().name == 'Ada' and #lsd.subsystem('Quests').done == 2)"));
+    CHECK(scripts.run("assert(lsd.player() == nil and lsd.open_level('Nowhere') == false)"));  // no host: no player, no levels
+    scripts.stop();
+    scripts.clear_persistent();  // a new Play
+    scripts.start(w, {}, path_of, nullptr);
+    CHECK(scripts.run("assert(lsd.game_instance().score == nil)"));
+    scripts.stop();
+}
+
 // Event dispatchers: Call Event reaches every object's Custom Event; lsd.call reaches one.
 static void test_events() {
     using namespace lsd::script;
@@ -521,6 +539,7 @@ int main() {
     test_graph();
     test_events();
     test_traces();
+    test_game_instance();
     test_properties();
     test_user_types();
     test_custom_nodes();

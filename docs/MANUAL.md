@@ -330,8 +330,22 @@ can have a third-person camera (**Camera Distance**).
 ### Game Mode
 
 A **Game Mode** data asset, picked in World Settings, sets the player prefab, a Lua script that runs
-for the whole game (on an object called GameMode), a **HUD** UI document shown when the game starts
-and **Show Cursor** for menus.
+for the whole game (on an object called GameMode), a **Player Controller** script (on an object called
+PlayerController: the player's input and menus, apart from the body; `lsd.player()` is the Character it
+drives), a **HUD** UI document shown when the game starts and **Show Cursor** for menus.
+
+**Changing level** (Unreal's Open Level): `lsd.open_level("Level2")` loads another level after this
+frame. Data that must survive the change lives in kept tables, plain data only (numbers, strings,
+booleans, tables):
+
+| Lua | Unreal |
+| --- | --- |
+| `lsd.game_instance()` | Game Instance |
+| `lsd.player_state()` | Player State |
+| `lsd.subsystem("Quests")` | a Game Instance Subsystem |
+
+They last for the whole Play (a new Play starts them empty); write to `lsd.save_game` to keep them
+between runs. In the editor, Stop always returns to the level you were editing.
 
 ---
 

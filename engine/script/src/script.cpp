@@ -217,6 +217,20 @@ end
 function lsd.after(seconds, fn) return add(seconds, fn, nil) end
 function lsd.every(seconds, fn) return add(seconds, fn, seconds) end
 function lsd.cancel(id) timers[id] = nil end
+-- Tables kept across level changes for the whole Play (plain data only: they travel as JSON).
+local function kept(key)
+  local t = lsd.__persist[key]
+  if type(t) ~= "table" then t = {} lsd.__persist[key] = t end
+  return t
+end
+function lsd.game_instance() return kept("game_instance") end
+function lsd.player_state() return kept("player_state") end
+function lsd.subsystem(name)
+  local all = kept("subsystems")
+  local t = all[name]
+  if type(t) ~= "table" then t = {} all[name] = t end
+  return t
+end
 function lsd._tick()
   local now, due = lsd.time(), {}
   for id, t in pairs(timers) do if now >= t.at then due[#due + 1] = id end end
@@ -455,6 +469,18 @@ struct Api {
         push_vec3(L, point);
         push_vec3(L, normal);
         return 7;
+    }
+    static int open_level(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.open_level && host.open_level(host.user, luaL_checkstring(L, 1)));
+        return 1;
+    }
+    static int player(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const world::Entity e = host.player ? host.player(host.user) : world::Entity{};
+        if (e.valid() && world(L).alive(e)) lua_pushnumber(L, e.value);
+        else lua_pushnil(L);
+        return 1;
     }
     static int sphere_trace(lua_State* L) { return trace(L, 0, {static_cast<f32>(luaL_checknumber(L, 7)), 0, 0}); }
     static int box_trace(lua_State* L) { return trace(L, 1, check_vec3(L, 7)); }
@@ -1082,11 +1108,32 @@ struct Api {
     }
 };
 
-ScriptSystem::~ScriptSystem() { stop(); }
+ScriptSystem::~ScriptSystem() {
+    stop();
+    clear_persistent();
+}
+
+void ScriptSystem::clear_persistent() {
+    delete[] persistent_;
+    persistent_ = nullptr;
+}
 
 void ScriptSystem::stop() {
     if (g_debugged == this) g_debugged = nullptr;
     stepping_ = DebugAction::Continue;
+    if (lua_) {  // keep the game instance for the next start (a level change)
+        lua_getglobal(lua_, "lsd");
+        lua_getfield(lua_, -1, "__persist");
+        std::string json;
+        if (lua_istable(lua_, -1) && !write_json(lua_, -1, json, 0)) {
+            LSD_LOG_WARN("script", "game_instance / player_state / subsystem hold something that cannot be kept (a function?): they start empty in the next level");
+            json.clear();
+        }
+        lua_pop(lua_, 2);
+        clear_persistent();
+        persistent_ = new char[json.size() + 1];
+        std::memcpy(persistent_, json.c_str(), json.size() + 1);
+    }
     if (lua_) lua_close(lua_);
     lua_ = nullptr;
     world_ = nullptr;
@@ -1123,7 +1170,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
-        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
@@ -1142,6 +1189,12 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     }
     lua_getfield(lua_, -1, "log");
     lua_setglobal(lua_, "print");  // print() goes to the Output Log too
+    const char* kept = persistent_;
+    if (!kept || !*kept || !read_json(lua_, kept, 0) || !lua_istable(lua_, -1)) {
+        lua_settop(lua_, 1);
+        lua_newtable(lua_);
+    }
+    lua_setfield(lua_, -2, "__persist");
     lua_setglobal(lua_, "lsd");
     run(kPrelude, "=lsd prelude");
     update_hook();  // breakpoints set before Play

@@ -1415,6 +1415,22 @@ int main(int argc, char** argv) {
             }
         }
 
+        // lsd.open_level: another level inside the same Play (Unreal's Open Level). Stop still reverts to the
+        // level being edited (play_snapshot); game_instance / player_state travel with the scripts.
+        // shortcut: the new level's baked lighting (BuiltData) is not loaded; load it here when travel matters for looks.
+        if (char travel_to[300]; state.playing && play.take_level_request(travel_to, sizeof travel_to)) {
+            play.stop();
+            state.kept_count = 0;  // Keep Simulation Changes names objects of the old level
+            if (lsd::world::load_level_file(world, travel_to)) {
+                play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch, true);
+                animations->reset();
+                effects->reset();
+                LSD_LOG_INFO("editor", "Opened %s (open_level)", travel_to);
+            } else {
+                LSD_LOG_ERROR("editor", "open_level: could not read %s", travel_to);
+                state.stop_requested = true;
+            }
+        }
         if (state.play_requested && !state.playing) {
             lsd::world::save_level(world, play_snapshot);
             play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);

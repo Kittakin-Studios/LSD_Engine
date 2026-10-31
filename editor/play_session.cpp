@@ -373,8 +373,10 @@ bool PlaySession::rebind(const char* action, const char* from, const char* to) {
     return true;
 }
 
-void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch) {
+void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel) {
     stop();
+    if (!travel) scripts_.clear_persistent();  // a new Play: a fresh game instance
+    level_request_[0] = '\0';
     registry_ = &registry;
     world_ = &world;
     meshes_ = &meshes;
@@ -584,6 +586,17 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         }
         return written;
     };
+    host.open_level = [](void* user, const char* name) {
+        auto& self = *static_cast<PlaySession*>(user);
+        const asset::AssetRecord* r = self.find_asset(asset::AssetType::Level, name);
+        if (!r) {
+            LSD_LOG_WARN("play", "open_level: no level named '%s'", name);
+            return false;
+        }
+        self.registry_->source_path(*r, self.level_request_, sizeof self.level_request_);
+        return true;
+    };
+    host.player = [](void* user) { return static_cast<const PlaySession*>(user)->character_; };
     host.table_path = [](void* user, const char* name, char* out, usize capacity) {
         const auto& self = *static_cast<const PlaySession*>(user);
         const asset::AssetRecord* r = self.find_asset(asset::AssetType::Table, name);
@@ -827,6 +840,13 @@ world::Entity PlaySession::create_spawn(world::World& world, const char* name, V
     return e;
 }
 
+bool PlaySession::take_level_request(char* path, usize capacity) {
+    if (!level_request_[0]) return false;
+    std::snprintf(path, capacity, "%s", level_request_);
+    level_request_[0] = '\0';
+    return true;
+}
+
 world::Entity PlaySession::spawn(const char* name, Vec3 position) {
     world::World& world = *world_;
     const world::Entity root = create_spawn(world, name, position);
@@ -908,6 +928,9 @@ void PlaySession::start_game_mode(world::World& world) {
         if (!player.valid() || !world.get<world::Character>(player)) LSD_LOG_WARN("play", "Game Mode: the player prefab is missing or has no Character component");
     }
     if (mode.script[0]) std::snprintf(world.add<world::Script>(world.create("GameMode"))->script, sizeof(world::Script::script), "%s", mode.script);
+    if (mode.player_controller[0]) {  // Unreal's Player Controller: lives as long as the level, whatever body the player has
+        std::snprintf(world.add<world::Script>(world.create("PlayerController"))->script, sizeof(world::Script::script), "%s", mode.player_controller);
+    }
     asset::Guid hud;
     const asset::AssetRecord* r = mode.hud[0] && asset::parse_guid(mode.hud, hud) ? registry_->find(hud) : nullptr;
     if (r && ui_) {

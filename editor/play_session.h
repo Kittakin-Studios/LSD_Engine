@@ -37,7 +37,8 @@ public:
     PlaySession(const PlaySession&) = delete;
     PlaySession& operator=(const PlaySession&) = delete;
 
-    void start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch);
+    // `travel`: a level change inside the same Play (lsd.open_level): game_instance / player_state are kept.
+    void start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel = false);
     // Moves the player and simulated objects; writes their new transforms into `world` (Stop reverts them).
     void update(world::World& world, const input::InputFrame& frame, f32 dt);
     void stop();
@@ -66,6 +67,8 @@ public:
     void set_user_settings(GameUserSettings* settings) { user_settings_ = settings; }
     void set_localization(asset::Localization* localization) { localization_ = localization; }
     bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
+    // A level lsd.open_level asked for (its file path), once; the caller stops, loads it and starts with travel = true.
+    bool take_level_request(char* path, usize capacity);
     // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
     void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
@@ -123,6 +126,7 @@ private:
     input::InputMappingContext context_;  // the Character's controls, the player's rebinds applied
     char key_held_[32] = "";
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
+    char level_request_[300] = "";
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker
     bool wired_ = false;
