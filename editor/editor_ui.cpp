@@ -912,11 +912,26 @@ void update_camera(EditorState& s, bool hovered, int index) {
 // Returns true while the mouse is over or dragging this viewport's gizmo.
 // A Spline's points in world space.
 u32 spline_world_points(const world::World& w, Entity e, Vec3* out) {
-    const auto* spline = w.get<world::Spline>(e);
-    if (!spline) return 0;
-    const Mat4 m = w.world_matrix(e);
-    for (u32 i = 0; i < spline->points.count; ++i) out[i] = transform_point(m, spline->points[i]);
-    return spline->points.count;
+    Vec3 tangents[32];
+    bool closed = false;
+    return world::spline_world_curve(w, e, out, tangents, closed);
+}
+
+// Where the tangent handle of point `k` sits (world): a third of its tangent ahead, like a Bezier control point.
+Vec3 spline_handle(const world::World& w, Entity e, u32 k) {
+    Vec3 points[32], tangents[32];
+    bool closed = false;
+    const u32 n = world::spline_world_curve(w, e, points, tangents, closed);
+    if (k >= n) return {};
+    return points[k] + world::spline_tangent(points, n, closed, static_cast<f32>(k), tangents) * (1.0f / 3.0f);
+}
+
+// Is the mouse on the selected point's tangent handle?
+bool spline_handle_at(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVec2 mouse) {
+    if (s.spline_point < 0 || !s.world->alive(s.selected) || !s.world->get<world::Spline>(s.selected)) return false;
+    ImVec2 p;
+    return project(view_proj, spline_handle(*s.world, s.selected, static_cast<u32>(s.spline_point)), pos, size, p) &&
+           (p.x - mouse.x) * (p.x - mouse.x) + (p.y - mouse.y) * (p.y - mouse.y) < 64.0f;
 }
 
 // The selected Spline's point under the mouse, or -1.
@@ -938,15 +953,38 @@ bool draw_spline_point_gizmo(EditorState& s, const Mat4& view, const Mat4& proj,
         return false;
     }
     const Mat4 world = s.world->world_matrix(s.selected);
-    Mat4 m = translation(transform_point(world, spline->points[static_cast<u32>(s.spline_point)]));
+    const u32 k = static_cast<u32>(s.spline_point);
+    // Alt-drag the point: a copy is added after it and dragged instead (Unreal's Alt-drag to add points).
+    if (!s.spline_handle && ImGui::GetIO().KeyAlt && ImGuizmo::IsOver() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && spline->points.count < 32) {
+        const Vec3 copy = spline->points[k];
+        spline->points.push_back(copy);
+        for (u32 i = spline->points.count - 1; i > k + 1; --i) spline->points[i] = spline->points[i - 1];
+        spline->points[k + 1] = copy;
+        if (spline->tangents.count > k + 1) {  // keep tangents lined up with their points
+            spline->tangents.push_back(Vec3{});
+            for (u32 i = spline->tangents.count - 1; i > k + 1; --i) spline->tangents[i] = spline->tangents[i - 1];
+            spline->tangents[k + 1] = Vec3{};
+        }
+        s.spline_point = static_cast<i32>(k + 1);
+        edited(s, "Add Spline Point");
+        return true;
+    }
+    Mat4 m = translation(s.spline_handle ? spline_handle(*s.world, s.selected, k) : transform_point(world, spline->points[k]));
     const f32 snap[3] = {s.settings.snap_move, s.settings.snap_move, s.settings.snap_move};
     ImGuizmo::SetOrthographic(s.camera.view != ViewType::Perspective);
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
     ImGuizmo::SetRect(pos.x, pos.y, size.x, size.y);
     ImGui::PushID(index + 100);
-    if (ImGuizmo::Manipulate(view.m, proj.m, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, m.m, nullptr, s.settings.snap ? snap : nullptr)) {
-        spline->points[static_cast<u32>(s.spline_point)] = transform_point(affine_inverse(world), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
-        edited(s, "Move Spline Point");
+    if (ImGuizmo::Manipulate(view.m, proj.m, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, m.m, nullptr, s.settings.snap && !s.spline_handle ? snap : nullptr)) {
+        const Vec3 local = transform_point(affine_inverse(world), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        if (s.spline_handle) {  // the handle is a third of the tangent ahead of its point
+            while (spline->tangents.count <= k) spline->tangents.push_back(Vec3{});
+            spline->tangents[k] = (local - spline->points[k]) * 3.0f;
+            edited(s, "Move Spline Tangent");
+        } else {
+            spline->points[k] = local;
+            edited(s, "Move Spline Point");
+        }
     }
     const bool busy = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
     ImGui::PopID();
@@ -1070,8 +1108,9 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
         const Entity e = s.world->owner(spline_type, i);
         if (s.world->hidden_in_hierarchy(e)) continue;
         const auto* spline = static_cast<const world::Spline*>(s.world->at(spline_type, i));
-        Vec3 points[32];
-        const u32 n = spline_world_points(*s.world, e, points);
+        Vec3 points[32], tangents[32];
+        bool closed = false;
+        const u32 n = world::spline_world_curve(*s.world, e, points, tangents, closed);
         const bool selected = s.is_selected(e);
         const ImU32 color = selected ? u32_color(t.details_tab_active) : IM_COL32(120, 200, 255, 220);
         const u32 samples = world::spline_segments(n, spline->closed) * 12;
@@ -1079,7 +1118,7 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
         bool have_previous = false;
         for (u32 k = 0; k <= samples; ++k) {
             ImVec2 p;
-            const bool visible = project(view_proj, world::spline_point(points, n, spline->closed, static_cast<f32>(k) / 12.0f), pos, size, p);
+            const bool visible = project(view_proj, world::spline_point(points, n, spline->closed, static_cast<f32>(k) / 12.0f, tangents), pos, size, p);
             if (visible && have_previous) dl->AddLine(previous, p, color, 2.0f);
             previous = p;
             have_previous = visible;
@@ -1091,6 +1130,11 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
             const bool active = s.selected == e && s.spline_point == static_cast<i32>(k);
             if (active) dl->AddRectFilled(ImVec2(p.x - 6, p.y - 6), ImVec2(p.x + 6, p.y + 6), IM_COL32(255, 255, 255, 255));
             dl->AddRect(ImVec2(p.x - 6, p.y - 6), ImVec2(p.x + 6, p.y + 6), color, 0.0f, 0, 2.0f);
+            ImVec2 h;  // the selected point's tangent handle: a line out to a dot
+            if (active && project(view_proj, spline_handle(*s.world, e, k), pos, size, h)) {
+                dl->AddLine(p, h, IM_COL32(255, 255, 255, 200), 1.5f);
+                dl->AddCircleFilled(h, 5.0f, s.spline_handle ? IM_COL32(255, 255, 255, 255) : color);
+            }
         }
     }
     // Lights: directional and spot lights show where they point; a selected point / spot light its range.
@@ -1314,11 +1358,16 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     ImVec2& marquee_start = marquee_start_by_view[index];
     const i32 clicked_point = ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy ? spline_point_at(s, view_proj, pos, size, io.MousePos) : -1;
     const bool clicked_pivot = clicked_point < 0 && ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy && joint_pivot_at(s, view_proj, pos, size, io.MousePos);
-    if (clicked_point >= 0) s.spline_point = clicked_point;  // the gizmo now moves that point
-    else if (clicked_pivot) s.joint_pivot = true;          // the gizmo now moves the joint's pivot
-    else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy) {
+    const bool clicked_handle = clicked_point < 0 && !clicked_pivot && ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy &&
+                                spline_handle_at(s, view_proj, pos, size, io.MousePos);
+    if (clicked_point >= 0 || clicked_handle) {  // the gizmo now moves that point, or its tangent handle
+        if (clicked_point >= 0) s.spline_point = clicked_point;
+        s.spline_handle = clicked_handle;
+    } else if (clicked_pivot) {
+        s.joint_pivot = true;  // the gizmo now moves the joint's pivot
+    } else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy) {
         const Entity hit = pick(s, view_proj, pos, size, io.MousePos);
-        s.joint_pivot = false;  // a click elsewhere: the gizmo goes back to the object
+        s.joint_pivot = s.spline_handle = false;  // a click elsewhere: the gizmo goes back to the object
         if (io.KeyCtrl) add_to_selection(s, hit, true);
         else if (io.KeyShift) add_to_selection(s, hit, false);
         else select(s, hit);
@@ -2456,7 +2505,7 @@ void draw_entity_details(EditorState& s) {
         ImGui::PushID(types[i]->name);
         bool keep = true;
         if (ImGui::CollapsingHeader(types[i]->name, i == 0 ? nullptr : &keep, ImGuiTreeNodeFlags_DefaultOpen)) {
-            static u8 before[8192];  // PrefabInstance with its override list is ~4 KB
+            static u8 before[65536];  // the biggest component: Instanced Static Mesh with 1024 copies, ~37 KB
             LSD_ASSERT(types[i]->size <= sizeof before);
             g_details_type = types[i];
             std::memcpy(before, component, types[i]->size);
@@ -2473,12 +2522,19 @@ void draw_entity_details(EditorState& s) {
                     for (u32 k = points.count; k > after + 1; --k) points[k] = points[k - 1];
                     points[after + 1] = next;
                     ++points.count;
+                    auto& tangents = static_cast<world::Spline*>(component)->tangents;
+                    if (tangents.count > after + 1 && tangents.count < tangents.capacity()) {  // keep them lined up: the new point's is automatic
+                        for (u32 k = tangents.count; k > after + 1; --k) tangents[k] = tangents[k - 1];
+                        tangents[after + 1] = Vec3{};
+                        ++tangents.count;
+                    }
                     s.spline_point = static_cast<i32>(after + 1);
                     edited(s, "Add Spline Point");
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Remove Point") && has_point && points.count > 2) {
                     points.remove(static_cast<u32>(s.spline_point));
+                    static_cast<world::Spline*>(component)->tangents.remove(static_cast<u32>(s.spline_point));  // no-op past its end
                     s.spline_point = -1;
                     edited(s, "Remove Spline Point");
                 }

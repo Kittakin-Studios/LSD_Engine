@@ -518,32 +518,22 @@ struct Api {
     }
     static int overlap_sphere(lua_State* L) { return overlap(L, 0, {static_cast<f32>(luaL_checknumber(L, 4)), 0, 0}); }
     static int overlap_box(lua_State* L) { return overlap(L, 1, check_vec3(L, 4)); }
-    // The Spline's points in world space; 0 if the object has none.
-    static u32 spline_points(lua_State* L, Vec3* out, bool& closed) {
-        const world::Entity e = live_entity(L, 1);
-        const auto* spline = world(L).get<world::Spline>(e);
-        if (!spline) return 0;
-        const Mat4 m = world(L).world_matrix(e);
-        for (u32 i = 0; i < spline->points.count; ++i) out[i] = transform_point(m, spline->points[i]);
-        closed = spline->closed;
-        return spline->points.count;
-    }
     static int spline_point(lua_State* L) {
-        Vec3 points[32];
+        Vec3 points[32], tangents[32];
         bool closed = false;
-        const u32 n = spline_points(L, points, closed);
+        const u32 n = world::spline_world_curve(world(L), live_entity(L, 1), points, tangents, closed);
         if (n == 0) luaL_argerror(L, 1, "has no Spline");
         Vec3 tangent;
-        push_vec3(L, world::spline_at_distance(points, n, closed, static_cast<f32>(luaL_checknumber(L, 2)), &tangent));
+        push_vec3(L, world::spline_at_distance(points, n, closed, static_cast<f32>(luaL_checknumber(L, 2)), &tangent, tangents));
         const f32 len = length(tangent);
         push_vec3(L, len > 0.0f ? tangent * (1.0f / len) : Vec3{1, 0, 0});
         return 6;
     }
     static int spline_length(lua_State* L) {
-        Vec3 points[32];
+        Vec3 points[32], tangents[32];
         bool closed = false;
-        const u32 n = spline_points(L, points, closed);
-        lua_pushnumber(L, n ? world::spline_length(points, n, closed) : 0.0);
+        const u32 n = world::spline_world_curve(world(L), live_entity(L, 1), points, tangents, closed);
+        lua_pushnumber(L, n ? world::spline_length(points, n, closed, tangents) : 0.0);
         return 1;
     }
     static int play_sound(lua_State* L) {

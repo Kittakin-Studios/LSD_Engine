@@ -75,6 +75,7 @@ struct EditorState {
     // `selection` holds every selected entity, primary included.
     world::Entity selected;
     i32 spline_point = -1;  // selected point of the selected object's Spline (the gizmo moves it); -1 = none
+    bool spline_handle = false;  // with spline_point: the gizmo moves that point's tangent handle
     bool joint_pivot = false;  // the gizmo moves the selected object's Physics Joint pivot (click its yellow ring)
     static constexpr u32 kMaxSelection = 1024;
     world::Entity selection[kMaxSelection];

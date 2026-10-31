@@ -201,7 +201,10 @@ Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `
   its children too), then drag the prefab in as often as you like. Edit one copy and **Apply to
   Prefab** (Details) to update the prefab; per-copy changes are
   remembered as overrides (**Revert to Prefab** in Details).
-- **Splines**: place a Spline, click a point to move it with the gizmo, Add / Remove Point in Details.
+- **Splines**: place a Spline, click a point to move it with the gizmo, Add / Remove Point in Details;
+  **Alt-drag** a point to add one after it; the selected point shows a **tangent handle** (drag it to
+  bend the curve there; Tangents in Details, zero = automatic). **Spline Meshes** (Add Component) puts
+  copies of a mesh every Spacing metres along it, turned along the curve: fences, rails, lamp posts.
   A **Spline Follower** moves an object along it (moving platforms, patrols).
 - **World Settings** (Window menu): kill height, gravity, exposure, the Game Mode and the navmesh
   settings for this level.

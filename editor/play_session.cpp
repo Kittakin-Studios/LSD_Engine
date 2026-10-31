@@ -1019,10 +1019,10 @@ void PlaySession::update_followers(world::World& world, f32 dt) {
         const auto* follower = world.get<world::SplineFollower>(f.entity);
         const auto* spline = world.alive(f.spline) ? world.get<world::Spline>(f.spline) : nullptr;
         if (!follower || !spline || spline->points.count < 2) continue;
-        Vec3 points[32];
-        const Mat4 m = world.world_matrix(f.spline);
-        for (u32 k = 0; k < spline->points.count; ++k) points[k] = transform_point(m, spline->points[k]);
-        const f32 total = world::spline_length(points, spline->points.count, spline->closed);
+        Vec3 points[32], tangents[32];
+        bool closed = false;
+        world::spline_world_curve(world, f.spline, points, tangents, closed);
+        const f32 total = world::spline_length(points, spline->points.count, spline->closed, tangents);
         f.distance += follower->speed * f.direction * dt;
         if (follower->mode == 1) {  // Loop
             f.distance = total > 0.0f ? std::fmod(f.distance, total) : 0.0f;
@@ -1034,7 +1034,7 @@ void PlaySession::update_followers(world::World& world, f32 dt) {
             f.distance = f.distance < 0.0f ? 0.0f : f.distance > total ? total : f.distance;
         }
         Vec3 tangent;
-        const Vec3 at = world::spline_at_distance(points, spline->points.count, spline->closed, f.distance, &tangent);
+        const Vec3 at = world::spline_at_distance(points, spline->points.count, spline->closed, f.distance, &tangent, tangents);
         Vec3 t, rotation, scale;
         decompose_trs(world.world_matrix(f.entity), t, rotation, scale);
         if (follower->face_forward) {

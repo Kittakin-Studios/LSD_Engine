@@ -320,6 +320,27 @@ struct Spline {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Points the curve passes through, in this object's local space") List<Vec3, 32> points = {2, {Vec3{0, 0, 0}, Vec3{4, 0, 0}}};
     LSD_PROPERTY(Edit, Tooltip = "Joins the last point back to the first") bool closed = false;
+    LSD_PROPERTY(Edit, Tooltip = "Per point (same order), local: the curve's direction and pull there. (0, 0, 0) or missing = automatic. Drag the handle of a selected point")
+    List<Vec3, 32> tangents;
+};
+
+// The Spline's tangents as an array lined up with its points (missing ones automatic): pass to the spline_* math.
+inline void spline_tangents(const Spline& s, Vec3 out[32]) {
+    for (u32 i = 0; i < 32; ++i) out[i] = i < s.tangents.count ? s.tangents[i] : Vec3{};
+}
+
+// Copies of a mesh placed along this object's Spline (Unreal's spline-placed meshes: fences, rails,
+// lamp posts). They are kept in an Instanced Static Mesh on the same object, rebuilt when the spline changes.
+LSD_STRUCT(Component, Category = "Rendering")
+struct SplineMeshes {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Tooltip = "Distance between copies along the curve") f32 spacing = 2.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Turn each copy to face along the curve") bool follow_curve = true;
+    LSD_PROPERTY(Edit, Tooltip = "Scale of each copy") Vec3 scale{1.0f, 1.0f, 1.0f};
+    LSD_PROPERTY(Edit) bool cast_shadows = true;
 };
 
 // Moves this object along a Spline in Play. With collision it is a moving platform the player rides.

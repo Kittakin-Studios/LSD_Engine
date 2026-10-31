@@ -233,6 +233,26 @@ static void test_spline() {
     CHECK(around > 3.9f && around < 4.6f);
     Spline s;
     CHECK(s.points.count == 2 && s.points[1].x == 4.0f);  // a new Spline starts as a 4 m line
+
+    // Tangent handles: a sideways tangent at the start bends the line, the ends stay put.
+    const Vec3 bent[2] = {{0, 4, 0}, {}};
+    CHECK(length(spline_point(line, 3, false, 0.0f, bent) - line[0]) < 1e-5f);
+    CHECK(spline_point(line, 3, false, 0.5f, bent).y > 0.3f);
+    CHECK(std::fabs(spline_point(line, 3, false, 0.5f).y) < 1e-5f);  // no tangents: straight as before
+
+    // Spline Meshes: copies every 2 m along a straight 4 m spline, facing along it.
+    HeapAllocator heap("spline");
+    World w(heap);
+    const Entity fence = w.create("Fence");
+    w.add<Spline>(fence);
+    w.add<SplineMeshes>(fence)->spacing = 2.0f;
+    update_spline_meshes(w);
+    const auto* copies = w.get<InstancedStaticMesh>(fence);
+    CHECK(copies && copies->instances.count == 3);
+    CHECK(copies && std::fabs(copies->instances[1].position.x - 2.0f) < 0.05f && std::fabs(copies->instances[2].position.x - 4.0f) < 0.05f);
+    w.get<SplineMeshes>(fence)->spacing = 1.0f;  // a change rebuilds them
+    update_spline_meshes(w);
+    CHECK(w.get<InstancedStaticMesh>(fence)->instances.count == 5);
 }
 
 static void test_curve() {
