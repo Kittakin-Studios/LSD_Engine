@@ -84,6 +84,7 @@ private:
         u32 body;
         Vec3 scale;
         Vec3 centre;  // bounds centre in the entity's local space (unscaled)
+        bool kinematic = false;  // follows its Transform instead of writing to it
     };
 
     static constexpr u32 kMaxBodies = 8192;

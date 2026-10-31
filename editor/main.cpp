@@ -980,6 +980,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputAction>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::PhysicalMaterial>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserEnum>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());

@@ -22,6 +22,8 @@
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -39,15 +41,20 @@ namespace lsd::physics {
 
 namespace {
 
-// Two object layers: things that never move, and everything else.
+// Object layers: things that never move, everything else, and debris (moving, but hitting only the
+// static level: Unreal's Debris preset, so rubble neither blocks the player nor piles up physics work).
 constexpr JPH::ObjectLayer kStaticLayer = 0;
 constexpr JPH::ObjectLayer kMovingLayer = 1;
+constexpr JPH::ObjectLayer kDebrisLayer = 2;
 const JPH::BroadPhaseLayer kStaticBroadPhase(0);
 const JPH::BroadPhaseLayer kMovingBroadPhase(1);
 
 class ObjectPairFilter final : public JPH::ObjectLayerPairFilter {
 public:
-    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override { return a == kMovingLayer || b == kMovingLayer; }
+    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
+        if (a == kDebrisLayer || b == kDebrisLayer) return a == kStaticLayer || b == kStaticLayer;
+        return a == kMovingLayer || b == kMovingLayer;
+    }
 };
 
 class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
@@ -61,7 +68,10 @@ public:
 
 class ObjectVsBroadPhaseFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
 public:
-    bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broad) const override { return layer == kMovingLayer || broad == kMovingBroadPhase; }
+    bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broad) const override {
+        if (layer == kDebrisLayer) return broad == kStaticBroadPhase;
+        return layer == kMovingLayer || broad == kMovingBroadPhase;
+    }
 };
 
 void trace(const char* format, ...) {
@@ -168,6 +178,31 @@ PhysicsWorld::~PhysicsWorld() {
 u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     JPH::RefConst<JPH::Shape> shape;
     switch (desc.shape) {
+        case Shape::Mesh:
+            if (desc.motion != Motion::Dynamic && desc.points && desc.indices && desc.index_count >= 3) {
+                JPH::VertexList vertices;
+                vertices.reserve(desc.point_count);
+                for (u32 i = 0; i < desc.point_count; ++i) vertices.push_back(JPH::Float3(desc.points[i].x, desc.points[i].y, desc.points[i].z));
+                JPH::IndexedTriangleList triangles;
+                triangles.reserve(desc.index_count / 3);
+                for (u32 i = 0; i + 2 < desc.index_count; i += 3) triangles.push_back(JPH::IndexedTriangle(desc.indices[i], desc.indices[i + 1], desc.indices[i + 2]));
+                const JPH::ShapeSettings::ShapeResult result = JPH::MeshShapeSettings(vertices, triangles).Create();
+                if (result.IsValid()) shape = result.Get();
+                else LSD_LOG_WARN("physics", "Mesh collision failed (%s): using a convex hull", result.GetError().c_str());
+            }
+            if (shape) break;
+            [[fallthrough]];  // moving bodies cannot use triangles: their convex hull instead
+        case Shape::Convex:
+            if (desc.points && desc.point_count >= 4) {
+                JPH::Array<JPH::Vec3> points;
+                points.reserve(desc.point_count);
+                for (u32 i = 0; i < desc.point_count; ++i) points.push_back(to_jolt(desc.points[i]));
+                const JPH::ShapeSettings::ShapeResult result = JPH::ConvexHullShapeSettings(points).Create();
+                if (result.IsValid()) shape = result.Get();
+                else LSD_LOG_WARN("physics", "Convex collision failed (%s): using a box", result.GetError().c_str());
+            }
+            if (shape) break;
+            [[fallthrough]];
         case Shape::Box: {
             // Flat boxes (planes) still need some thickness; the convex radius must fit inside.
             const JPH::Vec3 half = JPH::Vec3::sMax(to_jolt(desc.half_extents), JPH::Vec3::sReplicate(0.01f));
@@ -183,7 +218,8 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     const JPH::EMotionType motion = desc.motion == Motion::Static ? JPH::EMotionType::Static
                                   : desc.motion == Motion::Dynamic ? JPH::EMotionType::Dynamic
                                                                    : JPH::EMotionType::Kinematic;
-    JPH::BodyCreationSettings settings(shape, position, rotation, motion, desc.motion == Motion::Static ? kStaticLayer : kMovingLayer);
+    const JPH::ObjectLayer layer = desc.motion == Motion::Static ? kStaticLayer : desc.debris ? kDebrisLayer : kMovingLayer;
+    JPH::BodyCreationSettings settings(shape, position, rotation, motion, layer);
     settings.mFriction = desc.friction;
     settings.mUserData = impl_->bodies.size();  // our index, for contacts and ray hits
     settings.mRestitution = desc.restitution;

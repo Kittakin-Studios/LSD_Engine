@@ -103,6 +103,44 @@ static void test_joints() {
     w.step(dt);
 }
 
+// Mesh collision (a ramp's triangles), a convex hull falling onto it, and debris passing through bodies.
+static void test_shapes() {
+    PhysicsWorld w;
+    w.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));  // floor
+    // A wedge: 2 m long, rising to 1 m at +X; its sloped top is what a box test would miss.
+    const Vec3 ramp_points[6] = {{-1, -1, 0}, {1, -1, 0}, {1, -1, 1}, {-1, 1, 0}, {1, 1, 0}, {1, 1, 1}};
+    const u32 ramp_tris[] = {0, 1, 2, 3, 5, 4, 0, 5, 3, 0, 2, 5, 1, 5, 2, 1, 4, 5, 0, 4, 1, 0, 3, 4};  // counter-clockwise from outside
+    BodyDesc ramp;
+    ramp.shape = Shape::Mesh;
+    ramp.transform = translation({0, 0, 0});
+    ramp.points = ramp_points;
+    ramp.point_count = 6;
+    ramp.indices = ramp_tris;
+    ramp.index_count = sizeof ramp_tris / sizeof ramp_tris[0];
+    w.add_body(ramp);
+    RayHit hit;
+    CHECK(w.raycast({0, 0, 5}, {0, 0, -1}, 10, hit) && std::fabs(hit.point.z - 0.5f) < 0.05f && hit.normal.x < -0.4f && hit.normal.z > 0.8f);  // the slope, not a box top at 1
+
+    // A convex hull (a small pyramid) dropped above the floor comes to rest on it.
+    const Vec3 pyramid[5] = {{-0.3f, -0.3f, -0.2f}, {0.3f, -0.3f, -0.2f}, {0.3f, 0.3f, -0.2f}, {-0.3f, 0.3f, -0.2f}, {0, 0, 0.3f}};
+    BodyDesc rock;
+    rock.shape = Shape::Convex;
+    rock.motion = Motion::Dynamic;
+    rock.transform = translation({5, 0, 2});
+    rock.points = pyramid;
+    rock.point_count = 5;
+    const u32 r = w.add_body(rock);
+    // Debris above a dynamic crate falls through it to the floor.
+    const u32 crate = w.add_body(box({10, 0, 0.5f}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    BodyDesc pebble = box({10, 0, 3}, {0.1f, 0.1f, 0.1f}, Motion::Dynamic);
+    pebble.debris = true;
+    const u32 p = w.add_body(pebble);
+    for (int i = 0; i < 240; ++i) w.step(1.0f / 60.0f);
+    CHECK(std::fabs(centre(w, r).z - 0.2f) < 0.1f);   // resting on its base
+    CHECK(centre(w, p).z < 0.3f);                      // through the crate, on the floor
+    CHECK(std::fabs(centre(w, crate).z - 0.5f) < 0.05f);  // the crate never noticed
+}
+
 int main() {
     PhysicsWorld world;
     world.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));        // floor, top at z = 0
@@ -219,6 +257,7 @@ int main() {
     CHECK(world.character_feet().z > before + 0.8f);
 
     test_joints();
+    test_shapes();
     if (g_failures == 0) std::printf("All physics tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

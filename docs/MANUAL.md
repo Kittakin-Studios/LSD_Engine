@@ -354,8 +354,14 @@ between runs. In the editor, Stop always returns to the level you were editing.
 
 ## 8. Physics
 
-Jolt Physics. Meshes with **Collision** ticked and Blocking Volumes are static; add a **Rigid Body**
-component to simulate an object (box, sphere or capsule; mass, friction, bounciness). **Physics
+Jolt Physics. Meshes with **Collision** ticked and Blocking Volumes are static; a mesh's **Collision
+Shape** is its bounds (Box, fast) or its own triangles (**Mesh**: arches, ramps, stairs; Unreal's Use
+Complex As Simple). Add a **Rigid Body** component to simulate an object (box, sphere, capsule or
+**Convex** hull of the mesh; mass, friction, bounciness). A **Physical Material** data asset (friction,
+bounciness) picked on a mesh or Rigid Body sets its surface: ice, rubber, mud. Rigid Body
+**Collision Preset**: Block All, or **Debris** (hits only the static level: not the player or other
+objects). **Kinematic** Rigid Bodies follow their Transform (scripts, timelines) and push what they
+meet without being pushed. **Physics
 Joint** links two objects (fixed, hinge, ball, slider; limits; motors: doors, chains, rotating
 platforms). Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
 capsule (`lsd.sphere_trace` / `box_trace` / `capsule_trace`) or list what overlaps a shape

@@ -5,7 +5,9 @@
 
 namespace lsd::physics {
 
-enum class Shape : u8 { Box, Sphere, Capsule };
+// Mesh: the triangles themselves (static or kinematic only; Unreal's complex collision). Convex: the
+// tightest convex hull around the points (moving bodies too).
+enum class Shape : u8 { Box, Sphere, Capsule, Mesh, Convex };
 enum class Motion : u8 { Static, Dynamic, Kinematic };
 
 struct BodyDesc {
@@ -16,6 +18,12 @@ struct BodyDesc {
     f32 mass = 10.0f;  // kg, dynamic only
     f32 friction = 0.5f;
     f32 restitution = 0.0f;
+    // Mesh / Convex: points in the body's space (scale already applied); Mesh also takes triangles.
+    const Vec3* points = nullptr;
+    u32 point_count = 0;
+    const u32* indices = nullptr;
+    u32 index_count = 0;
+    bool debris = false;  // collides with static things only: not the player, not other moving bodies
 };
 
 struct CharacterDesc {

@@ -7,6 +7,10 @@
 #include "lsd/foundation/math.h"
 #include "lsd/render/mesh.h"
 
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 namespace lsd::editor {
 
 struct CachedMesh {
@@ -34,8 +38,17 @@ public:
     const CachedMesh* get(const char* key);
     void hot_reload();
 
+    // The mesh's positions and triangles on the CPU, for mesh and convex collision; read on first
+    // ask and kept until the next hot reload. Null if the mesh cannot be loaded.
+    struct Triangles {
+        std::vector<Vec3> points;
+        std::vector<u32> indices;
+    };
+    const Triangles* triangles(const char* key);
+
 private:
     bool load(CachedMesh& entry);
+    std::unordered_map<std::string, Triangles> triangles_;  // shortcut: std containers, editor-time collision data
 
     rhi::Device& device_;
     Allocator& allocator_;

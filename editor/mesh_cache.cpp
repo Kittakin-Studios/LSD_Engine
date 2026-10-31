@@ -107,6 +107,28 @@ bool MeshCache::load(CachedMesh& entry) {
     return true;
 }
 
+const MeshCache::Triangles* MeshCache::triangles(const char* key) {
+    if (const auto it = triangles_.find(key); it != triangles_.end()) return &it->second;
+    render::MeshData data;
+    asset::Guid guid;
+    if (!asset::parse_guid(key, guid)) {
+        if (!make_builtin(key, allocator_, data)) return nullptr;
+    } else {
+        const asset::AssetRecord* record = registry_.find(guid);
+        char compiled[300];
+        if (!record || record->type != asset::AssetType::Mesh || !asset::compile_mesh_asset(registry_, *record, data_dir_, allocator_, compiled, sizeof compiled) ||
+            !asset::load_compiled_mesh(compiled, allocator_, data, nullptr)) {
+            return nullptr;
+        }
+    }
+    Triangles& t = triangles_[key];
+    t.points.reserve(data.vertex_count);
+    for (u32 i = 0; i < data.vertex_count; ++i) t.points.push_back({data.vertices[i].position[0], data.vertices[i].position[1], data.vertices[i].position[2]});
+    t.indices.assign(data.indices, data.indices + data.index_count);
+    render::free_mesh(allocator_, data);
+    return &t;
+}
+
 const CachedMesh* MeshCache::get(const char* key) {
     for (const CachedMesh& m : meshes_) {
         if (std::strcmp(m.key, key) == 0) return m.failed ? nullptr : &m;
@@ -121,6 +143,7 @@ const CachedMesh* MeshCache::get(const char* key) {
 }
 
 void MeshCache::hot_reload() {
+    triangles_.clear();  // re-read on the next ask (a reimport may have changed them)
     for (CachedMesh& m : meshes_) m.failed = !load(m);
 }
 

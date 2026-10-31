@@ -23,6 +23,9 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drag a material from the Content Browser onto the object in the viewport, or pick it here") char material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Tints the material (white = as the material is)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "Blocks the player in Play") bool collision = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Box,Mesh", Tooltip = "Box: the bounds (fast). Mesh: the triangles themselves (arches, ramps, stairs; Unreal's Use Complex As Simple)")
+    u32 collision_shape = 0;
+    LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "The surface's friction and bounciness") char physical_material[33] = "";
 };
 
 // Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),
@@ -96,9 +99,22 @@ struct PlayerStart {
 LSD_STRUCT(Component, Category = "Physics")
 struct RigidBody {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Choice:Box,Sphere,Capsule", Tooltip = "Collision shape, fitted to the mesh bounds") u32 shape = 0;
+    LSD_PROPERTY(Edit, Widget = "Choice:Box,Sphere,Capsule,Convex", Tooltip = "Collision shape, fitted to the mesh bounds; Convex wraps the mesh's points") u32 shape = 0;
     LSD_PROPERTY(Edit, Units = "kg", Min = 0.01) f32 mass = 10.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 friction = 0.5f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "Friction and bounciness from a Physical Material (overrides the two above)") char physical_material[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Block All,Debris", Tooltip = "Debris hits only the static level: not the player, not other moving objects")
+    u32 collision_preset = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Moved by its Transform (scripts, timelines, animation), pushing what it meets; not pushed itself")
+    bool kinematic = false;
+};
+
+// Surface properties shared by many objects (Unreal's Physical Material): ice, rubber, mud.
+LSD_STRUCT(Category = "Physics")
+struct PhysicalMaterial {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Min = 0, Max = 2) f32 friction = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
 };
 

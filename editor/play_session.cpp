@@ -799,19 +799,48 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         }
         return;
     }
+    // The mesh's points (and triangles) around the bounds centre, scaled: for Mesh and Convex shapes.
+    std::vector<Vec3> points;
+    const MeshCache::Triangles* triangles = nullptr;
+    auto use_mesh_shape = [&](physics::BodyDesc& d, physics::Shape shape) {
+        triangles = mesh ? meshes_->triangles(mesh->mesh) : nullptr;
+        if (!triangles) return;
+        points.clear();
+        for (const Vec3& p : triangles->points) points.push_back(mul(p - centre, scale));
+        d.shape = shape;
+        d.points = points.data();
+        d.point_count = static_cast<u32>(points.size());
+        d.indices = triangles->indices.data();
+        d.index_count = static_cast<u32>(triangles->indices.size());
+    };
+    // A Physical Material asset overrides friction and bounciness.
+    // shortcut: read from disk per body at Play start; cache by GUID if levels get thousands of them.
+    auto apply_material = [&](physics::BodyDesc& d, const char* guid) {
+        world::PhysicalMaterial material;
+        if (!guid[0] || !load_asset(*registry_, guid, material)) return;
+        d.friction = material.friction;
+        d.restitution = material.bounciness;
+    };
     if (const auto* rigid = world.get<world::RigidBody>(e)) {
         if (simulated_count_ == sizeof simulated_ / sizeof simulated_[0]) return;
+        const physics::Motion motion = rigid->kinematic ? physics::Motion::Kinematic : physics::Motion::Dynamic;
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi,
-                                          rigid->shape, physics::Motion::Dynamic, scale, centre);
+                                          rigid->shape == 3 ? 0 : rigid->shape, motion, scale, centre);
+        if (rigid->shape == 3) use_mesh_shape(d, physics::Shape::Convex);
         d.mass = rigid->mass;
         d.friction = rigid->friction;
         d.restitution = rigid->bounciness;
+        d.debris = rigid->collision_preset == 1;
+        apply_material(d, rigid->physical_material);
         const u32 body = add_body(e, d);
-        simulated_[simulated_count_++] = {e, body, scale, centre};
+        simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic};
         return;
     }
     if (cached && mesh->collision) {
-        add_body(e, fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre));
+        physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
+        if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
+        apply_material(d, mesh->physical_material);
+        add_body(e, d);
     }
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
         add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
@@ -1076,6 +1105,13 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
+    for (u32 i = 0; i < simulated_count_; ++i) {  // kinematic rigid bodies go where scripts / timelines put their Transform
+        const Simulated& s = simulated_[i];
+        if (!s.kinematic || !world.alive(s.entity)) continue;
+        Vec3 t, r, scale;
+        decompose_trs(world.world_matrix(s.entity), t, r, scale);
+        physics_->move_kinematic(s.body, translation(t) * rotation_euler(r) * translation(mul(s.centre, s.scale)), dt);
+    }
 
     // Swimming: the chest inside a Water Volume. Move where you look; Jump (held) rises.
     const Vec3 chest = feet_ + Vec3{0, 0, settings_.height * 0.6f};
@@ -1130,7 +1166,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     // Write the simulation back so the viewport (and anything attached) shows it.
     for (u32 i = 0; i < simulated_count_; ++i) {
         const Simulated& s = simulated_[i];
-        if (!world.alive(s.entity)) continue;  // a script destroyed it
+        if (!world.alive(s.entity) || s.kinematic) continue;  // a script destroyed it; kinematic ones lead, not follow
         world.set_world_matrix(s.entity, physics_->body_transform(s.body) * translation(-mul(s.centre, s.scale)) * scaling(s.scale));
     }
     if (world.alive(character_)) {
