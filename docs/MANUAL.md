@@ -149,7 +149,7 @@ Import...** to pick several. They go into the Content Browser's current folder. 
 recompile on their own; select an asset to change its import settings in Details (Save writes its
 `.meta`).
 
-**Live Link** (Blender, Maya...): set Edit > Editor Settings > **Live Link Folder** to the folder
+**Live Link** (Blender, Maya...): set Edit > Editor Preferences > **Live Link Folder** to the folder
 you export to. Every time you export there (FBX, textures, sounds), the editor copies the file into
 `Content/LiveLink/` and it reloads in the level, also while playing.
 
