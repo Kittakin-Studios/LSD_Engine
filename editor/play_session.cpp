@@ -457,6 +457,13 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     script::ScriptHost host;
     host.user = this;
     host.set_view = [](void* user, world::Entity camera) { static_cast<PlaySession*>(user)->set_view(camera); };
+    host.music = [](void* user, int what, const char* name, f32 volume, f32 fade) {
+        SoundPlayer* sounds = static_cast<PlaySession*>(user)->sounds_;
+        if (!sounds) return;
+        if (what == 0) sounds->play_music(name, fade);
+        else if (what == 1) sounds->stop_music(fade);
+        else sounds->set_music_layer(name, volume, fade);
+    };
     host.input = [](void* user, const char* action) {
         const auto& self = *static_cast<const PlaySession*>(user);
         char guid[33];

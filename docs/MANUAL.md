@@ -408,6 +408,12 @@ at the object when the clip passes that time in Play.
 
 ## 12. Audio
 
+**Music**: `lsd.play_music("Explore", 2)` crossfades to a track over 2 seconds (the same track again
+does nothing); `lsd.music_layer("Drums", 1, 0.5)` brings in a stem that plays in step with the
+track (export stems the same length as the track), `lsd.music_layer("Drums", 0, 3)` fades it out;
+`lsd.stop_music(2)`. The same as Play Music / Set Music Layer / Stop Music nodes. Mark music files
+Stream and Looping in their import settings.
+
 - **Sound** assets: volume, pitch, looping, streaming, Sound Class, Attenuation, Concurrency, subtitle.
 - **Sound Emitter** component (drag a sound into the viewport; Unreal's Ambient Sound).
 - **Sound Cue** graphs: Wave Player, Random (no repeat), Modulator, Mixer, Concatenator, Delay,

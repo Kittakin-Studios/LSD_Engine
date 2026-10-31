@@ -24,6 +24,9 @@
 //   lsd.spline_length(e)                  metres
 //   lsd.play_sound(name [, x, y, z]) -> id   a sound asset by name, 2D or at a position; 0 if none
 //   lsd.stop_sound(id)
+//   lsd.play_music(name [, fade = 1])     crossfades from the current track (seconds); same track: nothing
+//   lsd.stop_music([fade = 1])
+//   lsd.music_layer(name, volume [, fade = 1])   a stem in step with the track, faded to volume (0..1)
 //   lsd.push_mix(name), lsd.pop_mix(name)   Sound Mix data assets by name
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
@@ -133,6 +136,7 @@ struct ScriptHost {
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;
     void (*set_view)(void* user, world::Entity camera) = nullptr;  // invalid: back to the player
+    void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
     bool (*data_path)(void* user, const char* data_type, const char* name, char* out, usize capacity) = nullptr;  // a data asset by type and name
     // shape: 0 line a-b, 1 sphere at a (radius), 2 box at a (half size b), 3 text at a.
     void (*draw_debug)(void* user, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) = nullptr;

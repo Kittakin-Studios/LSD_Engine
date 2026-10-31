@@ -167,7 +167,7 @@ visual-script sounds, `stat audio`.
 
 - [~] Audio (miniaudio, `engine/audio`): Sound assets (volume, pitch, loop, stream, class, attenuation, concurrency, subtitle), preview in the Content Browser, Sound Class tree (volume groups), Sound Attenuation, Sound Concurrency (stop oldest / quietest / refuse), Sound Emitter component (drag a sound into the viewport), Trigger Volume enter sound, `lsd.play_sound` / `stop_sound`, Play Sound 2D / at Location nodes, `stat audio` overlay, `-nosound`; Sound Cues (`.lsdcue` node graph in the graph editor: Wave Player, Random no-repeat, Modulator, Mixer, Concatenator, Delay, Looping, Switch on an audio parameter, Output; Play preview), Sound Mixes (class volume adjusters with fades; `lsd.push_mix` / `pop_mix`, Push / Pop Sound Mix nodes), `lsd.set_audio_param` / Set Audio Parameter; Submixes (effect chains a Sound Class runs through: Reverb, Low Pass, High Pass, EQ Band, Echo, Compressor), `lsd.set_class_volume` / Set Sound Class Volume for settings sliders; needs a submix graph with live meters, low-pass in mixes, a project base mix, a settings menu (with the UI system)
 - [~] Audio Volume component: reverb while the listener is inside (faded), sounds through its walls muffled by a per-voice low-pass; needs occlusion by trace, priority for overlapping volumes
-- [ ] Music: crossfades and layers driven by game state
+- [x] Music: crossfades and layers driven by game state: `lsd.play_music` (crossfade), `lsd.stop_music`, `lsd.music_layer` (stems started in step with the track, faded to a volume), Play Music / Stop Music / Set Music Layer nodes
 
 ### Effects
 

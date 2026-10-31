@@ -26,6 +26,13 @@ public:
     f32 param(const char* name) const;
     void stop_all_and_forget();  // stops every voice and drops the registered classes
 
+    // Music (one track at a time): play crossfades from the current track over `fade` seconds;
+    // layers play in step with the track (stems: drums, strings...) and fade to a volume by game
+    // state; stop fades everything out. A track that is already playing is left alone.
+    void play_music(const char* name, f32 fade);
+    void stop_music(f32 fade);
+    void set_music_layer(const char* name, f32 volume, f32 fade);
+
 private:
     const asset::AssetRecord* find(const char* sound, bool cues = true) const;
     u32 play_cue(const asset::AssetRecord& cue, bool spatial, Vec3 position);
@@ -56,6 +63,14 @@ private:
     Param params_[32];
     u32 param_count_ = 0;
     CueEnv cue_env_;
+    char music_[64] = "";
+    u32 music_voice_ = 0;
+    struct Layer {
+        char name[64];
+        u32 voice;
+    };
+    Layer layers_[8];
+    u32 layer_count_ = 0;
 };
 
 } // namespace lsd::editor

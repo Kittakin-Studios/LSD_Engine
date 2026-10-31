@@ -78,6 +78,12 @@ public:
     // muffling for sounds on the other side of a wall.
     void set_environment(f32 reverb_amount, f32 room_size);
     void set_voice_lowpass(u32 voice, f32 cutoff_hz);  // 20000 = open
+    // Music: fade a voice to a volume (0..1 times its own) over some seconds; stop it after a fade;
+    // where it is (seconds) and jump there, to start a layer in step with the track it joins.
+    void fade_voice(u32 voice, f32 volume, f32 seconds);
+    void stop_with_fade(u32 voice, f32 seconds);
+    f32 voice_time(u32 voice);
+    void seek_voice(u32 voice, f32 seconds);
 
     // Sound Mixes: class volumes multiplied while pushed, faded in and out. Returns a mix id.
     u32 push_mix(const MixAdjust* adjusters, u32 count, f32 fade_in, f32 fade_out);

@@ -60,6 +60,19 @@ int main() {
     CHECK(tone != 0 && a.playing(tone) && a.voice_count() == 1);
     const f32 full = loudness(a);
     CHECK(full > 0.1f);
+    // Music helpers: fades, the play position, a seek, stop after a fade.
+    a.fade_voice(tone, 0.0f, 0.0f);
+    CHECK(loudness(a) < full * 0.05f);  // faded to silence at once
+    a.fade_voice(tone, 1.0f, 0.0f);
+    CHECK(loudness(a) > full * 0.8f);
+    const f32 at = a.voice_time(tone);
+    CHECK(at > 0.15f && at < 0.4f);  // three reads of 0.1 s so far
+    a.seek_voice(tone, 0.05f);
+    CHECK(std::fabs(a.voice_time(tone) - 0.05f) < 0.01f);
+    a.stop_with_fade(tone, 0.05f);
+    loudness(a, 9600);  // past the fade
+    a.update();
+    CHECK(!a.playing(tone));
     a.stop(tone);
     CHECK(!a.playing(tone) && a.voice_count() == 0);
     CHECK(a.play(PlayDesc{}) == 0);  // no file

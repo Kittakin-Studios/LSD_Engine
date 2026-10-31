@@ -104,6 +104,7 @@ struct AudioSystem::Impl {
         Vec3 position;
         ma_lpf_node lowpass;  // sound -> lowpass -> class group
         f32 cutoff;
+        bool fading_out;  // stop_with_fade: done once miniaudio has stopped it
     };
     Voice* voices = nullptr;
     u32 next_id = 1;
@@ -381,6 +382,7 @@ u32 AudioSystem::play(const PlayDesc& d) {
     ma_node_attach_output_bus(&slot->lowpass, 0, group, 0);
     slot->cutoff = kOpen;
     slot->used = true;
+    slot->fading_out = false;
     slot->id = m.next_id++;
     slot->instance = d.instance ? d.instance : slot->id;
     std::snprintf(slot->name, sizeof slot->name, "%s", d.name);
@@ -425,7 +427,7 @@ bool AudioSystem::playing(u32 voice) const {
     if (!impl_->ready) return false;
     for (u32 i = 0; i < kMaxVoices; ++i) {
         const Impl::Voice& v = impl_->voices[i];
-        if (v.used && (v.id == voice || v.instance == voice) && !ma_sound_at_end(&v.sound)) return true;
+        if (v.used && (v.id == voice || v.instance == voice) && !ma_sound_at_end(&v.sound) && !(v.fading_out && !ma_sound_is_playing(&v.sound))) return true;
     }
     return false;
 }
@@ -498,6 +500,47 @@ void AudioSystem::set_voice_lowpass(u32 voice, f32 cutoff) {
     }
 }
 
+void AudioSystem::fade_voice(u32 voice, f32 volume, f32 seconds) {
+    if (!impl_->ready) return;
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = impl_->voices[i];
+        if (v.used && (v.id == voice || v.instance == voice)) ma_sound_set_fade_in_milliseconds(&v.sound, -1.0f, volume, static_cast<ma_uint64>(seconds * 1000.0f));
+    }
+}
+
+void AudioSystem::stop_with_fade(u32 voice, f32 seconds) {
+    if (!impl_->ready) return;
+    if (seconds <= 0.0f) {
+        stop(voice);
+        return;
+    }
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = impl_->voices[i];
+        if (!v.used || (v.id != voice && v.instance != voice)) continue;
+        ma_sound_stop_with_fade_in_milliseconds(&v.sound, static_cast<ma_uint64>(seconds * 1000.0f));
+        v.fading_out = true;
+    }
+}
+
+f32 AudioSystem::voice_time(u32 voice) {
+    if (!impl_->ready) return 0.0f;
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = impl_->voices[i];
+        float seconds = 0.0f;
+        if (v.used && v.id == voice && ma_sound_get_cursor_in_seconds(&v.sound, &seconds) == MA_SUCCESS) return seconds;
+    }
+    return 0.0f;
+}
+
+void AudioSystem::seek_voice(u32 voice, f32 seconds) {
+    if (!impl_->ready) return;
+    const ma_uint32 rate = ma_engine_get_sample_rate(&impl_->engine);
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = impl_->voices[i];
+        if (v.used && v.id == voice) ma_sound_seek_to_pcm_frame(&v.sound, static_cast<ma_uint64>(static_cast<double>(seconds) * rate));
+    }
+}
+
 void AudioSystem::update(f32 dt) {
     if (!impl_->ready) return;
     Impl& m = *impl_;
@@ -521,7 +564,7 @@ void AudioSystem::update(f32 dt) {
     }
     for (u32 i = 0; i < kMaxVoices; ++i) {
         Impl::Voice& v = impl_->voices[i];
-        if (v.used && ma_sound_at_end(&v.sound)) impl_->free_voice(v);
+        if (v.used && (ma_sound_at_end(&v.sound) || (v.fading_out && !ma_sound_is_playing(&v.sound)))) impl_->free_voice(v);
     }
 }
 

@@ -76,6 +76,46 @@ u32 SoundPlayer::concurrency_index(const char* guid) {
     return index;
 }
 
+void SoundPlayer::play_music(const char* name, f32 fade) {
+    if (!audio_ || !name || std::strcmp(name, music_) == 0) return;
+    stop_music(fade);
+    music_voice_ = play(name, false, {});
+    if (!music_voice_) return;
+    std::snprintf(music_, sizeof music_, "%s", name);
+    if (fade > 0.0f) {  // fade in: start silent
+        audio_->fade_voice(music_voice_, 0.0f, 0.0f);
+        audio_->fade_voice(music_voice_, 1.0f, fade);
+    }
+}
+
+void SoundPlayer::stop_music(f32 fade) {
+    if (!audio_) return;
+    if (music_voice_) audio_->stop_with_fade(music_voice_, fade);
+    for (u32 i = 0; i < layer_count_; ++i) audio_->stop_with_fade(layers_[i].voice, fade);
+    music_voice_ = 0;
+    music_[0] = '\0';
+    layer_count_ = 0;
+}
+
+void SoundPlayer::set_music_layer(const char* name, f32 volume, f32 fade) {
+    if (!audio_ || !name) return;
+    Layer* layer = nullptr;
+    for (u32 i = 0; i < layer_count_ && !layer; ++i) {
+        if (std::strcmp(layers_[i].name, name) == 0) layer = &layers_[i];
+    }
+    if (!layer) {
+        if (layer_count_ == sizeof layers_ / sizeof layers_[0]) return;
+        const u32 voice = play(name, false, {});
+        if (!voice) return;
+        if (music_voice_) audio_->seek_voice(voice, audio_->voice_time(music_voice_));  // in step with the track
+        audio_->fade_voice(voice, 0.0f, 0.0f);
+        layer = &layers_[layer_count_++];
+        std::snprintf(layer->name, sizeof layer->name, "%s", name);
+        layer->voice = voice;
+    }
+    audio_->fade_voice(layer->voice, volume, fade);
+}
+
 u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position) {
     if (!audio_ || !registry_ || !sound || !sound[0]) return 0;
     const asset::AssetRecord* r = find(sound);
@@ -217,6 +257,9 @@ f32 SoundPlayer::param(const char* name) const {
 void SoundPlayer::stop_all_and_forget() {
     if (audio_) audio_->reset_classes();
     class_count_ = group_count_ = mix_count_ = param_count_ = 0;
+    music_[0] = '\0';
+    music_voice_ = 0;
+    layer_count_ = 0;
 }
 
 } // namespace lsd::editor
