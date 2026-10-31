@@ -64,7 +64,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [x] Perspective + Top / Front / Right orthographic views (Alt+G/J/H/K), 1x1, 1x2 or 2x2 layout (each viewport has its own camera and gizmo; `layout 1|2|4`), side views draw the grid on their own plane
 - [~] View modes: Lit, Unlit, Wireframe (Alt+4/3/2) on D3D12 and OpenGL; needs normals, lighting only, collision, overdraw [View Modes, Buffer Visualization]
 - [x] Show flags: grid, axis gizmo, Game View (G), stats, navigation (P), bounds, collision (`show.Bounds` / `show.Collision`) [Show flags]
-- [~] Icons for Player Start (capsule + facing arrow), empties and volumes (wire boxes); selection tint; needs light/camera/sound icons, selection outline
+- [~] Icons for Player Start (capsule + facing arrow), empties and volumes (wire boxes), lights (sun), cameras, sound emitters (speaker), particle effects; selection tint; needs a selection outline
 - [x] Stats overlay: fps, frame time, draw calls, triangles (`stat fps`) [stat fps / stat unit]
 
 ### Panels

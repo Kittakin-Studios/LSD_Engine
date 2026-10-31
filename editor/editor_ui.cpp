@@ -997,6 +997,34 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
     return using_now || over;
 }
 
+// A small glyph telling what an object without a mesh is (Unreal's sprite icons), centred on `at`.
+void draw_type_icon(const world::World& w, Entity e, ImDrawList* dl, ImVec2 at, ImU32 color) {
+    const f32 x = at.x, y = at.y;
+    if (w.get<world::PointLight>(e) || w.get<world::SpotLight>(e) || w.get<world::DirectionalLight>(e) || w.get<world::SkyLight>(e)) {
+        dl->AddCircleFilled(at, 4.0f, color);  // a sun: disc and rays
+        for (int k = 0; k < 8; ++k) {
+            const f32 a = static_cast<f32>(k) * 0.785398f;
+            dl->AddLine(ImVec2(x + std::cos(a) * 6.5f, y + std::sin(a) * 6.5f), ImVec2(x + std::cos(a) * 10.0f, y + std::sin(a) * 10.0f), color, 1.5f);
+        }
+    } else if (w.get<world::Camera>(e)) {  // a film camera: body and lens
+        dl->AddRect(ImVec2(x - 8, y - 5), ImVec2(x + 3, y + 5), color, 1.0f, 0, 2.0f);
+        dl->AddTriangle(ImVec2(x + 3, y), ImVec2(x + 9, y - 5), ImVec2(x + 9, y + 5), color, 2.0f);
+    } else if (w.get<world::SoundEmitter>(e)) {  // a speaker with sound waves
+        dl->AddRectFilled(ImVec2(x - 8, y - 3), ImVec2(x - 4, y + 3), color);
+        dl->AddTriangleFilled(ImVec2(x - 4, y - 3), ImVec2(x + 1, y - 7), ImVec2(x + 1, y + 7), color);
+        dl->PathArcTo(at, 6.0f, -0.7f, 0.7f, 6);
+        dl->PathStroke(color, 0, 1.5f);
+        dl->PathArcTo(at, 10.0f, -0.7f, 0.7f, 8);
+        dl->PathStroke(color, 0, 1.5f);
+    } else if (w.get<world::ParticleEffect>(e)) {  // sparks
+        dl->AddCircleFilled(ImVec2(x - 4, y + 3), 2.5f, color);
+        dl->AddCircleFilled(ImVec2(x + 4, y + 2), 2.0f, color);
+        dl->AddCircleFilled(ImVec2(x, y - 5), 3.0f, color);
+    } else {
+        dl->AddCircle(at, 7.0f, color, 12, 2.0f);  // an empty
+    }
+}
+
 // Icons for entities without a mesh (Player Start, empties), drawn over the 3D view.
 void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 pos, ImVec2 size) {
     const EditorTheme& t = s.theme;
@@ -1119,8 +1147,8 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
             }
             dl->AddText(ImVec2(head.x + radius + 4, head.y - 8), color, s.world->name(e));
         } else {
-            dl->AddCircle(base, 7.0f, color, 12, 2.0f);
-            dl->AddText(ImVec2(base.x + 10, base.y - 8), color, s.world->name(e));
+            draw_type_icon(*s.world, e, dl, base, color);
+            dl->AddText(ImVec2(base.x + 12, base.y - 8), color, s.world->name(e));
         }
     }
 }
