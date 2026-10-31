@@ -148,6 +148,44 @@ static void test_graph() {
 
 static void write(const char* path, const char* text);
 
+// Event dispatchers: Call Event reaches every object's Custom Event; lsd.call reaches one.
+static void test_events() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 send = g.add("CallEvent", 200, 0)->id;
+    std::snprintf(g.find(send)->values[1], 64, "ping");
+    std::snprintf(g.find(send)->values[2], 64, "4");
+    const u32 on = g.add("CustomEvent", 0, 200)->id;
+    std::snprintf(g.find(on)->values[0], 64, "ping");
+    const u32 make = g.add("MakeVector", 200, 300)->id;
+    const u32 move = g.add("AddOffset", 400, 200)->id;
+    CHECK(g.connect(start, 0, send, 0) && g.connect(on, 0, move, 0) && g.connect(on, 1, make, 0) && g.connect(make, 0, move, 2));
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    CHECK(std::strstr(lua.data(), "function ping(self, value)") != nullptr);
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("events");
+    {
+        World w(heap);
+        const Entity a = w.create("A"), b = w.create("B");
+        std::snprintf(w.add<Script>(a)->script, sizeof(Script::script), "graph");
+        std::snprintf(w.add<Script>(b)->script, sizeof(Script::script), "graph");
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        // Each start broadcasts once, so both objects moved 4 m twice.
+        CHECK(scripts.error_count() == 0 && w.get<Transform>(a)->position.x == 8.0f && w.get<Transform>(b)->position.x == 8.0f);
+        char line[160];
+        std::snprintf(line, sizeof line, "assert(lsd.call(%u, 'ping', 1) == 1 and lsd.implements(%u, 'ping') and not lsd.implements(%u, 'pong'))", a.value, a.value, a.value);
+        CHECK(scripts.run(line));
+        CHECK(w.get<Transform>(a)->position.x == 9.0f && w.get<Transform>(b)->position.x == 8.0f);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Material graphs compile to one shader function; problems name the node.
 static void test_material_graph() {
     using namespace lsd::script;
@@ -270,6 +308,7 @@ assert(lsd.delete_save("Slot1") and not lsd.has_save("Slot1"))
 int main() {
     test_data_table();
     test_graph();
+    test_events();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

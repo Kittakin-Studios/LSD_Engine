@@ -85,7 +85,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [ ] Keep simulation changes: copy a property or object from PIE back to the editor world [Keep Simulation Changes]
 - [~] Volumes: Blocking, Kill and Trigger (on_overlap_begin / end to scripts; point tests for now), post-process / audio / nav modifier come with those systems
 - [~] Blockout: basic shapes scaled with the gizmo, collision on by default; needs box UVs, resize handles [BSP / Modeling Mode basics]
-- [ ] Visual debugging: draw debug lines/shapes/text from scripts, persistent or for N seconds
+- [x] Visual debugging: draw debug lines/shapes/text from scripts, persistent or for N seconds: `lsd.draw_line` / `draw_sphere` / `draw_box` / `draw_text` and Draw Debug Line / Sphere / String nodes, drawn over the viewport through the player's camera (editor only, always on top)
 
 ## Milestone 4 — Gameplay layer
 
@@ -116,7 +116,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 - [ ] Visual-script debugging: breakpoints, live wire flow, watch values [Blueprint Debugger]
 - [ ] Custom visual-script nodes declared from C++ (`LSD_FUNCTION`) and from Lua (today: the node table in engine/script/src/graph.cpp)
 - [~] Game rules framework: Game Mode data asset picked in World Settings (player prefab spawned at the Player Start, game script on a GameMode object); needs Player Controller, Player State, Game Instance, subsystems
-- [ ] Timers, event dispatchers, interfaces, latent actions (Delay)
+- [x] Timers, event dispatchers, interfaces, latent actions (Delay): Delay / Set Timer nodes and `lsd.after` / `every`; Custom Event, Call Event (to every object), Call Event on Object (an interface message), Has Event (Does Implement Interface); `lsd.broadcast`, `lsd.call`, `lsd.implements`
 
 ### Input, physics, movement
 

@@ -485,6 +485,67 @@ struct Api {
         if (host.set_language) host.set_language(host.user, luaL_checkstring(L, 1));
         return 0;
     }
+    // lsd.broadcast(name, ...) / lsd.call(e, name, ...): name(self, ...) on every script (or e's).
+    static int dispatch(lua_State* L, bool one) {
+        ScriptSystem& sys = system(L);
+        const int name_index = one ? 2 : 1;
+        const world::Entity target = one ? entity(L, 1) : world::Entity{};
+        const char* name = luaL_checkstring(L, name_index);
+        const int extra = lua_gettop(L) - name_index;
+        int called = 0;
+        for (u32 i = 0; i < sys.count_; ++i) {
+            ScriptSystem::Instance& instance = sys.instances_[i];
+            if (instance.failed || !sys.world_->alive(instance.entity) || (one && instance.entity != target)) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, instance.env);
+            lua_getfield(L, -1, name);
+            lua_remove(L, -2);
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                continue;
+            }
+            lua_rawgeti(L, LUA_REGISTRYINDEX, instance.self);
+            for (int k = 1; k <= extra; ++k) lua_pushvalue(L, name_index + k);
+            char what[300];
+            std::snprintf(what, sizeof what, "%s (%s)", instance.path, name);
+            if (!protected_call(L, 1 + extra, what)) instance.failed = true;
+            ++called;
+        }
+        lua_pushinteger(L, called);
+        return 1;
+    }
+    static int debug_shape(lua_State* L, int shape, int numbers) {  // numbers before the optional colour / seconds
+        const ScriptHost& host = system(L).host_;
+        f32 v[6] = {};
+        for (int i = 0; i < numbers; ++i) v[i] = static_cast<f32>(luaL_checknumber(L, i + 1));
+        int next = numbers + 1;
+        const char* text = shape == 3 ? luaL_checkstring(L, next++) : nullptr;
+        const Vec3 color{static_cast<f32>(luaL_optnumber(L, next, 1.0)), static_cast<f32>(luaL_optnumber(L, next + 1, 0.0)), static_cast<f32>(luaL_optnumber(L, next + 2, 0.0))};
+        const f32 seconds = static_cast<f32>(luaL_optnumber(L, next + 3, 0.0));
+        if (host.draw_debug) host.draw_debug(host.user, shape, Vec3{v[0], v[1], v[2]}, Vec3{v[3], v[4], v[5]}, v[3], text, color, seconds);
+        return 0;
+    }
+    static int draw_line(lua_State* L) { return debug_shape(L, 0, 6); }
+    static int draw_sphere(lua_State* L) { return debug_shape(L, 1, 4); }
+    static int draw_box(lua_State* L) { return debug_shape(L, 2, 6); }
+    static int draw_text(lua_State* L) { return debug_shape(L, 3, 3); }
+    static int broadcast(lua_State* L) { return dispatch(L, false); }
+    static int call_on(lua_State* L) { return dispatch(L, true); }
+    static int implements(lua_State* L) {  // Blueprint interfaces: does e's script define name?
+        ScriptSystem& sys = system(L);
+        const world::Entity target = entity(L, 1);
+        const char* name = luaL_checkstring(L, 2);
+        bool found = false;
+        for (u32 i = 0; i < sys.count_ && !found; ++i) {
+            ScriptSystem::Instance& instance = sys.instances_[i];
+            if (instance.entity != target || instance.failed) continue;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, instance.env);
+            lua_getfield(L, -1, name);
+            found = lua_isfunction(L, -1);
+            lua_pop(L, 2);
+        }
+        lua_pushboolean(L, found);
+        return 1;
+    }
     static int languages(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const char* codes[32];
@@ -915,7 +976,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

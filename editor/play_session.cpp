@@ -1,6 +1,7 @@
 #include "play_session.h"
 
 #include "animation_player.h"
+#include "debug_draw.h"
 #include "behavior.h"
 
 #include "lsd/foundation/profile.h"
@@ -458,6 +459,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const auto& self = *static_cast<const PlaySession*>(user);
         char guid[33];
         return action_guid(*self.registry_, action, guid) && self.input_.fired(guid);
+    };
+    host.draw_debug = [](void*, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) {
+        if (shape == 0) debug_draw::line(a, b, color, seconds);
+        else if (shape == 1) debug_draw::sphere(a, radius, color, seconds);
+        else if (shape == 2) debug_draw::box(a, b, color, seconds);
+        else debug_draw::text(a, text, color, seconds);
     };
     host.rebind = [](void* user, const char* action, const char* from, const char* to) { return static_cast<PlaySession*>(user)->rebind(action, from, to); };
     host.bindings = [](void* user, const char* action, const char** out, u32 capacity) {

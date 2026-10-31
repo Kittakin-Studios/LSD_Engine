@@ -12,6 +12,7 @@
 #include "lsd/script/material_graph.h"
 
 #include "mesh_cache.h"
+#include "debug_draw.h"
 #include "remote_console.h"
 #include "source_control.h"
 #include "thumbnails.h"
@@ -1042,7 +1043,13 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
         char text[200];
         std::snprintf(text, sizeof text, "%s%s   Esc: stop   Pause: pause   F8: eject%s", s.paused ? "Paused ( ] steps one frame)" : "Playing",
                       s.mouse_captured ? "" : " (mouse free: click to control)", s.mouse_captured ? "   Shift+F1: free the mouse" : "");
-        ImGui::GetBackgroundDrawList()->AddText(ImVec2(pos.x + 12, pos.y + 10), u32_color(t.details_tab_active), text);
+        ImDrawList* play_list = ImGui::GetBackgroundDrawList();
+        if (debug_draw::count()) {  // scripts' debug shapes, through the player's camera
+            play_list->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+            debug_draw::draw(play_list, s.drawn_view_proj[index], pos, size);
+            play_list->PopClipRect();
+        }
+        play_list->AddText(ImVec2(pos.x + 12, pos.y + 10), u32_color(t.details_tab_active), text);
         draw_stats(s, pos, size);
         return;
     }
@@ -1143,6 +1150,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
     if (!s.game_view) draw_icons(s, dl, view_proj, pos, size);
+    if (debug_draw::count()) debug_draw::draw(dl, s.drawn_view_proj[index], pos, size);  // scripts' debug shapes, also in Play
     if (s.show_navigation && !s.game_view) {  // the navmesh's polygons, like Unreal's P
         for (u32 i = 0; i + 1 < s.nav_line_count; i += 2) {
             ImVec2 a, b;

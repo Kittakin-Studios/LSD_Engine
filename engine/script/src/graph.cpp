@@ -3,6 +3,7 @@
 #include "lsd/foundation/log.h"
 #include "lsd/reflect/json.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +29,24 @@ NodeDef g_defs[] = {
      {kExecOut, {"Other", PinType::Entity, ""}}, 0, "function on_overlap_begin(self, other)", {nullptr, "other"}},
     {"OnOverlapEnd", "Event Overlap End", "Events", "Something left this Trigger Volume (or this left one)", {}, 0,
      {kExecOut, {"Other", PinType::Entity, ""}}, 0, "function on_overlap_end(self, other)", {nullptr, "other"}},
+    {"CustomEvent", "Custom Event", "Events", "Runs when Call Event names it (an event dispatcher); Value is what was sent",
+     {{"Name", PinType::String, "my_event"}}, 0, {kExecOut, {"Value", PinType::Float, ""}}, 0, "function $n0(self, value)", {nullptr, "value"}},
+    {"CallEvent", "Call Event", "Events", "Runs that Custom Event on every object that has it (Call Event Dispatcher)",
+     {kExecIn, {"Name", PinType::String, "my_event"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.broadcast($1, $2)", {}},
+    {"CallEventOn", "Call Event on Object", "Events", "Runs that Custom Event on one object only (an interface message)",
+     {kExecIn, kTarget, {"Name", PinType::String, "my_event"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.call($1, $2, $3)", {}},
+    {"HasEvent", "Has Event", "Events", "True if the object's scripts define that event (Does Implement Interface)",
+     {kTarget, {"Name", PinType::String, "my_event"}}, 0, {{"Has", PinType::Bool, ""}}, 0, nullptr, {"lsd.implements($0, $1)"}},
+    // ---- Debug ----
+    {"DrawDebugLine", "Draw Debug Line", "Debug", "A line over the view for some seconds (0: this frame)",
+     {kExecIn, {"Start", PinType::Vector, "0,0,0"}, {"End", PinType::Vector, "0,0,2"}, {"Color", PinType::Vector, "1,0,0"}, {"Duration", PinType::Float, "0"}}, 0,
+     {kExecOut}, 0, "do local a, b, c = $1, $2, $3 lsd.draw_line(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, $4) end", {}},
+    {"DrawDebugSphere", "Draw Debug Sphere", "Debug", "A wire sphere over the view for some seconds (0: this frame)",
+     {kExecIn, {"Center", PinType::Vector, "0,0,1"}, {"Radius", PinType::Float, "1"}, {"Color", PinType::Vector, "0,1,0"}, {"Duration", PinType::Float, "0"}}, 0,
+     {kExecOut}, 0, "do local p, c = $1, $3 lsd.draw_sphere(p.x, p.y, p.z, $2, c.x, c.y, c.z, $4) end", {}},
+    {"DrawDebugString", "Draw Debug String", "Debug", "Text at a place in the world for some seconds (0: this frame)",
+     {kExecIn, {"Location", PinType::Vector, "0,0,2"}, {"Text", PinType::String, "Hello"}, {"Color", PinType::Vector, "1,1,1"}, {"Duration", PinType::Float, "0"}}, 0,
+     {kExecOut}, 0, "do local p, c = $1, $3 lsd.draw_text(p.x, p.y, p.z, $2, c.x, c.y, c.z, $4) end", {}},
     // ---- Flow ----
     {"Branch", "Branch", "Flow", "True or False path by a condition", {kExecIn, {"Condition", PinType::Bool, "true"}}, 0,
      {{"True", PinType::Exec, ""}, {"False", PinType::Exec, ""}}, 0, "if $1 then\n#0\nelse\n#1\nend", {}},
@@ -379,6 +398,15 @@ struct Compiler {
             } else if (c[0] == '$' && c[1] == 'o' && c[2] >= '0' && c[2] <= '9') {
                 out += "n" + std::to_string(node.id) + "_" + std::string(1, c[2]);
                 c += 3;
+            } else if (c[0] == '$' && c[1] == 'n' && c[2] >= '0' && c[2] <= '9') {  // an input's text as a Lua name
+                std::string name;
+                for (const char* v = node.values[c[2] - '0']; *v; ++v) {
+                    const char ch = *v;
+                    name += (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') ? ch : '_';
+                }
+                if (name.empty() || std::isdigit(static_cast<unsigned char>(name[0]))) name = "_" + name;
+                out += name;
+                c += 3;
             } else if (c[0] == '$' && c[1] >= '0' && c[1] <= '9') {
                 out += input(node, def, static_cast<u32>(c[1] - '0'), depth);
                 c += 2;
@@ -471,7 +499,12 @@ const NodeDef* find_node_def(const char* id) {
 
 bool is_material_node(const NodeDef& def) { return std::strncmp(def.id, "Mat", 3) == 0; }
 
-bool is_event(const NodeDef& def) { return def.input_count == 0 && def.output_count > 0 && def.outputs[0].type == PinType::Exec; }
+bool is_event(const NodeDef& def) {  // no exec in, exec out (Custom Event has a Name field)
+    for (u32 i = 0; i < def.input_count; ++i) {
+        if (def.inputs[i].type == PinType::Exec) return false;
+    }
+    return def.output_count > 0 && def.outputs[0].type == PinType::Exec;
+}
 
 bool is_pure(const NodeDef& def) {
     for (u32 i = 0; i < def.input_count; ++i) {
@@ -704,11 +737,12 @@ bool compile_graph(const Graph& graph, Array<char>& lua, char* error, usize erro
         }
         if (!is_event(*def)) continue;
         for (const GraphNode& other : graph.nodes) {
-            if (other.id < node.id && std::strcmp(other.type, node.type) == 0) c.fail(node, "this event is in the graph twice");
+            const bool same_name = std::strcmp(node.type, "CustomEvent") != 0 || std::strcmp(other.values[0], node.values[0]) == 0;  // Custom Events differ by name
+            if (other.id < node.id && std::strcmp(other.type, node.type) == 0 && same_name) c.fail(node, "this event is in the graph twice");
         }
         const std::string body = c.chain(node, 0, 0);
         append(lua, "\n");
-        append(lua, def->code);
+        append(lua, c.substitute(node, *def, def->code, 0, false).c_str());  // a Custom Event's header carries its name
         append(lua, "\n");
         append(lua, body.c_str());
         append(lua, "\nend\n");

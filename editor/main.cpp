@@ -20,6 +20,7 @@
 #include "play_session.h"
 #include "light_bake.h"
 #include "sound_player.h"
+#include "debug_draw.h"
 #include "remote_console.h"
 #include "source_control.h"
 #include "thumbnails.h"
@@ -1149,6 +1150,7 @@ int main(int argc, char** argv) {
         if (state.stop_requested && state.playing) {
             lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size());  // Play changes revert, like Unreal's PIE
             state.playing = false;
+            lsd::editor::debug_draw::clear();
             state.mouse_captured = false;
             state.paused = state.ejected = false;
             play.stop();
@@ -1184,6 +1186,7 @@ int main(int argc, char** argv) {
                 }
             }
             LSD_PROFILE_SCOPE("game");
+            lsd::editor::debug_draw::tick(state.paused ? 0.0f : dt);  // the UI has drawn them; one-frame shapes go before scripts add new ones
             if (!state.paused || state.step_requested) play.update(world, devices, state.paused ? 1.0f / 60.0f : dt);
             state.step_requested = false;
             state.player_feet = play.feet();
@@ -1245,6 +1248,7 @@ int main(int argc, char** argv) {
             lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
             const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
             lsd::Mat4 view_proj = proj * view;
+            state.drawn_view_proj[v] = view_proj;
             lsd::editor::LightView light_view;
             light_view.eye = state.playing && !state.ejected ? play.eye() : camera.position;
             light_view.forward = state.playing && !state.ejected ? play.forward() : lsd::editor::camera_forward(camera);

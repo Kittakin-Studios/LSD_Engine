@@ -146,6 +146,7 @@ struct EditorState {
     int active_view = 0;
     u32 viewport_count = 0;          // set by draw_editor
     f32 viewport_rects[4][4] = {};   // x, y, width, height in window pixels
+    Mat4 drawn_view_proj[4];         // each viewport's camera as last drawn (the player's in Play): debug drawing
     const EditorCamera& viewport_camera(u32 i) const { return static_cast<int>(i) == active_view ? camera : views[i]; }
 };
 
