@@ -19,6 +19,7 @@
 #include "skinned_cache.h"
 #include "play_session.h"
 #include "sound_player.h"
+#include "remote_console.h"
 #include "source_control.h"
 #include "thumbnails.h"
 #include "transactions.h"
@@ -596,6 +597,7 @@ int main(int argc, char** argv) {
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
+    int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
     float smoke_arg = 0.0f;            // -smoketest=<seconds>: play the level that long, exit 0 if no errors (CI)
     long vram_arg = 0;                 // -vram=<MB>: pretend the card has that much video memory (tests the scaling)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
@@ -615,6 +617,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
+        else if (std::strcmp(argv[i], "-remote") == 0) remote_arg = lsd::editor::remote::kDefaultPort;
+        else if (std::strncmp(argv[i], "-remote=", 8) == 0) remote_arg = std::atoi(argv[i] + 8);
         else if (std::strncmp(argv[i], "-smoketest=", 11) == 0) smoke_arg = static_cast<float>(std::atof(argv[i] + 11));
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
@@ -825,6 +829,7 @@ int main(int argc, char** argv) {
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
     for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
+    if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg));
 
     lsd::audio::AudioSystem audio;
     audio.init(!no_sound);
@@ -880,6 +885,7 @@ int main(int argc, char** argv) {
     lsd::u64 last_tick = SDL_GetTicksNS();
     for (long frame = 0; running && frame != max_frames;) {
         SDL_Event event;
+        lsd::editor::remote::poll();
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A
@@ -1265,6 +1271,7 @@ int main(int argc, char** argv) {
         if (t.valid()) device->destroy_texture(t);
     }
     lsd::editor::source_control::stop();
+    lsd::editor::remote::close();
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;

@@ -36,6 +36,12 @@ void set_sink(Sink sink, void* user) {
     g_sink_user = user;
 }
 
+Sink sink(void** user) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (user) *user = g_sink_user;
+    return g_sink;
+}
+
 bool open_file(const char* path) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_file) std::fclose(g_file);

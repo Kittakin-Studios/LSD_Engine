@@ -48,7 +48,8 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
 (quit after n frames), `-screenshot=<n>` (OpenGL: Saved/screenshot.bmp; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
-(repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory).
+(repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
+`-remote[=port]` (Tools > Remote Console connects to it; localhost only).
 Test-only console commands: `ui.Click x y`, `ui.Keys down enter` (real SDL events, 0.8 s later),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
@@ -131,4 +132,4 @@ world-anchored elements, UI window with code + live preview), game user settings
 reports, frustum culling, asset validation, platform settings, Tracy / `stat unit`, smoke tests.
 Post pass: bloom + FXAA (draw_post) when a Post Process Volume applies.
 Still open (see BACKLOG): DOF, AO, TAA, baked lighting,
-UI designer canvas + QuickJS, remote console, Perforce / LFS locking.
+UI designer canvas + QuickJS, remote console to other machines, Perforce / LFS locking.

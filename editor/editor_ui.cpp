@@ -12,6 +12,7 @@
 #include "lsd/script/material_graph.h"
 
 #include "mesh_cache.h"
+#include "remote_console.h"
 #include "source_control.h"
 #include "thumbnails.h"
 #include "transactions.h"
@@ -2850,6 +2851,8 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Plays this level for 5 seconds and reports any errors it logs (Unreal's automation smoke test)");
         if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
+        ImGui::MenuItem("Remote Console", nullptr, &s.show_remote_console);
+        ImGui::SetItemTooltip("Sends console commands to a game running on this PC with -remote");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
@@ -3217,6 +3220,7 @@ void draw_editor(EditorState& s) {
     draw_table_editor(s);
     if (s.particle_editor) s.particle_editor->draw(s);
     source_control::draw();
+    remote::draw_window(&s.show_remote_console);
     draw_ui_editor(s);
     handle_shortcuts(s);
 

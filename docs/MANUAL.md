@@ -488,6 +488,8 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 
 - **Tools > Smoke Test Level**: plays the level for 5 seconds and reports every error logged.
   On a build server: `lsd_editor.exe -nosound -level=Content/Levels/Main.lsdlevel -smoketest=10`
+- **Remote Console** (Tools menu): start the packaged game with `-remote`, click Connect, and type
+  console commands into it while it runs; each one's log lines come back to the window.
   exits with 0 (clean) or 1 (errors).
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
@@ -604,4 +606,5 @@ behaviour tree tasks `name(self, dt)`.
 | `-nosound` | no audio device |
 | `-exec="<console line>"` | run a console command after startup (repeatable) |
 | `-smoketest=<seconds>`, `-frames=<n>`, `-screenshot=<n>` | automation |
+| `-remote[=port]` | listen for the editor's **Tools > Remote Console** (this PC only, port 7780 by default): type console commands into a running game, e.g. `stat unit`, `r.ForceLOD 2` |
 | `-import=<file>`, `-place=<asset>`, `-select=<name>` | scripted setup |

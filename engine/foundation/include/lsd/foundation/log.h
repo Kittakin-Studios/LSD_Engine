@@ -13,6 +13,7 @@ void set_min_level(Level level);
 // from any thread; keep it short. One sink; pass nullptr to remove it.
 using Sink = void (*)(void* user, Level level, const char* channel, const char* message);
 void set_sink(Sink sink, void* user);
+Sink sink(void** user);  // the current one (to chain it)
 
 // Also writes every line to this file (flushed per line, so a crash keeps everything up to it);
 // the previous file is kept as <name>-previous.<ext>. nullptr closes it. False if it cannot be opened.
