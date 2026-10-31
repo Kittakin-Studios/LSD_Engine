@@ -3466,6 +3466,8 @@ void draw_menu_bar(EditorState& s) {
             if (n) s.show_message_log = true;
         }
         ImGui::SetItemTooltip("Missing references, oversize textures, name prefixes (Project Settings > Validation)");
+        if (ImGui::MenuItem("Import...", nullptr, false, !s.playing)) s.import_requested = true;
+        ImGui::SetItemTooltip("Pick files (several at once) to copy into the Content Browser's folder; dropping files or a whole folder on the editor works too");
         if (ImGui::MenuItem("Package Project", nullptr, false, !s.playing)) s.package_requested = true;
         ImGui::SetItemTooltip("Build/<Project Name>/: the game in a folder that runs on another PC (opens Project Settings > Game Default Level)");
         ImGui::EndMenu();

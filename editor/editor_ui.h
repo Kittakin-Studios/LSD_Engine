@@ -129,6 +129,7 @@ struct EditorState {
     bool quit_confirmed = false;
     bool package_requested = false;  // File > Package Project
     bool build_lighting_requested = false;  // Build > Build Lighting
+    bool import_requested = false;          // File > Import...
     f32 build_lighting_progress = -1.0f;    // 0..1 while baking, -1 otherwise
     bool game_mode = false;          // a packaged game (or -game): Play only, no editor
     bool quit_after_save = false;

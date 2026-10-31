@@ -144,6 +144,11 @@ Particle System.
 
 All text assets (levels, graphs, data assets, UI) are plain text: they merge and diff in Git.
 
+**Importing**: drop files or a whole folder (its sub-folders are kept) onto the editor, or **File >
+Import...** to pick several. They go into the Content Browser's current folder. Changed source files
+recompile on their own; select an asset to change its import settings in Details (Save writes its
+`.meta`).
+
 **Browsing**: **List** / **Tiles** and the size slider change the view; the sort menu orders by name,
 type, last change or size. Ctrl-click and Shift-click select several assets (then right-click:
 Delete Selected, Reimport, Add to Collection). Right-click a folder > **Add to Favourites**; right-

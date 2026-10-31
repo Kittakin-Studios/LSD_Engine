@@ -48,6 +48,7 @@
 #include <imgui_impl_sdl3.h>
 
 #include <atomic>
+#include <mutex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -554,6 +555,25 @@ void register_console(EditorState& s) {
 // The registry picks it up on the next scan and writes its .meta.
 bool import_file(const char* source, const char* content_folder, char* status, lsd::usize capacity) {
     const fs::path src(source);
+    std::error_code dir_error;
+    if (fs::is_directory(src, dir_error)) {  // a folder: everything importable in it, keeping its sub-folders
+        lsd::u32 imported = 0, skipped = 0;
+        for (const auto& entry : fs::recursive_directory_iterator(src, dir_error)) {
+            if (!entry.is_regular_file(dir_error)) continue;
+            const std::string ext = entry.path().extension().string();
+            if (lsd::asset::type_from_extension(ext.c_str()) == lsd::asset::AssetType::Unknown) {
+                if (ext != ".bin") ++skipped;  // a .gltf's buffer goes with it
+                continue;
+            }
+            const fs::path relative = fs::relative(entry.path().parent_path(), src.parent_path(), dir_error);
+            const std::string target = (fs::path(content_folder) / relative).generic_string();
+            char ignored[300];
+            imported += import_file(entry.path().string().c_str(), target.c_str(), ignored, sizeof ignored) ? 1u : 0u;
+        }
+        std::snprintf(status, capacity, "Imported %u file%s from %s%s", imported, imported == 1 ? "" : "s", src.filename().string().c_str(), skipped ? " (other files skipped)" : "");
+        LSD_LOG_INFO("editor", "%s", status);
+        return imported > 0;
+    }
     if (lsd::asset::type_from_extension(src.extension().string().c_str()) == lsd::asset::AssetType::Unknown) {
         std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .csv, .wav, .ogg, .flac, .mp3)", src.filename().string().c_str());
         return false;
@@ -615,6 +635,16 @@ void register_script_nodes(const lsd::asset::AssetRegistry& registry) {
         def.output_code[0] = node.expression[0] ? node.expression : nullptr;
         lsd::script::register_node(def);
     }
+}
+
+// File > Import...: SDL's file dialog answers on any thread; the main loop imports what it chose.
+std::mutex g_import_mutex;
+std::vector<std::string> g_import_queue;
+
+void SDLCALL on_import_chosen(void*, const char* const* files, int) {
+    if (!files) return;  // cancelled or failed
+    std::lock_guard<std::mutex> lock(g_import_mutex);
+    for (const char* const* f = files; *f; ++f) g_import_queue.emplace_back(*f);
 }
 
 // ---- Level files ----
@@ -1061,6 +1091,25 @@ int main(int argc, char** argv) {
             ImGui::Render();
         }
         state.stat_ui_ms = timer.lap();
+        if (state.import_requested) {
+            state.import_requested = false;
+            static const SDL_DialogFileFilter filters[] = {
+                {"Meshes, textures, sounds, tables", "fbx;gltf;glb;png;jpg;jpeg;tga;bmp;psd;wav;ogg;flac;mp3;csv"},
+                {"All files", "*"},
+            };
+            SDL_ShowOpenFileDialog(on_import_chosen, nullptr, window, filters, 2, nullptr, true);
+        }
+        {
+            std::vector<std::string> chosen;
+            {
+                std::lock_guard<std::mutex> lock(g_import_mutex);
+                chosen.swap(g_import_queue);
+            }
+            lsd::u32 imported = 0;
+            for (const std::string& file : chosen) imported += import_file(file.c_str(), state.content_folder, state.status, sizeof state.status) ? 1u : 0u;
+            if (chosen.size() > 1) std::snprintf(state.status, sizeof state.status, "Imported %u of %zu files", imported, chosen.size());
+            if (imported) registry.scan();
+        }
         if (state.package_requested) {
             state.package_requested = false;
             lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
