@@ -37,7 +37,7 @@ Exit test: import a Blender FBX and find it by search. **Passes** (automated in 
 - [x] Thumbnails (render-to-texture, re-rendered when the source changes)
 - [x] Content Browser: folder tree and tiles, thumbnails, search, type filter, import by drop, drag to place, drag onto folders to move, right-click menus
 - [x] Thumbnail cache on disk (today they re-render every editor start): DerivedData/Thumbnails/<guid>-<source time>.png, saved the frame after rendering, loaded at start; a changed source re-renders and replaces it
-- [ ] Content Browser extras: list view, sort, tile size slider, multi-select, favourites, collections, Duplicate, Reimport, "Find in Content Browser" [Collections]
+- [x] Content Browser extras: list view, sort, tile size slider, multi-select, favourites, collections, Duplicate, Reimport, "Find in Content Browser" [Collections]: List / Tiles, sort by name / type / modified / size, tile slider, Ctrl / Shift-click (Delete Selected, Reimport, Add to Collection), folder Favourites and Collections in the tree (saved in editor_settings.json), Duplicate (new GUID, same import settings), Reimport, Outliner > Find in Content Browser and Ctrl+B
 - [ ] Asset editor windows: double-click opens a tab per asset (mesh viewer with stats, import settings, preview) [Static Mesh Editor]
 
 ## Milestone 3 — Editor shell

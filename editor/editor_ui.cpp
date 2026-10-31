@@ -31,6 +31,10 @@
 #include "lsd/world/curve.h"
 #include "lsd/render/material.h"
 
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <sstream>
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_internal.h>  // DockBuilder API
@@ -47,6 +51,9 @@
 namespace lsd::editor {
 
 namespace {
+
+bool asset_selected(const EditorState& s, asset::Guid g);
+void find_in_content_browser(EditorState& s, asset::Guid guid);
 
 using world::Entity;
 
@@ -625,7 +632,7 @@ bool begin_panel(const char* name) {
 }
 
 // One themed tab. Text turns dark on the active tab so it stays readable on bright colours.
-bool themed_tab(const char* label, int index, int& active, const LinearColor& on, const LinearColor& off, const LinearColor& on_text) {
+bool themed_tab(const char* label, int index, int& active, const LinearColor& on, const LinearColor& off, const LinearColor& on_text, bool select = false) {
     const bool is_active = active == index;
     ImGui::PushStyleColor(ImGuiCol_Tab, vec4(off));
     ImGui::PushStyleColor(ImGuiCol_TabHovered, vec4(on));
@@ -633,7 +640,7 @@ bool themed_tab(const char* label, int index, int& active, const LinearColor& on
     ImGui::PushStyleColor(ImGuiCol_TabDimmed, vec4(off));
     ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, vec4(on));
     if (is_active) ImGui::PushStyleColor(ImGuiCol_Text, vec4(on_text));
-    const bool open = ImGui::BeginTabItem(label);
+    const bool open = ImGui::BeginTabItem(label, nullptr, select ? ImGuiTabItemFlags_SetSelected : 0);
     if (is_active) ImGui::PopStyleColor();
     ImGui::PopStyleColor(5);
     if (open) active = index;
@@ -1346,6 +1353,12 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
         if (ImGui::BeginPopupContextItem("row_menu")) {
             if (!s.is_selected(e)) select(s, e);
             if (ImGui::MenuItem("Focus", "F")) focus_selected(s);
+            asset::Guid used;  // the object's mesh (or script, sound) asset
+            if (const auto* m = s.world->get<world::StaticMesh>(e)) asset::parse_guid(m->mesh, used);
+            if (const auto* m = s.world->get<world::SkeletalMesh>(e); m && !used.valid()) asset::parse_guid(m->mesh, used);
+            if (const auto* m = s.world->get<world::Script>(e); m && !used.valid()) asset::parse_guid(m->script, used);
+            if (const auto* m = s.world->get<world::SoundEmitter>(e); m && !used.valid()) asset::parse_guid(m->sound, used);
+            if (ImGui::MenuItem("Find in Content Browser", "Ctrl+B", false, used.valid())) find_in_content_browser(s, used);
             if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate_selected(s);
             if (ImGui::MenuItem("Detach", nullptr, false, s.world->parent(e).valid())) {
                 s.world->set_parent(e, {});
@@ -2264,12 +2277,26 @@ void draw_file_dialogs(EditorState& s) {
 
     if (ImGui::BeginPopupModal("Delete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const asset::AssetRecord* r = s.delete_asset.valid() ? s.registry->find(s.delete_asset) : nullptr;
-        if (r) ImGui::Text("Delete Content/%s?\nObjects using it in levels will show nothing.", r->path);
+        const bool many = r && s.asset_selection_count > 1 && asset_selected(s, s.delete_asset);
+        if (many) ImGui::Text("Delete the %u selected assets?\nObjects using them in levels will show nothing.", s.asset_selection_count);
+        else if (r) ImGui::Text("Delete Content/%s?\nObjects using it in levels will show nothing.", r->path);
         else ImGui::Text("Delete the empty folder Content/%s?", s.delete_folder);
         if (ImGui::Button("Delete")) {
             char error[200] = "";
             bool done = false;
-            if (r) {
+            if (many) {
+                u32 deleted = 0;
+                const u32 n = s.asset_selection_count;
+                asset::Guid doomed[EditorState::kMaxAssetSelection];
+                std::memcpy(doomed, s.asset_selection, sizeof(asset::Guid) * n);
+                for (u32 k = 0; k < n; ++k) {
+                    if (const asset::AssetRecord* each = s.registry->find(doomed[k])) deleted += s.registry->delete_asset(*each, error, sizeof error) ? 1u : 0u;
+                }
+                done = deleted == n;
+                if (done) std::snprintf(error, sizeof error, "%u assets", deleted);
+                s.asset_selection_count = 0;
+                s.selected_asset = {};
+            } else if (r) {
                 const std::string name = r->name;
                 done = s.registry->delete_asset(*r, error, sizeof error);
                 if (done) std::snprintf(error, sizeof error, "%s", name.c_str());
@@ -2313,6 +2340,155 @@ bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTre
     return any;
 }
 
+// ---- Content Browser extras: selection of several assets, duplicate, reimport, favourites, collections ----
+
+int strcmp_nocase(const char* a, const char* b) {
+    for (;; ++a, ++b) {
+        const int x = std::tolower(static_cast<unsigned char>(*a)), y = std::tolower(static_cast<unsigned char>(*b));
+        if (x != y || !x) return x - y;
+    }
+}
+
+bool asset_selected(const EditorState& s, asset::Guid g) {
+    for (u32 i = 0; i < s.asset_selection_count; ++i) {
+        if (s.asset_selection[i] == g) return true;
+    }
+    return false;
+}
+
+void select_asset(EditorState& s, const asset::AssetRecord& r, bool add) {
+    if (!add) s.asset_selection_count = 0;
+    if (!asset_selected(s, r.guid) && s.asset_selection_count < EditorState::kMaxAssetSelection) s.asset_selection[s.asset_selection_count++] = r.guid;
+    s.selected_asset = r.guid;
+}
+
+void deselect_asset(EditorState& s, asset::Guid g) {
+    for (u32 i = 0; i < s.asset_selection_count; ++i) {
+        if (s.asset_selection[i] != g) continue;
+        s.asset_selection[i] = s.asset_selection[--s.asset_selection_count];
+        break;
+    }
+    if (s.selected_asset == g) s.selected_asset = s.asset_selection_count ? s.asset_selection[s.asset_selection_count - 1] : asset::Guid{};
+}
+
+// Shows an asset in the Content Browser: its folder, selected (Unreal's Find in Content Browser, Ctrl+B).
+void find_in_content_browser(EditorState& s, asset::Guid guid) {
+    const asset::AssetRecord* r = s.registry ? s.registry->find(guid) : nullptr;
+    if (!r) {
+        std::snprintf(s.status, sizeof s.status, "That asset is not in Content/");
+        return;
+    }
+    std::snprintf(s.content_folder, sizeof s.content_folder, "%s", r->folder);
+    s.search[0] = '\0';
+    s.active_collection[0] = '\0';
+    s.type_filter = 0;
+    select_asset(s, *r, false);
+    s.show_content_tab = true;
+}
+
+// A copy next to the original ("Chair_Copy"), with its own GUID and the same import settings.
+void duplicate_asset(EditorState& s, const asset::AssetRecord& r) {
+    char source[300];
+    s.registry->source_path(r, source, sizeof source);
+    const std::filesystem::path from(source);
+    std::filesystem::path to = from.parent_path() / (std::string(r.name) + "_Copy" + from.extension().string());
+    std::error_code error;
+    for (int n = 2; std::filesystem::exists(to, error); ++n) to = from.parent_path() / (std::string(r.name) + "_Copy" + std::to_string(n) + from.extension().string());
+    std::filesystem::copy_file(from, to, error);
+    if (error) {
+        std::snprintf(s.status, sizeof s.status, "Duplicate failed: %s", error.message().c_str());
+        return;
+    }
+    std::ifstream meta_in(from.string() + ".meta", std::ios::binary);
+    if (meta_in) {  // same settings, new identity
+        std::stringstream text;
+        text << meta_in.rdbuf();
+        std::string meta = text.str();
+        char old_guid[33], fresh[33];
+        asset::to_string(r.guid, old_guid);
+        asset::to_string(asset::new_guid(), fresh);
+        const size_t at = meta.find(old_guid);
+        if (at != std::string::npos) meta.replace(at, 32, fresh);
+        std::ofstream(to.string() + ".meta", std::ios::binary) << meta;
+    }
+    s.registry->scan();
+    if (const asset::AssetRecord* copy = record_at(s, to.generic_string())) select_asset(s, *copy, false);
+    std::snprintf(s.status, sizeof s.status, "Duplicated %s as %s", r.name, to.stem().string().c_str());
+}
+
+// Reads the source file again (Unreal's Reimport): it counts as changed, so it compiles again.
+void reimport_asset(EditorState& s, const asset::AssetRecord& r) {
+    char source[300];
+    s.registry->source_path(r, source, sizeof source);
+    std::error_code error;
+    std::filesystem::last_write_time(source, std::filesystem::file_time_type::clock::now(), error);
+    s.registry->scan();
+    std::snprintf(s.status, sizeof s.status, error ? "Reimport failed: %s" : "Reimporting %s", error ? error.message().c_str() : r.name);
+}
+
+bool is_favourite(const EditorState& s, const char* folder) {
+    for (const FavouriteFolder& f : s.settings.favourites) {
+        if (std::strcmp(f.path, folder) == 0) return true;
+    }
+    return false;
+}
+
+void toggle_favourite(EditorState& s, const char* folder) {
+    auto& list = s.settings.favourites;
+    for (u32 i = 0; i < list.count; ++i) {
+        if (std::strcmp(list[i].path, folder) == 0) {
+            list.remove(i);
+            return;
+        }
+    }
+    FavouriteFolder f;
+    std::snprintf(f.path, sizeof f.path, "%s", folder);
+    list.push_back(f);
+}
+
+bool in_collection(const EditorState& s, const char* collection, asset::Guid g) {
+    char guid[33];
+    asset::to_string(g, guid);
+    for (const CollectionEntry& e : s.settings.collections) {
+        if (std::strcmp(e.collection, collection) == 0 && std::strcmp(e.guid, guid) == 0) return true;
+    }
+    return false;
+}
+
+void add_to_collection(EditorState& s, const char* collection, asset::Guid g) {
+    if (in_collection(s, collection, g)) return;
+    CollectionEntry e;
+    std::snprintf(e.collection, sizeof e.collection, "%s", collection);
+    asset::to_string(g, e.guid);
+    if (!s.settings.collections.push_back(e)) std::snprintf(s.status, sizeof s.status, "Collections are full (512 entries)");
+}
+
+void remove_from_collection(EditorState& s, const char* collection, asset::Guid g) {
+    char guid[33];
+    asset::to_string(g, guid);
+    auto& list = s.settings.collections;
+    for (u32 i = 0; i < list.count; ++i) {
+        if (std::strcmp(list[i].collection, collection) == 0 && std::strcmp(list[i].guid, guid) == 0) {
+            list.remove(i);
+            return;
+        }
+    }
+}
+
+// Distinct collection names, in first-seen order.
+u32 collection_names(const EditorState& s, const char* out[64]) {
+    u32 n = 0;
+    for (const CollectionEntry& e : s.settings.collections) {
+        bool seen = false;
+        for (u32 k = 0; k < n && !seen; ++k) seen = std::strcmp(out[k], e.collection) == 0;
+        if (!seen && n < 64) out[n++] = e.collection;
+    }
+    return n;
+}
+
+char g_new_collection[48] = "";
+bool g_open_new_collection = false;
+
 // Asset tiles for the current folder or search; meshes drag into the viewport, levels open on double-click.
 void draw_asset_grid(EditorState& s) {
     const EditorTheme& t = s.theme;
@@ -2322,7 +2498,19 @@ void draw_asset_grid(EditorState& s) {
     ImGui::SetNextItemWidth(120.0f);
     ImGui::Combo("##type", &s.type_filter, "All types\0Meshes\0Levels\0Data\0Prefabs\0Scripts\0Visual Scripts\0Data Tables\0Sounds\0Textures\0");
     ImGui::SameLine();
-    ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
+    ImGui::SetNextItemWidth(130.0f);
+    int sort_by = static_cast<int>(s.settings.sort_by);
+    if (ImGui::Combo("##sort", &sort_by, "Sort: Name\0Sort: Type\0Sort: Modified\0Sort: Size\0")) s.settings.sort_by = static_cast<u32>(sort_by);
+    ImGui::SameLine();
+    if (ImGui::Button(s.settings.list_view ? "Tiles" : "List")) s.settings.list_view = !s.settings.list_view;
+    if (!s.settings.list_view) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("##tile", &s.settings.tile_size, 48.0f, 256.0f, "%.0f px");
+    }
+    ImGui::SameLine();
+    if (s.active_collection[0]) ImGui::TextDisabled("Collection: %s", s.active_collection);
+    else ImGui::TextDisabled(s.search[0] ? "Results in all folders" : "Content/%s", s.content_folder);
     ImGui::Separator();
     if (!s.registry) return;
 
@@ -2334,13 +2522,32 @@ void draw_asset_grid(EditorState& s) {
                                 : s.type_filter == 7 ? asset::AssetType::Table
                                 : s.type_filter == 8 ? asset::AssetType::Sound
                                 : s.type_filter == 9 ? asset::AssetType::Texture : asset::AssetType::Unknown;
-    const usize count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
+    usize count = 0;
+    if (s.active_collection[0]) {  // a collection: its assets wherever they are, filtered by the search and type
+        for (usize i = 0; i < s.registry->count() && count < 1024; ++i) {
+            const asset::AssetRecord& r = s.registry->get(i);
+            const bool name_ok = !s.search[0] || std::strstr(r.name, s.search) != nullptr;
+            if (in_collection(s, s.active_collection, r.guid) && name_ok && (type == asset::AssetType::Unknown || r.type == type)) hits[count++] = i;
+        }
+    } else {
+        count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
+    }
+    std::sort(hits, hits + count, [&](usize a, usize b) {
+        const asset::AssetRecord &x = s.registry->get(a), &y = s.registry->get(b);
+        switch (s.settings.sort_by) {
+            case 1: if (x.type != y.type) return x.type < y.type; break;
+            case 2: if (x.source_time != y.source_time) return x.source_time > y.source_time; break;  // newest first
+            case 3: if (x.source_size != y.source_size) return x.source_size > y.source_size; break;  // biggest first
+            default: break;
+        }
+        return strcmp_nocase(x.name, y.name) < 0;
+    });
 
     // Sub-folders first (not while searching), like Unreal; double-click opens one.
     // shortcut: listed from disk every frame, like the folder tree.
     static char folders[64][96];
     usize folder_count = 0;
-    if (!s.search[0]) {
+    if (!s.search[0] && !s.active_collection[0]) {
         std::error_code error;
         for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(kContentDir) / s.content_folder, error)) {
             if (folder_count < 64 && entry.is_directory(error)) {
@@ -2439,27 +2646,56 @@ void draw_asset_grid(EditorState& s) {
         if (const asset::AssetRecord* r = s.registry->find(s.selected_asset)) start_rename(s, r->guid, "", r->name);
     }
     draw_file_dialogs(s);
+    if (g_open_new_collection) ImGui::OpenPopup("New Collection");
+    g_open_new_collection = false;
+    if (ImGui::BeginPopupModal("New Collection", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        const bool enter = ImGui::InputText("Name", g_new_collection, sizeof g_new_collection, ImGuiInputTextFlags_EnterReturnsTrue);
+        if ((ImGui::Button("Create") || enter) && g_new_collection[0]) {
+            for (u32 k = 0; k < s.asset_selection_count; ++k) add_to_collection(s, g_new_collection, s.asset_selection[k]);
+            std::snprintf(s.active_collection, sizeof s.active_collection, "%s", g_new_collection);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 
     if (count == 0 && folder_count == 0) {
         ImGui::TextDisabled(s.search[0] ? "No assets match." : "No assets here. Drag .fbx, .gltf or .glb files from Explorer onto the editor, or right-click for New Folder.");
         return;
     }
 
-    constexpr f32 kTile = 96.0f;
+    const bool list = s.settings.list_view;
+    const f32 kTile = s.settings.tile_size < 48.0f ? 48.0f : s.settings.tile_size;
     const f32 spacing = ImGui::GetStyle().ItemSpacing.x;
-    const int columns = static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing)) > 0
+    const int columns = list ? 1
+                        : static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing)) > 0
                             ? static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kTile + spacing))
                             : 1;
+    const f32 row_width = ImGui::GetContentRegionAvail().x;
+    const f32 row_height = ImGui::GetTextLineHeightWithSpacing();
+    if (list) {  // column headings
+        const ImVec2 h = ImGui::GetCursorScreenPos();
+        ImDrawList* hl = ImGui::GetWindowDrawList();
+        const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        hl->AddText(ImVec2(h.x + 4, h.y), dim, "Name");
+        hl->AddText(ImVec2(h.x + row_width * 0.35f, h.y), dim, "Type");
+        hl->AddText(ImVec2(h.x + row_width * 0.55f, h.y), dim, "Size");
+        hl->AddText(ImVec2(h.x + row_width * 0.68f, h.y), dim, "Folder");
+        ImGui::Dummy(ImVec2(row_width, row_height));
+    }
     usize tile = 0;
     for (usize f = 0; f < folder_count; ++f, ++tile) {
         ImGui::PushID(folders[f]);
         if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();
         ImGui::BeginGroup();
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::Selectable("##folder", false, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()));
+        ImGui::Selectable("##folder", false, ImGuiSelectableFlags_AllowDoubleClick, list ? ImVec2(row_width, row_height) : ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()));
         const std::string folder_path = join_folder(s.content_folder, folders[f]);
         folder_drop_target(s, folder_path.c_str());
         if (ImGui::BeginPopupContextItem("folder_menu")) {
+            if (ImGui::MenuItem(is_favourite(s, folder_path.c_str()) ? "Remove from Favourites" : "Add to Favourites")) toggle_favourite(s, folder_path.c_str());
             if (ImGui::MenuItem("Rename")) start_rename(s, {}, folder_path.c_str(), folders[f]);
             if (ImGui::MenuItem("Delete...")) {
                 s.delete_asset = {};
@@ -2471,6 +2707,15 @@ void draw_asset_grid(EditorState& s) {
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             std::snprintf(s.content_folder, sizeof s.content_folder, "%s", folder_path.c_str());
+        }
+        if (list) {
+            ImDrawList* rl = ImGui::GetWindowDrawList();
+            rl->AddRectFilled(ImVec2(p.x + 4, p.y + 4), ImVec2(p.x + 16, p.y + row_height - 4), u32_color(t.folder_tree_text), 2.0f);
+            rl->AddText(ImVec2(p.x + 22, p.y), ImGui::GetColorU32(ImGuiCol_Text), folders[f]);
+            rl->AddText(ImVec2(p.x + row_width * 0.35f, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "Folder");
+            ImGui::EndGroup();
+            ImGui::PopID();
+            continue;
         }
         // Folder shape: tab on top of a body, in the tree's folder colours.
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -2489,9 +2734,22 @@ void draw_asset_grid(EditorState& s) {
         if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();
         ImGui::BeginGroup();
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        const bool selected = r.guid == s.selected_asset;
-        if (ImGui::Selectable("##tile", selected, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()))) {
+        const bool selected = r.guid == s.selected_asset || asset_selected(s, r.guid);
+        if (ImGui::Selectable("##tile", selected, ImGuiSelectableFlags_AllowDoubleClick, list ? ImVec2(row_width, row_height) : ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()))) {
             select(s, {});
+            if (ImGui::GetIO().KeyCtrl && asset_selected(s, r.guid)) {  // Ctrl-click a selected one: unselect it
+                deselect_asset(s, r.guid);
+            } else if (ImGui::GetIO().KeyShift && s.selected_asset.valid()) {  // Shift: everything between the last click and this
+                usize from = count;
+                for (usize k = 0; k < count; ++k) {
+                    if (s.registry->get(hits[k]).guid == s.selected_asset) from = k;
+                }
+                const usize lo = from < n ? from : n, hi = from < n ? n : from;
+                if (from == count) select_asset(s, r, false);
+                for (usize k = lo; from != count && k <= hi; ++k) select_asset(s, s.registry->get(hits[k]), true);
+            } else {
+                select_asset(s, r, ImGui::GetIO().KeyCtrl);
+            }
             s.selected_asset = r.guid;
             s.selected_meta = asset::AssetMeta{};
             s.registry->load_meta(r, s.selected_meta);
@@ -2558,9 +2816,34 @@ void draw_asset_grid(EditorState& s) {
                 }
             }
             if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
+            if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
+            if (ImGui::MenuItem("Duplicate")) duplicate_asset(s, r);
+            if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Texture || r.type == asset::AssetType::Sound) && ImGui::MenuItem("Reimport")) {
+                for (u32 k = 0; k < s.asset_selection_count; ++k) {
+                    if (const asset::AssetRecord* each = s.registry->find(s.asset_selection[k])) reimport_asset(s, *each);
+                }
+            }
+            if (ImGui::BeginMenu("Add to Collection")) {
+                const char* names[64];
+                const u32 n_names = collection_names(s, names);
+                for (u32 c = 0; c < n_names; ++c) {
+                    if (ImGui::MenuItem(names[c])) {
+                        for (u32 k = 0; k < s.asset_selection_count; ++k) add_to_collection(s, names[c], s.asset_selection[k]);
+                    }
+                }
+                if (n_names) ImGui::Separator();
+                if (ImGui::MenuItem("New Collection...")) {
+                    std::snprintf(g_new_collection, sizeof g_new_collection, "Collection%u", n_names + 1);
+                    g_open_new_collection = true;
+                }
+                ImGui::EndMenu();
+            }
+            if (s.active_collection[0] && ImGui::MenuItem("Remove from Collection")) {
+                for (u32 k = 0; k < s.asset_selection_count; ++k) remove_from_collection(s, s.active_collection, s.asset_selection[k]);
+            }
             source_control::asset_menu(r.path);
             if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
-            if (ImGui::MenuItem("Delete...")) {
+            if (ImGui::MenuItem(s.asset_selection_count > 1 ? "Delete Selected..." : "Delete...")) {
                 s.delete_asset = r.guid;
                 s.open_delete = true;
             }
@@ -2573,6 +2856,23 @@ void draw_asset_grid(EditorState& s) {
             ImGui::EndDragDropSource();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(level ? "%s\nContent/%s\nDouble-click to open" : "%s\nContent/%s", r.name, r.path);
+        if (list) {  // one row: name, type, size, folder
+            ImDrawList* rl = ImGui::GetWindowDrawList();
+            const char* type_name = r.type == asset::AssetType::Data && r.data_type[0] ? r.data_type : asset::to_string(r.type);
+            char size_text[32];
+            std::snprintf(size_text, sizeof size_text, r.source_size >= 1048576 ? "%.1f MB" : "%.1f KB", static_cast<f64>(r.source_size) / (r.source_size >= 1048576 ? 1048576.0 : 1024.0));
+            rl->AddText(ImVec2(p.x + 4, p.y), ImGui::GetColorU32(ImGuiCol_Text), r.name);
+            rl->AddText(ImVec2(p.x + row_width * 0.35f, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), type_name);
+            rl->AddText(ImVec2(p.x + row_width * 0.55f, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), size_text);
+            rl->AddText(ImVec2(p.x + row_width * 0.68f, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), r.folder[0] ? r.folder : "(Content)");
+            if (const char code = source_control::status(r.path)) {
+                const char badge[2] = {code, 0};
+                rl->AddText(ImVec2(p.x + row_width - 18, p.y), code == 'A' ? IM_COL32(155, 225, 31, 255) : IM_COL32(243, 195, 18, 255), badge);
+            }
+            ImGui::EndGroup();
+            ImGui::PopID();
+            continue;
+        }
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 lo(p.x + 6, p.y + 6), hi(p.x + kTile - 6, p.y + kTile - 6);
         u64 thumbnail = 0;
@@ -2795,7 +3095,9 @@ void draw_content_browser(EditorState& s) {
     const ImVec2 wp = ImGui::GetWindowPos();
     ImGui::GetWindowDrawList()->AddRectFilled(wp, ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y + ImGui::GetFrameHeight() + 8.0f), u32_color(t.content_bar));
     if (ImGui::BeginTabBar("ContentTabs")) {
-        if (themed_tab("Content", 0, active_tab, t.content_tab, t.content_bar, t.text_on_bright)) {
+        const bool to_content = s.show_content_tab;  // Find in Content Browser
+        s.show_content_tab = false;
+        if (themed_tab("Content", 0, active_tab, t.content_tab, t.content_bar, t.text_on_bright, to_content)) {
             // Folder tree: black, lime border, yellow text and lines.
             ImGui::PushStyleColor(ImGuiCol_ChildBg, vec4(t.folder_tree_background));
             ImGui::PushStyleColor(ImGuiCol_Border, vec4(t.folder_tree_border));
@@ -2804,10 +3106,38 @@ void draw_content_browser(EditorState& s) {
             ImGui::BeginChild("FolderTree", ImVec2(200, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
             const ImGuiTreeNodeFlags node = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
             ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.folder_tree_border));
-            const bool root = ImGui::TreeNodeEx("Content", node | (s.content_folder[0] ? 0 : ImGuiTreeNodeFlags_Selected));
+            if (s.settings.favourites.count && ImGui::TreeNodeEx("Favourites", node)) {
+                for (u32 i = 0; i < s.settings.favourites.count; ++i) {
+                    const char* path = s.settings.favourites[i].path;
+                    ImGui::PushID(static_cast<int>(i));
+                    if (ImGui::Selectable(path[0] ? path : "Content", !s.active_collection[0] && std::strcmp(path, s.content_folder) == 0)) {
+                        std::snprintf(s.content_folder, sizeof s.content_folder, "%s", path);
+                        s.search[0] = s.active_collection[0] = '\0';
+                    }
+                    if (ImGui::BeginPopupContextItem("favourite_menu")) {
+                        if (ImGui::MenuItem("Remove from Favourites")) toggle_favourite(s, path);
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+            const char* collections[64];
+            const u32 collection_count = collection_names(s, collections);
+            if (collection_count && ImGui::TreeNodeEx("Collections", node)) {
+                for (u32 i = 0; i < collection_count; ++i) {
+                    if (ImGui::Selectable(collections[i], std::strcmp(collections[i], s.active_collection) == 0)) {
+                        std::snprintf(s.active_collection, sizeof s.active_collection, "%s", collections[i]);
+                        s.search[0] = '\0';
+                    }
+                }
+                ImGui::TreePop();
+            }
+            const bool root = ImGui::TreeNodeEx("Content", node | (s.content_folder[0] || s.active_collection[0] ? 0 : ImGuiTreeNodeFlags_Selected));
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                 s.content_folder[0] = '\0';
                 s.search[0] = '\0';
+                s.active_collection[0] = '\0';
             }
             folder_drop_target(s, "");
             ImGui::PopStyleColor();
@@ -3176,6 +3506,13 @@ void handle_shortcuts(EditorState& s) {
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) paste(s);
     if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_D)) duplicate_selected(s);
+    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_B)) {  // Find in Content Browser: the selected object's asset
+        asset::Guid used;
+        if (const auto* m = s.world->get<world::StaticMesh>(s.selected)) asset::parse_guid(m->mesh, used);
+        if (const auto* m = s.world->get<world::SkeletalMesh>(s.selected); m && !used.valid()) asset::parse_guid(m->mesh, used);
+        if (const auto* m = s.world->get<world::Script>(s.selected); m && !used.valid()) asset::parse_guid(m->script, used);
+        if (used.valid()) find_in_content_browser(s, used);
+    }
     if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_G)) group_selection(s);
     if (!ctrl && io.KeyShift && has && ImGui::IsKeyPressed(ImGuiKey_G)) {
         ungroup_selection(s);

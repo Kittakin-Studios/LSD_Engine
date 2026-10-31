@@ -144,6 +144,14 @@ Particle System.
 
 All text assets (levels, graphs, data assets, UI) are plain text: they merge and diff in Git.
 
+**Browsing**: **List** / **Tiles** and the size slider change the view; the sort menu orders by name,
+type, last change or size. Ctrl-click and Shift-click select several assets (then right-click:
+Delete Selected, Reimport, Add to Collection). Right-click a folder > **Add to Favourites**; right-
+click assets > **Add to Collection** (a named set of assets from any folders, like Unreal's
+Collections). Both appear above the folder tree. Right-click an asset > **Duplicate** copies it
+with its import settings; **Reimport** reads the source file again. In the Outliner, right-click an
+object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
+
 **Source control** (Unreal's Source Control, Git only). When the project folder is a Git repository,
 asset tiles get a badge: yellow **M** changed, green **A** new, blue **R** renamed (the `.meta`
 counts too). Right-click an asset > **Source Control**: **History** (its last 50 commits), **Diff

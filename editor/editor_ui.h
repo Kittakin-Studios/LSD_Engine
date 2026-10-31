@@ -98,6 +98,11 @@ struct EditorState {
     char search[96] = "";
     int type_filter = 0;            // 0 = all types, 1 = meshes, 2 = levels
     asset::Guid selected_asset;     // shown in Details when valid
+    static constexpr u32 kMaxAssetSelection = 256;
+    asset::Guid asset_selection[kMaxAssetSelection];  // Ctrl / Shift-click picks several (selected_asset is one of them)
+    u32 asset_selection_count = 0;
+    char active_collection[48] = "";  // the Content Browser shows this collection instead of a folder
+    bool show_content_tab = false;    // Find in Content Browser: switch the bottom panel to Content
     asset::AssetMeta selected_meta;
 
     // Rename / delete dialogs (Content Browser)
