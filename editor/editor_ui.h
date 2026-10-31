@@ -154,7 +154,7 @@ struct EditorState {
     ProjectSettings project;
     // Viewports: one, or a 2x2 layout (perspective, top, front, right). `camera` always belongs to the
     // active viewport (the last one clicked); `views` keeps the others' cameras.
-    bool quad_view = false;
+    u32 panes = 1;  // viewports shown: 1, 2 (side by side) or 4 (2x2)
     EditorCamera views[4];
     int active_view = 0;
     u32 viewport_count = 0;          // set by draw_editor
@@ -176,8 +176,8 @@ bool select_asset(EditorState& state, const char* name);
 void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type);
 bool asset_matches(const asset::AssetRecord& record, const char* type);  // "Mesh", "Material", a data type name...
 
-// One viewport, or the 2x2 layout (perspective, top, front, right).
-void set_layout(EditorState& state, bool quad);
+// 1 viewport, 2 side by side (perspective + top) or 4 (perspective, top, front, right).
+void set_layout(EditorState& state, u32 panes);
 
 Vec3 camera_forward(const EditorCamera& camera);
 Mat4 camera_view(const EditorCamera& camera);

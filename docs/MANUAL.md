@@ -84,7 +84,9 @@ saves the panel arrangement under a name (Unreal's Save Layout As), loads one ba
 
 Unreal's controls: hold the **right mouse button** and use **W A S D Q E** to fly, the mouse to
 look; **middle mouse** pans; **Alt + left mouse** orbits; **F** frames the selection; the mouse wheel
-during a fly changes speed. **Alt+G / J / H / K**: perspective / top / front / right view.
+during a fly changes speed. **Alt+G / J / H / K**: perspective / top / front / right view. The layout
+button on the viewport toolbar cycles **1x1 → 1x2** (perspective beside top) **→ 2x2** (perspective, top,
+front, right); each pane keeps its own camera. Console: `layout 1|2|4`.
 **Alt+4 / 3 / 2**: Lit / Unlit / Wireframe. **G**: game view (hides editor icons).
 
 ### Selecting and transforming

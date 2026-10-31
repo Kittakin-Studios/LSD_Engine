@@ -61,7 +61,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [~] Snapping: move, angle, scale steps; End drops to the surface below; needs vertex snap, surface snapping while dragging
 - [~] Picking: click select (meshes and volumes by box, icons on screen), Ctrl+click toggles, Shift+click adds (ranges in the Outliner), drag a selection box, Ctrl+A, focus (F); gizmo moves the whole selection around the last-clicked object; needs triangle-accurate picking
 - [x] Unreal camera: RMB look + WASD/QE fly, wheel speed, MMB pan, Alt+LMB orbit, wheel dolly; bookmarks Ctrl+0..9 / 0..9
-- [~] Perspective + Top / Front / Right orthographic views (Alt+G/J/H/K), 1x1 or 2x2 layout (each viewport has its own camera and gizmo); needs a 1x2 layout, vertical grid in side views
+- [x] Perspective + Top / Front / Right orthographic views (Alt+G/J/H/K), 1x1, 1x2 or 2x2 layout (each viewport has its own camera and gizmo; `layout 1|2|4`), side views draw the grid on their own plane
 - [~] View modes: Lit, Unlit, Wireframe (Alt+4/3/2) on D3D12 and OpenGL; needs normals, lighting only, collision, overdraw [View Modes, Buffer Visualization]
 - [~] Show flags: grid, axis gizmo, Game View (G), stats; needs bounds, collision, nav [Show flags]
 - [~] Icons for Player Start (capsule + facing arrow), empties and volumes (wire boxes); selection tint; needs light/camera/sound icons, selection outline

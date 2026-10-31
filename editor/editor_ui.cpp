@@ -1152,10 +1152,11 @@ Entity pick(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, ImVe
     return hit;
 }
 
-// Turns the 2x2 layout on or off. The first time, the extra views are framed around the camera's pivot.
-void set_quad_view(EditorState& s, bool on) {
-    if (on == s.quad_view) return;
-    if (on && s.views[1].view == ViewType::Perspective) {
+// Switches between 1, 2 (1x2) and 4 (2x2) viewports. The first time, the extra views are framed around the camera's pivot.
+void set_panes(EditorState& s, u32 panes) {
+    if (panes != 2 && panes != 4) panes = 1;
+    if (panes == s.panes) return;
+    if (panes > 1 && s.views[1].view == ViewType::Perspective) {
         const Vec3 pivot = s.camera.position + camera_forward(s.camera) * s.camera.pivot_distance;
         const ViewType types[3] = {ViewType::Top, ViewType::Front, ViewType::Right};
         for (int i = 1; i < 4; ++i) {
@@ -1165,11 +1166,11 @@ void set_quad_view(EditorState& s, bool on) {
         }
         s.views[0] = s.camera;
     }
-    if (!on && s.active_view != 0) {  // back to one viewport: keep showing the active camera
+    if (s.active_view >= static_cast<int>(panes)) {  // its pane is gone: show that camera in the first
         s.views[0] = s.camera;
         s.active_view = 0;
     }
-    s.quad_view = on;
+    s.panes = panes;
 }
 
 void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
@@ -1203,7 +1204,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                     ImGui::IsMouseClicked(ImGuiMouseButton_Middle))) {
         g_request_active = index;
     }
-    if (s.quad_view && active) {  // gold frame on the active viewport
+    if (s.panes > 1 && active) {  // gold frame on the active viewport
         ImGui::GetForegroundDrawList()->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), u32_color(t.details_tab_active), 0.0f, 0, 2.0f);
     }
 
@@ -1370,9 +1371,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(s.quad_view ? "2x2" : "1x1")) set_quad_view(s, !s.quad_view);
-        ImGui::SetItemTooltip("Viewport layout: one, or perspective + top + front + right");
-        if (s.quad_view && !active) {  // the other viewports keep a short toolbar
+        if (ImGui::Button(s.panes == 4 ? "2x2" : s.panes == 2 ? "1x2" : "1x1")) set_panes(s, s.panes == 1 ? 2 : s.panes == 2 ? 4 : 1);
+        ImGui::SetItemTooltip("Viewport layout: one; perspective + top side by side; or perspective + top + front + right");
+        if (s.panes > 1 && !active) {  // the other viewports keep a short toolbar
             ImGui::End();
             return;
         }
@@ -1412,7 +1413,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
         ImGui::SetNextItemWidth(90.0f);
         ImGui::SliderFloat("##speed", &s.settings.camera_speed, 0.5f, 50.0f, "speed %.1f", ImGuiSliderFlags_Logarithmic);
         ImGui::SetItemTooltip("Camera speed (RMB + wheel)");
-        if (!s.quad_view) {
+        if (s.panes == 1) {
             ImGui::SameLine();
             ImGui::TextDisabled("RMB: look + WASD/QE fly  MMB: pan  Alt+LMB: orbit  F: focus");
         }
@@ -3898,7 +3899,7 @@ void handle_shortcuts(EditorState& s) {
 
 } // namespace
 
-void set_layout(EditorState& s, bool quad) { set_quad_view(s, quad); }
+void set_layout(EditorState& s, u32 panes) { set_panes(s, panes); }
 
 void create_input_setup(EditorState& s) { create_default_input(s); }
 
@@ -3991,10 +3992,10 @@ void draw_editor(EditorState& s) {
 
     // The central node is left empty and transparent: the 3D viewport shows through it.
     if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace)) {
-        const bool quad = s.quad_view && !(s.playing && !s.ejected);  // the game plays in one big viewport
-        s.viewport_count = quad ? 4 : 1;
+        const u32 panes = s.playing && !s.ejected ? 1u : s.panes;  // the game plays in one big viewport
+        s.viewport_count = panes;
         g_request_active = -1;
-        if (!quad) {
+        if (panes == 1) {
             draw_viewport(s, s.active_view, central->Pos, central->Size);
             s.viewport_count = 1;
             if (s.active_view != 0) {  // single view always uses slot 0
@@ -4005,9 +4006,10 @@ void draw_editor(EditorState& s) {
             }
         } else {
             const f32 gap = 2.0f;
-            const ImVec2 half((central->Size.x - gap) * 0.5f, (central->Size.y - gap) * 0.5f);
-            for (int i = 0; i < 4; ++i) {
-                const ImVec2 at(central->Pos.x + (i % 2) * (half.x + gap), central->Pos.y + static_cast<f32>(i / 2) * (half.y + gap));
+            const f32 rows = panes == 4 ? 2.0f : 1.0f;
+            const ImVec2 half((central->Size.x - gap) * 0.5f, (central->Size.y - gap * (rows - 1.0f)) / rows);
+            for (int i = 0; i < static_cast<int>(panes); ++i) {
+                const ImVec2 at(central->Pos.x + static_cast<f32>(i % 2) * (half.x + gap), central->Pos.y + static_cast<f32>(i / 2) * (half.y + gap));
                 if (i != s.active_view) std::swap(s.camera, s.views[i]);  // draw_viewport works on s.camera
                 draw_viewport(s, i, at, half);
                 if (i != s.active_view) std::swap(s.camera, s.views[i]);

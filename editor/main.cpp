@@ -494,8 +494,9 @@ void register_console(EditorState& s) {
         LSD_LOG_WARN("console", "view: perspective, top, front or right");
     }, &s, "view perspective|top|front|right");
     console::add_command("layout", [](void* user, const char* args) {
-        lsd::editor::set_layout(*static_cast<EditorState*>(user), std::strcmp(args, "4") == 0 || std::strcmp(args, "2x2") == 0);
-    }, &s, "layout 1|4: one viewport or perspective + top + front + right");
+        const bool two = std::strcmp(args, "2") == 0 || std::strcmp(args, "1x2") == 0;
+        lsd::editor::set_layout(*static_cast<EditorState*>(user), two ? 2u : std::strcmp(args, "4") == 0 || std::strcmp(args, "2x2") == 0 ? 4u : 1u);
+    }, &s, "layout 1|2|4: one viewport, perspective + top side by side, or perspective + top + front + right");
     console::add_command("input.CreateDefaults", [](void* user, const char*) { lsd::editor::create_input_setup(*static_cast<EditorState*>(user)); },
                          &s, "Create IA_Move, IA_Look, IA_Jump and IMC_Default in the open folder");
     console::add_command("asset.Select", [](void* user, const char* args) {
@@ -1643,7 +1644,13 @@ int main(int argc, char** argv) {
                 scene_clear[c] = std::sqrt(lin / (1.0f + lin));
             }
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
-            if (state.show_grid && !state.game_view && !state.playing) device->draw_lines(grid.vertices, grid.vertex_count, view_proj.m);
+            if (state.show_grid && !state.game_view && !state.playing) {
+                // Side views see the floor edge-on, so they get the grid stood up on their own plane (XZ / YZ).
+                const lsd::Mat4 grid_proj = lens.view == lsd::editor::ViewType::Front ? view_proj * lsd::rotation_x(lsd::radians(90.0f))
+                                          : lens.view == lsd::editor::ViewType::Right ? view_proj * lsd::rotation_y(lsd::radians(90.0f))
+                                                                                       : view_proj;
+                device->draw_lines(grid.vertices, grid.vertex_count, grid_proj.m);
+            }
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
             if (scene.valid()) {
                 post.scene = scene;
