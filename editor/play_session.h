@@ -45,6 +45,9 @@ public:
     Vec3 view_forward() const { return view_forward_; }
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
     void set_view(world::Entity camera) { view_camera_ = camera; }  // invalid: the player again
+    // Timelines by asset name (lsd.play_timeline): several can play at once.
+    bool play_timeline(const char* name, bool loop);
+    void stop_timeline(const char* name);
     Vec3 forward() const;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
@@ -109,6 +112,9 @@ private:
     Projectile projectiles_[256];
     u32 projectile_count_ = 0;
     void update_movement(world::World& world, f32 dt);
+    struct PlayingTimeline;
+    PlayingTimeline* timelines_[8] = {};
+    void update_timelines(world::World& world, f32 dt);
     void update_view(const world::World& world);
     input::InputMappingContext context_;  // the Character's controls, the player's rebinds applied
     char key_held_[32] = "";

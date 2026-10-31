@@ -176,7 +176,7 @@ visual-script sounds, `stat audio`.
 
 ### Timelines
 
-- [ ] Simple timeline / cutscene editor: tracks for transforms, properties, events, audio, camera cuts **(S)** [Sequencer basics]
+- [x] Simple timeline / cutscene editor: tracks for transforms, properties, events, audio, camera cuts **(S)** [Sequencer basics]: Timeline data asset and window (tracks, keys on a ruler, scrub preview that restores the level, Key from the object as it is, drag keys snapping to 1/30 s), Transform / Property / Event / Sound / Camera Cut tracks, `lsd.play_timeline` / `stop_timeline`, on_timeline_finished, Play / Stop Timeline nodes; needs curve editing per key, blending, nested timelines, render to video
 
 ## Milestone 6 — Vertical slice
 

@@ -73,6 +73,9 @@
 // world point bending its parent (hands on ledges); lsd.ik_look_at(e, bone, x, y, z [, weight [, fx, fy, fz]])
 // turns a bone's forward axis (its own space, default +X) toward a point (heads, turrets).
 //
+// Timelines (cutscenes): lsd.play_timeline(name [, loop]) -> ok, lsd.stop_timeline(name); when one
+// ends, on_timeline_finished(self, name) runs on every script that has it.
+//
 // Cameras: lsd.set_view(e) looks through e's Camera component (blends are not done: a cut);
 // lsd.set_view(nil) goes back to the player.
 //
@@ -142,6 +145,7 @@ struct ScriptHost {
     void (*set_view)(void* user, world::Entity camera) = nullptr;  // invalid: back to the player
     void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
     void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
+    bool (*timeline)(void* user, int what, const char* name, bool loop) = nullptr;           // 0 play, 1 stop
     bool (*data_path)(void* user, const char* data_type, const char* name, char* out, usize capacity) = nullptr;  // a data asset by type and name
     // shape: 0 line a-b, 1 sphere at a (radius), 2 box at a (half size b), 3 text at a.
     void (*draw_debug)(void* user, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) = nullptr;

@@ -2,6 +2,7 @@
 
 #include "animation_player.h"
 #include "debug_draw.h"
+#include "timeline_player.h"
 #include "behavior.h"
 
 #include "lsd/foundation/profile.h"
@@ -14,6 +15,7 @@
 #include "lsd/foundation/log.h"
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
+#include "lsd/world/timeline.h"
 
 #include <SDL3/SDL_stdinc.h>
 
@@ -271,6 +273,7 @@ void PlaySession::stop() {
     physics_ = nullptr;
     simulated_count_ = 0;
     projectile_count_ = 0;
+    stop_timeline(nullptr);
     view_camera_ = {};
     overlap_count_ = 0;
     follower_count_ = 0;
@@ -480,6 +483,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             return true;
         }, this);
     }
+    host.timeline = [](void* user, int what, const char* name, bool loop) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (what == 0) return self.play_timeline(name, loop);
+        self.stop_timeline(name);
+        return true;
+    };
     host.music = [](void* user, int what, const char* name, f32 volume, f32 fade) {
         SoundPlayer* sounds = static_cast<PlaySession*>(user)->sounds_;
         if (!sounds) return;
@@ -1048,6 +1057,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
         eye_ = head + back * arm;
     }
+    update_timelines(world, dt);
     update_movement(world, dt);
     update_view(world);
     for (u32 i = 0; i < emitter_count_ && sounds_; ++i) {  // emitters follow their objects
@@ -1067,6 +1077,92 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     update_brains(world, dt);
     update_agents(world, dt);
+}
+
+struct PlaySession::PlayingTimeline {
+    char name[96];
+    world::Timeline data;
+    f32 time = 0.0f;
+    bool loop = false;
+    bool cuts = false;  // has camera cuts: the view goes back to the player at the end
+};
+
+bool PlaySession::play_timeline(const char* name, bool loop) {
+    const asset::AssetRecord* r = find_asset(asset::AssetType::Data, name);
+    if (!r || std::strcmp(r->data_type, "Timeline") != 0) {
+        LSD_LOG_WARN("timeline", "No Timeline named '%s'", name);
+        return false;
+    }
+    stop_timeline(name);  // from the start again
+    PlayingTimeline** slot = nullptr;
+    for (PlayingTimeline*& t : timelines_) {
+        if (!t && !slot) slot = &t;
+    }
+    if (!slot) return false;
+    auto* t = new PlayingTimeline();
+    char path[300];
+    registry_->source_path(*r, path, sizeof path);
+    if (!asset::load_data_asset(path, t->data)) {
+        delete t;
+        return false;
+    }
+    std::snprintf(t->name, sizeof t->name, "%s", name);
+    t->loop = loop;
+    t->time = -1e-4f;  // keys at 0 fire on the first update
+    for (const world::TimelineTrack& track : t->data.tracks) t->cuts = t->cuts || track.type == static_cast<u32>(world::TrackType::CameraCut);
+    *slot = t;
+    return true;
+}
+
+void PlaySession::stop_timeline(const char* name) {
+    for (PlayingTimeline*& t : timelines_) {
+        if (t && (!name || std::strcmp(t->name, name) == 0)) {
+            if (t->cuts) view_camera_ = {};
+            delete t;
+            t = nullptr;
+        }
+    }
+}
+
+// Timelines: poses, then the keys this frame crossed (events, sounds, camera cuts).
+void PlaySession::update_timelines(world::World& world, f32 dt) {
+    for (PlayingTimeline*& t : timelines_) {
+        if (!t) continue;
+        const f32 from = t->time;
+        t->time += dt;
+        const f32 length = t->data.length > 0.01f ? t->data.length : 0.01f;
+        const bool ended = t->time >= length;
+        const f32 to = ended ? length : t->time;
+        pose_timeline(world, t->data, to);
+        for (u32 i = 0; i < t->data.tracks.count; ++i) {
+            const auto type = static_cast<world::TrackType>(t->data.tracks[i].type);
+            if (type == world::TrackType::Transform || type == world::TrackType::Property) continue;
+            const world::TimelineKey* keys[32];
+            const u32 n = world::keys_crossed(t->data, i, from, to, keys, 32);
+            for (u32 k = 0; k < n; ++k) {
+                if (type == world::TrackType::Event) {
+                    scripts_.broadcast(keys[k]->text, t->name);
+                } else if (type == world::TrackType::Sound && sounds_) {
+                    const world::Entity at = find_named(world, t->data.tracks[i].object);
+                    const Mat4 m = world.alive(at) ? world.world_matrix(at) : Mat4{};
+                    sounds_->play(keys[k]->text, world.alive(at), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+                } else if (type == world::TrackType::CameraCut) {
+                    view_camera_ = find_named(world, keys[k]->text);
+                }
+            }
+        }
+        if (!ended) continue;
+        if (t->loop) {
+            t->time = -1e-4f;
+            continue;
+        }
+        char name[96];
+        std::snprintf(name, sizeof name, "%s", t->name);
+        if (t->cuts) view_camera_ = {};
+        delete t;
+        t = nullptr;
+        scripts_.broadcast("on_timeline_finished", name);  // function on_timeline_finished(self, name)
+    }
 }
 
 // Rotating and Projectile Movement components.

@@ -4,6 +4,7 @@
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/curve.h"
+#include "lsd/world/timeline.h"
 
 #include <cmath>
 #include <cstdio>
@@ -245,6 +246,44 @@ static void test_curve() {
     CHECK(between < 1.0f && between > 0.0f);
 }
 
+static void test_timeline() {  // Sequencer basics: eased transforms, values, keys crossed in order
+    world::Timeline t;
+    world::TimelineTrack move;
+    t.tracks.push_back(move);
+    world::TimelineTrack events;
+    events.type = static_cast<u32>(world::TrackType::Event);
+    t.tracks.push_back(events);
+    world::TimelineKey k;
+    k.track = 0;
+    k.time = 1.0f;
+    k.position = {0, 0, 0};
+    k.value = 10.0f;
+    t.keys.push_back(k);
+    k.time = 3.0f;
+    k.position = {4, 0, 2};
+    k.rotation = {0, 0, 90};
+    k.value = 20.0f;
+    t.keys.push_back(k);
+    for (f32 time : {2.5f, 1.5f}) {  // events out of order in the list
+        world::TimelineKey e;
+        e.track = 1;
+        e.time = time;
+        std::snprintf(e.text, sizeof e.text, time < 2.0f ? "first" : "second");
+        t.keys.push_back(e);
+    }
+    Vec3 p, r;
+    CHECK(world::sample_transform(t, 0, 0.0f, p, r) && p.x == 0.0f);  // held before the first key
+    CHECK(world::sample_transform(t, 0, 2.0f, p, r) && std::fabs(p.x - 2.0f) < 1e-4f && std::fabs(r.z - 45.0f) < 1e-3f);  // half-way
+    CHECK(world::sample_transform(t, 0, 1.5f, p, r) && p.x > 0.0f && p.x < 1.0f);  // eased: slower near the key than linear (1.0)
+    CHECK(world::sample_transform(t, 0, 9.0f, p, r) && p.z == 2.0f);  // held after the last
+    f32 v = 0;
+    CHECK(world::sample_value(t, 0, 2.0f, v) && std::fabs(v - 15.0f) < 1e-4f);
+    CHECK(!world::sample_transform(t, 5, 1.0f, p, r));
+    const world::TimelineKey* fired[4];
+    CHECK(world::keys_crossed(t, 1, 0.0f, 3.0f, fired, 4) == 2 && std::strcmp(fired[0]->text, "first") == 0);
+    CHECK(world::keys_crossed(t, 1, 1.5f, 2.0f, fired, 4) == 0);  // exactly at `from` does not fire again
+}
+
 int main() {
     test_math();
     test_entities();
@@ -253,6 +292,7 @@ int main() {
     test_tags();
     test_spline();
     test_curve();
+    test_timeline();
     if (g_failures == 0) std::printf("All world tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

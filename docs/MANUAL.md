@@ -435,6 +435,20 @@ Stream and Looping in their import settings.
 
 ---
 
+## 12b. Timelines (cutscenes)
+
+Unreal's Sequencer, the basics. Content Browser > New Data Asset > **Timeline**, then double-click it.
+
+1. Select an object in the level and press **+ Track** (a Transform track for it). Change a track's
+   type on the left: **Property** (a number on a component, written `PointLight.intensity`),
+   **Event** (calls a Lua function / Custom Event by name), **Sound**, **Camera Cut** (looks through
+   the Camera object named in the key).
+2. Drag the playhead (the orange line) to a time, move the object with the gizmo, press **Key**.
+   Scrubbing previews the level; **Restore Level** (or closing the window) puts objects back.
+3. Click a key to edit it; drag it to move it (snaps to 1/30 s, Ctrl for free); Delete removes it.
+4. Play it: `lsd.play_timeline("TL_Intro")` or the **Play Timeline** node. When it ends,
+   `on_timeline_finished(self, name)` runs and camera cuts hand the view back to the player.
+
 ## 13. Particles
 
 **New Data Asset > Particle System** (Unreal's Niagara System), up to 8 emitters each with: spawn

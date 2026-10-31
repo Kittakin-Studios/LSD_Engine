@@ -11,6 +11,7 @@
 #include "packaging.h"
 #include "navigation.h"
 #include "ui_editor.h"
+#include "timeline_editor.h"
 
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/profile.h"
@@ -35,6 +36,7 @@
 #include "lsd/foundation/log.h"
 #include "lsd/world/curve.h"
 #include "lsd/world/user_types.h"
+#include "lsd/world/timeline.h"
 #include "lsd/script/graph.h"
 #include "lsd/render/material.h"
 #include "lsd/audio/audio.h"
@@ -571,6 +573,16 @@ void register_console(EditorState& s) {
         volatile int* nowhere = nullptr;
         *nowhere = 1;
     }, &s, "Crash on purpose (writes a crash report to Saved/Crashes)");
+    console::add_command("timeline.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::usize hits[16];
+        const lsd::usize n = st.registry->search(args, lsd::asset::AssetType::Data, nullptr, hits, 16);
+        for (lsd::usize i = 0; i < n; ++i) {
+            const lsd::asset::AssetRecord& r = st.registry->get(hits[i]);
+            if (std::strcmp(r.data_type, "Timeline") == 0) return lsd::editor::open_timeline_editor(st, r);
+        }
+        LSD_LOG_WARN("editor", "timeline.Open: no Timeline named like '%s'", args);
+    }, &s, "Open a Timeline in the Timeline window");
     console::add_command("ui.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -906,6 +918,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserEnum>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::ScriptNode>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Timeline>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
