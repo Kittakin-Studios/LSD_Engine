@@ -148,6 +148,9 @@ struct EditorState {
     bool show_memory = false;          // Window > Memory (memreport)
     char load_layout[260] = "";        // Window > Layout > a saved layout: applied before the next frame
     bool reset_layout = false;         // Window > Layout > Reset to Default
+    bool simulate_requested = false;   // with play_requested: start ejected (Simulate, Alt+S)
+    GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
+    bool user_settings_changed = false;         // main.cpp applies and saves them
     bool show_debugger = false;        // Tools > Lua Debugger
     static constexpr u32 kMaxKept = 64;
     world::Entity kept[kMaxKept];             // Keep Simulation Changes: copied back into the level when Play stops

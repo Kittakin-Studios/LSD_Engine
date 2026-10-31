@@ -308,7 +308,9 @@ when you stop, they keep it, as one undo step.
 
 Press **Play** (or **Alt+P**). **Esc** stops; **Pause** pauses (`]` steps a frame); **F8** ejects to
 fly around the running game; **Shift+F1** frees the mouse. Changes made while playing are undone
-when Play stops, like Unreal's PIE.
+when Play stops, like Unreal's PIE. **Simulate** (**Alt+S**, next to Play) runs physics, scripts and AI
+while you keep the editor camera and selection (F8 possesses the player). The menu bar's **Settings >
+Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings.
 
 The player is the first object with a **Character** component; without one, a default walker
 appears at the Player Start (or the camera). A Character walks, jumps, climbs steps and slopes, and
@@ -755,7 +757,7 @@ behaviour tree tasks `name(self, dt)`.
 | Ctrl+C / X / V / D, Delete, End | clipboard, duplicate, delete, drop to floor |
 | Ctrl+G, Shift+G, Ctrl+A | group, ungroup, select all |
 | Alt+G / J / H / K, Alt+4 / 3 / 2, G, P | views, view modes, game view, navmesh |
-| Alt+P, Esc, Pause, ], F8, Shift+F1 | play, stop, pause, step, eject, free mouse |
+| Alt+P, Alt+S, Esc, Pause, ], F8, Shift+F1 | play, simulate, stop, pause, step, eject, free mouse |
 
 ### Command line
 

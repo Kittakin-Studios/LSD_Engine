@@ -676,6 +676,10 @@ void register_console(EditorState& s) {
         }, at);
     }, &s, "ui.Click <x> <y>: click the game UI at window pixels, 0.8 s later (tests)");
     console::add_command("play", [](void* user, const char*) { static_cast<EditorState*>(user)->play_requested = true; }, &s, "Start Play-in-Editor");
+    console::add_command("simulate", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        st.play_requested = st.simulate_requested = true;
+    }, &s, "Start Simulate: the level runs with the editor camera (Alt+S)");
     console::add_command("stop", [](void* user, const char*) { static_cast<EditorState*>(user)->stop_requested = true; }, &s, "Stop Play-in-Editor");
     console::add_command("save", [](void* user, const char*) {
         auto& st = *static_cast<EditorState*>(user);
@@ -1146,6 +1150,7 @@ int main(int argc, char** argv) {
     };
     apply_user_settings();
     play.set_user_settings(&user_settings);
+    state.user_settings = &user_settings;
     // Localisation: the project's string table in the player's language; UI documents translate keys.
     lsd::asset::Localization localization(allocator);
     {
@@ -1416,10 +1421,14 @@ int main(int argc, char** argv) {
             animations->reset();  // Play starts every animation from its beginning
             effects->reset();
             state.playing = true;
-            state.mouse_captured = true;
-            state.paused = state.ejected = false;
-            LSD_LOG_INFO("editor", "Play");
+            state.paused = false;
+            // Simulate (Unreal's Alt+S): the level runs while you keep the editor camera and selection.
+            // shortcut: the player is still spawned (just not possessed); skip spawning it if that gets in the way.
+            state.ejected = state.simulate_requested;
+            state.mouse_captured = !state.ejected;
+            LSD_LOG_INFO("editor", state.simulate_requested ? "Simulate" : "Play");
         }
+        state.simulate_requested = false;
         state.play_requested = false;
         if (state.stop_requested && state.playing) {
             // Keep Simulation Changes: copy the kept objects' components before the level reverts.
@@ -1469,7 +1478,8 @@ int main(int argc, char** argv) {
         if (game_mode && !state.playing && !state.play_requested) running = false;
         state.stop_requested = false;
         if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
-        if (play.take_settings_changed()) {  // an options menu changed them
+        if (play.take_settings_changed() || state.user_settings_changed) {  // an options menu, or Settings > Engine Scalability
+            state.user_settings_changed = false;
             apply_user_settings();
             lsd::reflect::save_file(user_settings, kUserSettingsPath);
         }

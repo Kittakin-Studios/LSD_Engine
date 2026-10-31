@@ -76,12 +76,12 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [x] Output Log tab with filters + console (`engine/core` console: variables and commands, Tab completion, history; `help` lists them; `-exec=` runs lines at startup) [Output Log, CVars]
 - [x] Message Log (Window menu): warnings and errors only, unread count in the menu bar; click a message to show the asset it names (a GUID or Content path in the text) in the Content Browser [Message Log]
 - [~] Editor preferences window (Edit menu): theme (`Config/editor_theme.json`) + per-user settings (`Saved/editor_settings.json`: snapping, camera speed, last level, autosave interval), named layouts (Window > Layout: Save Layout As, load, Reset to Default; `Saved/Layouts/*.ini`); needs a keymap editor
-- [~] Menu bar: File (New / Open / Save / Save As), Edit (Undo / Redo / Duplicate / Delete / Drop to Floor), Window (Undo History), Play / Stop; needs Simulate, build buttons, platform/quality dropdown
+- [x] Menu bar: File (New / Open / Recent / Save / Save As), Edit (Undo / Redo / Duplicate / Delete / Drop to Floor), Build (Lighting, Navigation, Validate Assets, Package Project), Settings (Engine Scalability: Low / Medium / High / Epic), Window (Undo History, Layout), Play / Simulate / Stop; one platform (Windows) so no platform dropdown yet
 
 ### Editing
 
 - [x] Transactions: undo/redo (Ctrl+Z / Ctrl+Y) of every level edit, Undo History window with click-to-jump, unsaved marker in the title [Transaction system]
-- [~] Play-in-Editor (Alt+P / Esc): play in the viewport from the Player Start, mouse capture (Shift+F1), Pause + frame step (]), Eject / Possess (F8: editor camera and selection while the game runs), changes revert on Stop; needs play in a new window, Simulate [PIE]
+- [~] Play-in-Editor (Alt+P / Esc): play in the viewport from the Player Start, mouse capture (Shift+F1), Pause + frame step (]), Eject / Possess (F8: editor camera and selection while the game runs), changes revert on Stop; Simulate (Alt+S, `simulate`: runs ejected with the editor camera); needs play in a new window [PIE]
 - [x] Keep simulation changes: copy a property or object from PIE back to the editor world [Keep Simulation Changes]: Outliner right-click > Keep Simulation Changes (K while ejected) copies the selected objects' components back into the level on Stop, as one undo step
 - [~] Volumes: Blocking, Kill and Trigger (on_overlap_begin / end to scripts; point tests for now), post-process / audio / nav modifier come with those systems
 - [~] Blockout: basic shapes scaled with the gizmo, collision on by default; needs box UVs, resize handles [BSP / Modeling Mode basics]

@@ -3808,6 +3808,25 @@ void draw_menu_bar(EditorState& s) {
     if (ImGui::BeginMenu("Build")) {
         if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
+        if (ImGui::MenuItem("Build Navigation", "P")) s.show_navigation = true;  // the navmesh rebuilds while it is shown
+        ImGui::SetItemTooltip("Builds and shows the navmesh (it keeps rebuilding while shown)");
+        if (ImGui::MenuItem("Validate Assets")) {
+            const u32 n = validate_assets(s.project, *s.registry);
+            std::snprintf(s.status, sizeof s.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
+            if (n) s.show_message_log = true;
+        }
+        if (ImGui::MenuItem("Package Project", nullptr, false, !s.playing)) s.package_requested = true;
+        ImGui::EndMenu();
+    }
+    if (s.user_settings && ImGui::BeginMenu("Settings")) {  // Unreal's toolbar Settings > Engine Scalability
+        static const char* kQuality[] = {"Low", "Medium", "High", "Epic"};
+        ImGui::TextDisabled("Engine Scalability");
+        for (u32 q = 0; q < 4; ++q) {
+            if (ImGui::MenuItem(kQuality[q], nullptr, s.user_settings->quality == q)) {
+                s.user_settings->quality = q;
+                s.user_settings_changed = true;
+            }
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
@@ -3844,7 +3863,9 @@ void draw_menu_bar(EditorState& s) {
     if (!s.playing) {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_y));
         if (ImGui::MenuItem("Play", "Alt+P")) s.play_requested = true;
+        if (ImGui::MenuItem("Simulate", "Alt+S")) s.play_requested = s.simulate_requested = true;
         ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the level with the editor camera: physics, scripts and AI, nobody possessed (F8 possesses)");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_x));
         if (ImGui::MenuItem("Stop", "Esc")) s.stop_requested = true;
@@ -4088,6 +4109,7 @@ void handle_shortcuts(EditorState& s) {
         return;
     }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P)) s.play_requested = true;
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) s.play_requested = s.simulate_requested = true;
     if (!io.KeyAlt && !io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_P, false)) s.show_navigation = !s.show_navigation;
     if (io.KeyAlt && !io.WantTextInput) {  // Unreal's viewport keys
         if (ImGui::IsKeyPressed(ImGuiKey_G)) set_view(s, ViewType::Perspective);
