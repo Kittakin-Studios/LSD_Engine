@@ -322,8 +322,10 @@ Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Spee
 ### Input (Enhanced Input)
 
 - **Input Action** data assets: Move (2D axis), Look, Jump (button), with a **Trigger** (Pressed,
-  Released, Hold, Tap...).
-- **Input Mapping Context**: which keys, mouse axes and gamepad buttons drive which action.
+  Released, Hold, Tap...), a **Chord Action** (counts only while another action is held too: Shift + E,
+  Unreal's Chorded Action) and **Smoothing** (seconds the value eases over: steadier look).
+- **Input Mapping Context**: which keys, mouse axes and gamepad buttons drive which action; each
+  mapping has a scale (-1 negates) and its own **Dead Zone** (on top of the sticks' built-in 0.15).
 - Pick the context and the Move / Look / Jump actions on the Character. Content Browser > **New
   Input Setup** creates a ready set (WASD, mouse, Space, gamepad).
 - A Character with no context set uses the built-in WASD / mouse / Space controls.

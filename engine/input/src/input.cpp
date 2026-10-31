@@ -60,12 +60,11 @@ u32 resolve(const char* key) {
 }
 
 // Radial dead zone for sticks: small drift reads as zero, then the range is rescaled to 0..1.
-Value dead_zone(f32 x, f32 y) {
-    constexpr f32 kDead = 0.15f;
+Value dead_zone(f32 x, f32 y, f32 dead = 0.15f) {
     const f32 len = std::sqrt(x * x + y * y);
-    if (len < kDead) return {};
+    if (len < dead) return {};
     const f32 clamped = len > 1.0f ? 1.0f : len;
-    const f32 scaled = (clamped - kDead) / (1.0f - kDead) / len;
+    const f32 scaled = (clamped - dead) / (1.0f - dead) / len;
     return {x * scaled, y * scaled};
 }
 
@@ -158,6 +157,9 @@ void InputSystem::add_context(const InputMappingContext& context) {
             a.trigger_time = 0.5f;
             a.held = 0.0f;
             a.fired = a.hold_done = false;
+            a.chord[0] = '\0';
+            a.smoothing = 0.0f;
+            a.smoothed = {};
             action = static_cast<i32>(action_count_++);
         }
         if (binding_count_ == kMaxBindings) return;
@@ -167,7 +169,7 @@ void InputSystem::add_context(const InputMappingContext& context) {
             bindings_[at] = bindings_[at - 1];
             --at;
         }
-        bindings_[at] = {static_cast<u32>(action), source, m.axis, m.scale, context.priority, context_id};
+        bindings_[at] = {static_cast<u32>(action), source, m.axis, m.scale, m.dead_zone, context.priority, context_id};
     }
 }
 
@@ -176,6 +178,14 @@ void InputSystem::set_trigger(const char* action, Trigger trigger, f32 seconds) 
     if (i < 0) return;
     actions_[i].trigger = trigger;
     actions_[i].trigger_time = seconds;
+}
+
+void InputSystem::configure(const char* action, const InputAction& settings) {
+    set_trigger(action, static_cast<Trigger>(settings.trigger), settings.trigger_time);
+    const i32 i = find_action(action);
+    if (i < 0) return;
+    std::memcpy(actions_[i].chord, settings.chord_action, sizeof actions_[i].chord);
+    actions_[i].smoothing = settings.smoothing;
 }
 
 void InputSystem::update(const InputFrame& frame, f32 dt) {
@@ -189,7 +199,9 @@ void InputSystem::update(const InputFrame& frame, f32 dt) {
     u32 claim_count = 0;
     for (u32 b = 0; b < binding_count_; ++b) {
         const Binding& binding = bindings_[b];
-        const Value v = read(binding.source, frame);
+        Value v = read(binding.source, frame);
+        const bool mouse_axis = binding.source == kMouseX || binding.source == kMouseY || binding.source == kMouseXY;  // pixels, not -1..1
+        if (binding.dead_zone > 0.0f && !mouse_axis) v = dead_zone(v.x, v.y, binding.dead_zone);  // the mapping's own, on top
         if (v.x == 0.0f && v.y == 0.0f) continue;
         bool blocked = false, claimed = false;
         for (u32 c = 0; c < claim_count; ++c) {
@@ -210,9 +222,26 @@ void InputSystem::update(const InputFrame& frame, f32 dt) {
             out.x += v.x * binding.scale;
         }
     }
+    for (u32 i = 0; i < action_count_; ++i) {  // smoothing: ease toward the raw value
+        Action& a = actions_[i];
+        if (a.smoothing > 0.0f && dt > 0.0f) {
+            const f32 k = 1.0f - std::exp(-dt / a.smoothing);
+            a.smoothed.x += (a.value.x - a.smoothed.x) * k;
+            a.smoothed.y += (a.value.y - a.smoothed.y) * k;
+            a.value = a.smoothed;
+        }
+        a.down = a.value.x * a.value.x + a.value.y * a.value.y > 0.25f;
+    }
+    for (u32 i = 0; i < action_count_; ++i) {  // chords: nothing unless the other action is down too
+        Action& a = actions_[i];
+        if (!a.chord[0]) continue;
+        const i32 c = find_action(a.chord);
+        if (c >= 0 && actions_[c].down) continue;
+        a.value = {};
+        a.down = false;
+    }
     for (u32 i = 0; i < action_count_; ++i) {
         Action& a = actions_[i];
-        a.down = a.value.x * a.value.x + a.value.y * a.value.y > 0.25f;
         const f32 held_before = a.held;
         a.held = a.down ? a.held + dt : 0.0f;
         switch (a.trigger) {

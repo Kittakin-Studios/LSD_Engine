@@ -331,7 +331,7 @@ void PlaySession::apply_input() {
     input_.add_context(context_);
     for (const input::KeyMapping& m : context_.mappings) {  // each action's trigger (Hold, Tap...) from its asset
         input::InputAction action;
-        if (registry_ && load_asset(*registry_, m.action, action)) input_.set_trigger(m.action, static_cast<input::Trigger>(action.trigger), action.trigger_time);
+        if (registry_ && load_asset(*registry_, m.action, action)) input_.configure(m.action, action);
     }
 }
 

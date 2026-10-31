@@ -113,6 +113,54 @@ static void test_mappings() {
     CHECK(!input.fired(kTap));  // once
 }
 
+// Chords (Shift + E), smoothing (the value eases in) and a mapping's own dead zone.
+static void test_modifiers() {
+    constexpr char kShift[] = "00000000000000000000000000000011";
+    constexpr char kPower[] = "00000000000000000000000000000012";
+    constexpr char kTurn[] = "00000000000000000000000000000013";
+    constexpr char kThrottle[] = "00000000000000000000000000000014";
+    InputMappingContext context;
+    context.mappings.push_back(map(kShift, "Left Shift"));
+    context.mappings.push_back(map(kPower, "E"));
+    context.mappings.push_back(map(kTurn, "D"));
+    KeyMapping trigger = map(kThrottle, "Gamepad Right Trigger");
+    trigger.dead_zone = 0.5f;
+    context.mappings.push_back(trigger);
+    InputSystem input;
+    input.add_context(context);
+    InputAction power;
+    std::snprintf(power.chord_action, sizeof power.chord_action, "%s", kShift);
+    power.trigger = static_cast<u32>(Trigger::Pressed);
+    input.configure(kPower, power);
+    InputAction turn;
+    turn.smoothing = 0.2f;
+    input.configure(kTurn, turn);
+
+    static bool keys[SDL_SCANCODE_COUNT];
+    InputFrame frame;
+    frame.keys = keys;
+    frame.key_count = SDL_SCANCODE_COUNT;
+    keys[SDL_SCANCODE_E] = true;
+    input.update(frame, 0.1f);
+    CHECK(!input.down(kPower) && !input.fired(kPower));  // E alone: nothing
+    keys[SDL_SCANCODE_LSHIFT] = true;
+    input.update(frame, 0.1f);
+    CHECK(input.down(kPower) && input.fired(kPower));    // Shift + E
+
+    keys[SDL_SCANCODE_D] = true;
+    input.update(frame, 0.1f);
+    const f32 first = input.value(kTurn).x;
+    for (int i = 0; i < 20; ++i) input.update(frame, 0.1f);
+    CHECK(first > 0.2f && first < 0.6f && input.value(kTurn).x > 0.99f);  // eased toward 1
+
+    frame.gamepad_axes[5] = 0.4f;  // under the mapping's 0.5 dead zone
+    input.update(frame, 0.1f);
+    CHECK(input.value(kThrottle).x == 0.0f);
+    frame.gamepad_axes[5] = 0.75f;
+    input.update(frame, 0.1f);
+    CHECK(std::fabs(input.value(kThrottle).x - 0.5f) < 1e-4f);  // rescaled: halfway past the dead zone
+}
+
 static void test_held_key() {  // rebinding's "press a key"
     static bool keys[SDL_SCANCODE_COUNT];
     InputFrame frame;
@@ -156,6 +204,7 @@ static void test_data_asset() {
 int main() {
     test_mappings();
     test_held_key();
+    test_modifiers();
     test_data_asset();
     if (g_failures == 0) std::printf("All input tests passed.\n");
     return g_failures == 0 ? 0 : 1;

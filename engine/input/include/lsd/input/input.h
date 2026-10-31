@@ -15,6 +15,9 @@ struct InputAction {
     LSD_PROPERTY(Edit, Widget = "Choice:Down,Pressed,Released,Hold,Tap",
                  Tooltip = "When the action fires (Unreal's Triggers): Down and Pressed when pushed, Released when let go, Hold after Trigger Time held, Tap when let go within Trigger Time") u32 trigger = 0;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Hold: how long to hold. Tap: the longest press that still counts") f32 trigger_time = 0.5f;
+    LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Counts only while this other action is held too (Unreal's Chorded Action: Shift + E)")
+    char chord_action[33] = "";
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "The value eases toward the input over this time (Unreal's Smooth modifier): steadier mouse or stick look") f32 smoothing = 0.0f;
 };
 
 enum class Trigger : u32 { Down, Pressed, Released, Hold, Tap };
@@ -27,6 +30,8 @@ struct KeyMapping {
     LSD_PROPERTY(Edit, Widget = "Key") char key[32] = "";
     LSD_PROPERTY(Edit, Widget = "Choice:X,Y", Tooltip = "Which part of a 2D action a 1D key drives (Unreal's Swizzle YXZ = Y)") u32 axis = 0;
     LSD_PROPERTY(Edit, Tooltip = "Multiplier; -1 is Unreal's Negate (S and A for Move)") f32 scale = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 0.95, Tooltip = "Values under this read as 0, the rest rescaled to 0..1 (Unreal's Dead Zone modifier); sticks already have 0.15")
+    f32 dead_zone = 0.0f;
 };
 
 LSD_STRUCT(Category = "Input")
@@ -65,6 +70,8 @@ public:
     void add_context(const InputMappingContext& context);
     // How an action fires (from its InputAction asset); actions not yet in a context are ignored.
     void set_trigger(const char* action, Trigger trigger, f32 seconds);
+    // Everything from the action's asset: its trigger, chord action and smoothing.
+    void configure(const char* action, const InputAction& settings);
     void update(const InputFrame& frame, f32 dt = 0.0f);
 
     Value value(const char* action) const;  // Axis 2D: x, y; Axis 1D and Button: x
@@ -85,12 +92,16 @@ private:
         f32 held;       // seconds down so far
         bool fired;
         bool hold_done; // Hold fires once per press
+        char chord[33]; // another action that must be down too ("" = none)
+        f32 smoothing;  // seconds
+        Value smoothed; // the eased value, kept between frames
     };
     struct Binding {
         u32 action;
         u32 source;  // see input.cpp: keyboard scancode, or a mouse / gamepad id above the scancodes
         u32 axis;
         f32 scale;
+        f32 dead_zone;
         i32 priority;
         u32 context;
     };
