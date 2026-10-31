@@ -320,6 +320,15 @@ platforms). Scripts get `on_hit` when contacts begin and can `lsd.raycast`.
 
 ## 9. Lua scripting
 
+**Exposed properties** (Unreal's Instance Editable variables): put a `properties` table at the top
+of a script and each object using it shows those values in Details, under its Script, to change per
+object (Reset returns to the script's value). They are on `self` before `on_start`:
+
+```lua
+properties = { speed = 5, label = "Door", locked = false }
+function on_start(self) lsd.log(self.label, self.speed, self.locked) end
+```
+
 Add a **Script** component and pick a `.lua` file (Content Browser > New Lua Script makes one).
 Each object runs its own copy:
 

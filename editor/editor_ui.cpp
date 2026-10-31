@@ -56,6 +56,111 @@ namespace {
 bool asset_selected(const EditorState& s, asset::Guid g);
 extern ReferenceIndex g_references;
 
+// A Lua script's `properties = { name = value, ... }` defaults, read from its text: (name, value as text).
+// shortcut: a small scanner for numbers, true / false and quoted strings (no nesting, no expressions).
+std::vector<std::pair<std::string, std::string>> script_property_defaults(const char* path) {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::ifstream file(path, std::ios::binary);
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    const std::string text = buffer.str();
+    size_t at = text.find("properties");
+    while (at != std::string::npos && at > 0 && (std::isalnum(static_cast<unsigned char>(text[at - 1])) || text[at - 1] == '_' || text[at - 1] == '.')) at = text.find("properties", at + 1);
+    if (at == std::string::npos) return out;
+    at = text.find('{', at);
+    const size_t end = at == std::string::npos ? at : text.find('}', at);
+    if (end == std::string::npos) return out;
+    size_t i = at + 1;
+    auto skip = [&] { while (i < end && (std::isspace(static_cast<unsigned char>(text[i])) || text[i] == ',' || text[i] == ';')) ++i; };
+    for (skip(); i < end; skip()) {
+        size_t name_end = i;
+        while (name_end < end && (std::isalnum(static_cast<unsigned char>(text[name_end])) || text[name_end] == '_')) ++name_end;
+        if (name_end == i) break;
+        const std::string name = text.substr(i, name_end - i);
+        i = text.find('=', name_end);
+        if (i == std::string::npos || i >= end) break;
+        ++i;
+        while (i < end && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+        std::string value;
+        if (i < end && (text[i] == '"' || text[i] == '\'')) {
+            const char quote = text[i++];
+            const size_t close = text.find(quote, i);
+            if (close == std::string::npos || close > end) break;
+            value = text.substr(i, close - i);
+            i = close + 1;
+        } else {
+            const size_t start = i;
+            while (i < end && text[i] != ',' && text[i] != ';' && !std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+            value = text.substr(start, i - start);
+        }
+        out.emplace_back(name, value);
+    }
+    return out;
+}
+
+// Details for a Script's exposed properties: the script's defaults, changed per object.
+void draw_script_properties(EditorState& s, world::Script& script) {
+    asset::Guid guid;
+    const asset::AssetRecord* r = asset::parse_guid(script.script, guid) ? s.registry->find(guid) : nullptr;
+    if (!r || r->type != asset::AssetType::Script) return;
+    char path[300];
+    s.registry->source_path(*r, path, sizeof path);
+    const auto defaults = script_property_defaults(path);
+    if (defaults.empty()) return;
+    ImGui::SeparatorText("Script properties");
+    for (const auto& [name, fallback] : defaults) {
+        world::ScriptProperty* own = nullptr;
+        for (world::ScriptProperty& p : script.properties) {
+            if (name == p.name) own = &p;
+        }
+        const std::string current = own ? own->value : fallback;
+        std::string changed;
+        bool edited_now = false;
+        ImGui::PushID(name.c_str());
+        if (fallback == "true" || fallback == "false") {
+            bool on = current == "true";
+            if ((edited_now = ImGui::Checkbox(name.c_str(), &on))) changed = on ? "true" : "false";
+        } else {
+            char* stop = nullptr;
+            const double number = std::strtod(fallback.c_str(), &stop);
+            if (!fallback.empty() && stop && *stop == '\0') {
+                float v = static_cast<float>(std::strtod(current.c_str(), nullptr));
+                if ((edited_now = ImGui::DragFloat(name.c_str(), &v, 0.1f))) {
+                    char text[64];
+                    std::snprintf(text, sizeof text, "%g", static_cast<double>(v));
+                    changed = text;
+                }
+                (void)number;
+            } else {
+                char text[64];
+                std::snprintf(text, sizeof text, "%s", current.c_str());
+                if ((edited_now = ImGui::InputText(name.c_str(), text, sizeof text))) changed = text;
+            }
+        }
+        if (own) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset")) {  // back to the script's default
+                changed = fallback;
+                edited_now = true;
+            }
+        }
+        ImGui::PopID();
+        if (!edited_now) continue;
+        if (changed == fallback) {  // the default again: no override
+            for (u32 k = 0; k < script.properties.count; ++k) {
+                if (name == script.properties[k].name) script.properties.remove(k);
+            }
+        } else if (own) {
+            std::snprintf(own->value, sizeof own->value, "%s", changed.c_str());
+        } else {
+            world::ScriptProperty p;
+            std::snprintf(p.name, sizeof p.name, "%s", name.c_str());
+            std::snprintf(p.value, sizeof p.value, "%s", changed.c_str());
+            script.properties.push_back(p);
+        }
+    }
+}
+
 // Unreal's Keep Simulation Changes: the selected objects are copied back into the level on Stop.
 void keep_simulation_changes(EditorState& s) {
     u32 added = 0;
@@ -2032,6 +2137,7 @@ void draw_entity_details(EditorState& s) {
                 ImGui::TextDisabled(has_point ? "Point %d selected" : "Click a point in the viewport", s.spline_point);
             }
             draw_properties(*types[i], component, &style);
+            if (types[i] == &reflect::type_of<world::Script>()) draw_script_properties(s, *static_cast<world::Script*>(component));
             g_details_type = nullptr;
             if (std::memcmp(before, component, types[i]->size) != 0) {
                 note_changed_overrides(s, e, *types[i], before, static_cast<const u8*>(component));

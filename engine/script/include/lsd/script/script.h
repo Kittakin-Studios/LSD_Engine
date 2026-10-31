@@ -82,6 +82,10 @@
 // Events sent by the game: on_overlap_begin(self, other), on_overlap_end(self, other) (Trigger Volumes),
 // on_hit(self, other) (physics contact began; the player counts as its Character).
 //
+// Exposed properties (Unreal's Instance Editable): a top-level `properties = { speed = 5, label = "Door",
+// locked = false }` shows those values in each object's Details, under its Script; each object can
+// change them, and self.speed etc. hold the object's values before on_start.
+//
 // Saving a script while playing reloads it; `self` keeps its fields. A script that errors stops
 // running (the error and stack go to the Output Log) until it is fixed and saved.
 #include "lsd/foundation/math.h"
@@ -178,7 +182,7 @@ private:
         bool failed = false;
     };
     void add_instance(world::Entity entity, const char* guid);
-    bool load(Instance& instance);
+    bool load(Instance& instance);  // false if it failed
     bool call(Instance& instance, const char* function, const f64* args, int arg_count);
 
     lua_State* lua_ = nullptr;

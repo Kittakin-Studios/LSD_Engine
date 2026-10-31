@@ -19,6 +19,7 @@ using namespace lsd::world;
 static const char kMover[] = LSD_TEST_TEMP_DIR "/mover.lua";
 static const char kBroken[] = LSD_TEST_TEMP_DIR "/broken.lua";
 static const char kGraphLua[] = LSD_TEST_TEMP_DIR "/graph.lua";
+static const char kPropsLua[] = LSD_TEST_TEMP_DIR "/props.lua";
 static const char kTable[] = LSD_TEST_TEMP_DIR "/DT_Weapons.csv";
 static const char kCurve[] = LSD_TEST_TEMP_DIR "/C_Ramp.lsdasset";
 
@@ -41,7 +42,7 @@ static void write(const char* path, const char* text) {
 }
 
 static bool path_of(void*, const char* guid, char* out, usize capacity) {
-    std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : std::strcmp(guid, "graph") == 0 ? kGraphLua : kBroken);
+    std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : std::strcmp(guid, "graph") == 0 ? kGraphLua : std::strcmp(guid, "props") == 0 ? kPropsLua : kBroken);
     return true;
 }
 
@@ -186,6 +187,41 @@ static void test_events() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Exposed properties: the script's defaults, then each object's own values, on self before on_start.
+static void test_properties() {
+    write(kPropsLua, R"(
+properties = { speed = 5, label = "Door", locked = false }
+function on_start(self)
+  lsd.set_position(self.entity, self.speed, self.locked and 1 or 0, #self.label)
+end
+)");
+    HeapAllocator heap("props");
+    {
+        World w(heap);
+        const Entity a = w.create("A"), b = w.create("B");
+        std::snprintf(w.add<Script>(a)->script, sizeof(Script::script), "props");
+        Script* sb = w.add<Script>(b);
+        std::snprintf(sb->script, sizeof(Script::script), "props");
+        ScriptProperty p;
+        std::snprintf(p.name, sizeof p.name, "speed");
+        std::snprintf(p.value, sizeof p.value, "2.5");
+        sb->properties.push_back(p);
+        std::snprintf(p.name, sizeof p.name, "locked");
+        std::snprintf(p.value, sizeof p.value, "true");
+        sb->properties.push_back(p);
+        std::snprintf(p.name, sizeof p.name, "label");
+        std::snprintf(p.value, sizeof p.value, "Gate42");
+        sb->properties.push_back(p);
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        const Vec3 pa = w.get<Transform>(a)->position, pb = w.get<Transform>(b)->position;
+        CHECK(scripts.error_count() == 0 && pa.x == 5.0f && pa.y == 0.0f && pa.z == 4.0f);
+        CHECK(pb.x == 2.5f && pb.y == 1.0f && pb.z == 6.0f);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Material graphs compile to one shader function; problems name the node.
 static void test_material_graph() {
     using namespace lsd::script;
@@ -309,6 +345,7 @@ int main() {
     test_data_table();
     test_graph();
     test_events();
+    test_properties();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

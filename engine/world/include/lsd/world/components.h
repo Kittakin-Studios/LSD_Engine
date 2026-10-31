@@ -206,10 +206,21 @@ struct Tags {
 };
 
 // Runs a Lua file in Play: on_start(self) once, on_update(self, dt) every frame (see engine/script).
+// One per-object value of a script's exposed property (see Script).
+LSD_STRUCT()
+struct ScriptProperty {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) char name[32] = "";
+    LSD_PROPERTY(Save) char value[64] = "";  // as text: a number, true / false, or a string
+};
+
 LSD_STRUCT(Component, Category = "Gameplay")
 struct Script {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Script") char script[33] = "";
+    // This object's values for the script's `properties = { speed = 5, ... }` (Unreal's Instance
+    // Editable variables): shown in Details under the script, set on self before on_start.
+    LSD_PROPERTY(Save) List<ScriptProperty, 16> properties;
 };
 
 // A curve through points (Unreal's Spline Component): paths for platforms, enemies and cameras.

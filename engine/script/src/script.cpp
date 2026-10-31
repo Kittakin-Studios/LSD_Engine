@@ -1048,7 +1048,32 @@ void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
     lua_setfield(lua_, -2, "__index");
     lua_setmetatable(lua_, -2);
     instance.env = luaL_ref(lua_, LUA_REGISTRYINDEX);
-    load(instance);
+    if (!load(instance)) return;
+    // Exposed properties: the script's defaults (its `properties` table), then this object's values.
+    lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.self);
+    lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
+    lua_getfield(lua_, -1, "properties");
+    if (lua_istable(lua_, -1)) {
+        lua_pushnil(lua_);
+        while (lua_next(lua_, -2)) {  // self[k] = v
+            lua_pushvalue(lua_, -2);
+            lua_insert(lua_, -2);
+            lua_settable(lua_, -6);
+        }
+    }
+    lua_pop(lua_, 2);
+    if (const auto* script = world_->get<world::Script>(entity)) {
+        for (const world::ScriptProperty& p : script->properties) {
+            if (!p.name[0]) continue;
+            char* end = nullptr;
+            const double number = std::strtod(p.value, &end);
+            if (std::strcmp(p.value, "true") == 0 || std::strcmp(p.value, "false") == 0) lua_pushboolean(lua_, p.value[0] == 't');
+            else if (p.value[0] && end && *end == '\0') lua_pushnumber(lua_, number);
+            else lua_pushstring(lua_, p.value);
+            lua_setfield(lua_, -2, p.name);
+        }
+    }
+    lua_pop(lua_, 1);
 }
 
 bool ScriptSystem::load(Instance& instance) {
