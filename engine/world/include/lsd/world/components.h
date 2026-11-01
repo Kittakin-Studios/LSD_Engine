@@ -359,7 +359,10 @@ struct PrefabOverride {
     LSD_GENERATED()
     LSD_PROPERTY(Save) char object[64] = "";     // names below the instance root, "Body/Wheel"; "" = the root
     LSD_PROPERTY(Save) char component[32] = "";  // TypeInfo name, "StaticMesh"
-    LSD_PROPERTY(Save) char property[32] = "";   // top-level property, "color"
+    LSD_PROPERTY(Save) char property[32] = "";   // top-level property, "color"; "" for the structural kinds
+    // 0 a changed property; 1 a component the instance added; 2 one it removed; 3 a child object it
+    // added (kept whole, with its children); 4 a child object it removed.
+    LSD_PROPERTY(Save) u32 kind = 0;
 };
 
 // Root of a placed prefab (Unreal's Blueprint actor / Packed Level Actor). Its children and its

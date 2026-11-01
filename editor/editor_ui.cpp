@@ -468,6 +468,30 @@ u32 refresh_instances(EditorState& s, const char* guid_text, Entity skip) {
     return updated;
 }
 
+// After an edit: every prefab instance compared with its prefab file, its added / removed components
+// and objects listed as structural overrides (prefab files read once per GUID).
+void record_prefab_structure(EditorState& s) {
+    const reflect::TypeInfo& type = reflect::type_of<world::PrefabInstance>();
+    std::map<std::string, std::string> texts;
+    for (u32 i = 0; i < s.world->count(type); ++i) {
+        const Entity e = s.world->owner(type, i);
+        const auto* instance = static_cast<const world::PrefabInstance*>(s.world->at(type, i));
+        auto it = texts.find(instance->prefab);
+        if (it == texts.end()) {
+            char path[300];
+            std::string text;
+            if (prefab_path(s, instance->prefab, path, sizeof path)) {
+                std::ifstream file(path, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            }
+            it = texts.emplace(instance->prefab, std::move(text)).first;
+        }
+        if (!it->second.empty() && !world::record_structure_overrides(*s.world, e, it->second.data(), it->second.size())) {
+            std::snprintf(s.status, sizeof s.status, "%s holds 32 overrides already: some added or removed parts are not kept", s.world->name(e));
+        }
+    }
+}
+
 // Marks a changed property of an object inside a prefab instance as overridden. The root's own
 // Transform and PrefabInstance are never part of the prefab, so they need no override.
 void note_override(EditorState& s, Entity object, const reflect::TypeInfo& type, const reflect::Property& p) {
@@ -4528,7 +4552,10 @@ void draw_editor(EditorState& s) {
     prune_selection(s);  // undo or delete may have removed selected objects
     // One undo step per finished edit: wait until drags and text fields are released.
     if (s.pending_edit[0] && (s.playing || (!ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
-        if (!s.playing) s.history->commit(*s.world, s.pending_edit);  // Play changes are thrown away on Stop
+        if (!s.playing) {
+            record_prefab_structure(s);  // components / objects added or removed inside instances: kept as overrides
+            s.history->commit(*s.world, s.pending_edit);  // Play changes are thrown away on Stop
+        }
         s.pending_edit[0] = '\0';
     }
 }

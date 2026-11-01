@@ -49,6 +49,7 @@
 #include "lsd/rhi/rhi.h"
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
+#include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 
 #include <SDL3/SDL.h>
@@ -1000,6 +1001,14 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::particles::ParticleSystem>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
+    lsd::world::set_prefab_resolver([](void* user, const char* guid_text, char* out, lsd::usize capacity) {  // nested prefabs refresh from their files
+        const auto& reg = *static_cast<const lsd::asset::AssetRegistry*>(user);
+        lsd::asset::Guid guid;
+        const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(guid_text, guid) ? reg.find(guid) : nullptr;
+        if (!r || r->type != lsd::asset::AssetType::Prefab) return false;
+        reg.source_path(*r, out, capacity);
+        return true;
+    }, &registry);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
     register_script_nodes(registry);
@@ -1728,6 +1737,7 @@ int main(int argc, char** argv) {
     if (unit_tests.joinable()) unit_tests.join();
     if (!game_mode) fs::remove(kLockPath, ignored);
     lsd::console::remove_all();  // the registrations point into state
+    lsd::world::set_prefab_resolver(nullptr, nullptr);  // it points at the registry
     lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
     lsd::log::open_file(nullptr);

@@ -211,7 +211,10 @@ Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `
 - **Prefabs** are reusable objects: right-click an object in the Outliner > Create Prefab (it takes
   its children too), then drag the prefab in as often as you like. Edit one copy and **Apply to
   Prefab** (Details) to update the prefab; per-copy changes are
-  remembered as overrides (**Revert to Prefab** in Details).
+  remembered as overrides (**Revert to Prefab** in Details). That includes components and child
+  objects a copy adds or removes: they stay so when the prefab changes (Revert drops them too).
+  Prefabs inside prefabs refresh from their own asset, so a changed lamp prefab shows in every room
+  prefab that holds it.
 - **Splines**: place a Spline, click a point to move it with the gizmo, Add / Remove Point in Details;
   **Alt-drag** a point to add one after it; the selected point shows a **tangent handle** (drag it to
   bend the curve there; Tangents in Details, zero = automatic). **Spline Meshes** (Add Component) puts

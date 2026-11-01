@@ -186,6 +186,58 @@ static void test_prefab() {
 
         const char empty[] = "{\"lsd_level\": 1, \"entities\": []}";
         CHECK(!update_instance(w, placed, empty, sizeof empty - 1) && w.get<StaticMesh>(placed));
+
+        // Structural overrides: the instance adds a Light child and a Tags component and drops the
+        // wheel's mesh; after the prefab changes (a new Seat child), all three are still so.
+        const Entity light = w.create("Light");
+        w.add<PointLight>(light)->intensity = 123.0f;
+        w.set_parent(light, placed, false);
+        w.add<Tags>(placed);
+        w.remove(find_in_instance(w, placed, "Wheel"), reflect::type_of<StaticMesh>());
+        CHECK(record_structure_overrides(w, placed, text.data(), text.size()));
+        u32 structural = 0;
+        for (const PrefabOverride& o : w.get<PrefabInstance>(placed)->overrides) structural += o.kind != 0;
+        CHECK(structural == 3);
+        const Entity seat = w.create("Seat");
+        w.set_parent(seat, car, false);
+        save_prefab(w, car, text);
+        CHECK(update_instance(w, placed, text.data(), text.size()));
+        const Entity kept_light = find_in_instance(w, placed, "Light");
+        CHECK(kept_light.valid() && w.get<PointLight>(kept_light) && w.get<PointLight>(kept_light)->intensity == 123.0f);
+        CHECK(w.get<Tags>(placed) && find_in_instance(w, placed, "Seat").valid() && !w.get<StaticMesh>(find_in_instance(w, placed, "Wheel")));
+        // Removing a prefab child in the instance: it stays gone.
+        w.destroy(find_in_instance(w, placed, "Seat"));
+        CHECK(record_structure_overrides(w, placed, text.data(), text.size()));
+        CHECK(update_instance(w, placed, text.data(), text.size()) && !find_in_instance(w, placed, "Seat").valid());
+    }
+    CHECK(heap.allocated_bytes() == 0);
+
+    // Nested prefabs: a Room holds a Lamp instance; when the Lamp prefab gains a Shade, a newly
+    // updated Room's lamp has it too (refreshed from the Lamp file through the resolver).
+    {
+        World w(heap);
+        static const char kLamp[] = LSD_TEST_TEMP_DIR "/Lamp.lsdprefab";
+        const Entity lamp = w.create("Lamp");
+        w.set_parent(w.create("Bulb"), lamp, false);
+        CHECK(save_prefab_file(w, lamp, kLamp));
+        const Entity room = w.create("Room");
+        const Entity inner = w.create("LampA");
+        std::snprintf(w.add<PrefabInstance>(inner)->prefab, sizeof(PrefabInstance::prefab), "0123456789abcdef0123456789abcdef");
+        CHECK(update_instance_from_file(w, inner, kLamp));
+        w.set_parent(inner, room, false);
+        Array<char> room_text(heap);
+        save_prefab(w, room, room_text);
+        w.set_parent(w.create("Shade"), lamp, false);  // the Lamp prefab changes after the Room was saved
+        CHECK(save_prefab_file(w, lamp, kLamp));
+        set_prefab_resolver([](void*, const char* guid, char* out, usize capacity) {
+            std::snprintf(out, capacity, "%s", kLamp);
+            return std::strcmp(guid, "0123456789abcdef0123456789abcdef") == 0;
+        }, nullptr);
+        const Entity placed = w.create("MyRoom");
+        w.add<PrefabInstance>(placed);
+        CHECK(update_instance(w, placed, room_text.data(), room_text.size()));
+        CHECK(find_in_instance(w, placed, "LampA/Bulb").valid() && find_in_instance(w, placed, "LampA/Shade").valid());
+        set_prefab_resolver(nullptr, nullptr);
     }
     CHECK(heap.allocated_bytes() == 0);
 }

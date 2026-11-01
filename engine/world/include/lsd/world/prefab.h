@@ -28,5 +28,14 @@ Entity find_in_instance(const World& world, Entity root, const char* path);  // 
 bool is_overridden(const World& world, Entity root, const char* path, const char* component, const char* property);
 // Marks (or unmarks) a property as this instance's own. False if the instance's list is full.
 bool set_override(World& world, Entity root, const char* path, const char* component, const char* property, bool on);
+// Compares the instance with its prefab and lists what it added or removed (components, child
+// objects) as structural overrides, replacing the previous ones; those changes then survive prefab
+// updates. Call after an edit. False if the list filled up (the rest are not kept).
+bool record_structure_overrides(World& world, Entity root, const char* prefab_text, usize length);
+
+// Nested prefabs: update_instance also refreshes prefab instances inside the instance from their own
+// files, found through this (a prefab GUID to its file path). Without it they keep the outer prefab's copy.
+using PrefabPathFn = bool (*)(void* user, const char* guid, char* out, usize capacity);
+void set_prefab_resolver(PrefabPathFn resolve, void* user);
 
 } // namespace lsd::world
