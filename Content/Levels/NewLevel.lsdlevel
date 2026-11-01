@@ -42,7 +42,9 @@
         "b": 0.556862772,
         "a": 1
       },
-      "collision": true
+      "collision": true,
+      "collision_shape": 0,
+      "physical_material": ""
     }},
     {"id": 1, "name": "PlayerStart", "parent": -1,
      "Transform": {
@@ -100,7 +102,9 @@
         "b": 0.0365230106,
         "a": 1
       },
-      "collision": true
+      "collision": true,
+      "collision_shape": 0,
+      "physical_material": ""
     }},
     {"id": 4194307, "name": "Sky Light", "parent": -1,
      "Transform": {
@@ -135,9 +139,9 @@
     },
      "SkyLight": {
       "sky_color": {
-        "r": 0.176470593,
-        "g": 0.43921569,
-        "b": 0.839215696,
+        "r": 1,
+        "g": 1,
+        "b": 1,
         "a": 0.956862748
       },
       "ground_color": {
@@ -150,9 +154,9 @@
     },
      "Sky": {
       "zenith": {
-        "r": 0.184313729,
-        "g": 0.435294122,
-        "b": 0.768627465,
+        "r": 0.795098424,
+        "g": 0.828382075,
+        "b": 0.872586846,
         "a": 1
       },
       "horizon": {
@@ -178,50 +182,195 @@
       }
     },
      "HeightFog": {
-      "density": 0.340000004,
-      "height_falloff": 0.391000003,
+      "density": 0,
+      "height_falloff": 0.0469999984,
       "color": {
-        "r": 0.721568644,
-        "g": 0.823529422,
-        "b": 0.917647064,
+        "r": 0.168676659,
+        "g": 0.392161816,
+        "b": 0.598455608,
         "a": 1
       },
       "start_distance": 0,
-      "max_opacity": 0.540000021
+      "max_opacity": 1
     },
      "PostProcessVolume": {
       "unbound": true,
-      "priority": 0,
-      "exposure_compensation": -2.65100002,
+      "priority": 13,
+      "exposure_compensation": -0.324999988,
       "filmic_tonemapper": true,
-      "saturation": 1,
-      "contrast": 1.21399999,
+      "saturation": 2,
+      "contrast": 0.851000011,
       "tint": {
-        "r": 1,
-        "g": 1,
-        "b": 1,
+        "r": 0.644787669,
+        "g": 0.644787669,
+        "b": 0.644787669,
         "a": 1
       },
-      "vignette": 0.463,
-      "bloom_intensity": 1.54200006,
-      "bloom_threshold": 1.69799995,
+      "vignette": 0.412,
+      "bloom_intensity": 0,
+      "bloom_threshold": 3.25600004,
       "anti_aliasing": true,
       "temporal_aa": true,
-      "ao_intensity": 1.28100002,
-      "ao_radius": 0.653999984,
-      "ssr_intensity": 0.809000015,
-      "ssr_max_distance": 101.450996,
+      "ao_intensity": 2,
+      "ao_radius": 0.74000001,
+      "ssr_intensity": 0.460000008,
+      "ssr_max_distance": 89.8560028,
       "dof_focal_distance": 0,
       "dof_focal_region": 0,
-      "dof_transition": 5,
+      "dof_transition": 0.00999999978,
       "dof_max_blur": 0
     },
      "LightmassImportanceVolume": {
-      "probe_spacing": 8.93000031
+      "probe_spacing": 10.1400003
     },
      "PrefabInstance": {
       "prefab": "f27fa176711ee35d436dc866f655c705",
-      "overrides": []
+      "overrides": [
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "start_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "LightmassImportanceVolume",
+          "property": "probe_spacing",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ao_intensity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ao_radius",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ssr_intensity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ssr_max_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "priority",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "exposure_compensation",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "vignette",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "tint",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_max_blur",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_transition",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_focal_region",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_focal_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "max_opacity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "saturation",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "bloom_intensity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "bloom_threshold",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "density",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "height_falloff",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "SkyLight",
+          "property": "sky_color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "zenith",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "contrast",
+          "kind": 0
+        }
+      ]
     }},
     {"id": 4, "name": "Cube", "parent": -1,
      "Transform": {
@@ -250,7 +399,9 @@
         "b": 0.297297299,
         "a": 1
       },
-      "collision": true
+      "collision": true,
+      "collision_shape": 0,
+      "physical_material": ""
     }},
     {"id": 5, "name": "Kill Volume", "parent": -1,
      "Transform": {
@@ -367,7 +518,9 @@
         "b": 0.721568644,
         "a": 1
       },
-      "collision": true
+      "collision": true,
+      "collision_shape": 0,
+      "physical_material": ""
     },
      "SkeletalMesh": {
       "mesh": "b400a445885d50b9205a057d8e2f4319",
@@ -445,14 +598,16 @@
         "b": 0.721568644,
         "a": 1
       },
-      "collision": true
+      "collision": true,
+      "collision_shape": 0,
+      "physical_material": ""
     }},
     {"id": 16777228, "name": "Nav Agent", "parent": -1,
      "Transform": {
       "position": {
         "x": 3.29933023,
         "y": 1.0058682,
-        "z": 0
+        "z": 0.449999988
       },
       "rotation": {
         "x": 0,
@@ -460,21 +615,23 @@
         "z": 0
       },
       "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
+        "x": 10.5500002,
+        "y": 10.5,
+        "z": 4
       }
     },
      "StaticMesh": {
       "mesh": "Cube",
       "material": "",
       "color": {
-        "r": 0.70588237,
-        "g": 0.70588237,
-        "b": 0.721568644,
+        "r": 0.327186525,
+        "g": 0.683397651,
+        "b": 0.415207803,
         "a": 1
       },
-      "collision": true
+      "collision": false,
+      "collision_shape": 0,
+      "physical_material": ""
     },
      "NavAgent": {
       "max_speed": 3.5,

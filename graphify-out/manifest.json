@@ -1,0 +1,110 @@
+{
+  "CLAUDE.md": {
+    "mtime": 1793420891.6089227,
+    "seen": 1793472060.651175,
+    "ast_hash": "05e092b509c21b2a3844ebabdd53ad49",
+    "semantic_hash": "05e092b509c21b2a3844ebabdd53ad49"
+  },
+  "README.md": {
+    "mtime": 1793322809.6554,
+    "seen": 1793472060.651179,
+    "ast_hash": "de28a3dbf10d6c1940dae7b8a7714459",
+    "semantic_hash": "de28a3dbf10d6c1940dae7b8a7714459"
+  },
+  "docs/ARCHITECTURE.md": {
+    "mtime": 1793408828.197652,
+    "seen": 1793472060.6511812,
+    "ast_hash": "7e15094811f946c6b4eae4c21e136e82",
+    "semantic_hash": "7e15094811f946c6b4eae4c21e136e82"
+  },
+  "docs/BACKLOG.md": {
+    "mtime": 1793439861.0162961,
+    "seen": 1793472060.6511824,
+    "ast_hash": "fb5ae1ad186a7d715f6c9969f246ee38",
+    "semantic_hash": "fb5ae1ad186a7d715f6c9969f246ee38"
+  },
+  "docs/CLEAN_ROOM.md": {
+    "mtime": 1793322809.6604102,
+    "seen": 1793472060.6511834,
+    "ast_hash": "ffb4a89d3dff5f69ba0333f672845fec",
+    "semantic_hash": "ffb4a89d3dff5f69ba0333f672845fec"
+  },
+  "docs/EXAMPLES.md": {
+    "mtime": 1793405074.4911344,
+    "seen": 1793472060.6511843,
+    "ast_hash": "a387256274aef233fb201f10f7e2fd1b",
+    "semantic_hash": "a387256274aef233fb201f10f7e2fd1b"
+  },
+  "docs/MANUAL.md": {
+    "mtime": 1793439861.0173054,
+    "seen": 1793472060.651185,
+    "ast_hash": "2eaec1cd8de302b4df9ddb7dc60e221e",
+    "semantic_hash": "2eaec1cd8de302b4df9ddb7dc60e221e"
+  },
+  "docs/ROADMAP.md": {
+    "mtime": 1793322809.6609092,
+    "seen": 1793472060.651186,
+    "ast_hash": "58883618a5e4496975c7c9514b796560",
+    "semantic_hash": "58883618a5e4496975c7c9514b796560"
+  },
+  "editor/README.md": {
+    "mtime": 1793322809.6634104,
+    "seen": 1793472060.6511867,
+    "ast_hash": "5765e3c1df7014993fbc5a5117cdcf2e",
+    "semantic_hash": "5765e3c1df7014993fbc5a5117cdcf2e"
+  },
+  "engine/core/README.md": {
+    "mtime": 1793322809.678964,
+    "seen": 1793472060.6511877,
+    "ast_hash": "f83b8fcf7029b8fa0cbfe7f0b5be2a2c",
+    "semantic_hash": "f83b8fcf7029b8fa0cbfe7f0b5be2a2c"
+  },
+  "engine/physics/README.md": {
+    "mtime": 1793331227.8292632,
+    "seen": 1793472060.6511884,
+    "ast_hash": "34370f000e53b1a76da8bd5f3b46d501",
+    "semantic_hash": "34370f000e53b1a76da8bd5f3b46d501"
+  },
+  "engine/render/README.md": {
+    "mtime": 1793322809.700034,
+    "seen": 1793472060.6511896,
+    "ast_hash": "f5c61d831441ff752eb3b8e91322b496",
+    "semantic_hash": "f5c61d831441ff752eb3b8e91322b496"
+  },
+  "engine/rhi/backends/d3d12/README.md": {
+    "mtime": 1793322809.7070663,
+    "seen": 1793472060.6511903,
+    "ast_hash": "74605832a2cd0bacd2d400a0d8b18a4e",
+    "semantic_hash": "74605832a2cd0bacd2d400a0d8b18a4e"
+  },
+  "engine/rhi/backends/opengl/README.md": {
+    "mtime": 1793322809.7095766,
+    "seen": 1793472060.6511912,
+    "ast_hash": "0050a93d24b882f99a6503f8e943a737",
+    "semantic_hash": "0050a93d24b882f99a6503f8e943a737"
+  },
+  "engine/rhi/backends/vulkan/README.md": {
+    "mtime": 1793322809.7110863,
+    "seen": 1793472060.651192,
+    "ast_hash": "0aa1ddc39cc1f945f65bb7bf50d9e4b4",
+    "semantic_hash": "0aa1ddc39cc1f945f65bb7bf50d9e4b4"
+  },
+  "engine/ui/README.md": {
+    "mtime": 1793393153.9272027,
+    "seen": 1793472060.651193,
+    "ast_hash": "8c73f13b63cd992ea2605e2a1249a2ec",
+    "semantic_hash": "8c73f13b63cd992ea2605e2a1249a2ec"
+  },
+  "engine/world/README.md": {
+    "mtime": 1793323817.1467578,
+    "seen": 1793472060.6511936,
+    "ast_hash": "c9f23568109002c970e2f3cd17984c49",
+    "semantic_hash": "c9f23568109002c970e2f3cd17984c49"
+  },
+  "third_party/README.md": {
+    "mtime": 1793420760.6999385,
+    "seen": 1793472060.6511943,
+    "ast_hash": "797a3383e63bc94f0c9890902fd13186",
+    "semantic_hash": "797a3383e63bc94f0c9890902fd13186"
+  }
+}
