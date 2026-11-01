@@ -122,7 +122,7 @@ struct Compiler {
         if (texture && !texture_slot(*node, slot)) return false;
         const bool scalar_param = std::strcmp(def->id, "MatScalarParam") == 0, vector_param = std::strcmp(def->id, "MatVectorParam") == 0;
         if ((scalar_param || vector_param) && !param_slot(*node, vector_param, slot)) return false;
-        std::string inputs[6];
+        std::string inputs[kMaxNodeInputs];
         for (u32 i = 0; i < def->input_count && !scalar_param && !vector_param; ++i) {  // parameters: the default is data, not code
             if (def->inputs[i].type == PinType::String) continue;  // settings, not values
             if (!input(*node, *def, i, inputs[i])) return false;
@@ -173,14 +173,25 @@ bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, 
     }
     Compiler c{graph, out, error, error_capacity, {}, {}, {}};
     const NodeDef& def = *find_node_def("MatOutput");
-    static const char* const fields[6] = {"s.base_color = ", "s.metallic = (", "s.roughness = (", "s.emissive = ", "s.normal = normalize(", "s.ao = ("};
-    static const char* const ends[6] = {";\n", ").x;\n", ").x;\n", ";\n", ");\n", ").x;\n"};
-    std::string assign;
+    // Graphs saved before a pin existed have no value for it: use the pin's default (Opacity 1, Opaque).
+    GraphNode filled = *output;
     for (u32 i = 0; i < def.input_count; ++i) {
+        if (!filled.values[i][0]) std::snprintf(filled.values[i], sizeof filled.values[i], "%s", def.inputs[i].default_value);
+    }
+    static const char* const fields[7] = {"s.base_color = ", "s.metallic = (", "s.roughness = (", "s.emissive = ", "s.normal = normalize(", "s.ao = (", "s.opacity = ("};
+    static const char* const ends[7] = {";\n", ").x;\n", ").x;\n", ";\n", ");\n", ").x;\n", ").x;\n"};
+    std::string assign;
+    for (u32 i = 0; i < def.input_count && i < 7; ++i) {
         assign += "    ";
         assign += fields[i];
-        if (!c.input(*output, def, i, assign)) return false;
+        if (!c.input(filled, def, i, assign)) return false;
         assign += ends[i];
+    }
+    // Blend Mode (a setting on the output, not a wire): Opaque, Masked, Translucent or Additive.
+    static const char* const modes[4] = {"Opaque", "Masked", "Translucent", "Additive"};
+    out.blend_mode = 0;
+    for (u32 m = 0; m < 4; ++m) {
+        if (std::strcmp(filled.values[7], modes[m]) == 0) out.blend_mode = m;
     }
     const std::string code = "Surface material_main(MaterialIn mi) {\n    Surface s;\n" + c.body + assign + "    return s;\n}\n";
     out.code.resize(code.size() + 1);

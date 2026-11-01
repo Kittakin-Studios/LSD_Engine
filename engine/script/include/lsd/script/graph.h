@@ -23,6 +23,7 @@ struct PinDef {
     const char* default_value;  // as typed on the node; Entity "self" means the script's own object
 };
 
+constexpr u32 kMaxNodeInputs = 8;   // the Material Output has 8 (Opacity, Blend Mode...)
 constexpr u32 kMaxNodeOutputs = 6;  // exec + data outputs on one node (a trace: exec, Hit, Object, Location, Normal)
 
 struct NodeDef {
@@ -30,7 +31,7 @@ struct NodeDef {
     const char* title;     // shown: "Set Position"
     const char* category;  // node menu group: "Events", "Flow", "Transform"...
     const char* tooltip;
-    PinDef inputs[6];
+    PinDef inputs[kMaxNodeInputs];
     u32 input_count;
     PinDef outputs[kMaxNodeOutputs];
     u32 output_count;
@@ -55,7 +56,7 @@ bool is_event(const NodeDef& def);
 bool is_pure(const NodeDef& def);  // no exec pins
 bool is_material_node(const NodeDef& def);
 
-constexpr u32 kMaxPinValues = 6;
+constexpr u32 kMaxPinValues = kMaxNodeInputs;
 
 struct GraphNode {
     u32 id = 0;

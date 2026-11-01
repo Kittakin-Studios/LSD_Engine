@@ -1556,7 +1556,8 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             if (project(view_proj, s.nav_lines[i], pos, size, a) && project(view_proj, s.nav_lines[i + 1], pos, size, b)) dl->AddLine(a, b, IM_COL32(60, 230, 90, 200), 1.5f);
         }
     }
-    if ((s.show_bounds || s.show_collision) && !s.game_view) {  // Unreal's Show > Bounds / Collision
+    const bool show_collision = s.show_collision || s.view_mode == ViewMode::Collision;
+    if ((s.show_bounds || show_collision) && !s.game_view) {  // Unreal's Show > Bounds / Collision
         // A box through `m`: its 8 corners projected, 12 edges drawn when all are in front of the camera.
         auto box = [&](const Mat4& m, Vec3 lo, Vec3 hi, ImU32 color) {
             ImVec2 corner[8];
@@ -1578,7 +1579,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             }
             // shortcut: rigid-body spheres and capsules are drawn as their fitted box; draw the real shapes if that misleads.
             const bool blocks = (mesh && mesh->collision) || s.world->get<world::BlockingVolume>(e) || s.world->get<world::RigidBody>(e);
-            if (s.show_collision && blocks) {
+            if (show_collision && blocks) {
                 Vec3 lo, hi;
                 local_bounds(s, e, lo, hi);
                 box(s.world->world_matrix(e), lo, hi, IM_COL32(80, 220, 255, 230));
@@ -1610,8 +1611,8 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     if (ImGui::Begin(window_name, nullptr, overlay)) {
         static const char* const kViews[] = {"Perspective", "Top", "Front", "Right"};
         static const char* const kViewKeys[] = {"Alt+G", "Alt+J", "Alt+H", "Alt+K"};
-        static const char* const kModes[] = {"Lit", "Unlit", "Wireframe"};
-        static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2"};
+        static const char* const kModes[] = {"Lit", "Unlit", "Wireframe", "Normals", "Lighting Only", "Collision", "Overdraw"};
+        static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2", "", "Alt+6", "Alt+C", "Alt+0"};
         if (ImGui::Button(kViews[static_cast<int>(s.camera.view)])) ImGui::OpenPopup("ViewMenu");
         if (ImGui::BeginPopup("ViewMenu")) {
             for (int v = 0; v < 4; ++v) {
@@ -1622,7 +1623,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
         ImGui::SameLine();
         if (ImGui::Button(kModes[static_cast<int>(s.view_mode)])) ImGui::OpenPopup("ModeMenu");
         if (ImGui::BeginPopup("ModeMenu")) {
-            for (int m = 0; m < 3; ++m) {
+            for (int m = 0; m < 7; ++m) {
                 if (ImGui::MenuItem(kModes[m], kModeKeys[m], static_cast<int>(s.view_mode) == m)) s.view_mode = static_cast<ViewMode>(m);
             }
             ImGui::EndPopup();
@@ -4456,6 +4457,9 @@ void handle_shortcuts(EditorState& s) {
         if (ImGui::IsKeyPressed(ImGuiKey_4)) s.view_mode = ViewMode::Lit;
         if (ImGui::IsKeyPressed(ImGuiKey_3)) s.view_mode = ViewMode::Unlit;
         if (ImGui::IsKeyPressed(ImGuiKey_2)) s.view_mode = ViewMode::Wireframe;
+        if (ImGui::IsKeyPressed(ImGuiKey_6)) s.view_mode = ViewMode::LightingOnly;
+        if (ImGui::IsKeyPressed(ImGuiKey_0)) s.view_mode = ViewMode::Overdraw;
+        if (ImGui::IsKeyPressed(ImGuiKey_C)) s.view_mode = s.view_mode == ViewMode::Collision ? ViewMode::Lit : ViewMode::Collision;
         if (ImGui::IsKeyPressed(ImGuiKey_V, false)) s.pivot_edit = !s.pivot_edit;  // Alt+V: move the gizmo's pivot
         return;
     }

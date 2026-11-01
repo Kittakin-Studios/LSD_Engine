@@ -109,6 +109,11 @@ struct MeshDraw {
     TextureHandle orm_texture;
     bool unlit = false;      // colour only, no lighting (Unlit view mode)
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
+    u32 debug_view = 0;      // 2 = world normals as colour, 3 = lighting only (grey surfaces), 4 = overdraw; 0 = lit
+    // 0 opaque; 1 translucent (alpha blended, no depth write: draw after opaque, far to near); 2 additive
+    // (glows, fire); 3 overdraw (additive, no depth test: the Overdraw view mode).
+    u32 blend = 0;
+    f32 alpha_cutoff = 0.0f;  // Masked: pixels with alpha below this are not drawn (0 = off)
     // Skinning: when set, the vertices are SkinnedVertex and each joint's skinning matrix is given
     // as its first three rows (12 floats, joint_count <= kMaxJoints); mvp / world apply after it.
     const f32* joint_rows = nullptr;

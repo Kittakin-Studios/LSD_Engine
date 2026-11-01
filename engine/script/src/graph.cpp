@@ -270,7 +270,8 @@ NodeDef g_cue_defs[] = {
 NodeDef g_material_defs[] = {
     {"MatOutput", "Material Output", "Output", "The surface: what the mesh looks like (Unreal's main material node)",
      {{"Base Color", PinType::Vector, "0.8,0.8,0.8"}, {"Metallic", PinType::Float, "0"}, {"Roughness", PinType::Float, "0.5"},
-      {"Emissive", PinType::Vector, "0,0,0"}, {"Normal", PinType::Vector, "0,0,1"}, {"Ambient Occlusion", PinType::Float, "1"}}, 0, {}, 0, nullptr, {}},
+      {"Emissive", PinType::Vector, "0,0,0"}, {"Normal", PinType::Vector, "0,0,1"}, {"Ambient Occlusion", PinType::Float, "1"},
+      {"Opacity", PinType::Float, "1"}, {"Blend Mode", PinType::String, "Opaque"}}, 0, {}, 0, nullptr, {}},
     {"MatConstant", "Constant", "Constants", "A number (1 key + click in Unreal)", {{"Value", PinType::Float, "1"}}, 0, {{"", PinType::Float, ""}}, 0, nullptr, {"$0"}},
     {"MatColor", "Color", "Constants", "A colour or vector (3 key + click)", {{"Value", PinType::Vector, "1,1,1"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"$0"}},
     {"MatScalarParam", "Scalar Parameter", "Parameters", "A number Material Instances can change (by its Name) without recompiling",
@@ -570,7 +571,7 @@ void register_node(const NodeDef& def) {
         pin.default_value = keep(pin.default_value);
     }
     for (auto& code : copy.output_code) code = keep(code);
-    copy.input_count = count_pins(copy.inputs, 6);
+    copy.input_count = count_pins(copy.inputs, kMaxNodeInputs);
     copy.output_count = count_pins(copy.outputs, kMaxNodeOutputs);
     for (NodeDef& existing : g_script_nodes) {
         if (std::strcmp(existing.id, copy.id) == 0) {
@@ -591,19 +592,19 @@ void clear_custom_nodes() {
 const NodeDef* node_defs(u32& count, GraphKind kind) {
     static const bool counted = [] {
         for (NodeDef& d : g_defs) {
-            d.input_count = count_pins(d.inputs, 6);
+            d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         for (NodeDef& d : g_cue_defs) {
-            d.input_count = count_pins(d.inputs, 6);
+            d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         for (NodeDef& d : g_bt_defs) {
-            d.input_count = count_pins(d.inputs, 6);
+            d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         for (NodeDef& d : g_material_defs) {
-            d.input_count = count_pins(d.inputs, 6);
+            d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
         g_script_nodes.assign(std::begin(g_defs), std::end(g_defs));

@@ -62,6 +62,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <algorithm>
 #include <vector>
 #include <filesystem>
 #include <new>
@@ -275,10 +276,27 @@ struct FrameTimer {
     }
 };
 
+using BlendQueue = std::vector<std::pair<lsd::f32, lsd::rhi::MeshDraw>>;
+
+// The Overdraw view mode: every mesh adds a little light, without a depth test. Otherwise translucent
+// and additive draws wait (with their distance) until the opaque ones are done; true when queued.
+bool blend_view(const EditorState& stats, lsd::rhi::MeshDraw& draw, lsd::Vec3 centre, lsd::Vec3 eye, BlendQueue& queue) {
+    if ((!stats.playing || stats.ejected) && stats.view_mode == lsd::editor::ViewMode::Overdraw) {
+        draw.blend = 3;
+        draw.debug_view = 4;
+        return false;
+    }
+    if (draw.wireframe || draw.blend == 0) return false;
+    queue.emplace_back(lsd::length(centre - eye), draw);
+    return true;
+}
+
 void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd::editor::LightView& light_view, const lsd::f32 viewport[4],
                 lsd::rhi::TextureHandle shadow_atlas, lsd::rhi::TextureHandle local_atlas, lsd::world::World& world, lsd::editor::MeshCache& meshes, lsd::editor::MaterialCache& materials,
                 EditorState& stats, lsd::rhi::TextureHandle scene_target = {}, const lsd::f32* scene_clear = nullptr, bool hdr = true) {
     LSD_PROFILE_SCOPE("draw_world");
+    static BlendQueue translucent;  // reused each call: no allocation once it has grown
+    translucent.clear();
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
@@ -345,13 +363,15 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
         materials.apply(component->material, draw);  // base colour x tint, textures, metallic / roughness, emissive
         const bool editor_view = !stats.playing || stats.ejected;
-        draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
+        draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
         if ((!stats.playing || stats.ejected) && stats.is_selected(e)) {  // shortcut: selection tint until the outline post-process exists
             draw.color[0] = 1.0f;
             draw.color[1] = 0.85f;
             draw.color[2] = 0.25f;
         }
+        if (blend_view(stats, draw, lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f), eye, translucent)) continue;
         device.draw_mesh(draw);
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3;
@@ -379,12 +399,17 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
             materials.apply(ism->material, draw);
             const bool editor_view = !stats.playing || stats.ejected;
-            draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
+            draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
             if (editor_view && stats.is_selected(e)) {
                 draw.color[0] = 1.0f;
                 draw.color[1] = 0.85f;
                 draw.color[2] = 0.25f;
+            }
+            if (stats.view_mode == lsd::editor::ViewMode::Overdraw && editor_view) {
+                draw.blend = 3;
+                draw.debug_view = 4;
             }
             if (!draw.material_shader.valid() || draw.wireframe) {
                 std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
@@ -450,16 +475,25 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
         materials.apply(component->material, draw);
         const bool editor_view = !stats.playing || stats.ejected;
-        draw.unlit = editor_view && stats.view_mode == lsd::editor::ViewMode::Unlit;
+        draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
         if (editor_view && stats.is_selected(e)) {
             draw.color[0] = 1.0f;
             draw.color[1] = 0.85f;
             draw.color[2] = 0.25f;
         }
+        if (blend_view(stats, draw, lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, eye, translucent)) continue;
         device.draw_mesh(draw);
         ++stats.stat_draws;
         stats.stat_triangles += model->index_count / 3;
+    }
+    // Translucent and additive meshes last, far to near, over everything opaque (they do not write depth).
+    std::sort(translucent.begin(), translucent.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [distance, draw] : translucent) {
+        device.draw_mesh(draw);
+        ++stats.stat_draws;
+        stats.stat_triangles += draw.index_count / 3;
     }
 }
 
@@ -551,15 +585,15 @@ void register_console(EditorState& s) {
                          "Build > Build Lighting: bake the level's light probes");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        static const char* const names[] = {"lit", "unlit", "wireframe"};
-        for (int m = 0; m < 3; ++m) {
+        static const char* const names[] = {"lit", "unlit", "wireframe", "normals", "lightingonly", "collision", "overdraw"};
+        for (int m = 0; m < 7; ++m) {
             if (std::strcmp(args, names[m]) == 0) {
                 st.view_mode = static_cast<lsd::editor::ViewMode>(m);
                 return;
             }
         }
-        LSD_LOG_WARN("console", "viewmode: lit, unlit or wireframe");
-    }, &s, "viewmode lit|unlit|wireframe");
+        LSD_LOG_WARN("console", "viewmode: lit, unlit, wireframe, normals, lightingonly, collision or overdraw");
+    }, &s, "viewmode lit|unlit|wireframe|normals|lightingonly|collision|overdraw");
     console::add_command("HighResShot", [](void* user, const char* args) {
         const int n = std::atoi(args);
         static_cast<EditorState*>(user)->high_res_shot = static_cast<lsd::u32>(n >= 1 && n <= 8 ? n : 2);

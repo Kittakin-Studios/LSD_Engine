@@ -13,6 +13,7 @@
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <new>
@@ -260,12 +261,18 @@ float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
 }
 float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
+    if (n0.w > 3.5) return float4(0.06, 0.025, 0.01, 1.0);  // Overdraw view mode: each layer drawn adds a little
+    // n1.w packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
+    const bool has_normal_map = fmod(n1.w, 2.0) > 0.5;
+    const bool blended = fmod(floor(n1.w * 0.5), 2.0) > 0.5;
+    const float cutoff = floor(n1.w * 0.25) / 255.0;
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
     const Surface surf = material_main(mi);
-    float4 base = float4(surf.base_color * color.rgb, color.a);
-    if (n0.w > 0.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
+    float4 base = float4(surf.base_color * color.rgb, color.a * surf.opacity);
+    if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
+    if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     n = perturb_normal(n, i.wpos, i.uv, surf.normal);
     const float metallic = saturate(surf.metallic);
     const float roughness = clamp(surf.roughness, 0.04, 1.0);
@@ -273,15 +280,18 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 emissive = surf.emissive;
 #else
     float4 base = color * base_tex.Sample(samp, i.uv);
-    if (n0.w > 0.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
-    if (n1.w > 0.5) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
+    if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
+    if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
+    if (has_normal_map) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
     const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
     const float metallic = saturate(mat0.x * orm.b);
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
     const float ao = orm.r;
     const float3 emissive = float3(mat0.zw, mat1.x);
 #endif
+    if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
     base.rgb = apply_decals(base.rgb, i.wpos, n);
+    if (n0.w > 2.5) base.rgb = float3(0.5, 0.5, 0.5);  // Lighting Only view mode: every surface a neutral grey
     const float3 v = normalize(mat1.yzw - i.wpos);
     const float ndv = max(dot(n, v), 1e-4);
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
@@ -320,7 +330,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), hdr_out.x > 0.5 ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR)
+    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 
 // The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
@@ -349,7 +359,7 @@ float4 ps_sky(SkyOut i) : SV_Target {
 constexpr char kMaterialPreludeHlsl[] = R"(
 #define LSD_MATERIAL 1
 struct MaterialIn { float3 uv; float3 wpos; float3 normal; float3 view; float time; };
-struct Surface { float3 base_color; float metallic; float roughness; float3 emissive; float3 normal; float ao; };
+struct Surface { float3 base_color; float metallic; float roughness; float3 emissive; float3 normal; float ao; float opacity; };
 float3 lsd_v3(float x) { return float3(x, x, x); }
 float4 lsd_tex0(float3 uv) { return base_tex.Sample(samp, uv.xy); }
 float4 lsd_tex1(float3 uv) { return normal_tex.Sample(samp, uv.xy); }
@@ -664,6 +674,7 @@ const char* to_string(AdapterType type) {
 class D3D12Device final : public Device {
     struct MaterialShader {
         ComPtr<ID3D12PipelineState> mesh, skinned;
+        ComPtr<ID3D12PipelineState> blended[2][2];  // [static, skinned][translucent, additive]
         u32 generation = 0;
     };
     static constexpr u32 kMaxMaterialShaders = 256;
@@ -1071,9 +1082,10 @@ public:
         std::memcpy(constants + 16, draw.normal_matrix, sizeof draw.normal_matrix);
         std::memcpy(constants + 28, draw.world, sizeof draw.world);
         std::memcpy(constants + 40, draw.color, sizeof draw.color);
-        constants[19] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
+        constants[19] = draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view);
         const Texture* normal = lookup_texture(draw.normal_texture);
-        constants[23] = normal ? 1.0f : 0.0f;
+        const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
+        constants[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f);  // see n1.w in the shader
         constants[44] = draw.metallic;
         constants[45] = draw.roughness;
         constants[46] = draw.emissive[0];
@@ -1097,8 +1109,9 @@ public:
         list_->SetGraphicsRootDescriptorTable(9, decal_srv_.ptr ? decal_srv_ : textures_[white_].srv_gpu);
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
+        const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1..3: a blended variant
         if (instanced) {  // batches of kMaxJoints instances through the joint ring
-            list_->SetPipelineState(draw.wireframe ? instanced_wire_pipeline_.Get() : instanced_pipeline_.Get());
+            list_->SetPipelineState(draw.wireframe ? instanced_wire_pipeline_.Get() : blend ? blend_pipelines_[2][blend - 1].Get() : instanced_pipeline_.Get());
             list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
             const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
@@ -1125,9 +1138,17 @@ public:
             const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(draw.joint_rows, draw.joint_count);
             if (!joints) return;
             list_->SetGraphicsRootConstantBufferView(7, joints);
-            list_->SetPipelineState(draw.wireframe ? skinned_wire_pipeline_.Get() : material ? material->skinned.Get() : skinned_pipeline_.Get());
+            list_->SetPipelineState(draw.wireframe                    ? skinned_wire_pipeline_.Get()
+                                    : blend && material && blend < 3 ? material->blended[1][blend - 1].Get()
+                                    : blend                          ? blend_pipelines_[1][blend - 1].Get()
+                                    : material                       ? material->skinned.Get()
+                                                                     : skinned_pipeline_.Get());
         } else {
-            list_->SetPipelineState(draw.wireframe ? mesh_wire_pipeline_.Get() : material ? material->mesh.Get() : mesh_pipeline_.Get());
+            list_->SetPipelineState(draw.wireframe                    ? mesh_wire_pipeline_.Get()
+                                    : blend && material && blend < 3 ? material->blended[0][blend - 1].Get()
+                                    : blend                          ? blend_pipelines_[0][blend - 1].Get()
+                                    : material                       ? material->mesh.Get()
+                                                                     : mesh_pipeline_.Get());
         }
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex)};
@@ -1150,10 +1171,18 @@ public:
         std::string source = kMeshHlsl;
         source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
         MaterialShader& m = material_shaders_[slot];
-        if (!create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) ||
-            !create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.skinned, false, kSkinnedDefines)) {
+        bool ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) &&
+                  create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.skinned, false, kSkinnedDefines);
+        for (u32 b = 0; b < 2 && ok; ++b) {  // translucent and additive variants
+            ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[0][b], false, nullptr, b + 1) &&
+                 create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[1][b], false, kSkinnedDefines, b + 1);
+        }
+        if (!ok) {
             m.mesh.Reset();
             m.skinned.Reset();
+            for (auto& kind : m.blended) {
+                for (auto& p : kind) p.Reset();
+            }
             return {};
         }
         return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
@@ -1165,6 +1194,9 @@ public:
         wait_for_gpu();  // shortcut: stalls; fine for edits in the editor, defer when materials churn
         m->mesh.Reset();
         m->skinned.Reset();
+        for (auto& kind : m->blended) {
+            for (auto& p : kind) p.Reset();
+        }
         ++m->generation;
     }
 
@@ -1931,6 +1963,17 @@ private:
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
+        // Blended variants: [static, skinned, instanced] x [translucent, additive, overdraw].
+        const D3D12_INPUT_LAYOUT_DESC blend_layouts[3] = {{mesh_layout, 3}, {skinned_layout, 5}, {mesh_layout, 3}};
+        const D3D_SHADER_MACRO* blend_defines[3] = {nullptr, skinned_defines, kInstancedDefines};
+        for (u32 kind = 0; kind < 3; ++kind) {
+            for (u32 b = 0; b < 3; ++b) {
+                if (!create_pipeline(kMeshHlsl, sizeof kMeshHlsl, blend_layouts[kind], D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, blend_pipelines_[kind][b], false,
+                                     blend_defines[kind], b + 1)) {
+                    return false;
+                }
+            }
+        }
         return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
@@ -2071,7 +2114,7 @@ private:
     }
 
     bool create_pipeline(const char* source, usize source_size, D3D12_INPUT_LAYOUT_DESC layout, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
-                         bool depth_test, ComPtr<ID3D12PipelineState>& out, bool wireframe = false, const D3D_SHADER_MACRO* defines = nullptr) {
+                         bool depth_test, ComPtr<ID3D12PipelineState>& out, bool wireframe = false, const D3D_SHADER_MACRO* defines = nullptr, u32 blend = 0) {
         ComPtr<ID3DBlob> vs, ps;
         if (!compile(source, source_size - 1, "vs_main", "vs_5_0", vs, defines) || !compile(source, source_size - 1, "ps_main", "ps_5_0", ps, defines)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
@@ -2080,13 +2123,25 @@ private:
         pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
         pso.InputLayout = layout;
         pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        if (blend) {  // 1 translucent (over), 2 / 3 additive (3: no depth test)
+            D3D12_RENDER_TARGET_BLEND_DESC& b = pso.BlendState.RenderTarget[0];
+            b.BlendEnable = TRUE;
+            b.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            b.DestBlend = blend == 1 ? D3D12_BLEND_INV_SRC_ALPHA : D3D12_BLEND_ONE;
+            b.BlendOp = D3D12_BLEND_OP_ADD;
+            // The scene target's alpha is the surface's mirror-likeness (SSR): translucent surfaces cover it by their
+            // opacity (no floor reflection through opaque glass), additive ones leave it.
+            b.SrcBlendAlpha = D3D12_BLEND_ZERO;
+            b.DestBlendAlpha = blend == 1 ? D3D12_BLEND_INV_SRC_ALPHA : D3D12_BLEND_ONE;
+            b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        }
         pso.SampleMask = UINT_MAX;
         pso.RasterizerState.FillMode = wireframe ? D3D12_FILL_MODE_WIREFRAME : D3D12_FILL_MODE_SOLID;
         pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;  // shortcut: no culling until imported winding is verified
         pso.RasterizerState.FrontCounterClockwise = TRUE;  // as in OpenGL: SV_IsFrontFace must agree for two-sided lighting
         pso.RasterizerState.DepthClipEnable = TRUE;
-        pso.DepthStencilState.DepthEnable = depth_test;
-        pso.DepthStencilState.DepthWriteMask = depth_test ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+        pso.DepthStencilState.DepthEnable = depth_test && blend != 3;
+        pso.DepthStencilState.DepthWriteMask = depth_test && !blend ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;  // blended: tested, not written
         pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
         pso.DSVFormat = kDepthFormat;
         pso.PrimitiveTopologyType = topology;
@@ -2186,6 +2241,7 @@ private:
     ComPtr<ID3D12RootSignature> root_signature_;
     ComPtr<ID3D12PipelineState> triangle_pipeline_;
     ComPtr<ID3D12PipelineState> mesh_pipeline_;
+    ComPtr<ID3D12PipelineState> blend_pipelines_[3][3];  // [static, skinned, instanced][translucent, additive, overdraw]
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
     D3D12_GPU_DESCRIPTOR_HANDLE decal_srv_{};

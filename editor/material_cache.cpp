@@ -114,6 +114,7 @@ void MaterialCache::resolve_textures(Entry& e) {
 
 void MaterialCache::load_graph(Entry& e, const char* path) {
     e.texture_count = 0;
+    e.blend_mode = 0;
     script::Graph graph(default_allocator());
     script::MaterialCode code(default_allocator());
     char error[256] = "";
@@ -215,6 +216,8 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
         for (u32 i = 0; i < graph->texture_count; ++i) {
             *slots[i] = graph->texture_guids[i][0] ? textures_.get(graph->texture_guids[i], graph->texture_srgb[i]) : rhi::TextureHandle{};
         }
+        draw.blend = graph->blend_mode == 2 ? 1u : graph->blend_mode == 3 ? 2u : 0u;
+        draw.alpha_cutoff = graph->blend_mode == 1 ? 0.333f : 0.0f;  // shortcut: graphs use Unreal's default clip; add a pin if it needs changing
         return;
     }
     const render::Material& m = e->material;
@@ -230,6 +233,10 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
     draw.base_color_texture = textures_.get(m.base_color_texture, true);
     draw.normal_texture = textures_.get(m.normal_texture, false);
     draw.orm_texture = textures_.get(m.orm_texture, false);
+    // Blend Mode: Opaque, Masked (cut-outs), Translucent, Additive; Opacity scales the alpha.
+    if (m.blend_mode != 0) draw.color[3] *= m.opacity;
+    draw.blend = m.blend_mode == 2 ? 1u : m.blend_mode == 3 ? 2u : 0u;
+    draw.alpha_cutoff = m.blend_mode == 1 ? (m.opacity_mask_clip > 0.0f ? m.opacity_mask_clip : 0.001f) : 0.0f;
 }
 
 void MaterialCache::check_files() {

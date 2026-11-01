@@ -66,6 +66,7 @@ private:
         char texture_guids[3][33];
         bool texture_srgb[3];
         u32 texture_count;
+        u32 blend_mode;  // a graph's Material Output Blend Mode
         // Graphs: their parameters' defaults; instances of a graph: those with the instance's values.
         f32 params[16][4];
         char param_names[16][32];

@@ -18,6 +18,11 @@ struct Material {
     char orm_texture[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Glow colour (not lit by anything)") LinearColor emissive = LinearColor::hex(0x000000);
     LSD_PROPERTY(Edit, Min = 0, Max = 100) f32 emissive_strength = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Blending", Widget = "Choice:Opaque,Masked,Translucent,Additive",
+                 Tooltip = "Masked: cut-outs from the base colour alpha (leaves, fences). Translucent: see-through (glass, water). Additive: adds light (fire, glows)")
+    u32 blend_mode = 0;
+    LSD_PROPERTY(Edit, Category = "Blending", Min = 0, Max = 1, Tooltip = "Times the base colour texture's alpha (Translucent, Additive, Masked)") f32 opacity = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Blending", Min = 0, Max = 1, Tooltip = "Masked: alpha below this is not drawn") f32 opacity_mask_clip = 0.333f;
 };
 
 // One Scalar / Vector Parameter of a Material Graph set by an instance (scalars use X).

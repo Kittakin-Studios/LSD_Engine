@@ -10,6 +10,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include <cstddef>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -253,12 +254,18 @@ vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
 #ifndef SKY
 void main() {
     vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
+    if (u_flags.x > 3.5) { o_color = vec4(0.06, 0.025, 0.01, 1.0); return; }  // Overdraw view mode
+    // u_flags.y packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
+    bool has_normal_map = mod(u_flags.y, 2.0) > 0.5;
+    bool blended = mod(floor(u_flags.y * 0.5), 2.0) > 0.5;
+    float cutoff = floor(u_flags.y * 0.25) / 255.0;
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time;
     Surface surf = material_main(mi);
-    vec4 base = vec4(surf.base_color * u_color.rgb, u_color.a);
-    if (u_flags.x > 0.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
+    vec4 base = vec4(surf.base_color * u_color.rgb, u_color.a * surf.opacity);
+    if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
+    if (u_flags.x > 0.5 && u_flags.x < 1.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
     n = perturb_normal(n, v_wpos, v_uv, surf.normal);
     float metallic = clamp(surf.metallic, 0.0, 1.0);
     float roughness = clamp(surf.roughness, 0.04, 1.0);
@@ -266,15 +273,18 @@ void main() {
     vec3 emissive = surf.emissive;
 #else
     vec4 base = u_color * texture(base_tex, v_uv);
-    if (u_flags.x > 0.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
-    if (u_flags.y > 0.5) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
+    if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
+    if (u_flags.x > 0.5 && u_flags.x < 1.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
+    if (has_normal_map) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
     vec3 orm = texture(orm_tex, v_uv).rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
     vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x);
 #endif
+    if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
     base.rgb = apply_decals(base.rgb, v_wpos, n);
+    if (u_flags.x > 2.5) base.rgb = vec3(0.5);  // Lighting Only view mode: every surface a neutral grey
     vec3 v = normalize(u_mat[1].yzw - v_wpos);
     float ndv = max(dot(n, v), 1e-4);
     vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
@@ -313,7 +323,7 @@ void main() {
     vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
     lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
     lit += emissive;
-    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), hdr_out.x > 0.5 ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR)
+    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 #else
 // The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
@@ -354,7 +364,7 @@ constexpr char kMaterialPreludeGlsl[] = R"(
 #define frac fract
 #define saturate(x) clamp((x), 0.0, 1.0)
 struct MaterialIn { vec3 uv; vec3 wpos; vec3 normal; vec3 view; float time; };
-struct Surface { vec3 base_color; float metallic; float roughness; vec3 emissive; vec3 normal; float ao; };
+struct Surface { vec3 base_color; float metallic; float roughness; vec3 emissive; vec3 normal; float ao; float opacity; };
 vec3 lsd_v3(float x) { return vec3(x); }
 vec4 lsd_tex0(vec3 uv) { return texture(base_tex, uv.xy); }
 vec4 lsd_tex1(vec3 uv) { return texture(normal_tex, uv.xy); }
@@ -1087,7 +1097,9 @@ public:
         const Texture* base = lookup_texture(draw.base_color_texture);
         const Texture* normal = lookup_texture(draw.normal_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
-        gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : 0.0f, normal ? 1.0f : 0.0f);
+        const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;  // packed as in the shader
+        gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view),
+                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f));
         if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
         if (graph) {
             f32 values[kMaxMaterialParams * 4] = {};
@@ -1103,6 +1115,13 @@ public:
         gl_.glBindTextureUnit(4, local_shadow_texture_);
         gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
+        const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1 translucent, 2 additive, 3 overdraw (no depth test)
+        if (blend) {
+            glEnable(GL_BLEND);
+            gl_.glBlendFuncSeparate(GL_SRC_ALPHA, blend == 1 ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE, GL_ZERO, blend == 1 ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE);  // alpha = mirror-likeness (SSR): covered by translucency
+            glDepthMask(GL_FALSE);  // tested, not written
+            if (blend == 3) glDisable(GL_DEPTH_TEST);
+        }
         const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(vao, ib->id);
@@ -1117,6 +1136,11 @@ public:
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(draw.index_count), GL_UNSIGNED_INT, nullptr);
         }
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        if (blend) {  // back to the opaque state the other draws expect
+            glDisable(GL_BLEND);
+            glDepthMask(GL_TRUE);
+            glEnable(GL_DEPTH_TEST);
+        }
     }
 
     void set_lights(const LightSetup& lights) override {

@@ -88,7 +88,9 @@ during a fly changes speed. **Alt+G / J / H / K**: perspective / top / front / r
 button on the viewport toolbar cycles **1x1 → 1x2** (perspective beside top) **→ 2x2** (perspective, top,
 front, right); each pane keeps its own camera. Console: `layout 1|2|4`. **Show** on the toolbar turns on
 the grid, axis gizmo, navigation (P), **Bounds** (yellow mesh boxes) and **Collision** (cyan: what blocks in Play).
-**Alt+4 / 3 / 2**: Lit / Unlit / Wireframe. **G**: game view (hides editor icons).
+**Alt+4 / 3 / 2**: Lit / Unlit / Wireframe; the view mode button also has **Normals**, **Lighting Only**
+(Alt+6: every surface grey), **Collision** (Alt+C: what blocks in Play) and **Overdraw** (Alt+0: bright where
+many surfaces stack). **G**: game view (hides editor icons).
 
 ### Selecting and transforming
 
@@ -295,7 +297,10 @@ neighbours. Direct light and shadows stay real-time. Rebuild after moving walls 
 
 **New Material** creates a physically based material: base colour (+ texture), metallic, roughness,
 normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive. Drop it on an
-object or pick it in the object's Static Mesh > Material. Edits show immediately.
+object or pick it in the object's Static Mesh > Material. Edits show immediately. **Blend Mode**:
+Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip: leaves, fences);
+**Translucent** (glass, water; Opacity sets how see-through; drawn after opaque objects, far to near);
+**Additive** (adds light: fire, glows).
 
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 
@@ -306,7 +311,7 @@ from a pin to wire. The preview on the right (sphere or cube) updates 0.3 s afte
 
 | Category | Nodes |
 | --- | --- |
-| Output | Material Output: Base Color, Metallic, Roughness, Emissive, Normal, Ambient Occlusion |
+| Output | Material Output: Base Color, Metallic, Roughness, Emissive, Normal, Ambient Occlusion, Opacity, Blend Mode (Opaque, Masked, Translucent, Additive) |
 | Constants | Constant, Color, Time |
 | Parameters | Scalar Parameter, Vector Parameter (changed by Material Instances, no recompile) |
 | Texture | Texture Sample (pick the texture; Type: Color / Normal / Data) |

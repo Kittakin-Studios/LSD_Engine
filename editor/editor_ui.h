@@ -20,7 +20,10 @@ class ThumbnailCache;
 class Transactions;
 
 enum class ViewType : u8 { Perspective, Top, Front, Right };  // ortho views look like Blender's numpad views
-enum class ViewMode : u8 { Lit, Unlit, Wireframe };
+// Normals: world normals as colour; Lighting Only: every surface grey, lit as usual; Collision: unlit,
+// with what blocks in Play drawn on top (Unreal's Player Collision view).
+// Overdraw: every layer adds a little light; bright spots are where many surfaces stack up.
+enum class ViewMode : u8 { Lit, Unlit, Wireframe, Normals, LightingOnly, Collision, Overdraw };
 
 // Unreal-style viewport camera: a position and a look direction. In the orthographic views
 // `position` is the centre of the view and `ortho_height` how many metres fit vertically.
@@ -55,7 +58,7 @@ struct EditorState {
     bool show_preferences = false;
     bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
     bool show_audio_stats = false;  // `stat audio`: active voices
-    bool view_mode_unlit_or_wire() const { return (!playing || ejected) && view_mode != ViewMode::Lit; }
+    bool view_mode_unlit_or_wire() const { return (!playing || ejected) && view_mode != ViewMode::Lit && view_mode != ViewMode::LightingOnly; }  // no shadows, sky or post
     class SoundPlayer* sounds = nullptr;  // set by main.cpp
     u32 preview_voice = 0;  // Content Browser sound preview
     u32 stat_draws = 0;       // set by main.cpp after drawing

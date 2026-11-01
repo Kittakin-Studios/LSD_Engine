@@ -34,6 +34,7 @@ struct MaterialCode {
     u32 texture_count = 0;
     MaterialParam params[kMaxMaterialParams] = {};  // slot order; same name = same slot
     u32 param_count = 0;
+    u32 blend_mode = 0;  // the Material Output's Blend Mode: 0 Opaque, 1 Masked, 2 Translucent, 3 Additive
 };
 
 // False with a message naming the problem: no (or two) Material Output, a loop, a Texture Sample
