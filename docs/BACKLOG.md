@@ -57,9 +57,9 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 ### Viewport
 
 - [x] Grid, axes, axis gizmo
-- [~] Move / rotate / scale gizmos (W / E / R, ImGuizmo), world / local space; needs pivot editing
-- [~] Snapping: move, angle, scale steps; End drops to the surface below; needs vertex snap, surface snapping while dragging
-- [~] Picking: click select (meshes and volumes by box, icons on screen), Ctrl+click toggles, Shift+click adds (ranges in the Outliner), drag a selection box, Ctrl+A, focus (F); gizmo moves the whole selection around the last-clicked object; needs triangle-accurate picking
+- [x] Move / rotate / scale gizmos (W / E / R, ImGuizmo), world / local space, pivot editing (Pivot toggle / Alt+V moves the pivot; rotate and scale about it)
+- [x] Snapping: move, angle, scale steps; End drops to the surface below; vertex snap (hold V while moving), surface snapping while dragging (Surface toggle)
+- [x] Picking: click select (meshes and volumes by box, icons on screen), Ctrl+click toggles, Shift+click adds (ranges in the Outliner), drag a selection box, Ctrl+A, focus (F); gizmo moves the whole selection around the last-clicked object; triangle-accurate picking (box, then the mesh's triangles)
 - [x] Unreal camera: RMB look + WASD/QE fly, wheel speed, MMB pan, Alt+LMB orbit, wheel dolly; bookmarks Ctrl+0..9 / 0..9
 - [x] Perspective + Top / Front / Right orthographic views (Alt+G/J/H/K), 1x1, 1x2 or 2x2 layout (each viewport has its own camera and gizmo; `layout 1|2|4`), side views draw the grid on their own plane
 - [~] View modes: Lit, Unlit, Wireframe (Alt+4/3/2) on D3D12 and OpenGL; needs normals, lighting only, collision, overdraw [View Modes, Buffer Visualization]

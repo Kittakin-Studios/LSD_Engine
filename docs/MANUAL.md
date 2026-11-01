@@ -94,7 +94,10 @@ the grid, axis gizmo, navigation (P), **Bounds** (yellow mesh boxes) and **Colli
 
 Click an object to select it; Ctrl+click to add; drag a box to select many. **W / E / R** switch the
 gizmo to move / rotate / scale; **Ctrl+`** toggles local / world space; Snap (toolbar) uses the snap
-steps from Editor Preferences. **End** drops the selection to the floor, **Delete** removes it,
+steps from Editor Preferences; **Surface** (toolbar) keeps moved objects on the surface under them and
+holding **V** while moving snaps to the nearest vertex of another mesh. **Pivot** (or **Alt+V**) lets the
+gizmo move the pivot the object turns and scales about (right-click it: Reset Pivot). Clicking picks
+the triangle under the mouse, not just the box around a mesh. **End** drops the selection to the floor, **Delete** removes it,
 **Ctrl+D** duplicates, **Ctrl+G / Shift+G** group / ungroup, **Ctrl+C / X / V** copy, cut, paste.
 Drag one object onto another in the Outliner to attach it (children follow their parent).
 **Folders** (Hierarchy tab, like Unreal's Outliner folders): right-click objects > Move to Folder > New

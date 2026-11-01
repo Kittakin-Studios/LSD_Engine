@@ -143,8 +143,11 @@ const CachedMesh* MeshCache::get(const char* key) {
 }
 
 void MeshCache::hot_reload() {
-    triangles_.clear();  // re-read on the next ask (a reimport may have changed them)
-    for (CachedMesh& m : meshes_) m.failed = !load(m);
+    for (CachedMesh& m : meshes_) {
+        const i64 before = m.compiled_time;
+        m.failed = !load(m);
+        if (m.compiled_time != before || m.failed) triangles_.erase(m.key);  // reimported: its triangles are re-read on the next ask
+    }
 }
 
 } // namespace lsd::editor

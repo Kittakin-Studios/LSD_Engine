@@ -321,6 +321,7 @@ void select(EditorState& s, Entity e) {
     if (e != s.selected) {
         s.spline_point = -1;
         s.joint_pivot = false;
+        s.pivot_offset = {};  // each object starts on its own origin
     }
     s.selected = e;
     s.selection_count = 0;
@@ -661,8 +662,29 @@ bool ray_box(Vec3 o, Vec3 d, Vec3 lo, Vec3 hi, f32& t) {
     return true;
 }
 
-// Nearest mesh under the ray. shortcut: tests each mesh's bounding box, not its triangles;
-// triangle-accurate picking when imported meshes get detailed.
+// Nearest triangle along a (local) ray (Moller-Trumbore, both faces); false if none.
+bool ray_triangles(Vec3 o, Vec3 d, const MeshCache::Triangles& mesh, f32& t) {
+    t = 1e30f;
+    for (usize i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const Vec3 a = mesh.points[mesh.indices[i]], b = mesh.points[mesh.indices[i + 1]], c = mesh.points[mesh.indices[i + 2]];
+        const Vec3 e1 = b - a, e2 = c - a, p = cross(d, e2);
+        const f32 det = dot(e1, p);
+        if (std::fabs(det) < 1e-9f) continue;
+        const f32 inv = 1.0f / det;
+        const Vec3 s = o - a;
+        const f32 u = dot(s, p) * inv;
+        if (u < 0.0f || u > 1.0f) continue;
+        const Vec3 q = cross(s, e1);
+        const f32 v = dot(d, q) * inv;
+        if (v < 0.0f || u + v > 1.0f) continue;
+        const f32 hit = dot(e2, q) * inv;
+        if (hit > 0.0f && hit < t) t = hit;
+    }
+    return t < 1e30f;
+}
+
+// Nearest mesh under the ray: its bounding box first, then its triangles (exact picking and
+// placement: through the hole of an arch, onto a ramp's slope).
 // Hidden objects are never hit; with `pickable`, locked ones are skipped too (viewport clicks).
 bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hit_t, bool pickable = false) {
     const reflect::TypeInfo& type = reflect::type_of<world::StaticMesh>();
@@ -670,11 +692,15 @@ bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hi
     for (u32 i = 0; i < s.world->count(type); ++i) {
         const Entity e = s.world->owner(type, i);
         if (e == ignore || s.world->hidden_in_hierarchy(e) || (pickable && s.world->locked(e))) continue;
-        const CachedMesh* cached = s.meshes->get(static_cast<const world::StaticMesh*>(s.world->at(type, i))->mesh);
+        const char* key = static_cast<const world::StaticMesh*>(s.world->at(type, i))->mesh;
+        const CachedMesh* cached = s.meshes->get(key);
         if (!cached) continue;
         const Mat4 inv = affine_inverse(s.world->world_matrix(e));
+        const Vec3 o = transform_point(inv, ray.origin), d = transform_vector(inv, ray.dir);
         f32 t;
-        if (ray_box(transform_point(inv, ray.origin), transform_vector(inv, ray.dir), cached->bounds_min, cached->bounds_max, t) && t < hit_t) {
+        if (!ray_box(o, d, cached->bounds_min, cached->bounds_max, t) || t >= hit_t) continue;
+        if (const MeshCache::Triangles* triangles = s.meshes->triangles(key); triangles && !triangles->indices.empty() && !ray_triangles(o, d, *triangles, t)) continue;
+        if (t < hit_t) {
             hit_t = t;
             hit = e;
         }
@@ -1064,28 +1090,82 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
                                                                    : ImGuizmo::SCALE;
     const f32 step = s.gizmo == GizmoMode::Translate ? s.settings.snap_move : s.gizmo == GizmoMode::Rotate ? s.settings.snap_angle : s.settings.snap_scale;
     const f32 snap[3] = {step, step, step};
-    const Mat4 before = s.world->world_matrix(s.selected);
+    // The gizmo sits on the pivot: the object's origin plus the pivot offset (Unreal's pivot; Alt+V or the Pivot button moves it).
+    const Mat4 object = s.world->world_matrix(s.selected);
+    const Mat4 before = object * translation(s.pivot_offset);
     Mat4 m = before;
+    const bool moving_pivot = s.pivot_edit;
     ImGui::PushID(index);  // one gizmo per viewport, each with its own drag state
+    if (moving_pivot) {  // only the pivot moves: translate, nothing else changes
+        const bool moved = ImGuizmo::Manipulate(view.m, proj.m, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, m.m, nullptr, s.settings.snap ? snap : nullptr);
+        if (moved) s.pivot_offset = transform_point(affine_inverse(object), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        const bool busy = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+        ImGui::PopID();
+        was_using = false;
+        return busy;
+    }
     const bool changed = ImGuizmo::Manipulate(view.m, proj.m, op, s.gizmo_local ? ImGuizmo::LOCAL : ImGuizmo::WORLD, m.m, nullptr,
                                               s.settings.snap ? snap : nullptr);
     const bool using_now = ImGuizmo::IsUsing();
     const bool over = ImGuizmo::IsOver();
     ImGui::PopID();
     if (using_now && !was_using) alt_duplicated = false;
+    if (changed && s.gizmo == GizmoMode::Translate) {
+        const Mat4 view_proj = proj * view;
+        ImVec2 at;
+        Vec3 target{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        bool snapped = false;
+        if (ImGui::IsKeyDown(ImGuiKey_V) && project(view_proj, target, pos, size, at)) {
+            // Vertex snap (Unreal's V): the pivot jumps to the nearest corner of another mesh on screen.
+            f32 best = 24.0f * 24.0f;
+            const reflect::TypeInfo& type = reflect::type_of<world::StaticMesh>();
+            for (u32 i = 0; i < s.world->count(type); ++i) {
+                const Entity e = s.world->owner(type, i);
+                if (s.is_selected(e) || s.world->hidden_in_hierarchy(e)) continue;
+                const MeshCache::Triangles* mesh = s.meshes->triangles(static_cast<const world::StaticMesh*>(s.world->at(type, i))->mesh);
+                if (!mesh) continue;
+                const Mat4 w = s.world->world_matrix(e);
+                for (const Vec3& local : mesh->points) {
+                    const Vec3 p = transform_point(w, local);
+                    ImVec2 q;
+                    if (!project(view_proj, p, pos, size, q)) continue;
+                    const f32 d = (q.x - at.x) * (q.x - at.x) + (q.y - at.y) * (q.y - at.y);
+                    if (d < best) {
+                        best = d;
+                        target = p;
+                        snapped = true;
+                    }
+                }
+            }
+        } else if (s.settings.snap_to_surface && project(view_proj, target, pos, size, at)) {
+            // Surface snap: the pivot follows the surface under it, seen from the camera.
+            Entity hit;
+            f32 t;
+            const Ray ray = mouse_ray(s.camera, pos, size, at);
+            if (raycast(s, ray, s.selected, hit, t) && !s.is_selected(hit)) {
+                target = ray.origin + ray.dir * t;
+                snapped = true;
+            }
+        }
+        if (snapped) {
+            m.at(0, 3) = target.x;
+            m.at(1, 3) = target.y;
+            m.at(2, 3) = target.z;
+        }
+    }
     if (changed) {
         if (ImGui::GetIO().KeyAlt && !alt_duplicated) {
             duplicate_selected(s);  // copies are made from the untouched originals; they get the move
             alt_duplicated = true;
         }
-        // The other selected objects follow the primary: same change, pivoting on the primary.
+        // Every selected object gets the same change, about the pivot.
         const Mat4 delta = m * affine_inverse(before);
         Entity roots[EditorState::kMaxSelection];
         const u32 count = selection_roots(s, roots);
         for (u32 i = 0; i < count; ++i) {
             const world::Transform moved_before = *s.world->get<world::Transform>(roots[i]);
             if (roots[i] != s.selected) s.world->set_world_matrix(roots[i], delta * s.world->world_matrix(roots[i]));
-            else s.world->set_world_matrix(s.selected, m);
+            else s.world->set_world_matrix(s.selected, m * translation(-s.pivot_offset));  // the pivot stays where the gizmo left it
             note_changed_overrides(s, roots[i], reflect::type_of<world::Transform>(), reinterpret_cast<const u8*>(&moved_before),
                                    reinterpret_cast<const u8*>(s.world->get<world::Transform>(roots[i])));
         }
@@ -1582,6 +1662,16 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
         ImGui::SameLine();
         if (ImGui::Button(s.gizmo_local ? "Local" : "World")) s.gizmo_local = !s.gizmo_local;
         ImGui::SetItemTooltip("Gizmo space (Ctrl+`)");
+        ImGui::SameLine();
+        if (toggle_button("Surface", s.settings.snap_to_surface)) s.settings.snap_to_surface = !s.settings.snap_to_surface;
+        ImGui::SetItemTooltip("Surface snapping: moved objects slide over what is under them. Hold V while moving: snap to the nearest vertex");
+        ImGui::SameLine();
+        if (toggle_button("Pivot", s.pivot_edit)) s.pivot_edit = !s.pivot_edit;
+        ImGui::SetItemTooltip("Alt+V: the gizmo moves the pivot the object turns and scales about (right-click: reset)");
+        if (ImGui::BeginPopupContextItem("pivot_menu")) {
+            if (ImGui::MenuItem("Reset Pivot")) s.pivot_offset = {};
+            ImGui::EndPopup();
+        }
         ImGui::SameLine();
         if (toggle_button("Snap", s.settings.snap)) s.settings.snap = !s.settings.snap;
         ImGui::SameLine();
@@ -4366,6 +4456,7 @@ void handle_shortcuts(EditorState& s) {
         if (ImGui::IsKeyPressed(ImGuiKey_4)) s.view_mode = ViewMode::Lit;
         if (ImGui::IsKeyPressed(ImGuiKey_3)) s.view_mode = ViewMode::Unlit;
         if (ImGui::IsKeyPressed(ImGuiKey_2)) s.view_mode = ViewMode::Wireframe;
+        if (ImGui::IsKeyPressed(ImGuiKey_V, false)) s.pivot_edit = !s.pivot_edit;  // Alt+V: move the gizmo's pivot
         return;
     }
     if (io.WantTextInput) return;

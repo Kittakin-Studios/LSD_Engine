@@ -76,7 +76,9 @@ struct EditorState {
     world::Entity selected;
     i32 spline_point = -1;  // selected point of the selected object's Spline (the gizmo moves it); -1 = none
     bool spline_handle = false;  // with spline_point: the gizmo moves that point's tangent handle
-    bool joint_pivot = false;  // the gizmo moves the selected object's Physics Joint pivot (click its yellow ring)
+    bool joint_pivot = false;
+    Vec3 pivot_offset;         // the gizmo's pivot in the selected object's space (Alt+V or the Pivot toggle moves it)
+    bool pivot_edit = false;   // the gizmo moves the pivot instead of the object  // the gizmo moves the selected object's Physics Joint pivot (click its yellow ring)
     static constexpr u32 kMaxSelection = 1024;
     world::Entity selection[kMaxSelection];
     u32 selection_count = 0;
