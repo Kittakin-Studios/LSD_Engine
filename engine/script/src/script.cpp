@@ -236,6 +236,27 @@ end
 function lsd.after(seconds, fn) return add(seconds, fn, nil) end
 function lsd.every(seconds, fn) return add(seconds, fn, seconds) end
 function lsd.cancel(id) timers[id] = nil end
+-- Curve tables (Unreal's Curve Table): a Data Table whose column headers are times.
+function lsd.curve_table(name, row, time)
+  local t = lsd.table(name)
+  local r = t and t[row]
+  if not r then return 0 end
+  local keys = {}
+  for k, v in pairs(r) do
+    local at = tonumber(k)
+    if at and type(v) == "number" then keys[#keys + 1] = {at, v} end
+  end
+  if #keys == 0 then return 0 end
+  table.sort(keys, function(a, b) return a[1] < b[1] end)
+  if time <= keys[1][1] then return keys[1][2] end
+  for i = 2, #keys do
+    if time <= keys[i][1] then
+      local a, b = keys[i - 1], keys[i]
+      return a[2] + (b[2] - a[2]) * (time - a[1]) / (b[1] - a[1])
+    end
+  end
+  return keys[#keys][2]
+end
 -- Tables kept across level changes for the whole Play (plain data only: they travel as JSON).
 local function kept(key)
   local t = lsd.__persist[key]
@@ -363,7 +384,8 @@ void read_struct(lua_State* L, int index, const reflect::TypeInfo& type, u8* dat
 struct ScriptSystem::CachedCurve {
     char path[260];
     i64 modified;
-    world::Curve curve;
+    world::CurveKeys channels[4];  // Curve: 1, CurveVector: 3, CurveColor: 4
+    u32 channel_count;
 };
 constexpr u32 kMaxCurves = 32;
 
@@ -987,14 +1009,38 @@ struct Api {
             slot->modified = -1;
         }
         if (!slot) luaL_error(L, "too many curves in use");
-        if (slot->modified != modified) {  // first use, or the asset was saved again
-            slot->curve = world::Curve{};
-            if (!asset::load_data_asset(path, slot->curve)) slot->curve.keys.count = 0;
-            world::sort_keys(slot->curve);
+        if (slot->modified != modified) {  // first use, or the asset was saved again: read it as its type
+            char type[32] = "";
+            asset::read_data_asset_type(path, type, sizeof type);
+            slot->channel_count = 0;
+            if (std::strcmp(type, "CurveVector") == 0) {
+                world::CurveVector v;
+                if (asset::load_data_asset(path, v)) {
+                    slot->channels[0] = v.x, slot->channels[1] = v.y, slot->channels[2] = v.z;
+                    slot->channel_count = 3;
+                }
+            } else if (std::strcmp(type, "CurveColor") == 0) {
+                world::CurveColor c;
+                if (asset::load_data_asset(path, c)) {
+                    slot->channels[0] = c.r, slot->channels[1] = c.g, slot->channels[2] = c.b, slot->channels[3] = c.a;
+                    slot->channel_count = 4;
+                }
+            } else {
+                world::Curve c;
+                if (asset::load_data_asset(path, c)) {
+                    slot->channels[0] = c.keys;
+                    slot->channel_count = 1;
+                }
+            }
+            for (u32 k = 0; k < slot->channel_count; ++k) world::sort_keys(slot->channels[k]);
             slot->modified = modified;
         }
-        lua_pushnumber(L, world::evaluate(slot->curve, time));
-        return 1;
+        if (!slot->channel_count) {
+            lua_pushnumber(L, 0);
+            return 1;
+        }
+        for (u32 k = 0; k < slot->channel_count; ++k) lua_pushnumber(L, world::evaluate(slot->channels[k], time));
+        return static_cast<int>(slot->channel_count);
     }
     static int table(lua_State* L) {
         ScriptSystem& self = system(L);
@@ -1023,11 +1069,33 @@ struct Api {
             lua_createtable(L, 0, static_cast<int>(data.columns()));
             for (u32 c = 1; c < data.columns(); ++c) {
                 const char* text = data.cell(r, c);
+                char column[128];
+                const asset::ColumnType type = asset::column_type(data.cell(0, c), column, sizeof column);  // "Damage:number"
                 char* stop = nullptr;
                 const double number = std::strtod(text, &stop);
-                if (text[0] && stop && *stop == '\0') lua_pushnumber(L, number);  // "12.5" is a number, "12 mm" text
-                else lua_pushstring(L, text);
-                lua_setfield(L, -2, data.cell(0, c));
+                const bool numeric = text[0] && stop && *stop == '\0';
+                double v[3] = {0, 0, 0};
+                switch (type) {
+                    case asset::ColumnType::String: lua_pushstring(L, text); break;  // "007" stays text
+                    case asset::ColumnType::Bool: lua_pushboolean(L, std::strcmp(text, "true") == 0 || std::strcmp(text, "1") == 0); break;
+                    case asset::ColumnType::Number:
+                    case asset::ColumnType::Int: lua_pushnumber(L, numeric ? number : 0.0); break;
+                    case asset::ColumnType::Vector:
+                        std::sscanf(text, "%lf , %lf , %lf", &v[0], &v[1], &v[2]);
+                        lua_createtable(L, 0, 3);
+                        lua_pushnumber(L, v[0]);
+                        lua_setfield(L, -2, "x");
+                        lua_pushnumber(L, v[1]);
+                        lua_setfield(L, -2, "y");
+                        lua_pushnumber(L, v[2]);
+                        lua_setfield(L, -2, "z");
+                        break;
+                    case asset::ColumnType::Auto:  // "12.5" is a number, "12 mm" text
+                        if (numeric) lua_pushnumber(L, number);
+                        else lua_pushstring(L, text);
+                        break;
+                }
+                lua_setfield(L, -2, column);
             }
             lua_setfield(L, -2, data.cell(r, 0));
         }

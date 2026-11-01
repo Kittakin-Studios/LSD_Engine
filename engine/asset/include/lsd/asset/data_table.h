@@ -33,4 +33,15 @@ private:
 // Writes cells (row by row, `columns` per row) as CSV, quoting where needed.
 void write_csv(const char* const* cells, u32 rows, u32 columns, Array<char>& out);
 
+// Typed columns (Unreal's row struct): a header "Damage:number" names the column Damage and types it.
+// Auto (no type) reads numbers where cells look like numbers, text otherwise.
+enum class ColumnType : u8 { Auto, Number, Int, Bool, String, Vector };
+// The header's type, and its name without the ":type" into `name`. Unknown types count as Auto.
+ColumnType column_type(const char* header, char* name, usize capacity);
+const char* to_string(ColumnType type);
+// Does the cell fit its column's type? (empty cells always do)
+bool cell_fits(ColumnType type, const char* cell);
+// The table as JSON: an object of rows, each an object of typed values ({x, y, z} for vectors).
+void export_json(const DataTable& table, Array<char>& out);
+
 } // namespace lsd::asset

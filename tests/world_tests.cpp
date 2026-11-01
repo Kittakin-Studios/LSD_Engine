@@ -272,6 +272,12 @@ static void test_curve() {
     CHECK(evaluate(c, 1.0f) == 1.0f && evaluate(c, 0.5f) == 2.0f);
     const f32 between = evaluate(c, 1.5f);
     CHECK(between < 1.0f && between > 0.0f);
+
+    // A User tangent: a steep start makes the curve rise early (an overshoot the auto ends never give).
+    Curve steep;
+    steep.keys[0].tangent_mode = 1;
+    steep.keys[0].tangent = 4.0f;
+    CHECK(evaluate(steep, 0.25f) > 0.4f && evaluate(steep, 0.5f) > 0.6f && evaluate(Curve{}, 0.25f) < 0.25f);
 }
 
 static void test_timeline() {  // Sequencer basics: eased transforms, values, keys crossed in order

@@ -558,6 +558,18 @@ static void test_data_table() {
     asset::write_csv(cells, 2, 2, out);
     CHECK(t.parse(out.data(), out.size()) && std::strcmp(t.cell(1, 1), cells[3]) == 0);
 
+    // Typed columns and JSON export.
+    char column[32];
+    CHECK(asset::column_type("Damage:number", column, sizeof column) == asset::ColumnType::Number && std::strcmp(column, "Damage") == 0);
+    CHECK(asset::column_type("Time:of:day", column, sizeof column) == asset::ColumnType::Auto && std::strcmp(column, "Time:of:day") == 0);
+    CHECK(asset::cell_fits(asset::ColumnType::Int, "12") && !asset::cell_fits(asset::ColumnType::Int, "1.5") && !asset::cell_fits(asset::ColumnType::Number, "abc"));
+    CHECK(asset::cell_fits(asset::ColumnType::Vector, "1, 2, 3") && !asset::cell_fits(asset::ColumnType::Vector, "1, 2") && asset::cell_fits(asset::ColumnType::Bool, ""));
+    const char typed[] = "Name,Damage:number,Code:string,On:bool\nPistol,12.5,007,true\n";
+    CHECK(t.parse(typed, sizeof typed - 1));
+    asset::export_json(t, out);
+    out.push_back('\0');
+    CHECK(std::strstr(out.data(), "\"Pistol\": {\"Damage\": 12.5, \"Code\": \"007\", \"On\": true}") != nullptr);
+
     // From Lua, cached until the file changes.
     write(kTable, "Name,Damage,Label\nPistol,12.5,Small\nRifle,40,Big\n");
     HeapAllocator heap("table");
@@ -579,6 +591,18 @@ assert(lsd.table("DT_Weapons") == t)  -- same table while the file is unchanged
         write(kTable, "Name,Damage\nPistol,99\n");
         std::filesystem::last_write_time(kTable, std::filesystem::last_write_time(kTable) + std::chrono::seconds(5));
         CHECK(scripts.run("assert(lsd.table('DT_Weapons').Pistol.Damage == 99)"));
+        // Typed columns: "007" stays text, booleans and vectors read as such; a curve table interpolates.
+        write(kTable, "Name,Code:string,Auto:bool,Aim:vector,0,10\nPistol,007,true,\"1,2,3\",5,25\n");
+        std::filesystem::last_write_time(kTable, std::filesystem::last_write_time(kTable) + std::chrono::seconds(10));
+        CHECK(scripts.run(R"(
+local p = lsd.table("DT_Weapons").Pistol
+assert(p.Code == "007" and p.Auto == true and p.Aim.y == 2)
+assert(lsd.curve_table("DT_Weapons", "Pistol", 5) == 15 and lsd.curve_table("DT_Weapons", "Pistol", 99) == 25 and lsd.curve_table("DT_Weapons", "Nope", 1) == 0)
+)"));
+        // A Curve Vector gives three values.
+        write(kCurve, R"({"type": "CurveVector", "data": {"x": [{"time": 0, "value": 1}], "y": [{"time": 0, "value": 2}], "z": [{"time": 0, "value": 3}]}})");
+        std::filesystem::last_write_time(kCurve, std::filesystem::last_write_time(kCurve) + std::chrono::seconds(10));
+        CHECK(scripts.run("local x, y, z = lsd.curve('C_Ramp', 0) assert(x == 1 and y == 2 and z == 3)"));
         // Save games round-trip through JSON; bad slot characters are dropped, functions refused.
         scripts.set_save_directory(LSD_TEST_TEMP_DIR "/SaveGames");
         CHECK(scripts.run(R"(

@@ -147,9 +147,20 @@ like Unreal's asset metadata): the Content Browser search box matches tags as we
 | New Data Asset > type | Data asset (`.lsdasset`) | Details | Data Asset |
 | Outliner: right-click an object > Create Prefab | Prefab (`.lsdprefab`) | the level | Blueprint Class (placed actor) |
 
-Data asset types: Input Action, Input Mapping Context, Game Mode, Curve, Material, Material
+Data asset types: Input Action, Input Mapping Context, Game Mode, Curve, Curve Vector, Curve Color, Physical Material, Material, Material
 Instance, Sound Class, Sound Attenuation, Sound Concurrency, Sound Mix, Submix, Animation Graph,
 Particle System.
+
+**Data Tables**: right-click a column name > **Type** (number, int, bool, string, vector; the header
+becomes `Damage:number`) and cells that do not fit turn red; Lua then reads them typed (`007` stays
+text in a string column). **Export JSON** writes the rows next to the .csv. A Data Table whose column
+headers are times is a **curve table** (Unreal's Curve Table): `lsd.curve_table("CT_Levels", "Damage", t)`
+or the Evaluate Curve Table node reads a row, linear between columns.
+
+**Curves**: drag keys in the graph, double-click to add, right-click to delete; click a key, then
+drag its handle to set its tangent (the key turns User; Auto in Details goes back). **Curve Vector**
+(X, Y, Z) and **Curve Color** (R, G, B, A) pick the channel to edit with buttons above the graph;
+`lsd.curve` returns 3 or 4 values for them (Evaluate Vector Curve node).
 
 All text assets (levels, graphs, data assets, UI) are plain text: they merge and diff in Git.
 
@@ -759,7 +770,8 @@ Time, input, logging, data
 | `lsd.pressed("IA_Jump")` | true on the frame it fires |
 | `lsd.log(...)`, `lsd.log_error(...)` | Output Log |
 | `lsd.table("DT_Items")` | Data Table as `{Row = {Column = value}}` |
-| `lsd.curve("C_Ramp", t)` | Curve data asset value |
+| `lsd.curve("C_Ramp", t)` | Curve data asset value (x, y, z for a Curve Vector; r, g, b, a for a Curve Color) |
+| `lsd.curve_table("CT_Levels", "Damage", t)` | a curve table row at time t |
 
 Audio and animation
 

@@ -2105,24 +2105,31 @@ void load_selected_data(EditorState& s, const asset::AssetRecord& r) {
     if (!asset::load_data_asset(path, *g_data_type, g_data)) std::snprintf(s.status, sizeof s.status, "Could not read %s", r.path);
 }
 
-// Graph of a Curve asset: drag keys, double-click to add one, right-click a key to delete it.
-bool draw_curve_editor(world::Curve& curve) {
+// Graph of one curve's keys: drag keys, double-click to add one, right-click a key to delete it; the
+// selected key shows a tangent handle (dragging it makes the tangent User). `others` are drawn faint
+// behind it (the other channels of a vector or colour curve).
+bool draw_curve_editor(world::CurveKeys& keys, const world::CurveKeys* const* others = nullptr, u32 other_count = 0, ImU32 color = IM_COL32(240, 200, 60, 255)) {
     static f32 view[4] = {0, 1, 0, 1};  // time min / max, value min / max (kept while dragging)
-    static i32 dragging = -1;
+    static i32 dragging = -1, selected = -1;
+    static bool handle = false;  // dragging the selected key's tangent handle
     bool changed = false;
     const ImVec2 size(ImGui::GetContentRegionAvail().x, 220.0f);
     const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("curve_canvas", size, ImGuiButtonFlags_MouseButtonLeft);
     const bool canvas_hovered = ImGui::IsItemHovered();
-    if (dragging < 0 && curve.keys.count) {  // fit the keys
-        view[0] = view[1] = curve.keys[0].time;
-        view[2] = view[3] = curve.keys[0].value;
-        for (const world::CurveKey& k : curve.keys) {
-            view[0] = k.time < view[0] ? k.time : view[0];
-            view[1] = k.time > view[1] ? k.time : view[1];
-            view[2] = k.value < view[2] ? k.value : view[2];
-            view[3] = k.value > view[3] ? k.value : view[3];
-        }
+    if (dragging < 0 && !handle && keys.count) {  // fit the keys (and the other channels)
+        view[0] = view[1] = keys[0].time;
+        view[2] = view[3] = keys[0].value;
+        auto fit = [&](const world::CurveKeys& list) {
+            for (const world::CurveKey& k : list) {
+                view[0] = k.time < view[0] ? k.time : view[0];
+                view[1] = k.time > view[1] ? k.time : view[1];
+                view[2] = k.value < view[2] ? k.value : view[2];
+                view[3] = k.value > view[3] ? k.value : view[3];
+            }
+        };
+        fit(keys);
+        for (u32 o = 0; o < other_count; ++o) fit(*others[o]);
         const f32 pad_t = (view[1] - view[0]) * 0.1f + 0.1f, pad_v = (view[3] - view[2]) * 0.15f + 0.1f;
         view[0] -= pad_t;
         view[1] += pad_t;
@@ -2147,48 +2154,111 @@ bool draw_curve_editor(world::Curve& curve) {
     dl->AddText(ImVec2(at.x + 4, at.y + size.y - 16), IM_COL32(150, 150, 160, 255), label);
     std::snprintf(label, sizeof label, "%.3g s", static_cast<double>(view[1]));
     dl->AddText(ImVec2(at.x + size.x - 60, at.y + size.y - 16), IM_COL32(150, 150, 160, 255), label);
-    ImVec2 previous;
-    for (int i = 0; i <= 120; ++i) {
-        const f32 t = view[0] + (view[1] - view[0]) * static_cast<f32>(i) / 120.0f;
-        const ImVec2 p = to_screen(t, world::evaluate(curve, t));
-        if (i) dl->AddLine(previous, p, IM_COL32(240, 200, 60, 255), 2.0f);
-        previous = p;
-    }
+    auto plot = [&](const world::CurveKeys& list, ImU32 line, f32 thickness) {
+        ImVec2 previous;
+        for (int i = 0; i <= 120; ++i) {
+            const f32 t = view[0] + (view[1] - view[0]) * static_cast<f32>(i) / 120.0f;
+            const ImVec2 p = to_screen(t, world::evaluate(list, t));
+            if (i) dl->AddLine(previous, p, line, thickness);
+            previous = p;
+        }
+    };
+    for (u32 o = 0; o < other_count; ++o) plot(*others[o], IM_COL32(150, 150, 160, 90), 1.5f);
+    plot(keys, color, 2.0f);
     const ImGuiIO& io = ImGui::GetIO();
+    if (selected >= static_cast<i32>(keys.count)) selected = -1;
+    // The selected key's tangent handle: 40 pixels along its slope.
+    ImVec2 handle_at;
+    bool handle_hot = false;
+    if (selected >= 0 && keys[static_cast<u32>(selected)].interp == 0) {
+        const world::CurveKey& k = keys[static_cast<u32>(selected)];
+        const f32 slope = k.tangent_mode == 1 ? k.tangent
+                          : (static_cast<u32>(selected) == 0 || static_cast<u32>(selected) + 1 >= keys.count)
+                              ? 0.0f
+                              : (keys[static_cast<u32>(selected) + 1].value - keys[static_cast<u32>(selected) - 1].value) /
+                                    std::fmax(keys[static_cast<u32>(selected) + 1].time - keys[static_cast<u32>(selected) - 1].time, 1e-4f);
+        const ImVec2 p = to_screen(k.time, k.value);
+        const f32 step = (view[1] - view[0]) * 0.05f;
+        const ImVec2 q = to_screen(k.time + step, k.value + slope * step);
+        const f32 len = std::sqrt((q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y));
+        handle_at = len > 0.0f ? ImVec2(p.x + (q.x - p.x) / len * 40.0f, p.y + (q.y - p.y) / len * 40.0f) : ImVec2(p.x + 40.0f, p.y);
+        dl->AddLine(ImVec2(2 * p.x - handle_at.x, 2 * p.y - handle_at.y), handle_at, IM_COL32(200, 200, 210, 160), 1.0f);
+        handle_hot = (io.MousePos.x - handle_at.x) * (io.MousePos.x - handle_at.x) + (io.MousePos.y - handle_at.y) * (io.MousePos.y - handle_at.y) < 49.0f;
+        dl->AddCircleFilled(handle_at, handle_hot || handle ? 5.0f : 4.0f, k.tangent_mode == 1 ? IM_COL32(255, 160, 60, 255) : IM_COL32(200, 200, 210, 255));
+    }
     i32 hovered_key = -1;
-    for (u32 i = 0; i < curve.keys.count; ++i) {
-        const ImVec2 p = to_screen(curve.keys[i].time, curve.keys[i].value);
+    for (u32 i = 0; i < keys.count; ++i) {
+        const ImVec2 p = to_screen(keys[i].time, keys[i].value);
         const bool hot = (io.MousePos.x - p.x) * (io.MousePos.x - p.x) + (io.MousePos.y - p.y) * (io.MousePos.y - p.y) < 64.0f;
         if (hot) hovered_key = static_cast<i32>(i);
-        dl->AddCircleFilled(p, hot || dragging == static_cast<i32>(i) ? 6.0f : 4.5f, IM_COL32(255, 255, 255, 255));
+        dl->AddCircleFilled(p, hot || dragging == static_cast<i32>(i) ? 6.0f : 4.5f, selected == static_cast<i32>(i) ? IM_COL32(255, 160, 60, 255) : IM_COL32(255, 255, 255, 255));
     }
     if (canvas_hovered && hovered_key >= 0) {
-        ImGui::SetTooltip("%.3f s  =  %.3f", static_cast<double>(curve.keys[static_cast<u32>(hovered_key)].time), static_cast<double>(curve.keys[static_cast<u32>(hovered_key)].value));
+        ImGui::SetTooltip("%.3f s  =  %.3f", static_cast<double>(keys[static_cast<u32>(hovered_key)].time), static_cast<double>(keys[static_cast<u32>(hovered_key)].value));
     }
-    if (ImGui::IsItemActivated() && hovered_key >= 0) dragging = hovered_key;
-    if (dragging >= 0 && static_cast<u32>(dragging) < curve.keys.count) {
+    if (ImGui::IsItemActivated()) {
+        if (handle_hot) {
+            handle = true;
+        } else if (hovered_key >= 0) {
+            dragging = selected = hovered_key;
+        } else {
+            selected = -1;
+        }
+    }
+    if (handle && selected >= 0) {
+        world::CurveKey& k = keys[static_cast<u32>(selected)];
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            to_curve(io.MousePos, curve.keys[static_cast<u32>(dragging)].time, curve.keys[static_cast<u32>(dragging)].value);
+            f32 t, v;
+            to_curve(io.MousePos, t, v);
+            if (std::fabs(t - k.time) > 1e-5f) {  // the slope from the key to the mouse
+                k.tangent = (v - k.value) / (t - k.time);
+                k.tangent_mode = 1;
+                changed = true;
+            }
+        } else {
+            handle = false;
+        }
+    }
+    if (dragging >= 0 && static_cast<u32>(dragging) < keys.count) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            to_curve(io.MousePos, keys[static_cast<u32>(dragging)].time, keys[static_cast<u32>(dragging)].value);
             changed = true;
         } else {
-            dragging = -1;
-            world::sort_keys(curve);
+            dragging = selected = -1;  // sorting may move it: select again with a click
+            world::sort_keys(keys);
             changed = true;
         }
     }
-    if (canvas_hovered && hovered_key < 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && curve.keys.count < curve.keys.capacity()) {
+    if (canvas_hovered && hovered_key < 0 && !handle_hot && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && keys.count < keys.capacity()) {
         world::CurveKey key;
         to_curve(io.MousePos, key.time, key.value);
-        curve.keys.push_back(key);
-        world::sort_keys(curve);
+        keys.push_back(key);
+        world::sort_keys(keys);
         changed = true;
     }
-    if (canvas_hovered && hovered_key >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && curve.keys.count > 1) {
-        curve.keys.remove(static_cast<u32>(hovered_key));
+    if (canvas_hovered && hovered_key >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && keys.count > 1) {
+        keys.remove(static_cast<u32>(hovered_key));
+        selected = -1;
         changed = true;
     }
-    ImGui::TextDisabled("Drag keys. Double-click: add a key. Right-click a key: delete it.");
+    ImGui::TextDisabled("Drag keys. Double-click: add a key. Right-click a key: delete it. Click a key, then drag its handle: its tangent.");
     return changed;
+}
+
+// A Curve Vector / Curve Color: pick the channel to edit; the others show faint behind it.
+bool draw_multi_curve_editor(world::CurveKeys* const* channels, const char* const* names, const ImU32* colors, u32 count) {
+    static u32 channel = 0;
+    if (channel >= count) channel = 0;
+    for (u32 c = 0; c < count; ++c) {
+        if (c) ImGui::SameLine();
+        if (ImGui::RadioButton(names[c], channel == c)) channel = c;
+    }
+    const world::CurveKeys* others[3];
+    u32 n = 0;
+    for (u32 c = 0; c < count && n < 3; ++c) {
+        if (c != channel) others[n++] = channels[c];
+    }
+    return draw_curve_editor(*channels[channel], others, n, colors[channel]);
 }
 
 } // namespace
@@ -2259,7 +2329,21 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     ImGui::EndDisabled();
     ImGui::BeginChild("DataRows");
     const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
-    if (g_data_type == &reflect::type_of<world::Curve>() && draw_curve_editor(*reinterpret_cast<world::Curve*>(g_data))) g_data_dirty = true;
+    if (g_data_type == &reflect::type_of<world::Curve>() && draw_curve_editor(reinterpret_cast<world::Curve*>(g_data)->keys)) g_data_dirty = true;
+        if (g_data_type == &reflect::type_of<world::CurveVector>()) {
+            auto* v = reinterpret_cast<world::CurveVector*>(g_data);
+            world::CurveKeys* channels[3] = {&v->x, &v->y, &v->z};
+            const char* names[3] = {"X", "Y", "Z"};
+            const ImU32 colors[3] = {IM_COL32(230, 70, 60, 255), IM_COL32(90, 210, 80, 255), IM_COL32(70, 130, 240, 255)};
+            if (draw_multi_curve_editor(channels, names, colors, 3)) g_data_dirty = true;
+        }
+        if (g_data_type == &reflect::type_of<world::CurveColor>()) {
+            auto* c = reinterpret_cast<world::CurveColor*>(g_data);
+            world::CurveKeys* channels[4] = {&c->r, &c->g, &c->b, &c->a};
+            const char* names[4] = {"R", "G", "B", "A"};
+            const ImU32 colors[4] = {IM_COL32(230, 70, 60, 255), IM_COL32(90, 210, 80, 255), IM_COL32(70, 130, 240, 255), IM_COL32(220, 220, 220, 255)};
+            if (draw_multi_curve_editor(channels, names, colors, 4)) g_data_dirty = true;
+        }
     if (g_data_type == &reflect::type_of<render::MaterialInstance>() && fill_graph_parameters(s, *reinterpret_cast<render::MaterialInstance*>(g_data))) g_data_dirty = true;
     if (draw_properties(*g_data_type, g_data, &style)) g_data_dirty = true;
     ImGui::EndChild();

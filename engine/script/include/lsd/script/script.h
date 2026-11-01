@@ -35,7 +35,10 @@
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
-//   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes
+//   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes.
+//                                         A Curve Vector gives x, y, z; a Curve Color r, g, b, a
+//   lsd.curve_table(table, row, time) -> value   a Data Table used as a curve table: column headers are
+//                                         times, each row a curve; linear between columns, flat past the ends
 //   lsd.move_to(e, x, y, z) -> ok         a Nav Agent walks there on the navmesh (AI Move To); false if unreachable
 //   lsd.stop_move(e), lsd.is_moving(e) -> bool
 //   lsd.find_path(x, y, z, tx, ty, tz) -> {{x, y, z}, ...}   corners of the navmesh path (empty if none)

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace lsd::editor {
@@ -140,7 +141,21 @@ void draw_table_editor(EditorState& s) {
         SDL_OpenURL(("file:///" + std::filesystem::absolute(t.path, error).generic_string()).c_str());
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", t.message[0] ? t.message : "Right-click a column name to delete the column");
+    if (ImGui::Button("Export JSON")) {  // next to the .csv: the same rows with typed values
+        if (t.dirty) save(s);
+        asset::DataTable data(default_allocator());
+        Array<char> json(default_allocator());
+        const std::string out = std::filesystem::path(t.path).replace_extension(".json").string();
+        FILE* file = data.load(t.path) ? std::fopen(out.c_str(), "wb") : nullptr;
+        if (file) {
+            asset::export_json(data, json);
+            std::fwrite(json.data(), 1, json.size(), file);
+            std::fclose(file);
+        }
+        std::snprintf(t.message, sizeof t.message, file ? "Exported %s" : "Could not export to %s", out.c_str());
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", t.message[0] ? t.message : "Right-click a column name: its Type, or delete it");
 
     const u32 rows = row_count();
     i32 delete_row = -1, delete_column = -1;
@@ -158,11 +173,27 @@ void draw_table_editor(EditorState& s) {
             for (u32 c = 0; c < t.columns; ++c) {
                 ImGui::TableSetColumnIndex(static_cast<int>(c + 1));
                 ImGui::PushID(static_cast<int>(c));
+                char column[128];
+                const asset::ColumnType type = asset::column_type(at(0, c).text, column, sizeof column);
+                const bool misfit = r > 0 && c > 0 && !asset::cell_fits(type, at(r, c).text);  // "abc" in a number column
                 if (r == 0 || c == 0) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.18f, 0.25f, 0.45f, 1.0f));  // names
+                else if (misfit) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
                 ImGui::SetNextItemWidth(-1.0f);
                 if (ImGui::InputText("##cell", at(r, c).text, sizeof(Cell::text))) t.dirty = true;
-                if (r == 0 || c == 0) ImGui::PopStyleColor();
+                if (r == 0 || c == 0 || misfit) ImGui::PopStyleColor();
+                if (misfit) ImGui::SetItemTooltip("Not a %s (the column's type)", asset::to_string(type));
                 if (r == 0 && c > 0 && ImGui::BeginPopupContextItem("column_menu")) {
+                    if (ImGui::BeginMenu("Type")) {  // Unreal's row struct: the header becomes "Name:type"
+                        for (const asset::ColumnType each : {asset::ColumnType::Auto, asset::ColumnType::Number, asset::ColumnType::Int, asset::ColumnType::Bool,
+                                                             asset::ColumnType::String, asset::ColumnType::Vector}) {
+                            if (ImGui::MenuItem(asset::to_string(each), nullptr, type == each)) {
+                                if (each == asset::ColumnType::Auto) std::snprintf(at(0, c).text, sizeof(Cell::text), "%s", column);
+                                else std::snprintf(at(0, c).text, sizeof(Cell::text), "%s:%s", column, asset::to_string(each));
+                                t.dirty = true;
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
                     if (ImGui::MenuItem("Delete Column")) delete_column = static_cast<i32>(c);
                     ImGui::EndPopup();
                 }
