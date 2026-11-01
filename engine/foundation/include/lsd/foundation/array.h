@@ -48,6 +48,7 @@ public:
     const T* data() const { return data_; }
     usize size() const { return size_; }
     bool empty() const { return size_ == 0; }
+    Allocator& allocator() const { return *allocator_; }
     T* begin() { return data_; }
     T* end() { return data_ + size_; }
     const T* begin() const { return data_; }

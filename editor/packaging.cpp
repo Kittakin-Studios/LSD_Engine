@@ -72,7 +72,7 @@ u32 validate_assets(const ProjectSettings& project, const asset::AssetRegistry& 
                 std::fclose(f);
             }
             for (usize k = 0; k + 33 < content.size(); ++k) {
-                if (content[k] != '"' || content[k + 33] != '"') continue;
+                if (content[k] != '"' || (content[k + 33] != '"' && content[k + 33] != '#')) continue;  // '#': a part of a mesh file
                 bool guid_like = true;
                 for (usize h = 1; h <= 32 && guid_like; ++h) guid_like = is_hex(content[k + h]);
                 if (!guid_like) continue;

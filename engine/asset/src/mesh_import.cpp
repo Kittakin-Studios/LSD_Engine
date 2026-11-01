@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 
@@ -47,8 +48,26 @@ rhi::MeshVertex make_vertex(f32 px, f32 py, f32 pz, f32 nx, f32 ny, f32 nz, f32 
     return rhi::MeshVertex{{px, py, pz}, {nx * inv, ny * inv, nz * inv}, {u, v}};
 }
 
-// FBX: ufbx converts axes to Z-up right-handed and units to metres for us.
-bool load_fbx(const char* path, f32 scale, Allocator& allocator, Array<rhi::MeshVertex>& soup, char* error, usize error_capacity) {
+// "Node" or, when the node has several parts, "Node_Material"; `fallback` when the node has no name.
+void part_name(MeshPart& part, const char* node, const char* fallback, bool several) {
+    const char* base = node && node[0] ? node : fallback;
+    if (several && part.material[0]) std::snprintf(part.name, sizeof part.name, "%s_%s", base, part.material);
+    else std::snprintf(part.name, sizeof part.name, "%s", base);
+}
+
+// The file name of a texture path ("C:/art/brick.png" -> "brick.png").
+void file_name(char* out, usize capacity, const char* path) {
+    const char* name = path;
+    for (const char* c = path; *c; ++c) {
+        if (*c == '/' || *c == '\\') name = c + 1;
+    }
+    std::snprintf(out, capacity, "%s", name);
+}
+
+// FBX: ufbx converts axes to Z-up right-handed and units to metres for us. A part is one material
+// slot of one mesh node. Fills `soup` with the triangles of `part` (all when < 0) and / or `parts`.
+bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error,
+              usize error_capacity) {
     ufbx_load_opts opts{};
     opts.target_axes = ufbx_axes_right_handed_z_up;
     opts.target_unit_meters = 1.0f;
@@ -60,6 +79,7 @@ bool load_fbx(const char* path, f32 scale, Allocator& allocator, Array<rhi::Mesh
         return false;
     }
     Array<u32> tri(allocator);
+    i32 k = 0;
     for (usize n = 0; n < scene->nodes.count; ++n) {
         const ufbx_node* node = scene->nodes.data[n];
         const ufbx_mesh* mesh = node->mesh;
@@ -67,28 +87,55 @@ bool load_fbx(const char* path, f32 scale, Allocator& allocator, Array<rhi::Mesh
         const ufbx_matrix to_world = node->geometry_to_world;
         const ufbx_matrix normal_to_world = ufbx_matrix_for_normals(&to_world);
         tri.resize(mesh->max_face_triangles * 3);
-        for (usize f = 0; f < mesh->faces.count; ++f) {
-            const u32 count = ufbx_triangulate_face(tri.data(), tri.size(), mesh, mesh->faces.data[f]);
-            for (u32 i = 0; i < count * 3; ++i) {
-                const u32 index = tri[i];
-                const ufbx_vec3 p = ufbx_transform_position(&to_world, ufbx_get_vertex_vec3(&mesh->vertex_position, index));
-                const ufbx_vec3 nrm = mesh->vertex_normal.exists
-                    ? ufbx_transform_direction(&normal_to_world, ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
-                    : ufbx_vec3{0, 0, 1};
-                ufbx_vec2 uv{0, 0};
-                if (mesh->vertex_uv.exists) uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, index);
-                soup.push_back(make_vertex(static_cast<f32>(p.x) * scale, static_cast<f32>(p.y) * scale, static_cast<f32>(p.z) * scale,
-                                           static_cast<f32>(nrm.x), static_cast<f32>(nrm.y), static_cast<f32>(nrm.z),
-                                           static_cast<f32>(uv.x), 1.0f - static_cast<f32>(uv.y)));
+        u32 used_parts = 0;
+        for (usize m = 0; m < mesh->material_parts.count; ++m) used_parts += mesh->material_parts.data[m].num_triangles > 0 ? 1u : 0u;
+        for (usize m = 0; m < mesh->material_parts.count; ++m) {
+            const ufbx_mesh_part& mp = mesh->material_parts.data[m];
+            if (mp.num_triangles == 0) continue;
+            if (parts) {
+                MeshPart info;
+                // Per-instance materials live on the node, at the mesh's material indices.
+                if (const ufbx_material* mat = m < node->materials.count ? node->materials.data[m] : nullptr) {
+                    std::snprintf(info.material, sizeof info.material, "%s", mat->name.data);
+                    const ufbx_vec4 c = mat->pbr.base_color.value_vec4;
+                    const f32 factor = mat->pbr.base_factor.has_value ? static_cast<f32>(mat->pbr.base_factor.value_real) : 1.0f;
+                    info.base_color[0] = static_cast<f32>(c.x) * factor;
+                    info.base_color[1] = static_cast<f32>(c.y) * factor;
+                    info.base_color[2] = static_cast<f32>(c.z) * factor;
+                    info.metallic = static_cast<f32>(mat->pbr.metalness.value_real);
+                    if (mat->pbr.roughness.has_value) info.roughness = static_cast<f32>(mat->pbr.roughness.value_real);
+                    if (const ufbx_texture* t = mat->pbr.base_color.texture) file_name(info.texture, sizeof info.texture, t->filename.length ? t->filename.data : t->relative_filename.data);
+                }
+                part_name(info, node->name.data, mesh->name.data, used_parts > 1);
+                parts->push_back(info);
             }
+            if (soup && (part < 0 || part == k)) {
+                for (usize f = 0; f < mp.face_indices.count; ++f) {
+                    const u32 count = ufbx_triangulate_face(tri.data(), tri.size(), mesh, mesh->faces.data[mp.face_indices.data[f]]);
+                    for (u32 i = 0; i < count * 3; ++i) {
+                        const u32 index = tri[i];
+                        const ufbx_vec3 p = ufbx_transform_position(&to_world, ufbx_get_vertex_vec3(&mesh->vertex_position, index));
+                        const ufbx_vec3 nrm = mesh->vertex_normal.exists
+                            ? ufbx_transform_direction(&normal_to_world, ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
+                            : ufbx_vec3{0, 0, 1};
+                        ufbx_vec2 uv{0, 0};
+                        if (mesh->vertex_uv.exists) uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, index);
+                        soup->push_back(make_vertex(static_cast<f32>(p.x) * scale, static_cast<f32>(p.y) * scale, static_cast<f32>(p.z) * scale,
+                                                    static_cast<f32>(nrm.x), static_cast<f32>(nrm.y), static_cast<f32>(nrm.z),
+                                                    static_cast<f32>(uv.x), 1.0f - static_cast<f32>(uv.y)));
+                    }
+                }
+            }
+            ++k;
         }
     }
     ufbx_free_scene(scene);
     return true;
 }
 
-// glTF is Y-up right-handed in metres: rotate +90 degrees about X so Y becomes Z.
-bool load_gltf(const char* path, f32 scale, Array<rhi::MeshVertex>& soup, char* error, usize error_capacity) {
+// glTF is Y-up right-handed in metres: rotate +90 degrees about X so Y becomes Z. A part is one
+// triangle primitive of one mesh node (each primitive has one material).
+bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error, usize error_capacity) {
     cgltf_options options{};
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, path, &data) != cgltf_result_success || cgltf_load_buffers(&options, data, path) != cgltf_result_success) {
@@ -96,22 +143,47 @@ bool load_gltf(const char* path, f32 scale, Array<rhi::MeshVertex>& soup, char* 
         cgltf_free(data);
         return false;
     }
+    i32 k = 0;
     for (cgltf_size n = 0; n < data->nodes_count; ++n) {
         const cgltf_node& node = data->nodes[n];
         if (!node.mesh) continue;
         cgltf_float m[16];  // column-major world matrix
         cgltf_node_transform_world(&node, m);
+        auto position_of = [](const cgltf_primitive& prim) -> const cgltf_accessor* {
+            if (prim.type != cgltf_primitive_type_triangles) return nullptr;
+            for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
+                if (prim.attributes[a].type == cgltf_attribute_type_position) return prim.attributes[a].data;
+            }
+            return nullptr;
+        };
+        u32 used_parts = 0;
+        for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p) used_parts += position_of(node.mesh->primitives[p]) ? 1u : 0u;
         for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p) {
             const cgltf_primitive& prim = node.mesh->primitives[p];
-            if (prim.type != cgltf_primitive_type_triangles) continue;
-            const cgltf_accessor *pos = nullptr, *nrm = nullptr, *uv = nullptr;
+            const cgltf_accessor* pos = position_of(prim);
+            if (!pos) continue;
+            const i32 this_part = k++;
+            if (parts) {
+                MeshPart info;
+                if (const cgltf_material* mat = prim.material) {
+                    if (mat->name) std::snprintf(info.material, sizeof info.material, "%s", mat->name);
+                    const cgltf_pbr_metallic_roughness& pbr = mat->pbr_metallic_roughness;
+                    std::memcpy(info.base_color, pbr.base_color_factor, sizeof info.base_color);
+                    info.metallic = pbr.metallic_factor;
+                    info.roughness = pbr.roughness_factor;
+                    const cgltf_texture* t = pbr.base_color_texture.texture;
+                    if (t && t->image && t->image->uri) file_name(info.texture, sizeof info.texture, t->image->uri);
+                }
+                part_name(info, node.name ? node.name : node.mesh->name, "Part", used_parts > 1);
+                parts->push_back(info);
+            }
+            if (!soup || (part >= 0 && part != this_part)) continue;
+            const cgltf_accessor *nrm = nullptr, *uv = nullptr;
             for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
                 const cgltf_attribute& attr = prim.attributes[a];
-                if (attr.type == cgltf_attribute_type_position) pos = attr.data;
-                else if (attr.type == cgltf_attribute_type_normal) nrm = attr.data;
+                if (attr.type == cgltf_attribute_type_normal) nrm = attr.data;
                 else if (attr.type == cgltf_attribute_type_texcoord && attr.index == 0) uv = attr.data;
             }
-            if (!pos) continue;
             const cgltf_size count = prim.indices ? prim.indices->count : pos->count;
             for (cgltf_size i = 0; i < count; ++i) {
                 const cgltf_size v = prim.indices ? cgltf_accessor_read_index(prim.indices, i) : i;
@@ -127,7 +199,7 @@ bool load_gltf(const char* path, f32 scale, Array<rhi::MeshVertex>& soup, char* 
                 const f32 nx = m[0] * ln[0] + m[4] * ln[1] + m[8] * ln[2];
                 const f32 ny = m[1] * ln[0] + m[5] * ln[1] + m[9] * ln[2];
                 const f32 nz = m[2] * ln[0] + m[6] * ln[1] + m[10] * ln[2];
-                soup.push_back(make_vertex(wx * scale, -wz * scale, wy * scale, nx, -nz, ny, t[0], t[1]));
+                soup->push_back(make_vertex(wx * scale, -wz * scale, wy * scale, nx, -nz, ny, t[0], t[1]));
             }
         }
     }
@@ -137,16 +209,44 @@ bool load_gltf(const char* path, f32 scale, Array<rhi::MeshVertex>& soup, char* 
 
 } // namespace
 
-bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity) {
+namespace {
+
+bool load_source(const char* path, f32 scale, i32 part, Allocator& allocator, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error,
+                 usize error_capacity) {
     error[0] = '\0';
+    if (has_extension(path, ".fbx")) return load_fbx(path, scale, part, allocator, soup, parts, error, error_capacity);
+    if (has_extension(path, ".gltf") || has_extension(path, ".glb")) return load_gltf(path, scale, part, soup, parts, error, error_capacity);
+    std::snprintf(error, error_capacity, "Unsupported file type: %s", path);
+    return false;
+}
+
+} // namespace
+
+bool list_mesh_parts(const char* path, Array<MeshPart>& out, char* error, usize error_capacity) {
+    out.clear();
+    return load_source(path, 1.0f, -1, out.allocator(), nullptr, &out, error, error_capacity);
+}
+
+bool parse_mesh_key(const char* key, Guid& guid, i32& part) {
+    part = -1;
+    char text[33];
+    std::snprintf(text, sizeof text, "%s", key);
+    if (std::strlen(key) > 32) {
+        if (key[32] != '#' || !std::isdigit(static_cast<unsigned char>(key[33]))) return false;
+        char* end = nullptr;
+        const long k = std::strtol(key + 33, &end, 10);
+        if (*end || k > 0xFFFF) return false;
+        part = static_cast<i32>(k);
+    }
+    return parse_guid(text, guid);
+}
+
+bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part) {
     Array<rhi::MeshVertex> soup(allocator);  // unindexed triangle list
-    bool ok = false;
-    if (has_extension(path, ".fbx")) ok = load_fbx(path, scale, allocator, soup, error, error_capacity);
-    else if (has_extension(path, ".gltf") || has_extension(path, ".glb")) ok = load_gltf(path, scale, soup, error, error_capacity);
-    else std::snprintf(error, error_capacity, "Unsupported file type: %s", path);
-    if (!ok) return false;
+    if (!load_source(path, scale, part, allocator, &soup, nullptr, error, error_capacity)) return false;
     if (soup.empty()) {
-        std::snprintf(error, error_capacity, "No triangles found in %s", path);
+        if (part >= 0) std::snprintf(error, error_capacity, "No part %d in %s", part, path);
+        else std::snprintf(error, error_capacity, "No triangles found in %s", path);
         return false;
     }
 
@@ -238,23 +338,24 @@ bool load_compiled_mesh(const char* path, Allocator& allocator, render::MeshData
 }
 
 bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, Allocator& allocator,
-                        char* compiled_path, usize compiled_path_capacity) {
+                        char* compiled_path, usize compiled_path_capacity, i32 part) {
     char guid[33];
     to_string(record.guid, guid);
-    std::snprintf(compiled_path, compiled_path_capacity, "%s/%s.lsdmesh", data_dir, guid);
+    if (part >= 0) std::snprintf(compiled_path, compiled_path_capacity, "%s/%s_%d.lsdmesh", data_dir, guid, part);
+    else std::snprintf(compiled_path, compiled_path_capacity, "%s/%s.lsdmesh", data_dir, guid);
 
     AssetMeta meta;
     registry.load_meta(record, meta);
     CompiledMeshSource source{record.source_size, record.source_time, 0};
     char settings[64];
-    std::snprintf(settings, sizeof settings, "scale=%.6g", static_cast<f64>(meta.import_scale));
+    std::snprintf(settings, sizeof settings, "scale=%.6g part=%d", static_cast<f64>(meta.import_scale), part);
     source.settings_hash = static_cast<u32>(hash64(settings));
     if (compiled_mesh_up_to_date(compiled_path, source)) return true;
 
     char path[300], error[256];
     registry.source_path(record, path, sizeof path);
     render::MeshData mesh;
-    if (!import_mesh(path, meta.import_scale, allocator, mesh, error, sizeof error)) {
+    if (!import_mesh(path, meta.import_scale, allocator, mesh, error, sizeof error, part)) {
         LSD_LOG_ERROR("asset", "Import failed for %s: %s", record.path, error);
         return false;
     }
@@ -264,6 +365,16 @@ bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record
     LSD_LOG_INFO("asset", "Compiled %s: %u vertices, %u triangles", record.path, mesh.vertex_count, mesh.index_count / 3);
     render::free_mesh(allocator, mesh);
     return ok;
+}
+
+bool compile_mesh_key(const AssetRegistry& registry, const char* key, const char* data_dir, Allocator& allocator, char* compiled_path,
+                      usize compiled_path_capacity) {
+    Guid guid;
+    i32 part = -1;
+    if (!parse_mesh_key(key, guid, part)) return false;
+    const AssetRecord* record = registry.find(guid);
+    return record && record->type == AssetType::Mesh &&
+           compile_mesh_asset(registry, *record, data_dir, allocator, compiled_path, compiled_path_capacity, part);
 }
 
 } // namespace lsd::asset

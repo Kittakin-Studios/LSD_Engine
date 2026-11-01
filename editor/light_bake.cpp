@@ -212,17 +212,16 @@ bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh) {
 
 bool load_mesh(const char* key, const asset::AssetRegistry& registry, const char* data_dir, Allocator& allocator, render::MeshData& out) {
     asset::Guid guid;
-    if (!asset::parse_guid(key, guid)) {
+    i32 part = -1;
+    if (!asset::parse_mesh_key(key, guid, part)) {
         if (std::strcmp(key, "Cube") == 0) out = render::make_cube(allocator);
         else if (std::strcmp(key, "Sphere") == 0) out = render::make_sphere(allocator);
         else if (std::strcmp(key, "Plane") == 0) out = render::make_plane(allocator);
         else return false;
         return true;
     }
-    const asset::AssetRecord* record = registry.find(guid);
-    if (!record || record->type != asset::AssetType::Mesh) return false;
     char compiled[300];
-    return asset::compile_mesh_asset(registry, *record, data_dir, allocator, compiled, sizeof compiled) && asset::load_compiled_mesh(compiled, allocator, out);
+    return asset::compile_mesh_key(registry, key, data_dir, allocator, compiled, sizeof compiled) && asset::load_compiled_mesh(compiled, allocator, out);
 }
 
 } // namespace

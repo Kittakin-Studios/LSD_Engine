@@ -186,6 +186,13 @@ Collections). Both appear above the folder tree. Right-click an asset > **Duplic
 with its import settings; **Reimport** reads the source file again. In the Outliner, right-click an
 object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 
+**Files with several meshes** (Unreal's import with Combine Meshes off): a mesh asset draws the whole
+file as one mesh. Right-click it > **Create Prefab from Parts** makes `BP_<name>`: one child object
+per mesh and material in the file (named `Node` or `Node_Material`), each in its place, plus an
+`M_<material>` Material for each material in the file (base colour, metallic, roughness; the base
+colour texture if a Texture with the same file name is already in Content). Import the textures
+first. Drag the prefab into the level and move, hide or re-material its parts like any objects.
+
 **References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
 (click to follow, double-click to find in the Content Browser). Deleting warns about anything that
 still uses the asset. A missing reference shows in red with **Replace with selected**; **Replace its

@@ -35,6 +35,7 @@
 #include "lsd/world/spline.h"
 #include "lsd/world/curve.h"
 #include "lsd/render/material.h"
+#include "lsd/asset/mesh_import.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1905,7 +1906,8 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             if (s.playing && ImGui::MenuItem("Keep Simulation Changes", "K")) keep_simulation_changes(s);
             if (s.playing) ImGui::SetItemTooltip("When Play stops, the selected objects keep what they have now (where physics left them...)");
             asset::Guid used;  // the object's mesh (or script, sound) asset
-            if (const auto* m = s.world->get<world::StaticMesh>(e)) asset::parse_guid(m->mesh, used);
+            i32 part = -1;  // a part of a mesh file finds the file
+            if (const auto* m = s.world->get<world::StaticMesh>(e)) asset::parse_mesh_key(m->mesh, used, part);
             if (const auto* m = s.world->get<world::SkeletalMesh>(e); m && !used.valid()) asset::parse_guid(m->mesh, used);
             if (const auto* m = s.world->get<world::Script>(e); m && !used.valid()) asset::parse_guid(m->script, used);
             if (const auto* m = s.world->get<world::SoundEmitter>(e); m && !used.valid()) asset::parse_guid(m->sound, used);
@@ -2496,6 +2498,67 @@ void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
     }
 }
 
+// Mesh > Create Prefab from Parts (Unreal's import with Combine Meshes off): a prefab with one child
+// per mesh node and material of the file ("<guid>#<k>" meshes, baked in place so they line up), and
+// a Material per material of the file, its base colour texture found in Content by file name.
+// shortcut: parts keep the file's pivot (Unreal's Transform Vertex to Absolute), add per-node pivots if artists ask
+void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
+    char source[300], error[256];
+    s.registry->source_path(mesh, source, sizeof source);
+    Array<asset::MeshPart> parts(default_allocator());
+    if (!asset::list_mesh_parts(source, parts, error, sizeof error) || parts.empty()) {
+        std::snprintf(s.status, sizeof s.status, "Could not read the parts of %s: %s", mesh.path, error[0] ? error : "no triangles");
+        return;
+    }
+    char guid[33];
+    asset::to_string(mesh.guid, guid);
+    std::vector<std::pair<std::string, std::string>> materials;  // file material name -> our Material's GUID
+    world::World w(default_allocator());
+    const Entity root = w.create(mesh.name);
+    for (usize k = 0; k < parts.size(); ++k) {
+        const asset::MeshPart& p = parts[k];
+        const Entity child = w.create(p.name);
+        w.set_parent(child, root, false);
+        auto* sm = w.add<world::StaticMesh>(child);
+        std::snprintf(sm->mesh, sizeof sm->mesh, "%s#%zu", guid, k);
+        sm->color = LinearColor::hex(0xFFFFFF);  // the material's own colour
+        if (!p.material[0]) continue;
+        std::string* found = nullptr;
+        for (auto& [name, id] : materials) found = name == p.material ? &id : found;
+        if (!found) {
+            render::Material m;
+            m.base_color.r = p.base_color[0];
+            m.base_color.g = p.base_color[1];
+            m.base_color.b = p.base_color[2];
+            m.base_color.a = p.base_color[3];
+            m.metallic = p.metallic;
+            m.roughness = p.roughness;
+            for (usize i = 0; p.texture[0] && i < s.registry->count() && !m.base_color_texture[0]; ++i) {
+                const asset::AssetRecord& t = s.registry->get(i);
+                const std::string file = std::filesystem::path(t.path).filename().string();
+                if (t.type == asset::AssetType::Texture && SDL_strcasecmp(file.c_str(), p.texture) == 0) asset::to_string(t.guid, m.base_color_texture);
+            }
+            const std::string path = new_asset_path(s, (std::string("M_") + p.material).c_str());
+            asset::save_data_asset(path.c_str(), reflect::type_of<render::Material>(), &m);
+            s.registry->scan();
+            char id[33] = "";
+            if (const asset::AssetRecord* r = record_at(s, path)) asset::to_string(r->guid, id);
+            materials.emplace_back(p.material, id);
+            found = &materials.back().second;
+        }
+        std::snprintf(sm->material, sizeof sm->material, "%s", found->c_str());
+    }
+    const std::string path = new_asset_path(s, (std::string("BP_") + mesh.name).c_str(), world::kPrefabExtension);
+    if (!world::save_prefab_file(w, root, path.c_str())) {
+        std::snprintf(s.status, sizeof s.status, "Could not save %s", path.c_str());
+        return;
+    }
+    s.registry->scan();
+    if (const asset::AssetRecord* r = record_at(s, path)) find_in_content_browser(s, r->guid);
+    std::snprintf(s.status, sizeof s.status, "Created %s: %zu parts, %zu materials", path.c_str(), parts.size(), materials.size());
+    LSD_LOG_INFO("editor", "%s", s.status);
+}
+
 constexpr char kScriptTemplate[] = R"(-- Runs on every object whose Script component points at this file (in Play).
 -- self.entity is the object, self.name its name; keep your own state in self.
 -- The engine API is the lsd table: see engine/script/include/lsd/script/script.h.
@@ -2568,9 +2631,15 @@ void create_default_input(EditorState& s) {
 void draw_mesh_slot(EditorState& s, world::StaticMesh& mesh) {
     const char* shown = mesh.mesh;
     asset::Guid guid;
-    if (asset::parse_guid(mesh.mesh, guid)) {
+    i32 part = -1;
+    char part_label[80];
+    if (asset::parse_mesh_key(mesh.mesh, guid, part)) {
         const asset::AssetRecord* r = s.registry->find(guid);
         shown = r ? r->name : "(missing asset)";
+        if (r && part >= 0) {
+            std::snprintf(part_label, sizeof part_label, "%s (part %d)", r->name, part);
+            shown = part_label;
+        }
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Mesh");
@@ -3683,6 +3752,8 @@ void draw_asset_grid(EditorState& s) {
             if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
             if (asset_matches(r, "Timeline") && ImGui::MenuItem("Edit Timeline")) open_timeline_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Open Mesh Editor")) open_mesh_editor(s, r);
+            if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) create_parts_prefab(s, r);
+            if (r.type == asset::AssetType::Mesh) ImGui::SetItemTooltip("One object per mesh and material in the file, with Materials made from the file's (Unreal: Combine Meshes off)");
             if (r.type == asset::AssetType::Prefab && ImGui::MenuItem("Edit Prefab")) open_prefab_editor(s, r);
             if (ImGui::MenuItem("Reference Viewer...")) open_reference_viewer(s, r.guid);
             if (ImGui::MenuItem("Duplicate")) duplicate_asset(s, r);
@@ -4485,7 +4556,8 @@ void handle_shortcuts(EditorState& s) {
     if (!ctrl && s.playing && s.ejected && has && ImGui::IsKeyPressed(ImGuiKey_K)) keep_simulation_changes(s);
     if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_B)) {  // Find in Content Browser: the selected object's asset
         asset::Guid used;
-        if (const auto* m = s.world->get<world::StaticMesh>(s.selected)) asset::parse_guid(m->mesh, used);
+        i32 part = -1;
+        if (const auto* m = s.world->get<world::StaticMesh>(s.selected)) asset::parse_mesh_key(m->mesh, used, part);
         if (const auto* m = s.world->get<world::SkeletalMesh>(s.selected); m && !used.valid()) asset::parse_guid(m->mesh, used);
         if (const auto* m = s.world->get<world::Script>(s.selected); m && !used.valid()) asset::parse_guid(m->script, used);
         if (used.valid()) find_in_content_browser(s, used);

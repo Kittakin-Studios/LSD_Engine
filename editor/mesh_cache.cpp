@@ -83,15 +83,14 @@ bool MeshCache::load(CachedMesh& entry) {
     render::MeshData data;
     asset::MeshBounds bounds;
     asset::Guid guid;
-    if (!asset::parse_guid(entry.key, guid)) {
+    i32 part = -1;
+    if (!asset::parse_mesh_key(entry.key, guid, part)) {
         if (entry.gpu.index_count) return true;  // built-ins never change
         if (!make_builtin(entry.key, allocator_, data)) return false;
         bounds = asset::compute_bounds(data);
     } else {
-        const asset::AssetRecord* record = registry_.find(guid);
-        if (!record || record->type != asset::AssetType::Mesh) return false;
         char compiled[300];
-        if (!asset::compile_mesh_asset(registry_, *record, data_dir_, allocator_, compiled, sizeof compiled)) return false;
+        if (!asset::compile_mesh_key(registry_, entry.key, data_dir_, allocator_, compiled, sizeof compiled)) return false;
         const i64 time = file_time(compiled);
         if (entry.gpu.index_count && time == entry.compiled_time) return true;  // already current
         if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
@@ -111,13 +110,12 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     if (const auto it = triangles_.find(key); it != triangles_.end()) return &it->second;
     render::MeshData data;
     asset::Guid guid;
-    if (!asset::parse_guid(key, guid)) {
+    i32 part = -1;
+    if (!asset::parse_mesh_key(key, guid, part)) {
         if (!make_builtin(key, allocator_, data)) return nullptr;
     } else {
-        const asset::AssetRecord* record = registry_.find(guid);
         char compiled[300];
-        if (!record || record->type != asset::AssetType::Mesh || !asset::compile_mesh_asset(registry_, *record, data_dir_, allocator_, compiled, sizeof compiled) ||
-            !asset::load_compiled_mesh(compiled, allocator_, data, nullptr)) {
+        if (!asset::compile_mesh_key(registry_, key, data_dir_, allocator_, compiled, sizeof compiled) || !asset::load_compiled_mesh(compiled, allocator_, data, nullptr)) {
             return nullptr;
         }
     }

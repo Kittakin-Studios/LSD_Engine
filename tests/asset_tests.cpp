@@ -178,6 +178,46 @@ static void test_gltf_axes(const fs::path& root) {
     }
     render::free_mesh(heap, mesh);
     CHECK(!asset::import_mesh((root / "missing.fbx").string().c_str(), 1.0f, heap, mesh, error, sizeof error) && error[0]);
+
+    // Parts: two nodes share the triangle (the second 5 m up glTF's Y, so +Z), the second with two
+    // materials; each part imports alone, in file space.
+    const char parts_gltf[] = R"({
+  "asset": {"version": "2.0"},
+  "scene": 0, "scenes": [{"nodes": [0, 1]}],
+  "nodes": [{"name": "Base", "mesh": 0}, {"name": "Top", "mesh": 1, "translation": [0, 5, 0]}],
+  "materials": [{"name": "Red", "pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1], "metallicFactor": 0, "roughnessFactor": 0.25}},
+                {"name": "Gold", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 1}}],
+  "textures": [{"source": 0}], "images": [{"uri": "textures/Gold_Base.png"}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]},
+             {"primitives": [{"attributes": {"POSITION": 0}, "material": 0}, {"attributes": {"POSITION": 0}, "material": 1}]}],
+  "buffers": [{"byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}],
+  "bufferViews": [{"buffer": 0, "byteLength": 36}],
+  "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]}]
+})";
+    const fs::path parts_path = root / "parts.gltf";
+    f = std::fopen(parts_path.string().c_str(), "wb");
+    std::fwrite(parts_gltf, 1, sizeof parts_gltf - 1, f);
+    std::fclose(f);
+    Array<asset::MeshPart> parts(heap);
+    CHECK(asset::list_mesh_parts(parts_path.string().c_str(), parts, error, sizeof error) && parts.size() == 3);
+    if (parts.size() == 3) {
+        CHECK(std::strcmp(parts[0].name, "Base") == 0 && !parts[0].material[0]);
+        CHECK(std::strcmp(parts[1].name, "Top_Red") == 0 && parts[1].base_color[1] == 0.0f && parts[1].roughness == 0.25f);
+        CHECK(std::strcmp(parts[2].name, "Top_Gold") == 0 && parts[2].metallic == 1.0f && std::strcmp(parts[2].texture, "Gold_Base.png") == 0);
+    }
+    CHECK(asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 2) && mesh.vertex_count == 3);
+    CHECK(std::fabs(asset::compute_bounds(mesh).min[2] - 5.0f) < 1e-5f);  // in place, not moved to the origin
+    render::free_mesh(heap, mesh);
+    CHECK(!asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 3) && error[0]);
+
+    // Mesh keys: a GUID, or a GUID and a part; nothing else.
+    asset::Guid guid;
+    i32 part = 0;
+    CHECK(asset::parse_mesh_key("0123456789abcdef0123456789abcdef", guid, part) && part == -1);
+    CHECK(asset::parse_mesh_key("0123456789abcdef0123456789abcdef#12", guid, part) && part == 12);
+    CHECK(!asset::parse_mesh_key("0123456789abcdef0123456789abcdef#", guid, part));
+    CHECK(!asset::parse_mesh_key("0123456789abcdef0123456789abcdef#1x", guid, part));
+    CHECK(!asset::parse_mesh_key("Cube", guid, part));
 }
 
 // Textures: mip chain sizes, colour mips averaged in light (sRGB) vs data mips in bytes, size cap, TGA load.
