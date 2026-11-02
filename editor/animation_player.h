@@ -18,6 +18,9 @@ public:
     // `sounds` only in Play (notifies are silent in the editor).
     void update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds);
     const anim::Pose* pose(world::Entity e) const;  // nullptr until the object has been updated
+    // The Animation Graph state `e` is in ("" without a graph or before its first update), and the
+    // crossfade's source state if one is running ("" otherwise).
+    const char* graph_state(SkinnedCache& cache, const world::SkeletalMesh& mesh, world::Entity e, const char** fading_from = nullptr) const;
     // The vertices to skin for `e`: its own morphed copy when morph weights are set, else `model`'s.
     rhi::BufferHandle vertices(world::Entity e, rhi::BufferHandle model) const;
     // A socket's world transform on e's skinned mesh (the mesh's .meta sockets); false if none.

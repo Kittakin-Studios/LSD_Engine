@@ -2,6 +2,7 @@
 #include "graph_editor.h"
 #include "lighting.h"
 #include "material_cache.h"
+#include "animation_player.h"
 #include "skinned_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
@@ -2692,6 +2693,43 @@ void draw_mesh_slot(EditorState& s, world::StaticMesh& mesh) {
     }
 }
 
+// Skeletal Mesh extras above its properties: the animation file's clips by name (picks Clip), and
+// while an Animation Graph runs, the state it is in (Unreal's live Anim Blueprint debugging).
+void draw_skeletal_readout(EditorState& s, Entity e, world::SkeletalMesh& mesh) {
+    if (!s.skinned) return;
+    if (mesh.anim_graph[0] && s.animations) {
+        const char* from = "";
+        const char* state = s.animations->graph_state(*s.skinned, mesh, e, &from);
+        if (state[0] && from[0]) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "State: %s (blending from %s)", state, from);
+        else if (state[0]) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "State: %s", state);
+        else ImGui::TextDisabled("State: (not running yet)");
+        return;  // the graph picks the clips
+    }
+    const ClipSet* set = s.skinned->clips(mesh.mesh, mesh.animation);
+    if (!set || set->count == 0) {
+        ImGui::TextDisabled("No animations in the animation file");
+        return;
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Clip");
+    ImGui::SameLine(160.0f);
+    ImGui::SetNextItemWidth(-1.0f);
+    char shown[96];
+    if (mesh.clip < set->count) std::snprintf(shown, sizeof shown, "%u: %s (%.2f s)", mesh.clip, set->clips[mesh.clip].name, static_cast<f64>(set->clips[mesh.clip].duration));
+    else std::snprintf(shown, sizeof shown, "%u: (no such clip)", mesh.clip);
+    if (ImGui::BeginCombo("##clip_list", shown)) {
+        for (u32 c = 0; c < set->count; ++c) {
+            char label[96];
+            std::snprintf(label, sizeof label, "%u: %s (%.2f s)", c, set->clips[c].name, static_cast<f64>(set->clips[c].duration));
+            if (ImGui::Selectable(label, c == mesh.clip)) {
+                mesh.clip = c;
+                edited(s, "Change Clip");
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
 // Copies each leaf value that differs between `before` and `after` into `target` (same type).
 void copy_changed(const reflect::TypeInfo& type, const u8* before, const u8* after, u8* target) {
     for (u32 i = 0; i < type.property_count; ++i) {
@@ -2790,6 +2828,7 @@ void draw_entity_details(EditorState& s) {
             g_details_type = types[i];
             std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
+            if (types[i] == &reflect::type_of<world::SkeletalMesh>()) draw_skeletal_readout(s, e, *static_cast<world::SkeletalMesh*>(component));
             if (types[i] == &reflect::type_of<world::Spline>()) {  // point tools; points are moved in the viewport
                 auto& points = static_cast<world::Spline*>(component)->points;
                 const bool has_point = s.spline_point >= 0 && static_cast<u32>(s.spline_point) < points.count;

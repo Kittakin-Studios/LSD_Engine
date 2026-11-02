@@ -1162,6 +1162,7 @@ int main(int argc, char** argv) {
     if (!game_mode) lsd::editor::source_control::start();  // Git badges in the Content Browser
     state.textures = texture_cache;
     state.skinned = skinned_cache;
+    state.animations = animations;
     state.device = device;
 
     const char* startup_level = level_arg              ? level_arg

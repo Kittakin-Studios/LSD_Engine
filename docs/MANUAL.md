@@ -518,7 +518,9 @@ with Offset / Turn, Save. Then give a prop **Attach To Socket** (the character's
 the socket) to carry it, or ask a script: `lsd.socket(e, "Hand_R")` -> x, y, z, fx, fy, fz.
 
 Drop a rigged FBX into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
-same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip**. Animations
+same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip** (Details
+lists the file's clips by name and length). With an Animation Graph, Details shows the state it is
+in while it plays. Animations
 play in the editor too.
 
 **Notifies** (Unreal's AnimNotify): in the animation file's Details, add a time and a sound; it plays

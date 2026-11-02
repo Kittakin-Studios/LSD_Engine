@@ -101,6 +101,7 @@ struct EditorState {
     ThumbnailCache* thumbnails = nullptr;
     class TextureCache* textures = nullptr;  // set by main.cpp (texture thumbnails)
     class SkinnedCache* skinned = nullptr;   // set by main.cpp (rigged meshes: bounds, drop)
+    class AnimationPlayer* animations = nullptr;  // set by main.cpp (Details: the graph's current state)
     class ParticleEditor* particle_editor = nullptr;  // set by main.cpp
     rhi::Device* device = nullptr;
     char content_folder[256] = "";  // selected folder relative to Content/ ("" = Content itself)

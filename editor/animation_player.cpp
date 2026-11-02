@@ -68,6 +68,17 @@ void AnimationPlayer::update_morphs(State& state, const world::SkeletalMesh& mes
     state.morphed = device_.create_buffer(rhi::BufferUsage::Vertex, morphed.data(), morphed.size() * sizeof(rhi::SkinnedVertex));
 }
 
+const char* AnimationPlayer::graph_state(SkinnedCache& cache, const world::SkeletalMesh& mesh, world::Entity e, const char** fading_from) const {
+    if (fading_from) *fading_from = "";
+    const anim::AnimGraph* graph = mesh.anim_graph[0] ? cache.graph(mesh.anim_graph) : nullptr;
+    for (const State& s : states_) {
+        if (!graph || !s.used || s.entity != e) continue;
+        if (fading_from && s.graph.previous >= 0 && s.graph.previous < static_cast<i32>(graph->states.count)) *fading_from = graph->states[static_cast<u32>(s.graph.previous)].name;
+        return anim::state_name(*graph, s.graph);
+    }
+    return "";
+}
+
 const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
     for (const State& s : states_) {
         if (s.used && s.entity == e) return &s.pose;
