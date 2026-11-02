@@ -139,6 +139,82 @@ The same things with nodes and wires (Blueprints):
 6. Debug: right-click a node > **Toggle Breakpoint** (or select it and press F9). While playing,
    nodes that run glow orange.
 
+### Worked example: press a key to interact with what you look at
+
+The Unreal "interact" pattern: on a key press, trace a line in front of the player; if it hits
+something, tell that object it was used.
+
+**A first try that does not work**, and why:
+
+```text
+Input Pressed (IA_Interact) --Pressed--> Branch.Condition
+Branch True  --> Call Function "WBP_Interact" --Result--> Line Trace.Start (End 10, 4.8, 4.2)
+             --> Play Sound 2D "Click" --> Print String "Worked"
+Branch False --> Play Sound 2D "Click" --> Print String "Failed"
+Get Variable "bInteract" (not wired)
+```
+
+| Problem | Why | Fix |
+| --- | --- | --- |
+| Nothing ever runs | **Input Pressed** is a value (green, no white pins), not an event. The Branch has no white wire coming in, so nothing starts it | Start from **Event Update** (Tick) and wire its white pin into the Branch |
+| `Call Function` fails | It runs a **Function inside this graph** with that name. There is no Function called `WBP_Interact`, so the script stops with an error in the Output Log. It does not open a widget | Showing a UI document is **Open UI** (Document = the `.rml` name). Telling the hit object is **Call Event on Object** (below) |
+| Trace starts in the wrong place | **Start** is wired to the function's Result, which is not a location. **End** is a fixed point in the world (10, 4.8, 4.2), the same wherever the player is | Start = the player's location at eye height; End = Start + the facing direction × reach |
+| "Worked" even when nothing was hit | Line Trace's white output always continues | Add a **Branch** on the trace's **Hit** |
+| "Failed" and a click **every frame** | Once driven by Event Update, the False path runs every frame the key is *not* pressed (60 times a second) | Leave Branch False empty |
+| `bInteract` does nothing | A Get node that is not wired into anything is never read | Delete it, or wire it into a Branch to switch interacting on and off |
+| No click sound | Play Sound 2D looks the sound up by **asset name** | Make sure a sound asset named `Click` exists (or type the real name) |
+
+**The working graph** (on the player's prefab, or any object; it uses the player either way):
+
+```text
+Event Update ──▶ Branch (Condition ◀ Input Pressed: IA_Interact)
+                   True ──▶ Line Trace
+                              Start ◀ Vector + Vector ( Get Location ◀ Get Player Character ,  Make Vector 0, 0, 1.6 )
+                              End   ◀ Vector + Vector ( that Start ,  Vector * Float ( Get Forward Vector ◀ Get Player Character , 3 ) )
+                            ──▶ Branch (Condition ◀ Line Trace.Hit)
+                                  True  ──▶ Call Event on Object (Target ◀ Hit Object, Name "on_interact")
+                                          ──▶ Play Sound 2D "Click" ──▶ Print String "Worked"
+                                  False ──▶ Print String "Nothing in reach"
+```
+
+Step by step in the graph window:
+
+1. Right-click the canvas > **Event Update**. Then **Branch**; wire Event Update's white pin to it.
+2. **Input Pressed**, Action `IA_Interact`; wire **Pressed** to the Branch's **Condition**.
+3. **Get Player Character**, then **Get Location** (wire Player into its Target) and **Make Vector**
+   (0, 0, 1.6: eye height). **Vector + Vector** adds them: that is the trace **Start**.
+4. **Get Forward Vector** (Target ◀ Player) into **Vector * Float** with Scale `3` (reach in metres);
+   a second **Vector + Vector** adds it to the Start: that is the trace **End**.
+5. **Line Trace**: wire Branch **True** to its white input, Start and End from steps 3 and 4.
+6. A second **Branch** after it with Condition ◀ **Hit**.
+7. True: **Call Event on Object**, Target ◀ **Hit Object**, Name `on_interact`; then **Play Sound 2D**
+   and **Print String** if you want them. False: a Print String, or nothing.
+8. **Save + Compile** (Ctrl+S). Put the graph on an object with a Script component and press Play.
+
+**The object being used** (a door, a lever...) gets its own visual script with a **Custom Event**
+named `on_interact` and whatever should happen after it (Unreal: an Interact interface event). An
+object without that event ignores the call. The line must hit it: tick **Collision** on its mesh (or give it a Rigid Body).
+
+The same in Lua:
+
+```lua
+function on_update(self, dt)
+  if not lsd.pressed("IA_Interact") then return end
+  local p = lsd.player()
+  local x, y, z = lsd.position(p)
+  local _, _, yaw = lsd.rotation(p)
+  local dx, dy = math.cos(math.rad(yaw)), math.sin(math.rad(yaw))
+  local hit = lsd.raycast(x, y, z + 1.6, dx, dy, 0, 3)   -- 3 m in front, at eye height
+  if hit then
+    lsd.call(hit, "on_interact")
+    lsd.play_sound("Click")
+  end
+end
+```
+
+Notes: the player's facing is its turn (yaw) only, so the line is level; looking up and down does
+not tilt it. The trace never hits the player's own capsule.
+
 ## 8. Recipes
 
 **Open a door when the player walks in** (the object needs a **Trigger Volume** component):

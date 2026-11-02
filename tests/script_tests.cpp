@@ -246,6 +246,34 @@ static void test_traces() {
     }
 }
 
+// Get Forward Vector: an object turned 90 degrees about Z faces +Y, so Start moves it to (0, 1, 0).
+static void test_forward_vector() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 move = g.add("SetPosition", 200, 0)->id;
+    const u32 forward = g.add("GetForward", 0, 100)->id;
+    CHECK(g.connect(start, 0, move, 0) && g.connect(forward, 0, move, 2));
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("forward");
+    {
+        World w(heap);
+        const Entity a = w.create("A");
+        w.get<Transform>(a)->rotation = {0, 0, 90};
+        std::snprintf(w.add<Script>(a)->script, sizeof(Script::script), "graph");
+        script::ScriptHost host;
+        script::ScriptSystem scripts;
+        scripts.start(w, host, path_of, nullptr);
+        const Vec3 p = w.get<Transform>(a)->position;
+        CHECK(scripts.error_count() == 0 && std::fabs(p.x) < 1e-4f && std::fabs(p.y - 1.0f) < 1e-4f && std::fabs(p.z) < 1e-4f);
+        scripts.stop();
+    }
+}
+
 // Functions, a For Loop, reroutes and a comment: Start sums add_one(i) for i = 0..2 into the "sum" variable (1 + 2 + 3).
 static void test_functions() {
     using namespace lsd::script;
@@ -696,6 +724,7 @@ int main() {
     test_graph_variables();
     test_events();
     test_traces();
+    test_forward_vector();
     test_game_instance();
     test_functions();
     test_properties();

@@ -521,6 +521,10 @@ level's one-off moments. It runs on an object named LevelScript while the level 
 wires carry values. **Save + Compile** (Ctrl+S) turns it into Lua; pick the graph on a Script
 component exactly like a `.lua` file. Playing objects pick up changes within half a second.
 
+A worked example (press a key, trace, tell the hit object) is in
+[How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md#worked-example-press-a-key-to-interact-with-what-you-look-at).
+Transform has **Get Forward Vector** (the way an object faces) and Objects **Get Player Character**.
+
 Node groups: Events (Start, Update, Hit, Overlap Begin / End), Flow (Branch, Sequence, Delay, Do Once,
 Set Timer), Transform, Objects (Spawn, Destroy, Find, Has Tag), Math, Input, Variables, Data (Data
 Table, Curve), Audio, Animation, AI, UI, Save Game, Utilities (Print String, Game Time).

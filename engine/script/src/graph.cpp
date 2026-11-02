@@ -179,6 +179,8 @@ NodeDef g_defs[] = {
     {"Comment", "Comment", "Utilities", "A labelled box behind nodes; drag its corner to size it", {}, 0, {}, 0, nullptr, {}},
     // ---- Pure ----
     {"Self", "Self", "Objects", "The object this script runs on", {}, 0, {{"Self", PinType::Entity, ""}}, 0, nullptr, {"self.entity"}},
+    {"GetPlayer", "Get Player Character", "Objects", "The player's Character (none outside Play)", {}, 0,
+     {{"Player", PinType::Entity, ""}}, 0, nullptr, {"lsd.player()"}},
     {"FindObject", "Find Object", "Objects", "An object by name (none if missing)", {{"Name", PinType::String, "Floor"}}, 0,
      {{"Object", PinType::Entity, ""}}, 0, nullptr, {"lsd.find($0)"}},
     {"GetName", "Get Name", "Objects", "", {kTarget}, 0, {{"Name", PinType::String, ""}}, 0, nullptr, {"lsd.name($0)"}},
@@ -190,6 +192,8 @@ NodeDef g_defs[] = {
      {{"Result", PinType::Bool, ""}}, 0, nullptr, {"lsd.has_all_tags($0, $1)"}},
     {"GetPosition", "Get Location", "Transform", "", {kTarget}, 0, {{"Location", PinType::Vector, ""}}, 0, nullptr, {"__vec(lsd.position($0))"}},
     {"GetRotation", "Get Rotation", "Transform", "", {kTarget}, 0, {{"Rotation", PinType::Vector, ""}}, 0, nullptr, {"__vec(lsd.rotation($0))"}},
+    {"GetForward", "Get Forward Vector", "Transform", "The direction the object faces (its +X), 1 m long; Location + this * distance is a point in front of it",
+     {kTarget}, 0, {{"Forward", PinType::Vector, ""}}, 0, nullptr, {"__forward($0)"}},
     {"SplineLocation", "Spline Location", "Transform", "World point at a distance along an object's Spline",
      {kTarget, {"Distance", PinType::Float, "0"}}, 0, {{"Location", PinType::Vector, ""}, {"Direction", PinType::Vector, ""}}, 0, nullptr,
      {"__vec(lsd.spline_point($0, $1))", "__vec(select(4, lsd.spline_point($0, $1)))"}},
@@ -363,6 +367,11 @@ constexpr char kLuaPrelude[] = R"lua(-- Generated from a visual script (.lsdgrap
 local function __vec(x, y, z) return {x = x or 0, y = y or 0, z = z or 0} end
 local function __vadd(a, b) return __vec(a.x + b.x, a.y + b.y, a.z + b.z) end
 local function __scale(a, s) return __vec(a.x * s, a.y * s, a.z * s) end
+local function __forward(e)  -- +X turned by the Euler rotation (X, then Y, then Z)
+  local _, y, z = lsd.rotation(e)
+  y, z = math.rad(y or 0), math.rad(z or 0)
+  return __vec(math.cos(y) * math.cos(z), math.cos(y) * math.sin(z), -math.sin(y))
+end
 local function __div(a, b) if b == 0 then return 0 end return a / b end
 local function __setpos(e, v) lsd.set_position(e, v.x, v.y, v.z) end
 local function __addpos(e, v) local x, y, z = lsd.position(e) lsd.set_position(e, x + v.x, y + v.y, z + v.z) end
