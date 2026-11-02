@@ -3,7 +3,7 @@
 Read this first. It is the short, current summary of how LSD_Engine is built and how to work on it.
 The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to use the engine),
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
-examples), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
+examples), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
 
 ## What this is
 
