@@ -188,10 +188,12 @@ object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 
 **Files with several meshes** (Unreal's import with Combine Meshes off): a mesh asset draws the whole
 file as one mesh. Right-click it > **Create Prefab from Parts** makes `BP_<name>`: one child object
-per mesh and material in the file (named `Node` or `Node_Material`), each in its place, plus an
-`M_<material>` Material for each material in the file (base colour, metallic, roughness; the base
-colour texture if a Texture with the same file name is already in Content). Import the textures
-first. Drag the prefab into the level and move, hide or re-material its parts like any objects.
+per mesh and material in the file (named `Node` or `Node_Material`), each with its node's pivot,
+position, rotation and scale from the DCC (a door turns about its hinge), plus an `M_<material>`
+Material for each material in the file (base colour, metallic, roughness; base colour, normal and
+glTF metallic-roughness textures if Textures with the same file names are already in Content).
+Import the textures first. Drag the prefab into the level and move, hide or re-material its parts
+like any objects.
 
 **References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
 (click to follow, double-click to find in the Content Browser). Deleting warns about anything that

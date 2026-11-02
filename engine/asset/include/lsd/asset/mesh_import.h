@@ -2,6 +2,7 @@
 // Mesh import (FBX via ufbx, glTF/GLB via cgltf) and the compiled binary mesh format.
 #include "lsd/asset/asset_registry.h"
 #include "lsd/foundation/array.h"
+#include "lsd/foundation/math.h"
 #include "lsd/render/mesh.h"
 
 namespace lsd::asset {
@@ -22,12 +23,15 @@ struct MeshPart {
     char texture[128] = "";   // the base colour texture's file name without folders, "" = none
     char normal_texture[128] = "";
     char orm_texture[128] = "";  // glTF's metallic-roughness map (G roughness, B metallic, as our ORM)
+    // The node's place in engine space (before the import scale: multiply `position` by it).
+    Vec3 position, rotation, scale = {1, 1, 1};  // rotation: Euler degrees, as Transform
 };
 
 // Reads a source file, converts to engine space (Z up, right-handed, metres), applies `scale`,
 // merges all meshes in the scene with their node transforms, welds duplicate vertices and
 // orders triangles for the GPU vertex cache. Writes a reason into `error` on failure.
-// `part` >= 0 imports only that part (list_mesh_parts order), still in file space so parts line up.
+// `part` >= 0 imports only that part (list_mesh_parts order) in its node's own space: place it with
+// the part's position / rotation / scale to line up with the others.
 bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part = -1);
 
 // The parts import_mesh can import one by one, in order.

@@ -48,6 +48,30 @@ rhi::MeshVertex make_vertex(f32 px, f32 py, f32 pz, f32 nx, f32 ny, f32 nz, f32 
     return rhi::MeshVertex{{px, py, pz}, {nx * inv, ny * inv, nz * inv}, {u, v}};
 }
 
+// A node's world matrix (engine space) as a Transform for the prefab, plus what a Transform cannot
+// hold (shear from a non-uniformly scaled, rotated parent), returned for the part's vertices to keep:
+// trs(part) * residual == world, so parts land exactly where the file puts them.
+Mat4 split_node_transform(const Mat4& world, MeshPart& part) {
+    decompose_trs(world, part.position, part.rotation, part.scale);
+    return inverse(trs(part.position, part.rotation, part.scale)) * world;
+}
+
+Mat4 from_ufbx(const ufbx_matrix& u) {
+    Mat4 m;
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 3; ++r) m.at(r, c) = static_cast<f32>(u.cols[c].v[r]);
+    }
+    return m;
+}
+
+ufbx_matrix to_ufbx(const Mat4& m) {
+    ufbx_matrix u{};
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 3; ++r) u.cols[c].v[r] = m.at(r, c);
+    }
+    return u;
+}
+
 // "Node" or, when the node has several parts, "Node_Material"; `fallback` when the node has no name.
 void part_name(MeshPart& part, const char* node, const char* fallback, bool several) {
     const char* base = node && node[0] ? node : fallback;
@@ -84,7 +108,11 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
         const ufbx_node* node = scene->nodes.data[n];
         const ufbx_mesh* mesh = node->mesh;
         if (!mesh) continue;
-        const ufbx_matrix to_world = node->geometry_to_world;
+        // A single part stays in its node's space (the prefab places it); the whole file is baked together.
+        MeshPart placed;
+        const Mat4 residual = split_node_transform(from_ufbx(node->node_to_world), placed);
+        const ufbx_matrix residual_u = to_ufbx(residual);
+        const ufbx_matrix to_world = part >= 0 ? ufbx_matrix_mul(&residual_u, &node->geometry_to_node) : node->geometry_to_world;
         const ufbx_matrix normal_to_world = ufbx_matrix_for_normals(&to_world);
         tri.resize(mesh->max_face_triangles * 3);
         u32 used_parts = 0;
@@ -111,6 +139,9 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
                     texture_file(mat->pbr.normal_map.texture, info.normal_texture, sizeof info.normal_texture);
                 }
                 part_name(info, node->name.data, mesh->name.data, used_parts > 1);
+                info.position = placed.position;
+                info.rotation = placed.rotation;
+                info.scale = placed.scale;
                 parts->push_back(info);
             }
             if (soup && (part < 0 || part == k)) {
@@ -153,6 +184,19 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
         if (!node.mesh) continue;
         cgltf_float m[16];  // column-major world matrix
         cgltf_node_transform_world(&node, m);
+        Mat4 node_world;  // in engine space: C * world * C^-1, C turning Y-up into Z-up
+        std::memcpy(node_world.m, m, sizeof m);
+        Mat4 up, down;
+        up.at(1, 1) = 0, up.at(1, 2) = -1, up.at(2, 1) = 1, up.at(2, 2) = 0;
+        down.at(1, 1) = 0, down.at(1, 2) = 1, down.at(2, 1) = -1, down.at(2, 2) = 0;
+        const Mat4 file_world = node_world;
+        node_world = up * node_world * down;
+        MeshPart placed;
+        split_node_transform(node_world, placed);
+        if (part >= 0) {  // a single part stays in its node's space (see FBX): C * m = trs^-1 * C * world
+            const Mat4 local = down * inverse(trs(placed.position, placed.rotation, placed.scale)) * up * file_world;
+            std::memcpy(m, local.m, sizeof m);
+        }
         auto position_of = [](const cgltf_primitive& prim) -> const cgltf_accessor* {
             if (prim.type != cgltf_primitive_type_triangles) return nullptr;
             for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
@@ -183,6 +227,9 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
                     texture_file(pbr.metallic_roughness_texture.texture, info.orm_texture, sizeof info.orm_texture);
                 }
                 part_name(info, node.name ? node.name : node.mesh->name, "Part", used_parts > 1);
+                info.position = placed.position;
+                info.rotation = placed.rotation;
+                info.scale = placed.scale;
                 parts->push_back(info);
             }
             if (!soup || (part >= 0 && part != this_part)) continue;
@@ -356,7 +403,7 @@ bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record
     registry.load_meta(record, meta);
     CompiledMeshSource source{record.source_size, record.source_time, 0};
     char settings[64];
-    std::snprintf(settings, sizeof settings, "scale=%.6g part=%d", static_cast<f64>(meta.import_scale), part);
+    std::snprintf(settings, sizeof settings, "scale=%.6g part=%d local", static_cast<f64>(meta.import_scale), part);  // "local": parts in node space
     source.settings_hash = static_cast<u32>(hash64(settings));
     if (compiled_mesh_up_to_date(compiled_path, source)) return true;
 

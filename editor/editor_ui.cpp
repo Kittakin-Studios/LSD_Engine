@@ -2499,13 +2499,16 @@ void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
 }
 
 // Mesh > Create Prefab from Parts (Unreal's import with Combine Meshes off): a prefab with one child
-// per mesh node and material of the file ("<guid>#<k>" meshes, baked in place so they line up), and
-// a Material per material of the file, its base colour texture found in Content by file name.
-// shortcut: parts keep the file's pivot (Unreal's Transform Vertex to Absolute), add per-node pivots if artists ask
+// per mesh node and material of the file ("<guid>#<k>" meshes in their node's space, placed by the
+// node's transform: pivots stay where the artist put them), and a Material per material of the file,
+// its textures found in Content by file name.
+// shortcut: flat (every part a child of the root); keep the file's node hierarchy if artists need it
 void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     char source[300], error[256];
     s.registry->source_path(mesh, source, sizeof source);
     Array<asset::MeshPart> parts(default_allocator());
+    asset::AssetMeta meta;
+    s.registry->load_meta(mesh, meta);
     if (!asset::list_mesh_parts(source, parts, error, sizeof error) || parts.empty()) {
         std::snprintf(s.status, sizeof s.status, "Could not read the parts of %s: %s", mesh.path, error[0] ? error : "no triangles");
         return;
@@ -2519,6 +2522,10 @@ void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
         const asset::MeshPart& p = parts[k];
         const Entity child = w.create(p.name);
         w.set_parent(child, root, false);
+        auto* transform = w.get<world::Transform>(child);
+        transform->position = p.position * meta.import_scale;  // the part's mesh is scaled by it too
+        transform->rotation = p.rotation;
+        transform->scale = p.scale;
         auto* sm = w.add<world::StaticMesh>(child);
         std::snprintf(sm->mesh, sizeof sm->mesh, "%s#%zu", guid, k);
         sm->color = LinearColor::hex(0xFFFFFF);  // the material's own colour

@@ -180,7 +180,7 @@ static void test_gltf_axes(const fs::path& root) {
     CHECK(!asset::import_mesh((root / "missing.fbx").string().c_str(), 1.0f, heap, mesh, error, sizeof error) && error[0]);
 
     // Parts: two nodes share the triangle (the second 5 m up glTF's Y, so +Z), the second with two
-    // materials; each part imports alone, in file space.
+    // materials; each part imports alone, in its node's space, with the node's transform beside it.
     const char parts_gltf[] = R"({
   "asset": {"version": "2.0"},
   "scene": 0, "scenes": [{"nodes": [0, 1]}],
@@ -209,7 +209,8 @@ static void test_gltf_axes(const fs::path& root) {
         CHECK(std::strcmp(parts[2].orm_texture, "Gold_MR.png") == 0 && std::strcmp(parts[2].normal_texture, "Gold_N.png") == 0);
     }
     CHECK(asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 2) && mesh.vertex_count == 3);
-    CHECK(std::fabs(asset::compute_bounds(mesh).min[2] - 5.0f) < 1e-5f);  // in place, not moved to the origin
+    CHECK(std::fabs(asset::compute_bounds(mesh).min[2]) < 1e-5f && std::fabs(asset::compute_bounds(mesh).max[2] - 1.0f) < 1e-5f);  // its node's space...
+    if (parts.size() == 3) CHECK(std::fabs(parts[2].position.z - 5.0f) < 1e-5f && std::fabs(parts[2].position.y) < 1e-5f && std::fabs(parts[0].position.z) < 1e-5f);  // ...placed 5 m up
     render::free_mesh(heap, mesh);
     CHECK(!asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 3) && error[0]);
 
@@ -281,8 +282,39 @@ static void test_localization() {
     CHECK(!loc.set_language("de") && std::strcmp(loc.text("MENU_PLAY"), "Play") == 0);
 }
 
+// A real FBX with nested, rotated and scaled nodes: its parts, each in its node's space and placed by
+// the node's transform, cover the same box as the merged import.
+static void test_fbx_parts() {
+    HeapAllocator heap("parts");
+    const std::string path = std::string(LSD_UFBX_DATA_DIR) + "/blender_279_nested_meshes_7400_binary.fbx";
+    char error[256];
+    Array<asset::MeshPart> parts(heap);
+    CHECK(asset::list_mesh_parts(path.c_str(), parts, error, sizeof error) && parts.size() > 1);
+    render::MeshData whole;
+    CHECK(asset::import_mesh(path.c_str(), 1.0f, heap, whole, error, sizeof error));
+    const asset::MeshBounds expected = asset::compute_bounds(whole);
+    render::free_mesh(heap, whole);
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    for (usize k = 0; k < parts.size(); ++k) {
+        render::MeshData part;
+        CHECK(asset::import_mesh(path.c_str(), 1.0f, heap, part, error, sizeof error, static_cast<i32>(k)));
+        const Mat4 m = trs(parts[k].position, parts[k].rotation, parts[k].scale);
+        for (u32 i = 0; i < part.vertex_count; ++i) {
+            const Vec3 p = transform_point(m, {part.vertices[i].position[0], part.vertices[i].position[1], part.vertices[i].position[2]});
+            lo = vmin(lo, p);
+            hi = vmax(hi, p);
+        }
+        render::free_mesh(heap, part);
+    }
+    std::printf("  %zu parts; merged box %.3f..%.3f, placed parts %.3f..%.3f (x)\n", parts.size(), static_cast<double>(expected.min[0]),
+                static_cast<double>(expected.max[0]), static_cast<double>(lo.x), static_cast<double>(hi.x));
+    const Vec3 elo{expected.min[0], expected.min[1], expected.min[2]}, ehi{expected.max[0], expected.max[1], expected.max[2]};
+    CHECK(length(lo - elo) < 1e-3f && length(hi - ehi) < 1e-3f);
+}
+
 int main() {
     test_localization();
+    test_fbx_parts();
     const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "asset_tests";
     test_guid_and_array();
     test_blender_fbx(root);
