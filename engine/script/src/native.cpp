@@ -1,6 +1,7 @@
 #include "lsd/script/native.h"
 
 #include "lsd/foundation/log.h"
+#include "lsd/script/graph.h"
 #include "lsd/script/script.h"
 #include "lsd/world/components.h"
 
@@ -15,6 +16,42 @@ const lsd_behaviour* NativeModule::find(const char* name) const {
         if (std::strcmp(names[i], name) == 0) return &behaviours[i];
     }
     return nullptr;
+}
+
+const lsd_function* NativeModule::find_function(const char* name) const {
+    for (u32 i = 0; i < function_count; ++i) {
+        if (std::strcmp(function_names[i], name) == 0) return &functions[i];
+    }
+    return nullptr;
+}
+
+u32 register_native_nodes(const NativeModule& module) {
+    u32 registered = 0;
+    for (u32 i = 0; i < module.function_count; ++i) {
+        const lsd_function& f = module.functions[i];
+        const char* name = module.function_names[i];
+        if (!f.call || std::strpbrk(name, "\"\\\n")) continue;  // the name goes into a Lua string
+        PinDef pins[kMaxNodeInputs - 1]{};
+        const u32 count = f.input_count < 0 ? 0 : static_cast<u32>(f.input_count) < kMaxNodeInputs - 1 ? static_cast<u32>(f.input_count) : kMaxNodeInputs - 1;
+        auto pin_type = [](int t) {
+            return t == LSD_VALUE_BOOL ? PinType::Bool : t == LSD_VALUE_TEXT ? PinType::String : t == LSD_VALUE_VECTOR ? PinType::Vector
+                 : t == LSD_VALUE_OBJECT ? PinType::Entity : PinType::Float;
+        };
+        for (u32 k = 0; k < count; ++k) {
+            const lsd_pin& p = f.inputs[k];
+            const PinType t = pin_type(p.type);
+            const char* fallback = t == PinType::Entity ? "self" : t == PinType::Bool ? "false" : t == PinType::Float ? "0" : "";
+            pins[k] = {p.name ? p.name : "", t, p.default_value ? p.default_value : fallback};
+        }
+        char id[96], call[128];
+        std::snprintf(id, sizeof id, "Cpp_%s", name);
+        std::snprintf(call, sizeof call, "lsd.native_call(\"%s\"", name);
+        const PinType result = pin_type(f.output_type);
+        register_call_node(id, f.title ? f.title : name, f.category ? f.category : "Game", f.tooltip, pins, count,
+                           f.output_type == LSD_VALUE_NONE ? nullptr : &result, f.pure != 0, call);
+        ++registered;
+    }
+    return registered;
 }
 
 namespace {
@@ -93,6 +130,13 @@ struct NativeApi {
         m.behaviours[m.count] = *b;
         std::snprintf(m.names[m.count], sizeof m.names[0], "%s", b->name);
         ++m.count;
+    }
+    static void register_function(lsd_registry* registry, const lsd_function* f) {
+        auto& m = *reinterpret_cast<NativeModule*>(registry);
+        if (!f || !f->name || !f->call || m.function_count == NativeModule::kMaxFunctions) return;
+        m.functions[m.function_count] = *f;
+        std::snprintf(m.function_names[m.function_count], sizeof m.function_names[0], "%s", f->name);
+        ++m.function_count;
     }
     static void log(int error, const char* text) {
         if (error) LSD_LOG_ERROR("game", "%s", text);
@@ -346,6 +390,7 @@ const lsd_api* native_api() {
         NativeApi::call,
         NativeApi::broadcast,
         NativeApi::draw_line,
+        NativeApi::register_function,
     };
     return &api;
 }

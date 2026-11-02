@@ -622,6 +622,10 @@ variable, `#0` where the next node's code goes. Without Exec pins the node is pu
 **Expression** is its output, e.g. `($0 * 2)`. It appears in the node menu once saved. C++ code can
 add nodes the same way with `lsd::script::register_node`.
 
+**Nodes from C / C++**: a function in the game code marked `LSD_NODE(fn, "Category", "pin names",
+"tooltip")` (or `LSD_PURE_NODE`) is in the node menu once Tools > Compile Game Code has built it;
+see [CODING.md](CODING.md#your-functions-as-nodes).
+
 **Nodes from JavaScript**: any `.js` file in Content can describe some of its functions as nodes.
 They show in the node menu (under their category, default JavaScript) as soon as the file is saved,
 and run in one shared context per file:

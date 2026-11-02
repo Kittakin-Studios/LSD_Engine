@@ -1057,6 +1057,7 @@ void register_script_nodes(const lsd::asset::AssetRegistry& registry) {
         def.output_code[0] = node.expression[0] ? node.expression : nullptr;
         lsd::script::register_node(def);
     }
+    if (lsd::editor::game_module::loaded()) lsd::script::register_native_nodes(lsd::editor::game_module::module());  // C / C++ nodes
 }
 
 // File > Import...: SDL's file dialog answers on any thread; the main loop imports what it chose.
@@ -1462,6 +1463,7 @@ int main(int argc, char** argv) {
     static DebugFrameContext debug_context;
     debug_context = {device, window, &state};
     lsd::editor::game_module::load();  // the project's C / C++ behaviours (Binaries/Game.dll), if any
+    register_script_nodes(registry);  // with its nodes
     play.scripts().set_native_module(&lsd::editor::game_module::module());
     lsd::editor::debugger::attach(play.scripts());
     lsd::editor::debugger::set_frame_callback(debug_frame, &debug_context);
@@ -1563,6 +1565,7 @@ int main(int argc, char** argv) {
             if (!game_mode && lsd::editor::game_module::changed() && !lsd::editor::game_module::compiling()) {  // a rebuilt Game.dll
                 play.scripts().stop_natives();  // their code is in the old DLL
                 lsd::editor::game_module::load();
+                register_script_nodes(registry);  // its nodes may have changed
                 play.scripts().start_natives();  // during Play: the behaviours start over with the new code
             }
             last_scan = SDL_GetTicks();

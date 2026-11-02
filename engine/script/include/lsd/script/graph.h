@@ -52,6 +52,11 @@ const NodeDef* find_node_def(const char* id);  // in either library
 // valid until the next register / clear.
 void register_node(const NodeDef& def);
 void clear_custom_nodes();
+// A node that calls a function (JavaScript and C / C++ nodes). `call` is the Lua call without its
+// arguments' end, e.g. `lsd.js_call("Content/a.js", "heal"`: the inputs are appended, then ")".
+// Exec nodes get In / Out pins; `output` (nullptr: none) adds a Result pin; `pure` needs an output.
+void register_call_node(const char* id, const char* title, const char* category, const char* tooltip, const PinDef* inputs, u32 input_count,
+                        const PinType* output, bool pure, const char* call);
 // Nodes from a JavaScript file (a Blueprint function library written in JS): its top-level
 // `var nodes = { heal: { title, category, tooltip, inputs: { amount: "number" | ["number", 10] },
 // output: "number", pure: false } }` describes functions of the same names. Types: number, boolean,

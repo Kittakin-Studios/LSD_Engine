@@ -58,6 +58,32 @@ typedef lsd_behaviour lsd_script;
 
 typedef struct lsd_registry lsd_registry;
 
+/* Visual-script nodes from game code (Unreal: BlueprintCallable / BlueprintPure functions). A node
+ * passes its inputs as values; the function fills *result when it has an output. */
+enum lsd_value_type { LSD_VALUE_NONE = -1, LSD_VALUE_NUMBER = 0, LSD_VALUE_BOOL = 1, LSD_VALUE_TEXT = 2, LSD_VALUE_VECTOR = 3, LSD_VALUE_OBJECT = 4 };
+typedef struct lsd_value {
+    double number;     /* LSD_VALUE_NUMBER; LSD_VALUE_BOOL as 0 / 1 */
+    lsd_vec3 vector;   /* LSD_VALUE_VECTOR */
+    const char* text;  /* LSD_VALUE_TEXT: inputs live for the call; a result must outlive it (static) */
+    lsd_entity object; /* LSD_VALUE_OBJECT */
+} lsd_value;
+typedef struct lsd_pin {
+    const char* name;
+    int type;                  /* lsd_value_type */
+    const char* default_value; /* used when nothing is wired: "10", "true", "self" (objects), NULL = empty */
+} lsd_pin;
+typedef struct lsd_function {
+    const char* name;     /* graphs save it ("Cpp_<name>"): renaming breaks them */
+    const char* title;    /* shown; NULL = name */
+    const char* category; /* node menu group; NULL = "Game" */
+    const char* tooltip;
+    const lsd_pin* inputs; /* up to 7 */
+    int input_count;
+    int output_type; /* lsd_value_type; LSD_VALUE_NONE: no Result pin */
+    int pure;        /* no exec pins: called when its Result is needed (needs an output) */
+    void (*call)(const lsd_value* args, int arg_count, lsd_value* result);
+} lsd_function;
+
 /* Everything the engine offers, filled in by the engine. Use the lsd_* functions below. */
 typedef struct lsd_api {
     int version;
@@ -109,6 +135,8 @@ typedef struct lsd_api {
     int (*broadcast)(const char* event);
     /* debug drawing (seconds 0 = this frame) */
     void (*draw_line)(lsd_vec3 a, lsd_vec3 b, lsd_vec3 color, float seconds);
+    /* Added later; fields are only ever added at the end, so older modules keep working. */
+    void (*register_function)(lsd_registry* registry, const lsd_function* function);
 } lsd_api;
 
 /* Set by LSD_GAME_MODULE before register_fn runs. */
@@ -135,6 +163,9 @@ extern const lsd_api* lsd_api_ptr;
 
 static inline void lsd_register_behaviour(lsd_registry* r, const lsd_behaviour* b) { lsd_api_ptr->register_behaviour(r, b); }
 static inline void lsd_register_script(lsd_registry* r, const lsd_script* s) { lsd_api_ptr->register_behaviour(r, s); }
+/* A visual-script node (in the node menu once the module is compiled); call it from a register
+ * function like lsd_register_script. */
+static inline void lsd_register_function(lsd_registry* r, const lsd_function* f) { lsd_api_ptr->register_function(r, f); }
 
 /* C scripts register themselves when the module loads: after a function that calls
  * lsd_register_script, put LSD_C_SCRIPT(that_function) in the same .c file. The module's

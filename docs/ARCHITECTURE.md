@@ -261,6 +261,13 @@ the instance stops like a failing Lua script, with the JS stack in the message),
 `lsd.js_call("<path>", "<fn>", $1...)`; at run time `lsd.js_call` loads the file into a shared
 library context (32 at most) and drops it when the file changes. The editor registers them with the
 ScriptNode assets after every scan.
+**C / C++ nodes**: `lsd_api.register_function` (appended to the table; fields are only added at the
+end, so the version stays 1) stores an `lsd_function` (typed `lsd_pin`s, output type, pure, a `call`
+taking `lsd_value`s) in the `NativeModule`; `register_native_nodes` turns them into `Cpp_<name>`
+nodes calling `lsd.native_call(name, ...)`, which converts the Lua arguments by the declared types.
+`LSD_NODE` deduces the pins from the C++ signature (`Node<&fn>` + an index sequence). Both node
+kinds go through `register_call_node` (graph.cpp). The editor re-registers after every scan and
+module reload.
 
 **Still planned:**
 

@@ -208,6 +208,35 @@ Events cross languages both ways:
   reach the script's `on_event(self, "unlock", other)`.
 - `broadcast` / `lsd.broadcast` / **Call Event** reach everyone; UI `onclick="start_game"` too.
 
+## Your functions as nodes
+
+Any plain function can become a visual-script node (Unreal: a `BlueprintCallable` /
+`BlueprintPure` function). After the next compile it is in the node menu and the Palette, under
+its category:
+
+```cpp
+// target defaults to the graph's own object; height to 2 when nothing is wired
+float lift_by(Entity target, float height) {
+    Vec3 p = position(target);
+    p.z += height;
+    set_position(target, p);
+    return p.z;  // the node's Result pin
+}
+LSD_NODE(lift_by, "Moves", "target, height = 2", "Raises the object")
+
+float half(float value) { return value * 0.5f; }
+LSD_PURE_NODE(half, "Math", "value", "")  // no white pins: called when its Result is needed
+```
+
+The third argument names the pins in order (`name = default`). Pin types come from the C++ types:
+numbers, `bool`, `const char*`, `Vec3`, `Entity` (an object; `Entity` is `lsd_entity`, so a
+`uint32_t` parameter is an object too). A `const char*` result must outlive the call (a string
+literal or a `static`). `void` means no Result pin. The node id is `Cpp_<function>`: renaming the
+function breaks graphs that use it. In C, fill an `lsd_function` (name, category, `lsd_pin` inputs,
+`output_type`, `pure`, and `call(args, count, result)`) and pass it to `lsd_register_function` from
+the same register function as your scripts. Lua and JavaScript can call them too:
+`lsd.native_call("lift_by", e, 3)`.
+
 ## Build, reload, debug, ship
 
 | Do this | How |
@@ -278,6 +307,5 @@ These are Lua-only for now (call them from Lua, or send an event to a Lua script
 box / capsule traces and overlaps, splines, curves and data tables, music and mixes, IK, morphs,
 sockets, timelines, blackboards and perception, `set_view`, UI cursor / follow / values, settings,
 key rebinding, text and languages, save games, timers (`after` / `every`), Game Instance data,
-debug spheres / boxes / text. Still planned for C++: C++ functions as visual-script nodes, your own
-reflected components in `Source/`, keeping script state across a reload, and JavaScript gameplay
-scripts ([BACKLOG.md](BACKLOG.md), milestone 7).
+debug spheres / boxes / text. Still planned for C++: your own reflected components in `Source/` and
+keeping script state across a reload ([BACKLOG.md](BACKLOG.md), milestone 7).

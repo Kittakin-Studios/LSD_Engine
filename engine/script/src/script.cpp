@@ -786,6 +786,57 @@ struct Api {
     }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
     static int call_on(lua_State* L) { return dispatch(L, true); }
+    // lsd.native_call(name, ...) -> result: a function the game module registered (C / C++ nodes).
+    static int native_call(lua_State* L) {
+        ScriptSystem& sys = system(L);
+        const char* name = luaL_checkstring(L, 1);
+        const lsd_function* f = sys.module_ ? sys.module_->find_function(name) : nullptr;
+        if (!f) return luaL_error(L, "no C / C++ function %s (compile the game code?)", name);
+        lsd_value args[8] = {};
+        const int count = f->input_count < 0 ? 0 : f->input_count < 8 ? f->input_count : 8;
+        for (int i = 0; i < count; ++i) {
+            const int at = i + 2;
+            lsd_value& v = args[i];
+            switch (f->inputs[i].type) {
+            case LSD_VALUE_BOOL: v.number = lua_toboolean(L, at); break;
+            case LSD_VALUE_TEXT: v.text = lua_isstring(L, at) ? lua_tostring(L, at) : ""; break;
+            case LSD_VALUE_OBJECT: v.object = static_cast<lsd_entity>(lua_tonumber(L, at)); break;
+            case LSD_VALUE_VECTOR:
+                if (lua_istable(L, at)) {
+                    f32* xyz[3] = {&v.vector.x, &v.vector.y, &v.vector.z};
+                    for (int k = 0; k < 3; ++k) {
+                        lua_getfield(L, at, k == 0 ? "x" : k == 1 ? "y" : "z");
+                        *xyz[k] = static_cast<f32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    }
+                }
+                break;
+            default: v.number = lua_tonumber(L, at);
+            }
+        }
+        lsd_value result = {};
+        f->call(args, count, &result);
+        switch (f->output_type) {
+        case LSD_VALUE_NONE: return 0;
+        case LSD_VALUE_BOOL: lua_pushboolean(L, result.number != 0); break;
+        case LSD_VALUE_TEXT: lua_pushstring(L, result.text ? result.text : ""); break;
+        case LSD_VALUE_OBJECT:
+            if (result.object) lua_pushnumber(L, result.object);
+            else lua_pushnil(L);
+            break;
+        case LSD_VALUE_VECTOR:  // as the graph's vectors: {x, y, z}
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, result.vector.x);
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, result.vector.y);
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, result.vector.z);
+            lua_setfield(L, -2, "z");
+            break;
+        default: lua_pushnumber(L, result.number);
+        }
+        return 1;
+    }
     static int implements(lua_State* L) {  // Blueprint interfaces: does e's script define name?
         ScriptSystem& sys = system(L);
         const world::Entity target = entity(L, 1);
@@ -1344,7 +1395,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

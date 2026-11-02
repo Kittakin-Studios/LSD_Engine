@@ -246,9 +246,9 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - [~] Debugging (done: Debug info, attach to lsd_editor.exe; needs the generated launch.json, crash reports naming the module): a generated `.vscode/launch.json` / Visual Studio attach to the editor (F5), breakpoints in game code; crash reports name the module and line
 - [~] Packaging (done: Binaries/ copied into the package and loaded in game mode, built against the release C runtime; needs the missing / older module report): the module's Release build ships beside the exe and loads in game mode; a missing or older module is reported at start
 - [~] Templates (done: Tools > New C / C++ Script with a C++ | C switch, `game.NewScript <Name> [c]`; C scripts register themselves with LSD_C_SCRIPT; needs a component template): File > New C++ Class (behaviour, component) writes the files into `Source/` [Add C++ Class]
-- [ ] Nodes from C / C++ (Unreal's BlueprintCallable / BlueprintPure): functions the module registers (`LSD_FUNCTION(Callable, Category = ...)` in C++, a registration call in C) appear in the visual script menu and Palette with typed pins; calling one from a graph goes through the C API
+- [x] Nodes from C / C++ (`LSD_NODE` / `LSD_PURE_NODE` in C++, `lsd_register_function` in C; graphs call `lsd.native_call`) (Unreal's BlueprintCallable / BlueprintPure): functions the module registers (`LSD_FUNCTION(Callable, Category = ...)` in C++, a registration call in C) appear in the visual script menu and Palette with typed pins; calling one from a graph goes through the C API
 - [ ] Module components in graphs: Get / Set nodes for their fields (and Lua / JS access) from reflection, like built-in components
-- [ ] Native events in graphs: a C++ behaviour can fire events a visual script on the same object handles (Unreal's BlueprintImplementableEvent), and call a graph's Custom Events
+- [x] Native events in graphs (`call(self, "Name", other)` / `lsd_call` runs the Custom Event Name of the object's visual script, `broadcast` everyone's; graphs reach `on_event` with Call Event): a C++ behaviour can fire events a visual script on the same object handles (Unreal's BlueprintImplementableEvent), and call a graph's Custom Events
 
 ### JavaScript
 

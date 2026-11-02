@@ -171,6 +171,98 @@ inline std::vector<void (*)(lsd_registry*)>& c_scripts() {  // C files' LSD_C_SC
     return list;
 }
 
+// ---- Nodes: plain functions as visual-script nodes (LSD_NODE) ----
+
+// Pin types from C++ types: bool, const char*, Vec3, Entity (lsd_entity: an object), other numbers.
+template <typename T> constexpr int value_type() {
+    if constexpr (std::is_void_v<T>) return LSD_VALUE_NONE;
+    else if constexpr (std::is_same_v<T, bool>) return LSD_VALUE_BOOL;
+    else if constexpr (std::is_same_v<T, const char*>) return LSD_VALUE_TEXT;
+    else if constexpr (std::is_same_v<T, Vec3>) return LSD_VALUE_VECTOR;
+    else if constexpr (std::is_same_v<T, Entity>) return LSD_VALUE_OBJECT;
+    else {
+        static_assert(std::is_arithmetic_v<T>, "node pins and results: numbers, bool, const char*, Vec3 or Entity");
+        return LSD_VALUE_NUMBER;
+    }
+}
+template <typename T> T from_value(const lsd_value& v) {
+    if constexpr (std::is_same_v<T, bool>) return v.number != 0;
+    else if constexpr (std::is_same_v<T, const char*>) return v.text ? v.text : "";
+    else if constexpr (std::is_same_v<T, Vec3>) return Vec3(v.vector);
+    else if constexpr (std::is_same_v<T, Entity>) return v.object;
+    else return static_cast<T>(v.number);
+}
+template <typename T> void to_value(T value, lsd_value& out) {
+    if constexpr (std::is_same_v<T, bool>) out.number = value ? 1 : 0;
+    else if constexpr (std::is_same_v<T, const char*>) out.text = value;
+    else if constexpr (std::is_same_v<T, Vec3>) out.vector = value;
+    else if constexpr (std::is_same_v<T, Entity>) out.object = value;
+    else out.number = static_cast<double>(value);
+}
+
+template <auto Fn, typename R, typename... A> void call_node(const lsd_value* args, lsd_value* result, R (*)(A...)) {
+    [&]<size_t... I>(std::index_sequence<I...>) {
+        if constexpr (std::is_void_v<R>) Fn(from_value<std::decay_t<A>>(args[I])...);
+        else to_value<std::decay_t<R>>(Fn(from_value<std::decay_t<A>>(args[I])...), *result);
+    }(std::index_sequence_for<A...>{});
+}
+template <typename R, typename... A> std::vector<int> input_types(R (*)(A...)) { return {value_type<std::decay_t<A>>()...}; }
+template <typename R, typename... A> int output_type(R (*)(A...)) { return value_type<std::decay_t<R>>(); }
+
+template <auto Fn> struct Node {
+    static inline const char* name = "";
+    static inline const char* category = nullptr;
+    static inline const char* pins = "";  // "target, amount = 10": names in order, optional defaults
+    static inline const char* tooltip = "";
+    static inline bool pure = false;
+    static void call(const lsd_value* args, int, lsd_value* result) { call_node<Fn>(args, result, Fn); }
+    static void register_it(lsd_registry* registry) {
+        static std::vector<std::string> names, defaults;
+        static std::vector<lsd_pin> list;
+        const std::vector<int> types = input_types(Fn);
+        names.assign(types.size(), "");
+        defaults.assign(types.size(), "");
+        list.clear();
+        const char* c = pins;
+        for (size_t i = 0; i < types.size(); ++i) {  // "name [= default]" per comma; missing names: A, B...
+            std::string part;
+            while (*c && *c != ',') part += *c++;
+            if (*c == ',') ++c;
+            const size_t eq = part.find('=');
+            auto trim = [](std::string s) {
+                while (!s.empty() && s.front() == ' ') s.erase(s.begin());
+                while (!s.empty() && s.back() == ' ') s.pop_back();
+                return s;
+            };
+            names[i] = trim(part.substr(0, eq));
+            if (eq != std::string::npos) defaults[i] = trim(part.substr(eq + 1));
+            if (names[i].empty()) names[i] = std::string(1, static_cast<char>('A' + i));
+        }
+        for (size_t i = 0; i < types.size(); ++i) list.push_back({names[i].c_str(), types[i], defaults[i].empty() ? nullptr : defaults[i].c_str()});
+        static lsd_function f{};
+        f.name = name;
+        f.category = category;
+        f.tooltip = tooltip;
+        f.inputs = list.data();
+        f.input_count = static_cast<int>(list.size());
+        f.output_type = output_type(Fn);
+        f.pure = pure;
+        f.call = &call;
+        lsd_register_function(registry, &f);
+    }
+};
+
+template <auto Fn> struct NodeRegistrar {
+    NodeRegistrar(const char* name, const char* category, const char* pins, const char* tooltip, bool pure) {
+        Node<Fn>::name = name;
+        Node<Fn>::category = category;
+        Node<Fn>::pins = pins;
+        Node<Fn>::tooltip = tooltip;
+        Node<Fn>::pure = pure;
+        registrars().push_back(&Node<Fn>::register_it);
+    }
+};
+
 inline void register_all(lsd_registry* registry) {
     for (auto* fn : registrars()) fn(registry);
     for (auto* fn : c_scripts()) fn(registry);
@@ -181,6 +273,15 @@ inline void register_all(lsd_registry* registry) {
 
 #define LSD_SCRIPT(Type) static ::lsd::game::detail::Registrar<Type> lsd_registrar_##Type(#Type);
 #define LSD_BEHAVIOUR(Type) LSD_SCRIPT(Type)  // the earlier name
+
+// A plain function as a visual-script node (Unreal: BlueprintCallable), in the node menu under
+// `category` once compiled: LSD_NODE(heal, "Health", "target, amount = 10", "Adds health").
+// Pins: numbers, bool, const char*, Vec3, Entity (an object; defaults to the graph's own). The node id
+// is "Cpp_<function>". LSD_PURE_NODE: no exec pins, called when its result is needed (BlueprintPure).
+#define LSD_NODE(fn, category, pins, tooltip) \
+    static ::lsd::game::detail::NodeRegistrar<&fn> lsd_node_##fn(#fn, category, pins, tooltip, false);
+#define LSD_PURE_NODE(fn, category, pins, tooltip) \
+    static ::lsd::game::detail::NodeRegistrar<&fn> lsd_node_##fn(#fn, category, pins, tooltip, true);
 
 // The module's entry point: in exactly one .cpp file of Source/.
 #define LSD_GAME_MODULE()                                                                   \

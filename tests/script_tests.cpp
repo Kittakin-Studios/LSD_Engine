@@ -265,7 +265,56 @@ struct Climber {
     }
 };
 LSD_SCRIPT(Climber)
+
+// C++ functions as visual-script nodes.
+static float lift_by(lsd::game::Entity target, float height) {
+    lsd::game::Vec3 p = lsd::game::position(target);
+    p.z += height;
+    lsd::game::set_position(target, p);
+    return p.z;
+}
+LSD_NODE(lift_by, "Moves", "target, height = 2", "Raises the object")
+static float half(float value) { return value * 0.5f; }
+LSD_PURE_NODE(half, "Math", "value", "")
 LSD_GAME_MODULE()
+
+static void test_native_nodes() {
+    using namespace lsd::script;
+    NativeModule module;
+    CHECK(lsd_game_register(native_api(), module.registry()) == 1);
+    CHECK(module.find_function("lift_by") && module.find_function("half") && module.find_function("half")->pure);
+    CHECK(register_native_nodes(module) == 2);
+    const NodeDef* lift = find_node_def("Cpp_lift_by");
+    CHECK(lift && lift->input_count == 3 && lift->output_count == 2 && std::strcmp(lift->inputs[1].default_value, "self") == 0 &&
+          std::strcmp(lift->inputs[2].default_value, "2") == 0 && std::strcmp(lift->category, "Moves") == 0);
+    // Start -> lift by half(8) = 4 -> lift by the default 2: z = 6.
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 first = g.add("Cpp_lift_by", 200, 0)->id;
+    const u32 halved = g.add("Cpp_half", 0, 200)->id;
+    const u32 second = g.add("Cpp_lift_by", 400, 0)->id;
+    std::snprintf(g.find(halved)->values[0], 64, "8");
+    std::snprintf(g.find(second)->values[2], 64, "2");
+    CHECK(g.connect(start, 0, first, 0) && g.connect(halved, 0, first, 2) && g.connect(first, 0, second, 0));
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("native nodes");
+    {
+        World w(heap);
+        const Entity e = w.create("E");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "graph");
+        ScriptSystem scripts;
+        scripts.set_native_module(&module);
+        scripts.start(w, {}, path_of, nullptr);
+        CHECK(scripts.error_count() == 0 && w.get<Transform>(e)->position.z == 6.0f);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+    clear_custom_nodes();
+}
 
 // A C behaviour registered by hand, as a .c file would.
 static void c_start(lsd_entity self, void* state) {
@@ -902,6 +951,7 @@ function twice(value) { return value * 2; }
 int main() {
     test_javascript();
     test_js_nodes();
+    test_native_nodes();
     test_data_table();
     test_graph();
     test_graph_variables();

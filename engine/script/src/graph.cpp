@@ -611,6 +611,31 @@ void register_node(const NodeDef& def) {
     ++g_custom_count;
 }
 
+void register_call_node(const char* id, const char* title, const char* category, const char* tooltip, const PinDef* inputs, u32 input_count,
+                        const PinType* output, bool pure, const char* call) {
+    pure = pure && output;  // a pure node is read for its value: it needs one
+    NodeDef def{};
+    u32 in = 0;
+    if (!pure) def.inputs[in++] = {"In", PinType::Exec, ""};
+    std::string code = call;
+    for (u32 i = 0; i < input_count && in < kMaxNodeInputs; ++i) {
+        def.inputs[in] = inputs[i];
+        code += ", $" + std::to_string(in++);
+    }
+    code += ")";
+    u32 out = 0;
+    if (!pure) def.outputs[out++] = {"Out", PinType::Exec, ""};
+    if (output) def.outputs[out++] = {"Result", *output, ""};
+    const std::string statement = pure ? std::string() : output ? "local $o1 = " + code : code;
+    def.id = id;
+    def.title = title;
+    def.category = category;
+    def.tooltip = tooltip ? tooltip : "";
+    def.code = statement.c_str();
+    def.output_code[0] = pure ? code.c_str() : nullptr;
+    register_node(def);  // copies the strings
+}
+
 void clear_custom_nodes() {
     g_script_nodes.resize(g_script_nodes.size() - g_custom_count);
     g_custom_count = 0;

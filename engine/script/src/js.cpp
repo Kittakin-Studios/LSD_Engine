@@ -573,18 +573,16 @@ bool register_one(JSContext* ctx, JSValueConst global, JSValueConst desc, const 
     if (title.empty()) title = function;
     if (category.empty()) category = "JavaScript";
     JSValue pure_value = JS_GetPropertyStr(ctx, desc, "pure");
-    const bool pure = JS_ToBool(ctx, pure_value) && !output.empty();  // no exec pins: read when its value is needed
+    const bool pure = JS_ToBool(ctx, pure_value);  // no exec pins: read when its value is needed
     JS_FreeValue(ctx, pure_value);
 
-    NodeDef def{};
+    PinDef pins[kMaxNodeInputs]{};
     std::string pin_names[kMaxNodeInputs], defaults[kMaxNodeInputs];
     u32 in = 0;
-    if (!pure) def.inputs[in++] = {"In", PinType::Exec, ""};
-    std::string call = "lsd.js_call(\"" + std::string(path) + "\", \"" + function + "\"";
     // Inputs: { amount: "number" } or { amount: ["number", 10] } (the value when nothing is wired).
     JSValue inputs = JS_GetPropertyStr(ctx, desc, "inputs");
     for (const std::string& pin : own_keys(ctx, inputs)) {
-        if (in == kMaxNodeInputs) break;
+        if (in == kMaxNodeInputs - 1) break;  // the Exec pin takes one
         JSValue spec = JS_GetPropertyStr(ctx, inputs, pin.c_str());
         std::string type = js_text(ctx, spec);
         if (JS_IsArray(spec)) {
@@ -598,23 +596,13 @@ bool register_one(JSContext* ctx, JSValueConst global, JSValueConst desc, const 
         const PinType t = pin_type(type);
         if (defaults[in].empty()) defaults[in] = t == PinType::Entity ? "self" : t == PinType::Bool ? "false" : t == PinType::Float ? "0" : "";
         pin_names[in] = pin;
-        def.inputs[in] = {pin_names[in].c_str(), t, defaults[in].c_str()};
-        call += ", $" + std::to_string(in);
+        pins[in] = {pin_names[in].c_str(), t, defaults[in].c_str()};
         ++in;
     }
     JS_FreeValue(ctx, inputs);
-    call += ")";
-    u32 out = 0;
-    if (!pure) def.outputs[out++] = {"Out", PinType::Exec, ""};
-    if (!output.empty()) def.outputs[out++] = {"Result", pin_type(output), ""};
-    const std::string code = pure ? std::string() : output.empty() ? call : "local $o1 = " + call;
-    def.id = id.c_str();
-    def.title = title.c_str();
-    def.category = category.c_str();
-    def.tooltip = tooltip.c_str();
-    def.code = code.c_str();
-    def.output_code[0] = pure ? call.c_str() : nullptr;
-    register_node(def);  // copies the strings
+    const PinType result = pin_type(output);
+    const std::string call = "lsd.js_call(\"" + std::string(path) + "\", \"" + function + "\"";
+    register_call_node(id.c_str(), title.c_str(), category.c_str(), tooltip.c_str(), pins, in, output.empty() ? nullptr : &result, pure, call.c_str());
     return true;
 }
 
