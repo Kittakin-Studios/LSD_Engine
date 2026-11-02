@@ -10,10 +10,15 @@ namespace lsd::editor::remote {
 
 constexpr u16 kDefaultPort = 7780;
 
-// Game side.
+// Game side (the editor too, for the Claude MCP plugin: tools/mcp/lsd_mcp bridges to it).
 bool listen(u16 port);
 void poll();  // every frame on the main thread: accepts, runs the lines that arrived
 void close();
+void stop_listening();  // closes the listener and its client, keeps the editor-side connection
+bool listening();
+bool client_connected();
+// Text for the client running the current line (answers of list commands); the Output Log otherwise.
+void print(const char* text);
 
 // Editor side.
 void draw_window(bool* open);

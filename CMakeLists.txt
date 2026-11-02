@@ -45,6 +45,8 @@ add_subdirectory(runtime)
 
 if(LSD_BUILD_EDITOR)
   add_subdirectory(editor)
+  add_subdirectory(tools/mcp)  # the Claude MCP plugin's bridge, built beside the editor
+  add_dependencies(lsd_editor lsd_mcp)
 endif()
 
 if(LSD_BUILD_TOOLS)

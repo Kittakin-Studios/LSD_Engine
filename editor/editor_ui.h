@@ -9,6 +9,8 @@
 #include "lsd/foundation/math.h"
 #include "lsd/world/world.h"
 
+#include <string>
+
 namespace lsd::rhi {
 class Device;
 }
@@ -199,6 +201,8 @@ Mat4 camera_projection(const EditorCamera& camera, f32 aspect);
 // Starts capturing log lines for the Output Log tab. Call once before anything logs that should show.
 void install_output_log();
 void clear_output_log();
+// The last `count` Output Log lines as text, oldest first ("[channel] message" per line).
+std::string recent_log(u32 count);
 
 // Loads Config/editor_theme.json into theme if it exists.
 void load_theme(EditorTheme& theme);

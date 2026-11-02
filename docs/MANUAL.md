@@ -475,6 +475,35 @@ Visual scripts: right-click a node > **Toggle Breakpoint** (or select it and pre
 first). While playing, nodes that run glow orange (Blueprint's execution flow); at a breakpoint the
 node is outlined red and the Lua Debugger shows the values (node outputs are named `n<node>_<pin>`).
 
+### Coding with Claude Code (Claude MCP plugin)
+
+**Edit > Editor Preferences > Plugins** lists the editor's plugins (Unreal's Edit > Plugins); tick one
+to enable it, click its name for its settings. **Claude MCP** lets Claude Code work in the running
+editor through MCP (Model Context Protocol): it writes scripts into `Content/` (they reload by
+themselves) and uses these tools to see and test them:
+
+| Tool | Does |
+| --- | --- |
+| `console` | Any console command: `play`, `stop`, `save`, `open <level>`, `graph.Open <asset>`, `validate`... |
+| `lua` | Runs Lua in the game while playing (several lines allowed) |
+| `list_objects` | Every object in the level: name, parent, world position, components (`scene.List`) |
+| `list_assets` | Assets in Content/ with type and path, optionally filtered (`asset.List`) |
+| `read_log` | The latest Output Log lines, e.g. script errors after Play (`log.Tail`) |
+
+Set it up once:
+
+1. Edit > Editor Preferences > Plugins: tick **Claude MCP** (Port 7780 unless that is taken).
+2. Click **Claude MCP** > **Copy Command** and run it in a terminal (`claude mcp add lsd-engine -- ".../lsd_mcp.exe" --port 7780`),
+   or click **Write .mcp.json** to add it to this project only.
+3. Start Claude Code in the project folder; `/mcp` shows **lsd-engine** connected, and the plugin
+   page says *Claude is connected*. Then ask it, e.g. "make the Door open when the player presses E
+   near it, then test it".
+
+`lsd_mcp.exe` (built next to `lsd_editor.exe`, `tools/mcp/`) is the bridge Claude Code starts; it
+sends each tool call to the editor as a console line over 127.0.0.1, the same channel as the Remote
+Console. Only programs on this PC can connect; untick the plugin when you are not using it. It is
+editor-only: packaged games never listen.
+
 ## 10. Visual scripting
 
 **The panels** (Unreal's Blueprint editor), on the left of the graph window (drag its edge to resize):
@@ -807,9 +836,9 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 
 - **Tools > Smoke Test Level**: plays the level for 5 seconds and reports every error logged.
   On a build server: `lsd_editor.exe -nosound -level=Content/Levels/Main.lsdlevel -smoketest=10`
+  exits with 0 (clean) or 1 (errors).
 - **Remote Console** (Tools menu): start the packaged game with `-remote`, click Connect, and type
   console commands into it while it runs; each one's log lines come back to the window.
-  exits with 0 (clean) or 1 (errors).
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).

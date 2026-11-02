@@ -103,7 +103,7 @@ bool execute(const char* line) {
     while (line[n] && line[n] != ' ' && line[n] != '\t') ++n;
     if (n == 0) return true;
     // Arguments: the rest of the line, trimmed.
-    char args[256];
+    char args[16384];  // long enough for a Lua chunk sent by a tool
     const char* a = line + n;
     while (*a == ' ' || *a == '\t') ++a;
     std::snprintf(args, sizeof args, "%s", a);

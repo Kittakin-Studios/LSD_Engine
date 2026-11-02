@@ -45,6 +45,9 @@ struct EditorSettings {
     LSD_PROPERTY(Edit, Category = "Content Browser") List<CollectionEntry, 512> collections;
     LSD_PROPERTY(Edit, Category = "Live Link", Tooltip = "A folder your DCC exports to (Blender, Maya: File > Export > FBX there). New and changed files are copied into Content/LiveLink and reload in the editor and Play; empty = off")
     char live_link_folder[260] = "";
+    // Plugins (Editor Preferences > Plugins), not in the Settings list.
+    LSD_PROPERTY(Save) bool mcp_enabled = false;  // Claude MCP: listen for tools/mcp/lsd_mcp on 127.0.0.1
+    LSD_PROPERTY(Save) u32 mcp_port = 7780;
 };
 
 // A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and

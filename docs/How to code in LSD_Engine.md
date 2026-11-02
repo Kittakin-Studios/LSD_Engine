@@ -11,7 +11,8 @@ is the Blueprint event graph itself, and the **Lua Debugger** is Visual Studio's
 Contents: [1. One-time setup](#1-one-time-setup) · [2. Make a script](#2-make-a-script) ·
 [3. Write the code](#3-write-the-code) · [4. Put it on an object](#4-put-it-on-an-object) ·
 [5. Run it](#5-run-it) · [6. Debug it](#6-debug-it) · [7. Visual scripts instead of code](#7-visual-scripts-instead-of-code) ·
-[8. Recipes](#8-recipes) · [9. When something goes wrong](#9-when-something-goes-wrong)
+[8. Recipes](#8-recipes) · [9. When something goes wrong](#9-when-something-goes-wrong) ·
+[10. Code with Claude Code](#10-code-with-claude-code)
 
 ---
 
@@ -283,3 +284,31 @@ lsd.log(c.walk_speed)
 | `io` / `os.execute` missing | Scripts are sandboxed (no files, no programs) | Use `lsd.save_game` for saving |
 
 Still stuck: take a screenshot of the Output Log and the debugger.
+
+## 10. Code with Claude Code
+
+Claude Code can write the scripts for you and test them in the running editor, through the
+**Claude MCP** plugin.
+
+**Turn it on (once):**
+
+1. **Edit > Editor Preferences**, scroll to **Plugins**.
+2. Tick the box next to **Claude MCP**, then click the name **Claude MCP** to open its page.
+   It says *Waiting for Claude Code on 127.0.0.1:7780*. (If it says the port is in use, type another
+   Port, e.g. 7781.)
+3. Click **Copy Command**, open a terminal (VS Code: **Ctrl+`**), paste and press Enter. Or click
+   **Write .mcp.json** to set it up for this project only.
+4. Start Claude Code in the project folder (`claude`). Type `/mcp`: **lsd-engine** is listed as
+   connected, and the plugin page says *Claude is connected*.
+
+**Then just ask**, in Unreal terms if you like:
+
+- "Make a Lua script that opens the door named Door when the player presses E within 2 m, put it
+  on the Door and test it."
+- "List the assets in Content/Script and explain what Interact_System does."
+- "Press Play, check the Output Log for script errors, and fix them."
+
+Claude writes `.lua` / `.lsdgraph` files into Content/ (they reload by themselves) and uses the
+plugin's tools: `console` (play, stop, save, open...), `lua` (while playing), `list_objects`,
+`list_assets` and `read_log`. Keep the editor open while it works. Untick the plugin when you are
+done: while it is on, any program on this PC could send the editor commands.

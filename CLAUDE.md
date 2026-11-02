@@ -107,7 +107,7 @@ editor/             lsd_editor (also the game): main.cpp (loop, rendering), edit
                     play_session (Play: physics, scripts, AI, UI, audio), caches (mesh, texture, material,
                     skinned), graph / particle / UI / table editors, packaging, navigation, behaviour trees
 runtime/            minimal runtime exe (hardware report, triangle); the shipped game is lsd_editor -game
-tools/              lsd_reflect_gen (reflection code generator), data_compiler
+tools/              lsd_reflect_gen (reflection code generator), data_compiler, mcp (lsd_mcp: Claude MCP plugin bridge)
 tests/              unit tests (CTest)
 docs/               MANUAL, ARCHITECTURE, EXAMPLES, BACKLOG, ROADMAP, CLEAN_ROOM
 ```
@@ -138,7 +138,8 @@ animated in takes); 2D blend spaces; mesh Normals (Smooth by default, Solid / Im
 Box UV; per-mesh LOD screen sizes, Max Draw Distance, Cull Distance Volumes; sound occlusion, mix
 low-pass, Base Sound Mix; particle Over Life keys and Auto Destroy; BT decorators / services;
 localisation {0} / plurals; lsd.save_objects; Blueprint panels in the graph window (My Blueprint,
-variable Details, Palette); thumbnails for materials (sphere), sounds (waveform), BT / Lua tiles.
+variable Details, Palette); thumbnails for materials (sphere), sounds (waveform), BT / Lua tiles;
+Editor Preferences > Plugins with Claude MCP (Claude Code drives the editor through `lsd_mcp`).
 Post pass (draw_post, when a Post Process Volume applies): SSAO, TAA, depth of field, bloom, ACES,
 grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /

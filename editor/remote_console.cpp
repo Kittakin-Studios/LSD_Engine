@@ -162,6 +162,24 @@ void poll() {
     }
 }
 
+void stop_listening() {
+    if (g_client != kNoSocket) LSD_CLOSE_SOCKET(g_client);
+    if (g_listener != kNoSocket) LSD_CLOSE_SOCKET(g_listener);
+    g_client = g_listener = kNoSocket;
+}
+
+bool listening() { return g_listener != kNoSocket; }
+bool client_connected() { return g_client != kNoSocket; }
+
+void print(const char* text) {
+    if (g_capture) {
+        *g_capture += text;
+        if (!g_capture->empty() && g_capture->back() != '\n') *g_capture += '\n';
+    } else {
+        LSD_LOG_INFO("console", "%s", text);
+    }
+}
+
 void close() {
     if (g_client != kNoSocket) LSD_CLOSE_SOCKET(g_client);
     if (g_listener != kNoSocket) LSD_CLOSE_SOCKET(g_listener);

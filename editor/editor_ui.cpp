@@ -4560,6 +4560,103 @@ void draw_world_settings_window(EditorState& s) {
     ImGui::End();
 }
 
+// ---- Plugins (Editor Preferences > Plugins, like Unreal's Edit > Plugins) ----
+
+// The Claude MCP bridge sits next to the editor exe; Claude Code starts it and it talks to us.
+std::string mcp_bridge_path() {
+    std::string dir = SDL_GetBasePath() ? SDL_GetBasePath() : "";
+    for (char& c : dir) {
+        if (c == '\\') c = '/';
+    }
+#ifdef _WIN32
+    return dir + "lsd_mcp.exe";
+#else
+    return dir + "lsd_mcp";
+#endif
+}
+
+void draw_claude_mcp(EditorState& s) {
+    EditorSettings& set = s.settings;
+    ImGui::TextWrapped("Lets Claude Code work in this editor through MCP (Model Context Protocol): run console commands "
+                       "and Lua, list the level's objects and the assets, read the Output Log. Scripts Claude writes into "
+                       "Content/ reload by themselves.");
+    ImGui::Spacing();
+    ImGui::Checkbox("Enabled", &set.mcp_enabled);
+    ImGui::SameLine(0, 24);
+    int port = static_cast<int>(set.mcp_port);
+    ImGui::SetNextItemWidth(90);
+    if (ImGui::InputInt("Port", &port, 0) && port > 0 && port < 65536) set.mcp_port = static_cast<u32>(port);
+    if (!set.mcp_enabled) ImGui::TextDisabled("Off");
+    else if (!remote::listening()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "Port %u is in use: pick another one", set.mcp_port);
+    else if (remote::client_connected()) ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1), "Claude is connected (127.0.0.1:%u)", set.mcp_port);
+    else ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1), "Waiting for Claude Code on 127.0.0.1:%u", set.mcp_port);
+
+    ImGui::SeparatorText("Connect Claude Code (once)");
+    const std::string bridge = mcp_bridge_path();
+    const std::string port_text = std::to_string(set.mcp_port);
+    const std::string command = "claude mcp add lsd-engine -- \"" + bridge + "\" --port " + port_text;
+    ImGui::TextWrapped("1. Copy this command and run it in a terminal (or ask Claude Code to run it):");
+    ImGui::TextDisabled("%s", command.c_str());
+    if (ImGui::Button("Copy Command")) {
+        ImGui::SetClipboardText(command.c_str());
+        std::snprintf(s.status, sizeof s.status, "Copied the claude mcp add command");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Write .mcp.json")) {  // project-scoped server: Claude Code asks once to trust it
+        std::error_code error;
+        if (std::filesystem::exists(".mcp.json", error)) {
+            std::snprintf(s.status, sizeof s.status, "A .mcp.json is already there: use Copy Command instead (it is left as it is)");
+        } else {
+            std::ofstream file(".mcp.json", std::ios::binary);
+            file << "{\n  \"mcpServers\": {\n    \"lsd-engine\": {\n      \"command\": \"" << bridge << "\",\n      \"args\": [\"--port\", \"" << port_text
+                 << "\"]\n    }\n  }\n}\n";
+            std::snprintf(s.status, sizeof s.status, file ? "Wrote .mcp.json in the project folder" : "Could not write .mcp.json");
+        }
+    }
+    ImGui::SetItemTooltip("Writes the server into this project's .mcp.json, so Claude Code started in this folder finds it");
+    ImGui::TextWrapped("2. Keep this plugin enabled and the editor open, then start Claude Code in the project folder. "
+                       "/mcp in Claude Code shows lsd-engine as connected.");
+
+    ImGui::SeparatorText("What Claude can do");
+    ImGui::BulletText("console: any console command (play, stop, save, open, graph.Open, validate, HighResShot...)");
+    ImGui::BulletText("lua: run Lua in the game while playing");
+    ImGui::BulletText("list_objects / list_assets: the level and Content/");
+    ImGui::BulletText("read_log: the latest Output Log lines (errors after Play)");
+    ImGui::TextDisabled("Only programs on this PC can connect (127.0.0.1). Disable it when you are not using it.");
+}
+
+struct Plugin {
+    const char* name;
+    const char* summary;
+    bool EditorSettings::*enabled;
+    void (*draw)(EditorState& s);
+};
+constexpr Plugin kPlugins[] = {
+    {"Claude MCP", "Code with Claude Code directly in the editor", &EditorSettings::mcp_enabled, draw_claude_mcp},
+};
+
+void draw_plugins(EditorState& s) {
+    static int selected = -1;
+    ImGui::BeginChild("##plugin_list", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 2.2f), ImGuiChildFlags_Borders);
+    for (int i = 0; i < static_cast<int>(std::size(kPlugins)); ++i) {
+        const Plugin& p = kPlugins[i];
+        ImGui::PushID(i);
+        ImGui::Checkbox("##on", &(s.settings.*p.enabled));
+        ImGui::SameLine();
+        if (ImGui::Selectable(p.name, selected == i)) selected = selected == i ? -1 : i;
+        ImGui::SameLine(200);
+        ImGui::TextDisabled("%s", p.summary);
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    if (selected < 0) {
+        ImGui::TextDisabled("Click a plugin for its settings.");
+        return;
+    }
+    ImGui::SeparatorText(kPlugins[selected].name);
+    kPlugins[selected].draw(s);
+}
+
 void draw_preferences_window(EditorState& s) {
     if (!s.show_preferences) return;
     EditorTheme& t = s.theme;
@@ -4582,6 +4679,7 @@ void draw_preferences_window(EditorState& s) {
             }
             if (draw_details(reflect::type_of<EditorTheme>(), &t, &style)) apply_theme(t);
         }
+        if (ImGui::CollapsingHeader("Plugins", ImGuiTreeNodeFlags_DefaultOpen)) draw_plugins(s);
     }
     ImGui::End();
 }
@@ -4705,6 +4803,17 @@ void install_output_log() { log::set_sink(log_sink, nullptr); }
 void clear_output_log() {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     g_log_count = 0;
+}
+
+std::string recent_log(u32 count) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    const u32 n = count < g_log_count ? count : g_log_count;
+    std::string out;
+    for (u32 i = 0; i < n; ++i) {
+        const LogLine& line = g_log[(g_log_next + kLogLines - n + i) % kLogLines];
+        out += std::string(line.level >= log::Level::Error ? "ERROR " : line.level >= log::Level::Warning ? "WARN " : "") + "[" + line.channel + "] " + line.text + "\n";
+    }
+    return out.empty() ? "(the Output Log is empty)" : out;
 }
 
 void apply_theme(const EditorTheme& t) {

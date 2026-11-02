@@ -302,6 +302,17 @@ system interface (time, log, translation). A `UiContext` is a screen of UI: docu
 become actions; the Play session sends actions to Lua. Text that equals a string table key is
 translated as documents load; switching language reloads them in place.
 
+## Editor plugins and the Claude MCP bridge
+
+Editor Preferences > Plugins is a table of plugins (`kPlugins` in `editor/editor_ui.cpp`: name,
+summary, its enabled flag in `EditorSettings`, a draw function for its page). **Claude MCP**: while
+enabled, the main loop keeps the remote console listening on 127.0.0.1 at the plugin's port (a
+`-remote` run keeps its own). `tools/mcp/lsd_mcp` (built next to the editor) is an MCP server on
+stdio that Claude Code starts: `initialize`, `tools/list`, `tools/call`; each tool becomes one console
+line on one kept connection (`console` as is, `lua` with line breaks sent as 0x1F, `list_objects` =
+`scene.List`, `list_assets` = `asset.List`, `read_log` = `log.Tail`) and its answer is what the line
+logged, plus text the list commands hand to `remote::print`. Console lines take up to 16 KB.
+
 ## Packaging and game mode
 
 `package_project` validates the assets, copies the Release executable (renamed to the project),

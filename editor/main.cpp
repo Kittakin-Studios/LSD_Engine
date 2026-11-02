@@ -66,6 +66,7 @@
 #include <vector>
 #include <filesystem>
 #include <new>
+#include <cctype>
 #include <string>
 
 namespace {
@@ -790,6 +791,50 @@ void register_console(EditorState& s) {
         if (st.registry->search(args, lsd::asset::AssetType::Level, nullptr, &hit, 1) == 1) st.registry->source_path(st.registry->get(hit), st.open_level_requested, sizeof st.open_level_requested);
         else LSD_LOG_WARN("console", "open: no level named like '%s'", args);
     }, &s, "open <level name>: open a level (discards unsaved changes)");
+    // Listings for tools (the Claude MCP plugin): answered to the remote client, else the Output Log.
+    console::add_command("scene.List", [](void* user, const char*) {
+        const auto& st = *static_cast<EditorState*>(user);
+        lsd::u32 type_count = 0;
+        const lsd::reflect::TypeInfo* const* types = lsd::world::component_types(type_count);
+        std::string out;
+        for (lsd::u32 slot = 0; slot < st.world->slot_count(); ++slot) {
+            const lsd::world::Entity e = st.world->entity_at_slot(slot);
+            if (!e.valid()) continue;
+            const lsd::world::Entity parent = st.world->parent(e);
+            const lsd::Mat4 m = st.world->world_matrix(e);
+            char line[200];
+            std::snprintf(line, sizeof line, "%s  parent=%s  at=(%.2f, %.2f, %.2f)  [", st.world->name(e), parent.valid() ? st.world->name(parent) : "-",
+                          static_cast<double>(m.at(0, 3)), static_cast<double>(m.at(1, 3)), static_cast<double>(m.at(2, 3)));
+            out += line;
+            const char* separator = "";
+            for (lsd::u32 i = 0; i < type_count; ++i) {
+                if (!st.world->get(e, *types[i])) continue;
+                out += separator;
+                out += types[i]->name;
+                separator = ", ";
+            }
+            out += "]\n";
+        }
+        lsd::editor::remote::print(out.empty() ? "(the level is empty)" : out.c_str());
+    }, &s, "Every object in the level: name, parent, world position, components");
+    console::add_command("asset.List", [](void* user, const char* args) {
+        const auto& st = *static_cast<EditorState*>(user);
+        std::string filter(args), out;
+        for (char& c : filter) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (lsd::usize i = 0; i < st.registry->count(); ++i) {
+            const lsd::asset::AssetRecord& r = st.registry->get(i);
+            char line[420];
+            std::snprintf(line, sizeof line, "%s  %s%s%s  Content/%s\n", r.name, lsd::asset::to_string(r.type), r.data_type[0] ? ":" : "", r.data_type, r.path);
+            std::string lower(line);
+            for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (filter.empty() || lower.find(filter) != std::string::npos) out += line;
+        }
+        lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
+    }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
+    console::add_command("log.Tail", [](void*, const char* args) {
+        const int n = args[0] ? std::atoi(args) : 50;
+        lsd::editor::remote::print(lsd::editor::recent_log(n > 0 ? static_cast<lsd::u32>(n) : 50u).c_str());
+    }, &s, "log.Tail [n]: the last n Output Log lines (default 50)");
 }
 
 // Copies a file dropped from Explorer into Content/<folder>/, renaming on clash ("Chair_1.fbx").
@@ -1283,7 +1328,11 @@ int main(int argc, char** argv) {
     lsd::editor::debugger::attach(play.scripts());
     lsd::editor::debugger::set_frame_callback(debug_frame, &debug_context);
     lsd::console::add_command("lua", [](void* user, const char* args) {
-        if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(args)) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
+        std::string code(args);
+        for (char& c : code) {
+            if (c == '\x1f') c = '\n';  // line breaks of multi-line code sent on one console line (the MCP bridge)
+        }
+        if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(code.c_str())) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
@@ -1296,8 +1345,20 @@ int main(int argc, char** argv) {
     lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
+    lsd::u32 mcp_tried_port = 0;  // Claude MCP plugin: the port last tried, so a busy one is not retried every frame
     for (long frame = 0; running && frame != max_frames;) {
         SDL_Event event;
+        if (!game_mode && remote_arg == 0) {  // -remote keeps its own listener
+            const lsd::u32 port = state.settings.mcp_port;
+            if (!state.settings.mcp_enabled) {
+                if (lsd::editor::remote::listening()) lsd::editor::remote::stop_listening();
+                mcp_tried_port = 0;
+            } else if (mcp_tried_port != port && port > 0 && port < 65536) {
+                if (lsd::editor::remote::listening()) lsd::editor::remote::stop_listening();
+                mcp_tried_port = port;
+                lsd::editor::remote::listen(static_cast<lsd::u16>(port));
+            }
+        }
         lsd::editor::remote::poll();
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
