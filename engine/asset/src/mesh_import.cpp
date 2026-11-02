@@ -104,7 +104,11 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
                     info.base_color[2] = static_cast<f32>(c.z) * factor;
                     info.metallic = static_cast<f32>(mat->pbr.metalness.value_real);
                     if (mat->pbr.roughness.has_value) info.roughness = static_cast<f32>(mat->pbr.roughness.value_real);
-                    if (const ufbx_texture* t = mat->pbr.base_color.texture) file_name(info.texture, sizeof info.texture, t->filename.length ? t->filename.data : t->relative_filename.data);
+                    auto texture_file = [](const ufbx_texture* t, char* out, usize capacity) {
+                        if (t) file_name(out, capacity, t->filename.length ? t->filename.data : t->relative_filename.data);
+                    };
+                    texture_file(mat->pbr.base_color.texture, info.texture, sizeof info.texture);
+                    texture_file(mat->pbr.normal_map.texture, info.normal_texture, sizeof info.normal_texture);
                 }
                 part_name(info, node->name.data, mesh->name.data, used_parts > 1);
                 parts->push_back(info);
@@ -171,8 +175,12 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
                     std::memcpy(info.base_color, pbr.base_color_factor, sizeof info.base_color);
                     info.metallic = pbr.metallic_factor;
                     info.roughness = pbr.roughness_factor;
-                    const cgltf_texture* t = pbr.base_color_texture.texture;
-                    if (t && t->image && t->image->uri) file_name(info.texture, sizeof info.texture, t->image->uri);
+                    auto texture_file = [](const cgltf_texture* t, char* out, usize capacity) {
+                        if (t && t->image && t->image->uri) file_name(out, capacity, t->image->uri);
+                    };
+                    texture_file(pbr.base_color_texture.texture, info.texture, sizeof info.texture);
+                    texture_file(mat->normal_texture.texture, info.normal_texture, sizeof info.normal_texture);
+                    texture_file(pbr.metallic_roughness_texture.texture, info.orm_texture, sizeof info.orm_texture);
                 }
                 part_name(info, node.name ? node.name : node.mesh->name, "Part", used_parts > 1);
                 parts->push_back(info);

@@ -140,6 +140,42 @@ static void graph_tests() {
     CHECK(os.finished);
     anim::step_graph(once, clips, 3, os, 0.0f, in);
     CHECK(std::strcmp(anim::state_name(once, os), "Land") == 0);
+
+    // 2D blend space (Speed x Direction): four clips on a square. Inside, the weights rebuild the
+    // point (barycentric); outside, the nearest edge; on a corner, that clip alone.
+    anim::Clip four[4];
+    for (anim::Clip& c : four) c.duration = 1.0f;
+    anim::AnimGraph strafe;
+    strafe.states.count = 1;
+    anim::AnimState& st = strafe.states[0];
+    std::snprintf(st.blend_parameter, 32, "Speed");
+    std::snprintf(st.blend_parameter_y, 32, "Direction");
+    st.samples.count = 4;
+    st.samples[0] = {0, 0.0f, 0.0f};
+    st.samples[1] = {1, 4.0f, 0.0f};
+    st.samples[2] = {2, 0.0f, 90.0f};
+    st.samples[3] = {3, 4.0f, 90.0f};
+    anim::GraphState ss;
+    auto blended = [&](f32 speed, f32 direction, f32& x, f32& y) {
+        ss.set("Speed", speed);
+        ss.set("Direction", direction);
+        const u32 count = anim::step_graph(strafe, four, 4, ss, 0.0f, in);
+        f32 total = 0.0f;
+        x = y = 0.0f;
+        for (u32 i = 0; i < count; ++i) {
+            const auto& sample = st.samples[static_cast<u32>(in[i].clip - four)];
+            x += sample.position * in[i].weight;
+            y += sample.position_y * in[i].weight;
+            total += in[i].weight;
+        }
+        CHECK(std::fabs(total - 1.0f) < 1e-4f && count >= 1 && count <= 3);
+        return count;
+    };
+    f32 x, y;
+    blended(1.0f, 30.0f, x, y);
+    CHECK(std::fabs(x - 1.0f) < 1e-3f && std::fabs(y - 30.0f) < 1e-3f);
+    CHECK(blended(8.0f, 45.0f, x, y) == 2 && std::fabs(x - 4.0f) < 1e-3f && std::fabs(y - 45.0f) < 1e-3f);  // past the right edge
+    CHECK(blended(4.0f, 90.0f, x, y) == 1 && in[0].clip == &four[3]);
 }
 
 // Morph targets: offsets mixed in by weight, by name, several targets sharing a name together.

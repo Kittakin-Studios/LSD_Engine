@@ -36,6 +36,51 @@ i32 find_state(const AnimGraph& g, const char* name) {
 
 const Clip* clip_at(const Clip* clips, u32 count, u32 index) { return index < count ? &clips[index] : nullptr; }
 
+// 2D blend space weights at (x, y), up to 3 samples: barycentric in the smallest triangle of samples
+// around the point; outside them all, the nearest point on a segment between two samples (or the
+// nearest sample). Returns how many of `which` / `weights` it filled.
+// shortcut: tries every triangle (56 at 8 samples) instead of a stored triangulation; fine at 8
+u32 weights_2d(const List<BlendSample, 8>& s, f32 x, f32 y, u32 which[3], f32 weights[3]) {
+    const u32 n = s.count;
+    f32 best_area = 1e30f;
+    u32 found = 0;
+    for (u32 a = 0; a < n; ++a) {
+        for (u32 b = a + 1; b < n; ++b) {
+            for (u32 c = b + 1; c < n; ++c) {
+                const f32 ax = s[a].position, ay = s[a].position_y, bx = s[b].position, by = s[b].position_y, cx = s[c].position, cy = s[c].position_y;
+                const f32 det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+                if (std::fabs(det) < 1e-6f || std::fabs(det) >= best_area) continue;
+                const f32 wa = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / det;
+                const f32 wb = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / det;
+                const f32 wc = 1.0f - wa - wb;
+                if (wa < -1e-5f || wb < -1e-5f || wc < -1e-5f) continue;
+                best_area = std::fabs(det);
+                which[0] = a, which[1] = b, which[2] = c;
+                weights[0] = std::fmax(wa, 0.0f), weights[1] = std::fmax(wb, 0.0f), weights[2] = std::fmax(wc, 0.0f);
+                found = 3;
+            }
+        }
+    }
+    if (found) return found;
+    f32 best = 1e30f;
+    for (u32 a = 0; a < n; ++a) {
+        for (u32 b = a; b < n; ++b) {  // b == a: the sample itself
+            const f32 dx = s[b].position - s[a].position, dy = s[b].position_y - s[a].position_y;
+            const f32 len2 = dx * dx + dy * dy;
+            f32 t = len2 > 0.0f ? ((x - s[a].position) * dx + (y - s[a].position_y) * dy) / len2 : 0.0f;
+            t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+            const f32 px = s[a].position + dx * t - x, py = s[a].position_y + dy * t - y;
+            if (px * px + py * py >= best) continue;
+            best = px * px + py * py;
+            which[0] = a, which[1] = b;
+            weights[0] = 1.0f - t, weights[1] = t;
+            found = a == b ? 1 : 2;
+        }
+    }
+    if (found == 1) weights[0] = 1.0f;
+    return found;
+}
+
 // A state's clips and weights at its parameter value (a 1D blend space: the two samples around
 // the value, linearly), and its length in seconds for advancing the phase.
 u32 state_inputs(const AnimState& s, const Clip* clips, u32 count, const GraphState& gs, f32 phase, f32 weight, BlendInput* out, f32* length) {
@@ -44,6 +89,19 @@ u32 state_inputs(const AnimState& s, const Clip* clips, u32 count, const GraphSt
         out[0] = {c, phase, weight};
         if (length) *length = c ? c->duration : 0.0f;
         return 1;
+    }
+    if (s.blend_parameter_y[0]) {
+        u32 which[3];
+        f32 w[3];
+        const u32 k = weights_2d(s.samples, gs.get(s.blend_parameter), gs.get(s.blend_parameter_y), which, w);
+        u32 n = 0;
+        if (length) *length = 0.0f;
+        for (u32 i = 0; i < k; ++i) {  // all at the same phase, lengths blended (like 1D)
+            const Clip* c = clip_at(clips, count, s.samples[which[i]].clip);
+            if (length) *length += (c ? c->duration : 0.0f) * w[i];
+            if (w[i] > 0.0f) out[n++] = {c, phase, weight * w[i]};
+        }
+        return n;
     }
     // Samples sorted by position on the fly (at most 8).
     u32 order[8];

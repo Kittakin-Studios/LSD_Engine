@@ -14,6 +14,7 @@ struct BlendSample {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Which animation in the graph's file") u32 clip = 0;
     LSD_PROPERTY(Edit, Tooltip = "The parameter value where this clip plays alone (e.g. walk at 1.5 m/s, run at 5)") f32 position = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "2D blend spaces: the second parameter's value here (e.g. Direction -90 strafe left)") f32 position_y = 0.0f;
 };
 
 LSD_STRUCT()
@@ -23,6 +24,8 @@ struct AnimState {
     LSD_PROPERTY(Edit, Tooltip = "The animation it plays (ignored when it has blend samples)") u32 clip = 0;
     LSD_PROPERTY(Edit, Tooltip = "Blend space: the parameter that picks between the samples (e.g. Speed); empty = just the clip")
     char blend_parameter[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "2D blend space (Unreal's Blend Space): a second parameter (e.g. Direction); the samples' Position Y place them on it")
+    char blend_parameter_y[32] = "";
     LSD_PROPERTY(Edit) List<BlendSample, 8> samples;
     LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 play_rate = 1.0f;
     LSD_PROPERTY(Edit) bool looping = true;

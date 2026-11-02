@@ -1150,6 +1150,12 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         animations_->set_param(world, character_, "InAir", physics_->character_on_ground() || swimming_ ? 0.0f : 1.0f);
         animations_->set_param(world, character_, "Crouching", crouched_ ? 1.0f : 0.0f);
         animations_->set_param(world, character_, "Swimming", swimming_ ? 1.0f : 0.0f);
+        // Unreal's Calculate Direction: degrees from facing (+X) to the movement, right positive, -180..180.
+        const Mat4 facing = world.world_matrix(character_);
+        const f32 fx = facing.at(0, 0), fy = facing.at(1, 0);
+        const bool moving = moved.x * moved.x + moved.y * moved.y > 1e-8f;
+        const f32 direction = moving ? -std::atan2(fx * moved.y - fy * moved.x, fx * moved.x + fy * moved.y) * 57.29578f : 0.0f;
+        animations_->set_param(world, character_, "Direction", direction);
     }
     // Objects scripts destroyed leave the simulation.
     for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {

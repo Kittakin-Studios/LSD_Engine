@@ -84,7 +84,7 @@ struct BlendInput {
     f32 ratio = 0.0f;            // 0..1 through the clip
     f32 weight = 1.0f;
 };
-constexpr u32 kMaxBlendInputs = 4;
+constexpr u32 kMaxBlendInputs = 6;  // a 2D blend space (3) crossfading from another (3)
 
 // Sampling state for one animated object.
 class Pose {

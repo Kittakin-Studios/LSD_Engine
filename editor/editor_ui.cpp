@@ -2533,11 +2533,16 @@ void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
             m.base_color.a = p.base_color[3];
             m.metallic = p.metallic;
             m.roughness = p.roughness;
-            for (usize i = 0; p.texture[0] && i < s.registry->count() && !m.base_color_texture[0]; ++i) {
-                const asset::AssetRecord& t = s.registry->get(i);
-                const std::string file = std::filesystem::path(t.path).filename().string();
-                if (t.type == asset::AssetType::Texture && SDL_strcasecmp(file.c_str(), p.texture) == 0) asset::to_string(t.guid, m.base_color_texture);
-            }
+            auto find_texture = [&](const char* wanted, char out[33]) {  // a Texture in Content with that file name
+                for (usize i = 0; wanted[0] && i < s.registry->count() && !out[0]; ++i) {
+                    const asset::AssetRecord& t = s.registry->get(i);
+                    const std::string file = std::filesystem::path(t.path).filename().string();
+                    if (t.type == asset::AssetType::Texture && SDL_strcasecmp(file.c_str(), wanted) == 0) asset::to_string(t.guid, out);
+                }
+            };
+            find_texture(p.texture, m.base_color_texture);
+            find_texture(p.normal_texture, m.normal_texture);
+            find_texture(p.orm_texture, m.orm_texture);
             const std::string path = new_asset_path(s, (std::string("M_") + p.material).c_str());
             asset::save_data_asset(path.c_str(), reflect::type_of<render::Material>(), &m);
             s.registry->scan();

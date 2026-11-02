@@ -519,11 +519,15 @@ at the object when the clip passes that time in Play.
 
 **Animation Graph** (New Data Asset > Animation Graph; Unreal's Anim Blueprint state machine):
 
-- **States**: a clip, or a 1D **blend space** (clips placed along a parameter such as Speed).
+- **States**: a clip, or a 1D **blend space** (clips placed along a parameter such as Speed), or a
+  2D one: also fill **Blend Parameter Y** (e.g. Direction) and each sample's **Position Y**
+  (walk forward at Speed 1.5 / Direction 0, strafe right at 1.5 / 90, left at 1.5 / -90...). Between
+  samples it mixes the three around the value; outside them, the nearest edge.
 - **Transitions**: from a state (or any) to another when a parameter is greater / less / true /
   false, or the clip finished, with a crossfade time.
 - Pick the graph in the Skeletal Mesh's **Anim Graph**. A Character feeds **Speed**,
-  **VerticalSpeed** and **InAir** automatically; set your own with `lsd.set_anim_param` or the
+  **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
+  like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the
   Set Anim Parameter node.
 
 **Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them

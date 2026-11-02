@@ -186,8 +186,10 @@ static void test_gltf_axes(const fs::path& root) {
   "scene": 0, "scenes": [{"nodes": [0, 1]}],
   "nodes": [{"name": "Base", "mesh": 0}, {"name": "Top", "mesh": 1, "translation": [0, 5, 0]}],
   "materials": [{"name": "Red", "pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1], "metallicFactor": 0, "roughnessFactor": 0.25}},
-                {"name": "Gold", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 1}}],
-  "textures": [{"source": 0}], "images": [{"uri": "textures/Gold_Base.png"}],
+                {"name": "Gold", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 1, "metallicRoughnessTexture": {"index": 1}},
+                 "normalTexture": {"index": 2}}],
+  "textures": [{"source": 0}, {"source": 1}, {"source": 2}],
+  "images": [{"uri": "textures/Gold_Base.png"}, {"uri": "Gold_MR.png"}, {"uri": "textures\\Gold_N.png"}],
   "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]},
              {"primitives": [{"attributes": {"POSITION": 0}, "material": 0}, {"attributes": {"POSITION": 0}, "material": 1}]}],
   "buffers": [{"byteLength": 36, "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}],
@@ -204,6 +206,7 @@ static void test_gltf_axes(const fs::path& root) {
         CHECK(std::strcmp(parts[0].name, "Base") == 0 && !parts[0].material[0]);
         CHECK(std::strcmp(parts[1].name, "Top_Red") == 0 && parts[1].base_color[1] == 0.0f && parts[1].roughness == 0.25f);
         CHECK(std::strcmp(parts[2].name, "Top_Gold") == 0 && parts[2].metallic == 1.0f && std::strcmp(parts[2].texture, "Gold_Base.png") == 0);
+        CHECK(std::strcmp(parts[2].orm_texture, "Gold_MR.png") == 0 && std::strcmp(parts[2].normal_texture, "Gold_N.png") == 0);
     }
     CHECK(asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 2) && mesh.vertex_count == 3);
     CHECK(std::fabs(asset::compute_bounds(mesh).min[2] - 5.0f) < 1e-5f);  // in place, not moved to the origin

@@ -20,6 +20,8 @@ struct MeshPart {
     f32 metallic = 0.0f;
     f32 roughness = 0.5f;
     char texture[128] = "";   // the base colour texture's file name without folders, "" = none
+    char normal_texture[128] = "";
+    char orm_texture[128] = "";  // glTF's metallic-roughness map (G roughness, B metallic, as our ORM)
 };
 
 // Reads a source file, converts to engine space (Z up, right-handed, metres), applies `scale`,
