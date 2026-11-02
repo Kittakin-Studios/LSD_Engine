@@ -260,8 +260,12 @@ pointers) and the reflection tables. Both become the C API, so every language se
 
 ## v2 (after the vertical slice)
 
-- World: level streaming volumes, terrain (sculpt, paint layers, heightmaps, holes), foliage painting + procedural scatter rules, water bodies (lake, river, ocean) [Landscape, Foliage, PCG, Water]
-- Modeling: in-editor mesh editing (extrude, bevel, boolean), UV tools [Modeling Mode]
+- [x] Level modes in the Level tab (Select, 3D Modeling, Foliage, Landscape, Animation Sequence, PCG, VFX) with a Mode panel; `mode <name>` [Unreal's mode dropdown]
+- [~] Landscape: Landscape component (65 x 65 heights in the level, drawn and collided as a generated mesh), Create + Sculpt / Smooth / Flatten brushes; needs paint layers, heightmap import / export, holes, bigger grids and tiles, LODs [Landscape]
+- [~] Foliage painting: brush paints / erases copies of a mesh onto surfaces into Instanced Static Meshes (density, scale, random turn); needs several foliage types at once, align to normal, per-copy collision [Foliage]
+- [~] PCG: PCG Volume scatters a mesh on the surfaces in its box (density, seed, slope, scale, align), rebuilt on change; needs graphs of rules, several meshes, exclusions, splines as input [PCG]
+- World: level streaming volumes, water bodies (lake, river, ocean) [Water]
+- [~] Modeling: 3D Modeling mode places and sizes blockout shapes with Box UV; needs in-editor mesh editing (extrude, bevel, boolean), UV tools [Modeling Mode]
 - Rendering: global material parameters, HLOD, GPU particles, dynamic GI, virtual texturing, hair / fur cards
 - Animation: full-body IK, foot placement, retargeting between skeletons, animation layers, motion matching [IK Rig, IK Retargeter]
 - Physics: ragdolls and physics assets, cloth, vehicles [Physics Asset, Chaos Cloth, Chaos Vehicles]

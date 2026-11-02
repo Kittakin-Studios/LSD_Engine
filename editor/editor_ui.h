@@ -40,6 +40,8 @@ struct EditorCamera {
 };
 
 enum class GizmoMode { Translate, Rotate, Scale };
+// The Level tab's modes (Unreal's mode dropdown); editor_modes.h has their tools.
+enum class EditorMode : u8 { Select, Modeling, Foliage, Landscape, Animation, Pcg, Vfx };
 
 struct EditorState {
     EditorTheme theme;
@@ -94,6 +96,7 @@ struct EditorState {
         return false;
     }
     GizmoMode gizmo = GizmoMode::Translate;
+    EditorMode mode = EditorMode::Select;
     bool gizmo_local = false;
     char level_path[260] = "";  // "" = never saved
     char pending_edit[64] = "";  // label of an edit in progress; committed when the mouse and widgets are idle

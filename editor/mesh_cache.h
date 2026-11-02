@@ -26,6 +26,7 @@ struct CachedMesh {
     Vec3 bounds_min, bounds_max;  // local space
     i64 compiled_time;
     bool failed;  // asset missing or import failed: drawn as nothing, retried on hot_reload
+    bool generated;  // built in code (set_generated: a landscape), never loaded from a file
 };
 
 class MeshCache {
@@ -50,6 +51,10 @@ public:
         std::vector<u32> indices;
     };
     const Triangles* triangles(const char* key);
+
+    // Puts `data` under `key` (drawn, picked and collided like any mesh), replacing what was there.
+    // Keys starting "Landscape:" are only ever generated: get() is quiet about them until then.
+    void set_generated(const char* key, const render::MeshData& data);
 
 private:
     bool load(CachedMesh& entry);

@@ -322,6 +322,19 @@ system interface (time, log, translation). A `UiContext` is a screen of UI: docu
 become actions; the Play session sends actions to Lua. Text that equals a string table key is
 translated as documents load; switching language reloads them in place.
 
+## Level modes
+
+`EditorState::mode` (the Level tab's list, `editor/editor_modes.*`). The mode panel draws the active
+mode's tools; `mode_brush` runs in `draw_viewport` after the gizmo and, in Foliage / Landscape, takes the
+LMB (selection is skipped) and paints at the surface under the mouse (`surface_ray` = the editor's
+mesh raycast). A **Landscape** component keeps 65 x 65 heights; `update_landscapes` (main loop, editor
+and game) gives its entity a Static Mesh keyed `Landscape:<id>` and, when the heights' hash changes,
+builds the grid and hands it to `MeshCache::set_generated`, which also stores its triangles, so drawing,
+picking, Mesh collision in Play and the brush's own raycast all use the sculpted surface. Foliage
+copies go to InstancedStaticMesh objects named `Foliage*`. A **PCG Volume** casts rays down through its
+box (seeded, so the layout is stable) into an ISM on its `output` object; `update_pcg` rebuilds it when
+a hash of its rules and box changes, after the mouse is released and before the frame's undo commit.
+
 ## Workspaces
 
 The tab strip is a viewport side bar under the main menu bar (`draw_workspace_tabs`), so the

@@ -82,6 +82,25 @@ Settings, Editor Preferences), **Tools** (smoke test, unit tests) and **Window**
 Settings, Message Log, **Layout**). While playing it shows **Stop / Pause / Eject**. Window > Layout
 saves the panel arrangement under a name (Unreal's Save Layout As), loads one back, or resets to the default.
 
+### Level modes (click the Level tab)
+
+Like Unreal's mode dropdown: click the **Level** tab (when it is showing) and a list opens: **Select**
+(the default), **3D Modeling**, **Foliage**, **Landscape**, **Animation Sequence**, **PCG** and **VFX**.
+The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel at the viewport's left
+(close it, or pick Select, to go back). Console: `mode Landscape`.
+
+| Mode | What it does (Unreal) |
+| --- | --- |
+| **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m (Modeling Mode basics; no extrude / bevel yet) |
+| **Foliage** | Pick a mesh, brush size, density (copies per m2), scale range; **LMB drag** paints copies onto surfaces, **Shift+LMB** erases. Copies go to *Foliage* objects (Instanced Static Meshes, 1024 each) |
+| **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks, then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All. It collides in Play; its material is on its Static Mesh |
+| **Animation Sequence** | Your Timelines (double-click to edit), New Timeline, a button to the Animation workspace (Sequencer) |
+| **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output* |
+| **VFX** | Your particle systems (double-click to edit, **Place** puts one where the view looks), New Particle System, a button to the Effects workspace (Niagara) |
+
+In Foliage and Landscape a ring shows the brush; clicks paint instead of selecting (Alt, RMB and MMB
+still move the camera). Every stroke is one undo step.
+
 ### Panel tabs and workspaces (the two rows under the menu bar)
 
 **Panel tabs** (the top row, like Unreal's tabs across the top of the editor): the first tab is

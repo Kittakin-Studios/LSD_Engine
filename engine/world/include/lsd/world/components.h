@@ -225,6 +225,38 @@ struct InstancedStaticMesh {
     LSD_PROPERTY(Edit) List<MeshInstance, 1024> instances;
 };
 
+// Terrain sculpted in Landscape mode (Unreal's Landscape): a square grid of heights centred on the
+// object, drawn and collided through the Static Mesh beside it (its mesh is "Landscape:<id>", built
+// from these heights by the editor and the game every time they change).
+// shortcut: one 65 x 65 grid saved in the level, one material; heightmap files and tiles for big worlds
+LSD_STRUCT(Component, Category = "Rendering")
+struct Landscape {
+    LSD_GENERATED()
+    static constexpr u32 kResolution = 65;  // heights per side
+    LSD_PROPERTY(Edit, Units = "m", Min = 1, Tooltip = "Width of the square (the grid stretches with it)") f32 size = 64.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "Metres per texture tile") f32 uv_tile = 4.0f;
+    LSD_PROPERTY(Save) List<f32, 4225> heights;  // kResolution x kResolution, row by row (y, then x), metres
+};
+
+// Scatters copies of a mesh on whatever surfaces are inside this box (Unreal's PCG Volume with a
+// surface sampler): density, slope and scale rules, the same result for the same seed. The copies go
+// to an Instanced Static Mesh on a separate object (`output`), rebuilt when a rule or the box changes.
+LSD_STRUCT(Component, Category = "Procedural")
+struct PcgVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh") char mesh[40] = "Sphere";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
+    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0x4F8A3C);
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "Copies per 100 square metres of the box's floor (at most 1024)") f32 density = 20.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Same seed, same layout; change it for another") u32 seed = 1;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 90, Tooltip = "No copies on surfaces steeper than this") f32 max_slope = 35.0f;
+    LSD_PROPERTY(Edit, Min = 0.01) f32 scale_min = 0.8f;
+    LSD_PROPERTY(Edit, Min = 0.01) f32 scale_max = 1.2f;
+    LSD_PROPERTY(Edit, Tooltip = "Turn each copy at random around Z") bool random_yaw = true;
+    LSD_PROPERTY(Edit, Tooltip = "Tilt copies to the surface (rocks on a slope) instead of standing upright") bool align_to_surface = false;
+    LSD_PROPERTY(Visible, Tooltip = "The object holding the copies") char output[64] = "";
+};
+
 // Keeps this object on a socket of another object's Skeletal Mesh (Unreal's Attach to Socket): a
 // sword in a hand follows the animation. The socket comes from the mesh (Mesh Editor > Sockets).
 LSD_STRUCT(Component, Category = "Animation")

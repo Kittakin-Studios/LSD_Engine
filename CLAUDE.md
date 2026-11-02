@@ -50,7 +50,7 @@ Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only).
-Console: `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame). Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later),
+Console: `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
@@ -141,7 +141,8 @@ low-pass, Base Sound Mix; particle Over Life keys and Auto Destroy; BT decorator
 localisation {0} / plurals; lsd.save_objects; Blueprint panels in the graph window (My Blueprint,
 variable Details, Palette); thumbnails for materials (sphere), sounds (waveform), BT / Lua tiles;
 Editor Preferences > Plugins with Claude MCP (Claude Code drives the editor through `lsd_mcp`);
-Unreal-style panel tabs under the menu bar (Level + each open asset editor), and under them, on the Level tab,
+Unreal-style panel tabs under the menu bar (Level + each open asset editor; the Level tab lists the modes: 3D Modeling,
+Foliage, Landscape, Animation Sequence, PCG, VFX in `editor/editor_modes.*`), and under them, on the Level tab,
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
 Post pass (draw_post, when a Post Process Volume applies): SSAO, TAA, depth of field, bloom, ACES,
 grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).

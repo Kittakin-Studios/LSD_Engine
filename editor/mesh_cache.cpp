@@ -80,6 +80,7 @@ MeshCache::~MeshCache() {
 }
 
 bool MeshCache::load(CachedMesh& entry) {
+    if (entry.generated) return true;  // nothing on disk to reload
     render::MeshData data;
     asset::MeshBounds bounds;
     asset::Guid guid;
@@ -154,6 +155,7 @@ const CachedMesh* MeshCache::get(const char* key) {
     for (const CachedMesh& m : meshes_) {
         if (std::strcmp(m.key, key) == 0) return m.failed ? nullptr : &m;
     }
+    if (std::strncmp(key, "Landscape:", 10) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
@@ -169,6 +171,33 @@ const CachedMesh* MeshCache::get_box_uv(const char* mesh, Vec3 scale) {
     std::snprintf(key, sizeof key, "%s|box:%g,%g,%g", mesh, static_cast<f64>(cm(scale.x)), static_cast<f64>(cm(scale.y)), static_cast<f64>(cm(scale.z)));
     const CachedMesh* boxed = get(key);
     return boxed ? boxed : get(mesh);
+}
+
+void MeshCache::set_generated(const char* key, const render::MeshData& data) {
+    CachedMesh* entry = nullptr;
+    for (CachedMesh& m : meshes_) {
+        if (std::strcmp(m.key, key) == 0) entry = &m;
+    }
+    if (!entry) {
+        CachedMesh fresh{};
+        std::snprintf(fresh.key, sizeof fresh.key, "%s", key);
+        meshes_.push_back(fresh);
+        entry = &meshes_[meshes_.size() - 1];
+    }
+    if (entry->gpu.index_count) render::destroy_mesh(device_, entry->gpu);
+    destroy_lods(device_, *entry);
+    entry->gpu = render::upload_mesh(device_, data);
+    entry->lod_count = 1;
+    entry->lod_screen_size[0] = 1e30f;
+    const asset::MeshBounds bounds = asset::compute_bounds(data);
+    entry->bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
+    entry->bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
+    entry->generated = true;
+    entry->failed = false;
+    Triangles& t = triangles_[key];
+    t.points.clear();
+    for (u32 i = 0; i < data.vertex_count; ++i) t.points.push_back({data.vertices[i].position[0], data.vertices[i].position[1], data.vertices[i].position[2]});
+    t.indices.assign(data.indices, data.indices + data.index_count);
 }
 
 void MeshCache::hot_reload() {

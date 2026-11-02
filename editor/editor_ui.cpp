@@ -17,6 +17,7 @@
 #include "references.h"
 #include "remote_console.h"
 #include "game_module.h"
+#include "editor_modes.h"
 #include "workspaces.h"
 #include "lua_debugger.h"
 #include "mesh_editor.h"
@@ -277,7 +278,7 @@ constexpr Vec3 kVolumeLo{-0.5f, -0.5f, 0.0f}, kVolumeHi{0.5f, 0.5f, 1.0f};
 bool is_volume(const world::World& w, world::Entity e) {
     const auto* post = w.get<world::PostProcessVolume>(e);
     return w.get<world::BlockingVolume>(e) || w.get<world::KillVolume>(e) || w.get<world::TriggerVolume>(e) || w.get<world::AudioVolume>(e) || (post && !post->unbound) ||
-           w.get<world::NavMeshBounds>(e) || w.get<world::NavModifierVolume>(e) || w.get<world::CullDistanceVolume>(e) || w.get<world::WaterVolume>(e) || w.get<world::LightmassImportanceVolume>(e) || w.get<world::Decal>(e);
+           w.get<world::NavMeshBounds>(e) || w.get<world::NavModifierVolume>(e) || w.get<world::CullDistanceVolume>(e) || w.get<world::WaterVolume>(e) || w.get<world::LightmassImportanceVolume>(e) || w.get<world::Decal>(e) || w.get<world::PcgVolume>(e);
 }
 
 // UI-only state for the confirmation dialogs.
@@ -1098,8 +1099,23 @@ void draw_panel_tabs(EditorState& s) {
                         ImGui::EndTabItem();
                     }
                 };
-                tab(kLevelTab, "Level###LevelTab", nullptr);
-                ImGui::SetItemTooltip("The level: viewport, Outliner, Details, Content Browser and the workspaces under this row");
+                char level_label[64];  // the mode shows in the tab; the space at the end is for the arrow
+                std::snprintf(level_label, sizeof level_label, "%s%s     ###LevelTab", s.mode == EditorMode::Select ? "Level" : "Level: ", s.mode == EditorMode::Select ? "" : mode_name(s.mode));
+                tab(kLevelTab, level_label, nullptr);
+                const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+                {  // a small down arrow: the tab opens the mode list
+                    const f32 cx = hi.x - 14.0f, cy = (lo.y + hi.y) * 0.5f;
+                    ImGui::GetWindowDrawList()->AddTriangleFilled(ImVec2(cx - 4.0f, cy - 2.0f), ImVec2(cx + 4.0f, cy - 2.0f), ImVec2(cx, cy + 3.0f), ImGui::GetColorU32(ImGuiCol_Text));
+                }
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && g_active_tab == kLevelTab) {
+                    ImGui::SetNextWindowPos(ImVec2(lo.x, hi.y));
+                    ImGui::OpenPopup("##level_modes");
+                }
+                ImGui::SetItemTooltip("The level and its modes (click again for the list): Select, 3D Modeling, Foliage, Landscape, Animation Sequence, PCG, VFX");
+                if (ImGui::BeginPopup("##level_modes")) {
+                    draw_mode_menu(s);
+                    ImGui::EndPopup();
+                }
                 for (const PanelTab& t : g_tabs) {
                     bool open = true;
                     tab(t.id, t.label.c_str(), &open);
@@ -1782,6 +1798,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
 
     const bool gizmo_busy = draw_gizmo(s, view, proj, pos, size, index);
     g_gizmo_busy[index] = gizmo_busy;
+    const bool brushing = mode_brush(s, view_proj, pos, size, hovered && !gizmo_busy);  // Foliage / Landscape paint instead of selecting
     // Click selects; Ctrl+click toggles, Shift+click adds; a drag from empty space draws a selection box.
     static bool marquee_by_view[4];
     static ImVec2 marquee_start_by_view[4];
@@ -1791,7 +1808,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     const bool clicked_pivot = clicked_point < 0 && ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy && joint_pivot_at(s, view_proj, pos, size, io.MousePos);
     const bool clicked_handle = clicked_point < 0 && !clicked_pivot && ImGui::IsItemClicked(ImGuiMouseButton_Left) && !io.KeyAlt && !gizmo_busy &&
                                 spline_handle_at(s, view_proj, pos, size, io.MousePos);
-    if (clicked_point >= 0 || clicked_handle) {  // the gizmo now moves that point, or its tangent handle
+    if (brushing) {
+        marquee = false;
+    } else if (clicked_point >= 0 || clicked_handle) {  // the gizmo now moves that point, or its tangent handle
         if (clicked_point >= 0) s.spline_point = clicked_point;
         s.spline_handle = clicked_handle;
     } else if (clicked_pivot) {
@@ -5211,6 +5230,7 @@ void draw_editor(EditorState& s) {
     draw_details_panel(s);
     draw_content_browser(s);
     draw_editor_area(s);
+    if (level_tab) draw_mode_panel(s);
     {  // asset editors opened from now on dock where the editor area is (begin_editor)
         const WorkspaceDef* def = find_workspace_def(s.settings, s.settings.workspace);
         const ImGuiWindow* area = def && def->hint ? ImGui::FindWindowByName(kEditorAreaWindow) : nullptr;
@@ -5299,6 +5319,7 @@ void draw_editor(EditorState& s) {
     }
 
     prune_selection(s);  // undo or delete may have removed selected objects
+    update_pcg(s);       // before the undo step below, so it holds the rebuilt copies
     // One undo step per finished edit: wait until drags and text fields are released.
     if (s.pending_edit[0] && (s.playing || (!ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
         if (!s.playing) {
@@ -5344,6 +5365,19 @@ void make_default_level(world::World& w) {
 }
 
 bool open_asset(EditorState& s, const asset::AssetRecord& record) { return open_record(s, record); }
+
+bool surface_ray(EditorState& s, Vec3 origin, Vec3 dir, f32& t) {
+    Entity hit;
+    return raycast(s, {origin, dir}, {}, hit, t);
+}
+void viewport_ray(const EditorCamera& camera, ImVec2 pos, ImVec2 size, ImVec2 mouse, Vec3& origin, Vec3& dir) {
+    const Ray ray = mouse_ray(camera, pos, size, mouse);
+    origin = ray.origin;
+    dir = ray.dir;
+}
+Entity place_object(EditorState& s, const char* name, const char* mesh, const char* component, Vec3 position) { return place(s, name, mesh, component, position); }
+void mark_edited(EditorState& s, const char* label) { edited(s, label); }
+void new_data_asset(EditorState& s, const reflect::TypeInfo& type) { create_data_asset(s, type); }
 
 bool begin_editor(const char* title, bool* open) {
     const std::string id = window_id(title);

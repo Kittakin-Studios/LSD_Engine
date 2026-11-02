@@ -1,5 +1,6 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
+#include "editor_modes.h"
 #include "graph_editor.h"
 #include "table_editor.h"
 #include "mesh_cache.h"
@@ -589,6 +590,17 @@ void register_console(EditorState& s) {
         else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
         else LSD_LOG_WARN("console", "stat: try 'stat fps' or 'stat audio'");
     }, &s, "stat fps | stat audio: toggle the fps / draw call or the active sounds overlay");
+    console::add_command("camera", [](void* user, const char* args) {
+        auto& cam = static_cast<EditorState*>(user)->camera;
+        float x, y, z, yaw = 0.0f, pitch = 0.0f;
+        if (std::sscanf(args, "%f %f %f %f %f", &x, &y, &z, &yaw, &pitch) < 3) {
+            lsd::editor::remote::print("camera <x> <y> <z> [yaw pitch]: degrees, yaw 0 looks along +X, pitch < 0 looks down");
+            return;
+        }
+        cam.position = {x, y, z};
+        cam.yaw = yaw * 0.0174533f;
+        cam.pitch = pitch * 0.0174533f;
+    }, &s, "camera <x> <y> <z> [yaw pitch]: put the viewport camera there (degrees)");
     console::add_command("view", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         static const char* const names[] = {"perspective", "top", "front", "right"};
@@ -910,6 +922,24 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("no asset with that name (asset.List)");
     }, &s, "asset.Open <name>: open an asset in its editor, like a double-click in the Content Browser");
+    console::add_command("mode", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        auto same = [](const char* a, const char* b) {
+            for (; *a && *b; ++a, ++b) {
+                if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b))) return false;
+            }
+            return *a == *b;
+        };
+        for (int m = 0; m <= static_cast<int>(lsd::editor::EditorMode::Vfx); ++m) {
+            const auto mode = static_cast<lsd::editor::EditorMode>(m);
+            if (same(lsd::editor::mode_name(mode), args) || (mode == lsd::editor::EditorMode::Modeling && same(args, "Modeling")) ||
+                (mode == lsd::editor::EditorMode::Animation && same(args, "Animation"))) {
+                st.mode = mode;
+                return;
+            }
+        }
+        lsd::editor::remote::print("Modes: Select, Modeling, Foliage, Landscape, Animation, PCG, VFX");
+    }, &s, "mode <name>: the Level tab's mode (Select, Modeling, Foliage, Landscape, Animation, PCG, VFX)");
     console::add_command("workspace", [](void* user, const char* args) {
         std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
     }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
@@ -1547,6 +1577,8 @@ int main(int argc, char** argv) {
         was_showing = state.show_navigation;
 
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
+        lsd::editor::update_landscapes(world, meshes);  // landscape meshes follow their heights (rebuilt on change)
+        if (state.world != &world) lsd::editor::update_landscapes(*state.world, meshes);  // Play's copy
         FrameTimer timer;
         if (state.load_layout[0]) lsd::editor::apply_layout_file(state.load_layout, state.status, sizeof state.status);
         state.load_layout[0] = '\0';
