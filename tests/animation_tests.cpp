@@ -208,6 +208,32 @@ static void morph_tests(const std::string& data) {
         found += static_cast<u32>(m.morphs.size());
     }
     CHECK(found > 0);
+
+    // Animated shape-key weights: a take's curve matches ufbx's own evaluation half-way through.
+    anim::SkinnedModel rig(default_allocator());
+    char error[256] = "";
+    const std::string animated = data + "/blender440_shape_weight_anim_7400_binary.fbx";
+    CHECK(anim::import_skinned((data + "/blender_293_half_skinned_7400_binary.fbx").c_str(), 1.0f, rig, error, sizeof error));
+    anim::Clip clips[2];
+    const u32 n = anim::import_clips(animated.c_str(), rig, clips, 2);
+    ufbx_load_opts opts{};
+    ufbx_scene* scene = ufbx_load_file(animated.c_str(), &opts, nullptr);
+    CHECK(n > 0 && scene && scene->blend_channels.count > 0 && scene->anim_stacks.count > 0);
+    if (n > 0 && scene && scene->blend_channels.count > 0 && scene->anim_stacks.count > 0) {
+        const ufbx_anim_stack* stack = scene->anim_stacks.data[0];
+        const f64 t = std::floor((stack->time_end - stack->time_begin) * 0.5 * 30.0) / 30.0;  // a sampled frame
+        const ufbx_blend_channel* channel = scene->blend_channels.data[0];
+        const f32 expected = static_cast<f32>(ufbx_evaluate_blend_weight(stack->anim, channel, stack->time_begin + t));
+        f32 ours = -1.0f;
+        CHECK(clips[0].morph_weight(channel->name.data, static_cast<f32>(t) / clips[0].duration, ours));
+        std::printf("  shape key '%s' at %.2f s: %.3f (ufbx %.3f)\n", channel->name.data, t, static_cast<double>(ours), static_cast<double>(expected));
+        CHECK(std::fabs(ours - expected) < 1e-3f);
+        const anim::BlendInput half[2] = {{&clips[0], static_cast<f32>(t) / clips[0].duration, 1.0f}, {nullptr, 0.0f, 1.0f}};
+        f32 mixed = -1.0f;
+        CHECK(anim::blended_morph_weight(half, 2, channel->name.data, mixed) && std::fabs(mixed - expected * 0.5f) < 1e-3f);  // half rest pose
+        CHECK(!anim::blended_morph_weight(half, 2, "NoSuchShape", mixed));
+    }
+    if (scene) ufbx_free_scene(scene);
 }
 
 int main() {

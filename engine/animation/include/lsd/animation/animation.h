@@ -69,8 +69,10 @@ struct Clip {
     Clip& operator=(const Clip&) = delete;
     char name[64] = "";
     f32 duration = 0.0f;  // seconds
+    // A morph target's weight animated by this clip at `ratio` (0..1); false if the clip leaves it alone.
+    bool morph_weight(const char* morph, f32 ratio, f32& weight) const;
     struct Impl;
-    Impl* impl = nullptr;  // the ozz animation
+    Impl* impl = nullptr;  // the ozz animation and morph weight curves
 };
 
 // Every animation (take / stack) in an FBX, sampled at 30 frames a second onto `model`'s skeleton
@@ -85,6 +87,9 @@ struct BlendInput {
     f32 weight = 1.0f;
 };
 constexpr u32 kMaxBlendInputs = 6;  // a 2D blend space (3) crossfading from another (3)
+
+// The morph weight a blend of clips gives `morph` (their weights mixed); false if none animates it.
+bool blended_morph_weight(const BlendInput* inputs, u32 count, const char* morph, f32& weight);
 
 // Sampling state for one animated object.
 class Pose {

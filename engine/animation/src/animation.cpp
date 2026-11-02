@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace lsd::anim {
@@ -31,6 +32,11 @@ struct SkinnedModel::Impl {
 
 struct Clip::Impl {
     ozz::unique_ptr<ozz::animation::Animation> animation;
+    struct MorphCurve {
+        std::string name;
+        std::vector<f32> weights;  // 30 a second, 0..1
+    };
+    std::vector<MorphCurve> morphs;
 };
 
 namespace {
@@ -284,6 +290,37 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
 
 Clip::~Clip() { delete impl; }
 
+bool Clip::morph_weight(const char* morph, f32 ratio, f32& weight) const {
+    if (!impl) return false;
+    for (const Impl::MorphCurve& c : impl->morphs) {
+        if (c.name != morph || c.weights.empty()) continue;
+        // Samples are 1/30 s apart, except the last, which sits at the very end of the clip.
+        const f32 time = (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio) * duration;
+        const usize last = c.weights.size() - 1;
+        usize i = static_cast<usize>(time * 30.0f);
+        i = i < last ? i : last;
+        const f32 t0 = static_cast<f32>(i) / 30.0f;
+        const f32 t1 = i + 1 == last ? duration : static_cast<f32>(i + 1) / 30.0f;
+        const f32 t = i < last && t1 > t0 ? (time - t0) / (t1 - t0) : 0.0f;
+        weight = i < last ? c.weights[i] * (1.0f - t) + c.weights[i + 1] * t : c.weights[last];
+        return true;
+    }
+    return false;
+}
+
+bool blended_morph_weight(const BlendInput* inputs, u32 count, const char* morph, f32& weight) {
+    f32 sum = 0.0f, total = 0.0f;
+    bool any = false;
+    for (u32 i = 0; i < count; ++i) {
+        f32 w = 0.0f;  // a clip that leaves the morph alone counts as rest (0)
+        if (inputs[i].clip && inputs[i].clip->morph_weight(morph, inputs[i].ratio, w)) any = true;
+        sum += w * inputs[i].weight;
+        total += inputs[i].weight;
+    }
+    if (any) weight = total > 0.0f ? sum / total : 0.0f;
+    return any;
+}
+
 u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity) {
     char error[256];
     ufbx_scene* scene = load_scene(path, error, sizeof error);
@@ -357,6 +394,17 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
         }
         std::snprintf(clip.name, sizeof clip.name, "%s", stack->name.length ? stack->name.data : "Take");
         clip.duration = raw.duration;
+        // Morph target weights the take animates (DeformPercent 0..100 in the FBX), matched by name later.
+        for (const ufbx_blend_channel* channel : scene->blend_channels) {
+            Clip::Impl::MorphCurve curve{channel->name.data, std::vector<f32>(frames)};
+            bool moves = false;
+            for (u32 f = 0; f < frames; ++f) {
+                const f64 t = f + 1 == frames ? length : static_cast<f64>(f) / 30.0;
+                curve.weights[f] = static_cast<f32>(ufbx_evaluate_blend_weight(stack->anim, channel, begin + t));
+                moves = moves || curve.weights[f] != curve.weights[0];
+            }
+            if (moves || curve.weights[0] != 0.0f) clip.impl->morphs.push_back(std::move(curve));
+        }
         ++written;
     }
     ufbx_free_scene(scene);

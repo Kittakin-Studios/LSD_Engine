@@ -38,27 +38,33 @@ rhi::BufferHandle AnimationPlayer::vertices(world::Entity e, rhi::BufferHandle m
 // shortcut: morphs on the CPU, a new buffer per change (buffers are immutable); move to the GPU
 // (a delta buffer read in the skinning shader) when many faces animate at once
 void AnimationPlayer::update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model) {
+    // A Morphs row on the component wins (scripts, hand-set); otherwise the playing clips' curves.
+    auto weight_of = [&](const char* name) {
+        for (const world::MorphWeight& m : mesh.morphs) {
+            if (std::strcmp(m.name, name) == 0) return m.weight;
+        }
+        f32 w = 0.0f;
+        anim::blended_morph_weight(state.inputs, state.input_count, name, w);
+        return w;
+    };
     u64 key = 1469598103934665603ull ^ model.vertices.value;  // a reload makes a new buffer, so a new key
     bool any = false;
-    for (const world::MorphWeight& m : mesh.morphs) {
-        if (m.weight == 0.0f) continue;
+    for (const anim::MorphTarget& t : model.model->morphs) {  // shortcut: names shared by several meshes hash twice; harmless
+        const f32 w = weight_of(t.name);
+        if (w == 0.0f) continue;
         u32 bits;
-        std::memcpy(&bits, &m.weight, sizeof bits);
-        key = (key ^ hash64(m.name) ^ bits) * 1099511628211ull;
+        std::memcpy(&bits, &w, sizeof bits);
+        key = (key ^ hash64(t.name) ^ bits) * 1099511628211ull;
         any = true;
     }
-    if (!any || model.model->morphs.empty()) key = 0;  // nothing to mix: the shared buffer
+    if (!any) key = 0;  // nothing to mix: the shared buffer
     if (key == state.morph_key) return;
     state.morph_key = key;
     if (state.morphed.valid()) device_.destroy_buffer(state.morphed);
     state.morphed = {};
     if (key == 0) return;
     std::vector<rhi::SkinnedVertex> morphed(model.model->vertices.size());
-    anim::apply_morphs(*model.model, [&](const char* name) {
-        f32 w = 0.0f;
-        for (const world::MorphWeight& m : mesh.morphs) w = std::strcmp(m.name, name) == 0 ? m.weight : w;
-        return w;
-    }, morphed.data());
+    anim::apply_morphs(*model.model, weight_of, morphed.data());
     state.morphed = device_.create_buffer(rhi::BufferUsage::Vertex, morphed.data(), morphed.size() * sizeof(rhi::SkinnedVertex));
 }
 
@@ -211,17 +217,18 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             }
         }
         if (!state) continue;  // more than 256 animated objects: the rest stay still
-        update_morphs(*state, *mesh, *model);
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
 
         // Animation Graph: states, blend spaces and crossfades pick the clips.
         if (const anim::AnimGraph* graph = mesh->anim_graph[0] ? cache.graph(mesh->anim_graph) : nullptr) {
             const ClipSet* set = cache.clips(mesh->mesh, graph->animation[0] ? graph->animation : mesh->animation);
-            anim::BlendInput inputs[anim::kMaxBlendInputs];
+            anim::BlendInput* inputs = state->inputs;
             const u32 n = anim::step_graph(*graph, set ? set->clips : nullptr, set ? set->count : 0, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
+            state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
             apply_ik(world, *state, *model->model);
+            update_morphs(*state, *mesh, *model);
             // Notifies follow the strongest clip (a blend space's feet are in step, so one is enough).
             u32 best = 0;
             for (u32 k = 1; k < n; ++k) {
@@ -244,6 +251,11 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         if (clip && mesh->playing) state->time += dt * mesh->play_rate;
         state->pose.sample(*model->model, clip, state->time, mesh->looping);
         apply_ik(world, *state, *model->model);
+        f32 ratio = clip && clip->duration > 0.0f ? state->time / clip->duration : 0.0f;  // as Pose::sample does
+        ratio = mesh->looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
+        state->inputs[0] = {clip, ratio, 1.0f};
+        state->input_count = clip ? 1 : 0;
+        update_morphs(*state, *mesh, *model);
 
         // Notifies whose time this frame's advance crossed (wrapping when looping).
         if (!sounds || !clip || clip->duration <= 0.0f || state->time == before) continue;

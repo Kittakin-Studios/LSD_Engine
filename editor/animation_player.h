@@ -47,6 +47,8 @@ private:
         anim::GraphState graph;
         u32 notify_clip = ~0u;  // graph: the strongest clip last frame and where it was
         f32 notify_ratio = 0.0f;
+        anim::BlendInput inputs[anim::kMaxBlendInputs];  // what was sampled this frame (morph curves follow it)
+        u32 input_count = 0;
         rhi::BufferHandle morphed;  // bind pose + morph targets, rebuilt when the weights change
         u64 morph_key = 0;
         bool used = false;

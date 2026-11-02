@@ -534,7 +534,9 @@ at the object when the clip passes that time in Play.
 with the rigged FBX. The Mesh Editor lists them under **Morph Targets**: click one to preview it
 (the slider sets the preview weight) and its name is copied. On the Skeletal Mesh, add rows to
 **Morphs** (name + weight 0..1), or from a script `lsd.set_morph(e, "Smile", 0.7)` / the **Set Morph
-Target** node (on a Character it finds the mesh below it). Several targets with the same name (head,
+Target** node (on a Character it finds the mesh below it). Shape keys animated in the FBX takes
+(facial animation) play with the clip, blended like the bones; a **Morphs** row with the same name
+overrides the clip. Several targets with the same name (head,
 teeth, brows) move together. Shapes are mixed on the CPU when a weight changes, so animate a few
 faces at a time, not crowds.
 
