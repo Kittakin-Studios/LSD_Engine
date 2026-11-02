@@ -19,7 +19,7 @@
 //   lsd.input(action) -> x, y             value of an Input Action, by asset name
 //   lsd.pressed(action)                   true on the frame the action fires (its Trigger: pressed, hold, tap...)
 //   lsd.log_error(...)                    print as an error
-//   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset or built-in shape ("Cube") by name; nil if none
+//   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset, particle system or built-in shape ("Cube") by name; nil if none
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
 //   lsd.sphere_trace(x1, y1, z1, x2, y2, z2, radius) -> e, px, py, pz, nx, ny, nz   a sphere swept from 1 to 2
 //   lsd.box_trace(x1, y1, z1, x2, y2, z2, hx, hy, hz)  /  lsd.capsule_trace(..., radius, half_height)   the same

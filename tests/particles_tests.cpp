@@ -71,6 +71,27 @@ int main() {
         CHECK(n == 6);
         CHECK(fx.build_sprites(s3, 0, at, {0, -10, 0}, {1, 0, 0}, {0, 0, 1}, v, 5) == 0);  // no room for a whole sprite
     }
+    {  // Over-life keys: size puffs up then shrinks (keys out of order on purpose); colour through three keys.
+        particles::ParticleEmitter k;
+        k.size_start = 2.0f;
+        k.size_over_life.count = 3;
+        k.size_over_life[0] = {1.0f, 0.0f};
+        k.size_over_life[1] = {0.0f, 0.5f};
+        k.size_over_life[2] = {0.25f, 1.5f};
+        CHECK(std::fabs(particles::size_at(k, 0.0f) - 1.0f) < 1e-5f);    // 0.5 x 2
+        CHECK(std::fabs(particles::size_at(k, 0.25f) - 3.0f) < 1e-5f);   // the peak
+        CHECK(std::fabs(particles::size_at(k, 0.625f) - 1.5f) < 1e-5f);  // half-way down from 1.5 to 0
+        CHECK(std::fabs(particles::size_at(k, 1.0f)) < 1e-5f);
+        k.color_over_life.count = 3;
+        k.color_over_life[0] = {0.0f, {1, 1, 1, 1}};
+        k.color_over_life[1] = {0.5f, {1, 0.5f, 0, 1}};
+        k.color_over_life[2] = {1.0f, {0.2f, 0.2f, 0.2f, 0}};
+        const LinearColor mid = particles::color_at(k, 0.25f), late = particles::color_at(k, 0.75f);
+        CHECK(std::fabs(mid.g - 0.75f) < 1e-5f && std::fabs(mid.b - 0.5f) < 1e-5f);
+        CHECK(std::fabs(late.r - 0.6f) < 1e-5f && std::fabs(late.a - 0.5f) < 1e-5f);
+        particles::ParticleEmitter plain;  // no keys: start -> end as before
+        CHECK(std::fabs(particles::size_at(plain, 0.5f) - 0.3f) < 1e-5f && std::fabs(particles::color_at(plain, 0.5f).a - 0.5f) < 1e-5f);
+    }
     if (g_failures == 0) std::printf("All particle tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

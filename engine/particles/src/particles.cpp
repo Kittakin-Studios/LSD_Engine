@@ -128,6 +128,44 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
     }
 }
 
+namespace {
+
+// Where `t` falls between keys a and b of a time-sorted list: the pair and the blend between them.
+template <typename Key, u32 N>
+void bracket(const List<Key, N>& keys, f32 t, u32& a, u32& b, f32& blend) {
+    i32 before = -1, after = -1;  // the latest key at or before t, the earliest after it (any order)
+    for (u32 i = 0; i < keys.count; ++i) {
+        const f32 k = keys[i].time;
+        if (k <= t && (before < 0 || k >= keys[static_cast<u32>(before)].time)) before = static_cast<i32>(i);
+        if (k > t && (after < 0 || k < keys[static_cast<u32>(after)].time)) after = static_cast<i32>(i);
+    }
+    a = static_cast<u32>(before >= 0 ? before : after);  // before the first / after the last key: hold it
+    b = static_cast<u32>(after >= 0 ? after : before);
+    blend = before >= 0 && after >= 0 ? (t - keys[a].time) / (keys[b].time - keys[a].time) : 0.0f;
+}
+
+} // namespace
+
+f32 size_at(const ParticleEmitter& e, f32 t) {
+    if (e.size_over_life.count == 0) return e.size_start + (e.size_end - e.size_start) * t;
+    u32 a, b;
+    f32 k;
+    bracket(e.size_over_life, t, a, b, k);
+    return e.size_start * (e.size_over_life[a].value + (e.size_over_life[b].value - e.size_over_life[a].value) * k);
+}
+
+LinearColor color_at(const ParticleEmitter& e, f32 t) {
+    LinearColor from = e.color_start, to = e.color_end;
+    f32 k = t;
+    if (e.color_over_life.count) {
+        u32 a, b;
+        bracket(e.color_over_life, t, a, b, k);
+        from = e.color_over_life[a].color;
+        to = e.color_over_life[b].color;
+    }
+    return {from.r + (to.r - from.r) * k, from.g + (to.g - from.g) * k, from.b + (to.b - from.b) * k, from.a + (to.a - from.a) * k};
+}
+
 u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, Vec3 right, Vec3 up,
                                     rhi::ParticleVertex* out, u32 capacity) const {
     if (emitter >= system.emitters.count || emitter >= kMaxEmitters) return 0;
@@ -148,9 +186,9 @@ u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, c
     for (u32 i = 0; i < n; ++i) {
         const Particle& p = s.particles[order[i]];
         const f32 t = p.lifetime > 0.0f ? p.age / p.lifetime : 1.0f;
-        const f32 half = 0.5f * (e.size_start + (e.size_end - e.size_start) * t);
-        const f32 color[4] = {e.color_start.r + (e.color_end.r - e.color_start.r) * t, e.color_start.g + (e.color_end.g - e.color_start.g) * t,
-                              e.color_start.b + (e.color_end.b - e.color_start.b) * t, e.color_start.a + (e.color_end.a - e.color_start.a) * t};
+        const f32 half = 0.5f * size_at(e, t);
+        const LinearColor lc = color_at(e, t);
+        const f32 color[4] = {lc.r, lc.g, lc.b, lc.a};
         const Vec3 centre = e.local_space ? transform_point(world, p.position) : p.position;
         const f32 c = std::cos(radians(p.rotation)), sn = std::sin(radians(p.rotation));
         const Vec3 x = (right * c + up * sn) * half;

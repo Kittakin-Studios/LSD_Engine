@@ -847,20 +847,24 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     }
 }
 
-// A prefab, mesh asset or built-in shape by name, placed at `position` (world objects only).
+// A prefab, mesh asset, particle system or built-in shape by name, placed at `position` (world objects only).
 world::Entity PlaySession::create_spawn(world::World& world, const char* name, Vec3 position) {
     const asset::AssetRecord* prefab = find_asset(asset::AssetType::Prefab, name);
     const asset::AssetRecord* mesh_asset = prefab ? nullptr : find_asset(asset::AssetType::Mesh, name);
+    const asset::AssetRecord* effect = prefab || mesh_asset ? nullptr : find_asset(asset::AssetType::Data, name);
+    if (effect && std::strcmp(effect->data_type, "ParticleSystem") != 0) effect = nullptr;
     char key[40];
     if (mesh_asset) asset::to_string(mesh_asset->guid, key);
     else std::snprintf(key, sizeof key, "%s", name);  // built-in shapes: Cube, Sphere...
-    if (!prefab && !meshes_->get(key)) return {};
+    if (!prefab && !effect && !meshes_->get(key)) return {};
 
     char unique[64];
     world.unique_name(name, unique, sizeof unique);
     const world::Entity e = world.create(unique);
     world.get<world::Transform>(e)->position = position;
-    if (prefab) {
+    if (effect) {  // an explosion or a puff of dust at a point (Unreal's Spawn System at Location)
+        asset::to_string(effect->guid, world.add<world::ParticleEffect>(e)->system);
+    } else if (prefab) {
         asset::to_string(prefab->guid, world.add<world::PrefabInstance>(e)->prefab);
         char path[300];
         registry_->source_path(*prefab, path, sizeof path);

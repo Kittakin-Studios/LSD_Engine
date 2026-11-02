@@ -593,7 +593,10 @@ Unreal's Sequencer, the basics. Content Browser > New Data Asset > **Timeline**,
 **New Data Asset > Particle System** (Unreal's Niagara System), up to 8 emitters each with: spawn
 rate, burst, duration and looping, lifetime, shape (point, sphere, box), direction and cone spread,
 speed, gravity, wind, drag, start / end colour and size, spin, texture (or a soft dot), Alpha or
-Additive blending, local or world space.
+Additive blending, local or world space. **Over Life** (Niagara's Scale Sprite Size / Scale Color):
+add **Size Over Life** keys (time 0..1 through the life, times Size Start) to puff up then shrink,
+and **Color Over Life** keys for fire-to-smoke colour ramps; they replace the start / end blend.
+From a script, `lsd.spawn("PS_Explosion", x, y, z)` puts one at a point.
 
 Double-click it to open the **Particle Editor**: a preview (orbit with the mouse), play / pause /
 restart, speed, a timeline to scrub and per-emitter particle counts. Edit in Details; the preview
@@ -795,7 +798,7 @@ Objects and transforms
 | `lsd.name(e)`, `lsd.alive(e)`, `lsd.destroy(e)` | |
 | `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres |
 | `lsd.rotation(e)` / `lsd.set_rotation(e, x, y, z)` | local rotation, degrees |
-| `lsd.spawn(name, x, y, z)` | a prefab, mesh asset or shape ("Cube"); the new entity |
+| `lsd.spawn(name, x, y, z)` | a prefab, mesh asset, particle system (an explosion at a point) or shape ("Cube"); the new entity |
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |
 | `lsd.has_any_tag(e, "A, B")` / `has_all_tags` / `has_no_tag` | several tags at once (Has Any Tag / Has All Tags nodes) |

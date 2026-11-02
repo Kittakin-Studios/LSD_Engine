@@ -75,7 +75,7 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "__addrot($1, $2)", {}},
     {"SetColor", "Set Color", "Rendering", "Recolours an object's Static Mesh (r, g, b from 0 to 1)", {kExecIn, kTarget, {"Color", PinType::Vector, "1,0,0"}}, 0,
      {kExecOut}, 0, "__color($1, $2)", {}},
-    {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
+    {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh, particle system or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
     // ---- Camera ----
     {"SetViewTarget", "Set View Target with Blend", "Camera", "Looks through an object's Camera (unconnected: this object's), blending over Blend Time seconds; Set View Target to Player goes back",

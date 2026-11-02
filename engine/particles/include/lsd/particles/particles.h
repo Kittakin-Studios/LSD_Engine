@@ -11,6 +11,22 @@
 
 namespace lsd::particles {
 
+// A point on an over-life curve: at `time` (0 = birth, 1 = death) the value is `value`; straight
+// lines between points, the first / last value held before / after them.
+LSD_STRUCT()
+struct LifeKey {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = birth, 1 = death") f32 time = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "Times Size Start") f32 value = 1.0f;
+};
+
+LSD_STRUCT()
+struct LifeColorKey {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = birth, 1 = death") f32 time = 0.0f;
+    LSD_PROPERTY(Edit) LinearColor color = {1.0f, 1.0f, 1.0f, 1.0f};
+};
+
 LSD_STRUCT()
 struct ParticleEmitter {
     LSD_GENERATED()
@@ -43,6 +59,11 @@ struct ParticleEmitter {
     LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 size_start = 0.2f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 size_end = 0.4f;
     LSD_PROPERTY(Edit, Units = "deg/s", Min = 0, Tooltip = "Sprites spin at a random speed up to this, either way") f32 spin = 0.0f;
+    // Over life (Niagara's Scale Sprite Size / Scale Color): when set, these replace the start -> end blend.
+    LSD_PROPERTY(Edit, Category = "Over Life", Tooltip = "Size over the particle's life, times Size Start (puff up then shrink...); empty = Start to End")
+    List<LifeKey, 8> size_over_life;
+    LSD_PROPERTY(Edit, Category = "Over Life", Tooltip = "Colour and opacity over life (fire: white, yellow, orange, smoke); empty = Start to End")
+    List<LifeColorKey, 8> color_over_life;
     LSD_PROPERTY(Edit, Tooltip = "Particles move with the object (a torch carried around) instead of staying where they were born (a smoke trail)")
     bool local_space = false;
 };
@@ -55,7 +76,11 @@ struct ParticleSystem {
     LSD_GENERATED()
     LSD_PROPERTY(Edit) List<ParticleEmitter, 8> emitters;
 };
-// shortcut: start -> end colour / size only; add Curve assets over life, collision, mesh and ribbon renderers next.
+// shortcut: over-life keys are straight lines, no curve tangents; collision, mesh and ribbon renderers next.
+
+// A particle's size and colour at `t` (0..1 through its life): the over-life keys, else start -> end.
+f32 size_at(const ParticleEmitter& e, f32 t);
+LinearColor color_at(const ParticleEmitter& e, f32 t);
 
 struct Particle {
     Vec3 position;  // local space if the emitter is, else world
