@@ -296,32 +296,36 @@ bool parse_mesh_key(const char* key, Guid& guid, i32& part) {
     return parse_guid(text, guid);
 }
 
-void compute_normals(rhi::MeshVertex* v, usize count, u32 normals, f32 smoothing_angle, Allocator& allocator) {
+void compute_normals(void* vertices, usize count, usize stride, usize position_offset, usize normal_offset, u32 normals, f32 smoothing_angle,
+                     Allocator& allocator) {
     if (normals == kNormalsImport || count < 3) return;
+    u8* base = static_cast<u8*>(vertices);
+    auto position = [&](usize i) { return reinterpret_cast<const f32*>(base + i * stride + position_offset); };
     const usize faces = count / 3;
     Array<Vec3> face(allocator);  // area-weighted (unnormalised) face normals
     face.resize(faces);
     for (usize f = 0; f < faces; ++f) {
-        const f32* a = v[f * 3].position;
-        const f32* b = v[f * 3 + 1].position;
-        const f32* c = v[f * 3 + 2].position;
+        const f32* a = position(f * 3);
+        const f32* b = position(f * 3 + 1);
+        const f32* c = position(f * 3 + 2);
         face[f] = cross(Vec3{b[0] - a[0], b[1] - a[1], b[2] - a[2]}, Vec3{c[0] - a[0], c[1] - a[1], c[2] - a[2]});
     }
-    auto store = [](rhi::MeshVertex& out, Vec3 n) {
+    auto store = [&](usize i, Vec3 n) {
         const f32 len = length(n);
         n = len > 0.0f ? n * (1.0f / len) : Vec3{0, 0, 1};
-        out.normal[0] = n.x;
-        out.normal[1] = n.y;
-        out.normal[2] = n.z;
+        f32* out = reinterpret_cast<f32*>(base + i * stride + normal_offset);
+        out[0] = n.x;
+        out[1] = n.y;
+        out[2] = n.z;
     };
     if (normals == kNormalsFlat) {
-        for (usize i = 0; i < faces * 3; ++i) store(v[i], face[i / 3]);
+        for (usize i = 0; i < faces * 3; ++i) store(i, face[i / 3]);
         return;
     }
     // Corners grouped by position (counting sort on the position remap).
     Array<u32> remap(allocator), start(allocator), order(allocator);
     remap.resize(count);
-    meshopt_generatePositionRemap(remap.data(), v[0].position, count, sizeof(rhi::MeshVertex));
+    meshopt_generatePositionRemap(remap.data(), position(0), count, stride);
     start.resize(count + 1);
     for (usize i = 0; i <= count; ++i) start[i] = 0;
     for (usize i = 0; i < faces * 3; ++i) ++start[remap[i] + 1];
@@ -345,7 +349,7 @@ void compute_normals(rhi::MeshVertex* v, usize count, u32 normals, f32 smoothing
             }
             sum = sum + other;
         }
-        store(v[i], sum);
+        store(i, sum);
     }
 }
 

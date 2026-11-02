@@ -3901,12 +3901,19 @@ void draw_asset_grid(EditorState& s) {
             char key[33];
             asset::to_string(r.guid, key);
             thumbnail = s.device->debug_ui_texture(s.textures->get(key, true));
-        } else if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Sound) && s.thumbnails) {
+        } else if (s.thumbnails && ThumbnailCache::has_thumbnail(r)) {
             thumbnail = s.thumbnails->get(r.guid);
         }
+        // Code assets: a dark tile with what they are in large white letters.
+        const char* code_label = r.type == asset::AssetType::BehaviorTree ? "BT" : r.type == asset::AssetType::Script ? ".Lua" : nullptr;
         if (thumbnail) {
             const bool flip = s.thumbnails->flipped();
             dl->AddImage(ImTextureRef(static_cast<ImTextureID>(thumbnail)), lo, hi, ImVec2(0, flip ? 1.0f : 0.0f), ImVec2(1, flip ? 0.0f : 1.0f));
+        } else if (code_label) {
+            dl->AddRectFilled(lo, hi, IM_COL32(22, 22, 26, 255), 4.0f);
+            const f32 font_size = (hi.y - lo.y) * 0.32f;
+            const ImVec2 text = ImGui::GetFont()->CalcTextSizeA(font_size, FLT_MAX, 0.0f, code_label);
+            dl->AddText(ImGui::GetFont(), font_size, ImVec2((lo.x + hi.x - text.x) * 0.5f, (lo.y + hi.y - text.y) * 0.5f), IM_COL32(255, 255, 255, 255), code_label);
         } else {  // still rendering (or no thumbnail for this type): type badge
             dl->AddRectFilled(lo, hi, u32_color(level ? t.details_tab : t.outline_row_b), 4.0f);
             const char* badge = r.type == asset::AssetType::Data && r.data_type[0] ? r.data_type : asset::to_string(r.type);

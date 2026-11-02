@@ -178,6 +178,11 @@ recompile on their own; select an asset to change its import settings in Details
 you export to. Every time you export there (FBX, textures, sounds), the editor copies the file into
 `Content/LiveLink/` and it reloads in the level, also while playing.
 
+**Thumbnails**: meshes show themselves; Materials, Material Instances and Material Graphs show a
+sphere wearing them (colour, textures, a graph's shader); textures show the image and sounds their
+waveform; Behavior Trees and Lua scripts are dark tiles reading **BT** and **.Lua**. They update when
+the asset's file changes.
+
 **Browsing**: **List** / **Tiles** and the size slider change the view; the sort menu orders by name,
 type, last change or size. Ctrl-click and Shift-click select several assets (then right-click:
 Delete Selected, Reimport, Add to Collection). Right-click a folder > **Add to Favourites**; right-
@@ -524,9 +529,10 @@ Table, Curve), Audio, Animation, AI, UI, Save Game, Utilities (Print String, Gam
 
 **Mesh Editor**: double-click a mesh. Drag the preview to turn it (wheel: zoom); the side shows its
 size, triangles and LODs, and its import settings (Save / Reimport). **Normals** sets the shading
-(Blender's Shade Smooth / Flat / Auto Smooth): Import keeps the file's, Smooth averages across every
-face (by topology, so UV seams do not show), Flat gives faceted faces, Auto Smooth keeps edges
-sharper than **Smoothing Angle** hard. Meshes of 512+ triangles get
+(Blender's Shade Smooth / Flat / Auto Smooth). Every mesh, static or rigged, is **Smooth** by
+default (averaged across faces by topology, so UV seams do not show); **Solid (Flat)** gives
+faceted faces, **Import** keeps the file's normals, **Auto Smooth** keeps edges sharper than
+**Smoothing Angle** hard. Meshes of 512+ triangles get
 up to three simpler LODs; **LOD 1 / 2 / 3 Screen Size** (Unreal's LOD Screen Size) set how small the
 mesh must look before each takes over (larger = sooner). Shadows use the LOD the camera sees. A
 Static Mesh's **Max Draw Distance** hides it (and its shadow) beyond that distance; a **Cull Distance

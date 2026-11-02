@@ -10,6 +10,8 @@
 
 namespace lsd::editor {
 
+class MaterialCache;
+
 class ThumbnailCache {
 public:
     ThumbnailCache(rhi::Device& device, Allocator& allocator, const asset::AssetRegistry& registry, const char* data_dir);
@@ -21,6 +23,10 @@ public:
     // Re-queued automatically when the source file changes.
     u64 get(asset::Guid guid);
     bool flipped() const { return device_.render_targets_flipped(); }
+    // Materials, Material Instances and Material Graphs render as a sphere wearing them.
+    void set_materials(MaterialCache* materials) { materials_ = materials; }
+    // Which assets get a picture (the others show a badge in the Content Browser).
+    static bool has_thumbnail(const asset::AssetRecord& record);
 
     // Renders up to `budget` queued thumbnails, then switches back to the window.
     // Call between begin_frame and the viewport's draws.
@@ -45,6 +51,7 @@ private:
     std::string cache_path(asset::Guid guid, i64 source_time) const;
 
     rhi::Device& device_;
+    MaterialCache* materials_ = nullptr;
     Allocator& allocator_;
     const asset::AssetRegistry& registry_;
     char data_dir_[256];

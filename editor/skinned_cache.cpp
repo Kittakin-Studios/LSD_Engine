@@ -68,7 +68,7 @@ bool SkinnedCache::load(SkinnedEntry& e) {
     registry_.load_meta(*r, meta);
     if (!e.model) e.model = new anim::SkinnedModel(default_allocator());
     char error[256];
-    if (!anim::import_skinned(path, meta.import_scale, *e.model, error, sizeof error)) return false;  // a static mesh: not ours
+    if (!anim::import_skinned(path, meta.import_scale, *e.model, error, sizeof error, meta.normals, meta.smoothing_angle)) return false;  // a static mesh: not ours
     e.vertices = device_.create_buffer(rhi::BufferUsage::Vertex, e.model->vertices.data(), e.model->vertices.size() * sizeof(rhi::SkinnedVertex));
     e.indices = device_.create_buffer(rhi::BufferUsage::Index, e.model->indices.data(), e.model->indices.size() * sizeof(u32));
     e.index_count = static_cast<u32>(e.model->indices.size());

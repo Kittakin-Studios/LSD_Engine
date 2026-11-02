@@ -1,5 +1,7 @@
 #include "thumbnails.h"
 
+#include "material_cache.h"
+
 #include "lsd/asset/mesh_import.h"
 #include "lsd/audio/audio.h"
 #include "lsd/asset/texture.h"
@@ -147,14 +149,27 @@ bool ThumbnailCache::draw_waveform(Entry& entry, const asset::AssetRecord& recor
            load_cached(entry, entry.source_time);
 }
 
+bool ThumbnailCache::has_thumbnail(const asset::AssetRecord& r) {
+    const bool material = r.type == asset::AssetType::MaterialGraph ||
+                          (r.type == asset::AssetType::Data && (std::strcmp(r.data_type, "Material") == 0 || std::strcmp(r.data_type, "MaterialInstance") == 0));
+    return r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Sound || material;
+}
+
 bool ThumbnailCache::render_one(Entry& entry, const f32 background[4]) {
     const asset::AssetRecord* record = registry_.find(entry.guid);
-    if (!record || record->type != asset::AssetType::Mesh) return false;
-    char compiled[300];
-    if (!asset::compile_mesh_asset(registry_, *record, data_dir_, allocator_, compiled, sizeof compiled)) return false;
+    if (!record || !has_thumbnail(*record) || record->type == asset::AssetType::Sound) return false;
+    const bool material = record->type != asset::AssetType::Mesh;
+    if (material && !materials_) return false;
     render::MeshData data;
     asset::MeshBounds bounds;
-    if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
+    if (material) {  // a sphere wearing it
+        data = render::make_sphere(allocator_);
+        bounds = asset::compute_bounds(data);
+    } else {
+        char compiled[300];
+        if (!asset::compile_mesh_asset(registry_, *record, data_dir_, allocator_, compiled, sizeof compiled)) return false;
+        if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
+    }
     const render::GpuMesh mesh = render::upload_mesh(device_, data);
     render::free_mesh(allocator_, data);
     temporaries_.push_back(mesh);  // the GPU reads it this frame; freed next frame
@@ -190,7 +205,13 @@ bool ThumbnailCache::render_one(Entry& entry, const f32 background[4]) {
     draw.camera_position[1] = eye.y;
     draw.camera_position[2] = eye.z;
     const f32 grey[4] = {0.75f, 0.75f, 0.75f, 1.0f};
-    std::memcpy(draw.color, grey, sizeof grey);
+    const f32 white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    std::memcpy(draw.color, material ? white : grey, sizeof grey);
+    if (material) {
+        char guid[33];
+        asset::to_string(entry.guid, guid);
+        materials_->apply(guid, draw);  // base colour, textures, metallic / roughness, a graph's shader
+    }
     device_.draw_mesh(draw);
     return true;
 }

@@ -5,6 +5,8 @@
 #include "lsd/foundation/math.h"
 #include "lsd/render/mesh.h"
 
+#include <cstddef>
+
 namespace lsd::asset {
 
 struct MeshBounds {
@@ -32,16 +34,22 @@ struct MeshPart {
 // orders triangles for the GPU vertex cache. Writes a reason into `error` on failure.
 // `part` >= 0 imports only that part (list_mesh_parts order) in its node's own space: place it with
 // the part's position / rotation / scale to line up with the others.
-// Normals (Blender's Shade Smooth / Flat / Auto Smooth): 0 keeps the file's, 1 smooth, 2 flat,
-// 3 smooth except across edges sharper than `smoothing_angle` degrees.
+// Normals (Blender's Shade Smooth / Flat / Auto Smooth): 0 keeps the file's, 1 smooth (the default
+// for every mesh), 2 solid (flat faces), 3 smooth except across edges sharper than `smoothing_angle`.
 enum MeshNormals : u32 { kNormalsImport = 0, kNormalsSmooth = 1, kNormalsFlat = 2, kNormalsAutoSmooth = 3 };
 bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part = -1,
-                 u32 normals = kNormalsImport, f32 smoothing_angle = 30.0f);
+                 u32 normals = kNormalsSmooth, f32 smoothing_angle = 30.0f);
 
-// Recomputes the normals of an unindexed triangle list (3 vertices a triangle) as `normals` asks.
-// Smoothing follows the topology: corners at the same position share, whatever their UVs, so UV
-// seams leave no shading seams. Area-weighted.
-void compute_normals(rhi::MeshVertex* triangles, usize vertex_count, u32 normals, f32 smoothing_angle, Allocator& allocator);
+// Recomputes the normals of an unindexed triangle list (3 vertices a triangle) as `normals` asks,
+// for any vertex layout (positions and normals as 3 floats at those byte offsets). Smoothing follows
+// the topology: corners at the same position share, whatever their UVs, so UV seams leave no
+// shading seams. Area-weighted.
+void compute_normals(void* triangles, usize vertex_count, usize stride, usize position_offset, usize normal_offset, u32 normals, f32 smoothing_angle,
+                     Allocator& allocator);
+inline void compute_normals(rhi::MeshVertex* triangles, usize vertex_count, u32 normals, f32 smoothing_angle, Allocator& allocator) {
+    compute_normals(triangles, vertex_count, sizeof(rhi::MeshVertex), offsetof(rhi::MeshVertex, position), offsetof(rhi::MeshVertex, normal), normals,
+                    smoothing_angle, allocator);
+}
 
 // The parts import_mesh can import one by one, in order.
 bool list_mesh_parts(const char* path, Array<MeshPart>& out, char* error, usize error_capacity);

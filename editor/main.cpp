@@ -1159,6 +1159,7 @@ int main(int argc, char** argv) {
     state.history = &history;
     state.meshes = &meshes;
     state.thumbnails = &thumbnails;
+    thumbnails.set_materials(&materials);
     if (!game_mode) lsd::editor::source_control::start();  // Git badges in the Content Browser
     state.textures = texture_cache;
     state.skinned = skinned_cache;

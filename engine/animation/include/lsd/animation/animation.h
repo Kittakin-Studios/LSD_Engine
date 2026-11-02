@@ -44,7 +44,8 @@ struct SkinnedModel {
 
 // Reads an FBX with a skinned mesh. Meshes without a skin follow the root. False + `error` if the
 // file has no skeleton or cannot be read.
-bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity);
+// `normals` / `smoothing_angle`: as the mesh import settings (asset::MeshNormals; 1 = smooth).
+bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity, u32 normals = 1, f32 smoothing_angle = 30.0f);
 
 // The bind pose with morph targets mixed in: `weight(name)` for each target (0 = untouched, 1 = the
 // full shape; outside 0..1 exaggerates). Writes model.vertices.size() vertices to `out`, ready to skin.

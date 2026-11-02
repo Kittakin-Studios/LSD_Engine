@@ -119,7 +119,7 @@ static void test_blender_fbx(const fs::path& root) {
     render::MeshData mesh;
     asset::MeshBounds bounds;
     CHECK(asset::load_compiled_mesh(compiled, heap, mesh, &bounds));
-    CHECK(mesh.vertex_count > 100 && mesh.index_count % 3 == 0 && mesh.index_count > mesh.vertex_count);
+    CHECK(mesh.vertex_count == 42 && mesh.index_count == 240);  // an 80-face icosphere: smooth by default welds it to its 42 points
     for (int k = 0; k < 3; ++k) {
         CHECK(std::fabs(bounds.min[k] + 1.0f) < 0.05f);
         CHECK(std::fabs(bounds.max[k] - 1.0f) < 0.05f);

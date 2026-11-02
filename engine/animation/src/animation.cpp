@@ -1,5 +1,6 @@
 #include "lsd/animation/animation.h"
 
+#include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/log.h"
 
 #include <ozz/animation/offline/animation_builder.h>
@@ -101,7 +102,7 @@ i32 SkinnedModel::find_joint(const char* name) const {
     return -1;
 }
 
-bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity) {
+bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity, u32 normals, f32 smoothing_angle) {
     ufbx_scene* scene = load_scene(path, error, error_capacity);
     if (!scene) return false;
     // Joints: every bone a skin uses, and their parents up to the scene root (which carries the
@@ -283,6 +284,8 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
         }
     }
     if (out.bounds_min.x > out.bounds_max.x) out.bounds_min = out.bounds_max = {};
+    asset::compute_normals(out.vertices.data(), out.vertices.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position),
+                           offsetof(rhi::SkinnedVertex, normal), normals, smoothing_angle, out.vertices.allocator());
     if (out.vertices.size() > 0 && joints > 255) LSD_LOG_WARN("anim", "%s: %u joints; vertices can only use the first 256", path, joints);
     ufbx_free_scene(scene);
     return !out.vertices.empty();

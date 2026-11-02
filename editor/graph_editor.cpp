@@ -83,6 +83,7 @@ struct GraphWindow {
     f32 preview_params[16][4] = {};
     u32 preview_param_count = 0;
     std::string preview_source;  // the graph as text when last compiled
+    std::string preview_code;    // the shader code the preview shader was built from
     u64 changed_at = 0;          // ms; 0 = up to date
     bool preview_cube = false;
     char preview_error[256] = "";
@@ -710,36 +711,45 @@ void draw_palette(GraphWindow& w) {
     for (char& c : needle) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     u32 count = 0;
     const NodeDef* defs = script::node_defs(count, w.kind);
-    const char* category = "";
-    bool open = false;
+    // Categories in order of first appearance, each listing all of its nodes (the library is not grouped).
+    std::vector<const char*> categories;
     for (u32 i = 0; i < count; ++i) {
-        const NodeDef& d = defs[i];
-        std::string title = d.title;
-        for (char& c : title) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (!needle.empty() && title.find(needle) == std::string::npos) continue;
-        if (std::strcmp(category, d.category) != 0) {
-            if (open) ImGui::TreePop();
-            category = d.category;
-            open = ImGui::TreeNodeEx(category, needle.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen);
-        }
-        if (!open) continue;
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(d.title, false, ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            const ImVec2 at = view_centre(w);
-            if (GraphNode* n = w.graph->add(d.id, at.x, at.y)) focus_node(w, *n);
-            w.dirty = true;
-        }
-        if (d.tooltip[0]) ImGui::SetItemTooltip("%s", d.tooltip);
-        if (ImGui::BeginDragDropSource()) {
-            char payload[32];
-            std::snprintf(payload, sizeof payload, "%s", d.id);
-            ImGui::SetDragDropPayload(kNodePayload, payload, sizeof payload);
-            ImGui::TextUnformatted(d.title);
-            ImGui::EndDragDropSource();
-        }
-        ImGui::PopID();
+        bool seen = false;
+        for (const char* c : categories) seen = seen || std::strcmp(c, defs[i].category) == 0;
+        if (!seen) categories.push_back(defs[i].category);
     }
-    if (open) ImGui::TreePop();
+    for (const char* category : categories) {
+        bool open = false;
+        bool header = false;
+        for (u32 i = 0; i < count; ++i) {
+            const NodeDef& d = defs[i];
+            if (std::strcmp(d.category, category) != 0) continue;
+            std::string title = d.title;
+            for (char& c : title) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (!needle.empty() && title.find(needle) == std::string::npos) continue;
+            if (!header) {
+                header = true;
+                open = ImGui::TreeNodeEx(category, needle.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen);
+            }
+            if (!open) continue;
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Selectable(d.title, false, ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                const ImVec2 at = view_centre(w);
+                if (GraphNode* n = w.graph->add(d.id, at.x, at.y)) focus_node(w, *n);
+                w.dirty = true;
+            }
+            if (d.tooltip[0]) ImGui::SetItemTooltip("%s", d.tooltip);
+            if (ImGui::BeginDragDropSource()) {
+                char payload[32];
+                std::snprintf(payload, sizeof payload, "%s", d.id);
+                ImGui::SetDragDropPayload(kNodePayload, payload, sizeof payload);
+                ImGui::TextUnformatted(d.title);
+                ImGui::EndDragDropSource();
+            }
+            ImGui::PopID();
+        }
+        if (open) ImGui::TreePop();
+    }
 }
 
 void draw_side_panel(GraphWindow& w) {
@@ -926,6 +936,7 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     w.wiring = false;
     w.message[0] = '\0';
     w.preview_source.clear();  // a new graph: preview it straight away
+    w.preview_code.clear();
     w.preview_error[0] = '\0';
     ImGui::SetWindowFocus("###VisualScript");
 }
@@ -946,13 +957,20 @@ void update_preview(EditorState& s, GraphWindow& w) {
     w.device = s.device;
     script::MaterialCode code(default_allocator());
     if (!script::compile_material_graph(*w.graph, code, w.preview_error, sizeof w.preview_error)) return;
-    const rhi::MaterialShaderHandle shader = s.device->create_material_shader(code.code.data());
-    if (!shader.valid()) {
-        std::snprintf(w.preview_error, sizeof w.preview_error, "The shader did not compile: see the Output Log");
-        return;
+    // Building a shader stalls the editor (D3D12 compiles every pipeline variant), so only when the
+    // generated code changed: moving nodes, comments and parameter values (a constant buffer) do not.
+    if (!w.preview_shader.valid() || w.preview_code != code.code.data()) {
+        const u64 started = SDL_GetTicks();
+        const rhi::MaterialShaderHandle shader = s.device->create_material_shader(code.code.data());
+        if (!shader.valid()) {
+            std::snprintf(w.preview_error, sizeof w.preview_error, "The shader did not compile: see the Output Log");
+            return;
+        }
+        LSD_LOG_INFO("editor", "Material preview rebuilt in %llu ms", static_cast<unsigned long long>(SDL_GetTicks() - started));
+        if (w.preview_shader.valid()) s.device->destroy_material_shader(w.preview_shader);
+        w.preview_shader = shader;
+        w.preview_code = code.code.data();
     }
-    if (w.preview_shader.valid()) s.device->destroy_material_shader(w.preview_shader);
-    w.preview_shader = shader;
     w.preview_error[0] = '\0';
     w.preview_param_count = code.param_count;
     for (u32 i = 0; i < code.param_count; ++i) std::memcpy(w.preview_params[i], code.params[i].value, sizeof w.preview_params[i]);
