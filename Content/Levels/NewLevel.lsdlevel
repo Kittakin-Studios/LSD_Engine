@@ -672,6 +672,66 @@
     },
      "WaterVolume": {
       "enabled": true
+    }},
+    {"id": 14, "name": "Cube3", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -4.72191906,
+        "y": 1.10368919,
+        "z": 1.10000002
+      },
+      "rotation": {
+        "x": 0,
+        "y": 90,
+        "z": 1.20000005
+      },
+      "scale": {
+        "x": 2.1500001,
+        "y": 1.35000002,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "Plane",
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "collision": true,
+      "collision_shape": 0,
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
+    }},
+    {"id": 15, "name": "Decal2", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 6.75284672,
+        "y": 7.43602753,
+        "z": -0.550000012
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 4,
+        "y": 4,
+        "z": 3
+      }
+    },
+     "Decal": {
+      "texture": "",
+      "tint": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+      }
     }}
   ]
 }
