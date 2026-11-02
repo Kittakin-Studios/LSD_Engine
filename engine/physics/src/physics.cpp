@@ -228,6 +228,7 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     settings.mFriction = desc.friction;
     settings.mUserData = impl_->bodies.size();  // our index, for contacts and ray hits
     settings.mRestitution = desc.restitution;
+    if (desc.plane_2d) settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationZ | JPH::EAllowedDOFs::RotationY;
     if (desc.motion == Motion::Dynamic) {
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         settings.mMassPropertiesOverride.mMass = std::fmax(desc.mass, 0.01f);

@@ -11,6 +11,7 @@
 #include "lsd/ui/ui.h"
 #include "navigation.h"
 #include "graph_editor.h"
+#include "paper2d.h"
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
@@ -837,6 +838,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         d.friction = rigid->friction;
         d.restitution = rigid->bounciness;
         d.debris = rigid->collision_preset == 1;
+        d.plane_2d = rigid->lock_2d;
         apply_material(d, rigid->physical_material);
         const u32 body = add_body(e, d);
         simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic};
@@ -847,6 +849,17 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
         apply_material(d, mesh->physical_material);
         add_body(e, d);
+    }
+    if (const auto* sprite = world.get<world::Sprite>(e); sprite && sprite->collision && !cached) {
+        add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));  // the sprite's quad, 1 m deep
+    }
+    if (const auto* map = world.get<world::TileMap>(e); map && map->collision) {  // a box per run of solid tiles in a row
+        static TileRun runs[4096];
+        const u32 count = tile_runs(*map, runs, 4096);
+        for (u32 k = 0; k < count; ++k) {
+            Vec3 run_scale, run_centre;
+            add_body(e, fitted_body(world.world_matrix(e), runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre));
+        }
     }
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
         add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
@@ -1129,7 +1142,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     pitch_ = pitch_ < -1.5f ? -1.5f : pitch_ > 1.5f ? 1.5f : pitch_;
     const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
     const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};
-    Vec3 velocity = ahead * move.y + right * move.x;
+    Vec3 velocity = settings_.side_scroller ? Vec3{move.x, 0, 0} : ahead * move.y + right * move.x;  // 2D: along X only
+    if (settings_.side_scroller && move.x != 0.0f) {  // the player's sprite faces the way it walks
+        if (auto* sprite = world.get<world::Sprite>(character_)) sprite->flip_x = move.x < 0.0f;
+    }
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
@@ -1430,6 +1446,7 @@ void PlaySession::find_view(const world::World& world) {
     view_eye_ = eye_;
     view_forward_ = forward();
     view_fov_ = 0.0f;
+    view_ortho_ = 0.0f;
     const reflect::TypeInfo& camera_type = reflect::type_of<world::Camera>();
     world::Entity camera = view_camera_;
     if (!world.alive(camera) || !world.get<world::Camera>(camera)) {
@@ -1443,6 +1460,7 @@ void PlaySession::find_view(const world::World& world) {
     view_eye_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
     view_forward_ = normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
     view_fov_ = radians(world.get<world::Camera>(camera)->fov);
+    if (const auto* cam = world.get<world::Camera>(camera); cam->orthographic) view_ortho_ = cam->ortho_height;
 }
 
 // shortcut: point tests (the Character's middle, a body's centre), not shape overlaps; use Jolt sensors for big objects.

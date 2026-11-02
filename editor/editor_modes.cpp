@@ -1,5 +1,6 @@
 #include "editor_modes.h"
 
+#include "material_cache.h"
 #include "mesh_cache.h"
 
 #include "lsd/asset/asset_registry.h"
@@ -40,6 +41,7 @@ constexpr ModeInfo kModes[] = {
     {EditorMode::Animation, "Animation Sequence", "Timelines: moves, properties, events, sounds and camera cuts over time (Sequencer)"},
     {EditorMode::Pcg, "PCG", "Volumes that scatter meshes over surfaces by rules (Unreal's PCG)"},
     {EditorMode::Vfx, "VFX", "Particle systems: make, edit and place them (Niagara)"},
+    {EditorMode::Paper2D, "2D", "Sprites, flipbooks and tile maps for 2D games (Unreal's Paper2D)"},
 };
 
 constexpr f32 kPi = 3.14159265f;
@@ -463,6 +465,143 @@ void draw_vfx(EditorState& s) {
     asset_list(s, "ParticleSystem", "No particle systems yet: New Particle System makes one.", true);
 }
 
+// ---- 2D (Paper2D) ----
+
+char g_2d_texture[33] = "";  // the image new sprites / tile maps use
+u32 g_tile = 0;              // the palette's chosen tile (tileset cell)
+
+// The tile map being painted: the selected one, else the first.
+world::TileMap* paint_map(EditorState& s, Entity& owner) {
+    if (s.selected.valid()) {
+        if (auto* map = s.world->get<world::TileMap>(s.selected)) {
+            owner = s.selected;
+            return map;
+        }
+    }
+    const reflect::TypeInfo& type = reflect::type_of<world::TileMap>();
+    if (!s.world->count(type)) return nullptr;
+    owner = s.world->owner(type, 0);
+    return static_cast<world::TileMap*>(s.world->at(type, 0));
+}
+
+void texture_picker(EditorState& s) {
+    const asset::AssetRecord* chosen = nullptr;
+    for (usize i = 0; s.registry && i < s.registry->count(); ++i) {
+        const asset::AssetRecord& r = s.registry->get(i);
+        char guid[33];
+        asset::to_string(r.guid, guid);
+        if (r.type == asset::AssetType::Texture && std::strcmp(guid, g_2d_texture) == 0) chosen = &r;
+    }
+    if (ImGui::BeginCombo("Image", chosen ? chosen->name : "(pick a texture)")) {
+        for (usize i = 0; s.registry && i < s.registry->count(); ++i) {
+            const asset::AssetRecord& r = s.registry->get(i);
+            if (r.type != asset::AssetType::Texture) continue;
+            char guid[33];
+            asset::to_string(r.guid, guid);
+            if (ImGui::Selectable(r.name, std::strcmp(guid, g_2d_texture) == 0)) std::snprintf(g_2d_texture, sizeof g_2d_texture, "%s", guid);
+        }
+        ImGui::EndCombo();
+    }
+}
+
+void draw_2d(EditorState& s) {
+    if (ImGui::Button("2D View")) set_view(s, ViewType::Front);
+    ImGui::SetItemTooltip("Look along +Y without perspective, like a side-on 2D game (H)");
+    ImGui::SeparatorText("New");
+    texture_picker(s);
+    if (ImGui::Button("Sprite")) {
+        const Vec3 at = view_target(s);
+        const Entity e = place_object(s, "Sprite", nullptr, "Sprite", {at.x, 0.0f, at.z});
+        std::snprintf(s.world->get<world::Sprite>(e)->texture, sizeof(world::Sprite::texture), "%s", g_2d_texture);
+    }
+    ImGui::SetItemTooltip("The image on a 1 m quad; a sprite sheet: set Columns / Rows and Frame Count in Details");
+    ImGui::SameLine();
+    if (ImGui::Button("Tile Map")) {
+        const Vec3 at = view_target(s);
+        const Entity e = place_object(s, "Tile Map", nullptr, "TileMap", {at.x, 0.0f, at.z});
+        auto* map = s.world->get<world::TileMap>(e);
+        std::snprintf(map->tileset, sizeof map->tileset, "%s", g_2d_texture);
+        map->tiles.count = 0;
+        for (u32 i = 0; i < map->width * map->height && i < map->tiles.capacity(); ++i) map->tiles.push_back(0);
+    }
+    ImGui::SetItemTooltip("An empty grid using the image as its tileset (set its Columns / Rows in Details), then paint below");
+    Entity owner;
+    world::TileMap* map = paint_map(s, owner);
+    ImGui::SeparatorText("Paint Tiles");
+    if (!map) {
+        hint("Make a Tile Map first.");
+        return;
+    }
+    ImGui::Text("Painting %s", s.world->name(owner));
+    const rhi::TextureHandle tileset = map->tileset[0] && s.textures ? s.textures->get(map->tileset, true) : rhi::TextureHandle{};
+    const u64 image = tileset.valid() && s.device ? s.device->debug_ui_texture(tileset) : 0;
+    if (!image) {
+        hint("Pick the map's Tileset texture in Details.");
+        return;
+    }
+    // The palette: the tileset with its grid; click a tile to paint with it.
+    const f32 width = ImGui::GetContentRegionAvail().x;
+    const ImVec2 size(width, width * static_cast<f32>(map->tileset_rows) / static_cast<f32>(map->tileset_columns ? map->tileset_columns : 1));
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(image)), size);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const f32 cw = size.x / static_cast<f32>(map->tileset_columns), ch = size.y / static_cast<f32>(map->tileset_rows);
+    for (u32 c = 1; c < map->tileset_columns; ++c) dl->AddLine(ImVec2(at.x + cw * c, at.y), ImVec2(at.x + cw * c, at.y + size.y), IM_COL32(0, 0, 0, 90));
+    for (u32 r = 1; r < map->tileset_rows; ++r) dl->AddLine(ImVec2(at.x, at.y + ch * r), ImVec2(at.x + size.x, at.y + ch * r), IM_COL32(0, 0, 0, 90));
+    if (ImGui::IsItemClicked()) {
+        const ImVec2 m = ImGui::GetIO().MousePos;
+        g_tile = static_cast<u32>((m.y - at.y) / ch) * map->tileset_columns + static_cast<u32>((m.x - at.x) / cw);
+    }
+    const u32 col = g_tile % map->tileset_columns, row = g_tile / map->tileset_columns;
+    dl->AddRect(ImVec2(at.x + cw * col, at.y + ch * row), ImVec2(at.x + cw * (col + 1), at.y + ch * (row + 1)), IM_COL32(255, 230, 30, 255), 0.0f, 0, 2.0f);
+    hint("LMB paints the chosen tile on the map in the viewport, Shift+LMB erases. Use the 2D View.");
+}
+
+// The viewport brush in 2D: the tile under the mouse on the painted map's plane.
+bool tile_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
+    static bool stroke = false;
+    const ImGuiIO& io = ImGui::GetIO();
+    Entity owner;
+    world::TileMap* map = paint_map(s, owner);
+    if (!map || io.KeyAlt || ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (!hovered && !stroke)) {
+        stroke = false;
+        return false;
+    }
+    Vec3 o, d;
+    viewport_ray(s.camera, pos, size, io.MousePos, o, d);
+    const Mat4 m = s.world->world_matrix(owner);
+    const Mat4 inv = affine_inverse(m);
+    const Vec3 lo = transform_point(inv, o), ld = transform_vector(inv, d);
+    if (std::fabs(ld.y) < 1e-6f) return hovered;
+    const Vec3 p = lo + ld * (-lo.y / ld.y);  // where the ray meets the map's plane
+    const i32 tx = static_cast<i32>(std::floor(p.x / map->tile_size)), tz = static_cast<i32>(std::floor(p.z / map->tile_size));
+    if (tx < 0 || tz < 0 || tx >= static_cast<i32>(map->width) || tz >= static_cast<i32>(map->height)) {
+        stroke = stroke && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        return stroke;
+    }
+    // The hovered tile's outline.
+    const f32 ts = map->tile_size;
+    const Vec3 corners[4] = {{tx * ts, 0, tz * ts}, {(tx + 1) * ts, 0, tz * ts}, {(tx + 1) * ts, 0, (tz + 1) * ts}, {tx * ts, 0, (tz + 1) * ts}};
+    ImVec2 outline[4];
+    int points = 0;
+    for (const Vec3& c : corners) points += project(view_proj, transform_point(m, c), pos, size, outline[points]) ? 1 : 0;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    if (points == 4) dl->AddPolyline(outline, 4, io.KeyShift ? IM_COL32(255, 110, 80, 255) : IM_COL32(120, 230, 255, 255), ImDrawFlags_Closed, 2.0f);
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) stroke = true;
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) stroke = false;
+    if (stroke) {
+        const u32 cells = map->width * map->height < map->tiles.capacity() ? map->width * map->height : map->tiles.capacity();
+        while (map->tiles.count < cells) map->tiles.push_back(0);
+        const u32 index = static_cast<u32>(tz) * map->width + static_cast<u32>(tx);
+        const i32 value = io.KeyShift ? 0 : static_cast<i32>(g_tile) + 1;
+        if (index < map->tiles.count && map->tiles[index] != value) {
+            map->tiles[index] = value;
+            mark_edited(s, "Paint Tiles");
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 const char* mode_name(EditorMode mode) {
@@ -502,6 +641,7 @@ void draw_mode_panel(EditorState& s) {
             case EditorMode::Animation: draw_animation(s); break;
             case EditorMode::Pcg: draw_pcg(s); break;
             case EditorMode::Vfx: draw_vfx(s); break;
+            case EditorMode::Paper2D: draw_2d(s); break;
             case EditorMode::Select: break;
         }
     }
@@ -510,6 +650,7 @@ void draw_mode_panel(EditorState& s) {
 }
 
 bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
+    if (s.mode == EditorMode::Paper2D) return tile_brush(s, view_proj, pos, size, hovered);
     static bool stroke = false;
     static f32 flatten_z = 0.0f, since_stamp = 0.0f;
     const ImGuiIO& io = ImGui::GetIO();

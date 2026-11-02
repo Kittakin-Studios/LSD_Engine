@@ -282,6 +282,15 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 - VR / XR via OpenXR **(S)**
 
+## 2D (Paper2D)
+
+- [x] Sprites: texture or sprite-sheet cell on a quad in X-Z, flip, tint, pixel art (whole-texel sampling), lit / unlit, alpha cut-out, collision [Paper2D Sprite]
+- [x] Flipbooks: Frame Count cells from Frame at FPS, loop / once; scripts set the frame [Paper2D Flipbook]
+- [x] Tile maps: tileset grid, painted in the 2D level mode with a palette (LMB / Shift erase, undo), one mesh, row runs as collision boxes [Paper2D Tile Map]
+- [x] 2D physics (RigidBody Lock 2D: Jolt allowed DOFs X, Z, rotation Y) and a side-scroller Character (moves along X, sprite faces its way)
+- [x] Orthographic Camera component (Ortho Height) for Play; 2D View in the editor
+- [~] Still to do: sprites in shadow passes, flipbook assets with per-frame durations and events, tile map layers and per-tile collision shapes, sprite sorting for translucent sprites, a 2D template level
+
 ## Later
 
 World Partition + Data Layers, Nanite-style virtualised geometry, Lumen-style software ray-traced GI, hardware

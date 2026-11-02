@@ -41,7 +41,7 @@ struct EditorCamera {
 
 enum class GizmoMode { Translate, Rotate, Scale };
 // The Level tab's modes (Unreal's mode dropdown); editor_modes.h has their tools.
-enum class EditorMode : u8 { Select, Modeling, Foliage, Landscape, Animation, Pcg, Vfx };
+enum class EditorMode : u8 { Select, Modeling, Foliage, Landscape, Animation, Pcg, Vfx, Paper2D };
 
 struct EditorState {
     EditorTheme theme;

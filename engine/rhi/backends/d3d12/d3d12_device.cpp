@@ -278,7 +278,8 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     // n1.w packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     const bool has_normal_map = fmod(n1.w, 2.0) > 0.5;
     const bool blended = fmod(floor(n1.w * 0.5), 2.0) > 0.5;
-    const float cutoff = floor(n1.w * 0.25) / 255.0;
+    const float cutoff = fmod(floor(n1.w * 0.25), 256.0) / 255.0;
+    const bool pixel_art = n1.w > 1023.5;  // 1024: whole texels of the base colour texture
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
@@ -292,7 +293,9 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float ao = saturate(surf.ao);
     const float3 emissive = surf.emissive;
 #else
-    float4 base = color * base_tex.Sample(samp, i.uv);
+    float2 texel_size;
+    base_tex.GetDimensions(texel_size.x, texel_size.y);
+    float4 base = color * (pixel_art ? base_tex.SampleLevel(samp, (floor(i.uv * texel_size) + 0.5) / texel_size, 0) : base_tex.Sample(samp, i.uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     if (has_normal_map) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
@@ -1134,7 +1137,7 @@ public:
         constants[19] = draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view);
         const Texture* normal = lookup_texture(draw.normal_texture);
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
-        constants[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f);  // see n1.w in the shader
+        constants[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f);  // see n1.w in the shader
         constants[44] = draw.metallic;
         constants[45] = draw.roughness;
         constants[46] = draw.emissive[0];

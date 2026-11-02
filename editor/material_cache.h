@@ -51,6 +51,7 @@ public:
     // material: the draw keeps its colour with default roughness. A Material Graph sets the draw's
     // material shader and its textures (compiled when first used and again when its file changes).
     void apply(const char* material_guid, rhi::MeshDraw& draw);
+    TextureCache& textures() { return textures_; }
     void check_files();
 
 private:

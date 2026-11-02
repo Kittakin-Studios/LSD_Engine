@@ -18,6 +18,7 @@
 #include "remote_console.h"
 #include "game_module.h"
 #include "editor_modes.h"
+#include "paper2d.h"
 #include "workspaces.h"
 #include "lua_debugger.h"
 #include "mesh_editor.h"
@@ -736,6 +737,22 @@ bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hi
         if (t < hit_t) {
             hit_t = t;
             hit = e;
+        }
+    }
+    // 2D: sprites and tile maps by their flat boxes.
+    for (const reflect::TypeInfo* flat : {&reflect::type_of<world::Sprite>(), &reflect::type_of<world::TileMap>()}) {
+        for (u32 i = 0; i < s.world->count(*flat); ++i) {
+            const Entity e = s.world->owner(*flat, i);
+            if (e == ignore || s.world->hidden_in_hierarchy(e) || (pickable && s.world->locked(e))) continue;
+            Vec3 lo, hi;
+            if (flat == &reflect::type_of<world::Sprite>()) sprite_bounds(lo, hi);
+            else tile_map_bounds(*static_cast<const world::TileMap*>(s.world->at(*flat, i)), lo, hi);
+            const Mat4 inv = affine_inverse(s.world->world_matrix(e));
+            f32 t;
+            if (ray_box(transform_point(inv, ray.origin), transform_vector(inv, ray.dir), lo, hi, t) && t < hit_t) {
+                hit_t = t;
+                hit = e;
+            }
         }
     }
     const reflect::TypeInfo& skinned_type = reflect::type_of<world::SkeletalMesh>();

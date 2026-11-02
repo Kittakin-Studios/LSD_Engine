@@ -24,6 +24,7 @@ struct BodyDesc {
     const u32* indices = nullptr;
     u32 index_count = 0;
     bool debris = false;  // collides with static things only: not the player, not other moving bodies
+    bool plane_2d = false;  // moves only in X-Z, turns only around Y (2D games)
 };
 
 struct CharacterDesc {

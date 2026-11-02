@@ -270,7 +270,8 @@ void main() {
     // u_flags.y packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     bool has_normal_map = mod(u_flags.y, 2.0) > 0.5;
     bool blended = mod(floor(u_flags.y * 0.5), 2.0) > 0.5;
-    float cutoff = floor(u_flags.y * 0.25) / 255.0;
+    float cutoff = mod(floor(u_flags.y * 0.25), 256.0) / 255.0;
+    bool pixel_art = u_flags.y > 1023.5;  // 1024: whole texels of the base colour texture
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time;
@@ -284,7 +285,8 @@ void main() {
     float ao = clamp(surf.ao, 0.0, 1.0);
     vec3 emissive = surf.emissive;
 #else
-    vec4 base = u_color * texture(base_tex, v_uv);
+    vec2 texel_size = vec2(textureSize(base_tex, 0));
+    vec4 base = u_color * (pixel_art ? textureLod(base_tex, (floor(v_uv * texel_size) + 0.5) / texel_size, 0.0) : texture(base_tex, v_uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (u_flags.x > 0.5 && u_flags.x < 1.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
     if (has_normal_map) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
@@ -1148,7 +1150,7 @@ public:
         const Texture* orm = lookup_texture(draw.orm_texture);
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;  // packed as in the shader
         gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view),
-                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f));
+                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f));
         if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
         if (graph) {
             f32 values[kMaxMaterialParams * 4] = {};

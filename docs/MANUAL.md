@@ -350,6 +350,28 @@ indoors. Screen-space reflections add what is on screen on top.
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
 
+### 2D games (Paper2D)
+
+Click the Level tab > **2D**. The panel's **2D View** looks along +Y without perspective (H in
+the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z plane.
+
+- **Sprite** (Unreal's Paper2D Sprite + Flipbook): pick an Image, click **Sprite**. A 1 m quad
+  (scale it with the Transform), pivot at the bottom centre. For a **sprite sheet** set Columns /
+  Rows in Details and the cell in **Frame**; **Frame Count** > 1 plays that many cells at **FPS**
+  (a flipbook, Loop or once). Flip X / Y mirror it; **Pixel Art** keeps texels sharp; **Lit** lets
+  the level's lights shade it (off: its own colours, like most 2D games); **Collision** makes it
+  block in Play. Scripts switch animations with `lsd.set(e, "Sprite", {frame = 8, frame_count = 4})`.
+- **Tile Map** (Paper2D Tile Map): pick the tileset image, click **Tile Map**, set the tileset's
+  Columns / Rows, the map's Width / Height and Tile Size in Details. The panel shows the tileset:
+  click a tile, then **LMB paints** it on the map in the viewport and **Shift+LMB erases** (each
+  stroke is one undo). Painted tiles block in Play (rows of tiles become boxes).
+- **2D physics**: RigidBody > **Lock 2D** keeps a body in its X-Z plane, turning only around Y.
+- **Side-scroller player**: Character > **Side Scroller**: Move's left / right walks along X,
+  Jump jumps, and the player's Sprite faces the way it walks.
+- **2D camera**: a Camera with **Orthographic** (and Ortho Height, metres of world on screen) and
+  Auto Activate; make it a child of the player, about 10 m back on -Y turned to look along +Y
+  (rotation Z 90), so it follows.
+
 ### Baked lighting (Build Lighting)
 
 Without baking, the Sky Light's ambient is the same everywhere, so the inside of a closed room is

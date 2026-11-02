@@ -47,6 +47,7 @@ public:
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
+    f32 view_ortho() const { return view_ortho_; }  // an orthographic Camera's height in metres; 0: perspective
     // Looks through `camera` (invalid: the player again), cutting or blending over `blend_seconds`.
     void set_view(world::Entity camera, f32 blend_seconds = 0.0f);
     // Unreal's camera shake: strength 1 = 5 cm and about 1 degree of wobble, fading out over `seconds`.
@@ -117,6 +118,7 @@ private:
     input::InputSystem input_;
     Vec3 view_eye_, view_forward_{1, 0, 0};
     f32 view_fov_ = 0.0f;
+    f32 view_ortho_ = 0.0f;
     Vec3 blend_eye_, blend_forward_{1, 0, 0};  // the view a blend starts from
     f32 blend_fov_ = 0.0f, blend_time_ = 0.0f, blend_length_ = 0.0f;
     f32 shake_strength_ = 0.0f, shake_time_ = 0.0f, shake_length_ = 0.0f, shake_frequency_ = 12.0f, view_clock_ = 0.0f;

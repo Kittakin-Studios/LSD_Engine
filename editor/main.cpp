@@ -1,6 +1,7 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
 #include "editor_modes.h"
+#include "paper2d.h"
 #include "graph_editor.h"
 #include "table_editor.h"
 #include "mesh_cache.h"
@@ -442,6 +443,64 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         device.draw_mesh(draw);
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3;
+    }
+    // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask.
+    // shortcut: they cast no shadows; add them to the shadow passes when lit 2D scenes need it.
+    {
+        const bool editor_view = !stats.playing || stats.ejected;
+        auto draw_flat = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, const lsd::LinearColor& tint, bool pixel_art, bool lit, lsd::f32 cutoff) {
+            if (!mesh || (editor_view && world.hidden_in_hierarchy(e))) return;
+            const lsd::Mat4 m = world.world_matrix(e);
+            const lsd::Mat4 mvp = view_proj * m;
+            if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
+                ++stats.stat_culled;
+                return;
+            }
+            lsd::rhi::MeshDraw draw{};
+            draw.vertices = mesh->gpu.vertices;
+            draw.indices = mesh->gpu.indices;
+            draw.index_count = mesh->gpu.index_count;
+            std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
+            const lsd::Mat4 inv = lsd::affine_inverse(m);
+            for (int c = 0; c < 3; ++c) {
+                for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
+                draw.normal_matrix[c * 4 + 3] = 0.0f;
+            }
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
+            }
+            draw.camera_position[0] = eye.x;
+            draw.camera_position[1] = eye.y;
+            draw.camera_position[2] = eye.z;
+            to_rgba(tint, draw.color);
+            draw.roughness = 1.0f;
+            if (texture[0]) draw.base_color_texture = materials.textures().get(texture, true);
+            draw.pixel_art = pixel_art;
+            draw.alpha_cutoff = cutoff;
+            draw.unlit = !lit || (editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision));
+            draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+            if (editor_view && stats.is_selected(e)) {
+                draw.color[0] = 1.0f;
+                draw.color[1] = 0.85f;
+                draw.color[2] = 0.25f;
+            }
+            device.draw_mesh(draw);
+            ++stats.stat_draws;
+            stats.stat_triangles += draw.index_count / 3;
+        };
+        const lsd::f32 seconds = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // flipbooks play in the editor too
+        const lsd::reflect::TypeInfo& sprite_type = lsd::reflect::type_of<lsd::world::Sprite>();
+        for (lsd::u32 i = 0; i < world.count(sprite_type); ++i) {
+            const auto* sprite = static_cast<const lsd::world::Sprite*>(world.at(sprite_type, i));
+            const lsd::editor::CachedMesh* mesh = lsd::editor::sprite_mesh(meshes, *sprite, lsd::editor::sprite_cell(*sprite, seconds));
+            draw_flat(world.owner(sprite_type, i), mesh, sprite->texture, sprite->tint, sprite->pixel_art, sprite->lit, sprite->alpha_cutoff);
+        }
+        const lsd::reflect::TypeInfo& map_type = lsd::reflect::type_of<lsd::world::TileMap>();
+        for (lsd::u32 i = 0; i < world.count(map_type); ++i) {
+            const auto* map = static_cast<const lsd::world::TileMap*>(world.at(map_type, i));
+            const lsd::world::Entity e = world.owner(map_type, i);
+            draw_flat(e, lsd::editor::tile_map_mesh(meshes, *map, e.value), map->tileset, map->tint, map->pixel_art, map->lit, 0.5f);
+        }
     }
     // Instanced Static Meshes: every copy in one draw (a Material Graph draws them one by one).
     {
@@ -930,7 +989,7 @@ void register_console(EditorState& s) {
             }
             return *a == *b;
         };
-        for (int m = 0; m <= static_cast<int>(lsd::editor::EditorMode::Vfx); ++m) {
+        for (int m = 0; m <= static_cast<int>(lsd::editor::EditorMode::Paper2D); ++m) {
             const auto mode = static_cast<lsd::editor::EditorMode>(m);
             if (same(lsd::editor::mode_name(mode), args) || (mode == lsd::editor::EditorMode::Modeling && same(args, "Modeling")) ||
                 (mode == lsd::editor::EditorMode::Animation && same(args, "Animation"))) {
@@ -938,7 +997,7 @@ void register_console(EditorState& s) {
                 return;
             }
         }
-        lsd::editor::remote::print("Modes: Select, Modeling, Foliage, Landscape, Animation, PCG, VFX");
+        lsd::editor::remote::print("Modes: Select, Modeling, Foliage, Landscape, Animation, PCG, VFX, 2D");
     }, &s, "mode <name>: the Level tab's mode (Select, Modeling, Foliage, Landscape, Animation, PCG, VFX)");
     console::add_command("workspace", [](void* user, const char* args) {
         std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
@@ -1913,6 +1972,10 @@ int main(int argc, char** argv) {
             if (state.playing && !state.ejected) {
                 lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
                 if (play.view_fov() > 0.0f) lens.fov_y = play.view_fov();  // a Camera component's
+                if (play.view_ortho() > 0.0f) {  // an orthographic Camera (2D games)
+                    lens.view = lsd::editor::ViewType::Front;
+                    lens.ortho_height = play.view_ortho();
+                }
             }
             lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
             const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.view_forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);

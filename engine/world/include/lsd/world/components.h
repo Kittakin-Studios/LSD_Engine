@@ -107,6 +107,7 @@ LSD_STRUCT(Component, Category = "Physics")
 struct RigidBody {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Choice:Box,Sphere,Capsule,Convex", Tooltip = "Collision shape, fitted to the mesh bounds; Convex wraps the mesh's points") u32 shape = 0;
+    LSD_PROPERTY(Edit, Tooltip = "2D physics: moves only in its X-Z plane and turns only around Y (Unreal's Constrain to Plane)") bool lock_2d = false;
     LSD_PROPERTY(Edit, Units = "kg", Min = 0.01) f32 mass = 10.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 friction = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
@@ -158,6 +159,7 @@ struct Character {
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = right, y = forward") char move_action[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = turn right, y = look up") char look_action[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction") char jump_action[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "2D side-scroller: Move's x walks along X only (no turning), Jump jumps; the object's Sprite faces the way it walks") bool side_scroller = false;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 walk_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 jump_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89) f32 max_slope = 45.0f;
@@ -190,6 +192,50 @@ struct Camera {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "deg", Min = 10, Max = 170, Tooltip = "Vertical field of view") f32 fov = 60.0f;
     LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
+    LSD_PROPERTY(Edit, Tooltip = "No perspective: sizes stay the same at any distance (2D games, strategy views)") bool orthographic = false;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 1000, Tooltip = "Orthographic: how many metres of the world fit the screen's height") f32 ortho_height = 10.0f;
+};
+
+// A 2D image in the world (Unreal's Paper2D Sprite and Flipbook): a texture, or one cell of a sprite
+// sheet, on a 1 m quad in the X-Z plane facing -Y (a side-on game looks along +Y: the Front view),
+// pivot at the bottom centre; the Transform's scale sizes it. With Frame Count > 1 it plays that
+// many cells from Frame at FPS (a flipbook); scripts switch animations by setting Frame.
+LSD_STRUCT(Component, Category = "2D")
+struct Sprite {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char texture[33] = "";
+    LSD_PROPERTY(Edit) LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Category = "Sheet", Min = 1, Max = 64, Tooltip = "Cells across the sprite sheet") u32 columns = 1;
+    LSD_PROPERTY(Edit, Category = "Sheet", Min = 1, Max = 64, Tooltip = "Cells down") u32 rows = 1;
+    LSD_PROPERTY(Edit, Category = "Sheet", Tooltip = "The cell shown, or the animation's first (left to right, then down)") u32 frame = 0;
+    LSD_PROPERTY(Edit, Category = "Flipbook", Min = 1, Max = 4096, Tooltip = "Cells the animation plays from Frame; 1 = a still sprite") u32 frame_count = 1;
+    LSD_PROPERTY(Edit, Category = "Flipbook", Min = 0, Max = 120, Tooltip = "Frames a second") f32 fps = 12.0f;
+    LSD_PROPERTY(Edit, Category = "Flipbook") bool loop = true;
+    LSD_PROPERTY(Edit, Tooltip = "Mirror left-right (a side-scroller Character sets it from the way it walks)") bool flip_x = false;
+    LSD_PROPERTY(Edit) bool flip_y = false;
+    LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
+    LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours, like most 2D games") bool lit = false;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Pixels with less alpha are cut out") f32 alpha_cutoff = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Blocks in Play: a box the sprite's size, 1 m deep (a RigidBody uses the same box)") bool collision = false;
+};
+
+// A grid of tiles from a tileset image (Unreal's Paper2D Tile Map), painted in the 2D level mode:
+// drawn as one mesh in the X-Z plane from its bottom-left corner; solid tiles block in Play.
+LSD_STRUCT(Component, Category = "2D")
+struct TileMap {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The tileset: an image of equal tiles") char tileset[33] = "";
+    LSD_PROPERTY(Edit, Min = 1, Max = 256, Tooltip = "Tiles across the tileset image") u32 tileset_columns = 8;
+    LSD_PROPERTY(Edit, Min = 1, Max = 256, Tooltip = "Tiles down the tileset image") u32 tileset_rows = 8;
+    LSD_PROPERTY(Edit, Min = 1, Max = 256, Tooltip = "Tiles across the map (width x height at most 4096)") u32 width = 32;
+    LSD_PROPERTY(Edit, Min = 1, Max = 128) u32 height = 16;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 100) f32 tile_size = 1.0f;
+    LSD_PROPERTY(Edit) LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
+    LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours") bool lit = false;
+    LSD_PROPERTY(Edit, Tooltip = "Painted tiles block in Play (rows of tiles become boxes)") bool collision = true;
+    // Row by row from the bottom-left: the tileset cell + 1 (cells count left to right, then down), 0 = empty.
+    LSD_PROPERTY(Save) List<i32, 4096> tiles;
 };
 
 // A picture projected onto whatever is inside its box (Unreal's Decal Actor): blood, dirt, cracks,

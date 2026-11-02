@@ -114,6 +114,7 @@ struct MeshDraw {
     // (glows, fire); 3 overdraw (additive, no depth test: the Overdraw view mode).
     u32 blend = 0;
     f32 alpha_cutoff = 0.0f;  // Masked: pixels with alpha below this are not drawn (0 = off)
+    bool pixel_art = false;   // the base colour texture sampled at whole texels, no blur (2D sprites, tiles)
     // Skinning: when set, the vertices are SkinnedVertex and each joint's skinning matrix is given
     // as its first three rows (12 floats, joint_count <= kMaxJoints); mvp / world apply after it.
     const f32* joint_rows = nullptr;

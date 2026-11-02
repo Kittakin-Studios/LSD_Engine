@@ -251,6 +251,15 @@ RGBA8 target, two targets ping-pong per post chain. An EXPOSE pass multiplies th
 bloom and the tonemapper see the adapted image. Sky reflections (both mesh shaders) use the
 `sky_radiance` gradient along the reflection and an analytic split-sum BRDF instead of cubemaps.
 
+**2D** (`editor/paper2d.*`, Paper2D): Sprite and TileMap components are drawn by the main loop as
+generated meshes in the X-Z plane (quads facing -Y plus their backs). A sprite cell's quad is cached
+by sheet size, cell and flips ("Sprite:..."), a tile map's mesh by its entity ("TileMap:<id>") and
+rebuilt when the FNV hash of its tiles changes. MeshDraw.pixel_art packs a flag (1024) the mesh
+shaders read to sample the base colour at whole texels (no sampler change). Picking uses their
+flat boxes; Play adds a box per sprite with Collision and per run of solid tiles in a row;
+RigidBody.lock_2d sets Jolt's allowed DOFs; Character.side_scroller walks along X and flips the
+player's Sprite; an orthographic Camera gives the lens an ortho height.
+
 **JavaScript** (`engine/script/src/js.*`, QuickJS-ng) lives inside the Lua script system rather
 than beside it. A `.js` instance gets a Lua environment like any script; loading the file in its own
 JS context (one per instance, all in one runtime: 256 MB, 0.5 s per call) fills that environment

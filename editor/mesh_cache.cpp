@@ -155,7 +155,7 @@ const CachedMesh* MeshCache::get(const char* key) {
     for (const CachedMesh& m : meshes_) {
         if (std::strcmp(m.key, key) == 0) return m.failed ? nullptr : &m;
     }
-    if (std::strncmp(key, "Landscape:", 10) == 0) return nullptr;  // not generated yet
+    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
