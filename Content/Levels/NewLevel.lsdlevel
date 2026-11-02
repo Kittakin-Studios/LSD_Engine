@@ -44,7 +44,9 @@
       },
       "collision": true,
       "collision_shape": 0,
-      "physical_material": ""
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
     }},
     {"id": 1, "name": "PlayerStart", "parent": -1,
      "Transform": {
@@ -104,7 +106,9 @@
       },
       "collision": true,
       "collision_shape": 0,
-      "physical_material": ""
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
     }},
     {"id": 4194307, "name": "Sky Light", "parent": -1,
      "Transform": {
@@ -401,7 +405,9 @@
       },
       "collision": true,
       "collision_shape": 0,
-      "physical_material": ""
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
     }},
     {"id": 5, "name": "Kill Volume", "parent": -1,
      "Transform": {
@@ -520,7 +526,9 @@
       },
       "collision": true,
       "collision_shape": 0,
-      "physical_material": ""
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
     },
      "SkeletalMesh": {
       "mesh": "b400a445885d50b9205a057d8e2f4319",
@@ -536,7 +544,8 @@
       "play_rate": 1,
       "looping": true,
       "playing": true,
-      "anim_graph": ""
+      "anim_graph": "",
+      "morphs": []
     },
      "FootIK": {
       "left_foot": "foot_l",
@@ -600,14 +609,16 @@
       },
       "collision": true,
       "collision_shape": 0,
-      "physical_material": ""
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
     }},
     {"id": 16777228, "name": "Nav Agent", "parent": -1,
      "Transform": {
       "position": {
-        "x": 3.29933023,
-        "y": 1.0058682,
-        "z": 0.449999988
+        "x": -2.40100002,
+        "y": 5.30600023,
+        "z": 1.10000002
       },
       "rotation": {
         "x": 0,
@@ -615,9 +626,9 @@
         "z": 0
       },
       "scale": {
-        "x": 10.5500002,
-        "y": 10.5,
-        "z": 4
+        "x": 1.64999998,
+        "y": 2.04999995,
+        "z": 1.04999995
       }
     },
      "StaticMesh": {
@@ -631,13 +642,36 @@
       },
       "collision": false,
       "collision_shape": 0,
-      "physical_material": ""
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0
     },
      "NavAgent": {
       "max_speed": 3.5,
       "radius": 0.400000006,
       "height": 1.79999995,
       "face_movement": true
+    }},
+    {"id": 13, "name": "Water Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 3.82294583,
+        "y": -0.528198838,
+        "z": -1.1920929e-07
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 4,
+        "y": 4,
+        "z": 3
+      }
+    },
+     "WaterVolume": {
+      "enabled": true
     }}
   ]
 }
