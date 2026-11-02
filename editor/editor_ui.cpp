@@ -16,6 +16,7 @@
 #include "debug_draw.h"
 #include "references.h"
 #include "remote_console.h"
+#include "game_module.h"
 #include "lua_debugger.h"
 #include "mesh_editor.h"
 #include "prefab_editor.h"
@@ -137,6 +138,10 @@ void draw_scatter(world::InstancedStaticMesh& ism) {
     if (ImGui::Button("Clear")) ism.instances.count = 0;
 }
 
+// Per-object values over a script's or behaviour's defaults (name, default as text); only changed
+// values are kept in `overrides`.
+void draw_property_overrides(const std::vector<std::pair<std::string, std::string>>& defaults, List<world::ScriptProperty, 16>& overrides);
+
 // Details for a Script's exposed properties: the script's defaults, changed per object.
 void draw_script_properties(EditorState& s, world::Script& script) {
     asset::Guid guid;
@@ -147,9 +152,27 @@ void draw_script_properties(EditorState& s, world::Script& script) {
     const auto defaults = script_property_defaults(path);
     if (defaults.empty()) return;
     ImGui::SeparatorText("Script properties");
+    draw_property_overrides(defaults, script.properties);
+}
+
+// The same for a Native Script: the defaults come from a fresh state of the C / C++ behaviour.
+void draw_native_properties(world::NativeScript& native) {
+    const lsd_behaviour* b = game_module::module().find(native.behaviour);
+    if (!b || b->property_count == 0) return;
+    std::vector<std::pair<std::string, std::string>> defaults;
+    for (int i = 0; i < b->property_count; ++i) {
+        char text[64];
+        script::native_property_default(*b, b->properties[i], text, sizeof text);
+        defaults.emplace_back(b->properties[i].name, text);
+    }
+    ImGui::SeparatorText("Behaviour properties");
+    draw_property_overrides(defaults, native.properties);
+}
+
+void draw_property_overrides(const std::vector<std::pair<std::string, std::string>>& defaults, List<world::ScriptProperty, 16>& overrides) {
     for (const auto& [name, fallback] : defaults) {
         world::ScriptProperty* own = nullptr;
-        for (world::ScriptProperty& p : script.properties) {
+        for (world::ScriptProperty& p : overrides) {
             if (name == p.name) own = &p;
         }
         const std::string current = own ? own->value : fallback;
@@ -186,16 +209,16 @@ void draw_script_properties(EditorState& s, world::Script& script) {
         ImGui::PopID();
         if (!edited_now) continue;
         if (changed == fallback) {  // the default again: no override
-            for (u32 k = 0; k < script.properties.count; ++k) {
-                if (name == script.properties[k].name) script.properties.remove(k);
+            for (u32 k = 0; k < overrides.count; ++k) {
+                if (name == overrides[k].name) overrides.remove(k);
             }
         } else if (own) {
             std::snprintf(own->value, sizeof own->value, "%s", changed.c_str());
-        } else {
+        } else if (overrides.count < overrides.capacity()) {
             world::ScriptProperty p;
             std::snprintf(p.name, sizeof p.name, "%s", name.c_str());
             std::snprintf(p.value, sizeof p.value, "%s", changed.c_str());
-            script.properties.push_back(p);
+            overrides.push_back(p);
         }
     }
 }
@@ -2229,6 +2252,27 @@ bool details_widget(void* user, const reflect::Property& p, u8* field, bool& cha
         changed |= tag_picker(s, reinterpret_cast<char*>(field), p.size);
         return true;
     }
+    if (std::strcmp(p.widget, "Behaviour") == 0) {  // a C / C++ behaviour from the game module
+        char* value = reinterpret_cast<char*>(field);
+        const script::NativeModule& m = game_module::module();
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##value", value[0] ? value : "None")) {
+            if (ImGui::Selectable("None", !value[0])) {
+                value[0] = '\0';
+                changed = true;
+            }
+            for (u32 i = 0; i < m.count; ++i) {
+                if (ImGui::Selectable(m.names[i], std::strcmp(value, m.names[i]) == 0)) {
+                    std::snprintf(value, p.size, "%s", m.names[i]);
+                    changed = true;
+                }
+            }
+            if (m.count == 0) ImGui::TextDisabled(game_module::loaded() ? "The game module has no behaviours" : "No game code yet: Tools > New C++ Behaviour");
+            ImGui::EndCombo();
+        }
+        if (value[0] && !m.find(value)) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "Not in the loaded game module (compile it?)");
+        return true;
+    }
     if (std::strncmp(p.widget, "Asset:", 6) == 0) {
         changed |= asset_picker(s, p.widget + 6, reinterpret_cast<char*>(field), p.size);
         return true;
@@ -2893,6 +2937,7 @@ void draw_entity_details(EditorState& s) {
             }
             draw_properties(*types[i], component, &style);
             if (types[i] == &reflect::type_of<world::Script>()) draw_script_properties(s, *static_cast<world::Script*>(component));
+            if (types[i] == &reflect::type_of<world::NativeScript>()) draw_native_properties(*static_cast<world::NativeScript*>(component));
             if (types[i] == &reflect::type_of<world::InstancedStaticMesh>()) draw_scatter(*static_cast<world::InstancedStaticMesh*>(component));
             g_details_type = nullptr;
             if (std::memcmp(before, component, types[i]->size) != 0) {
@@ -4297,6 +4342,12 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Plays this level for 5 seconds and reports any errors it logs (Unreal's automation smoke test)");
         if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Compile Game Code", "Ctrl+Alt+F11", false, !game_module::compiling())) game_module::compile();
+        ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
+        if (ImGui::MenuItem("New C++ Behaviour...")) s.new_behaviour_popup = true;
+        ImGui::SetItemTooltip("Writes Source/<Name>.cpp from a template (Unreal's Tools > New C++ Class)");
+        ImGui::Separator();
         ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
         ImGui::SetItemTooltip("Breakpoints, stepping, call stack, locals and watch for Lua scripts (visual scripts: breakpoints on nodes)");
         ImGui::MenuItem("Remote Console", nullptr, &s.show_remote_console);
@@ -4686,6 +4737,7 @@ void draw_preferences_window(EditorState& s) {
 
 void handle_shortcuts(EditorState& s) {
     ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F11, false)) game_module::compile();  // also while playing
     if (s.playing) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) s.stop_requested = true;
         if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F1)) s.mouse_captured = false;
@@ -4873,6 +4925,28 @@ void draw_editor(EditorState& s) {
     if (s.particle_editor) s.particle_editor->draw(s);
     source_control::draw();
     remote::draw_window(&s.show_remote_console);
+    if (s.new_behaviour_popup) {  // Tools > New C++ Behaviour
+        ImGui::OpenPopup("New C++ Behaviour");
+        s.new_behaviour_popup = false;
+    }
+    if (ImGui::BeginPopupModal("New C++ Behaviour", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        static char name[64] = "Spinner";
+        ImGui::TextUnformatted("A behaviour runs on objects with a Native Script component.");
+        ImGui::TextDisabled("Writes Source/<Name>.cpp, then compiles the game code.");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        const bool enter = ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::Button("Create") || enter) {
+            if (game_module::new_behaviour(name, s.status, sizeof s.status)) {
+                LSD_LOG_INFO("game", "%s", s.status);
+                game_module::compile();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", s.status);
+        ImGui::EndPopup();
+    }
     draw_reference_viewer(s);
     draw_timeline_editor(s);
     draw_mesh_editor(s);

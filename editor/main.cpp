@@ -28,6 +28,7 @@
 #include "sound_player.h"
 #include "debug_draw.h"
 #include "remote_console.h"
+#include "game_module.h"
 #include "source_control.h"
 #include "thumbnails.h"
 #include "transactions.h"
@@ -831,6 +832,23 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
+    console::add_command("game.Compile", [](void*, const char*) { lsd::editor::game_module::compile(); }, &s,
+                         "Tools > Compile Game Code: build Source/ into Binaries/Game.dll (it reloads by itself)");
+    console::add_command("game.NewBehaviour", [](void*, const char* args) {
+        char message[300];
+        if (lsd::editor::game_module::new_behaviour(args, message, sizeof message)) {
+            LSD_LOG_INFO("game", "%s", message);
+            lsd::editor::game_module::compile();
+        } else {
+            LSD_LOG_WARN("game", "%s", message);
+        }
+    }, &s, "game.NewBehaviour <Name>: Tools > New C++ Behaviour (Source/<Name>.cpp from the template), then compile");
+    console::add_command("game.Behaviours", [](void*, const char*) {
+        const lsd::script::NativeModule& m = lsd::editor::game_module::module();
+        std::string out = lsd::editor::game_module::loaded() ? "" : "(no game module loaded: compile Source/ first)\n";
+        for (lsd::u32 i = 0; i < m.count; ++i) out += std::string(m.names[i]) + "\n";
+        lsd::editor::remote::print(out.empty() ? "(the game module registers no behaviours)" : out.c_str());
+    }, &s, "The C / C++ behaviours the loaded game module registered");
     console::add_command("log.Tail", [](void*, const char* args) {
         const int n = args[0] ? std::atoi(args) : 50;
         lsd::editor::remote::print(lsd::editor::recent_log(n > 0 ? static_cast<lsd::u32>(n) : 50u).c_str());
@@ -1325,6 +1343,8 @@ int main(int argc, char** argv) {
     play.set_skinned(skinned_cache);
     static DebugFrameContext debug_context;
     debug_context = {device, window, &state};
+    lsd::editor::game_module::load();  // the project's C / C++ behaviours (Binaries/Game.dll), if any
+    play.scripts().set_native_module(&lsd::editor::game_module::module());
     lsd::editor::debugger::attach(play.scripts());
     lsd::editor::debugger::set_frame_callback(debug_frame, &debug_context);
     lsd::console::add_command("lua", [](void* user, const char* args) {
@@ -1422,6 +1442,11 @@ int main(int argc, char** argv) {
             skinned_cache->check_files();
             effects->check_files();
             materials.check_files();
+            if (!game_mode && lsd::editor::game_module::changed() && !lsd::editor::game_module::compiling()) {  // a rebuilt Game.dll
+                play.scripts().stop_natives();  // their code is in the old DLL
+                lsd::editor::game_module::load();
+                play.scripts().start_natives();  // during Play: the behaviours start over with the new code
+            }
             last_scan = SDL_GetTicks();
         }
 
@@ -1908,6 +1933,8 @@ int main(int argc, char** argv) {
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
+    lsd::editor::game_module::shutdown();
+    lsd::editor::game_module::unload();  // after Play stopped: no behaviour runs its code any more
     audio.shutdown();
     SDL_SetWindowRelativeMouseMode(window, false);
     if (gamepad) SDL_CloseGamepad(gamepad);

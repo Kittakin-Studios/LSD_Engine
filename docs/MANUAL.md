@@ -504,6 +504,15 @@ sends each tool call to the editor as a console line over 127.0.0.1, the same ch
 Console. Only programs on this PC can connect; untick the plugin when you are not using it. It is
 editor-only: packaged games never listen.
 
+### C and C++ behaviours
+
+Game code can also be C or C++ (Unreal: your project's C++ module): **Tools > New C++ Behaviour**
+writes `Source/<Name>.cpp`, **Tools > Compile Game Code** (Ctrl+Alt+F11) builds `Binaries/Game.dll`,
+and a **Native Script** component (Details > Add Component) runs the behaviour on an object with the
+same events as a Lua script. It reloads when rebuilt, also during Play. Click-by-click:
+[How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md#11-c--c-instead-of-lua); every
+command: [CODING.md](CODING.md).
+
 ## 10. Visual scripting
 
 **The panels** (Unreal's Blueprint editor), on the left of the graph window (drag its edge to resize):

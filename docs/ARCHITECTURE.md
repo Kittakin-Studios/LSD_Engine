@@ -209,7 +209,7 @@ parameter values cost nothing.
 - **Save games** are Lua values as versioned JSON; `lsd.save_objects` / `load_objects` (Lua in the
   prelude) store chosen components of objects by name through `lsd.get` / `lsd.set`.
 
-### Planned: C, C++ and JavaScript gameplay (milestone 7)
+### C, C++ (built) and JavaScript (planned) gameplay
 
 One API, several languages. Everything a script can do already goes through two plain-data
 layers: `ScriptHost` (C function pointers the game fills in) and the reflection tables (component
@@ -224,6 +224,23 @@ types and fields by name). They become the public C API:
                                        |
                         World, physics, audio, UI, AI (unchanged)
 ```
+
+**Built so far** (`engine/game_api/include/lsd/lsd_game.h`, `lsd/game.hpp`, `engine/script/src/native.cpp`,
+`editor/game_module.*`): the C API is a versioned table of function pointers (`lsd_api`) that the
+engine hands to the DLL's exported `lsd_game_register`, so the DLL links nothing of the engine; the
+inline `lsd_*` wrappers call through it. A module registers `lsd_behaviour` structs (events as
+function pointers, state size or create / destroy, property offsets) into a `NativeModule`.
+`ScriptSystem` owns the running instances (`natives_`): it creates them before Lua's `on_start` so
+events sent at start reach them, then calls their `on_start`; `update`, `send`, `broadcast` and Lua's
+`lsd.call` / `lsd.broadcast` reach them; `on_hit` / overlaps map to their fields, other names to
+`on_event`. The C++ layer turns a struct's member functions into those pointers with `requires`
+checks and registers it from a static `Registrar`. The editor loads `Binaries/Game.dll` from a
+numbered copy in `Intermediate/GameModule/`, checks it once a second, and on a change runs
+`stop_natives` -> reload -> `start_natives` (state starts over). Tools > Compile Game Code writes
+`Intermediate/compile_game.bat` (vcvars from vswhere, CMake + Ninja, Debug with the release C
+runtime) and streams its output to the log from a thread. Packaging copies `Binaries/`.
+
+**Still planned:**
 
 - **Game module**: `Source/` builds `Game.dll` against `lsd_game.h` only (a C header, so C works
   and the ABI does not depend on the engine's compiler settings). The editor copies the DLL before

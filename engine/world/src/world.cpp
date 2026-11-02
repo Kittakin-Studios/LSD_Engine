@@ -35,6 +35,7 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<PrefabInstance>(),
         &reflect::type_of<Tags>(),
         &reflect::type_of<Script>(),
+        &reflect::type_of<NativeScript>(),
         &reflect::type_of<Spline>(),
         &reflect::type_of<SplineFollower>(),
         &reflect::type_of<Camera>(),

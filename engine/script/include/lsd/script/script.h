@@ -123,6 +123,7 @@
 // Saving a script while playing reloads it; `self` keeps its fields. A script that errors stops
 // running (the error and stack go to the Output Log) until it is fixed and saved.
 #include "lsd/foundation/math.h"
+#include "lsd/script/native.h"
 #include "lsd/world/world.h"
 #include "lsd/world/curve.h"
 
@@ -236,7 +237,8 @@ public:
     // Where lsd.save_game writes (default Saved/SaveGames).
     void set_save_directory(const char* path);
     // Calls `event(self, other)` on the scripts of `target`, if they define it.
-    void send(world::Entity target, const char* event, world::Entity other);
+    // Native behaviours on `target` get it too. Returns how many scripts / behaviours had it.
+    u32 send(world::Entity target, const char* event, world::Entity other);
     // A behaviour tree's Run Script: `function(self, dt)` on `target`'s script. 1 = returned true,
     // 0 = false (or an error), 2 = nothing (still running), -1 = no such function.
     int call_task(world::Entity target, const char* function, f32 dt);
@@ -251,7 +253,29 @@ public:
     bool has_breakpoint(const char* source, i32 line) const;
     void set_line_trace(LineTrace trace, void* user);
 
+    // C / C++ behaviours (Native Script components) from a game module; they start, update and get
+    // events with the Lua scripts. Before the module's DLL is unloaded or swapped: stop_natives(),
+    // then start_natives() with the new one (their state starts over, like Live Coding a constructor).
+    void set_native_module(const NativeModule* module) { module_ = module; }
+    void stop_natives();
+    void start_natives();
+    u32 native_count() const { return native_count_; }
+
 private:
+    struct NativeInstance {
+        world::Entity entity;
+        const lsd_behaviour* behaviour;
+        void* state;
+    };
+    void add_natives(world::Entity root);  // invalid root: the whole world
+    void create_natives();                 // the instances, without on_start
+    // Native side of an event; returns how many behaviours took it.
+    u32 native_event(world::Entity target, const char* event, world::Entity other, bool everyone);
+    const NativeModule* module_ = nullptr;
+    NativeInstance natives_[256];
+    u32 native_count_ = 0;
+    friend struct NativeApi;
+
     char save_dir_[260] = "Saved/SaveGames";
     char* persistent_ = nullptr;  // lsd.__persist as JSON between stop and the next start (heap, NUL-terminated)
     struct Instance {

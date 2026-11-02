@@ -17,6 +17,7 @@ compile_commands.json
 # Compiled data and caches produced by the data compiler / editor
 **/DerivedData/
 **/Intermediate/
+**/Binaries/
 **/Saved/
 *.lsdcache
 

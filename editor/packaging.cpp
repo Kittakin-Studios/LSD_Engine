@@ -137,6 +137,7 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     fs::copy_file(exe, out / (name + ".exe"), fs::copy_options::overwrite_existing, error);
     if (!error) fs::copy("Content", out / "Content", copy_options, error);
     if (!error) fs::copy("Config", out / "Config", copy_options, error);
+    if (!error && fs::exists("Binaries", error)) fs::copy("Binaries", out / "Binaries", copy_options, error);  // the C / C++ game code
     if (error) {
         std::snprintf(message, capacity, "Copying into %s failed: %s", out.generic_string().c_str(), error.message().c_str());
         return false;

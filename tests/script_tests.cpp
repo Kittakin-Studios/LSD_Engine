@@ -6,6 +6,7 @@
 #include "lsd/script/script.h"
 #include "lsd/world/user_types.h"
 #include "lsd/asset/data_asset.h"
+#include "lsd/game.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -243,6 +244,82 @@ static void test_traces() {
         CHECK(w.get<Transform>(a)->position.z == 1.0f && w.get<Transform>(b)->position.z == 1.0f);
         CHECK(scripts.run("local hits = lsd.overlap_box(0, 0, 0, 1, 1, 1) assert(#hits == 2) assert(lsd.capsule_trace(0, 0, 0, 1, 0, 0, 0.3, 0.5))"));
         scripts.stop();
+    }
+}
+
+// ---- C / C++ behaviours (game module) ----
+
+// A C++ behaviour as game code writes it: climbs at `speed` m/s, counts hits, answers "ping" with "pong".
+struct Climber {
+    float speed = 2.0f;
+    int hits = 0;
+    static void properties(lsd::game::Properties<Climber>& p) { p.add("speed", &Climber::speed); }
+    void on_update(lsd::game::Entity self, float dt) { lsd::game::set_position(self, lsd::game::position(self) + lsd::game::Vec3(0, 0, speed * dt)); }
+    void on_hit(lsd::game::Entity self, lsd::game::Entity) { lsd::game::set_rotation(self, {0, 0, 10.0f * static_cast<float>(++hits)}); }
+    void on_event(lsd::game::Entity self, const char* name, lsd::game::Entity other) {
+        if (std::strcmp(name, "ping") == 0) lsd::game::call(other, "pong", self);
+    }
+};
+LSD_BEHAVIOUR(Climber)
+LSD_GAME_MODULE()
+
+// A C behaviour registered by hand, as a .c file would.
+static void c_start(lsd_entity self, void* state) {
+    *static_cast<int*>(state) = 5;
+    lsd_set_number(self, "Transform", "nonexistent", 1.0);  // unknown fields are ignored
+    lsd_vec3 p = lsd_position(self);
+    p.x = static_cast<float>(*static_cast<int*>(state));
+    lsd_set_position(self, p);
+}
+
+// The module registers both; Native Script components run them in Play with the Lua scripts, and
+// events cross between C++, C and Lua in both directions.
+static void test_native_behaviours() {
+    script::NativeModule module;
+    CHECK(lsd_game_register(script::native_api(), module.registry()) == 1);
+    lsd_behaviour c{};
+    c.name = "Pusher";
+    c.state_size = sizeof(int);
+    c.on_start = c_start;
+    lsd_api_ptr->register_behaviour(module.registry(), &c);
+    CHECK(module.count == 2 && module.find("Climber") && module.find("Pusher") && module.find("Climber")->property_count == 1);
+    char text[32];
+    script::native_property_default(*module.find("Climber"), module.find("Climber")->properties[0], text, sizeof text);
+    CHECK(std::strcmp(text, "2") == 0);
+
+    // B's Lua script pings A at start; A's C++ answers with pong, which moves B.
+    write(kGraphLua, "function on_start(self) lsd.call(lsd.find('A'), 'ping', self.entity) end\n"
+                     "function pong(self, from) lsd.set_position(self.entity, 0, 0, 7) end\n");
+    HeapAllocator heap("native");
+    {
+        World w(heap);
+        const Entity a = w.create("A"), b = w.create("B"), p = w.create("P");
+        auto* native = w.add<NativeScript>(a);
+        std::snprintf(native->behaviour, sizeof native->behaviour, "Climber");
+        ScriptProperty speed;
+        std::snprintf(speed.name, sizeof speed.name, "speed");
+        std::snprintf(speed.value, sizeof speed.value, "4");
+        native->properties.push_back(speed);
+        std::snprintf(w.add<Script>(b)->script, sizeof(Script::script), "graph");
+        std::snprintf(w.add<NativeScript>(p)->behaviour, sizeof(NativeScript::behaviour), "Pusher");
+        script::ScriptHost host;
+        script::ScriptSystem scripts;
+        scripts.set_native_module(&module);
+        scripts.start(w, host, path_of, nullptr);
+        CHECK(scripts.native_count() == 2 && scripts.error_count() == 0);
+        CHECK(w.get<Transform>(b)->position.z == 7.0f);   // Lua -> C++ -> Lua
+        CHECK(w.get<Transform>(p)->position.x == 5.0f);   // the C behaviour started
+        scripts.update(0.5f);
+        CHECK(std::fabs(w.get<Transform>(a)->position.z - 2.0f) < 1e-5f);  // speed 4 from the object's override
+        CHECK(scripts.send(a, "on_hit", b) == 1 && scripts.send(a, "on_hit", b) == 1);
+        CHECK(w.get<Transform>(a)->rotation.z == 20.0f);
+        CHECK(scripts.run("assert(lsd.call(lsd.find('A'), 'ping', lsd.find('B')) == 1)"));  // reaches the behaviour
+        scripts.stop_natives();  // a module reload: stop, swap, start again
+        CHECK(scripts.native_count() == 0);
+        scripts.start_natives();
+        CHECK(scripts.native_count() == 2);
+        scripts.stop();
+        CHECK(scripts.native_count() == 0);
     }
 }
 
@@ -725,6 +802,7 @@ int main() {
     test_events();
     test_traces();
     test_forward_vector();
+    test_native_behaviours();
     test_game_instance();
     test_functions();
     test_properties();

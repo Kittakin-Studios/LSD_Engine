@@ -330,6 +330,16 @@ struct Script {
     LSD_PROPERTY(Save) List<ScriptProperty, 16> properties;
 };
 
+// A C / C++ behaviour from the project's game module (Source/ -> Game.dll, lsd_game.h): the same
+// events as a Script, written in native code (Unreal: an Actor Component class from your C++ module).
+LSD_STRUCT(Component, Category = "Gameplay")
+struct NativeScript {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Behaviour", Tooltip = "A behaviour the game module registered (Tools > Compile Game Code builds it)") char behaviour[64] = "";
+    // This object's values for the behaviour's properties (shown in Details under it).
+    LSD_PROPERTY(Save) List<ScriptProperty, 16> properties;
+};
+
 // A curve through points (Unreal's Spline Component): paths for platforms, enemies and cameras.
 // Select the object to see its points in the viewport; click one to move it with the gizmo.
 LSD_STRUCT(Component, Category = "Gameplay")

@@ -1,18 +1,22 @@
 # How to code in LSD_Engine
 
 Step by step: where to click to write game code, attach it to an object, run it and debug it.
-In Unreal terms: a **Lua script** is a Blueprint's event graph written as text, a **Visual Script**
-is the Blueprint event graph itself, and the **Lua Debugger** is Visual Studio's debugger.
+There are three ways to script, and you can mix them in one level:
 
-> **C and C++:** game code in C / C++ (a `Game.dll` from `Source/`) comes with milestone 7. Its
-> commands have the same names as the Lua ones below, so everything you learn here carries over.
-> The C / C++ API and every command: [CODING.md](CODING.md).
+| Way | Unreal equivalent | Where |
+| --- | --- | --- |
+| **Lua script** (`.lua`) | A Blueprint event graph written as text | Sections 1-6, 8 |
+| **Visual Script** (`.lsdgraph`) | The Blueprint event graph | Section 7 |
+| **C / C++ behaviour** (`Source/*.cpp` -> `Game.dll`) | A C++ Actor Component class | Section 11 |
+
+They get the same events (start, update, hit, overlap...), use commands with the same names
+(`lsd.find` in Lua, `find` in C++, `lsd_find` in C) and can send each other events.
 
 Contents: [1. One-time setup](#1-one-time-setup) · [2. Make a script](#2-make-a-script) ·
 [3. Write the code](#3-write-the-code) · [4. Put it on an object](#4-put-it-on-an-object) ·
 [5. Run it](#5-run-it) · [6. Debug it](#6-debug-it) · [7. Visual scripts instead of code](#7-visual-scripts-instead-of-code) ·
 [8. Recipes](#8-recipes) · [9. When something goes wrong](#9-when-something-goes-wrong) ·
-[10. Code with Claude Code](#10-code-with-claude-code)
+[10. Code with Claude Code](#10-code-with-claude-code) · [11. C / C++ instead of Lua](#11-c--c-instead-of-lua)
 
 ---
 
@@ -312,3 +316,77 @@ Claude writes `.lua` / `.lsdgraph` files into Content/ (they reload by themselve
 plugin's tools: `console` (play, stop, save, open...), `lua` (while playing), `list_objects`,
 `list_assets` and `read_log`. Keep the editor open while it works. Untick the plugin when you are
 done: while it is on, any program on this PC could send the editor commands.
+
+## 11. C / C++ instead of Lua
+
+The same jobs in compiled C++ (Unreal: a C++ Actor Component). Full reference: [CODING.md](CODING.md).
+
+**One-time:** Visual Studio 2022 or newer with **Desktop development with C++** (already there if
+you build the engine).
+
+**Make a behaviour:**
+
+1. **Tools > New C++ Behaviour...**, type a name (letters and digits, e.g. `Door`), click **Create**.
+2. The editor writes `Source/Door.cpp` (plus `Source/CMakeLists.txt` and `Source/GameModule.cpp`
+   the first time) and compiles. The **Output Log** shows the build, then
+   *Game code loaded: 1 behaviour*.
+3. Open `Source/Door.cpp` in VS Code (File > Open Folder on the project, or Ctrl+P and type it).
+
+**Put it on an object:**
+
+1. Select the object, **Details > Add Component > Native Script**.
+2. In **Behaviour**, pick `Door`. Its properties appear below as **Behaviour properties**; change
+   them per object like a Lua script's.
+
+**Write the code** (the template spins the object; here is the door from section 8 in C++):
+
+```cpp
+#include <lsd/game.hpp>
+using namespace lsd::game;
+
+struct Door {
+    float open_angle = 90.0f;
+    static void properties(Properties<Door>& p) { p.add("open_angle", &Door::open_angle); }
+
+    void on_overlap_begin(Self self, Entity other) {
+        if (other == player()) {
+            Vec3 r = rotation(self);
+            set_rotation(self, {r.x, r.y, r.z + open_angle});
+            play_sound("S_DoorOpen");
+        }
+    }
+};
+LSD_BEHAVIOUR(Door)
+```
+
+| Lua | C++ |
+| --- | --- |
+| `function on_start(self)` | `void on_start(Self self)` |
+| `function on_update(self, dt)` | `void on_update(Self self, float dt)` |
+| `self.entity` | `self` |
+| `self.speed = 2` (state) | a field: `float speed = 2;` |
+| `properties = { speed = 2 }` | `static void properties(Properties<T>& p) { p.add("speed", &T::speed); }` |
+| `lsd.find("Lift")` | `find("Lift")` |
+| `local x, y, z = lsd.position(e)` | `Vec3 p = position(e);` |
+| `lsd.raycast(x, y, z, dx, dy, dz, 3)` | `if (auto hit = raycast(from, dir, 3)) { hit->entity ... }` |
+| `lsd.call(e, "on_interact")` | `call(e, "on_interact");` |
+| `lsd.log("hi", n)` | `log("hi %d", n);` |
+
+**Compile and test:**
+
+1. Save the file, press **Ctrl+Alt+F11** (Tools > Compile Game Code).
+2. Errors show in red in the Output Log with file and line; fix and compile again. The old code
+   keeps running meanwhile.
+3. When it succeeds the editor loads the new code by itself, **even during Play** (behaviours restart
+   with fresh state).
+
+**Debug:** Visual Studio: **Debug > Attach to Process > lsd_editor.exe**. VS Code: Run and Debug >
+create a launch.json > **C++ (Windows): Attach**, pick `lsd_editor.exe`. Set breakpoints in your
+`.cpp`, then Play.
+
+**Mixing:** a C++ behaviour can `call(e, "unlock")` an object's Lua script (`function unlock(self,
+other)`) or a visual script's Custom Event `unlock`; Lua's `lsd.call(e, "unlock")` and Call Event on
+Object nodes reach the behaviour's `on_event(self, name, other)`.
+
+**Claude Code** can do all of this through the Claude MCP plugin (section 10): it writes
+`Source/*.cpp` and runs `game.Compile`, `game.NewBehaviour` and `game.Behaviours` as console commands.

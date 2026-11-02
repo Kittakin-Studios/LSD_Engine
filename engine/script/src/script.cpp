@@ -486,7 +486,7 @@ struct Api {
     }
     // Validates into a copy first, so a bad field leaves the component as it was.
     static void write(lua_State* L, world::Entity e, const reflect::TypeInfo& type, void* data, int fields) {
-        u8 copy[1024];
+        alignas(16) u8 copy[4096];  // Script / Native Script with their property lists are ~1.6 KB
         if (type.size > sizeof copy) luaL_error(L, "%s is too big to set from Lua", type.name);
         std::memcpy(copy, data, type.size);
         read_struct(L, fields, type, copy);
@@ -652,6 +652,9 @@ struct Api {
             if (!protected_call(L, 1 + extra, what)) instance.failed = true;
             ++called;
         }
+        world::Entity other;
+        if (extra > 0 && lua_type(L, name_index + 1) == LUA_TNUMBER) other.value = static_cast<u32>(lua_tonumber(L, name_index + 1));
+        called += static_cast<int>(sys.native_event(target, name, other, !one));
         lua_pushinteger(L, called);
         return 1;
     }
@@ -1278,6 +1281,7 @@ void ScriptSystem::clear_persistent() {
 }
 
 void ScriptSystem::stop() {
+    stop_natives();
     if (g_debugged == this) g_debugged = nullptr;
     stepping_ = DebugAction::Continue;
     if (lua_) {  // keep the game instance for the next start (a level change)
@@ -1361,9 +1365,14 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
 
     const reflect::TypeInfo& type = reflect::type_of<world::Script>();
     for (u32 i = 0; i < world.count(type); ++i) add_instance(world.owner(type, i), static_cast<const world::Script*>(world.at(type, i))->script);
+    create_natives();  // before any on_start, so events sent from one reach the behaviours too
     // on_start after every script is loaded, so lsd.find sees them all.
     for (u32 i = 0; i < count_; ++i) {
         if (!instances_[i].failed) call(instances_[i], "on_start", nullptr, 0);
+    }
+    for (u32 i = 0; i < native_count_; ++i) {
+        const NativeInstance n = natives_[i];
+        if (n.behaviour->on_start) n.behaviour->on_start(n.entity.value, n.state);
     }
 }
 
@@ -1379,6 +1388,12 @@ void ScriptSystem::attach(world::Entity root) {
     }
     for (u32 i = first; i < count_; ++i) {
         if (!instances_[i].failed) call(instances_[i], "on_start", nullptr, 0);
+    }
+    const u32 first_native = native_count_;
+    add_natives(root);
+    for (u32 i = first_native; i < native_count_; ++i) {
+        const NativeInstance& n = natives_[i];
+        if (n.behaviour->on_start) n.behaviour->on_start(n.entity.value, n.state);
     }
 }
 
@@ -1645,13 +1660,25 @@ void ScriptSystem::update(f32 dt) {
         }
         if (!instance.failed) call(instance, "on_update", &dt_arg, 1);
     }
+    for (u32 i = 0; i < native_count_; ++i) {
+        const NativeInstance n = natives_[i];  // a copy: on_update may spawn (attach adds natives)
+        if (n.behaviour->on_update && world_->alive(n.entity)) n.behaviour->on_update(n.entity.value, n.state, dt);
+    }
 }
 
-void ScriptSystem::send(world::Entity target, const char* event, world::Entity other) {
+u32 ScriptSystem::send(world::Entity target, const char* event, world::Entity other) {
     const f64 arg = other.value;
-    for (u32 i = 0; i < count_; ++i) {
-        if (instances_[i].entity == target && !instances_[i].failed) call(instances_[i], event, &arg, 1);
+    u32 called = 0;
+    for (u32 i = 0; lua_ && i < count_; ++i) {
+        Instance& instance = instances_[i];
+        if (instance.entity != target || instance.failed) continue;
+        lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
+        lua_getfield(lua_, -1, event);
+        called += lua_isfunction(lua_, -1);
+        lua_pop(lua_, 2);
+        call(instance, event, &arg, 1);
     }
+    return called + native_event(target, event, other, false);
 }
 
 int ScriptSystem::call_task(world::Entity target, const char* function, f32 dt) {
@@ -1701,7 +1728,7 @@ u32 ScriptSystem::broadcast(const char* function, const char* text) {
         if (!protected_call(lua_, 2, what)) instance.failed = true;
         ++called;
     }
-    return called;
+    return called + native_event({}, function, {}, true);
 }
 
 void ScriptSystem::set_save_directory(const char* path) { std::snprintf(save_dir_, sizeof save_dir_, "%s", path); }
