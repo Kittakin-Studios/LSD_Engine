@@ -557,6 +557,9 @@ Stream and Looping in their import settings.
 - **Sound Class** (volume groups, with a Submix effect chain: reverb, filters, EQ, echo,
   compressor), **Sound Mix** (push / pop volume changes with fades), **Attenuation**, **Concurrency**.
 - **Audio Volume**: reverb while the listener is inside; sounds through its walls are muffled.
+  Where volumes overlap, the higher **Priority** wins (a small room inside a big cave).
+- **Occlusion** (Sound Attenuation > Occlusion, Unreal's Enable Occlusion): a sound with it on is
+  muffled to **Occlusion Muffle** while anything with collision is between it and the listener.
 - Lua: `lsd.play_sound`, `push_mix`, `set_audio_param`, `set_class_volume`; `stat audio` lists
   playing sounds.
 

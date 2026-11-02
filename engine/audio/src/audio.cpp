@@ -104,6 +104,8 @@ struct AudioSystem::Impl {
         Vec3 position;
         ma_lpf_node lowpass;  // sound -> lowpass -> class group
         f32 cutoff;
+        bool occlusion;
+        f32 occlusion_muffle;
         bool fading_out;  // stop_with_fade: done once miniaudio has stopped it
     };
     Voice* voices = nullptr;
@@ -392,6 +394,8 @@ u32 AudioSystem::play(const PlayDesc& d) {
     slot->started = m.play_counter++;
     slot->spatial = spatial;
     slot->position = d.position;
+    slot->occlusion = spatial && d.attenuation.occlusion;
+    slot->occlusion_muffle = d.attenuation.occlusion_muffle;
     ma_sound_set_volume(&slot->sound, d.volume);
     ma_sound_set_pitch(&slot->sound, d.pitch);
     ma_sound_set_looping(&slot->sound, d.looping ? MA_TRUE : MA_FALSE);
@@ -579,9 +583,10 @@ VoiceInfo AudioSystem::voice(u32 index) const {
     for (u32 i = 0, n = 0; impl_->ready && i < kMaxVoices; ++i) {
         const Impl::Voice& v = impl_->voices[i];
         if (!v.used || n++ != index) continue;
-        return {v.id, v.name, v.sound_class, v.volume, v.spatial ? length(v.position - impl_->listener) : 0.0f, v.spatial, v.position, v.cutoff};
+        return {v.id, v.name, v.sound_class, v.volume, v.spatial ? length(v.position - impl_->listener) : 0.0f, v.spatial, v.position, v.cutoff,
+                v.occlusion, v.occlusion_muffle};
     }
-    return {0, "", 0, 0, 0, false, {}, kOpen};
+    return {0, "", 0, 0, 0, false, {}, kOpen, false, kOpen};
 }
 
 u32 AudioSystem::read_frames(f32* out, u32 frames) {

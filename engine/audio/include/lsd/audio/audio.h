@@ -41,6 +41,8 @@ struct VoiceInfo {
     bool spatial;
     Vec3 position;
     f32 lowpass;   // Hz; 20000 = open
+    bool occlusion;      // its attenuation asks to be muffled behind walls
+    f32 occlusion_muffle;  // Hz, while blocked
 };
 
 class AudioSystem {

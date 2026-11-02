@@ -1047,17 +1047,19 @@ void PlaySession::update_followers(world::World& world, f32 dt) {
 }
 
 // Audio Volumes: the one the ears are in sets the reverb (faded); voices on the other side of a
-// volume's walls are muffled.
+// volume's walls are muffled. Voices whose attenuation has Occlusion are muffled while a physics
+// ray from the ears to them is blocked.
 void PlaySession::update_audio_volumes(const world::World& world, f32 dt) {
     if (!sounds_) return;
     audio::AudioSystem& a = *sounds_->audio();
     const reflect::TypeInfo& type = reflect::type_of<world::AudioVolume>();
     auto volume_at = [&](Vec3 p) {
+        const world::AudioVolume* best = nullptr;
         for (u32 i = 0; i < world.count(type); ++i) {
             const auto* v = static_cast<const world::AudioVolume*>(world.at(type, i));
-            if (v->enabled && inside_volume(world, world.owner(type, i), p)) return v;
+            if (v->enabled && (!best || v->priority > best->priority) && inside_volume(world, world.owner(type, i), p)) best = v;
         }
-        return static_cast<const world::AudioVolume*>(nullptr);
+        return best;
     };
     const world::AudioVolume* here = volume_at(eye_);
     const f32 target_reverb = here ? here->reverb : 0.0f, target_room = here ? here->room_size : 0.5f;
@@ -1071,7 +1073,16 @@ void PlaySession::update_audio_volumes(const world::World& world, f32 dt) {
         if (!v.spatial) continue;
         const world::AudioVolume* there = volume_at(v.position);
         const world::AudioVolume* wall = here != there ? (here ? here : there) : nullptr;  // between the ears and the sound
-        a.set_voice_lowpass(v.id, wall ? wall->muffle : 20000.0f);
+        f32 cutoff = wall ? wall->muffle : 20000.0f;
+        if (v.occlusion && physics_) {
+            const Vec3 to = v.position - eye_;
+            const f32 distance = length(to);
+            constexpr f32 kSkin = 0.3f;  // stop short: the emitter's own collision does not hide it
+            physics::RayHit hit;
+            if (distance > kSkin * 2.0f && physics_->raycast(eye_, to * (1.0f / distance), distance - kSkin, hit)) cutoff = std::fmin(cutoff, v.occlusion_muffle);
+        }
+        // shortcut: the cutoff jumps when the ray is blocked; add a short glide if it clicks on real content
+        a.set_voice_lowpass(v.id, cutoff);
     }
 }
 

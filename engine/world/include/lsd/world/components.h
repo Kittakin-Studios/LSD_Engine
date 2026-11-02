@@ -64,6 +64,7 @@ struct AudioVolume {
     LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 room_size = 0.7f;
     LSD_PROPERTY(Edit, Units = "Hz", Min = 100, Max = 20000, Tooltip = "Sounds through its walls are muffled to this; 20000 = not muffled") f32 muffle = 800.0f;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "How long the reverb takes to change when entering or leaving") f32 fade = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the highest priority wins (a small room inside a big cave)") i32 priority = 0;
 };
 
 // A sound in the level (Unreal's Ambient Sound): ambience, a river, a crackling torch. Drag a

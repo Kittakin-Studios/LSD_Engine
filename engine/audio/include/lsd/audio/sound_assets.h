@@ -46,6 +46,9 @@ struct SoundAttenuation {
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Full volume inside this distance") f32 min_distance = 2.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "No further fading beyond this distance") f32 max_distance = 40.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How fast it fades (Inverse and Exponential)") f32 rolloff = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Occlusion", Tooltip = "Muffled when something solid is between it and the listener (Unreal's Enable Occlusion)")
+    bool occlusion = false;
+    LSD_PROPERTY(Edit, Category = "Occlusion", Units = "Hz", Min = 100, Max = 20000, Tooltip = "Low-pass while blocked") f32 occlusion_muffle = 1200.0f;
 };
 
 LSD_STRUCT(Category = "Audio")
