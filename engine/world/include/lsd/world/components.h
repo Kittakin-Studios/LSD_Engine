@@ -196,6 +196,17 @@ struct Camera {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 1000, Tooltip = "Orthographic: how many metres of the world fit the screen's height") f32 ortho_height = 10.0f;
 };
 
+// This object replicates in multiplayer (Unreal's Replicates + Replicate Movement): the server's copy
+// is the real one and every client shows it, smoothly. Ignored when multiplayer is off.
+LSD_STRUCT(Component, Category = "Multiplayer")
+struct NetReplicated {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Send its position and rotation to the clients (off: it is created and destroyed everywhere, but not moved)") bool replicate_movement = true;
+    LSD_PROPERTY(Visible, Tooltip = "Who moves it: 0 = the server, else that player's machine (their avatar)") u32 owner = 0;
+    LSD_PROPERTY(Visible, Tooltip = "Its id on the network (from its name for objects placed in the level)") u32 net_id = 0;
+    LSD_PROPERTY(Visible, Tooltip = "What the server spawned it from, so clients make the same") char spawned_from[64] = "";
+};
+
 // A 2D image in the world (Unreal's Paper2D Sprite and Flipbook): a texture, or one cell of a sprite
 // sheet, on a 1 m quad in the X-Z plane facing -Y (a side-on game looks along +Y: the Front view),
 // pivot at the bottom centre; the Transform's scale sizes it. With Frame Count > 1 it plays that

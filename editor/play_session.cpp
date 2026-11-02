@@ -268,6 +268,9 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 }
 
 void PlaySession::stop() {
+    net_.shutdown();  // tells the others first
+    my_avatar_ = {};
+    chat_.clear();
     if (ui_) ui_->close_all();
     ui_cursor_ = false;
     ui_follower_count_ = 0;
@@ -384,6 +387,17 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
     start_game_mode(world);  // may spawn the player and a GameMode object first
+    // Multiplayer: host or join before any body or script exists (clients make replicated bodies
+    // kinematic; scripts may ask lsd.net_mode() in on_start).
+    // shortcut: lsd.open_level ends the session (travel); make the server send the level when games need it.
+    if (net_play_.enabled && !travel) {
+        net_.set_spawner(net_spawn, this);
+        const bool ok = net_play_.host ? net_.host(world, net_play_.settings) : net_.join(world, net_play_.address, net_play_.settings);
+        if (ok && net_play_.host && !net_play_.dedicated) {
+            my_avatar_ = make_avatar(world, "Player 0", feet_, true);
+            net_.set_owner(world, my_avatar_, net::kServerPlayer);
+        }
+    }
     if (world.settings().level_script[0]) {  // the Level Blueprint: a script on an object of its own
         std::snprintf(world.add<world::Script>(world.create("LevelScript"))->script, sizeof(world::Script::script), "%s", world.settings().level_script);
     }
@@ -623,6 +637,22 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         auto& self = *static_cast<PlaySession*>(user);
         if (self.animations_) self.animations_->set_param(*self.world_, e, name, value);
     };
+    host.net_mode = [](void* user) {
+        const net::Mode mode = static_cast<PlaySession*>(user)->net_.mode();
+        return mode == net::Mode::Server ? 1 : mode == net::Mode::Client ? 2 : 0;
+    };
+    host.net_player = [](void* user) {
+        const auto& net = static_cast<PlaySession*>(user)->net_;
+        return net.active() ? net.player_id() : 0u;
+    };
+    host.net_send = [](void* user, i32 target, const char* name, const char* json) { static_cast<PlaySession*>(user)->net_.send_event(target, name, json); };
+    host.net_chat = [](void* user, const char* channel, const char* text) { return static_cast<PlaySession*>(user)->send_chat(channel, text); };
+    host.net_set_group = [](void* user, u32 player, u32 team, u32 squad) { static_cast<PlaySession*>(user)->net_.set_player_group(player, team, squad); };
+    host.net_group = [](void* user, u32 player, u32& team, u32& squad) {
+        const auto& net = static_cast<PlaySession*>(user)->net_;
+        team = net.player_team(player);
+        squad = net.player_squad(player);
+    };
     host.set_class_volume = [](void* user, const char* name, f32 volume) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_class_volume(name, volume);
     };
@@ -830,7 +860,9 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     };
     if (const auto* rigid = world.get<world::RigidBody>(e)) {
         if (simulated_count_ == sizeof simulated_ / sizeof simulated_[0]) return;
-        const physics::Motion motion = rigid->kinematic ? physics::Motion::Kinematic : physics::Motion::Dynamic;
+        // A client shows the server's simulation: its replicated bodies follow their Transform.
+        const bool remote = net_.mode() == net::Mode::Client && world.get<world::NetReplicated>(e);
+        const physics::Motion motion = rigid->kinematic || remote ? physics::Motion::Kinematic : physics::Motion::Dynamic;
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi,
                                           rigid->shape == 3 ? 0 : rigid->shape, motion, scale, centre);
         if (rigid->shape == 3) use_mesh_shape(d, physics::Shape::Convex);
@@ -841,7 +873,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         d.plane_2d = rigid->lock_2d;
         apply_material(d, rigid->physical_material);
         const u32 body = add_body(e, d);
-        simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic};
+        simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic || remote};
         return;
     }
     if (cached && mesh->collision) {
@@ -1123,6 +1155,7 @@ void PlaySession::send_hits() {
 }
 
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
+    net_receive(world, dt);  // other machines' moves and events first
     LSD_PROFILE_SCOPE("play");
     if (!physics_) return;
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
@@ -1258,6 +1291,110 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     update_brains(world, dt);
     update_agents(world, dt);
+    net_send(world, dt);
+}
+
+// ---- Multiplayer ----
+
+namespace {
+std::string json_string(const char* text) {  // a JSON string literal
+    std::string out = "\"";
+    for (const char* c = text; *c; ++c) {
+        const unsigned char ch = static_cast<unsigned char>(*c);
+        if (ch == '"' || ch == '\\') out += '\\', out += *c;
+        else if (ch < 0x20) {
+            char escaped[8];
+            std::snprintf(escaped, sizeof escaped, "\\u%04x", ch);
+            out += escaped;
+        } else out += *c;
+    }
+    return out + "\"";
+}
+} // namespace
+
+world::Entity PlaySession::make_avatar(world::World& world, const char* name, Vec3 at, bool mine) {
+    // How a player looks to the others: the project's avatar mesh, no collision (players do not
+    // block each other: each moves on its own machine). Your own is not drawn for you.
+    const world::Entity e = world.create(name);
+    world.get<world::Transform>(e)->position = at;
+    if (!mine) {
+        auto* mesh = world.add<world::StaticMesh>(e);
+        mesh->collision = false;
+        if (const asset::AssetRecord* r = find_asset(asset::AssetType::Mesh, net_play_.avatar)) asset::to_string(r->guid, mesh->mesh);
+        else std::snprintf(mesh->mesh, sizeof mesh->mesh, "%s", net_play_.avatar);
+    }
+    auto* rep = world.add<world::NetReplicated>(e);
+    std::snprintf(rep->spawned_from, sizeof rep->spawned_from, "avatar:%s", net_play_.avatar);
+    return e;
+}
+
+world::Entity PlaySession::net_spawn(void* user, const char* asset, const char* name, Vec3 position, Vec3 rotation) {
+    auto& self = *static_cast<PlaySession*>(user);
+    world::World& world = *self.world_;
+    world::Entity e;
+    if (std::strncmp(asset, "avatar:", 7) == 0) e = self.make_avatar(world, name, position, false);
+    else e = self.create_spawn(world, asset, position);
+    if (e.valid()) world.get<world::Transform>(e)->rotation = rotation;
+    return e;
+}
+
+bool PlaySession::send_chat(const char* channel, const char* text) {
+    net::ChatChannel c;
+    return net_.active() && net::parse_chat_channel(channel, c) && net_.send_chat(c, text);
+}
+
+void PlaySession::net_receive(world::World& world, f32 dt) {
+    if (!net_.active()) return;
+    net_.receive(world, dt);
+    net::NetEvent ev;
+    while (net_.take_event(ev)) {
+        switch (ev.kind) {
+        case net::NetEvent::Kind::Call: scripts_.net_call(ev.name, ev.from, ev.json); break;
+        case net::NetEvent::Kind::PlayerJoined:
+            if (net_.mode() == net::Mode::Server) {  // their avatar, which their machine moves
+                char name[32];
+                std::snprintf(name, sizeof name, "Player %u", ev.from);
+                net_.set_owner(world, make_avatar(world, name, feet_, false), ev.from);
+            }
+            scripts_.net_call("on_player_joined", ev.from, "[]");
+            break;
+        case net::NetEvent::Kind::PlayerLeft: scripts_.net_call("on_player_left", ev.from, "[]"); break;
+        case net::NetEvent::Kind::Connected: scripts_.net_call("on_connected", ev.from, "[]"); break;
+        case net::NetEvent::Kind::Disconnected: scripts_.net_call("on_disconnected", 0, "[]"); break;
+        case net::NetEvent::Kind::Chat: {
+            ChatLine line{};
+            line.from = ev.from;
+            std::snprintf(line.channel, sizeof line.channel, "%s", ev.name);
+            std::snprintf(line.text, sizeof line.text, "%s", ev.json);
+            chat_.push_back(line);
+            LSD_LOG_INFO("chat", "[%s] Player %u: %s", line.channel, line.from, line.text);
+            if (chat_.size() > 100) chat_.erase(chat_.begin());
+            const std::string args = "[" + json_string(ev.name) + "," + json_string(ev.json) + "]";
+            scripts_.net_call("on_chat", ev.from, args.c_str());
+            break;
+        }
+        }
+    }
+    // A client's own avatar arrives from the server: found once, hidden here, moved by this machine.
+    if (!world.alive(my_avatar_) && net_.mode() == net::Mode::Client && net_.connected()) {
+        const reflect::TypeInfo& type = reflect::type_of<world::NetReplicated>();
+        for (u32 i = 0; i < world.count(type); ++i) {
+            const auto* rep = static_cast<const world::NetReplicated*>(world.at(type, i));
+            if (rep->owner != net_.player_id() || std::strncmp(rep->spawned_from, "avatar:", 7) != 0) continue;
+            my_avatar_ = world.owner(type, i);
+            if (world.get<world::StaticMesh>(my_avatar_)) world.remove(my_avatar_, reflect::type_of<world::StaticMesh>());
+            break;
+        }
+    }
+}
+
+void PlaySession::net_send(world::World& world, f32 dt) {
+    if (!net_.active()) return;
+    if (auto* t = world.alive(my_avatar_) ? world.get<world::Transform>(my_avatar_) : nullptr) {  // where this player is
+        t->position = feet_;
+        t->rotation = {0.0f, 0.0f, yaw_ * 57.2957795f};
+    }
+    net_.send(world, dt);
 }
 
 struct PlaySession::PlayingTimeline {

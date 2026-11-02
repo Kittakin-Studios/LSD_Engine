@@ -251,6 +251,19 @@ RGBA8 target, two targets ping-pong per post chain. An EXPOSE pass multiplies th
 bloom and the tonemapper see the adapted image. Sky reflections (both mesh shaders) use the
 `sky_radiance` gradient along the reflection and an analytic split-sum BRDF instead of cubemaps.
 
+**Multiplayer** (`engine/net`, ENet): `NetSession` hosts or joins; channel 0 is reliable (welcome,
+spawn, destroy, events, chat, joins, teams), channel 1 unreliable sequenced (snapshots, owner states).
+Level objects get ids from FNV of their names (identical everywhere), spawned ones a counter; the
+server notices replicated objects without an id (spawned) and ids whose object died (destroyed) in
+`send`. Snapshots carry the server clock; clients keep a smoothed clock offset (half the round trip)
+and interpolate the last 4 states per object at `now - delay`, holding the newest rather than
+guessing ahead. Owner states from a client are accepted only for objects it owns and are smoothed on
+the server over ~1.5 ticks. Reader checks every length and float, so a hostile packet stops being
+read instead of crashing. PlaySession owns the session: hosts / joins before bodies and scripts
+exist, makes replicated rigid bodies kinematic on clients, spawns avatars (owner = player), feeds
+events to scripts through `ScriptSystem::net_call` (JSON arguments), and the Lua prelude implements
+server_event / multicast / client_event on `_net_send`.
+
 **2D** (`editor/paper2d.*`, Paper2D): Sprite and TileMap components are drawn by the main loop as
 generated meshes in the X-Z plane (quads facing -Y plus their backs). A sprite cell's quad is cached
 by sheet size, cell and flips ("Sprite:..."), a tile map's mesh by its entity ("TileMap:<id>") and

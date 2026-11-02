@@ -15,6 +15,7 @@
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/localization.h"
 #include "lsd/input/input.h"
+#include "lsd/net/net.h"
 #include "lsd/physics/physics.h"
 #include "lsd/script/script.h"
 #include "lsd/world/components.h"
@@ -29,6 +30,16 @@ namespace lsd::editor {
 class SkinnedCache;
 
 class AnimationPlayer;
+
+// Multiplayer for one Play (Project Settings > Multiplayer): host or join, and how.
+struct NetPlay {
+    bool enabled = false;
+    bool host = true;        // false: join `address`
+    bool dedicated = false;  // a server without a player of its own (no avatar)
+    char address[64] = "127.0.0.1";
+    net::NetSettings settings;
+    char avatar[64] = "Cube";  // how each player looks to the others: a mesh asset or a shape by name
+};
 
 class PlaySession {
 public:
@@ -58,6 +69,16 @@ public:
     Vec3 forward() const;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
+    // Multiplayer: set before start(); off by default (single player).
+    void set_network(const NetPlay& play) { net_play_ = play; }
+    const net::NetSession& network() const { return net_; }
+    struct ChatLine {
+        u32 from;
+        char channel[16];
+        char text[256];
+    };
+    const std::vector<ChatLine>& chat_log() const { return chat_; }
+    bool send_chat(const char* channel, const char* text);  // this machine's player says something
     void set_sounds(SoundPlayer* sounds) { sounds_ = sounds; }
     // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
     void set_animations(AnimationPlayer* animations) { animations_ = animations; }
@@ -99,6 +120,15 @@ private:
     u32 add_body(world::Entity e, const physics::BodyDesc& desc);
     world::Entity body_entity(u32 body) const;
     world::Entity create_spawn(world::World& world, const char* name, Vec3 position);
+    // Multiplayer: the session, avatars and what the network asked scripts to do.
+    NetPlay net_play_;
+    net::NetSession net_;
+    std::vector<ChatLine> chat_;
+    world::Entity my_avatar_;
+    world::Entity make_avatar(world::World& world, const char* name, Vec3 at, bool mine);
+    static world::Entity net_spawn(void* user, const char* asset, const char* name, Vec3 position, Vec3 rotation);
+    void net_receive(world::World& world, f32 dt);
+    void net_send(world::World& world, f32 dt);
     world::Entity spawn(const char* name, Vec3 position);  // during Play: bodies and scripts too
     void start_game_mode(world::World& world);
     void send_hits();

@@ -17,6 +17,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -24,6 +25,14 @@ namespace fs = std::filesystem;
 namespace lsd::editor::game_module {
 
 namespace {
+
+unsigned long process_id() {
+#ifdef _WIN32
+    return GetCurrentProcessId();
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
 
 #ifdef _WIN32
 constexpr char kModuleFile[] = "Binaries/Game.dll";
@@ -275,7 +284,7 @@ bool load() {
         std::error_code ignored;
         fs::remove(old.path(), ignored);  // copies still loaded (none after unload) stay locked: fine
     }
-    const fs::path copy = fs::path(kCopyFolder) / ("Game-" + std::to_string(++g_copy_number) + kCopyExtension);
+    const fs::path copy = fs::path(kCopyFolder) / ("Game-" + std::to_string(process_id()) + "-" + std::to_string(++g_copy_number) + kCopyExtension);  // per process: several game windows
     fs::copy_file(kModuleFile, copy, fs::copy_options::overwrite_existing, error);
     if (error) {
         LSD_LOG_ERROR("game", "Could not copy %s: %s", kModuleFile, error.message().c_str());

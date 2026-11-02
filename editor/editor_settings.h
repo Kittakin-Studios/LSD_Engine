@@ -113,6 +113,19 @@ struct ProjectSettings {
     char base_sound_mix[33] = "";
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Validate Assets also checks name prefixes (SM_, T_, M_, MI_, BT_, UI_...)") bool check_naming = false;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Textures larger than this on a side are reported") u32 max_texture_size = 4096;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Tooltip = "Tick for an online / LAN game. Off: a single-player game and nothing networked runs") bool multiplayer = false;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Min = 1, Max = 16, Tooltip = "Play in the editor with this many players: the editor hosts (a listen server) and opens a game window for each other player") u32 play_players = 2;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Min = 1024, Max = 65535) u32 port = 7777;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Min = 2, Max = 256) u32 max_players = 16;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Min = 10, Max = 120, Tooltip = "Updates a second: smoother with more, at more bandwidth") f32 tick_rate = 30.0f;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Units = "ms", Min = 0, Max = 500, Tooltip = "How far in the past clients show other objects: hides lag spikes and lost packets") f32 interpolation_ms = 100.0f;
+    LSD_PROPERTY(Edit, Category = "Multiplayer", Tooltip = "How each player looks to the others: a mesh asset or a shape (Cube, Sphere...) by name") char player_avatar[64] = "Cube";
+    LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "Text chat to everyone") bool chat_all = true;
+    LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "Text chat to the player's team (scripts set teams: lsd.set_team)") bool chat_team = true;
+    LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "Text chat to the player's squad inside the team") bool chat_squad = false;
+    LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "Text chat to players near the speaker") bool chat_proximity = false;
+    LSD_PROPERTY(Edit, Category = "Chat", Units = "m", Min = 1, Max = 1000) f32 proximity_range = 30.0f;
+    LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "The built-in chat box in Play (Enter to type); off: make your own with on_chat and lsd.chat") bool chat_box = true;
     LSD_PROPERTY(Edit, Category = "Gameplay Tags", Tooltip = "The tags the Details tag picker offers (dotted: Damage.Fire is under Damage)")
     List<GameplayTagDef, 128> gameplay_tags;
 };

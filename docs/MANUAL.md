@@ -350,6 +350,32 @@ indoors. Screen-space reflections add what is on screen on top.
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
 
+### Multiplayer
+
+One checkbox: **Settings > Project Settings > Multiplayer > Multiplayer**. Off (the default), the
+game is single player and nothing networked runs. On:
+
+- **Play** hosts (a listen server: you are player 0) and opens a game window for each other player
+  (**Play Players**, default 2), which joins it on the level as it is. Stop closes them.
+- Tick **Net Replicated** on an object (Details > Add Component > Multiplayer) to share it (Unreal's
+  Replicates): the server's copy is the real one, every client shows it. Clients play other objects
+  back about 100 ms in the past (**Interpolation**), blending between updates, so lag and lost
+  packets look smooth instead of jumpy; physics runs on the server only. Objects scripts spawn on the
+  server appear everywhere, and go everywhere when destroyed.
+- Every player has an **avatar** the others see (**Player Avatar**: a mesh asset or shape). Your
+  own player moves on your machine (no waiting for the network) and the others see it.
+- Scripts: `lsd.has_authority()` (the server, or single player), `lsd.server_event(name, ...)`
+  (Run on Server), `lsd.multicast(name, ...)` (server to everyone), `lsd.client_event(player, name,
+  ...)`, `lsd.set_team(player, team, squad)`, events `on_player_joined(self, id)`,
+  `on_player_left`, `on_connected`, `on_disconnected`. In single player the same calls just run
+  locally, so one script works both ways.
+- **Text chat** (Project Settings > Chat): All, Team, Squad (off by default) and Proximity (off by
+  default, with a range). The server routes every line (a client cannot pick who hears it). The
+  built-in **Chat Box** (Enter to type, Tab for the channel, Esc to cancel) can be turned off to make
+  your own with `lsd.chat(channel, text)` and `on_chat(self, from, channel, text)`.
+- Packaged games: `-server` hosts, `-dedicated` hosts without a player, `-connect=address[:port]`
+  joins (port 7777 by default). Tick rate, port and max players are in the same settings.
+
 ### 2D games (Paper2D)
 
 Click the Level tab > **2D**. The panel's **2D View** looks along +Y without perspective (H in

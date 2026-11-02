@@ -125,6 +125,17 @@
 // array: const [x, y, z] = lsd.position(self.entity)), `var properties = { speed: 5 }`, console.log.
 //   lsd.js_call(path, function, ...) -> result   a function of a .js file (what JavaScript nodes compile to)
 //
+// Multiplayer (Project Settings > Multiplayer; in a single-player game these answer as standalone):
+//   lsd.net_mode() -> "standalone" | "server" | "client", lsd.player_id() (0 = the server's player)
+//   lsd.has_authority() -> bool          true on the server and in single player (Unreal's HasAuthority)
+//   lsd.server_event(name, ...)          runs name(self, player, ...) on the server (Run on Server)
+//   lsd.multicast(name, ...)             server: runs name(self, 0, ...) everywhere (Multicast)
+//   lsd.client_event(player, name, ...)  server: runs it on that player's machine (Run on Owning Client)
+//   lsd.chat(channel, text) -> ok        "all", "team", "squad", "proximity" (those the project turns on)
+//   lsd.set_team(player, team [, squad]) server: groups for team / squad chat; lsd.team(player) -> team, squad
+// Events: on_player_joined(self, id), on_player_left(self, id), on_chat(self, from, channel, text),
+// on_connected(self, id), on_disconnected(self). Arguments travel as JSON (numbers, text, tables).
+//
 // Saving a script while playing reloads it; `self` keeps its fields. A script that errors stops
 // running (the error and stack go to the Output Log) until it is fixed and saved.
 #include "lsd/foundation/math.h"
@@ -216,6 +227,13 @@ struct ScriptHost {
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
     void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
+    // Multiplayer (all null when it is off: scripts then see a standalone game).
+    int (*net_mode)(void* user) = nullptr;   // 0 standalone, 1 server, 2 client
+    u32 (*net_player)(void* user) = nullptr; // this machine's player id (0 = the server's own)
+    void (*net_send)(void* user, i32 target, const char* name, const char* json) = nullptr;  // -1 server, -2 everyone, else a player
+    bool (*net_chat)(void* user, const char* channel, const char* text) = nullptr;
+    void (*net_set_group)(void* user, u32 player, u32 team, u32 squad) = nullptr;
+    void (*net_group)(void* user, u32 player, u32& team, u32& squad) = nullptr;
 };
 
 class ScriptSystem {
@@ -251,6 +269,9 @@ public:
     int call_task(world::Entity target, const char* function, f32 dt);
     // Calls `function(self, text)` on every script that defines it (UI actions). Returns how many.
     u32 broadcast(const char* function, const char* text);
+    // A network event: `function(self, from, ...)` on every script that defines it, the arguments
+    // from a JSON array (multiplayer events, chat, players joining).
+    void net_call(const char* function, u32 from, const char* json);
 
     // Debugging. Breakpoints by file and line (any script loaded from that file); the handler is
     // called when one is hit or a step ends, and its answer resumes. A trace sees every line run.

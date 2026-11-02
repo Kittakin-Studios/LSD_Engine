@@ -282,6 +282,17 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 - VR / XR via OpenXR **(S)**
 
+## Multiplayer
+
+- [x] One project checkbox (Project Settings > Multiplayer); off = single player, nothing runs
+- [x] Transport: ENet (reliable + unreliable channels), non-blocking on the game thread; malformed packets are refused, not trusted
+- [x] Replication: Net Replicated objects, snapshots at the tick rate (changed objects, all once a second), client interpolation, server-only physics, spawns / destroys / late joiners [Replication]
+- [x] Players: avatars, client-owned movement (no input lag), server smoothing, owned objects leave with their player
+- [x] Script events: Run on Server, Multicast, Run on Owning Client, has_authority, joins / leaves, teams and squads
+- [x] Text chat: all / team / squad (optional) / proximity (optional), routed by the server; built-in chat box or your own
+- [x] Play with N players in the editor (listen server + game windows); -server / -dedicated / -connect for packages
+- [ ] Voice chat (team / all / proximity), lag compensation for hits, server-side move checks, relevancy (only nearby objects), level travel together, a server browser / sessions, replicating component fields beyond the transform
+
 ## 2D (Paper2D)
 
 - [x] Sprites: texture or sprite-sheet cell on a quad in X-Z, flip, tint, pixel art (whole-texel sampling), lit / unlit, alpha cut-out, collision [Paper2D Sprite]

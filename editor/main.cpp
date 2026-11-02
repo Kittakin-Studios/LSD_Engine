@@ -1119,6 +1119,67 @@ void register_script_nodes(const lsd::asset::AssetRegistry& registry) {
     if (lsd::editor::game_module::loaded()) lsd::script::register_native_nodes(lsd::editor::game_module::module());  // C / C++ nodes
 }
 
+// Multiplayer Play in the editor: the other players' game windows (closed on Stop).
+std::vector<SDL_Process*> g_play_clients;
+
+void stop_play_clients() {
+    for (SDL_Process* p : g_play_clients) {
+        SDL_KillProcess(p, false);
+        SDL_DestroyProcess(p);
+    }
+    g_play_clients.clear();
+}
+
+// The built-in chat box (Project Settings > Chat > Chat Box): the last lines, Enter to type, Tab
+// picks the channel among those the project turns on, Esc cancels.
+void draw_chat_box(lsd::editor::PlaySession& play, const lsd::editor::ProjectSettings& project) {
+    static bool typing = false;
+    static int channel = 0;
+    static char line[256] = "";
+    const char* channels[4];
+    int count = 0;
+    if (project.chat_all) channels[count++] = "all";
+    if (project.chat_team) channels[count++] = "team";
+    if (project.chat_squad) channels[count++] = "squad";
+    if (project.chat_proximity) channels[count++] = "proximity";
+    if (!count) return;
+    channel %= count;
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(16.0f, io.DisplaySize.y - 250.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 220.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(typing ? 0.65f : 0.25f);
+    ImGui::Begin("##chat", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    const lsd::net::NetSession& net = play.network();
+    const lsd::net::NetStats stats = net.stats();
+    ImGui::TextDisabled("%s, player %u%s  %.0f ms", net.mode() == lsd::net::Mode::Server ? "Server" : "Client", net.player_id(), net.connected() ? "" : " (connecting)", stats.ping_ms);
+    ImGui::BeginChild("##lines", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
+    for (const auto& l : play.chat_log()) {
+        const ImVec4 color = std::strcmp(l.channel, "team") == 0 ? ImVec4(0.45f, 0.8f, 1.0f, 1.0f)
+                           : std::strcmp(l.channel, "squad") == 0 ? ImVec4(0.5f, 1.0f, 0.5f, 1.0f)
+                           : std::strcmp(l.channel, "proximity") == 0 ? ImVec4(1.0f, 0.85f, 0.4f, 1.0f) : ImVec4(1, 1, 1, 1);
+        ImGui::TextColored(color, "[%s] Player %u: %s", l.channel, l.from, l.text);
+    }
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
+    ImGui::EndChild();
+    if (!typing && ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !io.WantTextInput) typing = true;
+    if (typing) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) channel = (channel + 1) % count;
+        ImGui::TextColored(ImVec4(1, 0.9f, 0.3f, 1), "[%s]", channels[channel]);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SetKeyboardFocusHere();
+        if (ImGui::InputText("##say", line, sizeof line, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (line[0]) play.send_chat(channels[channel], line);
+            line[0] = '\0';
+            typing = false;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) typing = false;
+    } else {
+        ImGui::TextDisabled("Enter: chat");
+    }
+    ImGui::End();
+}
+
 // File > Import...: SDL's file dialog answers on any thread; the main loop imports what it chose.
 std::mutex g_import_mutex;
 std::vector<std::string> g_import_queue;
@@ -1218,6 +1279,9 @@ int main(int argc, char** argv) {
     bool no_sound = false;             // -nosound: no audio device (automated runs stay quiet)
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
+    const char* connect_arg = nullptr; // -connect=<host[:port]>: multiplayer, join that server
+    bool server_arg = false;           // -server: multiplayer, host (a listen server)
+    bool dedicated_arg = false;        // -dedicated: host without a player of its own
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
     float smoke_arg = 0.0f;            // -smoketest=<seconds>: play the level that long, exit 0 if no errors (CI)
@@ -1238,6 +1302,9 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-nosound") == 0) no_sound = true;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
+        else if (std::strncmp(argv[i], "-connect=", 9) == 0) connect_arg = argv[i] + 9;
+        else if (std::strcmp(argv[i], "-server") == 0) server_arg = true;
+        else if (std::strcmp(argv[i], "-dedicated") == 0) server_arg = dedicated_arg = true;
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
         else if (std::strcmp(argv[i], "-remote") == 0) remote_arg = lsd::editor::remote::kDefaultPort;
         else if (std::strncmp(argv[i], "-remote=", 8) == 0) remote_arg = std::atoi(argv[i] + 8);
@@ -1655,6 +1722,7 @@ int main(int argc, char** argv) {
             LSD_PROFILE_SCOPE("editor ui");
             if (game_mode) lsd::editor::draw_game(state);
             else lsd::editor::draw_editor(state);
+            if (state.playing && play.network().active() && state.project.chat_box) draw_chat_box(play, state.project);
             ImGui::Render();
         }
         state.stat_ui_ms = timer.lap();
@@ -1814,6 +1882,40 @@ int main(int argc, char** argv) {
         }
         if (state.play_requested && !state.playing) {
             lsd::world::save_level(world, play_snapshot);
+            // Multiplayer (Project Settings): join with -connect, else host; the editor's Play also
+            // opens a game window per extra player, joining it, on the level as it is now.
+            lsd::editor::NetPlay net_play;
+            const lsd::editor::ProjectSettings& pr = state.project;
+            net_play.enabled = pr.multiplayer;
+            net_play.host = connect_arg == nullptr;
+            net_play.dedicated = dedicated_arg;
+            if (connect_arg) std::snprintf(net_play.address, sizeof net_play.address, "%s", connect_arg);
+            net_play.settings.port = static_cast<lsd::u16>(pr.port);
+            net_play.settings.max_players = pr.max_players;
+            net_play.settings.tick_rate = pr.tick_rate;
+            net_play.settings.interpolation_delay = pr.interpolation_ms * 0.001f;
+            net_play.settings.chat_all = pr.chat_all;
+            net_play.settings.chat_team = pr.chat_team;
+            net_play.settings.chat_squad = pr.chat_squad;
+            net_play.settings.chat_proximity = pr.chat_proximity;
+            net_play.settings.proximity_range = pr.proximity_range;
+            std::snprintf(net_play.avatar, sizeof net_play.avatar, "%s", pr.player_avatar);
+            play.set_network(net_play);
+            if (pr.multiplayer && !game_mode && pr.play_players > 1) {
+                const std::string level = "Saved/MultiplayerPlay" + std::string(lsd::world::kLevelExtension);
+                if (FILE* f = std::fopen(level.c_str(), "wb")) {
+                    std::fwrite(play_snapshot.data(), 1, play_snapshot.size(), f);
+                    std::fclose(f);
+                }
+                char connect[96], level_flag[300];
+                std::snprintf(connect, sizeof connect, "-connect=127.0.0.1:%u", pr.port);
+                std::snprintf(level_flag, sizeof level_flag, "-level=%s", level.c_str());
+                for (lsd::u32 k = 1; k < pr.play_players; ++k) {
+                    const char* args[] = {argv[0], "-game", level_flag, connect, no_sound ? "-nosound" : nullptr, nullptr};
+                    if (SDL_Process* p = SDL_CreateProcess(args, false)) g_play_clients.push_back(p);
+                    else LSD_LOG_ERROR("net", "Could not open player %u's window: %s", k + 1, SDL_GetError());
+                }
+            }
             play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);
             animations->reset();  // Play starts every animation from its beginning
             effects->reset();
@@ -1828,6 +1930,7 @@ int main(int argc, char** argv) {
         state.simulate_requested = false;
         state.play_requested = false;
         if (state.stop_requested && state.playing) {
+            stop_play_clients();  // the other players' windows close with the session
             // Keep Simulation Changes: copy the kept objects' components before the level reverts.
             struct Kept {
                 lsd::world::Entity entity;
@@ -2120,6 +2223,7 @@ int main(int argc, char** argv) {
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
+    stop_play_clients();
     lsd::editor::game_module::shutdown();
     lsd::editor::game_module::unload();  // after Play stopped: no behaviour runs its code any more
     audio.shutdown();

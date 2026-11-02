@@ -239,6 +239,22 @@ end
 function lsd.after(seconds, fn) return add(seconds, fn, nil) end
 function lsd.every(seconds, fn) return add(seconds, fn, seconds) end
 function lsd.cancel(id) timers[id] = nil end
+-- Multiplayer: the events run locally when this machine is the one they are for.
+function lsd.has_authority() return lsd.net_mode() ~= "client" end
+function lsd.server_event(name, ...)  -- Run on Server
+  if lsd.net_mode() ~= "client" then return lsd.broadcast(name, lsd.player_id(), ...) end
+  lsd._net_send(-1, name, {...})
+end
+function lsd.multicast(name, ...)  -- Multicast: the server tells everyone, itself too
+  if lsd.net_mode() == "client" then lsd.log_error("multicast: only the server sends to everyone; clients use server_event") return end
+  if lsd.net_mode() == "server" then lsd._net_send(-2, name, {...}) end
+  return lsd.broadcast(name, 0, ...)
+end
+function lsd.client_event(player, name, ...)  -- Run on Owning Client
+  if player == lsd.player_id() then return lsd.broadcast(name, 0, ...) end
+  if lsd.net_mode() ~= "server" then lsd.log_error("client_event: only the server sends to a player") return end
+  lsd._net_send(player, name, {...})
+end
 -- Curve tables (Unreal's Curve Table): a Data Table whose column headers are times.
 function lsd.curve_table(name, row, time)
   local t = lsd.table(name)
@@ -785,6 +801,46 @@ struct Api {
         return 0;
     }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
+    static int net_mode(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const int mode = host.net_mode ? host.net_mode(host.user) : 0;
+        lua_pushstring(L, mode == 1 ? "server" : mode == 2 ? "client" : "standalone");
+        return 1;
+    }
+    static int player_id(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushnumber(L, host.net_player ? host.net_player(host.user) : 0);
+        return 1;
+    }
+    static int net_send(lua_State* L) {  // lsd._net_send(target, name, {args}): the prelude's events call it
+        const ScriptHost& host = system(L).host_;
+        const i32 target = static_cast<i32>(luaL_checknumber(L, 1));
+        const char* name = luaL_checkstring(L, 2);
+        std::string json;
+        if (!lua_istable(L, 3) || !write_json(L, 3, json, 0)) return luaL_error(L, "%s: its arguments must be numbers, text, booleans or tables", name);
+        if (host.net_send) host.net_send(host.user, target, name, json.c_str());
+        return 0;
+    }
+    static int chat(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const char* channel = luaL_checkstring(L, 1);
+        const char* text = luaL_checkstring(L, 2);
+        lua_pushboolean(L, host.net_chat && host.net_chat(host.user, channel, text));
+        return 1;
+    }
+    static int set_team(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.net_set_group) host.net_set_group(host.user, static_cast<u32>(luaL_checknumber(L, 1)), static_cast<u32>(luaL_checknumber(L, 2)), static_cast<u32>(luaL_optnumber(L, 3, 0)));
+        return 0;
+    }
+    static int team(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        u32 t = 0, squad = 0;
+        if (host.net_group) host.net_group(host.user, static_cast<u32>(luaL_checknumber(L, 1)), t, squad);
+        lua_pushnumber(L, t);
+        lua_pushnumber(L, squad);
+        return 2;
+    }
     static int call_on(lua_State* L) { return dispatch(L, true); }
     // lsd.native_call(name, ...) -> result: a function the game module registered (C / C++ nodes).
     static int native_call(lua_State* L) {
@@ -1395,7 +1451,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"player_id", Api::player_id},
+        {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
@@ -1793,6 +1850,31 @@ u32 ScriptSystem::broadcast(const char* function, const char* text) {
         ++called;
     }
     return called + native_event({}, function, {}, true);
+}
+
+void ScriptSystem::net_call(const char* function, u32 from, const char* json) {
+    if (!lua_) return;
+    const int base = lua_gettop(lua_);
+    lua_getglobal(lua_, "lsd");
+    lua_getfield(lua_, -1, "broadcast");
+    lua_remove(lua_, -2);
+    lua_pushstring(lua_, function);
+    lua_pushnumber(lua_, from);
+    const char* c = json && *json ? json : "[]";
+    int args = 2;
+    if (read_json(lua_, c, 0) && lua_istable(lua_, -1)) {  // the array's items become the arguments
+        const int list = lua_gettop(lua_);
+        const int n = static_cast<int>(lua_objlen(lua_, list));
+        lua_checkstack(lua_, n + 4);
+        for (int i = 1; i <= n; ++i) lua_rawgeti(lua_, list, i);
+        lua_remove(lua_, list);
+        args += n;
+    } else {
+        lua_settop(lua_, base + 3);  // bad JSON: just the sender
+        LSD_LOG_WARN("script", "%s: arguments that are not a JSON array were dropped", function);
+    }
+    protected_call(lua_, args, function);
+    lua_settop(lua_, base);
 }
 
 void ScriptSystem::set_save_directory(const char* path) { std::snprintf(save_dir_, sizeof save_dir_, "%s", path); }

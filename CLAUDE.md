@@ -38,7 +38,7 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 - Windows, MSVC, VS Code + CMake Tools, preset **`windows-msvc`** (Ninja Multi-Config). Linux: `linux-clang`.
 - `cmake --preset windows-msvc` then `cmake --build --preset windows-msvc` (Debug);
   Release: `cmake --build --preset windows-msvc --config Release` (packaging uses it).
-- Tests: `ctest --preset windows-msvc` (14 suites, framework-free, in `tests/`). Keep them passing.
+- Tests: `ctest --preset windows-msvc` (15 suites, framework-free, in `tests/`). Keep them passing.
 - Editor: `build\windows-msvc\editor\Debug\lsd_editor.exe`. The same exe is the game (`-game`, or a
   folder with `game.json` from File > Package Project).
 - Both Debug and Release build with **0 warnings**; keep it that way (`/W4`, `-Wall -Wextra -Wpedantic
@@ -49,7 +49,8 @@ Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug
 (quit after n frames), `-screenshot=<n>` (OpenGL: Saved/screenshot.bmp; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
-`-remote[=port]` (Tools > Remote Console connects to it; localhost only).
+`-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
+`-connect=<host[:port]>` (multiplayer, when Project Settings > Multiplayer is on).
 Console: `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
@@ -69,7 +70,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs).
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
 | Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
 | UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); a document's own `.js` runs on QuickJS-ng (`engine/ui/src/ui_script.*`) |
-| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
+| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
 
 ## Editor look
 
@@ -102,6 +103,7 @@ engine/animation/   ozz: skinned models, clips, poses, blending, animation graph
 engine/audio/       miniaudio: voices, sound classes, submixes, attenuation, concurrency, mixes
 engine/particles/   ParticleSystem data and CPU simulation
 engine/ai/          Recast & Detour navmesh + crowd; behaviour trees and blackboards
+engine/net/         multiplayer: NetSession on ENet (replication, interpolation, events, chat)
 engine/ui/          RmlUi contexts (documents, input, actions, translation)
 engine/debug_ui/    ImGui Details panel generated from reflection
 editor/             lsd_editor (also the game): main.cpp (loop, rendering), editor_ui.cpp (panels),
@@ -144,6 +146,8 @@ Editor Preferences > Plugins with Claude MCP (Claude Code drives the editor thro
 Unreal-style panel tabs under the menu bar (Level + each open asset editor; the Level tab lists the modes: 3D Modeling,
 Foliage, Landscape, Animation Sequence, PCG, VFX, 2D in `editor/editor_modes.*`), and under them, on the Level tab,
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
+Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
+script events, text chat; Play opens a game window per extra player.
 2D (Paper2D, `editor/paper2d.*`, the Level tab's 2D mode): Sprite (sheets + flipbooks), Tile Map
 (palette painting), Lock 2D physics, side-scroller Character, orthographic Camera.
 Graphics: sky reflections without cubemaps, auto exposure, a default look without a volume, sky
