@@ -2,6 +2,7 @@
 
 #include "light_bake.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace lsd::editor {
@@ -208,12 +209,63 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     return true;
 }
 
-bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out) {
+namespace {
+
+const world::Sky* find_sky(const world::World& w, bool skip_hidden) {
     const reflect::TypeInfo& sky_type = reflect::type_of<world::Sky>();
-    const world::Sky* sky = nullptr;
-    for (u32 i = 0; i < w.count(sky_type) && !sky; ++i) {
-        if (!skip_hidden || !w.hidden_in_hierarchy(w.owner(sky_type, i))) sky = static_cast<const world::Sky*>(w.at(sky_type, i));
+    for (u32 i = 0; i < w.count(sky_type); ++i) {
+        if (!skip_hidden || !w.hidden_in_hierarchy(w.owner(sky_type, i))) return static_cast<const world::Sky*>(w.at(sky_type, i));
     }
+    return nullptr;
+}
+
+f32 smooth(f32 a, f32 b, f32 x) {
+    const f32 t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// The sky's colours (display colours, before brightness). With `atmosphere`: from the sun's height,
+// an artist's fit of single scattering: deep blue overhead by day, a pale horizon, an orange band
+// while the sun is near the horizon, dark blue at night; the sun itself reddens as it sets.
+struct SkyColors {
+    Vec3 zenith, horizon, ground, sun;
+    Vec3 sun_direction{0, 0, 1};  // toward the sun
+    bool has_sun = false;
+};
+SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
+    SkyColors c;
+    const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
+    for (u32 i = 0; i < w.count(dir_type); ++i) {
+        const world::Entity e = w.owner(dir_type, i);
+        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
+        c.sun_direction = -forward_of(w.world_matrix(e));  // the light travels along +X; the sun is the other way
+        c.has_sun = true;
+        break;
+    }
+    if (!sky.atmosphere) {
+        c.zenith = {sky.zenith.r, sky.zenith.g, sky.zenith.b};
+        c.horizon = {sky.horizon.r, sky.horizon.g, sky.horizon.b};
+        c.ground = {sky.ground.r, sky.ground.g, sky.ground.b};
+        c.sun = {sky.sun_color.r, sky.sun_color.g, sky.sun_color.b};
+        return c;
+    }
+    auto mix = [](Vec3 a, Vec3 b, f32 t) { return a * (1.0f - t) + b * t; };
+    const f32 height = c.has_sun ? c.sun_direction.z : 0.6f;  // sine of the sun's elevation
+    const f32 day = smooth(-0.08f, 0.3f, height);
+    const f32 glow = std::exp(-((height - 0.03f) / 0.13f) * ((height - 0.03f) / 0.13f)) * smooth(-0.18f, 0.0f, height);
+    c.zenith = mix({0.002f, 0.004f, 0.014f}, {0.03f, 0.16f, 0.55f}, day) + Vec3{0.06f, 0.03f, 0.07f} * glow;
+    c.horizon = mix(mix({0.01f, 0.014f, 0.03f}, {0.48f, 0.64f, 0.82f}, day), {0.95f, 0.42f, 0.13f}, glow * 0.5f);
+    c.ground = mix(mix({0.003f, 0.003f, 0.004f}, {0.11f, 0.10f, 0.09f}, day), {0.25f, 0.12f, 0.05f}, glow * 0.5f);
+    const Vec3 tint{sky.sun_color.r, sky.sun_color.g, sky.sun_color.b};
+    const Vec3 reddened = mix({1.0f, 0.35f, 0.08f}, {1.0f, 1.0f, 1.0f}, smooth(0.0f, 0.3f, height));
+    c.sun = Vec3{tint.x * reddened.x, tint.y * reddened.y, tint.z * reddened.z} * smooth(-0.05f, 0.02f, height);
+    return c;
+}
+
+} // namespace
+
+bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out) {
+    const world::Sky* sky = find_sky(w, skip_hidden);
     if (!sky) return false;
     out = rhi::SkyDraw{};
     // The inverse view-projection (general 4x4 inverse by cofactors).
@@ -239,30 +291,26 @@ bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip
     if (std::fabs(det) < 1e-12f) return false;
     for (int i = 0; i < 16; ++i) out.inv_view_proj[i] = inv[i] / det;
     const f32 b = sky->brightness;
-    const LinearColor* colors[3] = {&sky->zenith, &sky->horizon, &sky->ground};
+    const SkyColors colors = sky_colors(w, *sky, skip_hidden);
+    const Vec3 values[3] = {colors.zenith, colors.horizon, colors.ground};
     f32* slots[3] = {out.zenith, out.horizon, out.ground};
     for (int k = 0; k < 3; ++k) {
-        slots[k][0] = colors[k]->r * b;
-        slots[k][1] = colors[k]->g * b;
-        slots[k][2] = colors[k]->b * b;
+        slots[k][0] = values[k].x * b;
+        slots[k][1] = values[k].y * b;
+        slots[k][2] = values[k].z * b;
     }
     out.camera[0] = eye.x;
     out.camera[1] = eye.y;
     out.camera[2] = eye.z;
-    const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
-    for (u32 i = 0; i < w.count(dir_type) && sky->sun_disc; ++i) {
-        const world::Entity e = w.owner(dir_type, i);
-        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
-        const Vec3 toward = -forward_of(w.world_matrix(e));  // the light travels along +X; the sun is the other way
-        out.sun_direction[0] = toward.x;
-        out.sun_direction[1] = toward.y;
-        out.sun_direction[2] = toward.z;
+    if (colors.has_sun && sky->sun_disc) {
+        out.sun_direction[0] = colors.sun_direction.x;
+        out.sun_direction[1] = colors.sun_direction.y;
+        out.sun_direction[2] = colors.sun_direction.z;
         out.sun_direction[3] = std::cos(radians(sky->sun_size * 0.5f));
-        out.sun_color[0] = sky->sun_color.r * 4.0f;  // brighter than the sky around it
-        out.sun_color[1] = sky->sun_color.g * 4.0f;
-        out.sun_color[2] = sky->sun_color.b * 4.0f;
+        out.sun_color[0] = colors.sun.x * 4.0f;  // brighter than the sky around it
+        out.sun_color[1] = colors.sun.y * 4.0f;
+        out.sun_color[2] = colors.sun.z * 4.0f;
         out.sun_color[3] = 1.0f;
-        break;
     }
     return true;
 }
@@ -288,7 +336,20 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         const auto* light = static_cast<const world::SkyLight*>(w.at(sky_type, i));
         sky = Vec3{light->sky_color.r, light->sky_color.g, light->sky_color.b} * light->intensity;
         ground = Vec3{light->ground_color.r, light->ground_color.g, light->ground_color.b} * light->intensity;
+        if (const world::Sky* drawn = light->capture_sky ? find_sky(w, skip_hidden) : nullptr) {
+            // What the sky shows, as ambient (the drawn colours are after exposure, ambient before it,
+            // so the division below makes them match on screen).
+            const SkyColors colors = sky_colors(w, *drawn, skip_hidden);
+            sky = (colors.zenith * 0.65f + colors.horizon * 0.35f) * (drawn->brightness * light->intensity * s.exposure);
+            ground = colors.ground * (drawn->brightness * light->intensity * s.exposure);
+        }
         break;
+    }
+    // The sun's colour through the atmosphere (white at noon, orange at sunset, gone at night).
+    Vec3 sun_tint{1.0f, 1.0f, 1.0f};
+    if (const world::Sky* drawn = find_sky(w, skip_hidden); drawn && drawn->atmosphere) {
+        sun_tint = sky_colors(w, *drawn, skip_hidden).sun;
+        sun_tint = Vec3{sun_tint.x / std::max(drawn->sun_color.r, 1e-3f), sun_tint.y / std::max(drawn->sun_color.g, 1e-3f), sun_tint.z / std::max(drawn->sun_color.b, 1e-3f)};
     }
     for (int c = 0; c < 3; ++c) {
         s.sky[c] = (&sky.x)[c] / s.exposure;
@@ -327,7 +388,8 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         const Vec3 travel = forward_of(w.world_matrix(e));
         static const f32 distance_scale[4] = {0.0f, 0.6f, 1.0f, 1.5f};
         if (light->cast_shadows && g_quality > 0 && s.shadow_info[1] < 0.0f) fit_cascades(s, s.count, travel, view, light->shadow_distance * distance_scale[g_quality]);
-        put(rhi::LightType::Directional, {}, travel, light_rgb(light->color, light->use_temperature, light->temperature) * light->intensity, 0, 0, 0);
+        const Vec3 rgb = light_rgb(light->color, light->use_temperature, light->temperature) * light->intensity;
+        put(rhi::LightType::Directional, {}, travel, Vec3{rgb.x * sun_tint.x, rgb.y * sun_tint.y, rgb.z * sun_tint.z}, 0, 0, 0);
     }
     // Local lights nearest the camera fill the rest (shortcut: no clustering; 16 per frame is the limit).
     struct Candidate {

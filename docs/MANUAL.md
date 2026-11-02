@@ -319,7 +319,11 @@ exposure: 1.5 suits the default sun; a real 100 000 lux sun wants about 15.
 Atmosphere:
 
 - **Sky**: a gradient (zenith, horizon, ground) with a sun disc where the first Directional Light
-  comes from. Without one the viewport stays its plain dark colour.
+  comes from. Without one the viewport stays its plain dark colour. **Atmosphere** (on by default,
+  Unreal's Sky Atmosphere): the colours follow the sun's height, so turning the Directional Light
+  sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night.
+  The sun's light takes the same colour, and a **Sky Light** with **Capture Sky** (default) lights
+  the level with the sky's colours. Untick Atmosphere to pick the colours yourself.
 - **Height Fog**: exponential fog, thickest at the object's height and thinning upwards; density,
   falloff, colour, start distance, max opacity.
 - **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in

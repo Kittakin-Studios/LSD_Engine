@@ -372,7 +372,7 @@ float4 ps_sky(SkyOut i) : SV_Target {
     float3 c = d.z >= 0.0 ? lerp(n1.rgb, n0.rgb, pow(saturate(d.z), 0.6)) : lerp(n1.rgb, n2.rgb, saturate(-d.z * 4.0));
     if (w1.w > 0.0) {
         const float s = dot(d, w0.xyz);
-        c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0));  // disc + glow
+        c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));  // disc + glow + the wide haze around the sun (Mie)
     }
     return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy), 1.0);
 }

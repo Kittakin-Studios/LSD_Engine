@@ -482,6 +482,7 @@ struct SkyLight {
     LSD_PROPERTY(Edit) LinearColor sky_color = LinearColor::hex(0x4D5C73);
     LSD_PROPERTY(Edit) LinearColor ground_color = LinearColor::hex(0x292624);
     LSD_PROPERTY(Edit, Min = 0, Max = 20, Tooltip = "1 = the editor's default ambient") f32 intensity = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Take the colours from the level's Sky (Unreal's Sky Light capturing the sky): sunsets light the level orange, night dark. Untick to use the colours above") bool capture_sky = true;
 };
 
 // The sky behind everything (Unreal's Sky Atmosphere, as a gradient): colours as they appear, a sun
@@ -489,6 +490,7 @@ struct SkyLight {
 LSD_STRUCT(Component, Category = "Environment")
 struct Sky {
     LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Colours from the sun's height (Unreal's Sky Atmosphere): blue day, orange sunrise / sunset, dark night; turn the Directional Light to change the time of day. Untick to use the colours below") bool atmosphere = true;
     LSD_PROPERTY(Edit, Tooltip = "Straight up") LinearColor zenith = LinearColor::hex(0x2F6FC4);
     LSD_PROPERTY(Edit, Tooltip = "At the horizon (match the fog colour for a seamless distance)") LinearColor horizon = LinearColor::hex(0xB8D2EA);
     LSD_PROPERTY(Edit, Tooltip = "Below the horizon") LinearColor ground = LinearColor::hex(0x4A4640);

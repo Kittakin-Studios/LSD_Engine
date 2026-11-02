@@ -354,7 +354,7 @@ void main() {
     vec3 c = d.z >= 0.0 ? mix(u_sky[1].rgb, u_sky[0].rgb, pow(clamp(d.z, 0.0, 1.0), 0.6)) : mix(u_sky[1].rgb, u_sky[2].rgb, clamp(-d.z * 4.0, 0.0, 1.0));
     if (u_sky[4].w > 0.0) {
         float s = dot(d, u_sky[3].xyz);
-        c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0));
+        c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0) + 0.06 * pow(clamp(s, 0.0, 1.0), 6.0));
     }
     o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy), 1.0);
 }
