@@ -1,5 +1,6 @@
 #include "mesh_cache.h"
 
+#include "lsd/asset/asset_meta.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/log.h"
 
@@ -43,10 +44,8 @@ void destroy_lods(rhi::Device& device, CachedMesh& m) {
 
 u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const {
     if (force_lod >= 0) return static_cast<u32>(force_lod) < lod_count ? static_cast<u32>(force_lod) : lod_count - 1;
-    // shortcut: fixed angular sizes (about half, a quarter, an eighth of the screen at 60 degrees), add per-mesh screen sizes when a project needs them
-    const f32 kSizes[] = {0.12f, 0.06f, 0.03f};
     u32 lod = 0;
-    while (lod + 1 < lod_count && radius_over_distance < kSizes[lod]) ++lod;
+    while (lod + 1 < lod_count && radius_over_distance < lod_screen_size[lod + 1]) ++lod;
     return lod;
 }
 
@@ -91,7 +90,14 @@ bool MeshCache::load(CachedMesh& entry) {
     char* suffix = std::strstr(key, "|box:");
     const bool boxed = suffix && std::sscanf(suffix + 5, "%f,%f,%f", &box.x, &box.y, &box.z) == 3;
     if (suffix) *suffix = '\0';
-    if (!asset::parse_mesh_key(key, guid, part)) {
+    const bool is_asset = asset::parse_mesh_key(key, guid, part);
+    asset::AssetMeta meta;  // LOD screen sizes, re-read on every reload (editing them does not recompile; defaults for shapes)
+    if (const asset::AssetRecord* record = is_asset ? registry_.find(guid) : nullptr) registry_.load_meta(*record, meta);
+    entry.lod_screen_size[0] = 1e30f;
+    entry.lod_screen_size[1] = meta.lod1_screen_size;
+    entry.lod_screen_size[2] = meta.lod2_screen_size;
+    entry.lod_screen_size[3] = meta.lod3_screen_size;
+    if (!is_asset) {
         if (entry.gpu.index_count) return true;  // built-ins never change
         if (!make_builtin(key, allocator_, data)) return false;
         bounds = asset::compute_bounds(data);

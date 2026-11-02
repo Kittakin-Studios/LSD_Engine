@@ -184,8 +184,30 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
     }
 }
 
+// What to draw of a static mesh at world matrix `m` seen from `eye`: false past its Max Draw Distance
+// (not drawn at all), else the index buffer of the LOD its on-screen size picks (r.ForceLOD forces one).
+bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::StaticMesh& component, const lsd::Mat4& m, lsd::Vec3 eye, lsd::i32 force_lod,
+                     lsd::rhi::BufferHandle& indices, lsd::u32& count) {
+    const lsd::Vec3 centre = lsd::transform_point(m, (mesh.bounds_min + mesh.bounds_max) * 0.5f);
+    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f);
+    if (component.max_draw_distance > 0.0f && distance > component.max_draw_distance) return false;
+    indices = mesh.gpu.indices;
+    count = mesh.gpu.index_count;
+    if (mesh.lod_count <= 1) return true;
+    const lsd::Vec3 half = (mesh.bounds_max - mesh.bounds_min) * 0.5f;
+    const lsd::f32 scale = std::fmax(lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}),
+                                     std::fmax(lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}), lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})));
+    const lsd::u32 lod = mesh.pick_lod(lsd::length(half) * scale / distance, force_lod);
+    if (lod > 0) {
+        indices = mesh.lod_indices[lod];
+        count = mesh.lod_index_count[lod];
+    }
+    return true;
+}
+
+// Shadow casters use the LOD the camera sees (a far tree casts its simple shape), not the light's view.
 void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
-                  lsd::editor::MeshCache& meshes, bool skip_hidden) {
+                  lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     device.begin_shadow_pass(atlas);
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
@@ -196,10 +218,15 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
         for (lsd::u32 i = 0; i < world.count(type); ++i) {
             const lsd::world::Entity e = world.owner(type, i);
             if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
-            const lsd::editor::CachedMesh* mesh = meshes.get(static_cast<const lsd::world::StaticMesh*>(world.at(type, i))->mesh);
+            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
+            const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
             if (!mesh) continue;
-            const lsd::Mat4 mvp = vp * world.world_matrix(e);
-            device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
+            const lsd::Mat4 m = world.world_matrix(e);
+            lsd::rhi::BufferHandle indices;
+            lsd::u32 count = 0;
+            if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
+            const lsd::Mat4 mvp = vp * m;
+            device.draw_shadow_caster(mesh->gpu.vertices, indices, count, mvp.m);
         }
         draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
         draw_instanced_casters(device, vp, world, meshes, skip_hidden);
@@ -209,7 +236,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
 
 // Spot / point light shadow tiles: the meshes that reach into each light's range.
 void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
-                        lsd::editor::MeshCache& meshes, bool skip_hidden) {
+                        lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     device.begin_shadow_pass(atlas);
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
@@ -226,15 +253,19 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
             for (lsd::u32 i = 0; i < world.count(type); ++i) {
                 const lsd::world::Entity e = world.owner(type, i);
                 if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
-                const lsd::editor::CachedMesh* mesh = meshes.get(static_cast<const lsd::world::StaticMesh*>(world.at(type, i))->mesh);
+                const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
+                const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
                 if (!mesh) continue;
                 const lsd::Mat4 m = world.world_matrix(e);
                 // Skip meshes whose bounding sphere does not reach the light.
                 const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
                 const lsd::Vec3 extent = lsd::transform_vector(m, (mesh->bounds_max - mesh->bounds_min) * 0.5f);
                 if (lsd::length(centre - at) > light.range + lsd::length(extent) * 1.8f) continue;
+                lsd::rhi::BufferHandle indices;
+                lsd::u32 count = 0;
+                if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
                 const lsd::Mat4 mvp = vp * m;
-                device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);
+                device.draw_shadow_caster(mesh->gpu.vertices, indices, count, mvp.m);
             }
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
             draw_instanced_casters(device, vp, world, meshes, skip_hidden);
@@ -304,8 +335,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     if (g_decals) g_decals->apply(world, skip_hidden, light_view.eye, lights);
     const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
     const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
-    if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden);
-    if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden);
+    if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
+    if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
     if (scene_target.valid()) {  // the post pass reads it: draw into the scene target (after the shadow passes)
         device.set_render_target(scene_target, scene_clear);
         lights.output[0] = hdr ? 1.0f : 0.0f;
@@ -333,23 +364,13 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             ++stats.stat_culled;
             continue;
         }
-        const lsd::Mat4 inv = lsd::affine_inverse(m);  // normals use the inverse transpose (correct under non-uniform scale)
         lsd::rhi::MeshDraw draw{};
-        draw.vertices = mesh->gpu.vertices;
-        draw.indices = mesh->gpu.indices;
-        draw.index_count = mesh->gpu.index_count;
-        if (mesh->lod_count > 1) {  // distant meshes draw a simpler LOD
-            const lsd::Vec3 half = (mesh->bounds_max - mesh->bounds_min) * 0.5f;
-            const lsd::f32 scale = std::fmax(lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}),
-                                             std::fmax(lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}), lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})));
-            const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
-            const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f);
-            const lsd::u32 lod = mesh->pick_lod(lsd::length(half) * scale / distance, stats.force_lod);
-            if (lod > 0) {
-                draw.indices = mesh->lod_indices[lod];
-                draw.index_count = mesh->lod_index_count[lod];
-            }
+        if (!pick_static_lod(*mesh, *component, m, eye, stats.force_lod, draw.indices, draw.index_count)) {  // distant meshes draw a simpler LOD
+            ++stats.stat_culled;
+            continue;
         }
+        const lsd::Mat4 inv = lsd::affine_inverse(m);  // normals use the inverse transpose (correct under non-uniform scale)
+        draw.vertices = mesh->gpu.vertices;
         std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
         for (int c = 0; c < 3; ++c) {
             for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);

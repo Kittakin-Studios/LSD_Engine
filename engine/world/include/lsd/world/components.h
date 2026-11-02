@@ -28,6 +28,8 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "The surface's friction and bounciness") char physical_material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Box-projected UVs from the object's size: one texture tile per metre on every face, however it is scaled (blockout walls and floors)")
     bool box_uv = false;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Not drawn (nor shadowed) farther than this from the camera; 0 = always (Unreal's Max Draw Distance)")
+    f32 max_draw_distance = 0.0f;
 };
 
 // Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),

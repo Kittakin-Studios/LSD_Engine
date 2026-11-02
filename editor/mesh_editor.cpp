@@ -238,7 +238,7 @@ void draw_mesh_editor(EditorState& s) {
     }
     ImGui::SeparatorText("Import settings");
     DetailsStyle style;
-    style.categories = "Asset,Import";
+    style.categories = "Asset,Import,LOD";
     if (draw_details(reflect::type_of<asset::AssetMeta>(), &g_mw.meta, &style)) g_mw.meta_dirty = true;
     if (ImGui::Button("Save")) {
         g_mw.meta_dirty = !s.registry->save_meta(g_mw.record, g_mw.meta);

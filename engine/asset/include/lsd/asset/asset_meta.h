@@ -42,6 +42,13 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "Import", Min = 0.001, Max = 1000, Tooltip = "Uniform scale applied on import (after unit conversion to metres)")
     f32 import_scale = 1.0f;
 
+    // Auto LODs (Unreal's LOD Screen Size): how big the mesh looks (bounding radius over distance)
+    // below which each simpler LOD takes over. Larger = switches sooner.
+    LSD_PROPERTY(Edit, Category = "LOD", Min = 0, Max = 2, Tooltip = "LOD 1 (half the triangles) below this size; about half the screen at 0.12")
+    f32 lod1_screen_size = 0.12f;
+    LSD_PROPERTY(Edit, Category = "LOD", Min = 0, Max = 2, Tooltip = "LOD 2 (a quarter) below this size") f32 lod2_screen_size = 0.06f;
+    LSD_PROPERTY(Edit, Category = "LOD", Min = 0, Max = 2, Tooltip = "LOD 3 (an eighth) below this size") f32 lod3_screen_size = 0.03f;
+
     // Animation files (FBX with takes): notifies, edited in Details, played in Play.
     LSD_PROPERTY(Edit, Category = "Animation") List<AnimNotify, 16> notifies;
     LSD_PROPERTY(Edit, Category = "Skeleton") List<MeshSocket, 16> sockets;

@@ -22,6 +22,7 @@ struct CachedMesh {
     u32 lod_count;                            // 1 = no simpler LODs
     // Which LOD to draw from how big the mesh looks: its bounding radius over its distance.
     u32 pick_lod(f32 radius_over_distance, i32 force_lod) const;
+    f32 lod_screen_size[kMaxLods];            // [1..3]: from the asset's import settings (LOD category)
     Vec3 bounds_min, bounds_max;  // local space
     i64 compiled_time;
     bool failed;  // asset missing or import failed: drawn as nothing, retried on hot_reload
