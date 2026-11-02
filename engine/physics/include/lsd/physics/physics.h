@@ -99,7 +99,8 @@ public:
     u32 body_count() const;
 
     // Nearest body along the ray (direction need not be unit length; the player is not hit).
-    bool raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit) const;
+    // `ignore_body`: one body the ray passes through (a vehicle looking for the ground under itself).
+    bool raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit, u32 ignore_body = 0xFFFFFFFFu) const;
     // The first body a shape touches moving from `from` to `to` (Unreal's Sphere / Box / Capsule Trace);
     // hit.distance is how far the shape's centre got. Boxes stay axis-aligned, capsules stand along Z.
     bool sweep(const QueryShape& shape, Vec3 from, Vec3 to, RayHit& hit) const;

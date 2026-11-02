@@ -14,7 +14,7 @@ namespace lsd::world {
 struct EntityTag;
 using Entity = Handle<EntityTag>;
 
-constexpr u32 kMaxComponentTypes = 48;
+constexpr u32 kMaxComponentTypes = 64;
 
 // Component types the world knows, in "Add Component" order. Transform is always first.
 const reflect::TypeInfo* const* component_types(u32& count);

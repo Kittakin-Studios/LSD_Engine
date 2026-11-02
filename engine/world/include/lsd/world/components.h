@@ -196,6 +196,59 @@ struct Camera {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 1000, Tooltip = "Orthographic: how many metres of the world fit the screen's height") f32 ortho_height = 10.0f;
 };
 
+// Moves the object by itself (Unreal's Interp To Movement and spline routes): along a direction, back
+// and forth to an offset, or along a Spline object's path, optionally turning. It can wait for its
+// start (Begin Play, the player entering a Trigger Volume, a time of the game, or a script) and run
+// again every so many minutes (120 = every 2 hours). It is solid: what stands on it rides along.
+LSD_STRUCT(Component, Category = "Movement")
+struct Mover {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Direction,Back and Forth,Spline", Tooltip = "Direction: forever (or Duration) at Velocity. Back and Forth: to Offset and back. Spline: along a Spline object's route") u32 path = 1;
+    LSD_PROPERTY(Edit, Units = "m/s", Tooltip = "Direction: the velocity, any vector (x, y, z)") Vec3 velocity{2.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Back and Forth: where it goes, from where it starts") Vec3 offset{0.0f, 0.0f, 4.0f};
+    LSD_PROPERTY(Edit, Tooltip = "Spline: the name of the object with the Spline (its route)") char spline[64] = "";
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Back and Forth / Spline") f32 speed = 3.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Once,Loop,Ping-Pong", Tooltip = "Once: stops at the end. Loop: starts over. Ping-Pong: comes back") u32 repeat = 2;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Direction: stops after this long (0 = never)") f32 duration = 0.0f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Waits this long at each end (stations, lift floors)") f32 pause = 0.0f;
+    LSD_PROPERTY(Edit, Units = "deg/s", Tooltip = "Turns while it moves (a rotating platform, a windmill)") Vec3 spin{0.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Tooltip = "Spline: turns to face along its route (trains, cars)") bool face_forward = true;
+    LSD_PROPERTY(Edit, Category = "Start", Widget = "Choice:Begin Play,Trigger,Game Time,Script", Tooltip = "When it starts: at once, when the player enters Trigger, at Start Time, or when a script calls lsd.start_mover") u32 start = 0;
+    LSD_PROPERTY(Edit, Category = "Start", Tooltip = "Trigger: the Trigger Volume's name") char trigger[64] = "";
+    LSD_PROPERTY(Edit, Category = "Start", Units = "s", Min = 0, Tooltip = "Game Time: seconds after Play starts") f32 start_time = 10.0f;
+    LSD_PROPERTY(Edit, Category = "Start", Units = "min", Min = 0, Tooltip = "Runs its route again from the start every so many minutes (60 = hourly); 0 = no") f32 repeat_minutes = 0.0f;
+};
+
+// A vehicle the player drives (Unreal's Chaos Vehicle, arcade-style): E near it gets in or out; W / S
+// throttle and reverse, A / D steer, Shift boost, Ctrl or Space handbrake (a flying one: Space up,
+// Ctrl down). It hugs the ground, stops at walls, and the camera follows behind it.
+LSD_STRUCT(Component, Category = "Movement")
+struct Vehicle {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Ground,Flying", Tooltip = "Ground: a car, cart or tank on the floor. Flying: a ship or drone that climbs") u32 kind = 0;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 max_speed = 20.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 reverse_speed = 6.0f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 acceleration = 8.0f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 braking = 20.0f;
+    LSD_PROPERTY(Edit, Units = "deg/s", Min = 0) f32 turn_rate = 90.0f;
+    LSD_PROPERTY(Edit, Min = 1, Max = 5, Tooltip = "Shift multiplies the top speed by this") f32 boost = 1.6f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Flying: how fast Space / Ctrl climb and sink") f32 climb_speed = 6.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "How near the player must be to get in with E") f32 enter_distance = 3.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Where the driver sits, in the vehicle's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
+    LSD_PROPERTY(Edit, Units = "m", Min = 1, Max = 50) f32 camera_distance = 8.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 30) f32 camera_height = 3.0f;
+};
+
+// A ride the player hitches without driving (trains, ferries, lifts, cable cars): E near it gets on or
+// off, and the player travels on its seat. It moves with a Mover or Spline Follower on the same object.
+LSD_STRUCT(Component, Category = "Movement")
+struct Transport {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5) f32 enter_distance = 4.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Where the rider stands, in the object's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
+    LSD_PROPERTY(Edit, Tooltip = "The rider can look around while riding (off: faces the way it travels)") bool free_look = true;
+};
+
 // This object replicates in multiplayer (Unreal's Replicates + Replicate Movement): the server's copy
 // is the real one and every client shows it, smoothly. Ignored when multiplayer is off.
 LSD_STRUCT(Component, Category = "Multiplayer")

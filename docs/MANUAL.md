@@ -350,6 +350,33 @@ indoors. Screen-space reflections add what is on screen on top.
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
 
+### Vehicles, transports and moving meshes
+
+Three ready-made objects in the **Place** tab, coloured cubes as placeholders (put your own mesh in
+their Static Mesh):
+
+- **Drivable Vehicle** (red, Unreal's vehicle Blueprint): walk up and press **E** to get in. **W / S**
+  throttle and reverse, **A / D** steer, **Shift** boost, **Ctrl** or **Space** handbrake, **E** gets
+  out (beside it). It hugs the ground (steps and ramps up to half a metre), stops at walls, pushes
+  what it hits, and the camera follows behind. Details > Vehicle: Ground or **Flying** (Space climbs,
+  Ctrl sinks), top speed, reverse, acceleration, braking, turn rate, boost, the seat, camera distance.
+- **Transport (Ride)** (blue: trains, ferries, lifts, cable cars): **E** near it hops on, and you
+  travel on its seat without driving; **E** gets off. It comes with a Mover going back and forth
+  20 m with a 3 s stop at each end: change its route in the Mover (a Spline for rails), or use a
+  Spline Follower instead.
+- **Moving Mesh (Mover)** (green): moves by itself. **Path**: *Direction* (any velocity vector,
+  forever or for Duration seconds), *Back and Forth* (to Offset and back), or *Spline* (a Spline
+  object's route by name, facing along it). **Repeat**: Once, Loop or Ping-Pong; **Pause** at each
+  end; **Spin** turns it while it moves. **Start**: Begin Play, **Trigger** (when the player enters a
+  Trigger Volume of that name), **Game Time** (seconds into the game) or **Script**; **Repeat
+  Minutes** runs the route again from the start every so many minutes (60 = hourly, 0 = never).
+  What stands on it rides along.
+
+Visual scripts: **Enter Vehicle**, **Exit Vehicle**, **Get Driven Vehicle**, **Hitch Ride**,
+**Leave Ride**, **Start / Stop / Restart Mover**. Lua: `lsd.enter_vehicle(e)`, `lsd.exit_vehicle()`,
+`lsd.vehicle()`, `lsd.ride(e)`, `lsd.stop_riding()`, `lsd.start_mover(e)`, `lsd.stop_mover(e)`,
+`lsd.restart_mover(e)`; vehicles and transports get `on_enter(self, player)` / `on_exit`.
+
 ### Multiplayer
 
 One checkbox: **Settings > Project Settings > Multiplayer > Multiplayer**. Off (the default), the

@@ -125,6 +125,12 @@
 // array: const [x, y, z] = lsd.position(self.entity)), `var properties = { speed: 5 }`, console.log.
 //   lsd.js_call(path, function, ...) -> result   a function of a .js file (what JavaScript nodes compile to)
 //
+// Vehicles and movers (Place tab: Drivable Vehicle, Transport, Moving Mesh):
+//   lsd.enter_vehicle(e) / lsd.exit_vehicle() -> ok, lsd.vehicle() -> e | nil   (E does it too)
+//   lsd.ride(e) / lsd.stop_riding() -> ok   a Transport (train, ferry, lift)
+//   lsd.start_mover(e), lsd.stop_mover(e), lsd.restart_mover(e) -> ok
+// Vehicles and transports get on_enter(self, player) and on_exit(self, player).
+//
 // Multiplayer (Project Settings > Multiplayer; in a single-player game these answer as standalone):
 //   lsd.net_mode() -> "standalone" | "server" | "client", lsd.player_id() (0 = the server's player)
 //   lsd.has_authority() -> bool          true on the server and in single player (Unreal's HasAuthority)
@@ -227,6 +233,8 @@ struct ScriptHost {
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
     void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
+    // Vehicles and movers: 0 enter vehicle, 1 exit, 2 driven vehicle, 3 ride, 4 get off, 5 / 6 / 7 start / stop / restart a mover.
+    u32 (*ride)(void* user, int what, world::Entity e) = nullptr;
     // Multiplayer (all null when it is off: scripts then see a standalone game).
     int (*net_mode)(void* user) = nullptr;   // 0 standalone, 1 server, 2 client
     u32 (*net_player)(void* user) = nullptr; // this machine's player id (0 = the server's own)

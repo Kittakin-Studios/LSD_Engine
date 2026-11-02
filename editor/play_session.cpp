@@ -13,6 +13,8 @@
 #include "graph_editor.h"
 #include "paper2d.h"
 
+#include <SDL3/SDL_scancode.h>
+
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/prefab.h"
@@ -270,6 +272,10 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 void PlaySession::stop() {
     net_.shutdown();  // tells the others first
     my_avatar_ = {};
+    moving_.clear();
+    driving_ = riding_ = {};
+    play_clock_ = 0.0;
+    interact_was_down_ = false;
     chat_.clear();
     if (ui_) ui_->close_all();
     ui_cursor_ = false;
@@ -637,6 +643,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         auto& self = *static_cast<PlaySession*>(user);
         if (self.animations_) self.animations_->set_param(*self.world_, e, name, value);
     };
+    host.ride = [](void* user, int what, world::Entity e) {
+        auto& self = *static_cast<PlaySession*>(user);
+        return self.world_ ? self.ride_command(*self.world_, what, e) : 0u;
+    };
     host.net_mode = [](void* user) {
         const net::Mode mode = static_cast<PlaySession*>(user)->net_.mode();
         return mode == net::Mode::Server ? 1 : mode == net::Mode::Client ? 2 : 0;
@@ -874,6 +884,10 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         apply_material(d, rigid->physical_material);
         const u32 body = add_body(e, d);
         simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic || remote};
+        return;
+    }
+    if (world.get<world::Mover>(e) || world.get<world::Vehicle>(e)) {  // moved by Play: kinematic, carries what stands on it
+        add_moving(world, e, cached, !mesh || mesh->collision);
         return;
     }
     if (cached && mesh->collision) {
@@ -1166,7 +1180,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     std::snprintf(key_held_, sizeof key_held_, "%s", held);
     const input::Value move = input_.value(settings_.move_action);
     const input::Value look = input_.value(settings_.look_action);
-    const bool jump = input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...
+    const bool aboard = world.alive(driving_) || world.alive(riding_);  // in a vehicle or on a ride: no walking
+    const bool jump = !aboard && input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...
 
     const f32 sensitivity = settings_.look_sensitivity * (user_settings_ ? user_settings_->mouse_sensitivity : 1.0f);
     const bool invert = settings_.invert_look_y != (user_settings_ && user_settings_->invert_look);
@@ -1181,7 +1196,9 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);
+    if (aboard) velocity = {};
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
+    update_rides(world, frame, move, dt);  // vehicles, transports, movers
     for (u32 i = 0; i < simulated_count_; ++i) {  // kinematic rigid bodies go where scripts / timelines put their Transform
         const Simulated& s = simulated_[i];
         if (!s.kinematic || !world.alive(s.entity)) continue;
@@ -1216,6 +1233,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     const Vec3 moved = physics_->character_feet() - feet_;
     feet_ = physics_->character_feet();
+    place_rider(world);  // a driver or rider stays on its seat
     if (animations_ && character_.valid() && dt > 0.0f) {
         animations_->set_param(world, character_, "Speed", std::sqrt(moved.x * moved.x + moved.y * moved.y) / dt);
         animations_->set_param(world, character_, "VerticalSpeed", moved.z / dt);
@@ -1559,6 +1577,7 @@ void PlaySession::camera_shake(f32 strength, f32 seconds, f32 frequency) {
 // then the blend from the previous view and any camera shake on top.
 void PlaySession::update_view(const world::World& world, f32 dt) {
     find_view(world);
+    vehicle_view(world);
     view_clock_ += dt;
     if (blend_time_ < blend_length_) {
         blend_time_ += dt;
@@ -1652,6 +1671,292 @@ void PlaySession::update_triggers(world::World& world) {
         }
         scripts_.send(entered[i].trigger, "on_overlap_begin", entered[i].other);
         scripts_.send(entered[i].other, "on_overlap_begin", entered[i].trigger);
+    }
+}
+
+// ---- Vehicles, transports and movers ----
+
+namespace {
+// The nearest point of an object's unit box (a scaled cube placeholder or mesh) to `p`, in the world.
+Vec3 nearest_on_box(const world::World& world, world::Entity e, Vec3 p) {
+    const Mat4 m = world.world_matrix(e);
+    Vec3 local = transform_point(affine_inverse(m), p);
+    local = {std::clamp(local.x, kUnitLo.x, kUnitHi.x), std::clamp(local.y, kUnitLo.y, kUnitHi.y), std::clamp(local.z, kUnitLo.z, kUnitHi.z)};
+    return transform_point(m, local);
+}
+Vec3 axis_x(const Mat4& m) { return normalize(Vec3{m.at(0, 0), m.at(1, 0), 0.0f}); }
+} // namespace
+
+void PlaySession::add_moving(const world::World& world, world::Entity e, const CachedMesh* cached, bool solid) {
+    Moving m;
+    m.entity = e;
+    Vec3 t, r, s;
+    decompose_trs(world.world_matrix(e), t, r, s);
+    m.start_position = t;
+    m.start_rotation = r;
+    m.world_scale = s;
+    m.yaw = radians(r.z);
+    if (solid) m.body = add_body(e, fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi, 0, physics::Motion::Kinematic, m.scale, m.centre));
+    if (const auto* mover = world.get<world::Mover>(e)) {
+        m.running = mover->start == 0;  // Begin Play
+        if (m.running) m.started_at = 0.0;
+        for (u32 slot = 0; slot < world.slot_count() && mover->path == 2; ++slot) {
+            const world::Entity candidate = world.entity_at_slot(slot);
+            if (candidate.valid() && world.get<world::Spline>(candidate) && std::strcmp(world.name(candidate), mover->spline) == 0) m.spline = candidate;
+        }
+        if (mover->path == 2 && !m.spline.valid()) LSD_LOG_WARN("play", "%s: Mover: no object named '%s' with a Spline", world.name(e), mover->spline);
+    }
+    moving_.push_back(m);
+}
+
+PlaySession::Moving* PlaySession::moving_of(world::Entity e) {
+    for (Moving& m : moving_) {
+        if (m.entity == e) return &m;
+    }
+    return nullptr;
+}
+
+void PlaySession::restart_mover(world::World& world, Moving& m) {
+    m.time = m.distance = m.wait = 0.0f;
+    m.direction = 1.0f;
+    m.spun = {};
+    m.running = true;
+    m.started_at = play_clock_;
+    world.set_world_matrix(m.entity, trs(m.start_position, m.start_rotation, m.world_scale));
+}
+
+// One step of a Mover: where its path puts it now (false: it does not move this frame).
+bool PlaySession::step_mover(world::World& world, Moving& m, const world::Mover& mover, f32 dt, Vec3& at, Vec3& rotation) {
+    if (m.wait > 0.0f) {  // resting at an end (a station, a lift floor)
+        m.wait -= dt;
+        return false;
+    }
+    rotation = m.start_rotation + (m.spun = m.spun + mover.spin * dt);
+    auto ends = [&](f32 length) {  // Once / Loop / Ping-Pong at the ends of a route `length` long
+        if (m.distance >= length || m.distance <= 0.0f) {
+            const bool at_end = m.distance >= length;
+            if (mover.repeat == 0) {
+                m.distance = std::clamp(m.distance, 0.0f, length);
+                if (at_end) m.running = false;
+            } else if (mover.repeat == 1) {
+                if (at_end) m.distance = length > 0.0f ? std::fmod(m.distance, length) : 0.0f, m.wait = mover.pause;
+            } else {
+                m.distance = std::clamp(m.distance, 0.0f, length);
+                m.direction = at_end ? -1.0f : 1.0f;
+                m.wait = mover.pause;
+            }
+        }
+    };
+    switch (mover.path) {
+    case 0:  // a direction, forever or for Duration seconds
+        m.time += dt;
+        if (mover.duration > 0.0f && m.time >= mover.duration) {
+            m.time = mover.duration;
+            m.running = false;
+        }
+        at = m.start_position + mover.velocity * m.time;
+        return true;
+    case 1: {  // back and forth to Offset
+        const f32 length = std::sqrt(mover.offset.x * mover.offset.x + mover.offset.y * mover.offset.y + mover.offset.z * mover.offset.z);
+        if (length < 1e-4f) return false;
+        m.distance += mover.speed * m.direction * dt;
+        ends(length);
+        at = m.start_position + mover.offset * (m.distance / length);
+        return true;
+    }
+    default: {  // along a Spline object's route
+        const auto* spline = world.alive(m.spline) ? world.get<world::Spline>(m.spline) : nullptr;
+        if (!spline || spline->points.count < 2) return false;
+        Vec3 points[32], tangents[32];
+        bool closed = false;
+        world::spline_world_curve(world, m.spline, points, tangents, closed);
+        const f32 length = world::spline_length(points, spline->points.count, spline->closed, tangents);
+        m.distance += mover.speed * m.direction * dt;
+        ends(length);
+        Vec3 tangent;
+        at = world::spline_at_distance(points, spline->points.count, spline->closed, m.distance, &tangent, tangents);
+        if (mover.face_forward) {
+            const Vec3 d = tangent * m.direction;
+            rotation = Vec3{0.0f, -degrees(std::atan2(d.z, std::sqrt(d.x * d.x + d.y * d.y))), degrees(std::atan2(d.y, d.x))} + m.spun;
+        }
+        return true;
+    }
+    }
+}
+
+// A driven vehicle, arcade-style: throttle / reverse / brake / boost, steering that needs speed,
+// ground following by ray, walls stop it.
+void PlaySession::drive(world::World& world, Moving& m, const world::Vehicle& v, const input::InputFrame& frame, input::Value move, f32 dt, Vec3& at) {
+    auto key = [&](SDL_Scancode k) { return frame.keys && static_cast<i32>(k) < frame.key_count && frame.keys[k]; };
+    const bool boost = key(SDL_SCANCODE_LSHIFT);
+    const bool brake = key(SDL_SCANCODE_LCTRL) || (v.kind == 0 && key(SDL_SCANCODE_SPACE));
+    const f32 top = v.max_speed * (boost ? v.boost : 1.0f);
+    auto toward = [](f32 value, f32 target, f32 step) { return value < target ? std::min(value + step, target) : std::max(value - step, target); };
+    if (move.y > 0.01f) m.speed = m.speed < 0.0f ? toward(m.speed, 0.0f, v.braking * dt) : std::min(m.speed + v.acceleration * move.y * dt, top);
+    else if (move.y < -0.01f) m.speed = m.speed > 0.0f ? toward(m.speed, 0.0f, v.braking * dt) : std::max(m.speed + v.acceleration * move.y * dt, -v.reverse_speed);
+    else m.speed = toward(m.speed, 0.0f, v.acceleration * 0.5f * dt);  // rolling to a stop
+    if (brake) m.speed = toward(m.speed, 0.0f, v.braking * 1.5f * dt);
+    if (m.speed > top) m.speed = toward(m.speed, top, v.braking * dt);  // boost released
+    m.yaw -= radians(v.turn_rate) * move.x * dt * std::clamp(m.speed / 4.0f, -1.0f, 1.0f);  // turning needs some speed; reversing turns the other way
+    const Vec3 forward{std::cos(m.yaw), std::sin(m.yaw), 0.0f};
+    const Vec3 from = at;
+    Vec3 next = from + forward * (m.speed * dt);
+    // Walls: a ray from just outside the nose (or tail) along the travel.
+    const f32 half_length = m.world_scale.x * 0.5f;
+    if (std::fabs(m.speed) > 0.01f) {
+        const f32 sign = m.speed > 0.0f ? 1.0f : -1.0f;
+        physics::RayHit hit;
+        const Vec3 nose = from + forward * (sign * (half_length + 0.05f)) + Vec3{0, 0, std::max(0.3f, m.world_scale.z * 0.5f)};
+        if (physics_->raycast(nose, forward * sign, std::fabs(m.speed * dt) + 0.1f, hit, m.body)) {
+            m.speed = 0.0f;
+            next = from;
+        }
+    }
+    if (v.kind == 1) {  // flying: Space climbs, Ctrl sinks
+        next.z += ((key(SDL_SCANCODE_SPACE) ? 1.0f : 0.0f) - (key(SDL_SCANCODE_LCTRL) ? 1.0f : 0.0f)) * v.climb_speed * dt;
+    } else {  // ground: down to what is below (steps up to 0.5 m), or falls
+        physics::RayHit hit;  // from half a metre up (steps and ramps), through the vehicle itself
+        const bool found = physics_->raycast(next + Vec3{0, 0, 0.5f}, {0, 0, -1}, 50.0f, hit, m.body);
+        const f32 ground = found ? hit.point.z : -1e9f;
+        if (next.z - ground > 0.05f) {
+            m.fall += world.settings().gravity * dt;
+            next.z = std::max(ground, next.z - m.fall * dt);
+        } else {
+            m.fall = 0.0f;
+            next.z = ground;
+        }
+    }
+    at = next;
+}
+
+void PlaySession::update_rides(world::World& world, const input::InputFrame& frame, input::Value move, f32 dt) {
+    play_clock_ += dt;
+    // E gets in / out of the nearest vehicle or transport.
+    const bool e_down = frame.keys && SDL_SCANCODE_E < frame.key_count && frame.keys[SDL_SCANCODE_E];
+    if (e_down && !interact_was_down_) {
+        if (world.alive(driving_) || world.alive(riding_)) {
+            ride_command(world, world.alive(driving_) ? 1 : 4, {});
+        } else {
+            world::Entity best;
+            f32 best_d = 1e30f;
+            for (const Moving& m : moving_) {
+                const auto* v = world.get<world::Vehicle>(m.entity);
+                const auto* t = world.get<world::Transport>(m.entity);
+                if (!v && !t) continue;
+                const f32 d = length(nearest_on_box(world, m.entity, feet_ + Vec3{0, 0, 0.9f}) - (feet_ + Vec3{0, 0, 0.9f}));
+                if (d <= (v ? v->enter_distance : t->enter_distance) && d < best_d) best = m.entity, best_d = d;
+            }
+            if (best.valid()) ride_command(world, world.get<world::Vehicle>(best) ? 0 : 3, best);
+        }
+    }
+    interact_was_down_ = e_down;
+
+    const reflect::TypeInfo& trigger_type = reflect::type_of<world::TriggerVolume>();
+    for (Moving& m : moving_) {
+        if (!world.alive(m.entity)) continue;
+        Vec3 t, rotation, scale;
+        decompose_trs(world.world_matrix(m.entity), t, rotation, scale);
+        Vec3 at = t;
+        bool moved = false;
+        if (const auto* mover = world.get<world::Mover>(m.entity)) {
+            // Starting: a Trigger the player enters, or a time of the game; then again every N minutes.
+            if (!m.running && m.started_at < 0.0) {
+                if (mover->start == 2 && play_clock_ >= mover->start_time) restart_mover(world, m);
+                for (u32 i = 0; mover->start == 1 && i < world.count(trigger_type); ++i) {
+                    const world::Entity trigger = world.owner(trigger_type, i);
+                    if (std::strcmp(world.name(trigger), mover->trigger) == 0 && inside_volume(world, trigger, feet_ + Vec3{0, 0, 0.9f})) restart_mover(world, m);
+                }
+            }
+            if (mover->repeat_minutes > 0.0f && m.started_at >= 0.0 && play_clock_ - m.started_at >= mover->repeat_minutes * 60.0) restart_mover(world, m);
+            if (m.running) moved = step_mover(world, m, *mover, dt, at, rotation);
+        }
+        if (const auto* v = world.get<world::Vehicle>(m.entity); v && m.entity == driving_) {
+            drive(world, m, *v, frame, move, dt, at);
+            rotation = {0.0f, 0.0f, degrees(m.yaw)};
+            moved = true;
+        }
+        if (!moved) continue;
+        world.set_world_matrix(m.entity, trs(at, rotation, m.world_scale));
+        if (m.body != physics::kWorldBody) physics_->move_kinematic(m.body, translation(at) * rotation_euler(rotation) * translation(mul(m.centre, m.scale)), dt);
+    }
+}
+
+// After the physics step: a driver or rider sits on its seat, wherever the vehicle went.
+void PlaySession::place_rider(world::World& world) {
+    const world::Entity on = world.alive(driving_) ? driving_ : world.alive(riding_) ? riding_ : world::Entity{};
+    if (!on.valid()) return;
+    const auto* v = world.get<world::Vehicle>(on);
+    const auto* t = world.get<world::Transport>(on);
+    if (!v && !t) return;
+    const Mat4 m = world.world_matrix(on);
+    const Vec3 seat = transform_point(m, v ? v->seat : t->seat) + Vec3{0, 0, 0.02f};
+    physics_->teleport_character(seat);
+    feet_ = seat;
+    if (v || (t && !t->free_look)) {  // facing the way it travels
+        const Vec3 x = axis_x(m);
+        if (length(x) > 0.5f) yaw_ = std::atan2(x.y, x.x);
+    }
+}
+
+// Driving: the camera follows behind and above the vehicle.
+void PlaySession::vehicle_view(const world::World& world) {
+    const auto* v = world.alive(driving_) ? world.get<world::Vehicle>(driving_) : nullptr;
+    if (!v || view_camera_.valid()) return;
+    const Mat4 m = world.world_matrix(driving_);
+    const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    const Vec3 forward = axis_x(m);
+    view_eye_ = at - forward * v->camera_distance + Vec3{0, 0, v->camera_height};
+    view_forward_ = normalize(at + Vec3{0, 0, 1.0f} - view_eye_);
+}
+
+u32 PlaySession::ride_command(world::World& world, int what, world::Entity e) {
+    auto beside = [&](world::Entity of) {  // out to the left side, standing
+        const Mat4 m = world.world_matrix(of);
+        const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        const Vec3 x = axis_x(m);
+        const Vec3 left{-x.y, x.x, 0.0f};
+        const f32 half_width = length(Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}) * 0.5f;
+        physics_->teleport_character(at + left * (half_width + 1.0f) + Vec3{0, 0, 0.1f});
+        feet_ = physics_->character_feet();
+    };
+    switch (what) {
+    case 0:  // enter a vehicle
+        if (!world.alive(e) || !world.get<world::Vehicle>(e) || !moving_of(e)) return 0;
+        if (world.alive(riding_)) ride_command(world, 4, {});
+        driving_ = e;
+        scripts_.send(e, "on_enter", character_);
+        return 1;
+    case 1:  // exit it
+        if (!world.alive(driving_)) return 0;
+        if (Moving* m = moving_of(driving_)) m->speed = 0.0f;
+        beside(driving_);
+        scripts_.send(driving_, "on_exit", character_);
+        driving_ = {};
+        return 1;
+    case 2: return world.alive(driving_) ? driving_.value : 0;  // the vehicle driven
+    case 3:  // hitch a ride
+        if (!world.alive(e) || !world.get<world::Transport>(e)) return 0;
+        if (world.alive(driving_)) ride_command(world, 1, {});
+        riding_ = e;
+        scripts_.send(e, "on_enter", character_);
+        return 1;
+    case 4:  // get off
+        if (!world.alive(riding_)) return 0;
+        beside(riding_);
+        scripts_.send(riding_, "on_exit", character_);
+        riding_ = {};
+        return 1;
+    case 5:
+    case 6:
+    case 7: {  // movers: start, stop, restart
+        Moving* m = world.alive(e) && world.get<world::Mover>(e) ? moving_of(e) : nullptr;
+        if (!m) return 0;
+        if (what == 6) m->running = false;
+        else if (what == 7 || m->started_at < 0.0) restart_mover(world, *m);
+        else m->running = true;
+        return 1;
+    }
+    default: return 0;
     }
 }
 

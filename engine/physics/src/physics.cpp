@@ -30,6 +30,7 @@
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 
 #include <algorithm>
 #include <cmath>
@@ -264,13 +265,16 @@ void PhysicsWorld::remove_body(u32 body) {
     impl_->bodies[body] = JPH::BodyID();
 }
 
-bool PhysicsWorld::raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit) const {
+bool PhysicsWorld::raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit, u32 ignore_body) const {
     const f32 length = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
     if (length <= 0.0f || max_distance <= 0.0f) return false;
     const JPH::Vec3 span = to_jolt(direction) * (max_distance / length);
     const JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), span);
     JPH::RayCastResult result;
-    if (!impl_->system.GetNarrowPhaseQuery().CastRay(ray, result)) return false;
+    const bool ignoring = ignore_body < impl_->bodies.size() && !impl_->bodies[ignore_body].IsInvalid();
+    const JPH::IgnoreSingleBodyFilter skip(ignoring ? impl_->bodies[ignore_body] : JPH::BodyID());
+    const JPH::BodyFilter everything;
+    if (!impl_->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, {}, ignoring ? static_cast<const JPH::BodyFilter&>(skip) : everything)) return false;
     const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
     JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID);
     if (!lock.Succeeded()) return false;

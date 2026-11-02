@@ -282,6 +282,13 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 - VR / XR via OpenXR **(S)**
 
+## Vehicles, transports, movers
+
+- [x] Drivable Vehicle (Place tab): E in / out, WASD + Shift boost + Ctrl / Space brake, ground following, walls, flying kind, follow camera; Enter / Exit / Get Driven Vehicle nodes [Vehicle Blueprint]
+- [x] Transport (Place tab): hitch a ride with E, no controls; Hitch Ride / Leave Ride nodes
+- [x] Mover (Place tab): direction / back and forth / spline paths, once / loop / ping-pong, pauses, spin; starts at Begin Play, a Trigger, a game time or a script, repeats every N minutes; Start / Stop / Restart Mover nodes [Interp To Movement]
+- [ ] Wheels and suspension (Chaos-style physics vehicles), vehicles in multiplayer (driving on clients), seats for passengers, camera collision for the follow camera
+
 ## Multiplayer
 
 - [x] One project checkbox (Project Settings > Multiplayer); off = single player, nothing runs

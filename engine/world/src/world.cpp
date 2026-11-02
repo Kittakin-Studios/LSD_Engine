@@ -50,6 +50,9 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<Sprite>(),
         &reflect::type_of<TileMap>(),
         &reflect::type_of<NetReplicated>(),
+        &reflect::type_of<Mover>(),
+        &reflect::type_of<Vehicle>(),
+        &reflect::type_of<Transport>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     count = static_cast<u32>(sizeof types / sizeof types[0]);

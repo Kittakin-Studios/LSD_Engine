@@ -77,6 +77,17 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "__color($1, $2)", {}},
     {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh, particle system or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
+    // ---- Vehicles and movers ----
+    {"EnterVehicle", "Enter Vehicle", "Vehicles", "The player gets in and drives it: W / S, A / D, Shift boost, Ctrl or Space brake, E gets out", {kExecIn, kTarget}, 0,
+     {kExecOut, {"Entered", PinType::Bool, ""}}, 0, "local $o1 = lsd.enter_vehicle($1)", {}},
+    {"ExitVehicle", "Exit Vehicle", "Vehicles", "The player gets out of the vehicle it drives", {kExecIn}, 0, {kExecOut}, 0, "lsd.exit_vehicle()", {}},
+    {"GetVehicle", "Get Driven Vehicle", "Vehicles", "The vehicle the player drives (none when walking)", {}, 0, {{"Vehicle", PinType::Entity, ""}}, 0, nullptr, {"lsd.vehicle()"}},
+    {"HitchRide", "Hitch Ride", "Vehicles", "The player rides a Transport (train, ferry, lift) without driving; E gets off", {kExecIn, kTarget}, 0,
+     {kExecOut, {"Riding", PinType::Bool, ""}}, 0, "local $o1 = lsd.ride($1)", {}},
+    {"LeaveRide", "Leave Ride", "Vehicles", "The player gets off the Transport it rides", {kExecIn}, 0, {kExecOut}, 0, "lsd.stop_riding()", {}},
+    {"StartMover", "Start Mover", "Movers", "Starts a Mover (one waiting for Script, or stopped)", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.start_mover($1)", {}},
+    {"StopMover", "Stop Mover", "Movers", "Stops a Mover where it is", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.stop_mover($1)", {}},
+    {"RestartMover", "Restart Mover", "Movers", "Puts a Mover back at the start of its route and runs it", {kExecIn, kTarget}, 0, {kExecOut}, 0, "lsd.restart_mover($1)", {}},
     // ---- Camera ----
     {"SetViewTarget", "Set View Target with Blend", "Camera", "Looks through an object's Camera (unconnected: this object's), blending over Blend Time seconds; Set View Target to Player goes back",
      {kExecIn, {"Camera", PinType::Entity, ""}, {"Blend Time", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_view($1, $2)", {}},

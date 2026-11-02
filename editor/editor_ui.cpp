@@ -271,6 +271,8 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
     {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
     {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
+    // Movement prefabs, cubes as placeholders: swap the mesh in Details.
+    {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
@@ -449,6 +451,22 @@ Entity place(EditorState& s, const char* name, const char* mesh, const char* com
         s.world->get<world::Transform>(e)->position.z += 3.0f;
     }
     if (s.world->get<world::PointLight>(e)) s.world->get<world::Transform>(e)->position.z += 1.5f;
+    // Movement prefabs: a car-sized box, a long platform that shuttles (a train or ferry to ride), a box that rises and falls.
+    if (s.world->get<world::Vehicle>(e)) {
+        s.world->get<world::Transform>(e)->scale = {4.0f, 2.0f, 1.2f};
+        s.world->get<world::StaticMesh>(e)->color = LinearColor::hex(0xC0392B);
+    }
+    if (s.world->get<world::Transport>(e)) {
+        s.world->get<world::Transform>(e)->scale = {8.0f, 3.0f, 0.5f};
+        s.world->get<world::StaticMesh>(e)->color = LinearColor::hex(0x2E86C1);
+        auto* mover = s.world->add<world::Mover>(e);
+        mover->offset = {20.0f, 0.0f, 0.0f};
+        mover->pause = 3.0f;
+    }
+    if (s.world->get<world::Mover>(e) && !s.world->get<world::Transport>(e)) {
+        s.world->get<world::Transform>(e)->scale = {2.0f, 2.0f, 0.5f};
+        s.world->get<world::StaticMesh>(e)->color = LinearColor::hex(0x27AE60);
+    }
     select(s, e);
     char label[96];
     std::snprintf(label, sizeof label, "Place %s", unique);

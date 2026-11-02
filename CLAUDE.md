@@ -51,7 +51,7 @@ Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
 `-connect=<host[:port]>` (multiplayer, when Project Settings > Multiplayer is on).
-Console: `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later),
+Console: `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
@@ -146,6 +146,7 @@ Editor Preferences > Plugins with Claude MCP (Claude Code drives the editor thro
 Unreal-style panel tabs under the menu bar (Level + each open asset editor; the Level tab lists the modes: 3D Modeling,
 Foliage, Landscape, Animation Sequence, PCG, VFX, 2D in `editor/editor_modes.*`), and under them, on the Level tab,
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
+Vehicles / Transports / Movers (Place tab, cube placeholders; nodes in the Vehicles and Movers menus).
 Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
 script events, text chat; Play opens a game window per extra player.
 2D (Paper2D, `editor/paper2d.*`, the Level tab's 2D mode): Sprite (sheets + flipbooks), Tile Map

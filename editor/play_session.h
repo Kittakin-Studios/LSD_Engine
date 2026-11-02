@@ -79,6 +79,9 @@ public:
     };
     const std::vector<ChatLine>& chat_log() const { return chat_; }
     bool send_chat(const char* channel, const char* text);  // this machine's player says something
+    // Vehicles and movers for scripts: 0 enter vehicle e, 1 exit, 2 the driven vehicle (entity value),
+    // 3 ride transport e, 4 get off, 5 start mover e, 6 stop it, 7 restart it. 0 = refused / none.
+    u32 ride_command(world::World& world, int what, world::Entity e);
     void set_sounds(SoundPlayer* sounds) { sounds_ = sounds; }
     // The Character's Speed, VerticalSpeed and InAir go to its Animation Graph; Lua sets others.
     void set_animations(AnimationPlayer* animations) { animations_ = animations; }
@@ -129,6 +132,29 @@ private:
     static world::Entity net_spawn(void* user, const char* asset, const char* name, Vec3 position, Vec3 rotation);
     void net_receive(world::World& world, f32 dt);
     void net_send(world::World& world, f32 dt);
+    // Vehicles, transports and movers: objects moved by Play itself, on kinematic bodies.
+    struct Moving {
+        world::Entity entity, spline;
+        u32 body = physics::kWorldBody;
+        Vec3 scale{1, 1, 1}, centre{};  // the body's fit (see fitted_body)
+        Vec3 start_position{}, start_rotation{}, world_scale{1, 1, 1}, spun{};
+        f32 time = 0, distance = 0, direction = 1, wait = 0;
+        f64 started_at = -1.0;  // play clock when its run began; -1: not yet
+        bool running = false;
+        f32 speed = 0, yaw = 0, fall = 0;  // a vehicle's motion
+    };
+    std::vector<Moving> moving_;
+    world::Entity driving_, riding_;
+    f64 play_clock_ = 0.0;
+    bool interact_was_down_ = false;
+    void add_moving(const world::World& world, world::Entity e, const CachedMesh* cached, bool solid);
+    Moving* moving_of(world::Entity e);
+    void restart_mover(world::World& world, Moving& m);
+    bool step_mover(world::World& world, Moving& m, const world::Mover& mover, f32 dt, Vec3& at, Vec3& rotation);
+    void drive(world::World& world, Moving& m, const world::Vehicle& v, const input::InputFrame& frame, input::Value move, f32 dt, Vec3& at);
+    void update_rides(world::World& world, const input::InputFrame& frame, input::Value move, f32 dt);
+    void place_rider(world::World& world);
+    void vehicle_view(const world::World& world);
     world::Entity spawn(const char* name, Vec3 position);  // during Play: bodies and scripts too
     void start_game_mode(world::World& world);
     void send_hits();

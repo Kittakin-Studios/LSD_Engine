@@ -251,6 +251,13 @@ RGBA8 target, two targets ping-pong per post chain. An EXPOSE pass multiplies th
 bloom and the tonemapper see the adapted image. Sky reflections (both mesh shaders) use the
 `sky_radiance` gradient along the reflection and an analytic split-sum BRDF instead of cubemaps.
 
+**Vehicles, transports, movers** (play_session.cpp, end of file): Mover and Vehicle objects get a
+kinematic body and a `Moving` record instead of a static body; `update_rides` runs before the physics
+step (E to board, Mover routes and start / repeat conditions, the driven vehicle's arcade model with
+`raycast(..., ignore_body)` for ground and walls) and moves their bodies with `move_kinematic`, so the
+character and objects on them are carried; `place_rider` after the step puts the driver / rider on its
+seat; `vehicle_view` follows behind. Scripts reach it through `ScriptHost.ride`.
+
 **Multiplayer** (`engine/net`, ENet): `NetSession` hosts or joins; channel 0 is reliable (welcome,
 spawn, destroy, events, chat, joins, teams), channel 1 unreliable sequenced (snapshots, owner states).
 Level objects get ids from FNV of their names (identical everywhere), spawned ones a counter; the

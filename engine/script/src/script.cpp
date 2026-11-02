@@ -801,6 +801,26 @@ struct Api {
         return 0;
     }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
+    static int ride_call(lua_State* L, int what, bool target) {
+        const ScriptHost& host = system(L).host_;
+        const world::Entity e = target ? entity(L, 1) : world::Entity{};
+        const u32 result = host.ride ? host.ride(host.user, what, e) : 0;
+        if (what == 2) {
+            if (result) lua_pushnumber(L, result);
+            else lua_pushnil(L);
+        } else {
+            lua_pushboolean(L, result != 0);
+        }
+        return 1;
+    }
+    static int enter_vehicle(lua_State* L) { return ride_call(L, 0, true); }
+    static int exit_vehicle(lua_State* L) { return ride_call(L, 1, false); }
+    static int vehicle(lua_State* L) { return ride_call(L, 2, false); }
+    static int ride(lua_State* L) { return ride_call(L, 3, true); }
+    static int stop_riding(lua_State* L) { return ride_call(L, 4, false); }
+    static int start_mover(lua_State* L) { return ride_call(L, 5, true); }
+    static int stop_mover(lua_State* L) { return ride_call(L, 6, true); }
+    static int restart_mover(lua_State* L) { return ride_call(L, 7, true); }
     static int net_mode(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const int mode = host.net_mode ? host.net_mode(host.user) : 0;
@@ -1451,7 +1471,9 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"player_id", Api::player_id},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
+        {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
+        {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},

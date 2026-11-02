@@ -72,6 +72,9 @@
 #include <cctype>
 #include <string>
 
+// input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
+lsd::u64 g_held_until[SDL_SCANCODE_COUNT] = {};
+
 namespace {
 
 bool g_screenshot = false;  // the screenshot command: capture the next frame
@@ -789,6 +792,17 @@ void register_console(EditorState& s) {
             LSD_LOG_WARN("editor", "ui.Open: no UI document or style named like '%s'", args);
         }
     }, &s, "Open a UI document (.rml) or style (.rcss) in the UI window");
+    console::add_command("input.Hold", [](void*, const char* args) {  // tests / the MCP bridge drive Play
+        char name[32] = "";
+        float seconds = 1.0f;
+        if (std::sscanf(args, "%31s %f", name, &seconds) < 1) return;
+        const SDL_Scancode k = SDL_GetScancodeFromName(name);
+        if (k == SDL_SCANCODE_UNKNOWN) {
+            LSD_LOG_WARN("input", "input.Hold: no key named %s (W, Space, E...)", name);
+            return;
+        }
+        g_held_until[k] = SDL_GetTicks() + static_cast<lsd::u64>(seconds * 1000.0f);
+    }, nullptr, "input.Hold <key> <seconds>: hold a key for the game (tests), e.g. input.Hold W 2");
     console::add_command("ui.Keys", [](void*, const char* args) {  // tests: "down down enter", 0.8 s later
         static char keys[128];
         std::snprintf(keys, sizeof keys, "%s", args);
@@ -1988,8 +2002,14 @@ int main(int argc, char** argv) {
         if (state.playing) {
             // Devices go to the game only while it has the mouse (not when ejected or the mouse is freed).
             lsd::input::InputFrame devices;
+            static bool keys[SDL_SCANCODE_COUNT];
             if (state.mouse_captured && !state.ejected) {
-                devices.keys = SDL_GetKeyboardState(&devices.key_count);
+                int count = 0;
+                const bool* real = SDL_GetKeyboardState(&count);
+                const lsd::u64 ticks = SDL_GetTicks();
+                for (int k = 0; k < SDL_SCANCODE_COUNT; ++k) keys[k] = (k < count && real[k]) || g_held_until[k] > ticks;
+                devices.keys = keys;
+                devices.key_count = SDL_SCANCODE_COUNT;
                 devices.mouse_dx = mouse_dx;
                 devices.mouse_dy = mouse_dy;
                 const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
