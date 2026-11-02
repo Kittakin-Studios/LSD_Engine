@@ -543,6 +543,11 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0, Max = 1000, Tooltip = "Distance either side of it that stays fully sharp") f32 dof_focal_region = 0.0f;
     LSD_PROPERTY(Edit, Category = "Depth of Field", Units = "m", Min = 0.01, Max = 1000, Tooltip = "Distance from sharp to fully blurred") f32 dof_transition = 5.0f;
     LSD_PROPERTY(Edit, Category = "Depth of Field", Min = 0, Max = 32, Tooltip = "Blur radius in pixels") f32 dof_max_blur = 8.0f;
+    LSD_PROPERTY(Edit, Category = "Exposure", Tooltip = "Eye adaptation: dark views brighten and bright ones darken over a moment (Unreal's Auto Exposure)") bool auto_exposure = true;
+    LSD_PROPERTY(Edit, Category = "Exposure", Units = "EV", Min = -10, Max = 0, Tooltip = "How much darker than World Settings exposure it may make the image") f32 exposure_min_ev = -4.0f;
+    LSD_PROPERTY(Edit, Category = "Exposure", Units = "EV", Min = 0, Max = 10, Tooltip = "How much brighter") f32 exposure_max_ev = 4.0f;
+    LSD_PROPERTY(Edit, Category = "Exposure", Min = 0.1, Max = 20, Tooltip = "How fast it brightens (walking into the dark)") f32 exposure_speed_up = 3.0f;
+    LSD_PROPERTY(Edit, Category = "Exposure", Min = 0.1, Max = 20, Tooltip = "How fast it darkens (walking into the sun)") f32 exposure_speed_down = 1.0f;
 };
 
 // Where the navmesh is built (Unreal's Nav Mesh Bounds Volume): the unit cube scaled by the

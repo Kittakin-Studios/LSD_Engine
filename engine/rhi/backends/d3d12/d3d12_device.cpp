@@ -212,6 +212,18 @@ VsOut vs_main(VsIn i) {
 }
 //@MATERIAL
 static const float PI = 3.14159265;
+// Image-based lighting without cubemaps (Unreal's Sky Light reflections): the sky / ground gradient
+// seen along a direction, brighter toward the horizon like the drawn sky.
+float3 sky_radiance(float3 d) {
+    const float h = 1.0 - abs(d.z);
+    return lerp(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
+}
+// The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
+float2 env_brdf(float ndv, float roughness) {
+    const float4 r = roughness * float4(-1.0, -0.0275, -0.572, 0.022) + float4(1.0, 0.0425, 1.04, -0.04);
+    const float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
+    return float2(-1.04, 1.04) * a004 + r.zw;
+}
 float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
 // Fog and post-processing on an exposed colour (see rhi::LightSetup): tint, filmic tonemap, height
 // fog, saturation, contrast, vignette. `pixel` is SV_Position.xy.
@@ -261,6 +273,7 @@ float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
 }
 float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
+    const float3 geometric_n = n;  // before the normal map: reflections never point into the surface
     if (n0.w > 3.5) return float4(0.06, 0.025, 0.01, 1.0);  // Overdraw view mode: each layer drawn adds a little
     // n1.w packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     const bool has_normal_map = fmod(n1.w, 2.0) > 0.5;
@@ -326,9 +339,19 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
         lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
     }
+    // Ambient: diffuse from the sky / baked probes; specular from the sky along the reflection,
+    // blurred toward the diffuse light as roughness grows, darkened where the probes are darker than
+    // the sky (indoors), by AO (specular occlusion) and below the geometric horizon.
     const float3 sky = ambient_light(i.wpos, n);
-    const float3 env_f = f0 + (max(1.0 - roughness, f0) - f0) * pow(1.0 - ndv, 5.0);
-    lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
+    const float3 r = reflect(-v, n);
+    const float3 lum = float3(0.2126, 0.7152, 0.0722);
+    const float open_sky = saturate(dot(sky, lum) / max(dot(lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4));
+    const float3 reflected = lerp(sky_radiance(r) * open_sky, sky, roughness * roughness);
+    const float2 ab = env_brdf(ndv, roughness);
+    const float3 env_spec = f0 * ab.x + ab.y;
+    const float spec_ao = saturate(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+    const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
+    lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
     return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
@@ -620,6 +643,29 @@ float4 ps_up(VsOut i) : SV_Target {  // this level plus the blurred (tent) level
 }
 float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
 float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+// Eye adaptation (see the GLSL): metered log average -> eased exposure in 16 bits (r high, g low).
+float4 ps_meter(VsOut i) : SV_Target {
+    float sum = 0.0, weights = 0.0;
+    [loop] for (int y = 0; y < 32; ++y) {
+        [loop] for (int x = 0; x < 32; ++x) {
+            const float2 uv = (float2(x, y) + 0.5) / 32.0;
+            const float w = 1.0 - 0.75 * min(length(uv - 0.5) * 1.4142, 1.0);
+            sum += log2(max(dot(tap(t0, uv), float3(0.2126, 0.7152, 0.0722)), 1e-4)) * w;
+            weights += w;
+        }
+    }
+    const float target = clamp(log2(0.18) - sum / weights + bloom.z, bloom.x, bloom.y);
+    const float4 prev = t1.SampleLevel(clamp_linear, float2(0.5, 0.5), 0);
+    const float last = (prev.r + prev.g / 255.0) * 32.0 - 16.0;
+    const float ev = bloom.w > 0.5 ? target : lerp(last, target, 1.0 - exp(-(target > last ? tint_tm.x : tint_tm.y)));
+    const float stored = saturate((ev + 16.0) / 32.0);
+    const float high = floor(stored * 255.0) / 255.0;
+    return float4(high, (stored - high) * 255.0, 0.0, 1.0);
+}
+float4 ps_expose(VsOut i) : SV_Target {
+    const float4 e = t1.SampleLevel(clamp_linear, float2(0.5, 0.5), 0);
+    return float4(encode(tap(t0, i.uv) * exp2((e.r + e.g / 255.0) * 32.0 - 16.0)), 1.0);
+}
 float4 ps_composite(VsOut i) : SV_Target {
     float3 c = tap(t0, i.uv);
     if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
@@ -1409,6 +1455,9 @@ public:
         TextureHandle down[5], up[4], ldr;
         TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
         TextureHandle ssr;                   // the scene with reflections
+        TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
+        u32 exposure_index = 0;
+        bool exposure_valid = false;
         u32 taa_index = 0;
         bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
     };
@@ -1425,6 +1474,8 @@ public:
         destroy_texture(c.dof);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
+        for (TextureHandle& t : c.exposure) destroy_texture(t);
+        destroy_texture(c.exposed);
         c = PostChain{};
         c.width = width;
         c.height = height;
@@ -1440,6 +1491,9 @@ public:
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
+        c.exposure[0] = create_render_target(1, 1);
+        c.exposure[1] = create_render_target(1, 1);
+        c.exposed = create_render_target(width, height);
         return c;
     }
     // One full-screen pass into `target` (invalid: the window, in `window_rect`).
@@ -1578,6 +1632,23 @@ public:
         if (dof) {
             post_pass(post_dof_.Get(), c.dof, nullptr, src, {}, p.scene, k);
             src = c.dof;
+        }
+        if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
+            f32 e[48] = {};
+            e[4] = p.exposure_min_ev;
+            e[5] = p.exposure_max_ev;
+            e[6] = p.exposure_compensation;
+            e[7] = c.exposure_valid && p.delta_seconds > 0.0f ? 0.0f : 1.0f;  // 1: jump to the target
+            e[8] = p.delta_seconds * p.exposure_speed_up;
+            e[9] = p.delta_seconds * p.exposure_speed_down;
+            const TextureHandle now = c.exposure[c.exposure_index], last = c.exposure[c.exposure_index ^ 1u];
+            post_pass(post_meter_.Get(), now, nullptr, src, last, {}, e);
+            post_pass(post_expose_.Get(), c.exposed, nullptr, src, now, {}, e);
+            c.exposure_index ^= 1u;
+            c.exposure_valid = true;
+            src = c.exposed;
+        } else {
+            c.exposure_valid = false;
         }
         const bool bloom = p.bloom_intensity > 0.0f;
         if (bloom) {
@@ -1999,7 +2070,8 @@ private:
             ComPtr<ID3D12PipelineState>* out;
         };
         const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
-                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}};
+                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_},
+                                 {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
@@ -2262,7 +2334,7 @@ private:
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
-    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_;
+    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

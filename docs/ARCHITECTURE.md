@@ -243,6 +243,14 @@ numbered copy in `Intermediate/GameModule/`, checks it once a second, and on a c
 `Intermediate/compile_game.bat` (vcvars from vswhere, CMake + Ninja, Debug with the release C
 runtime) and streams its output to the log from a thread. Packaging copies `Binaries/`.
 
+**Eye adaptation** (rhi `draw_post`): after DOF and before bloom, a METER pass renders one pixel
+from 32 x 32 taps of the scene (centre-weighted log luminance), computes the exposure that brings it
+to mid grey (plus compensation, clamped to min / max EV) and eases it from last frame's 1 x 1 target
+(`1 - exp(-dt * speed)`, faster up than down); the value is stored as 16 bits in the R / G of an
+RGBA8 target, two targets ping-pong per post chain. An EXPOSE pass multiplies the scene by it, so
+bloom and the tonemapper see the adapted image. Sky reflections (both mesh shaders) use the
+`sky_radiance` gradient along the reflection and an analytic split-sum BRDF instead of cubemaps.
+
 **JavaScript** (`engine/script/src/js.*`, QuickJS-ng) lives inside the Lua script system rather
 than beside it. A `.js` instance gets a Lua environment like any script; loading the file in its own
 JS context (one per instance, all in one runtime: 256 MB, 0.5 s per call) fills that environment

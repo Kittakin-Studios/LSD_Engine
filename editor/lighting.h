@@ -34,7 +34,7 @@ rhi::LightSetup world_lights(const world::World& world, const LightView& view, b
 // casts them further.
 void set_shadow_quality(u32 quality);
 // The post-process pass the camera gets from the level's Post Process Volume (bloom, tonemap,
-// grading, FXAA); false if no volume applies (then the forward shaders grade directly).
+// grading, FXAA); the default volume's values where none applies. Always true for now.
 bool world_post(const world::World& world, Vec3 eye, bool skip_hidden, rhi::PostDraw& out);
 // The level's Sky, if it has one (sun disc from the first Directional Light).
 bool world_sky(const world::World& world, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out);

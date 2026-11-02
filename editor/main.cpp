@@ -1927,6 +1927,7 @@ int main(int argc, char** argv) {
             // Post-processing (a Post Process Volume applies): the scene goes into a target the post pass reads.
             lsd::rhi::PostDraw post;
             const bool use_post = !state.view_mode_unlit_or_wire() && lsd::editor::world_post(world, light_view.eye, !state.playing || state.ejected, post);
+            post.delta_seconds = dt;  // eye adaptation eases over time
             if (use_post && lens.view == lsd::editor::ViewType::Perspective) {  // depth effects (AO, DOF, TAA) need the projection
                 post.proj[0] = proj.at(0, 0);
                 post.proj[1] = proj.at(1, 1);

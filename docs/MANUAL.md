@@ -330,8 +330,18 @@ Atmosphere:
   **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
   buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
   transition, max blur in pixels; focal distance 0 = off).
-  With a volume the scene is drawn into a target first and these run as a post-process pass; AO,
-  DOF and TAA need a perspective view.
+  **Exposure** (Unreal's Auto Exposure / eye adaptation, on by default): the image is metered every
+  frame and eased toward mid grey, so dark interiors brighten and sunlit views darken over a moment;
+  Min / Max EV limit how far it moves from World Settings exposure, Speed Up / Down how fast,
+  exposure compensation shifts the result. Untick Auto Exposure for a fixed, manual exposure.
+  The scene is drawn into a target and these run as a post-process pass. **Without a volume the
+  level gets a new volume's defaults** (filmic tonemapper, bloom, AO, reflections, FXAA, auto
+  exposure), as in Unreal; add one to change them. AO, DOF and TAA need a perspective view.
+
+Reflections and ambient light (Unreal's Sky Light): every surface reflects the sky / ground colours
+along its reflection, sharper the smoother it is (metals and polished floors pick up the sky), with
+the usual energy-conserving split-sum BRDF, darkened by AO and where baked probes say it is
+indoors. Screen-space reflections add what is on screen on top.
 
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.

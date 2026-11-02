@@ -209,6 +209,17 @@ in vec2 v_uv;
 out vec4 o_color;
 //@MATERIAL
 const float PI = 3.14159265;
+// Image-based lighting without cubemaps (see the HLSL): the sky / ground gradient along a direction.
+vec3 sky_radiance(vec3 d) {
+    float h = 1.0 - abs(d.z);
+    return mix(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
+}
+// The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
+vec2 env_brdf(float ndv, float roughness) {
+    vec4 r = roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
+    return vec2(-1.04, 1.04) * a004 + r.zw;
+}
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
@@ -254,6 +265,7 @@ vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
 #ifndef SKY
 void main() {
     vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 geometric_n = n;  // before the normal map: reflections never point into the surface
     if (u_flags.x > 3.5) { o_color = vec4(0.06, 0.025, 0.01, 1.0); return; }  // Overdraw view mode
     // u_flags.y packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     bool has_normal_map = mod(u_flags.y, 2.0) > 0.5;
@@ -319,9 +331,17 @@ void main() {
         vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
         lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
     }
+    // Ambient (see the HLSL): diffuse from the sky / probes, specular from the sky along the reflection.
     vec3 sky = ambient_light(v_wpos, n);
-    vec3 env_f = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - ndv, 5.0);
-    lit += (base.rgb * (1.0 - metallic) * (1.0 - env_f) + env_f * (1.0 - roughness * 0.7)) * sky * ao;
+    vec3 r = reflect(-v, n);
+    vec3 lum = vec3(0.2126, 0.7152, 0.0722);
+    float open_sky = clamp(dot(sky, lum) / max(dot(mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4), 0.0, 1.0);
+    vec3 reflected = mix(sky_radiance(r) * open_sky, sky, roughness * roughness);
+    vec2 ab = env_brdf(ndv, roughness);
+    vec3 env_spec = f0 * ab.x + ab.y;
+    float spec_ao = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+    float horizon = clamp(1.0 + 1.2 * dot(r, geometric_n), 0.0, 1.0);
+    lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
     o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
@@ -502,6 +522,29 @@ void main() {
     c += (tap(t1, v_uv + vec2(-px.x, 0)) + tap(t1, v_uv + vec2(px.x, 0)) + tap(t1, v_uv + vec2(0, -px.y)) + tap(t1, v_uv + vec2(0, px.y))) * 2.0;
     c += tap(t1, v_uv + px * vec2(-1, -1)) + tap(t1, v_uv + px * vec2(1, -1)) + tap(t1, v_uv + px * vec2(-1, 1)) + tap(t1, v_uv + px * vec2(1, 1));
     o_color = vec4(encode(tap(t0, v_uv) + c / 16.0), 1.0);
+#elif defined(METER)
+    // Eye adaptation: the scene's average brightness (log, centre-weighted, 32 x 32 taps) gives the
+    // exposure (EV) that brings it to mid grey, plus compensation, within the range; eased from the
+    // last frame's (t1). Stored as 16 bits over -16..16 EV: r high, g low.
+    float sum = 0.0, weights = 0.0;
+    for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 32; ++x) {
+            vec2 uv = (vec2(x, y) + 0.5) / 32.0;
+            float w = 1.0 - 0.75 * min(length(uv - 0.5) * 1.4142, 1.0);
+            sum += log2(max(dot(tap(t0, uv), vec3(0.2126, 0.7152, 0.0722)), 1e-4)) * w;
+            weights += w;
+        }
+    }
+    float target = clamp(log2(0.18) - sum / weights + bloom.z, bloom.x, bloom.y);
+    vec4 prev = textureLod(t1, vec2(0.5), 0.0);
+    float last = (prev.r + prev.g / 255.0) * 32.0 - 16.0;
+    float ev = bloom.w > 0.5 ? target : mix(last, target, 1.0 - exp(-(target > last ? tint_tm.x : tint_tm.y)));
+    float stored = clamp((ev + 16.0) / 32.0, 0.0, 1.0);
+    float high = floor(stored * 255.0) / 255.0;
+    o_color = vec4(high, (stored - high) * 255.0, 0.0, 1.0);
+#elif defined(EXPOSE)
+    vec4 e = textureLod(t1, vec2(0.5), 0.0);
+    o_color = vec4(encode(tap(t0, v_uv) * exp2((e.r + e.g / 255.0) * 32.0 - 16.0)), 1.0);
 #elif defined(COMPOSITE)
     vec3 c = tap(t0, v_uv);
     if (bloom.y > 0.0) c += tap(t1, v_uv) * bloom.y;
@@ -761,6 +804,9 @@ class OpenGLDevice final : public Device {
         TextureHandle down[5], up[4], ldr;
         TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
         TextureHandle ssr;                   // the scene with reflections
+        TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
+        u32 exposure_index = 0;
+        bool exposure_valid = false;
         u32 taa_index = 0;
         bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
     };
@@ -1333,6 +1379,8 @@ public:
         destroy_texture(c.dof);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
+        for (TextureHandle& t : c.exposure) destroy_texture(t);
+        destroy_texture(c.exposed);
         c = PostChain{};
         c.width = width;
         c.height = height;
@@ -1348,6 +1396,9 @@ public:
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
+        c.exposure[0] = create_render_target(1, 1);
+        c.exposure[1] = create_render_target(1, 1);
+        c.exposed = create_render_target(width, height);
         return c;
     }
     // One full-screen pass into `target` (invalid: the window, in `window_rect`); `depth_of`: whose depth is t2.
@@ -1441,6 +1492,23 @@ public:
         if (dof) {
             post_pass(8, c.dof, nullptr, src, {}, p.scene, k);
             src = c.dof;
+        }
+        if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
+            f32 e[48] = {};
+            e[4] = p.exposure_min_ev;
+            e[5] = p.exposure_max_ev;
+            e[6] = p.exposure_compensation;
+            e[7] = c.exposure_valid && p.delta_seconds > 0.0f ? 0.0f : 1.0f;  // 1: jump to the target
+            e[8] = p.delta_seconds * p.exposure_speed_up;
+            e[9] = p.delta_seconds * p.exposure_speed_down;
+            const TextureHandle now = c.exposure[c.exposure_index], last = c.exposure[c.exposure_index ^ 1u];
+            post_pass(10, now, nullptr, src, last, {}, e);
+            post_pass(11, c.exposed, nullptr, src, now, {}, e);
+            c.exposure_index ^= 1u;
+            c.exposure_valid = true;
+            src = c.exposed;
+        } else {
+            c.exposure_valid = false;
         }
         const bool bloom = p.bloom_intensity > 0.0f;
         if (bloom) {
@@ -1715,7 +1783,8 @@ private:
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
         particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
         const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
-                                                   "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n"};
+                                                   "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n",
+                                                   "#define METER\n", "#define EXPOSE\n"};
         for (u32 i = 0; i < kPostPrograms; ++i) {
             std::string fragment = kPostFragmentShader;
             fragment.insert(fragment.find('\n') + 1, post_defines[i]);
@@ -1762,8 +1831,8 @@ private:
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
     GLint particle_mvp_ = -1, particle_hdr_ = -1;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
-    static constexpr u32 kPostPrograms = 10;
-    GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof
+    static constexpr u32 kPostPrograms = 12;
+    GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof, ssr, meter, expose
     GLint post_uniforms_[kPostPrograms] = {};
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;

@@ -176,7 +176,10 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
         }
         if (!best || v->priority > best->priority) best = v;
     }
-    if (!best) return false;
+    // Without a volume the level still gets the default look (as in Unreal: filmic tonemapper, bloom,
+    // AO, reflections, anti-aliasing): the values a new Post Process Volume starts with.
+    static const world::PostProcessVolume defaults;
+    if (!best) best = &defaults;
     out.bloom_intensity = best->bloom_intensity;
     out.bloom_threshold = best->bloom_threshold;
     out.tint[0] = best->tint.r;
@@ -196,6 +199,12 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.dof_focal_region = best->dof_focal_region;
     out.dof_transition = best->dof_transition;
     out.dof_max_blur = best->dof_max_blur;
+    out.auto_exposure = best->auto_exposure;
+    out.exposure_compensation = best->exposure_compensation;
+    out.exposure_min_ev = best->exposure_min_ev;
+    out.exposure_max_ev = best->exposure_max_ev;
+    out.exposure_speed_up = best->exposure_speed_up;
+    out.exposure_speed_down = best->exposure_speed_down;
     return true;
 }
 

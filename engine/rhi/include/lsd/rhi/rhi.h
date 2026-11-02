@@ -234,6 +234,16 @@ struct PostDraw {
     bool taa = false;
     bool taa_reset = true;
     f32 reproject[16] = {};
+    // Eye adaptation (Unreal's Auto Exposure): the scene is metered each frame (log average,
+    // centre-weighted) and eased toward the exposure that brings it to mid grey, within min..max EV
+    // of the set exposure; compensation shifts the result. Speeds: how fast it brightens / darkens.
+    bool auto_exposure = false;
+    f32 exposure_compensation = 0.0f;
+    f32 exposure_min_ev = -4.0f;
+    f32 exposure_max_ev = 4.0f;
+    f32 exposure_speed_up = 3.0f;
+    f32 exposure_speed_down = 1.0f;
+    f32 delta_seconds = 0.0f;  // since this view's last frame; 0: jump to the target
 };
 
 // A gradient sky with a sun disc behind everything (display colours; fog and post-processing apply).
