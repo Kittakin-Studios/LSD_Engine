@@ -184,19 +184,57 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
     }
 }
 
+// This frame's Cull Distance Volumes (filled by draw_world before any pass): the inverse of each
+// box's matrix and its rules.
+struct CullVolume {
+    lsd::Mat4 to_local;
+    const lsd::world::CullDistanceVolume* rules;
+};
+std::vector<CullVolume> g_cull_volumes;
+
+void gather_cull_volumes(const lsd::world::World& world) {
+    g_cull_volumes.clear();
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::CullDistanceVolume>();
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const auto* v = static_cast<const lsd::world::CullDistanceVolume*>(world.at(type, i));
+        if (v->enabled && v->cull_distances.count) g_cull_volumes.push_back({lsd::affine_inverse(world.world_matrix(world.owner(type, i))), v});
+    }
+}
+
+// The distance beyond which an object `size` across at `centre` is culled by the volumes it is in; 0 = none.
+lsd::f32 volume_cull_distance(lsd::Vec3 centre, lsd::f32 size) {
+    lsd::f32 result = 0.0f;
+    for (const CullVolume& v : g_cull_volumes) {
+        const lsd::Vec3 p = lsd::transform_point(v.to_local, centre);
+        if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;  // the unit volume box
+        const lsd::world::CullDistance* best = nullptr;  // the smallest rule that fits, else the biggest
+        for (const lsd::world::CullDistance& r : v.rules->cull_distances) {
+            const bool fits = r.size >= size, best_fits = best && best->size >= size;
+            if (!best || (fits && (!best_fits || r.size < best->size)) || (!fits && !best_fits && r.size > best->size)) best = &r;
+        }
+        if (best && best->distance > 0.0f && (result == 0.0f || best->distance < result)) result = best->distance;
+    }
+    return result;
+}
+
 // What to draw of a static mesh at world matrix `m` seen from `eye`: false past its Max Draw Distance
-// (not drawn at all), else the index buffer of the LOD its on-screen size picks (r.ForceLOD forces one).
+// or its Cull Distance Volume's distance (not drawn at all), else the index buffer of the LOD its
+// on-screen size picks (r.ForceLOD forces one).
 bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::StaticMesh& component, const lsd::Mat4& m, lsd::Vec3 eye, lsd::i32 force_lod,
                      lsd::rhi::BufferHandle& indices, lsd::u32& count) {
     const lsd::Vec3 centre = lsd::transform_point(m, (mesh.bounds_min + mesh.bounds_max) * 0.5f);
     const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f);
     if (component.max_draw_distance > 0.0f && distance > component.max_draw_distance) return false;
-    indices = mesh.gpu.indices;
-    count = mesh.gpu.index_count;
-    if (mesh.lod_count <= 1) return true;
     const lsd::Vec3 half = (mesh.bounds_max - mesh.bounds_min) * 0.5f;
     const lsd::f32 scale = std::fmax(lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}),
                                      std::fmax(lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}), lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})));
+    if (!g_cull_volumes.empty()) {
+        const lsd::f32 cull = volume_cull_distance(centre, lsd::length(half) * scale * 2.0f);
+        if (cull > 0.0f && distance > cull) return false;
+    }
+    indices = mesh.gpu.indices;
+    count = mesh.gpu.index_count;
+    if (mesh.lod_count <= 1) return true;
     const lsd::u32 lod = mesh.pick_lod(lsd::length(half) * scale / distance, force_lod);
     if (lod > 0) {
         indices = mesh.lod_indices[lod];
@@ -335,6 +373,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     if (g_decals) g_decals->apply(world, skip_hidden, light_view.eye, lights);
     const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
     const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
+    gather_cull_volumes(world);
     if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
     if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
     if (scene_target.valid()) {  // the post pass reads it: draw into the scene target (after the shadow passes)

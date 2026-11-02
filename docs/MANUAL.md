@@ -510,7 +510,9 @@ Table, Curve), Audio, Animation, AI, UI, Save Game, Utilities (Print String, Gam
 size, triangles and LODs, and its import settings (Save / Reimport). Meshes of 512+ triangles get
 up to three simpler LODs; **LOD 1 / 2 / 3 Screen Size** (Unreal's LOD Screen Size) set how small the
 mesh must look before each takes over (larger = sooner). Shadows use the LOD the camera sees. A
-Static Mesh's **Max Draw Distance** hides it (and its shadow) beyond that distance. For rigged meshes: the bone
+Static Mesh's **Max Draw Distance** hides it (and its shadow) beyond that distance; a **Cull Distance
+Volume** (Place tab) does it for every static mesh inside by size (Size / Distance rules: pebbles
+vanish sooner than houses). For rigged meshes: the bone
 tree (click a bone to see it in the preview) and **Sockets**: select a bone, **+ Socket**, move it
 with Offset / Turn, Save. Then give a prop **Attach To Socket** (the character's object name and
 the socket) to carry it, or ask a script: `lsd.socket(e, "Hand_R")` -> x, y, z, fx, fy, fz.

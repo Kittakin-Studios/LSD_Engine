@@ -517,6 +517,25 @@ struct NavModifierVolume {
     LSD_PROPERTY(Edit) bool enabled = true;
 };
 
+// One rule of a Cull Distance Volume: objects up to `size` across are hidden beyond `distance`.
+LSD_STRUCT()
+struct CullDistance {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Objects up to this big (bounding sphere diameter) use this rule") f32 size = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Hidden farther than this from the camera; 0 = never") f32 distance = 50.0f;
+};
+
+// Hides static meshes inside its box once the camera is far enough away for their size (Unreal's
+// Cull Distance Volume): pebbles vanish sooner than houses. Each object uses the rule with the
+// smallest Size that still fits it (the biggest rule for anything larger); a Static Mesh's own Max
+// Draw Distance still applies when it is nearer.
+LSD_STRUCT(Component, Category = "Volumes")
+struct CullDistanceVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit) List<CullDistance, 8> cull_distances = {3, {{0.5f, 30.0f}, {2.0f, 80.0f}, {10.0f, 250.0f}}};
+};
+
 // Walks on the navmesh in Play, steering round other agents (an AI-controlled pawn): Lua
 // lsd.move_to(e, x, y, z) or the AI Move To node sends it somewhere.
 LSD_STRUCT(Component, Category = "AI")
