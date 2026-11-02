@@ -63,6 +63,8 @@ struct SoundMixAdjuster {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:SoundClass", Tooltip = "Its children follow (Master > SFX > Footsteps)") char sound_class[33] = "";
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Multiplies the class volume while the mix is pushed; 0.5 is about -6 dB") f32 volume = 0.5f;
+    LSD_PROPERTY(Edit, Units = "Hz", Min = 100, Max = 20000, Tooltip = "Muffles the class (and its children) while the mix is pushed (a pause menu, underwater); 20000 = not")
+    f32 lowpass = 20000.0f;
 };
 
 // A temporary balance change (Unreal's Sound Mix): push it when something happens (a pause menu

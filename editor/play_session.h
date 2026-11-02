@@ -69,6 +69,7 @@ public:
     // The player's settings Lua reads and changes; `changed` tells main.cpp to apply and save them.
     void set_user_settings(GameUserSettings* settings) { user_settings_ = settings; }
     void set_localization(asset::Localization* localization) { localization_ = localization; }
+    void set_base_mix(const char* guid) { base_mix_ = guid; }  // Project Settings > Audio > Base Sound Mix (read at each start)
     bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
     // A level lsd.open_level asked for (its file path), once; the caller stops, loads it and starts with travel = true.
     bool take_level_request(char* path, usize capacity);
@@ -162,6 +163,7 @@ private:
     ui::UiContext* ui_ = nullptr;
     GameUserSettings* user_settings_ = nullptr;
     asset::Localization* localization_ = nullptr;
+    const char* base_mix_ = nullptr;
     struct UiFollower {
         i32 doc;
         char id[64];

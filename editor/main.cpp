@@ -1273,6 +1273,7 @@ int main(int argc, char** argv) {
         localization.set_language(user_settings.language[0] ? user_settings.language : state.project.default_language);
     }
     play.set_localization(&localization);
+    play.set_base_mix(state.project.base_sound_mix);
     lsd::ui::set_translator([](void* user, const char* text) { return static_cast<const lsd::asset::Localization*>(user)->find(text); }, &localization);
     play.set_animations(animations);
     play.set_skinned(skinned_cache);

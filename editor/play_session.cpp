@@ -738,6 +738,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     // Sound Emitters set to Auto Play start with the game.
     if (sounds_) {
         sounds_->stop_all_and_forget();  // classes are read fresh: edits since the last Play count
+        asset::Guid base;
+        if (const asset::AssetRecord* r = base_mix_ && asset::parse_guid(base_mix_, base) ? registry.find(base) : nullptr) sounds_->push_mix(r->name);
         const reflect::TypeInfo& emitter_type = reflect::type_of<world::SoundEmitter>();
         for (u32 i = 0; i < world.count(emitter_type) && emitter_count_ < sizeof emitters_ / sizeof emitters_[0]; ++i) {
             const auto* emitter = static_cast<const world::SoundEmitter*>(world.at(emitter_type, i));

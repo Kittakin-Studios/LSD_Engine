@@ -564,7 +564,10 @@ Stream and Looping in their import settings.
 - **Sound Cue** graphs: Wave Player, Random (no repeat), Modulator, Mixer, Concatenator, Delay,
   Looping, Switch (on an audio parameter); Play previews it.
 - **Sound Class** (volume groups, with a Submix effect chain: reverb, filters, EQ, echo,
-  compressor), **Sound Mix** (push / pop volume changes with fades), **Attenuation**, **Concurrency**.
+  compressor), **Sound Mix** (push / pop volume changes with fades; an adjuster's **Lowpass** muffles
+  the class and its children, for pause menus and underwater), **Attenuation**, **Concurrency**.
+  **Project Settings > Audio > Base Sound Mix** is pushed whenever the game starts (Unreal's Base
+  Sound Mix).
 - **Audio Volume**: reverb while the listener is inside; sounds through its walls are muffled.
   Where volumes overlap, the higher **Priority** wins (a small room inside a big cave).
 - **Occlusion** (Sound Attenuation > Occlusion, Unreal's Enable Occlusion): a sound with it on is

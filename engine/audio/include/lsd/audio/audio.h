@@ -30,6 +30,7 @@ struct PlayDesc {
 struct MixAdjust {
     u32 sound_class;
     f32 volume;
+    f32 lowpass = 20000.0f;  // Hz while the mix is in; 20000 = not muffled
 };
 
 struct VoiceInfo {

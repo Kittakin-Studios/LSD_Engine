@@ -204,7 +204,7 @@ void SoundPlayer::push_mix(const char* name) {
         return;
     }
     audio::MixAdjust adjust[16];
-    for (u32 i = 0; i < mix.adjusters.count; ++i) adjust[i] = {class_index(mix.adjusters[i].sound_class), mix.adjusters[i].volume};
+    for (u32 i = 0; i < mix.adjusters.count; ++i) adjust[i] = {class_index(mix.adjusters[i].sound_class), mix.adjusters[i].volume, mix.adjusters[i].lowpass};
     Pushed& p = mixes_[mix_count_++];
     std::snprintf(p.name, sizeof p.name, "%s", name);
     p.id = audio_->push_mix(adjust, mix.adjusters.count, mix.fade_in, mix.fade_out);

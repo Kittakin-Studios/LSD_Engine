@@ -73,6 +73,8 @@ struct AudioSystem::Impl {
     Chain chains[kMaxClasses];  // a class's Submix
     char class_names[kMaxClasses][32];
     f32 class_volume[kMaxClasses];  // as set, before mixes
+    u32 class_parent[kMaxClasses];  // 0 (Master) for top-level classes
+    f32 class_cutoff[kMaxClasses];  // low-pass from the mixes, inherited down the tree (kOpen = none)
     struct Mix {
         u32 id;
         MixAdjust adjust[16];
@@ -103,7 +105,8 @@ struct AudioSystem::Impl {
         bool spatial;
         Vec3 position;
         ma_lpf_node lowpass;  // sound -> lowpass -> class group
-        f32 cutoff;
+        f32 cutoff;       // applied: the lower of base_cutoff and its class's mix cutoff
+        f32 base_cutoff;  // set_voice_lowpass (walls, occlusion)
         bool occlusion;
         f32 occlusion_muffle;
         bool fading_out;  // stop_with_fade: done once miniaudio has stopped it
@@ -118,6 +121,15 @@ struct AudioSystem::Impl {
         ma_sound_uninit(&v.sound);
         ma_lpf_node_uninit(&v.lowpass, nullptr);
         v.used = false;
+    }
+    // The voice's low-pass: the lower of what its caller set and what the mixes ask of its class.
+    void apply_cutoff(Voice& v) {
+        const f32 mix = v.sound_class < class_count ? class_cutoff[v.sound_class] : kOpen;
+        const f32 want = v.base_cutoff < mix ? v.base_cutoff : mix;
+        if (std::fabs(v.cutoff - want) < want * 0.02f) return;  // re-initialising the filter costs: only on real changes
+        const ma_lpf_config config = ma_lpf_config_init(ma_format_f32, 2, ma_engine_get_sample_rate(&engine), want, 2);
+        ma_lpf_node_reinit(&config, &v.lowpass);
+        v.cutoff = want;
     }
     ma_node* class_node(u32 c) { return c > 0 && c < class_count ? static_cast<ma_node*>(&groups[c]) : static_cast<ma_node*>(&master); }
 
@@ -253,6 +265,7 @@ bool AudioSystem::init(bool use_device) {
     impl_->class_count = 1;
     std::snprintf(impl_->class_names[0], sizeof impl_->class_names[0], "Master");
     impl_->class_volume[0] = 1.0f;
+    impl_->class_cutoff[0] = kOpen;
     impl_->mix_count = 0;
     impl_->concurrency_count = 0;
     return true;
@@ -297,6 +310,8 @@ u32 AudioSystem::add_class(const char* name, u32 parent, f32 volume, f32 pitch, 
     ma_sound_group_set_volume(&impl_->groups[index], volume);
     ma_sound_group_set_pitch(&impl_->groups[index], pitch);
     impl_->class_volume[index] = volume;
+    impl_->class_parent[index] = parent < index ? parent : 0;
+    impl_->class_cutoff[index] = kOpen;
     std::snprintf(impl_->class_names[index], sizeof impl_->class_names[index], "%s", name);
     impl_->class_count = index + 1;
     return index;
@@ -326,6 +341,7 @@ void AudioSystem::reset_classes() {
     set_environment(0.0f, 0.5f);
     impl_->mix_count = 0;
     impl_->class_volume[0] = 1.0f;
+    impl_->class_cutoff[0] = kOpen;
     ma_engine_set_volume(&impl_->engine, 1.0f);
 }
 
@@ -383,6 +399,7 @@ u32 AudioSystem::play(const PlayDesc& d) {
     ma_node_attach_output_bus(&slot->sound, 0, &slot->lowpass, 0);
     ma_node_attach_output_bus(&slot->lowpass, 0, group, 0);
     slot->cutoff = kOpen;
+    slot->base_cutoff = kOpen;
     slot->used = true;
     slot->fading_out = false;
     slot->id = m.next_id++;
@@ -497,10 +514,9 @@ void AudioSystem::set_voice_lowpass(u32 voice, f32 cutoff) {
     cutoff = cutoff < 20.0f ? 20.0f : cutoff > kOpen ? kOpen : cutoff;
     for (u32 i = 0; i < kMaxVoices; ++i) {
         Impl::Voice& v = impl_->voices[i];
-        if (!v.used || (v.id != voice && v.instance != voice) || std::fabs(v.cutoff - cutoff) < cutoff * 0.02f) continue;
-        const ma_lpf_config config = ma_lpf_config_init(ma_format_f32, 2, ma_engine_get_sample_rate(&impl_->engine), cutoff, 2);
-        ma_lpf_node_reinit(&config, &v.lowpass);
-        v.cutoff = cutoff;
+        if (!v.used || (v.id != voice && v.instance != voice)) continue;
+        v.base_cutoff = cutoff;
+        impl_->apply_cutoff(v);
     }
 }
 
@@ -559,12 +575,22 @@ void AudioSystem::update(f32 dt) {
     }
     for (u32 c = 0; c < m.class_count; ++c) {
         f32 volume = m.class_volume[c];
+        // Low-pass: the lowest any mix asks for (faded in log space, as ears hear pitch), and never
+        // brighter than the parent's (classes come after their parents).
+        f32 cutoff = c > 0 ? m.class_cutoff[m.class_parent[c]] : kOpen;
         for (u32 i = 0; i < m.mix_count; ++i) {
             for (u32 k = 0; k < m.mixes[i].count; ++k) {
-                if (m.mixes[i].adjust[k].sound_class == c) volume *= 1.0f + (m.mixes[i].adjust[k].volume - 1.0f) * m.mixes[i].weight;
+                const MixAdjust& a = m.mixes[i].adjust[k];
+                if (a.sound_class != c) continue;
+                volume *= 1.0f + (a.volume - 1.0f) * m.mixes[i].weight;
+                if (a.lowpass < kOpen) cutoff = std::fmin(cutoff, kOpen * std::pow(std::fmax(a.lowpass, 20.0f) / kOpen, m.mixes[i].weight));
             }
         }
+        m.class_cutoff[c] = cutoff;
         apply_class_volume(m.engine, m.groups, c, volume);
+    }
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        if (impl_->voices[i].used) impl_->apply_cutoff(impl_->voices[i]);
     }
     for (u32 i = 0; i < kMaxVoices; ++i) {
         Impl::Voice& v = impl_->voices[i];

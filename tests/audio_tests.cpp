@@ -262,6 +262,25 @@ int main() {
     a.set_voice_lowpass(muffled, 100.0f);
     loudness(a, 4800);
     CHECK(loudness(a) < open_level * 0.3f && a.voice(0).lowpass < 200.0f);
+    a.set_voice_lowpass(muffled, 20000.0f);
+    a.stop_all();
+
+    // A mix's low-pass on a parent class muffles its children's voices while it is in, then lets go.
+    a.reset_classes();
+    const u32 world_class = a.add_class("World", kMasterClass, 1.0f, 1.0f);
+    d.sound_class = a.add_class("Ambience", world_class, 1.0f, 1.0f);
+    const u32 ambience = a.play(d);
+    MixAdjust underwater{world_class, 1.0f};
+    underwater.lowpass = 300.0f;
+    const u32 dive = a.push_mix(&underwater, 1, 0.0f, 0.0f);
+    a.update(0.0f);
+    CHECK(a.voice(0).id == ambience && a.voice(0).lowpass < 400.0f);
+    a.set_voice_lowpass(ambience, 5000.0f);  // a wall's muffle does not lift the mix's
+    CHECK(a.voice(0).lowpass < 400.0f);
+    a.pop_mix(dive);
+    a.update(0.0f);
+    CHECK(a.voice(0).lowpass > 4000.0f && a.voice(0).lowpass < 6000.0f);  // back to the wall's
+    a.stop_all();
     a.reset_classes();
     a.shutdown();
     if (g_failures == 0) std::printf("All audio tests passed.\n");
