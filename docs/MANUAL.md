@@ -596,7 +596,8 @@ speed, gravity, wind, drag, start / end colour and size, spin, texture (or a sof
 Additive blending, local or world space. **Over Life** (Niagara's Scale Sprite Size / Scale Color):
 add **Size Over Life** keys (time 0..1 through the life, times Size Start) to puff up then shrink,
 and **Color Over Life** keys for fire-to-smoke colour ramps; they replace the start / end blend.
-From a script, `lsd.spawn("PS_Explosion", x, y, z)` puts one at a point.
+From a script, `lsd.spawn("PS_Explosion", x, y, z)` puts one at a point; it deletes itself when
+it has played out (**Auto Destroy** on the Particle Effect, for non-looping systems).
 
 Double-click it to open the **Particle Editor**: a preview (orbit with the mouse), play / pause /
 restart, speed, a timeline to scrub and per-emitter particle counts. Edit in Details; the preview

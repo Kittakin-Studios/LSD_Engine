@@ -863,7 +863,9 @@ world::Entity PlaySession::create_spawn(world::World& world, const char* name, V
     const world::Entity e = world.create(unique);
     world.get<world::Transform>(e)->position = position;
     if (effect) {  // an explosion or a puff of dust at a point (Unreal's Spawn System at Location)
-        asset::to_string(effect->guid, world.add<world::ParticleEffect>(e)->system);
+        auto* fx = world.add<world::ParticleEffect>(e);
+        asset::to_string(effect->guid, fx->system);
+        fx->auto_destroy = true;  // gone once it has played out (a looping one plays until destroyed)
     } else if (prefab) {
         asset::to_string(prefab->guid, world.add<world::PrefabInstance>(e)->prefab);
         char path[300];

@@ -18,6 +18,8 @@ public:
 
     // `playing`: in Play (effects with Preview off only run then). dt 0 freezes them (pause).
     void update(const world::World& world, f32 dt, bool playing);
+    // In Play: objects whose Auto Destroy effect finished during the last update (the caller deletes them).
+    u32 take_finished(world::Entity* out, u32 capacity);
     // One viewport: `view` gives the camera's axes, so sprites face it.
     void draw(rhi::Device& device, const world::World& world, const Mat4& view_proj, const Mat4& view, Vec3 eye, bool skip_hidden);
     // One instance (the Particle Editor's preview), the same way.
@@ -52,6 +54,8 @@ private:
     u32 system_count_ = 0;
     Effect effects_[512];
     rhi::ParticleVertex* vertices_ = nullptr;  // one emitter's sprites at a time
+    world::Entity finished_[64];
+    u32 finished_count_ = 0;
     u32 particle_count_ = 0;
 };
 

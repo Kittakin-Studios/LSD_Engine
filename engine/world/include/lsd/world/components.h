@@ -89,6 +89,8 @@ struct ParticleEffect {
     LSD_PROPERTY(Edit, Tooltip = "Emitting; turn off (Details, Lua lsd.set) to let the particles die out") bool active = true;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Slow motion / fast forward") f32 time_scale = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too (preview while placing)") bool preview = true;
+    LSD_PROPERTY(Edit, Tooltip = "In Play, the object is deleted once the effect has finished (every emitter non-looping and its particles gone): explosions, impacts. lsd.spawn sets it")
+    bool auto_destroy = false;
 };
 
 // Where Play puts the player; facing = the entity's Z rotation.

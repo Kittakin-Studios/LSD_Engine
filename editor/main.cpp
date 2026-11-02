@@ -1652,6 +1652,10 @@ int main(int argc, char** argv) {
                            state.playing && !state.paused ? &sounds : nullptr);
         animations->attach_to_sockets(world, *skinned_cache);  // weapons in hands follow this frame's pose
         effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : dt, state.playing);
+        lsd::world::Entity finished[64];  // Auto Destroy effects that are over (Play only)
+        for (lsd::u32 n = effects->take_finished(finished, 64), k = 0; k < n; ++k) {
+            if (world.alive(finished[k])) world.destroy(finished[k]);
+        }
         // The ears: the player's camera in Play, else the editor camera.
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.view_forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));

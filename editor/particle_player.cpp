@@ -105,6 +105,7 @@ void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
         }
     }
     particle_count_ = 0;
+    finished_count_ = 0;
     const reflect::TypeInfo& type = reflect::type_of<world::ParticleEffect>();
     for (u32 i = 0; i < world.count(type); ++i) {
         const world::Entity entity = world.owner(type, i);
@@ -131,7 +132,17 @@ void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
         }
         effect->instance->update(system->system, world.world_matrix(entity), dt * c->time_scale, world.settings().gravity, c->active);
         for (u32 k = 0; k < particles::kMaxEmitters; ++k) particle_count_ += effect->instance->count(k);
+        if (playing && c->auto_destroy && effect->instance->finished() && finished_count_ < sizeof finished_ / sizeof finished_[0]) {
+            finished_[finished_count_++] = entity;
+        }
     }
+}
+
+u32 ParticlePlayer::take_finished(world::Entity* out, u32 capacity) {
+    const u32 n = finished_count_ < capacity ? finished_count_ : capacity;
+    for (u32 i = 0; i < n; ++i) out[i] = finished_[i];
+    finished_count_ = 0;
+    return n;
 }
 
 void ParticlePlayer::draw_instance(rhi::Device& device, const particles::ParticleInstance& instance, const particles::ParticleSystem& system,
