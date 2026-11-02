@@ -52,6 +52,12 @@ const NodeDef* find_node_def(const char* id);  // in either library
 // valid until the next register / clear.
 void register_node(const NodeDef& def);
 void clear_custom_nodes();
+// Nodes from a JavaScript file (a Blueprint function library written in JS): its top-level
+// `var nodes = { heal: { title, category, tooltip, inputs: { amount: "number" | ["number", 10] },
+// output: "number", pure: false } }` describes functions of the same names. Types: number, boolean,
+// string, vector, object (default self), any. Ids are "JS_<name>_<function>"; a node compiles to
+// lsd.js_call(path, function, ...). Returns how many were registered.
+u32 register_js_nodes(const char* path, const char* name);
 bool is_event(const NodeDef& def);
 bool is_pure(const NodeDef& def);  // no exec pins
 bool is_material_node(const NodeDef& def);

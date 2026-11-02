@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -129,7 +130,7 @@ void draw_window(EditorState& s, bool* open) {
     if (ImGui::BeginCombo("File", g_file[0] ? g_file : "(pick a script)")) {
         for (usize i = 0; s.registry && i < s.registry->count(); ++i) {
             const asset::AssetRecord& r = s.registry->get(i);
-            if (r.type != asset::AssetType::Script) continue;
+            if (r.type != asset::AssetType::Script || std::filesystem::path(r.path).extension() == ".js") continue;  // Lua only: JS has no debugger
             char path[300];
             s.registry->source_path(r, path, sizeof path);
             if (ImGui::Selectable(path, std::strcmp(path, g_file) == 0)) std::snprintf(g_file, sizeof g_file, "%s", path);

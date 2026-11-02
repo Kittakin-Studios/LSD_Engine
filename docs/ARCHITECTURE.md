@@ -209,7 +209,7 @@ parameter values cost nothing.
 - **Save games** are Lua values as versioned JSON; `lsd.save_objects` / `load_objects` (Lua in the
   prelude) store chosen components of objects by name through `lsd.get` / `lsd.set`.
 
-### C, C++ (built) and JavaScript (planned) gameplay
+### C, C++ and JavaScript gameplay
 
 One API, several languages. Everything a script can do already goes through two plain-data
 layers: `ScriptHost` (C function pointers the game fills in) and the reflection tables (component
@@ -243,6 +243,25 @@ numbered copy in `Intermediate/GameModule/`, checks it once a second, and on a c
 `Intermediate/compile_game.bat` (vcvars from vswhere, CMake + Ninja, Debug with the release C
 runtime) and streams its output to the log from a thread. Packaging copies `Binaries/`.
 
+**JavaScript** (`engine/script/src/js.*`, QuickJS-ng) lives inside the Lua script system rather
+than beside it. A `.js` instance gets a Lua environment like any script; loading the file in its own
+JS context (one per instance, all in one runtime: 256 MB, 0.5 s per call) fills that environment
+with a Lua C closure per top-level function (looked up by name on each call) and copies its
+`properties` / `defaults` objects in as tables. So `call`, `send`, `broadcast`, `lsd.call`,
+`call_task` and the exposed-properties code see JS scripts as ordinary Lua scripts. The other way,
+each context's `lsd` object is made from the Lua `lsd` table's functions (built-in and prelude), so
+the binding list is the Lua registration and the two cannot drift. Values cross by copy: tables with
+keys 1..n are arrays, other tables objects; several Lua results become an array; a JS function given
+to Lua (timers) is a userdata closure holding its context. A JS exception becomes a Lua error (so
+the instance stops like a failing Lua script, with the JS stack in the message), a Lua error inside
+`lsd.*` a catchable JS exception. A reload makes a new context and carries `self` over as JSON.
+`self` itself is built from the Lua one on the first call (entity, name, properties).
+**JavaScript nodes**: `register_js_nodes` evaluates a `.js` file in a throwaway runtime (with a stub
+`lsd`) and turns its `nodes` description into `NodeDef`s whose code is
+`lsd.js_call("<path>", "<fn>", $1...)`; at run time `lsd.js_call` loads the file into a shared
+library context (32 at most) and drops it when the file changes. The editor registers them with the
+ScriptNode assets after every scan.
+
 **Still planned:**
 
 - **Game module**: `Source/` builds `Game.dll` against `lsd_game.h` only (a C header, so C works
@@ -254,9 +273,6 @@ runtime) and streams its output to the log from a thread. Packaging copies `Bina
   engine headers; the world's component registry becomes runtime so these types get pools,
   Details, save / load, undo and Play copies. On hot reload their data is written out through
   reflection and read back into the new types by field name (added fields take defaults).
-- **JavaScript**: the Script component accepts `.js`; a JS script system on QuickJS-ng mirrors the
-  Lua one (own environment per instance, `self`, events, reload on change). The `lsd` functions are
-  declared once and bound to both Lua and JS from that list.
 - **Nodes**: visual scripts stay the no-code layer for all of it. Functions a module or a `.js` file
   registers become node definitions (typed pins, category, tooltip) next to the built-in ones and
   ScriptNode assets; a graph calls them through the same binding list, so a C++ function is one more

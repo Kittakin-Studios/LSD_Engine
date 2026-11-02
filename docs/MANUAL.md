@@ -562,6 +562,28 @@ same events as a Lua script. It reloads when rebuilt, also during Play. Click-by
 [How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md#11-c--c-instead-of-lua); every
 command: [CODING.md](CODING.md).
 
+### JavaScript scripts
+
+A Script component takes a `.js` file as well as a `.lua` one: Content Browser > right-click >
+**New JavaScript Script**. It is the same thing in another language: the same events (`on_start`,
+`on_update`, `on_hit`, UI actions, `lsd.broadcast` / `lsd.call` names), the same `lsd` API, the same
+`properties` in Details, reload on save with `self` kept, and errors with the file and line in the
+Output Log. Two differences: several results come back as an array, and events must be top-level
+`function` declarations (a `const f = () => {}` is not seen).
+
+```js
+var properties = { speed: 90 };   // Details, per object
+function on_start(self) { console.log("Hello from " + self.name); }
+function on_update(self, dt) {
+  const [x, y, z] = lsd.rotation(self.entity);
+  lsd.set_rotation(self.entity, x, y, z + self.speed * dt);
+}
+```
+
+Tables you get back (`lsd.get`, `lsd.game_instance()`) are copies: change them and hand them back
+with `lsd.set` / `lsd.save_game`. `lsd.after(2, () => ...)` takes a JS function. There is no
+debugger for JS yet (use `console.log`); the Lua Debugger lists Lua files only.
+
 ## 10. Visual scripting
 
 **The panels** (Unreal's Blueprint editor), on the left of the graph window (drag its edge to resize):
@@ -599,6 +621,25 @@ what the node is called, pick a Category, add input and output pins, and write t
 variable, `#0` where the next node's code goes. Without Exec pins the node is pure and
 **Expression** is its output, e.g. `($0 * 2)`. It appears in the node menu once saved. C++ code can
 add nodes the same way with `lsd::script::register_node`.
+
+**Nodes from JavaScript**: any `.js` file in Content can describe some of its functions as nodes.
+They show in the node menu (under their category, default JavaScript) as soon as the file is saved,
+and run in one shared context per file:
+
+```js
+var nodes = {
+  heal:  { title: "Heal", category: "Health", tooltip: "Adds health, returns the new value",
+           inputs: { target: "object", amount: ["number", 10] }, output: "number" },
+  clamp01: { pure: true, inputs: { value: "number" }, output: "number" },
+};
+function heal(target, amount) { /* ... */ return 100; }
+function clamp01(value) { return Math.min(1, Math.max(0, value)); }
+```
+
+Pin types: `number`, `boolean`, `string`, `vector`, `object` (defaults to the graph's own object),
+`any`; `["number", 10]` gives the value used when nothing is wired. A node has an Exec pin unless it
+is `pure`; `output` adds a Result pin. Renaming the file or the function breaks graphs that use it
+(the node id is `JS_<file>_<function>`), like renaming a C++ function.
 
 **Level script** (Unreal's Level Blueprint): Window > World Settings > **Level Script** picks a
 visual script (or Lua file) that belongs to the level: Event Start, Custom Events, timers for that

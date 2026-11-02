@@ -1035,9 +1035,13 @@ void register_script_nodes(const lsd::asset::AssetRegistry& registry) {
     lsd::script::clear_custom_nodes();
     for (lsd::usize i = 0; i < registry.count(); ++i) {
         const lsd::asset::AssetRecord& r = registry.get(i);
-        if (r.type != lsd::asset::AssetType::Data || std::strcmp(r.data_type, "ScriptNode") != 0) continue;
         char path[300];
         registry.source_path(r, path, sizeof path);
+        if (r.type == lsd::asset::AssetType::Script && std::filesystem::path(path).extension() == ".js") {  // a .js file's `nodes`
+            lsd::script::register_js_nodes(path, r.name);
+            continue;
+        }
+        if (r.type != lsd::asset::AssetType::Data || std::strcmp(r.data_type, "ScriptNode") != 0) continue;
         lsd::world::ScriptNode node;
         if (!lsd::asset::load_data_asset(path, node)) continue;
         lsd::script::NodeDef def{};

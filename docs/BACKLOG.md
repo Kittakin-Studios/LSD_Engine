@@ -252,11 +252,11 @@ pointers) and the reflection tables. Both become the C API, so every language se
 
 ### JavaScript
 
-- [ ] `.js` Script assets: the Script component takes `.js` as well as `.lua`, on QuickJS-ng (already used by UI documents); the same events and the same `lsd` API [Puerts / UnrealJS-style scripting]
-- [ ] One binding list: the `lsd` functions are declared once and bound to Lua and JavaScript from it, so the two cannot drift apart
-- [ ] Hot reload of `.js` files (state kept in `self`), errors per script like Lua
-- [ ] Debugging: errors and logs with file and line; breakpoints later (QuickJS has no debugger of its own)
-- [ ] Nodes from JavaScript: functions a `.js` file exports with a node description appear in the visual script menu (like ScriptNode assets), so designers wire code-written logic without code
+- [x] `.js` Script assets: the Script component takes `.js` as well as `.lua`, on QuickJS-ng (already used by UI documents); the same events and the same `lsd` API [Puerts / UnrealJS-style scripting]
+- [x] One binding list (JavaScript's `lsd` is built from the Lua `lsd` table's functions, so every Lua function, prelude ones too, is in JS): the `lsd` functions are declared once and bound to Lua and JavaScript from it, so the two cannot drift apart
+- [x] Hot reload of `.js` files (state kept in `self`), errors per script like Lua
+- [~] Debugging (done: errors with the JS stack, file, line and column; console.log; needs breakpoints): errors and logs with file and line; breakpoints later (QuickJS has no debugger of its own)
+- [x] Nodes from JavaScript (`var nodes = { fn: { inputs, output, pure } }` in any .js; `lsd.js_call` runs them in a shared context per file, reloaded on save): functions a `.js` file exports with a node description appear in the visual script menu (like ScriptNode assets), so designers wire code-written logic without code
 
 ## v2 (after the vertical slice)
 

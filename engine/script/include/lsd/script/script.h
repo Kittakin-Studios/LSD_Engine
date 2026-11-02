@@ -120,6 +120,11 @@
 // locked = false }` shows those values in each object's Details, under its Script; each object can
 // change them, and self.speed etc. hold the object's values before on_start.
 //
+// JavaScript: the Script component also takes a .js file (QuickJS-ng, engine/script/src/js.*): the same
+// events as top-level function declarations, the same lsd object (several results come back as an
+// array: const [x, y, z] = lsd.position(self.entity)), `var properties = { speed: 5 }`, console.log.
+//   lsd.js_call(path, function, ...) -> result   a function of a .js file (what JavaScript nodes compile to)
+//
 // Saving a script while playing reloads it; `self` keeps its fields. A script that errors stops
 // running (the error and stack go to the Output Log) until it is fixed and saved.
 #include "lsd/foundation/math.h"
@@ -131,6 +136,8 @@ struct lua_State;
 struct lua_Debug;
 
 namespace lsd::script {
+
+namespace js { struct Host; }
 
 // ---- Debugging (the editor's Lua debugger) ----
 struct DebugVariable {
@@ -306,6 +313,7 @@ private:
     i32 step_depth_ = 0;
     bool in_debugger_ = false;
     lua_State* lua_ = nullptr;
+    js::Host* js_ = nullptr;  // QuickJS for .js scripts, made on the first one
     world::World* world_ = nullptr;
     ScriptHost host_;
     PathFn path_of_ = nullptr;

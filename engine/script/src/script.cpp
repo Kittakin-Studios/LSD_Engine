@@ -1,5 +1,7 @@
 #include "lsd/script/script.h"
 
+#include "js.h"
+
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/data_table.h"
 #include "lsd/asset/localization.h"
@@ -1299,6 +1301,8 @@ void ScriptSystem::stop() {
     }
     if (lua_) lua_close(lua_);
     lua_ = nullptr;
+    js::destroy(js_);  // after Lua, which held JS functions (timers)
+    js_ = nullptr;
     world_ = nullptr;
     count_ = 0;
     table_count_ = 0;  // their refs went with the Lua state
@@ -1359,6 +1363,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     }
     lua_setfield(lua_, -2, "__persist");
     lua_setglobal(lua_, "lsd");
+    js::register_lua(lua_, &js_);  // lsd.js_call: JavaScript nodes in visual scripts
     run(kPrelude, "=lsd prelude");
     run(kSandbox, "=lsd sandbox");
     update_hook();  // breakpoints set before Play
@@ -1616,6 +1621,13 @@ void ScriptSystem::set_line_trace(LineTrace trace, void* user) {
 bool ScriptSystem::load(Instance& instance) {
     instance.modified = file_time(instance.path);
     instance.failed = true;
+    if (js::is_js(instance.path)) {
+        if (!js_) js_ = js::create(lua_);
+        lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
+        instance.failed = !js::load(js_, static_cast<u32>(&instance - instances_), instance.path);
+        lua_pop(lua_, 1);
+        return !instance.failed;
+    }
     if (luaL_loadfile(lua_, instance.path) != 0) {
         LSD_LOG_ERROR("script", "%s", lua_tostring(lua_, -1));
         lua_pop(lua_, 1);
@@ -1651,6 +1663,7 @@ void ScriptSystem::update(f32 dt) {
     lua_getfield(lua_, -1, "_tick");
     lua_remove(lua_, -2);
     protected_call(lua_, 0, "timers");
+    if (check_files) js::update(js_);
     const f64 dt_arg = dt;
     for (u32 i = 0; i < count_; ++i) {
         Instance& instance = instances_[i];

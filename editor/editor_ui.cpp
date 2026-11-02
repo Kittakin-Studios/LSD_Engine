@@ -67,7 +67,7 @@ namespace {
 bool asset_selected(const EditorState& s, asset::Guid g);
 extern ReferenceIndex g_references;
 
-// A Lua script's `properties = { name = value, ... }` defaults, read from its text: (name, value as text).
+// A Lua or JavaScript script's `properties = { name = value, ... }` (`{ name: value }`) defaults, read from its text: (name, value as text).
 // shortcut: a small scanner for numbers, true / false and quoted strings (no nesting, no expressions).
 std::vector<std::pair<std::string, std::string>> script_property_defaults(const char* path) {
     std::vector<std::pair<std::string, std::string>> out;
@@ -88,7 +88,7 @@ std::vector<std::pair<std::string, std::string>> script_property_defaults(const 
         while (name_end < end && (std::isalnum(static_cast<unsigned char>(text[name_end])) || text[name_end] == '_')) ++name_end;
         if (name_end == i) break;
         const std::string name = text.substr(i, name_end - i);
-        i = text.find('=', name_end);
+        i = text.find_first_of("=:", name_end);  // Lua `speed = 5`, JavaScript `speed: 5`
         if (i == std::string::npos || i >= end) break;
         ++i;
         while (i < end && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
@@ -2952,11 +2952,31 @@ function on_update(self, dt)
 end
 )";
 
-void create_script(EditorState& s) {
-    const std::string path = new_asset_path(s, "NewScript", ".lua");
+constexpr char kJsScriptTemplate[] = R"(// Runs on every object whose Script component points at this file (in Play).
+// self.entity is the object, self.name its name; keep your own state in self.
+// The engine API is the lsd object, the same as Lua's: see engine/script/include/lsd/script/script.h.
+// Several results come back as an array: const [x, y, z] = lsd.position(self.entity).
+// Events are top-level function declarations (not const / let arrow functions).
+
+// Shown in each object's Details (Instance Editable).
+var properties = { speed: 90 };
+
+function on_start(self) {
+  lsd.log("Hello from " + self.name);
+}
+
+function on_update(self, dt) {
+  // spin around Z, self.speed degrees a second
+  const [x, y, z] = lsd.rotation(self.entity);
+  lsd.set_rotation(self.entity, x, y, z + self.speed * dt);
+}
+)";
+
+void create_script(EditorState& s, bool javascript) {
+    const std::string path = new_asset_path(s, "NewScript", javascript ? ".js" : ".lua");
     FILE* file = std::fopen(path.c_str(), "wb");
     if (!file) return;
-    std::fputs(kScriptTemplate, file);
+    std::fputs(javascript ? kJsScriptTemplate : kScriptTemplate, file);
     std::fclose(file);
     s.registry->scan();
     if (const asset::AssetRecord* r = record_at(s, path)) {
@@ -4013,8 +4033,10 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A node graph that combines sounds: Random, Modulator, Mixer, Delay, Looping, Switch... Double-click to edit");
-        if (ImGui::MenuItem("New Lua Script")) create_script(s);
+        if (ImGui::MenuItem("New Lua Script")) create_script(s, false);
         ImGui::SetItemTooltip("A .lua file with on_start / on_update; add a Script component to an object and pick it");
+        if (ImGui::MenuItem("New JavaScript Script")) create_script(s, true);
+        ImGui::SetItemTooltip("A .js file with on_start / on_update and the same lsd API as Lua; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
         ImGui::SetItemTooltip("Creates IA_Move, IA_Look, IA_Jump and IMC_Default mapped to WASD, mouse, Space and a gamepad");
         if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(s.content_folder);
@@ -4255,7 +4277,7 @@ void draw_asset_grid(EditorState& s) {
             thumbnail = s.thumbnails->get(r.guid);
         }
         // Code assets: a dark tile with what they are in large white letters.
-        const char* code_label = r.type == asset::AssetType::BehaviorTree ? "BT" : r.type == asset::AssetType::Script ? ".Lua" : nullptr;
+        const char* code_label = r.type == asset::AssetType::BehaviorTree ? "BT" : r.type == asset::AssetType::Script ? (std::filesystem::path(r.path).extension() == ".js" ? ".JS" : ".Lua") : nullptr;
         if (thumbnail) {
             const bool flip = s.thumbnails->flipped();
             dl->AddImage(ImTextureRef(static_cast<ImTextureID>(thumbnail)), lo, hi, ImVec2(0, flip ? 1.0f : 0.0f), ImVec2(1, flip ? 0.0f : 1.0f));

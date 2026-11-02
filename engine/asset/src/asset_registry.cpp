@@ -68,7 +68,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
     if (std::strcmp(lower, ".lsdasset") == 0) return AssetType::Data;
     if (std::strcmp(lower, ".lsdprefab") == 0) return AssetType::Prefab;
-    if (std::strcmp(lower, ".lua") == 0) return AssetType::Script;
+    if (std::strcmp(lower, ".lua") == 0 || std::strcmp(lower, ".js") == 0) return AssetType::Script;
     if (std::strcmp(lower, ".lsdgraph") == 0) return AssetType::Graph;
     if (std::strcmp(lower, ".csv") == 0) return AssetType::Table;
     if (std::strcmp(lower, ".lsdcue") == 0) return AssetType::Cue;

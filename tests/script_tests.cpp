@@ -46,6 +46,10 @@ static void write(const char* path, const char* text) {
 }
 
 static bool path_of(void*, const char* guid, char* out, usize capacity) {
+    if (std::strncmp(guid, "file:", 5) == 0) {  // any file in the temp folder
+        std::snprintf(out, capacity, "%s/%s", LSD_TEST_TEMP_DIR, guid + 5);
+        return true;
+    }
     std::snprintf(out, capacity, "%s", std::strcmp(guid, "mover") == 0 ? kMover : std::strcmp(guid, "graph") == 0 ? kGraphLua : std::strcmp(guid, "props") == 0 ? kPropsLua : std::strcmp(guid, "debugged") == 0 ? kDebugLua : kBroken);
     return true;
 }
@@ -798,7 +802,106 @@ lsd.delete_save("World1")
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// JavaScript scripts: the same events and lsd API as Lua, properties, timers, broadcasts both ways,
+// errors kept to their script, and a reload that keeps self.
+static void test_javascript() {
+    write(LSD_TEST_TEMP_DIR "/door.js", R"(
+var properties = { speed: 5, label: "Door" };
+let opened = 0;
+function on_start(self) {
+  self.ticks = 0;
+  const [x, y, z] = lsd.position(self.entity);
+  lsd.set_position(self.entity, self.speed, self.label.length, z + 1);
+  lsd.after(0.25, () => { self.fired = true; lsd.set_rotation(self.entity, 0, 0, 45); });
+}
+function on_update(self, dt) { self.ticks++; }
+function ping(self, amount) { opened += amount; lsd.set(self.entity, "Transform", { scale: { x: opened } }); }
+function probe(self) {
+  try { lsd.position(12345); return false; } catch (e) { return lsd.get(self.entity, "Transform").scale.x > 0; }
+}
+)");
+    write(LSD_TEST_TEMP_DIR "/caller.lua", "function on_start(self) lsd.broadcast('ping', 2) end\n");
+    write(LSD_TEST_TEMP_DIR "/bad.js", "function on_update(self, dt) { null.x; }\n");
+    HeapAllocator heap("javascript");
+    {
+        World w(heap);
+        const Entity door = w.create("Door");
+        std::snprintf(w.add<Script>(door)->script, sizeof(Script::script), "file:door.js");
+        std::snprintf(w.add<Script>(w.create("Caller"))->script, sizeof(Script::script), "file:caller.lua");
+        std::snprintf(w.add<Script>(w.create("Bad"))->script, sizeof(Script::script), "file:bad.js");
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        const Vec3 p = w.get<Transform>(door)->position;
+        CHECK(scripts.script_count() == 3 && scripts.error_count() == 0);
+        CHECK(p.x == 5.0f && p.y == 4.0f && p.z == 1.0f);
+        CHECK(w.get<Transform>(door)->scale.x == 2.0f);  // Lua's broadcast reached the JS function
+        for (int i = 0; i < 3; ++i) scripts.update(0.1f);
+        CHECK(w.get<Transform>(door)->rotation.z == 45.0f);  // the JS timer fired
+        CHECK(scripts.error_count() == 1);                   // bad.js stopped, the door kept going
+        char line[96];
+        std::snprintf(line, sizeof line, "assert(lsd.call(%u, 'ping', 1) == 1)", door.value);
+        CHECK(scripts.run(line) && w.get<Transform>(door)->scale.x == 3.0f);
+        CHECK(scripts.call_task(door, "probe", 0.0f) == 1);  // a Lua error is a JS exception it can catch
+
+        write(LSD_TEST_TEMP_DIR "/door.js", "function on_update(self, dt) { lsd.set_position(self.entity, self.ticks, self.fired ? 1 : 0, 0); }\n");
+        std::filesystem::last_write_time(LSD_TEST_TEMP_DIR "/door.js", std::filesystem::last_write_time(LSD_TEST_TEMP_DIR "/door.js") + std::chrono::seconds(5));
+        scripts.update(0.5f);
+        CHECK(w.get<Transform>(door)->position.x == 3.0f && w.get<Transform>(door)->position.y == 1.0f);  // self kept
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
+// JavaScript nodes: a .js file's `nodes` description becomes graph nodes calling its functions.
+static void test_js_nodes() {
+    using namespace lsd::script;
+    write(LSD_TEST_TEMP_DIR "/lift.js", R"(
+var nodes = {
+  lift: { title: "Lift", category: "Moves", inputs: { target: "object", height: ["number", 2] }, output: "number" },
+  twice: { pure: true, inputs: { value: "number" }, output: "number" },
+  missing: { inputs: {} },
+};
+function lift(target, height) {
+  const [x, y, z] = lsd.position(target);
+  lsd.set_position(target, x, y, z + height);
+  return z + height;
+}
+function twice(value) { return value * 2; }
+)");
+    CHECK(register_js_nodes(LSD_TEST_TEMP_DIR "/lift.js", "lift") == 2);  // `missing` has no function
+    const NodeDef* lift = find_node_def("JS_lift_lift");
+    CHECK(lift && lift->input_count == 3 && lift->output_count == 2 && std::strcmp(lift->inputs[1].default_value, "self") == 0);
+    CHECK(find_node_def("JS_lift_twice") && is_pure(*find_node_def("JS_lift_twice")));
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 up = g.add("JS_lift_lift", 200, 0)->id;
+    const u32 dbl = g.add("JS_lift_twice", 0, 200)->id;
+    const u32 again = g.add("JS_lift_lift", 400, 0)->id;
+    std::snprintf(g.find(dbl)->values[0], 64, "1.5");
+    CHECK(g.connect(start, 0, up, 0) && g.connect(dbl, 0, up, 2) && g.connect(up, 0, again, 0) && g.connect(up, 1, again, 2));
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("js nodes");
+    {
+        World w(heap);
+        const Entity e = w.create("E");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "graph");
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        // Up by twice(1.5) = 3, then by the first node's result (3): z = 6.
+        CHECK(scripts.error_count() == 0 && w.get<Transform>(e)->position.z == 6.0f);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+    clear_custom_nodes();
+}
+
 int main() {
+    test_javascript();
+    test_js_nodes();
     test_data_table();
     test_graph();
     test_graph_variables();
