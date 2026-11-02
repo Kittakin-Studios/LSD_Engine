@@ -1,0 +1,11 @@
+{
+  "type": "InputAction",
+  "data": {
+    "value_type": 0,
+    "description": "",
+    "trigger": 0,
+    "trigger_time": 0.5,
+    "chord_action": "",
+    "smoothing": 0
+  }
+}

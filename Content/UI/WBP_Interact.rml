@@ -1,0 +1,23 @@
+<rml>
+<head>
+<title>New UI</title>
+<style>
+body { font-family: sans; width: 100%; height: 100%; }
+div { display: block; }
+#panel { position: absolute
+; left: 40px; top: 40px; width: 380px; padding: 18px 24px;
+         background-color: rgba(13, 4, 4, 200); border: 2px #F3C312; border-radius: 10px;
+         color: #FFE51A; font-size: 26px; }
+
+#title { font-size: 38px; font-weight: bold; color: #ffffff; margin-bottom: 8px; }
+button { display: block; margin-top: 14
+px; padding: 8px 20px; background-color: #025291;
+         color: #ffffff; font-size: 22px; border-radius: 6px; text-align: center;
+         nav: auto; tab-index: auto; focus: auto; }   /* arrows / D-pad move between buttons */
+button:hover, button:focus { background-color: #EEA70E; }
+</style>
+</head>
+<body>
+<button id="button1" onclick="E" style="position: Relative; left: 41%; width: 200px; top: 80%; color: White;">E</button>
+</body>
+</rml>

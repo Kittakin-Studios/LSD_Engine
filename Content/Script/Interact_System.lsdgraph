@@ -1,0 +1,30 @@
+{
+  "lsd_graph": 1,
+  "next_id": 13,
+  "nodes": [
+    {"id": 1, "type": "OnStart", "x": 0.0, "y": 0.0, "values": []},
+    {"id": 2, "type": "OnUpdate", "x": 3.3, "y": 96.2, "values": []},
+    {"id": 3, "type": "GetVariable", "x": 1212.7, "y": 129.4, "values": ["bInteract"]},
+    {"id": 5, "type": "Branch", "x": 544.8, "y": 226.9, "values": ["", "true"]},
+    {"id": 6, "type": "LineTrace", "x": 1538.8, "y": 228.9, "values": ["", "0,0,1", "10,4.8,4.2"]},
+    {"id": 7, "type": "InputPressed", "x": 274.8, "y": 231.7, "values": ["IA_Interact"]},
+    {"id": 8, "type": "PlaySound2D", "x": 1114.0, "y": 481.1, "values": ["", "Click"]},
+    {"id": 9, "type": "PlaySound2D", "x": 1967.8, "y": 229.6, "values": ["", "Click"]},
+    {"id": 10, "type": "PrintString", "x": 1356.0, "y": 478.9, "values": ["", "Failed"]},
+    {"id": 11, "type": "PrintString", "x": 2292.3, "y": 228.5, "values": ["", "Worked"]},
+    {"id": 12, "type": "CallFunction", "x": 1077.1, "y": 228.8, "values": ["", "WBP_Interact", "0", "0", "0"]}
+  ],
+  "links": [
+    [12, 0, 6, 0],
+    [8, 0, 10, 0],
+    [7, 0, 5, 1],
+    [5, 1, 8, 0],
+    [6, 0, 9, 0],
+    [9, 0, 11, 0],
+    [5, 0, 12, 0],
+    [12, 1, 6, 1]
+  ],
+  "variables": [
+    {"name": "bInteract", "type": "Bool", "default": "true", "editable": "false", "tooltip": "True"}
+  ]
+}

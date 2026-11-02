@@ -1,0 +1,37 @@
+{
+  "lsd_graph": 1,
+  "next_id": 16,
+  "nodes": [
+    {"id": 1, "type": "OnStart", "x": 0.0, "y": 0.0, "values": []},
+    {"id": 2, "type": "OnUpdate", "x": -179.3, "y": 101.7, "values": []},
+    {"id": 3, "type": "GetVariable", "x": 520.5, "y": 54.2, "values": ["bInteract"]},
+    {"id": 5, "type": "Branch", "x": 544.8, "y": 226.9, "values": ["", "true"]},
+    {"id": 6, "type": "LineTrace", "x": 1219.7, "y": 69.4, "values": ["", "0,0,1", "10,0,1"]},
+    {"id": 7, "type": "InputPressed", "x": 76.4, "y": 476.2, "values": ["IA_Interact"]},
+    {"id": 8, "type": "PlaySound2D", "x": 1114.0, "y": 481.1, "values": ["", "Click"]},
+    {"id": 9, "type": "PlaySound2D", "x": 2263.0, "y": 67.1, "values": ["", "Click"]},
+    {"id": 10, "type": "PrintString", "x": 1356.0, "y": 478.9, "values": ["", "Failed"]},
+    {"id": 11, "type": "PrintString", "x": 2587.5, "y": 66.0, "values": ["", "Worked"]},
+    {"id": 12, "type": "SetTimer", "x": 172.7, "y": 145.7, "values": ["", "2"]},
+    {"id": 13, "type": "UiOpen", "x": 1778.1, "y": 71.5, "values": ["", "UI_HUD"]},
+    {"id": 14, "type": "Delay", "x": 2921.9, "y": 65.8, "values": ["", "1"]},
+    {"id": 15, "type": "SetVariable", "x": 921.6, "y": 102.6, "values": ["", "bInteract", "true"]}
+  ],
+  "links": [
+    [15, 0, 6, 0],
+    [11, 0, 14, 0],
+    [7, 0, 5, 1],
+    [5, 1, 8, 0],
+    [13, 0, 9, 0],
+    [9, 0, 11, 0],
+    [8, 0, 10, 0],
+    [12, 0, 5, 0],
+    [2, 0, 12, 0],
+    [6, 0, 13, 0],
+    [5, 0, 15, 0],
+    [3, 0, 15, 2]
+  ],
+  "variables": [
+    {"name": "bInteract", "type": "Bool", "default": "true", "editable": "false", "tooltip": "True"}
+  ]
+}
