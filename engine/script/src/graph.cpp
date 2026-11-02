@@ -776,7 +776,44 @@ void save_graph(const Graph& graph, Array<char>& out) {
         std::snprintf(line, sizeof line, "%s\n    [%u, %u, %u, %u]", i ? "," : "", l.from_node, l.from_pin, l.to_node, l.to_pin);
         append(out, line);
     }
+    append(out, "\n  ],\n  \"variables\": [");
+    for (usize i = 0; i < graph.variables.size(); ++i) {
+        const GraphVariable& v = graph.variables[i];
+        append(out, i ? ",\n    {\"name\": " : "\n    {\"name\": ");
+        append_quoted(out, v.name);
+        append(out, ", \"type\": ");
+        append_quoted(out, pin_type_name(v.type));
+        append(out, ", \"default\": ");
+        append_quoted(out, v.default_value);
+        append(out, v.instance_editable ? ", \"editable\": \"true\", \"tooltip\": " : ", \"editable\": \"false\", \"tooltip\": ");
+        append_quoted(out, v.tooltip);
+        append(out, "}");
+    }
     append(out, "\n  ]\n}\n");
+}
+
+const char* pin_type_name(PinType type) {
+    switch (type) {
+        case PinType::Exec: return "Exec";
+        case PinType::Float: return "Float";
+        case PinType::Bool: return "Bool";
+        case PinType::String: return "String";
+        case PinType::Vector: return "Vector";
+        case PinType::Entity: return "Entity";
+        case PinType::Audio: return "Audio";
+        case PinType::Any: return "Any";
+    }
+    return "Any";
+}
+
+bool parse_pin_type(const char* name, PinType& out) {
+    for (PinType t : {PinType::Float, PinType::Bool, PinType::String, PinType::Vector, PinType::Entity, PinType::Audio, PinType::Any, PinType::Exec}) {
+        if (std::strcmp(pin_type_name(t), name) == 0) {
+            out = t;
+            return true;
+        }
+    }
+    return false;
 }
 
 namespace {
@@ -795,6 +832,7 @@ f32 read_f32(reflect::JsonReader& r) {
 bool load_graph(Graph& graph, const char* text, usize length) {
     graph.nodes.clear();
     graph.links.clear();
+    graph.variables.clear();
     graph.next_id = 1;
     reflect::JsonReader r{text, text + length};
     r.expect('{');
@@ -854,6 +892,28 @@ bool load_graph(Graph& graph, const char* text, usize length) {
                 if (!r.accept(',')) break;
             }
             r.expect(']');
+        } else if (std::strcmp(key, "variables") == 0) {
+            r.expect('[');
+            while (r.ok && !r.peek(']')) {
+                GraphVariable v;
+                r.expect('{');
+                while (r.ok && !r.peek('}')) {
+                    char field[16], value[96];
+                    r.read_string(field, sizeof field);
+                    r.expect(':');
+                    r.read_string(value, sizeof value);
+                    if (std::strcmp(field, "name") == 0) std::snprintf(v.name, sizeof v.name, "%s", value);
+                    else if (std::strcmp(field, "type") == 0) parse_pin_type(value, v.type);
+                    else if (std::strcmp(field, "default") == 0) std::snprintf(v.default_value, sizeof v.default_value, "%s", value);
+                    else if (std::strcmp(field, "editable") == 0) v.instance_editable = std::strcmp(value, "true") == 0;
+                    else if (std::strcmp(field, "tooltip") == 0) std::snprintf(v.tooltip, sizeof v.tooltip, "%s", value);
+                    if (!r.accept(',')) break;
+                }
+                r.expect('}');
+                if (v.name[0]) graph.variables.push_back(v);
+                if (!r.accept(',')) break;
+            }
+            r.expect(']');
         } else {
             r.skip_value();
         }
@@ -892,6 +952,42 @@ bool compile_graph(const Graph& graph, Array<char>& lua, char* error, usize erro
     if (error_capacity) error[0] = '\0';
     lua.clear();
     append(lua, kLuaPrelude);
+    // Declared variables: Instance Editable ones as `properties` (Details shows them per object),
+    // the rest as `defaults`; both are set on self before on_start.
+    for (int editable = 1; editable >= 0; --editable) {
+        append(lua, editable ? "\nproperties = {" : "\ndefaults = {");
+        for (const GraphVariable& v : graph.variables) {
+            const bool scalar = v.type == PinType::Float || v.type == PinType::Bool || v.type == PinType::String;
+            if ((v.instance_editable && scalar) != (editable == 1) || v.type == PinType::Entity) continue;
+            std::string value;
+            if (v.type == PinType::Bool) {
+                value = std::strcmp(v.default_value, "true") == 0 || std::strcmp(v.default_value, "1") == 0 ? "true" : "false";
+            } else if (v.type == PinType::String || v.type == PinType::Audio) {
+                value = "\"";
+                for (const char* ch = v.default_value; *ch; ++ch) {
+                    if (*ch == '"' || *ch == '\\') value += '\\';
+                    if (*ch != '\n') value += *ch;
+                }
+                value += "\"";
+            } else if (v.type == PinType::Vector) {
+                f32 x = 0, y = 0, z = 0;
+                std::sscanf(v.default_value, "%f , %f , %f", &x, &y, &z);
+                char text[96];
+                std::snprintf(text, sizeof text, "__vec(%.9g, %.9g, %.9g)", static_cast<double>(x), static_cast<double>(y), static_cast<double>(z));
+                value = text;
+            } else {  // Float and Any: a number
+                char text[48];
+                std::snprintf(text, sizeof text, "%.9g", std::atof(v.default_value));
+                value = text;
+            }
+            bool identifier = (std::isalpha(static_cast<unsigned char>(v.name[0])) || v.name[0] == '_');
+            for (const char* ch = v.name; *ch; ++ch) identifier = identifier && (std::isalnum(static_cast<unsigned char>(*ch)) || *ch == '_');
+            if (identifier) append(lua, (std::string(" ") + v.name + " = " + value + ",").c_str());
+            else if (!editable) append(lua, (std::string(" [\"") + v.name + "\"] = " + value + ",").c_str());  // names with spaces still work in Get / Set
+        }
+        append(lua, " }");
+    }
+    append(lua, "\n");
     Compiler c{graph, error, error_capacity};
     for (const GraphNode& node : graph.nodes) {
         const NodeDef* def = find_node_def(node.type);

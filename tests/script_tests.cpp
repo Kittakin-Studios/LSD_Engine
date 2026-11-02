@@ -68,6 +68,52 @@ static bool raycast(void*, Vec3 origin, Vec3, f32, Entity& hit, Vec3& point, Vec
 }
 
 // A visual script: Start moves the object; Update spins it while it is tagged Enemy, else prints its name.
+// Declared variables (My Blueprint): saved with the graph; compiled to `properties` (Instance
+// Editable numbers / booleans / text) and `defaults` (the rest), which the script starts with.
+static void test_graph_variables() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    g.add("OnStart", 0, 0);
+    GraphVariable speed;
+    std::snprintf(speed.name, sizeof speed.name, "speed");
+    std::snprintf(speed.default_value, sizeof speed.default_value, "5");
+    speed.instance_editable = true;
+    GraphVariable home;
+    std::snprintf(home.name, sizeof home.name, "home");
+    home.type = PinType::Vector;
+    std::snprintf(home.default_value, sizeof home.default_value, "1,2,3");
+    home.instance_editable = true;  // vectors cannot be edited per object: a default
+    GraphVariable label;
+    std::snprintf(label.name, sizeof label.name, "label");
+    label.type = PinType::String;
+    std::snprintf(label.default_value, sizeof label.default_value, "Say \"hi\"");
+    g.variables.push_back(speed);
+    g.variables.push_back(home);
+    g.variables.push_back(label);
+    Array<char> text(default_allocator());
+    save_graph(g, text);
+    Graph back(default_allocator());
+    CHECK(load_graph(back, text.data(), text.size()) && back.variables.size() == 3);
+    if (back.variables.size() == 3) {
+        CHECK(std::strcmp(back.variables[1].name, "home") == 0 && back.variables[1].type == PinType::Vector && back.variables[0].instance_editable);
+        CHECK(std::strcmp(back.variables[2].default_value, "Say \"hi\"") == 0);
+    }
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(back, lua, error, sizeof error));
+    lua.push_back('\0');
+    CHECK(std::strstr(lua.data(), "properties = { speed = 5, }") != nullptr);
+    CHECK(std::strstr(lua.data(), "defaults = { home = __vec(1, 2, 3), label = \"Say \\\"hi\\\"\", }") != nullptr);
+    // The script starts with them on self.
+    World w(default_allocator());
+    script::ScriptSystem scripts;
+    scripts.start(w, {}, nullptr, nullptr);
+    std::string chunk(lua.data());
+    chunk += "\nassert(properties.speed == 5 and defaults.home.y == 2 and defaults.label == 'Say \"hi\"')";
+    CHECK(scripts.run(chunk.c_str()));
+    scripts.stop();
+}
+
 static void test_graph() {
     using namespace lsd::script;
     Graph g(default_allocator());
@@ -647,6 +693,7 @@ lsd.delete_save("World1")
 int main() {
     test_data_table();
     test_graph();
+    test_graph_variables();
     test_events();
     test_traces();
     test_game_instance();

@@ -470,6 +470,22 @@ node is outlined red and the Lua Debugger shows the values (node outputs are nam
 
 ## 10. Visual scripting
 
+**The panels** (Unreal's Blueprint editor), on the left of the graph window (drag its edge to resize):
+
+- **My Blueprint**: **Event Graph** lists the events in the graph (click one to jump to it; **+** adds a
+  Custom Event), **Functions** lists them (click to jump, drag one onto the canvas for a Call
+  Function, **+** adds one), **Variables** lists the declared variables (**+** adds one). Drag a
+  variable onto the canvas for Get / Set (hold Ctrl for Get, Alt for Set). Names used by Get / Set
+  nodes but not declared are listed greyed with **Declare**.
+- **Details** (under My Blueprint, for the selected variable): Name (Enter renames it and every Get /
+  Set follows), Type, Default, **Instance Editable** (numbers, booleans and text: each object using
+  the script can change it in its Details, under the Script), Tooltip, how many nodes use it
+  (**Find** jumps to the next), Delete.
+- **Palette**: every node by category, with search; double-click one to add it in the middle of the
+  view, or drag it where you want it. Material Graphs, Sound Cues and Behavior Trees get it too.
+
+Declared variables start with their defaults on every object (before Event Start).
+
 **Editing the graph**: right-click for the node menu; wheel zooms about the mouse; drag on empty space
 to box-select (Ctrl / Shift add); drag a node's title to move the whole selection; **Ctrl+C / X / V /
 D** copy, cut, paste (at the mouse) and duplicate; **Ctrl+Z / Ctrl+Y** undo and redo inside the graph;

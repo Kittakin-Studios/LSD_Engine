@@ -32,7 +32,16 @@ struct MeshPart {
 // orders triangles for the GPU vertex cache. Writes a reason into `error` on failure.
 // `part` >= 0 imports only that part (list_mesh_parts order) in its node's own space: place it with
 // the part's position / rotation / scale to line up with the others.
-bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part = -1);
+// Normals (Blender's Shade Smooth / Flat / Auto Smooth): 0 keeps the file's, 1 smooth, 2 flat,
+// 3 smooth except across edges sharper than `smoothing_angle` degrees.
+enum MeshNormals : u32 { kNormalsImport = 0, kNormalsSmooth = 1, kNormalsFlat = 2, kNormalsAutoSmooth = 3 };
+bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part = -1,
+                 u32 normals = kNormalsImport, f32 smoothing_angle = 30.0f);
+
+// Recomputes the normals of an unindexed triangle list (3 vertices a triangle) as `normals` asks.
+// Smoothing follows the topology: corners at the same position share, whatever their UVs, so UV
+// seams leave no shading seams. Area-weighted.
+void compute_normals(rhi::MeshVertex* triangles, usize vertex_count, u32 normals, f32 smoothing_angle, Allocator& allocator);
 
 // The parts import_mesh can import one by one, in order.
 bool list_mesh_parts(const char* path, Array<MeshPart>& out, char* error, usize error_capacity);

@@ -41,6 +41,11 @@ struct AssetMeta {
 
     LSD_PROPERTY(Edit, Category = "Import", Min = 0.001, Max = 1000, Tooltip = "Uniform scale applied on import (after unit conversion to metres)")
     f32 import_scale = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Import", Widget = "Choice:Import,Smooth,Flat,Auto Smooth",
+                 Tooltip = "Shading (Blender's Shade Smooth / Flat / Auto Smooth; Unreal's Normal Import Method): the file's normals, smooth, faceted, or smooth with edges sharper than the angle kept hard. Static meshes; rigged meshes keep the file's")
+    u32 normals = 0;
+    LSD_PROPERTY(Edit, Category = "Import", Units = "deg", Min = 0, Max = 180, Tooltip = "Auto Smooth: edges sharper than this stay hard")
+    f32 smoothing_angle = 30.0f;
 
     // Auto LODs (Unreal's LOD Screen Size): how big the mesh looks (bounding radius over distance)
     // below which each simpler LOD takes over. Larger = switches sooner.

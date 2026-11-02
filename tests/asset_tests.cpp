@@ -303,6 +303,37 @@ static void test_localization() {
     CHECK(std::strcmp(out, "Ada w") == 0);  // cut to fit
 }
 
+// Normal modes on two faces meeting at a right angle along the edge x = 0..1 (y = z = 0): a floor
+// (normal +Z) and a wall (normal +Y, facing the floor: an inside corner). The edge's corners carry different UVs (a seam) on purpose.
+static void test_normals() {
+    HeapAllocator heap("normals");
+    auto make = [](rhi::MeshVertex* v) {
+        const f32 p[6][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0},    // floor: (0,0,0) (1,0,0) (0,1,0)
+                             {1, 0, 0}, {0, 0, 0}, {0, 0, 1}};   // wall:  (1,0,0) (0,0,0) (0,0,1)
+        for (int i = 0; i < 6; ++i) {
+            v[i] = rhi::MeshVertex{{p[i][0], p[i][1], p[i][2]}, {0, 0, 1}, {static_cast<f32>(i), 0}};
+        }
+    };
+    rhi::MeshVertex v[6];
+    auto near = [](const rhi::MeshVertex& m, f32 x, f32 y, f32 z) { return std::fabs(m.normal[0] - x) + std::fabs(m.normal[1] - y) + std::fabs(m.normal[2] - z) < 1e-4f; };
+    make(v);
+    asset::compute_normals(v, 6, asset::kNormalsFlat, 30.0f, heap);
+    CHECK(near(v[0], 0, 0, 1) && near(v[4], 0, 1, 0));
+    make(v);
+    asset::compute_normals(v, 6, asset::kNormalsSmooth, 30.0f, heap);
+    const f32 h = 0.70710678f;
+    CHECK(near(v[0], 0, h, h) && near(v[4], 0, h, h) && near(v[2], 0, 0, 1));  // the shared edge blends, across the UV seam
+    make(v);
+    asset::compute_normals(v, 6, asset::kNormalsAutoSmooth, 30.0f, heap);
+    CHECK(near(v[0], 0, 0, 1) && near(v[4], 0, 1, 0));  // 90 degrees > 30: kept hard
+    make(v);
+    asset::compute_normals(v, 6, asset::kNormalsAutoSmooth, 100.0f, heap);
+    CHECK(near(v[0], 0, h, h));  // under 100: smoothed
+    make(v);
+    asset::compute_normals(v, 6, asset::kNormalsImport, 30.0f, heap);
+    CHECK(near(v[4], 0, 0, 1));  // left alone
+}
+
 // A real FBX with nested, rotated and scaled nodes: its parts, each in its node's space and placed by
 // the node's transform, cover the same box as the merged import.
 static void test_fbx_parts() {
@@ -336,6 +367,7 @@ static void test_fbx_parts() {
 int main() {
     test_localization();
     test_fbx_parts();
+    test_normals();
     const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "asset_tests";
     test_guid_and_array();
     test_blender_fbx(root);

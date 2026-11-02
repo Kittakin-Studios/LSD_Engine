@@ -574,7 +574,10 @@ void main() {
     if (dot(n, p) > 0.0) n = -n;  // facing the camera
     float radius = ao_p.x;
     vec2 scale = vec2(u_post[4].x, u_post[4].y) * 0.5 * radius / -p.z;
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    // A 4 x 4 Bayer pattern (as the HLSL): the 4 x 4 blur sees every rotation once.
+    uvec2 q = uvec2(gl_FragCoord.xy) & 3u;
+    uint xy = q.x ^ q.y;
+    float noise = (float(((xy & 1u) << 3) | ((q.y & 1u) << 2) | (((xy >> 1) & 1u) << 1) | (q.y >> 1)) + 0.5) / 16.0;
     float sum = 0.0;
     for (int i = 0; i < 12; ++i) {
         float a = (float(i) + noise) * 2.39996323;

@@ -66,6 +66,11 @@ struct GraphWindow {
     bool wire_from_output = true;
     ImVec2 menu_at;  // canvas position for a node picked from the menu
     char search[64] = "";
+    char palette_search[64] = "";
+    i32 variable = -1;          // the variable selected in My Blueprint (its Details show), -1 none
+    i32 drop_variable = -1;     // a variable dropped on the canvas, waiting for Get / Set
+    ImVec2 drop_at;
+    ImVec2 view_size{800.0f, 600.0f};  // the canvas on screen last frame (new nodes go to its middle)
     char message[256] = "";
     bool message_is_error = false;
     // Material Graph preview: recompiled a moment after the graph last changed.
@@ -427,6 +432,377 @@ void node_menu(GraphWindow& w) {
     ImGui::EndPopup();
 }
 
+
+// ---- Side panel: My Blueprint, Palette, Details (Unreal's Blueprint editor panels) ----
+
+constexpr char kNodePayload[] = "LSD_GRAPH_NODE";
+constexpr char kVariablePayload[] = "LSD_GRAPH_VAR";
+
+// Where the middle of the visible canvas is, in canvas units (new nodes go there).
+ImVec2 view_centre(const GraphWindow& w) {
+    return ImVec2((w.view_size.x * 0.5f - w.scroll.x) / w.zoom - 80.0f, (w.view_size.y * 0.5f - w.scroll.y) / w.zoom - 30.0f);
+}
+
+// Scrolls the canvas so the node is in the middle, and selects it.
+void focus_node(GraphWindow& w, const GraphNode& n) {
+    w.scroll = ImVec2(w.view_size.x * 0.5f - (n.x + 80.0f) * w.zoom, w.view_size.y * 0.5f - (n.y + 30.0f) * w.zoom);
+    select_only(w, n.id);
+}
+
+bool is_get_variable(const GraphNode& n) { return std::strcmp(n.type, "GetVariable") == 0; }
+bool is_set_variable(const GraphNode& n) { return std::strcmp(n.type, "SetVariable") == 0; }
+const char* variable_of(const GraphNode& n) { return is_get_variable(n) ? n.values[0] : is_set_variable(n) ? n.values[1] : nullptr; }
+
+i32 find_variable(const Graph& g, const char* name) {
+    for (usize i = 0; i < g.variables.size(); ++i) {
+        if (std::strcmp(g.variables[i].name, name) == 0) return static_cast<i32>(i);
+    }
+    return -1;
+}
+
+// A Get or Set Variable node for a declared variable at canvas position `at`.
+void add_variable_node(GraphWindow& w, const script::GraphVariable& v, bool set, ImVec2 at) {
+    GraphNode* n = w.graph->add(set ? "SetVariable" : "GetVariable", at.x, at.y);
+    if (!n) return;
+    std::snprintf(n->values[set ? 1 : 0], sizeof n->values[0], "%s", v.name);
+    if (set) std::snprintf(n->values[2], sizeof n->values[2], "%s", v.default_value);
+    select_only(w, n->id);
+    w.dirty = true;
+}
+
+ImVec4 type_colour(script::PinType t) {  // the wire colours of the canvas
+    switch (t) {
+        case script::PinType::Float: return ImVec4(0.55f, 0.85f, 0.45f, 1.0f);
+        case script::PinType::Bool: return ImVec4(0.85f, 0.25f, 0.25f, 1.0f);
+        case script::PinType::String: return ImVec4(0.95f, 0.45f, 0.85f, 1.0f);
+        case script::PinType::Vector: return ImVec4(0.95f, 0.8f, 0.2f, 1.0f);
+        case script::PinType::Entity: return ImVec4(0.3f, 0.6f, 1.0f, 1.0f);
+        default: return ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+    }
+}
+
+// A list header with a + button on the right (Unreal's My Blueprint sections).
+bool section(const char* title, bool* add, const char* add_tip) {
+    const bool open = ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+    if (add) {
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 14.0f);
+        ImGui::PushID(title);
+        *add = ImGui::SmallButton("+");
+        ImGui::SetItemTooltip("%s", add_tip);
+        ImGui::PopID();
+    }
+    return open;
+}
+
+void draw_my_blueprint(GraphWindow& w) {
+    Graph& g = *w.graph;
+    bool add = false;
+    // Graphs: the events that start chains (Unreal's Event Graph entries).
+    if (section("Event Graph", &add, "Add a Custom Event (an event dispatcher other scripts can call)")) {
+        for (const GraphNode& n : g.nodes) {
+            const script::NodeDef* def = script::find_node_def(n.type);
+            if (!def || !script::is_event(*def) || std::strcmp(n.type, "FunctionEntry") == 0) continue;
+            char label[96];
+            if (std::strcmp(n.type, "CustomEvent") == 0) std::snprintf(label, sizeof label, "%s (custom)##%u", n.values[0], n.id);
+            else std::snprintf(label, sizeof label, "%s##%u", def->title, n.id);
+            if (ImGui::Selectable(label, w.selected == n.id)) focus_node(w, n);
+        }
+    }
+    if (add) {
+        const ImVec2 at = view_centre(w);
+        if (GraphNode* n = g.add("CustomEvent", at.x, at.y)) focus_node(w, *n);
+        w.dirty = true;
+    }
+    // Functions.
+    add = false;
+    if (section("Functions", &add, "Add a Function (Call Function runs it by name)")) {
+        for (const GraphNode& n : g.nodes) {
+            if (std::strcmp(n.type, "FunctionEntry") != 0) continue;
+            char label[96];
+            std::snprintf(label, sizeof label, "%s()##%u", n.values[0], n.id);
+            if (ImGui::Selectable(label, w.selected == n.id)) focus_node(w, n);
+            if (ImGui::BeginDragDropSource()) {  // drop on the canvas: a Call Function for it
+                char payload[32];
+                std::snprintf(payload, sizeof payload, "CallFunction:%s", n.values[0]);
+                ImGui::SetDragDropPayload(kNodePayload, payload, sizeof payload);
+                ImGui::Text("Call %s", n.values[0]);
+                ImGui::EndDragDropSource();
+            }
+        }
+    }
+    if (add) {
+        char name[32] = "NewFunction";
+        for (int k = 2;; ++k) {  // a name no other Function has
+            bool taken = false;
+            for (const GraphNode& n : g.nodes) taken = taken || (std::strcmp(n.type, "FunctionEntry") == 0 && std::strcmp(n.values[0], name) == 0);
+            if (!taken) break;
+            std::snprintf(name, sizeof name, "NewFunction%d", k);
+        }
+        const ImVec2 at = view_centre(w);
+        if (GraphNode* n = g.add("FunctionEntry", at.x, at.y)) {
+            std::snprintf(n->values[0], sizeof n->values[0], "%s", name);
+            focus_node(w, *n);
+        }
+        w.dirty = true;
+    }
+    // Variables: declared ones (drag onto the canvas: Get, Ctrl Get, Alt Set), then names the graph
+    // uses without declaring them.
+    add = false;
+    if (section("Variables", &add, "Add a variable")) {
+        for (usize i = 0; i < g.variables.size(); ++i) {
+            const script::GraphVariable& v = g.variables[i];
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::ColorButton("##type", type_colour(v.type), ImGuiColorEditFlags_NoTooltip, ImVec2(10, 10));
+            ImGui::SameLine();
+            char label[96];
+            std::snprintf(label, sizeof label, "%s%s", v.name, v.instance_editable ? "  (editable)" : "");
+            if (ImGui::Selectable(label, w.variable == static_cast<i32>(i))) {
+                w.variable = static_cast<i32>(i);
+                select_only(w, 0);
+            }
+            if (v.tooltip[0]) ImGui::SetItemTooltip("%s", v.tooltip);
+            if (ImGui::BeginDragDropSource()) {
+                const u32 index = static_cast<u32>(i);
+                ImGui::SetDragDropPayload(kVariablePayload, &index, sizeof index);
+                ImGui::Text("%s (%s): drop for Get / Set; Ctrl = Get, Alt = Set", v.name, script::pin_type_name(v.type));
+                ImGui::EndDragDropSource();
+            }
+            ImGui::PopID();
+        }
+        std::vector<std::string> undeclared;
+        for (const GraphNode& n : g.nodes) {
+            const char* name = variable_of(n);
+            if (!name || !name[0] || find_variable(g, name) >= 0 || std::find(undeclared.begin(), undeclared.end(), name) != undeclared.end()) continue;
+            undeclared.emplace_back(name);
+        }
+        for (const std::string& name : undeclared) {
+            ImGui::PushID(name.c_str());
+            ImGui::TextDisabled("%s (used, not declared)", name.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Declare")) {
+                script::GraphVariable v;
+                std::snprintf(v.name, sizeof v.name, "%s", name.c_str());
+                v.type = script::PinType::Any;
+                g.variables.push_back(v);
+                w.variable = static_cast<i32>(g.variables.size()) - 1;
+                w.dirty = true;
+            }
+            ImGui::PopID();
+        }
+    }
+    if (add) {
+        script::GraphVariable v;
+        std::snprintf(v.name, sizeof v.name, "NewVar");
+        for (int k = 2; find_variable(g, v.name) >= 0; ++k) std::snprintf(v.name, sizeof v.name, "NewVar%d", k);
+        g.variables.push_back(v);
+        w.variable = static_cast<i32>(g.variables.size()) - 1;
+        select_only(w, 0);
+        w.dirty = true;
+    }
+}
+
+// Details of the selected variable (Unreal's Details for a Blueprint variable).
+void draw_variable_details(GraphWindow& w) {
+    Graph& g = *w.graph;
+    if (w.variable < 0 || static_cast<usize>(w.variable) >= g.variables.size()) return;
+    script::GraphVariable& v = g.variables[static_cast<usize>(w.variable)];
+    ImGui::SeparatorText("Details");
+    char name[32];
+    std::snprintf(name, sizeof name, "%s", v.name);
+    ImGui::SetNextItemWidth(-60.0f);
+    if (ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue) && name[0] && find_variable(g, name) < 0) {
+        for (GraphNode& n : g.nodes) {  // renaming moves every Get / Set with it
+            char* used = is_get_variable(n) ? n.values[0] : is_set_variable(n) ? n.values[1] : nullptr;
+            if (used && std::strcmp(used, v.name) == 0) std::snprintf(used, sizeof n.values[0], "%s", name);
+        }
+        std::snprintf(v.name, sizeof v.name, "%s", name);
+        w.dirty = true;
+    }
+    ImGui::SetItemTooltip("Enter to rename (every Get / Set follows)");
+    const script::PinType types[] = {script::PinType::Float, script::PinType::Bool, script::PinType::String, script::PinType::Vector, script::PinType::Entity, script::PinType::Any};
+    ImGui::SetNextItemWidth(-60.0f);
+    if (ImGui::BeginCombo("Type", script::pin_type_name(v.type))) {
+        for (const script::PinType t : types) {
+            if (!ImGui::Selectable(script::pin_type_name(t), t == v.type) || t == v.type) continue;
+            v.type = t;
+            std::snprintf(v.default_value, sizeof v.default_value, "%s",
+                          t == script::PinType::Bool ? "false" : t == script::PinType::Vector ? "0,0,0" : t == script::PinType::Float || t == script::PinType::Any ? "0" : "");
+            w.dirty = true;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetNextItemWidth(-60.0f);
+    switch (v.type) {
+        case script::PinType::Float:
+        case script::PinType::Any: {
+            float f = static_cast<float>(std::atof(v.default_value));
+            if (ImGui::DragFloat("Default", &f, 0.1f)) {
+                std::snprintf(v.default_value, sizeof v.default_value, "%g", static_cast<double>(f));
+                w.dirty = true;
+            }
+            break;
+        }
+        case script::PinType::Bool: {
+            bool b = std::strcmp(v.default_value, "true") == 0;
+            if (ImGui::Checkbox("Default", &b)) {
+                std::snprintf(v.default_value, sizeof v.default_value, "%s", b ? "true" : "false");
+                w.dirty = true;
+            }
+            break;
+        }
+        case script::PinType::Vector: {
+            float xyz[3] = {};
+            std::sscanf(v.default_value, "%f , %f , %f", &xyz[0], &xyz[1], &xyz[2]);
+            if (ImGui::DragFloat3("Default", xyz, 0.1f)) {
+                std::snprintf(v.default_value, sizeof v.default_value, "%g,%g,%g", static_cast<double>(xyz[0]), static_cast<double>(xyz[1]), static_cast<double>(xyz[2]));
+                w.dirty = true;
+            }
+            break;
+        }
+        case script::PinType::Entity: ImGui::TextDisabled("Objects start empty (set them in a graph)"); break;
+        default:
+            if (ImGui::InputText("Default", v.default_value, sizeof v.default_value)) w.dirty = true;
+            break;
+    }
+    const bool scalar = v.type == script::PinType::Float || v.type == script::PinType::Bool || v.type == script::PinType::String;
+    ImGui::BeginDisabled(!scalar);
+    if (ImGui::Checkbox("Instance Editable", &v.instance_editable)) w.dirty = true;
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip(scalar ? "Each object using this script can change it in Details (under its Script)" : "Numbers, booleans and text only");
+    ImGui::SetNextItemWidth(-60.0f);
+    if (ImGui::InputText("Tooltip", v.tooltip, sizeof v.tooltip)) w.dirty = true;
+    u32 uses = 0;
+    for (const GraphNode& n : g.nodes) {
+        const char* used = variable_of(n);
+        uses += used && std::strcmp(used, v.name) == 0 ? 1u : 0u;
+    }
+    ImGui::TextDisabled("%u node%s use it", uses, uses == 1 ? "" : "s");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Find")) {  // the next node using it
+        const GraphNode* first = nullptr;
+        const GraphNode* after = nullptr;
+        for (const GraphNode& n : g.nodes) {
+            const char* used = variable_of(n);
+            if (!used || std::strcmp(used, v.name) != 0) continue;
+            if (!first) first = &n;
+            if (!after && n.id > w.selected) after = &n;
+        }
+        if (after || first) {
+            const i32 keep = w.variable;
+            focus_node(w, after ? *after : *first);
+            w.variable = keep;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Delete")) {
+        g.variables[static_cast<usize>(w.variable)] = g.variables[g.variables.size() - 1];
+        g.variables.resize(g.variables.size() - 1);
+        w.variable = -1;
+        w.dirty = true;
+    }
+}
+
+// Every node of this graph kind by category, searchable; double-click or drag onto the canvas.
+void draw_palette(GraphWindow& w) {
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##palette_search", "Search nodes", w.palette_search, sizeof w.palette_search);
+    std::string needle = w.palette_search;
+    for (char& c : needle) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    u32 count = 0;
+    const NodeDef* defs = script::node_defs(count, w.kind);
+    const char* category = "";
+    bool open = false;
+    for (u32 i = 0; i < count; ++i) {
+        const NodeDef& d = defs[i];
+        std::string title = d.title;
+        for (char& c : title) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (!needle.empty() && title.find(needle) == std::string::npos) continue;
+        if (std::strcmp(category, d.category) != 0) {
+            if (open) ImGui::TreePop();
+            category = d.category;
+            open = ImGui::TreeNodeEx(category, needle.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen);
+        }
+        if (!open) continue;
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Selectable(d.title, false, ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            const ImVec2 at = view_centre(w);
+            if (GraphNode* n = w.graph->add(d.id, at.x, at.y)) focus_node(w, *n);
+            w.dirty = true;
+        }
+        if (d.tooltip[0]) ImGui::SetItemTooltip("%s", d.tooltip);
+        if (ImGui::BeginDragDropSource()) {
+            char payload[32];
+            std::snprintf(payload, sizeof payload, "%s", d.id);
+            ImGui::SetDragDropPayload(kNodePayload, payload, sizeof payload);
+            ImGui::TextUnformatted(d.title);
+            ImGui::EndDragDropSource();
+        }
+        ImGui::PopID();
+    }
+    if (open) ImGui::TreePop();
+}
+
+void draw_side_panel(GraphWindow& w) {
+    if (ImGui::BeginTabBar("side_tabs")) {
+        if (w.kind == script::GraphKind::Script && ImGui::BeginTabItem("My Blueprint")) {
+            ImGui::BeginChild("my_blueprint", ImVec2(0, w.variable >= 0 ? -230.0f : 0.0f));
+            draw_my_blueprint(w);
+            ImGui::EndChild();
+            draw_variable_details(w);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Palette")) {
+            ImGui::BeginChild("palette");
+            draw_palette(w);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+// Drops from the side panel onto the canvas: a node from the Palette (or a Call Function), a
+// variable as Get / Set (Ctrl: Get, Alt: Set, else a small menu like Unreal's).
+void canvas_drops(GraphWindow& w, ImVec2 canvas, ImVec2 size, ImVec2 at) {
+    ImGui::SetCursorScreenPos(canvas);
+    ImGui::Dummy(size);
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kNodePayload)) {
+            const char* id = static_cast<const char*>(p->Data);
+            if (std::strncmp(id, "CallFunction:", 13) == 0) {
+                if (GraphNode* n = w.graph->add("CallFunction", at.x, at.y)) {
+                    std::snprintf(n->values[1], sizeof n->values[1], "%s", id + 13);
+                    select_only(w, n->id);
+                }
+            } else if (GraphNode* n = w.graph->add(id, at.x, at.y)) {
+                select_only(w, n->id);
+            }
+            w.dirty = true;
+        }
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kVariablePayload)) {
+            u32 index = 0;
+            std::memcpy(&index, p->Data, sizeof index);
+            const ImGuiIO& io = ImGui::GetIO();
+            if (index < w.graph->variables.size() && (io.KeyCtrl || io.KeyAlt)) {
+                add_variable_node(w, w.graph->variables[index], io.KeyAlt, at);
+            } else if (index < w.graph->variables.size()) {
+                w.drop_variable = static_cast<i32>(index);
+                w.drop_at = at;
+                ImGui::OpenPopup("VariableDrop");
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopup("VariableDrop")) {
+        if (w.drop_variable >= 0 && static_cast<usize>(w.drop_variable) < w.graph->variables.size()) {
+            const script::GraphVariable& v = w.graph->variables[static_cast<usize>(w.drop_variable)];
+            if (ImGui::MenuItem((std::string("Get ") + v.name).c_str())) add_variable_node(w, v, false, w.drop_at);
+            if (ImGui::MenuItem((std::string("Set ") + v.name).c_str())) add_variable_node(w, v, true, w.drop_at);
+        }
+        ImGui::EndPopup();
+    }
+}
+
 } // namespace
 
 std::string create_graph_file(const char* folder_path, const char* base) {
@@ -544,6 +920,7 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     w.selected = 0;
     w.selection.clear();
     w.undo.clear();
+    w.variable = w.drop_variable = -1;
     w.redo.clear();
     w.snapshot = graph_text(*w.graph);
     w.wiring = false;
@@ -701,6 +1078,10 @@ void draw_graph_editor(EditorState& s) {
 
     const bool material = w.kind == script::GraphKind::Material;
     const f32 preview_width = material ? 300.0f : 0.0f;
+    ImGui::BeginChild("Side", ImVec2(260.0f, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+    draw_side_panel(w);
+    ImGui::EndChild();
+    ImGui::SameLine();
     ImGui::BeginChild("Canvas", ImVec2(material ? -preview_width : 0.0f, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 canvas = ImGui::GetCursorScreenPos();
@@ -1044,6 +1425,8 @@ void draw_graph_editor(EditorState& s) {
         w.dirty = true;
     }
     if (focused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) save_and_compile(s);
+    w.view_size = size;
+    canvas_drops(w, canvas, size, to_canvas(io.MousePos));
     ImGui::EndChild();
     if (material) {
         ImGui::SameLine();

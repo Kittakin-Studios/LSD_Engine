@@ -487,7 +487,10 @@ float4 ps_ao(VsOut i) : SV_Target {
     if (dot(n, p) > 0.0) n = -n;  // facing the camera
     const float radius = ao_p.x;
     const float2 scale = float2(proj.x, proj.y) * 0.5 * radius / -p.z;
-    const float noise = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));
+    // A 4 x 4 Bayer pattern: the 4 x 4 blur in ps_ao_apply sees every rotation once, so the noise averages out exactly.
+    const uint2 q = uint2(i.pos.xy) & 3u;
+    const uint xy = q.x ^ q.y;
+    const float noise = (float(((xy & 1u) << 3) | ((q.y & 1u) << 2) | (((xy >> 1) & 1u) << 1) | (q.y >> 1)) + 0.5) / 16.0;
     float sum = 0.0;
     for (int k = 0; k < 12; ++k) {
         const float a = (k + noise) * 2.39996323;

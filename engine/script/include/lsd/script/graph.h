@@ -72,10 +72,24 @@ struct GraphLink {
     u32 to_pin;
 };
 
+// A declared variable (Unreal's My Blueprint > Variables): Get / Set Variable nodes use it by name.
+// Instance Editable ones (numbers, booleans, text) show in each object's Details under its Script.
+struct GraphVariable {
+    char name[32] = "";
+    PinType type = PinType::Float;
+    char default_value[64] = "0";
+    bool instance_editable = false;
+    char tooltip[96] = "";
+};
+
+const char* pin_type_name(PinType type);              // "Float", "Vector"...
+bool parse_pin_type(const char* name, PinType& out);  // false if unknown
+
 struct Graph {
-    explicit Graph(Allocator& allocator) : nodes(allocator), links(allocator) {}
+    explicit Graph(Allocator& allocator) : nodes(allocator), links(allocator), variables(allocator) {}
     Array<GraphNode> nodes;
     Array<GraphLink> links;
+    Array<GraphVariable> variables;
     u32 next_id = 1;
 
     // New node of a known type at (x, y) with its inputs' default values; null if the type is unknown.

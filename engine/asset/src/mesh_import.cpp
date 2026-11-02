@@ -296,7 +296,61 @@ bool parse_mesh_key(const char* key, Guid& guid, i32& part) {
     return parse_guid(text, guid);
 }
 
-bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part) {
+void compute_normals(rhi::MeshVertex* v, usize count, u32 normals, f32 smoothing_angle, Allocator& allocator) {
+    if (normals == kNormalsImport || count < 3) return;
+    const usize faces = count / 3;
+    Array<Vec3> face(allocator);  // area-weighted (unnormalised) face normals
+    face.resize(faces);
+    for (usize f = 0; f < faces; ++f) {
+        const f32* a = v[f * 3].position;
+        const f32* b = v[f * 3 + 1].position;
+        const f32* c = v[f * 3 + 2].position;
+        face[f] = cross(Vec3{b[0] - a[0], b[1] - a[1], b[2] - a[2]}, Vec3{c[0] - a[0], c[1] - a[1], c[2] - a[2]});
+    }
+    auto store = [](rhi::MeshVertex& out, Vec3 n) {
+        const f32 len = length(n);
+        n = len > 0.0f ? n * (1.0f / len) : Vec3{0, 0, 1};
+        out.normal[0] = n.x;
+        out.normal[1] = n.y;
+        out.normal[2] = n.z;
+    };
+    if (normals == kNormalsFlat) {
+        for (usize i = 0; i < faces * 3; ++i) store(v[i], face[i / 3]);
+        return;
+    }
+    // Corners grouped by position (counting sort on the position remap).
+    Array<u32> remap(allocator), start(allocator), order(allocator);
+    remap.resize(count);
+    meshopt_generatePositionRemap(remap.data(), v[0].position, count, sizeof(rhi::MeshVertex));
+    start.resize(count + 1);
+    for (usize i = 0; i <= count; ++i) start[i] = 0;
+    for (usize i = 0; i < faces * 3; ++i) ++start[remap[i] + 1];
+    for (usize i = 0; i < count; ++i) start[i + 1] += start[i];
+    order.resize(faces * 3);
+    Array<u32> fill(allocator);
+    fill.resize(count);
+    for (usize i = 0; i < count; ++i) fill[i] = start[i];
+    for (usize i = 0; i < faces * 3; ++i) order[fill[remap[i]]++] = static_cast<u32>(i);
+    const bool by_angle = normals == kNormalsAutoSmooth;
+    const f32 min_cos = std::cos(smoothing_angle * 0.017453293f);
+    for (usize i = 0; i < faces * 3; ++i) {
+        const Vec3 own = face[i / 3];
+        const f32 own_len = length(own);
+        Vec3 sum{};
+        for (u32 k = start[remap[i]]; k < start[remap[i] + 1]; ++k) {
+            const Vec3 other = face[order[k] / 3];
+            if (by_angle) {  // only faces within the angle of this one: hard edges stay hard
+                const f32 other_len = length(other);
+                if (own_len > 0.0f && other_len > 0.0f && dot(own, other) < min_cos * own_len * other_len) continue;
+            }
+            sum = sum + other;
+        }
+        store(v[i], sum);
+    }
+}
+
+bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part, u32 normals,
+                 f32 smoothing_angle) {
     Array<rhi::MeshVertex> soup(allocator);  // unindexed triangle list
     if (!load_source(path, scale, part, allocator, &soup, nullptr, error, error_capacity)) return false;
     if (soup.empty()) {
@@ -304,6 +358,7 @@ bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::Mesh
         else std::snprintf(error, error_capacity, "No triangles found in %s", path);
         return false;
     }
+    compute_normals(soup.data(), soup.size(), normals, smoothing_angle, allocator);
 
     // Weld identical vertices into an index buffer, then reorder triangles for the vertex cache.
     const usize count = soup.size();
@@ -402,15 +457,16 @@ bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record
     AssetMeta meta;
     registry.load_meta(record, meta);
     CompiledMeshSource source{record.source_size, record.source_time, 0};
-    char settings[64];
-    std::snprintf(settings, sizeof settings, "scale=%.6g part=%d local", static_cast<f64>(meta.import_scale), part);  // "local": parts in node space
+    char settings[96];
+    std::snprintf(settings, sizeof settings, "scale=%.6g part=%d local normals=%u/%.3g", static_cast<f64>(meta.import_scale), part, meta.normals,
+                  static_cast<f64>(meta.smoothing_angle));  // "local": parts in node space
     source.settings_hash = static_cast<u32>(hash64(settings));
     if (compiled_mesh_up_to_date(compiled_path, source)) return true;
 
     char path[300], error[256];
     registry.source_path(record, path, sizeof path);
     render::MeshData mesh;
-    if (!import_mesh(path, meta.import_scale, allocator, mesh, error, sizeof error, part)) {
+    if (!import_mesh(path, meta.import_scale, allocator, mesh, error, sizeof error, part, meta.normals, meta.smoothing_angle)) {
         LSD_LOG_ERROR("asset", "Import failed for %s: %s", record.path, error);
         return false;
     }

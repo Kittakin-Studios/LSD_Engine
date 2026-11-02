@@ -204,6 +204,10 @@ types and fields by name). They become the public C API:
 - **JavaScript**: the Script component accepts `.js`; a JS script system on QuickJS-ng mirrors the
   Lua one (own environment per instance, `self`, events, reload on change). The `lsd` functions are
   declared once and bound to both Lua and JS from that list.
+- **Nodes**: visual scripts stay the no-code layer for all of it. Functions a module or a `.js` file
+  registers become node definitions (typed pins, category, tooltip) next to the built-in ones and
+  ScriptNode assets; a graph calls them through the same binding list, so a C++ function is one more
+  node in the Palette (Unreal's BlueprintCallable).
 - UI keeps HTML / CSS on RmlUi with each document's own `.js` (`engine/ui/src/ui_script.*`).
 
 ## Animation

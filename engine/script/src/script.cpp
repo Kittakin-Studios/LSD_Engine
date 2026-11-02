@@ -1411,19 +1411,23 @@ void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
     lua_setmetatable(lua_, -2);
     instance.env = luaL_ref(lua_, LUA_REGISTRYINDEX);
     if (!load(instance)) return;
-    // Exposed properties: the script's defaults (its `properties` table), then this object's values.
+    // A visual script's `defaults` (declared variables), then the exposed properties: the script's
+    // defaults (its `properties` table), then this object's values.
     lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.self);
     lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
-    lua_getfield(lua_, -1, "properties");
-    if (lua_istable(lua_, -1)) {
-        lua_pushnil(lua_);
-        while (lua_next(lua_, -2)) {  // self[k] = v
-            lua_pushvalue(lua_, -2);
-            lua_insert(lua_, -2);
-            lua_settable(lua_, -6);
+    for (const char* table : {"defaults", "properties"}) {
+        lua_getfield(lua_, -1, table);
+        if (lua_istable(lua_, -1)) {
+            lua_pushnil(lua_);
+            while (lua_next(lua_, -2)) {  // self[k] = v
+                lua_pushvalue(lua_, -2);
+                lua_insert(lua_, -2);
+                lua_settable(lua_, -6);
+            }
         }
+        lua_pop(lua_, 1);
     }
-    lua_pop(lua_, 2);
+    lua_pop(lua_, 1);
     if (const auto* script = world_->get<world::Script>(entity)) {
         for (const world::ScriptProperty& p : script->properties) {
             if (!p.name[0]) continue;
