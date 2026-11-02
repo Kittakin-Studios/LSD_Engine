@@ -17,6 +17,7 @@
 #include "references.h"
 #include "remote_console.h"
 #include "game_module.h"
+#include "workspaces.h"
 #include "lua_debugger.h"
 #include "mesh_editor.h"
 #include "prefab_editor.h"
@@ -858,19 +859,200 @@ void focus_selected(EditorState& s) {
 constexpr char kLayoutDir[] = "Saved/Layouts";
 
 
-void build_default_layout(ImGuiID dockspace, ImVec2 size) {
+// ---- Workspaces (Blender's workspace tabs) ----
+
+constexpr char kWorkspaceDir[] = "Saved/Layouts/Workspaces";
+constexpr char kEditorAreaWindow[] = "Editors###WorkspaceEditorArea";  // holds a workspace's editor area open
+
+// A built-in workspace: how it splits the screen around the viewport (which keeps the remaining,
+// central node), and what its editor area is for. `editor_area` returns that node, 0 for none.
+struct WorkspaceDef {
+    const char* name;
+    const char* tooltip;
+    const char* hint;  // shown in the empty editor area
+    bool lua_debugger;
+    ImGuiID (*build)(ImGuiID root);
+};
+
+ImGuiID dock_panels(ImGuiID right, f32 outliner_share, ImGuiID content) {
+    ImGuiID top = 0, bottom = 0;
+    ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, outliner_share, &top, &bottom);
+    ImGui::DockBuilderDockWindow(kOutlinerWindow, top);
+    ImGui::DockBuilderDockWindow(kDetailsWindow, bottom);
+    ImGui::DockBuilderDockWindow(kContentWindow, content);
+    return 0;
+}
+
+ImGuiID build_layout_workspace(ImGuiID root) {  // the original arrangement
+    ImGuiID right = 0, left = 0, content = 0, viewport = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.22f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.30f, &content, &viewport);
+    return dock_panels(right, 0.45f, content);
+}
+
+ImGuiID build_side_editor_workspace(ImGuiID root) {  // Modeling, Effects: the editor beside the viewport
+    ImGuiID right = 0, left = 0, content = 0, rest = 0, area = 0, viewport = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.20f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.25f, &content, &rest);
+    ImGui::DockBuilderSplitNode(rest, ImGuiDir_Left, 0.45f, &area, &viewport);
+    dock_panels(right, 0.40f, content);
+    return area;
+}
+
+ImGuiID build_shading_workspace(ImGuiID root) {  // Blender's Shading: browser left, node editor under the viewport
+    ImGuiID right = 0, left = 0, content = 0, rest = 0, area = 0, viewport = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.20f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Left, 0.20f, &content, &rest);
+    ImGui::DockBuilderSplitNode(rest, ImGuiDir_Down, 0.48f, &area, &viewport);
+    dock_panels(right, 0.40f, content);
+    return area;
+}
+
+ImGuiID build_bottom_editor_workspace(ImGuiID root) {  // Animation, UI: the editor along the bottom
+    ImGuiID right = 0, left = 0, bottom = 0, viewport = 0, content = 0, area = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.20f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.42f, &bottom, &viewport);
+    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.28f, &content, &area);
+    dock_panels(right, 0.40f, content);
+    return area;
+}
+
+ImGuiID build_scripting_workspace(ImGuiID root) {  // Blender's Scripting: a big editor, a small viewport
+    ImGuiID right = 0, left = 0, bottom = 0, viewport = 0, content = 0, area = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.24f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.58f, &bottom, &viewport);
+    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.26f, &content, &area);
+    dock_panels(right, 0.40f, content);
+    ImGui::DockBuilderDockWindow("Lua Debugger", area);
+    return area;
+}
+
+constexpr WorkspaceDef kWorkspaces[] = {
+    {"Layout", "The level: viewport, Outliner, Details, Content Browser", nullptr, false, build_layout_workspace},
+    {"Modeling", "Meshes and prefabs: their editors beside the viewport", "Double-click a mesh or a prefab in the Content Browser to edit it here.", false, build_side_editor_workspace},
+    {"Shading", "Materials: the Material Graph under the viewport", "Double-click a Material Graph in the Content Browser to edit it here.", false, build_shading_workspace},
+    {"Animation", "Timelines (Sequencer) and animation graphs along the bottom", "Double-click a Timeline or an Animation Graph to edit it here.", false, build_bottom_editor_workspace},
+    {"Scripting", "Visual scripts, the Lua Debugger and a small viewport", "Double-click a visual script to edit it here (Lua opens in your code editor).", true, build_scripting_workspace},
+    {"UI", "Game UI documents (HTML / CSS) along the bottom", "Double-click a UI document (.rml) to edit it here.", false, build_bottom_editor_workspace},
+    {"Effects", "Particle systems (Niagara) and sound cues beside the viewport", "Double-click a particle system or a sound cue to edit it here.", false, build_side_editor_workspace},
+};
+
+const WorkspaceDef* find_workspace_def(const EditorSettings& set, const char* name) {
+    for (const WorkspaceDef& w : kWorkspaces) {
+        if (std::strcmp(w.name, name) == 0) return &w;
+    }
+    for (const CustomWorkspace& c : set.workspaces) {  // a user's workspace has its base's editor area
+        if (std::strcmp(c.name, name) == 0) return find_workspace_def(set, c.base);
+    }
+    return nullptr;
+}
+
+std::string workspace_file(const char* name) { return std::string(kWorkspaceDir) + "/" + name + ".ini"; }
+
+void build_workspace(const WorkspaceDef& w, ImGuiID dockspace, ImVec2 size) {
     ImGui::DockBuilderRemoveNode(dockspace);
     ImGui::DockBuilderAddNode(dockspace, static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_DockSpace) | ImGuiDockNodeFlags_PassthruCentralNode);
     ImGui::DockBuilderSetNodeSize(dockspace, size);
-    ImGuiID right = 0, left = 0, right_top = 0, right_bottom = 0, content = 0, viewport = 0;
-    ImGui::DockBuilderSplitNode(dockspace, ImGuiDir_Right, 0.22f, &right, &left);
-    ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.45f, &right_top, &right_bottom);
-    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.30f, &content, &viewport);
-    ImGui::DockBuilderDockWindow(kOutlinerWindow, right_top);
-    ImGui::DockBuilderDockWindow(kDetailsWindow, right_bottom);
-    ImGui::DockBuilderDockWindow(kContentWindow, content);
+    if (const ImGuiID area = w.build(dockspace)) ImGui::DockBuilderDockWindow(kEditorAreaWindow, area);
     ImGui::DockBuilderFinish(dockspace);
 }
+
+// Saves the active workspace's arrangement, then shows `name`'s: as it was left, or built fresh.
+void switch_workspace(EditorState& s, const char* name, ImGuiID dockspace, ImVec2 size) {
+    std::error_code ec;
+    std::filesystem::create_directories(kWorkspaceDir, ec);
+    ImGui::SaveIniSettingsToDisk(workspace_file(s.settings.workspace).c_str());
+    std::snprintf(s.settings.workspace, sizeof s.settings.workspace, "%s", name);
+    const WorkspaceDef* def = find_workspace_def(s.settings, name);
+    s.show_debugger = def && def->lua_debugger;
+    const std::string file = workspace_file(name);
+    if (std::filesystem::exists(file, ec)) apply_layout_file(file.c_str(), s.status, sizeof s.status);
+    else if (def) build_workspace(*def, dockspace, size);
+}
+
+// The tab strip under the menu bar.
+void draw_workspace_tabs(EditorState& s) {
+    const f32 height = ImGui::GetFrameHeight() + 6.0f;
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
+    if (ImGui::BeginViewportSideBar("##workspace_tabs", ImGui::GetMainViewport(), ImGuiDir_Up, height, flags)) {
+        if (ImGui::BeginMenuBar()) {
+            // The tab bar keeps its own selection: when the workspace changed elsewhere (start, console,
+            // +), select its tab and ignore what the bar reports this frame.
+            static char selected[32] = "";
+            const bool sync = std::strcmp(selected, s.settings.workspace) != 0;
+            if (ImGui::BeginTabBar("##workspaces", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) {
+                auto tab = [&](const char* name, const char* tooltip, bool custom) {
+                    const bool active = std::strcmp(s.settings.workspace, name) == 0;
+                    const ImGuiTabItemFlags tab_flags = active && sync ? ImGuiTabItemFlags_SetSelected : 0;
+                    if (ImGui::BeginTabItem(name, nullptr, tab_flags)) {
+                        if (!active && !sync && !s.workspace_request[0]) std::snprintf(s.workspace_request, sizeof s.workspace_request, "%s", name);
+                        ImGui::EndTabItem();
+                    }
+                    if (tooltip) ImGui::SetItemTooltip("%s", tooltip);
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Reset to Default")) {  // forget its saved arrangement
+                            std::error_code ec;
+                            std::filesystem::remove(workspace_file(name), ec);
+                            if (active) s.reset_layout = true;
+                        }
+                        if (custom && !active && ImGui::MenuItem("Delete")) {
+                            for (u32 k = 0; k < s.settings.workspaces.count; ++k) {
+                                if (std::strcmp(s.settings.workspaces[k].name, name) == 0) s.settings.workspaces.remove(k);
+                            }
+                            std::error_code ec;
+                            std::filesystem::remove(workspace_file(name), ec);
+                        }
+                        ImGui::EndPopup();
+                    }
+                };
+                for (const WorkspaceDef& w : kWorkspaces) tab(w.name, w.tooltip, false);
+                for (u32 k = 0; k < s.settings.workspaces.count; ++k) tab(s.settings.workspaces[k].name, "Your workspace (right-click: Reset, Delete)", true);
+                if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) ImGui::OpenPopup("New Workspace");
+                ImGui::SetItemTooltip("New workspace: a copy of this one's arrangement, under a new name");
+                if (ImGui::BeginPopup("New Workspace")) {
+                    static char name[32] = "My Workspace";
+                    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                    const bool enter = ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
+                    const bool taken = find_workspace_def(s.settings, name) != nullptr || std::strcmp(name, s.settings.workspace) == 0;
+                    if ((ImGui::Button("Create") || enter) && asset::valid_name(name) && !taken && s.settings.workspaces.count < s.settings.workspaces.capacity()) {
+                        const WorkspaceDef* base = find_workspace_def(s.settings, s.settings.workspace);
+                        CustomWorkspace c;
+                        std::snprintf(c.name, sizeof c.name, "%s", name);
+                        std::snprintf(c.base, sizeof c.base, "%s", base ? base->name : "Layout");
+                        s.settings.workspaces.push_back(c);
+                        std::error_code ec;
+                        std::filesystem::create_directories(kWorkspaceDir, ec);
+                        ImGui::SaveIniSettingsToDisk(workspace_file(name).c_str());  // starts as this arrangement
+                        std::snprintf(s.workspace_request, sizeof s.workspace_request, "%s", name);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (taken) ImGui::TextDisabled("That name is taken");
+                    ImGui::EndPopup();
+                }
+                ImGui::EndTabBar();
+            }
+            if (sync) std::snprintf(selected, sizeof selected, "%s", s.settings.workspace);
+            ImGui::EndMenuBar();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+// A workspace's editor area while no asset editor is open in it (Blender shows an empty editor too).
+void draw_editor_area(EditorState& s) {
+    const WorkspaceDef* def = find_workspace_def(s.settings, s.settings.workspace);
+    if (!def || !def->hint) return;
+    if (ImGui::Begin(kEditorAreaWindow, nullptr, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", def->hint);
+        ImGui::TextDisabled("Editors opened in this workspace dock here as tabs.");
+    }
+    ImGui::End();
+}
+
+ImGuiID g_editor_area = 0;  // this frame's editor area dock node, 0 for none
 
 // Panels draw their own themed tab bars, so the dock nodes hide theirs.
 bool begin_panel(const char* name) {
@@ -4904,16 +5086,30 @@ void draw_game(EditorState& s) {
 void draw_editor(EditorState& s) {
     ImGuizmo::BeginFrame();
     draw_menu_bar(s);
+    draw_workspace_tabs(s);
     const ImGuiViewport* main = ImGui::GetMainViewport();
     const ImGuiID dockspace = ImHashStr("EditorDockspace");
+    if (s.workspace_request[0]) {
+        if (std::strcmp(s.workspace_request, s.settings.workspace) != 0) switch_workspace(s, s.workspace_request, dockspace, main->WorkSize);
+        s.workspace_request[0] = '\0';
+    }
     const ImGuiDockNode* existing = ImGui::DockBuilderGetNode(dockspace);
-    if (!existing || !existing->IsSplitNode() || s.reset_layout) build_default_layout(dockspace, main->WorkSize);
+    if (!existing || !existing->IsSplitNode() || s.reset_layout) {
+        const WorkspaceDef* def = find_workspace_def(s.settings, s.settings.workspace);
+        build_workspace(def ? *def : kWorkspaces[0], dockspace, main->WorkSize);
+    }
     s.reset_layout = false;
     ImGui::DockSpaceOverViewport(dockspace, main, ImGuiDockNodeFlags_PassthruCentralNode);
 
     draw_outliner(s);
     draw_details_panel(s);
     draw_content_browser(s);
+    draw_editor_area(s);
+    {  // asset editors opened from now on dock where the editor area is (dock_in_workspace)
+        const WorkspaceDef* def = find_workspace_def(s.settings, s.settings.workspace);
+        const ImGuiWindow* area = def && def->hint ? ImGui::FindWindowByName(kEditorAreaWindow) : nullptr;
+        g_editor_area = area && area->DockNode ? area->DockNode->ID : 0;
+    }
     draw_history_window(s);
     draw_preferences_window(s);
     draw_world_settings_window(s);
@@ -5031,6 +5227,10 @@ void make_default_level(world::World& w) {
     t->scale = {20, 20, 0.2f};
     w.add<world::StaticMesh>(floor)->color = LinearColor::hex(0x8A8A8E);
     w.add<world::PlayerStart>(w.create("PlayerStart"));
+}
+
+void dock_in_workspace() {
+    if (g_editor_area) ImGui::SetNextWindowDockID(g_editor_area, ImGuiCond_Appearing);
 }
 
 void apply_layout_file(const char* path, char* status, usize status_capacity) {

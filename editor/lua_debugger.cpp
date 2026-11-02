@@ -1,4 +1,5 @@
 #include "lua_debugger.h"
+#include "workspaces.h"
 
 #include "lsd/foundation/log.h"
 
@@ -109,6 +110,7 @@ void draw_window(EditorState& s, bool* open) {
     if (!*open) return;
     ImGui::SetNextWindowSize(ImVec2(1000, 560), ImGuiCond_FirstUseEver);
     if (g_stop) ImGui::SetNextWindowFocus();
+    dock_in_workspace();  // into the active workspace's editor area, if it has one
     if (!ImGui::Begin("Lua Debugger", open)) {
         ImGui::End();
         return;

@@ -319,6 +319,19 @@ system interface (time, log, translation). A `UiContext` is a screen of UI: docu
 become actions; the Play session sends actions to Lua. Text that equals a string table key is
 translated as documents load; switching language reloads them in place.
 
+## Workspaces
+
+The tab strip is a viewport side bar under the main menu bar (`draw_workspace_tabs`), so the
+dockspace below shrinks to fit. A built-in workspace (`kWorkspaces` in `editor/editor_ui.cpp`) is a
+function that splits the dockspace with DockBuilder, always splitting panels *off* the viewport so
+the remaining node stays the transparent central node the 3D view draws through, and returns its
+editor area node, where an always-present placeholder window (`Editors`) is docked. Switching saves
+the ImGui ini of the active workspace to `Saved/Layouts/Workspaces/<name>.ini` and loads the target's
+(or builds it fresh) before the dockspace is submitted. Asset editors call `dock_in_workspace()`
+before `ImGui::Begin`: `SetNextWindowDockID(<node holding the placeholder>, Appearing)`, so they
+join the editor area as tabs; in Layout there is no placeholder, so they float as before. User
+workspaces are copies of an ini plus the built-in they came from (for their editor area).
+
 ## Editor plugins and the Claude MCP bridge
 
 Editor Preferences > Plugins is a table of plugins (`kPlugins` in `editor/editor_ui.cpp`: name,

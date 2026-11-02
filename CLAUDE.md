@@ -140,7 +140,8 @@ Box UV; per-mesh LOD screen sizes, Max Draw Distance, Cull Distance Volumes; sou
 low-pass, Base Sound Mix; particle Over Life keys and Auto Destroy; BT decorators / services;
 localisation {0} / plurals; lsd.save_objects; Blueprint panels in the graph window (My Blueprint,
 variable Details, Palette); thumbnails for materials (sphere), sounds (waveform), BT / Lua tiles;
-Editor Preferences > Plugins with Claude MCP (Claude Code drives the editor through `lsd_mcp`).
+Editor Preferences > Plugins with Claude MCP (Claude Code drives the editor through `lsd_mcp`);
+Blender-style workspace tabs under the menu bar (Layout = the original arrangement; `editor/workspaces.h`).
 Post pass (draw_post, when a Post Process Volume applies): SSAO, TAA, depth of field, bloom, ACES,
 grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /

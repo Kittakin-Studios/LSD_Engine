@@ -832,7 +832,10 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
-    console::add_command("game.Compile", [](void*, const char*) { lsd::editor::game_module::compile(); }, &s,
+    console::add_command("workspace", [](void* user, const char* args) {
+        std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
+    }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
+    console::add_command("game.Compile",[](void*, const char*) { lsd::editor::game_module::compile(); }, &s,
                          "Tools > Compile Game Code: build Source/ into Binaries/Game.dll (it reloads by itself)");
     console::add_command("game.NewBehaviour", [](void*, const char* args) {
         char message[300];

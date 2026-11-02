@@ -82,6 +82,26 @@ Settings, Editor Preferences), **Tools** (smoke test, unit tests) and **Window**
 Settings, Message Log, **Layout**). While playing it shows **Stop / Pause / Eject**. Window > Layout
 saves the panel arrangement under a name (Unreal's Save Layout As), loads one back, or resets to the default.
 
+### Workspaces (the tabs under the menu bar)
+
+Like Blender's workspace tabs, each tab is a whole arrangement of the panels for one job; the
+editor's original arrangement is **Layout**, and it is unchanged.
+
+| Tab | What it shows | Editor area (asset editors opened there dock in it) |
+| --- | --- | --- |
+| **Layout** | Viewport, Outliner, Details, Content Browser (the original) | none: editors float, as before |
+| **Modeling** | Viewport with an editor beside it | Mesh Editor, Prefab editor |
+| **Shading** | Content Browser left, viewport, node editor under it | Material Graphs (Blender's Shader Editor) |
+| **Animation** | Viewport, editor along the bottom | Timelines (Sequencer), Animation Graphs |
+| **Scripting** | Small viewport, big editor area with the **Lua Debugger** | Visual scripts |
+| **UI** | Viewport, editor along the bottom | UI documents (UMG) |
+| **Effects** | Viewport with an editor beside it | Particle systems (Niagara), Sound Cues |
+
+Each workspace remembers how you resize and rearrange it (in `Saved/Layouts/Workspaces/`).
+Right-click a tab > **Reset to Default** to rebuild it. **+** saves the current arrangement as a new
+workspace under a name; right-click yours > **Delete**. Window > Layout > Reset to Default resets the
+active workspace. Console: `workspace Shading`.
+
 ### Moving around the viewport
 
 Unreal's controls: hold the **right mouse button** and use **W A S D Q E** to fly, the mouse to

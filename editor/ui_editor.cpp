@@ -1,4 +1,5 @@
 #include "ui_editor.h"
+#include "workspaces.h"
 
 #include "rml_edit.h"
 
@@ -299,6 +300,7 @@ void draw_ui_editor(EditorState& s) {
     std::snprintf(title, sizeof title, "%s%s - %s###UiEditor", w.name, w.dirty ? "*" : "", w.style_sheet ? "UI Style" : "UI Document");
     ImGui::SetNextWindowSize(ImVec2(1200, 640), ImGuiCond_FirstUseEver);
     bool open = true;
+    dock_in_workspace();  // into the active workspace's editor area, if it has one
     if (!ImGui::Begin(title, &open)) {
         ImGui::End();
         return;

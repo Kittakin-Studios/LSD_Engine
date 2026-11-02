@@ -26,6 +26,14 @@ struct RecentLevel {
     LSD_PROPERTY(Edit) char path[260] = "";
 };
 
+// A workspace tab the user added with + (a copy of another workspace's arrangement).
+LSD_STRUCT()
+struct CustomWorkspace {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit) char name[32] = "";
+    LSD_PROPERTY(Edit) char base[32] = "";  // the built-in workspace it was made from (its editor area)
+};
+
 LSD_STRUCT()
 struct EditorSettings {
     LSD_GENERATED()
@@ -48,6 +56,9 @@ struct EditorSettings {
     // Plugins (Editor Preferences > Plugins), not in the Settings list.
     LSD_PROPERTY(Save) bool mcp_enabled = false;  // Claude MCP: listen for tools/mcp/lsd_mcp on 127.0.0.1
     LSD_PROPERTY(Save) u32 mcp_port = 7780;
+    // Workspace tabs under the menu bar (Blender's Layout / Modeling / Shading...).
+    LSD_PROPERTY(Save) char workspace[32] = "Layout";
+    LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;
 };
 
 // A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and

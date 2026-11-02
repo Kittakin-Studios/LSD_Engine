@@ -1,4 +1,5 @@
 #include "timeline_editor.h"
+#include "workspaces.h"
 
 #include "timeline_player.h"
 
@@ -154,6 +155,7 @@ void draw_timeline_editor(EditorState& s) {
     std::snprintf(title, sizeof title, "%s%s - Timeline###Timeline", g_tl.name, g_tl.dirty ? "*" : "");
     ImGui::SetNextWindowSize(ImVec2(1000, 340), ImGuiCond_FirstUseEver);
     bool open = true;
+    dock_in_workspace();  // into the active workspace's editor area, if it has one
     if (!ImGui::Begin(title, &open)) {
         ImGui::End();
         return;

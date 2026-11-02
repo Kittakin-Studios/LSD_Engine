@@ -1,4 +1,5 @@
 #include "mesh_editor.h"
+#include "workspaces.h"
 
 #include "mesh_cache.h"
 #include "skinned_cache.h"
@@ -160,6 +161,7 @@ void draw_mesh_editor(EditorState& s) {
     std::snprintf(title, sizeof title, "%s%s - Mesh Editor###MeshEditor", g_mw.name, g_mw.meta_dirty ? "*" : "");
     ImGui::SetNextWindowSize(ImVec2(980, 600), ImGuiCond_FirstUseEver);
     bool open = true;
+    dock_in_workspace();  // into the active workspace's editor area, if it has one
     if (!ImGui::Begin(title, &open)) {
         ImGui::End();
         return;

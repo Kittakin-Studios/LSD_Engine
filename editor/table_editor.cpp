@@ -1,4 +1,5 @@
 #include "table_editor.h"
+#include "workspaces.h"
 
 #include "lsd/asset/data_table.h"
 #include "lsd/foundation/log.h"
@@ -105,6 +106,7 @@ void draw_table_editor(EditorState& s) {
     ImGui::SetNextWindowPos(ImVec2(main->WorkPos.x + main->WorkSize.x * 0.5f, main->WorkPos.y + main->WorkSize.y * 0.45f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(760, 420), ImGuiCond_FirstUseEver);
     bool open = true;
+    dock_in_workspace();  // into the active workspace's editor area, if it has one
     if (!ImGui::Begin(title, &open)) {
         ImGui::End();
         return;
