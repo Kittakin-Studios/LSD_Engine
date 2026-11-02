@@ -517,7 +517,7 @@
     },
      "StaticMesh": {
       "mesh": "b400a445885d50b9205a057d8e2f4319",
-      "material": "",
+      "material": "77e5eb97a4ac6d8af4488e59230d8404",
       "color": {
         "r": 0.70588237,
         "g": 0.70588237,
