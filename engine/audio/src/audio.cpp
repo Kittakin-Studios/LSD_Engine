@@ -591,4 +591,42 @@ u32 AudioSystem::read_frames(f32* out, u32 frames) {
     return static_cast<u32>(read);
 }
 
+bool waveform(const char* path, u32 columns, f32* peaks) {
+    for (u32 c = 0; c < columns; ++c) peaks[c] = 0.0f;
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder;
+    if (columns == 0 || ma_decoder_init_file(path, &config, &decoder) != MA_SUCCESS) return false;
+    ma_uint64 frames = 0;
+    // Streams without a known length (some MP3s) are read twice: once to count, once to measure.
+    if (ma_decoder_get_length_in_pcm_frames(&decoder, &frames) != MA_SUCCESS || frames == 0) {
+        float scratch[4096];
+        for (ma_uint64 read = 1; read > 0;) {
+            read = 0;
+            ma_decoder_read_pcm_frames(&decoder, scratch, 4096 / decoder.outputChannels, &read);
+            frames += read;
+        }
+        ma_decoder_seek_to_pcm_frame(&decoder, 0);
+    }
+    const u32 channels = decoder.outputChannels;
+    if (frames == 0 || channels == 0) {
+        ma_decoder_uninit(&decoder);
+        return false;
+    }
+    float buffer[4096];
+    ma_uint64 at = 0;
+    for (;;) {
+        ma_uint64 read = 0;
+        const ma_result result = ma_decoder_read_pcm_frames(&decoder, buffer, 4096 / channels, &read);  // the last block may come with MA_AT_END
+        for (ma_uint64 f = 0; f < read; ++f, ++at) {
+            const u32 column = static_cast<u32>(at * columns / frames);
+            if (column >= columns) break;
+            for (u32 ch = 0; ch < channels; ++ch) peaks[column] = std::fmax(peaks[column], std::fabs(buffer[f * channels + ch]));
+        }
+        if (result != MA_SUCCESS || read == 0) break;
+    }
+    ma_decoder_uninit(&decoder);
+    for (u32 c = 0; c < columns; ++c) peaks[c] = peaks[c] > 1.0f ? 1.0f : peaks[c];
+    return true;
+}
+
 } // namespace lsd::audio

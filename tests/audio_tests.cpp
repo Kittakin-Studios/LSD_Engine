@@ -132,6 +132,13 @@ int main() {
 
     // Delayed start, voices grouped under one instance, length.
     CHECK(std::fabs(a.length_seconds(kTone) - 0.5f) < 0.01f && a.length_seconds("missing.wav") == 0.0f);
+    // Waveform (Content Browser thumbnails): the steady tone peaks at 16000 / 32768 in every column.
+    f32 peaks[64];
+    CHECK(waveform(kTone, 64, peaks) && !waveform("missing.wav", 64, peaks));
+    waveform(kTone, 64, peaks);
+    bool steady = true;
+    for (f32 p : peaks) steady = steady && std::fabs(p - 16000.0f / 32768.0f) < 0.01f;
+    CHECK(steady);
     d.looping = false;
     d.delay = 0.3f;
     const u32 cue = a.play(d);

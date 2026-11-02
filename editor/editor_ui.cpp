@@ -3824,7 +3824,7 @@ void draw_asset_grid(EditorState& s) {
             char key[33];
             asset::to_string(r.guid, key);
             thumbnail = s.device->debug_ui_texture(s.textures->get(key, true));
-        } else if (r.type == asset::AssetType::Mesh && s.thumbnails) {
+        } else if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Sound) && s.thumbnails) {
             thumbnail = s.thumbnails->get(r.guid);
         }
         if (thumbnail) {

@@ -1,6 +1,7 @@
 #include "thumbnails.h"
 
 #include "lsd/asset/mesh_import.h"
+#include "lsd/audio/audio.h"
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/math.h"
 
@@ -106,6 +107,13 @@ void ThumbnailCache::render(const f32 background[4], u32 budget) {
         if (e.ready || e.failed) continue;
         if (const asset::AssetRecord* r = registry_.find(e.guid)) e.source_time = r->source_time;  // also on failure: retry only after a change
         if (load_cached(e, e.source_time)) continue;  // another start saved this version already
+        const asset::AssetRecord* r = registry_.find(e.guid);
+        if (r && r->type == asset::AssetType::Sound) {  // drawn on the CPU: no render target, nothing to read back
+            e.failed = !draw_waveform(e, *r, background);
+            e.ready = !e.failed;
+            --budget;
+            continue;
+        }
         e.failed = !render_one(e, background);
         e.ready = !e.failed;
         e.save = e.ready;
@@ -113,6 +121,30 @@ void ThumbnailCache::render(const f32 background[4], u32 budget) {
         --budget;
     }
     if (rendered) device_.set_render_target({}, nullptr);
+}
+
+// Sounds: the waveform (peaks per column, mirrored about the middle) in the Content Browser's orange.
+bool ThumbnailCache::draw_waveform(Entry& entry, const asset::AssetRecord& record, const f32 background[4]) {
+    char path[300];
+    registry_.source_path(record, path, sizeof path);
+    f32 peaks[kThumbnailSize];
+    if (!audio::waveform(path, kThumbnailSize, peaks)) return false;
+    std::vector<u8> pixels(static_cast<usize>(kThumbnailSize) * kThumbnailSize * 4);
+    const u8 back[4] = {static_cast<u8>(background[0] * 255.0f), static_cast<u8>(background[1] * 255.0f), static_cast<u8>(background[2] * 255.0f), 255};
+    const u8 wave[4] = {0xEE, 0xA7, 0x0E, 255};
+    constexpr f32 kMiddle = kThumbnailSize * 0.5f;
+    for (u32 x = 0; x < kThumbnailSize; ++x) {
+        const f32 half = std::fmax(peaks[x] * (kMiddle - 4.0f), 0.5f);  // silence still shows a line
+        for (u32 y = 0; y < kThumbnailSize; ++y) {
+            const bool inside = std::fabs(static_cast<f32>(y) + 0.5f - kMiddle) <= half;
+            std::memcpy(&pixels[(static_cast<usize>(y) * kThumbnailSize + x) * 4], inside ? wave : back, 4);
+        }
+    }
+    const std::filesystem::path folder = std::filesystem::path(data_dir_) / "Thumbnails";
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    return asset::write_png(cache_path(entry.guid, entry.source_time).c_str(), kThumbnailSize, kThumbnailSize, pixels.data()) &&
+           load_cached(entry, entry.source_time);
 }
 
 bool ThumbnailCache::render_one(Entry& entry, const f32 background[4]) {

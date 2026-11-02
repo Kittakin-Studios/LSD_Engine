@@ -1,5 +1,6 @@
 #pragma once
-// Content Browser thumbnails: each mesh asset rendered once into a small render target, then saved
+// Content Browser thumbnails: each mesh asset rendered once into a small render target (a sound's
+// waveform drawn on the CPU), then saved
 // to DerivedData/Thumbnails/<guid>-<source time>.png so the next editor start loads it instead.
 #include "lsd/asset/asset_registry.h"
 #include "lsd/foundation/array.h"
@@ -39,6 +40,7 @@ private:
     };
 
     bool render_one(Entry& entry, const f32 background[4]);
+    bool draw_waveform(Entry& entry, const asset::AssetRecord& record, const f32 background[4]);
     bool load_cached(Entry& entry, i64 source_time);
     std::string cache_path(asset::Guid guid, i64 source_time) const;
 

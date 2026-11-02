@@ -105,4 +105,8 @@ private:
     Impl* impl_;
 };
 
+// A sound file's loudness over its length, for pictures (Content Browser thumbnails): the peak of
+// each of `columns` equal slices, 0..1, all channels. False if the file cannot be decoded.
+bool waveform(const char* path, u32 columns, f32* peaks);
+
 } // namespace lsd::audio
