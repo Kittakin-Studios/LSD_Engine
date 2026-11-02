@@ -28,7 +28,9 @@ public:
         capacity_ = capacity;
     }
     void resize(usize size) {
-        reserve(size);
+        // Grows by at least doubling, like push_back: appending in many small resizes stays linear
+        // (growing to the exact size made saving a 3000-object level take 6.5 s instead of milliseconds).
+        if (size > capacity_) reserve(size > capacity_ * 2 ? size : capacity_ * 2);
         size_ = size;  // new elements are uninitialised
     }
     void push_back(const T& value) {

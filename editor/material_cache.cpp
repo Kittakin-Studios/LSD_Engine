@@ -60,10 +60,10 @@ bool TextureCache::load(Entry& e) {
 
 rhi::TextureHandle TextureCache::get(const char* guid, bool srgb) {
     if (!guid || !guid[0]) return {};
-    for (u32 i = 0; i < count_; ++i) {
-        if (entries_[i].srgb == srgb && std::strcmp(entries_[i].guid, guid) == 0) return entries_[i].texture;
-    }
+    const i64 slot = index_.find(guid, srgb ? 1u : 0u, [&](u32 i) { return entries_[i].srgb == srgb && std::strcmp(entries_[i].guid, guid) == 0; });
+    if (slot >= 0) return entries_[slot].texture;
     if (count_ == sizeof entries_ / sizeof entries_[0]) return {};
+    index_.add(guid, srgb ? 1u : 0u, count_);
     Entry& e = entries_[count_++];
     e = Entry{};
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);
@@ -83,10 +83,10 @@ void TextureCache::check_files() {
 }
 
 MaterialCache::Entry* MaterialCache::find(const char* guid) {
-    for (u32 i = 0; i < count_; ++i) {
-        if (std::strcmp(entries_[i].guid, guid) == 0) return &entries_[i];
-    }
+    const i64 slot = index_.find(guid, 0, [&](u32 i) { return std::strcmp(entries_[i].guid, guid) == 0; });
+    if (slot >= 0) return &entries_[slot];
     if (count_ == sizeof entries_ / sizeof entries_[0]) return nullptr;
+    index_.add(guid, 0, count_);
     Entry& e = entries_[count_++];
     e = Entry{};
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);

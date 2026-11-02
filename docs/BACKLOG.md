@@ -282,6 +282,17 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 - VR / XR via OpenXR **(S)**
 
+## Performance (measured)
+
+Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects over 300 m (sun shadows on):
+
+- [x] Saving / snapshotting a level: 6469 ms -> 14 ms (Array::resize grew to the exact size, so every append copied the whole text)
+- [x] Editor UI frame: 26 ms -> 1.5 ms (the Outliner's hierarchy scanned every object for every object; now child lists built once a frame, rows clipped to the visible ones)
+- [x] Mesh / texture / material lookups: a hash index per cache instead of comparing every entry (every object, every pass); mesh cache reserved so pointers stay valid
+- [x] Sun shadow casters culled per cascade (sides only, pancaking kept), spot / point tiles per face
+- [x] `stat dump`: game / render / UI / GPU-wait times, draws, triangles, culled and the UI by panel (the GPU wait was counted as render before)
+- [ ] Instanced drawing of repeated meshes (870 draws cost ~3.5 ms of CPU), navmesh cache between Plays (200 ms at 3000 objects), GPU timings
+
 ## Vehicles, transports, movers
 
 - [x] Drivable Vehicle (Place tab): E in / out, WASD + Shift boost + Ctrl / Space brake, ground following, walls, flying kind, follow camera; Enter / Exit / Get Driven Vehicle nodes [Vehicle Blueprint]

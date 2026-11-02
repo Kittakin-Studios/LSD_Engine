@@ -2081,13 +2081,17 @@ struct OutlineRow {
     const char* folder = nullptr;  // set on a folder's header row (then `entity` is invalid)
 };
 
-void collect_rows(const world::World& w, Entity parent, int depth, OutlineRow* rows, int& count, int max) {
-    // shortcut: scans all slots per level of the tree; keep child lists when levels get big.
-    for (u32 slot = 0; slot < w.slot_count() && count < max; ++slot) {
-        const Entity e = w.entity_at_slot(slot);
-        if (!e.valid() || w.parent(e) != parent) continue;
+// Each object's children in slot order, gathered in one pass a frame: the walk below is linear in the
+// number of objects (scanning every slot for every parent was quadratic: 25 ms with 3000 objects).
+using ChildLists = std::unordered_map<u32, std::vector<Entity>>;
+
+void collect_rows(const ChildLists& children, Entity parent, int depth, OutlineRow* rows, int& count, int max) {
+    const auto it = children.find(parent.value);
+    if (it == children.end()) return;
+    for (const Entity e : it->second) {
+        if (count >= max) return;
         rows[count++] = {e, depth};
-        collect_rows(w, e, depth + 1, rows, count, max);
+        collect_rows(children, e, depth + 1, rows, count, max);
     }
 }
 
@@ -2097,6 +2101,12 @@ char g_folder_name[64] = "";
 
 // Hierarchy tab: folders (A-Z) with their root objects inside, then the objects in no folder.
 void collect_hierarchy(const world::World& w, OutlineRow* rows, int& count, int max) {
+    static ChildLists children;
+    for (auto& [parent, list] : children) list.clear();  // keeps the lists' memory frame to frame
+    for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+        const Entity e = w.entity_at_slot(slot);
+        if (e.valid() && w.parent(e).valid()) children[w.parent(e).value].push_back(e);
+    }
     std::map<std::string, const char*> folders;  // name -> a record's copy, stable for this frame
     for (u32 slot = 0; slot < w.slot_count(); ++slot) {
         const Entity e = w.entity_at_slot(slot);
@@ -2110,14 +2120,14 @@ void collect_hierarchy(const world::World& w, OutlineRow* rows, int& count, int 
             const Entity e = w.entity_at_slot(slot);
             if (!e.valid() || w.parent(e).valid() || name != w.folder(e)) continue;
             rows[count++] = {e, 1};
-            collect_rows(w, e, 2, rows, count, max);
+            collect_rows(children, e, 2, rows, count, max);
         }
     }
     for (u32 slot = 0; slot < w.slot_count() && count < max; ++slot) {
         const Entity e = w.entity_at_slot(slot);
         if (!e.valid() || w.parent(e).valid() || w.folder(e)[0]) continue;
         rows[count++] = {e, 0};
-        collect_rows(w, e, 1, rows, count, max);
+        collect_rows(children, e, 1, rows, count, max);
     }
 }
 
@@ -2221,7 +2231,10 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
     const f32 right = left + ImGui::GetWindowWidth();
     int visible = static_cast<int>(ImGui::GetWindowHeight() / row_height) + 1;
     visible = visible > row_count ? visible : row_count;
-    for (int i = 0; i < visible; ++i) {
+    ImGuiListClipper clipper;  // only the rows on screen are built: thousands of objects stay cheap
+    clipper.Begin(visible, row_height);
+    while (clipper.Step())
+    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         dl->AddRectFilled(ImVec2(left, p.y), ImVec2(right, p.y + row_height), u32_color((i & 1) ? t.outline_row_b : t.outline_row_a));
         if (i >= row_count) { ImGui::Dummy(ImVec2(0, row_height - ImGui::GetStyle().ItemSpacing.y)); continue; }
@@ -5283,10 +5296,20 @@ void draw_editor(EditorState& s) {
     s.reset_layout = false;
     ImGui::DockSpaceOverViewport(dockspace, main, ImGuiDockNodeFlags_PassthruCentralNode);
 
+    u64 lap = SDL_GetTicksNS();
+    auto took = [&](int part) {  // stat dump's UI breakdown
+        const u64 now = SDL_GetTicksNS();
+        s.stat_panel_ms[part] = static_cast<f32>(static_cast<f64>(now - lap) * 1e-6);
+        lap = now;
+    };
     draw_outliner(s);
+    took(0);
     draw_details_panel(s);
+    took(1);
     draw_content_browser(s);
+    took(2);
     draw_editor_area(s);
+    took(3);
     if (level_tab) draw_mode_panel(s);
     {  // asset editors opened from now on dock where the editor area is (begin_editor)
         const WorkspaceDef* def = find_workspace_def(s.settings, s.settings.workspace);
@@ -5339,6 +5362,7 @@ void draw_editor(EditorState& s) {
     debugger::draw_window(s, &s.show_debugger);
     draw_memory_window(s);
     draw_ui_editor(s);
+    took(4);
     handle_shortcuts(s);
 
     // The central node is left empty and transparent: the 3D viewport shows through it.

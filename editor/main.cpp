@@ -252,6 +252,29 @@ bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::Stat
     return true;
 }
 
+// Frustum culling: false when the box (local bounds under `mvp`) is wholly outside one clip plane.
+// `sides_only`: just the four side planes (shadow casters in front of a pancaked cascade still cast).
+bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false) {
+    int outside[6] = {};
+    for (int c = 0; c < 8; ++c) {
+        const lsd::Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
+        const lsd::f32 x = mvp.at(0, 0) * p.x + mvp.at(0, 1) * p.y + mvp.at(0, 2) * p.z + mvp.at(0, 3);
+        const lsd::f32 y = mvp.at(1, 0) * p.x + mvp.at(1, 1) * p.y + mvp.at(1, 2) * p.z + mvp.at(1, 3);
+        const lsd::f32 z = mvp.at(2, 0) * p.x + mvp.at(2, 1) * p.y + mvp.at(2, 2) * p.z + mvp.at(2, 3);
+        const lsd::f32 w = mvp.at(3, 0) * p.x + mvp.at(3, 1) * p.y + mvp.at(3, 2) * p.z + mvp.at(3, 3);
+        outside[0] += x < -w;
+        outside[1] += x > w;
+        outside[2] += y < -w;
+        outside[3] += y > w;
+        outside[4] += z < 0.0f;  // 0..1 depth
+        outside[5] += z > w;
+    }
+    for (int k = 0; k < (sides_only ? 4 : 6); ++k) {
+        if (outside[k] == 8) return false;
+    }
+    return true;
+}
+
 // Shadow casters use the LOD the camera sees (a far tree casts its simple shape), not the light's view.
 void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                   lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
@@ -271,8 +294,9 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             const lsd::Mat4 m = world.world_matrix(e);
             lsd::rhi::BufferHandle indices;
             lsd::u32 count = 0;
-            if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
             const lsd::Mat4 mvp = vp * m;
+            if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
+            if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
             device.draw_shadow_caster(mesh->gpu.vertices, indices, count, mvp.m);
         }
         draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
@@ -308,10 +332,11 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
                 const lsd::Vec3 extent = lsd::transform_vector(m, (mesh->bounds_max - mesh->bounds_min) * 0.5f);
                 if (lsd::length(centre - at) > light.range + lsd::length(extent) * 1.8f) continue;
+                const lsd::Mat4 mvp = vp * m;
+                if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // outside this tile's cone / cube face
                 lsd::rhi::BufferHandle indices;
                 lsd::u32 count = 0;
                 if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-                const lsd::Mat4 mvp = vp * m;
                 device.draw_shadow_caster(mesh->gpu.vertices, indices, count, mvp.m);
             }
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
@@ -319,28 +344,6 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
         }
     }
     device.end_shadow_pass();
-}
-
-// Frustum culling: false when the box (local bounds under `mvp`) is wholly outside one clip plane.
-bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi) {
-    int outside[6] = {};
-    for (int c = 0; c < 8; ++c) {
-        const lsd::Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
-        const lsd::f32 x = mvp.at(0, 0) * p.x + mvp.at(0, 1) * p.y + mvp.at(0, 2) * p.z + mvp.at(0, 3);
-        const lsd::f32 y = mvp.at(1, 0) * p.x + mvp.at(1, 1) * p.y + mvp.at(1, 2) * p.z + mvp.at(1, 3);
-        const lsd::f32 z = mvp.at(2, 0) * p.x + mvp.at(2, 1) * p.y + mvp.at(2, 2) * p.z + mvp.at(2, 3);
-        const lsd::f32 w = mvp.at(3, 0) * p.x + mvp.at(3, 1) * p.y + mvp.at(3, 2) * p.z + mvp.at(3, 3);
-        outside[0] += x < -w;
-        outside[1] += x > w;
-        outside[2] += y < -w;
-        outside[3] += y > w;
-        outside[4] += z < 0.0f;  // 0..1 depth
-        outside[5] += z > w;
-    }
-    for (int k : outside) {
-        if (k == 8) return false;
-    }
-    return true;
 }
 
 // stat unit: CPU milliseconds of the frame's parts (smoothed when shown).
@@ -650,8 +653,17 @@ void register_console(EditorState& s) {
         auto& st = *static_cast<EditorState*>(user);
         if (std::strcmp(args, "fps") == 0 || std::strcmp(args, "unit") == 0) st.show_stats = !st.show_stats;
         else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
-        else LSD_LOG_WARN("console", "stat: try 'stat fps' or 'stat audio'");
-    }, &s, "stat fps | stat audio: toggle the fps / draw call or the active sounds overlay");
+        else if (std::strcmp(args, "dump") == 0) {  // the numbers as text (remote console, the MCP bridge, tests)
+            char line[200];
+            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u", st.stat_game_ms,
+                          st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled);
+            lsd::editor::remote::print(line);
+            LSD_LOG_INFO("stat", "%s", line);
+            std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
+                          st.stat_panel_ms[2], st.stat_panel_ms[3], st.stat_panel_ms[4]);
+            lsd::editor::remote::print(line);
+        } else LSD_LOG_WARN("console", "stat: try 'stat fps', 'stat audio' or 'stat dump'");
+    }, &s, "stat fps | stat audio | stat dump: toggle the fps / draw call or the active sounds overlay; dump prints the frame's numbers");
     console::add_command("camera", [](void* user, const char* args) {
         auto& cam = static_cast<EditorState*>(user)->camera;
         float x, y, z, yaw = 0.0f, pitch = 0.0f;
@@ -1899,7 +1911,10 @@ int main(int argc, char** argv) {
             }
         }
         if (state.play_requested && !state.playing) {
+            const lsd::u64 snapshot_start = SDL_GetTicksNS();
             lsd::world::save_level(world, play_snapshot);
+            const double snapshot_ms = static_cast<double>(SDL_GetTicksNS() - snapshot_start) * 1e-6;
+            if (snapshot_ms > 100.0) LSD_LOG_WARN("editor", "Saving the level for Play took %.0f ms", snapshot_ms);  // only worth a line when slow
             // Multiplayer (Project Settings): join with -connect, else host; the editor's Play also
             // opens a game window per extra player, joining it, on the level as it is now.
             lsd::editor::NetPlay net_play;
@@ -2090,6 +2105,7 @@ int main(int argc, char** argv) {
         thumbnails.release_temporaries();
         decal_atlas->update(world);  // before the frame: the atlas may be rebuilt
         device->begin_frame(clear_color);
+        state.stat_wait_ms = timer.lap();  // the GPU (and vsync) holding the CPU back: not part of render
         thumbnails.render(clear_color);
         particle_editor->render(*device, clear_color);
         lsd::editor::render_graph_preview(state, clear_color);

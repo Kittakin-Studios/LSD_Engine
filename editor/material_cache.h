@@ -2,6 +2,7 @@
 // GPU textures and loaded materials for drawing, keyed by asset GUID. Both reload when their
 // files change (check_files, about once a second), so edits in Photoshop or the Details panel
 // show up live.
+#include "key_index.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/render/material.h"
 #include "lsd/rhi/rhi.h"
@@ -41,6 +42,7 @@ private:
     u32 size_cap_ = 0;
     Entry entries_[512];
     u32 count_ = 0;
+    KeyIndex index_;  // guid (salted by colour / data use) -> slot
 };
 
 class MaterialCache {
@@ -84,6 +86,7 @@ private:
     const asset::AssetRegistry& registry_;
     Entry entries_[256];
     u32 count_ = 0;
+    KeyIndex index_;  // guid -> slot
 };
 
 } // namespace lsd::editor

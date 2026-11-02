@@ -14,6 +14,7 @@
 #include "paper2d.h"
 
 #include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_scancode.h>
 
 #include "lsd/asset/data_asset.h"
@@ -390,6 +391,7 @@ bool PlaySession::rebind(const char* action, const char* from, const char* to) {
 
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel) {
     stop();
+    const u64 start_ns = SDL_GetTicksNS();  // how long Play takes to start (logged at the end)
     if (!travel) scripts_.clear_persistent();  // a new Play: a fresh game instance
     level_request_[0] = '\0';
     registry_ = &registry;
@@ -420,7 +422,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     }
     add_joints(world, {});
     agent_count_ = 0;
-    if (build_level_navmesh(world, *meshes_, nav_)) LSD_LOG_INFO("play", "Navmesh built");
+    const u64 nav_start = SDL_GetTicksNS();
+    if (build_level_navmesh(world, *meshes_, nav_)) LSD_LOG_INFO("play", "Navmesh built (%.0f ms)", static_cast<f64>(SDL_GetTicksNS() - nav_start) * 1e-6);
     brains_ = new Brain[kMaxBrains];
     brain_count_ = 0;
     noise_count_ = 0;
@@ -810,6 +813,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return r && std::strcmp(r->data_type, "Curve") == 0;
     };
     scripts_.start(world, host, script_path, const_cast<asset::AssetRegistry*>(&registry));
+    LSD_LOG_INFO("play", "Play started in %.0f ms", static_cast<f64>(SDL_GetTicksNS() - start_ns) * 1e-6);
 }
 
 const asset::AssetRecord* PlaySession::find_asset(asset::AssetType type, const char* name) const {

@@ -251,6 +251,12 @@ RGBA8 target, two targets ping-pong per post chain. An EXPOSE pass multiplies th
 bloom and the tonemapper see the adapted image. Sky reflections (both mesh shaders) use the
 `sky_radiance` gradient along the reflection and an analytic split-sum BRDF instead of cubemaps.
 
+**Performance notes**: `Array::resize` grows by doubling (exact growth made repeated appends
+quadratic); the editor caches look keys up through `editor/key_index.h` (FNV-64 to slot, confirmed by
+a compare); the Outliner's hierarchy uses per-frame child lists; shadow passes cull casters against
+each cascade's side planes only, since pancaking keeps casters in front of the near plane. `stat dump`
+prints the frame's CPU parts with the GPU / vsync wait separated.
+
 **Voice chat**: `net::VoiceEncoder` / `VoiceDecoder` wrap Opus (48 kHz mono, 20 ms frames, in-band
 FEC, concealment for lost packets). The client sends kVoice (unreliable) to the server, which routes
 kVoiceOut with the chat rules (never back to the speaker; the voice channel switches are separate

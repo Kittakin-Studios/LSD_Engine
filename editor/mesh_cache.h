@@ -2,6 +2,7 @@
 // GPU meshes for StaticMesh components, keyed by the component's mesh string: a mesh asset's
 // GUID or a basic shape name (Cube, Sphere, Plane). Loaded on first use, hot-reloaded when the
 // source file or its import settings change.
+#include "key_index.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/foundation/array.h"
 #include "lsd/foundation/math.h"
@@ -64,7 +65,8 @@ private:
     Allocator& allocator_;
     asset::AssetRegistry& registry_;
     char data_dir_[256];
-    Array<CachedMesh> meshes_;
+    Array<CachedMesh> meshes_;  // reserved up front: pointers handed out stay valid as it fills
+    KeyIndex index_;            // key -> slot in meshes_
 };
 
 } // namespace lsd::editor

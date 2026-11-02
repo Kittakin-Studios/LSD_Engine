@@ -31,6 +31,8 @@ bool make_builtin(const char* name, Allocator& allocator, render::MeshData& out)
 MeshCache::MeshCache(rhi::Device& device, Allocator& allocator, asset::AssetRegistry& registry, const char* data_dir)
     : device_(device), allocator_(allocator), registry_(registry), meshes_(allocator) {
     std::snprintf(data_dir_, sizeof data_dir_, "%s", data_dir);
+    // shortcut: room for 8192 meshes (shapes, assets, LOD / box-UV variants, sprites, tiles) without moving; grow by chunks if a project needs more.
+    meshes_.reserve(8192);
 }
 
 namespace {
@@ -152,15 +154,15 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
 }
 
 const CachedMesh* MeshCache::get(const char* key) {
-    for (const CachedMesh& m : meshes_) {
-        if (std::strcmp(m.key, key) == 0) return m.failed ? nullptr : &m;
-    }
+    const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
+    if (slot >= 0) return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
     if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
     entry.failed = !load(entry);
     if (entry.failed) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", key);
+    index_.add(key, 0, static_cast<u32>(meshes_.size()));
     meshes_.push_back(entry);
     return entry.failed ? nullptr : &meshes_[meshes_.size() - 1];
 }
@@ -175,12 +177,12 @@ const CachedMesh* MeshCache::get_box_uv(const char* mesh, Vec3 scale) {
 
 void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     CachedMesh* entry = nullptr;
-    for (CachedMesh& m : meshes_) {
-        if (std::strcmp(m.key, key) == 0) entry = &m;
-    }
+    const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
+    if (slot >= 0) entry = &meshes_[static_cast<usize>(slot)];
     if (!entry) {
         CachedMesh fresh{};
         std::snprintf(fresh.key, sizeof fresh.key, "%s", key);
+        index_.add(key, 0, static_cast<u32>(meshes_.size()));
         meshes_.push_back(fresh);
         entry = &meshes_[meshes_.size() - 1];
     }
