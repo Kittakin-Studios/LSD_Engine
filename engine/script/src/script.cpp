@@ -2,6 +2,7 @@
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/data_table.h"
+#include "lsd/asset/localization.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/user_types.h"
@@ -569,7 +570,18 @@ struct Api {
     static int text(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const char* key = luaL_checkstring(L, 1);
-        lua_pushstring(L, host.text ? host.text(host.user, key) : key);
+        const char* pattern = host.text ? host.text(host.user, key) : key;
+        const int extra = lua_gettop(L) - 1;
+        if (extra <= 0) {
+            lua_pushstring(L, pattern);
+            return 1;
+        }
+        const char* args[10] = {};
+        const u32 count = static_cast<u32>(extra < 10 ? extra : 10);
+        for (u32 i = 0; i < count; ++i) args[i] = luaL_tolstring_compat(L, static_cast<int>(i) + 2);  // numbers and booleans too
+        char out[1024];
+        asset::format_text(pattern, args, count, host.language ? host.language(host.user) : "en", out, sizeof out);
+        lua_pushstring(L, out);
         return 1;
     }
     static int set_language(lua_State* L) {

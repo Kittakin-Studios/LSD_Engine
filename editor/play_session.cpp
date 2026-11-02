@@ -692,6 +692,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const auto* loc = static_cast<PlaySession*>(user)->localization_;
         return loc ? loc->text(key) : key;
     };
+    host.language = [](void* user) {
+        const auto* loc = static_cast<PlaySession*>(user)->localization_;
+        return loc ? loc->language() : "en";
+    };
     host.set_language = [](void* user, const char* code) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.localization_ && !self.localization_->set_language(code)) LSD_LOG_WARN("ui", "The string table has no language '%s'", code);

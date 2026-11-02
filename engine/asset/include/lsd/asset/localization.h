@@ -6,9 +6,19 @@
 //   MENU_PLAY,Play,Jouer
 //
 // text(key) gives the current language's text, falling back to the first language, then the key.
+// format_text fills in arguments (Unreal's FText::Format):
+//
+//   SCORE,"Score: {0}"            {0}..{9}: the arguments in order
+//   APPLES,"{0} {0}|plural(one=apple,other=apples)"     a word picked by the number's plural form
+//
+// Plural forms: zero (when given, for 0), one, other; which numbers are "one" follows the language
+// (English 1; French 0 and 1). shortcut: no few / many forms (Slavic, Arabic); add CLDR rules per language then.
 #include "lsd/asset/data_table.h"
 
 namespace lsd::asset {
+
+// Writes `pattern` with its {N} arguments filled in to `out` (always terminated, cut to fit).
+void format_text(const char* pattern, const char* const* args, u32 arg_count, const char* language, char* out, usize capacity);
 
 class Localization {
 public:
@@ -21,6 +31,10 @@ public:
     const char* text(const char* key) const {  // never null: the key itself when missing
         const char* t = find(key);
         return t ? t : key;
+    }
+    // text(key) with arguments filled in, in this language's plural rules.
+    void format(const char* key, const char* const* args, u32 arg_count, char* out, usize capacity) const {
+        format_text(text(key), args, arg_count, language_, out, capacity);
     }
     u32 language_count() const { return table_.columns() > 1 ? table_.columns() - 1 : 0; }
     const char* language_code(u32 index) const { return table_.cell(0, index + 1); }

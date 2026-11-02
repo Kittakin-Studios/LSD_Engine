@@ -55,7 +55,9 @@
 //   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
 //                          mouse_sensitivity, invert_look}   the player's settings (options menus)
 //   lsd.set_settings({quality = 1, ...})  changes those given, applies and saves them
-//   lsd.text(key) -> text                 the string table's text in the current language (the key if missing)
+//   lsd.text(key [, ...]) -> text         the string table's text in the current language (the key if missing),
+//                                         with {0}, {1}... filled from the extra arguments and
+//                                         {0}|plural(one=apple,other=apples) forms picked by number
 //   lsd.set_language(code)                switches (en, fr...): open UI documents are reloaded translated
 //   lsd.languages() -> {"en", "fr", ...}
 //   lsd.bindings(action) -> {"W", "Gamepad Left Stick", ...}   the keys an Input Action listens to
@@ -184,6 +186,7 @@ struct ScriptHost {
     void* (*settings)(void* user, const reflect::TypeInfo** type) = nullptr;
     void (*settings_changed)(void* user) = nullptr;
     const char* (*text)(void* user, const char* key) = nullptr;
+    const char* (*language)(void* user) = nullptr;  // for plural rules ("en" when null)
     void (*set_language)(void* user, const char* code) = nullptr;
     u32 (*languages)(void* user, const char** out, u32 capacity) = nullptr;
     bool (*rebind)(void* user, const char* action, const char* from, const char* to) = nullptr;

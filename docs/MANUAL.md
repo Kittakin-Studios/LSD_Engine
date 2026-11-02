@@ -731,6 +731,16 @@ MENU_QUIT,Quit,Quitter
 UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in Lua use
 `lsd.text("MENU_PLAY")`. `lsd.set_language("fr")` switches and reloads open UI documents.
 
+**Arguments and plurals** (Unreal's Format Text): write `{0}`, `{1}`... in the text and pass the
+values after the key: `lsd.text("SCORE", score)` (or the **Format Text** node). For words that
+change with a number, `{0}|plural(one=apple,other=apples)` picks by the language's rule (French
+counts 0 as one); add `zero=` for a special empty case:
+
+```text
+Key,en,fr
+APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=pommes)"
+```
+
 ---
 
 ## 17. Packaging and shipping

@@ -270,6 +270,8 @@ static void test_game_instance() {
     scripts.start(w, {}, path_of, nullptr);  // the next level
     CHECK(scripts.run("assert(lsd.game_instance().score == 5 and lsd.player_state().name == 'Ada' and #lsd.subsystem('Quests').done == 2)"));
     CHECK(scripts.run("assert(lsd.player() == nil and lsd.open_level('Nowhere') == false)"));  // no host: no player, no levels
+    // No string table: the key is the pattern; extra arguments fill it in, numbers pick plurals.
+    CHECK(scripts.run("assert(lsd.text('{0} {0}|plural(one=coin,other=coins), {1}!', 3, true) == '3 coins, true!' and lsd.text('{0} left', 1) == '1 left')"));
     // The sandbox: no files, processes, native code or bytecode; the harmless parts remain.
     CHECK(scripts.run("assert(io == nil and os.execute == nil and os.remove == nil and dofile == nil and string.dump == nil)"));
     CHECK(scripts.run("assert(package.loadlib == nil and not pcall(require, 'ffi') and type(os.time()) == 'number')"));

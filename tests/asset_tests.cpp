@@ -280,6 +280,27 @@ static void test_localization() {
     CHECK(std::strcmp(loc.text("MENU_QUIT"), "Quit") == 0);  // untranslated: the first language
     CHECK(std::strcmp(loc.text("NOPE"), "NOPE") == 0 && !loc.find("NOPE"));
     CHECK(!loc.set_language("de") && std::strcmp(loc.text("MENU_PLAY"), "Play") == 0);
+
+    // Arguments and plurals (FText::Format): English 1 is "one"; French 0 and 1 are; zero= wins at 0.
+    char out[64];
+    const char* one[] = {"1"};
+    const char* three[] = {"3", "Ada"};
+    const char* none[] = {"0"};
+    const char* apples = "{0} {0}|plural(one=apple,other=apples)";
+    asset::format_text(apples, three, 2, "en", out, sizeof out);
+    CHECK(std::strcmp(out, "3 apples") == 0);
+    asset::format_text(apples, one, 1, "en", out, sizeof out);
+    CHECK(std::strcmp(out, "1 apple") == 0);
+    asset::format_text(apples, none, 1, "en", out, sizeof out);
+    CHECK(std::strcmp(out, "0 apples") == 0);
+    asset::format_text("{0} {0}|plural(one=pomme,other=pommes)", none, 1, "fr", out, sizeof out);
+    CHECK(std::strcmp(out, "0 pomme") == 0);
+    asset::format_text("{0}|plural(zero=No mail,one=One mail,other={1} has mail)", none, 1, "en", out, sizeof out);
+    CHECK(std::strcmp(out, "No mail") == 0);
+    asset::format_text("Hi {1}, {0} new; {5} {x}", three, 2, "en", out, sizeof out);
+    CHECK(std::strcmp(out, "Hi Ada, 3 new;  {x}") == 0);  // missing argument: empty; not an argument: as written
+    asset::format_text("{1} wins", three, 2, "en", out, 6);
+    CHECK(std::strcmp(out, "Ada w") == 0);  // cut to fit
 }
 
 // A real FBX with nested, rotated and scaled nodes: its parts, each in its node's space and placed by
