@@ -618,6 +618,27 @@ assert(#s.items == 3 and s.items[1] == "sword" and s.items[3] == 3 and s.pos.y =
 assert(not pcall(lsd.save_game, "Slot2", {f = print}))
 assert(lsd.delete_save("Slot1") and not lsd.has_save("Slot1"))
 )"));
+        // Whole objects: Transform and a chosen component back on the objects by name; extra rides along.
+        const world::Entity crate = w.create("Crate");
+        w.create("Barrel");
+        CHECK(scripts.run(R"(
+local crate, barrel = lsd.find("Crate"), lsd.find("Barrel")
+lsd.set_position(crate, 1, 2, 3)
+lsd.set_rotation(crate, 0, 0, 90)
+lsd.add(barrel, "RigidBody", {mass = 7})
+assert(lsd.save_objects("World1", {crate, barrel}, {"Transform", "RigidBody"}, {score = 42}))
+lsd.set_position(crate, 0, 0, 0)
+lsd.set(barrel, "RigidBody", {mass = 1})
+lsd.remove(crate, "RigidBody")
+local extra, found = lsd.load_objects("World1")
+assert(extra.score == 42 and found == 2)
+local x, y, z = lsd.position(crate)
+assert(x == 1 and y == 2 and z == 3 and select(3, lsd.rotation(crate)) == 90)
+assert(lsd.get(barrel, "RigidBody").mass == 7 and not lsd.has(crate, "RigidBody"))  -- the crate had none when saved
+assert(lsd.load_objects("Missing") == nil)
+lsd.delete_save("World1")
+)"));
+        CHECK(w.alive(crate));
         scripts.stop();
     }
     CHECK(heap.allocated_bytes() == 0);

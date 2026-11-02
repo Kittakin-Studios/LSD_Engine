@@ -272,6 +272,44 @@ function lsd.subsystem(name)
   if type(t) ~= "table" then t = {} all[name] = t end
   return t
 end
+-- Whole objects in a save game (Unreal's SaveGame-flagged properties): the chosen components of
+-- each object (Transform when none are named), by object name, so loading into a freshly opened
+-- level finds them again. `extra` rides along (score, inventory...) and comes back from load.
+function lsd.save_objects(slot, objects, components, extra)
+  components = components or {"Transform"}
+  local saved = {}
+  for _, e in ipairs(objects) do
+    if lsd.alive(e) then
+      local entry = {}
+      for _, c in ipairs(components) do entry[c] = lsd.get(e, c) end
+      saved[lsd.name(e)] = entry
+    end
+  end
+  return lsd.save_game(slot, {objects = saved, extra = extra})
+end
+-- Puts saved components back on the objects with those names (adding missing components).
+-- Returns the extra value and how many objects were found; objects no longer in the level are skipped.
+function lsd.load_objects(slot)
+  local data = lsd.load_game(slot)
+  if type(data) ~= "table" or type(data.objects) ~= "table" then return nil, 0 end
+  local found = 0
+  for name, components in pairs(data.objects) do
+    local e = lsd.find(name)
+    if e then
+      for c, fields in pairs(components) do
+        if c == "Transform" then  -- through the setters, so physics bodies and children follow
+          local p, r = fields.position, fields.rotation
+          if p then lsd.set_position(e, p.x, p.y, p.z) end
+          if r then lsd.set_rotation(e, r.x, r.y, r.z) end
+          if fields.scale then lsd.set(e, "Transform", {scale = fields.scale}) end
+        elseif lsd.has(e, c) then lsd.set(e, c, fields)
+        else lsd.add(e, c, fields) end
+      end
+      found = found + 1
+    end
+  end
+  return data.extra, found
+end
 function lsd._tick()
   local now, due = lsd.time(), {}
   for id, t in pairs(timers) do if now >= t.at then due[#due + 1] = id end end

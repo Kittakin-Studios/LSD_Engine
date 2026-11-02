@@ -68,6 +68,8 @@
 //   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
 //                                         string keys) to Saved/SaveGames/<slot>.json, versioned
 //   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
+//   lsd.save_objects(slot, {e1, e2}, [{"Transform", "Character"}], [extra]) -> ok   whole objects by name
+//   lsd.load_objects(slot) -> extra, found   puts their components back (Transform through set_position)
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
 //                                         cells are numbers; re-read when the file changes; nil if none
 //

@@ -711,6 +711,14 @@ local save = lsd.load_game("Slot1")   -- nil if there is none
 
 Files go to `Saved/SaveGames/<slot>.json`. Visual scripts: Save Value / Load Value.
 
+Whole objects (the components you name, Transform when you name none) by object name, so a load
+into a freshly opened level puts them back:
+
+```lua
+lsd.save_objects("Slot1", {lsd.find("Door"), lsd.find("Chest")}, {"Transform", "Script"}, {coins = 250})
+local extra, found = lsd.load_objects("Slot1")   -- extra.coins == 250; objects gone from the level are skipped
+```
+
 **Player settings** (Unreal's Game User Settings) are in `Saved/GameUserSettings.json`: fullscreen,
 quality, master / music / effects volume, mouse sensitivity, invert look, language. The first run picks
 the quality that suits the graphics card. An options menu reads and changes them:
@@ -864,6 +872,7 @@ UI, saving, settings, languages
 | `lsd.ui_show_cursor(on)` | menus: free the mouse |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
 | `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
+| `lsd.save_objects(slot, objects, [components], [extra])`, `lsd.load_objects(slot)` | whole objects' components by name |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |
 | `lsd.text(key)`, `lsd.set_language(code)`, `lsd.languages()` | localisation |
 | `lsd.ik_reach(e, bone, x, y, z [, weight])`, `lsd.ik_look_at(e, bone, x, y, z [, weight [, fx, fy, fz]])` | IK each frame you call it: a hand on a ledge (two-bone), a head following a target (aim along the bone's own +X unless given) |
