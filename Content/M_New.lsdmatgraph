@@ -1,0 +1,41 @@
+{
+  "lsd_graph": 1,
+  "next_id": 21,
+  "nodes": [
+    {"id": 1, "type": "MatColor", "x": -619.8, "y": -116.1, "values": ["8.2,0.8,9.1"]},
+    {"id": 2, "type": "MatOutput", "x": 950.7, "y": 35.0, "values": ["0.8,0.8,0.8", "0", "0.5", "0,0,0", "0,0,1", "1", "1", "Opaque"]},
+    {"id": 3, "type": "MatConstant", "x": -738.1, "y": -213.2, "values": ["1"]},
+    {"id": 4, "type": "MatScalarParam", "x": -437.9, "y": 68.9, "values": ["BC", "6.3"]},
+    {"id": 5, "type": "MatTexCoord", "x": -1222.2, "y": -101.9, "values": ["1,1,1"]},
+    {"id": 9, "type": "MatScalarParam", "x": -127.8, "y": 230.4, "values": ["Roughness", "1"]},
+    {"id": 10, "type": "MatMultiply", "x": -203.1, "y": -54.2, "values": ["1,1,1", "1,1,1"]},
+    {"id": 8, "type": "MatScalarParam", "x": -106.3, "y": 124.1, "values": ["Metalic", "1"]},
+    {"id": 12, "type": "MatScalarParam", "x": -946.9, "y": 64.2, "values": ["Contrast", "-2.6"]},
+    {"id": 13, "type": "MatDivide", "x": 84.9, "y": -383.3, "values": ["1,1,1", "1,1,1"]},
+    {"id": 14, "type": "MatLerp", "x": 490.9, "y": -92.0, "values": ["0,0,0", "1,1,1", "0.5"]},
+    {"id": 15, "type": "MatAdd", "x": 541.3, "y": 270.1, "values": ["0,0,0", "0,0,0"]},
+    {"id": 16, "type": "MatScalarParam", "x": 204.9, "y": 383.9, "values": ["AO", "16.9"]},
+    {"id": 17, "type": "MatNormalize", "x": -220.0, "y": 424.4, "values": ["0,0,1"]},
+    {"id": 18, "type": "MatConstant", "x": 226.7, "y": -0.9, "values": ["0.5"]},
+    {"id": 19, "type": "MatLerp", "x": -203.1, "y": 511.7, "values": ["0,0,0", "1,1,1", "0.5"]},
+    {"id": 20, "type": "MatClamp", "x": 587.5, "y": 470.4, "values": ["0,0,0", "0", "1"]}
+  ],
+  "links": [
+    [9, 0, 2, 2],
+    [4, 0, 10, 1],
+    [8, 0, 2, 1],
+    [1, 0, 10, 0],
+    [12, 0, 3, 0],
+    [14, 0, 2, 0],
+    [13, 0, 14, 0],
+    [10, 0, 14, 1],
+    [3, 0, 13, 1],
+    [10, 0, 13, 0],
+    [16, 0, 15, 0],
+    [18, 0, 14, 2],
+    [18, 0, 15, 1],
+    [15, 0, 2, 5]
+  ],
+  "variables": [
+  ]
+}

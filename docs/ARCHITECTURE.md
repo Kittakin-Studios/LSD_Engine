@@ -84,7 +84,23 @@ the same format for a sub-tree; instances remember per-field overrides.
 - Importers: FBX (ufbx) and glTF (cgltf) to meshes (indexed and optimised with meshoptimizer, saved
   as compiled `.lsdmesh` in DerivedData), skinned FBX + clips through ozz, images through stb_image
   (mip chains built in linear light), sounds through miniaudio, CSV data tables, localisation tables.
-- `validate_assets` scans text assets for GUIDs no asset has, oversize textures and name prefixes.
+- **Normals** are set per mesh in its import settings (`AssetMeta::normals`): Smooth by default,
+  Solid (Flat), Import (the file's) or Auto Smooth by angle. `asset::compute_normals` works on any
+  vertex layout (static `MeshVertex` and rigged `SkinnedVertex`): it groups triangle corners by
+  position (`meshopt_generatePositionRemap`), so UV seams share normals, and sums area-weighted face
+  normals (only faces within the angle for Auto Smooth). The setting is part of the compiled mesh's
+  settings hash, so changing it recompiles.
+- **Mesh parts**: a mesh key is a GUID (the whole file, merged) or `<guid>#<k>`, part k = one mesh
+  node and one material. `list_mesh_parts` reports each part's name, material values, texture file
+  names and node transform; a part compiles to `DerivedData/<guid>_<k>.lsdmesh` in its node's space,
+  with any shear the Transform cannot hold kept in its vertices. Create Prefab from Parts writes a
+  prefab with one child per part (placed by the node transform) and a Material per file material.
+- **Thumbnails** (`editor/thumbnails.*`): meshes are rendered into a 128² target, Materials /
+  Instances / Material Graphs as a sphere with `MaterialCache::apply`, sounds drawn on the CPU from
+  `audio::waveform` peaks; each is saved as `DerivedData/Thumbnails/<guid>-<source time>.png` and
+  loaded from there on the next start. Behaviour trees and Lua scripts are drawn as text tiles.
+- `validate_assets` scans text assets for GUIDs no asset has (part keys too), oversize textures and
+  name prefixes.
 
 ## Rendering
 
@@ -131,10 +147,16 @@ The editor builds the light setup each frame (`editor/lighting.cpp`): lights fro
 nearest local lights first), cascades fitted to the camera, the camera's Post Process Volume, the
 fog, and the player's quality setting. Meshes outside the camera's frustum are culled first. Static meshes of 512+ triangles get up to
 three simpler LODs when they load (meshoptimizer simplify, sharing the LOD 0 vertices); the draw picks
-one from the mesh's bounding radius over its distance (`r.ForceLOD n` to inspect one).
+one from the mesh's bounding radius over its distance against the mesh's own LOD screen sizes (its
+import settings; `r.ForceLOD n` to inspect one). `pick_static_lod` does this for the main view and
+both shadow passes (casters use the camera's LOD), and culls a mesh past its Max Draw Distance or the
+distance a Cull Distance Volume gives its size (the volumes are gathered once per frame). **Box UV**
+meshes are cached variants (`MeshCache::get_box_uv`, key `<mesh>|box:x,y,z` at the object's scale
+rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis.
 
 The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
-backends). Its order: ambient occlusion (from depth, then a depth-aware blur, multiplied into the
+backends). Its order: ambient occlusion (from depth: 12 samples rotated by a 4×4 Bayer pattern, then
+a 4×4 depth-aware blur that sees every rotation once, so no noise is left; multiplied into the
 scene), TAA (the editor jitters the projection by a Halton offset; each pixel is found in last
 frame's output through `reproject`, clamped to its neighbours and blended 10 % per frame), depth of
 field (a disc gather sized by each pixel's blur), bloom, then the composite (tint, ACES, grading)
@@ -149,7 +171,9 @@ function, `Surface material_main(MaterialIn mi)`, in HLSL spelling. The backends
 lit shader at a marker (OpenGL maps `float3` / `lerp` / `frac` / `saturate` with macros) and compile
 static and skinned pipelines (`create_material_shader`). Parameters live in a 16-entry constant
 buffer, so instances only change data. The material cache recompiles a graph when its file changes;
-the graph window compiles its own preview 0.3 s after each edit.
+the graph window regenerates its preview's shader code 0.3 s after an edit and rebuilds the shader
+only when that code changed (building one stalls the frame on D3D12), so moving nodes, comments and
+parameter values cost nothing.
 
 ## Play
 
@@ -175,6 +199,15 @@ the graph window compiles its own preview 0.3 s after each edit.
   sound cues, material graphs and behaviour trees. A visual script compiles to Lua: each node is a
   code template (`$1` inputs, `$o1` outputs, `#0` exec chains), so a graph runs exactly like a
   hand-written script and the two cannot drift apart.
+- **Declared variables** (`script::GraphVariable`, saved in the `.lsdgraph`): the compiler emits
+  `properties = {...}` for Instance Editable numbers / booleans / text (the Details panel reads that
+  table to offer per-object values) and `defaults = {...}` for the rest; `ScriptSystem` copies both
+  onto `self` before `on_start`. The graph window's side panel (My Blueprint, variable Details,
+  Palette) edits them; undo covers them because it snapshots the graph text.
+- **Text**: `asset::format_text` fills `{0}`..`{9}` and picks `{0}|plural(zero=,one=,other=)` choices
+  by the language's rule; `lsd.text(key, ...)` formats with the host's current language.
+- **Save games** are Lua values as versioned JSON; `lsd.save_objects` / `load_objects` (Lua in the
+  prelude) store chosen components of objects by name through `lsd.get` / `lsd.set`.
 
 ### Planned: C, C++ and JavaScript gameplay (milestone 7)
 
@@ -214,23 +247,36 @@ types and fields by name). They become the public C API:
 
 ozz-animation behind `anim::SkinnedModel` (mesh + skeleton from FBX), `Clip` (every take, sampled
 at 30 fps, matched by bone name so animations can come from other files) and `Pose` (sampling,
-blending up to 4 clips, joint matrices for GPU skinning). An `AnimGraph` is a state machine of clip
-or 1D blend-space states with parameter-driven, crossfading transitions; the editor's animation
-player steps it each frame and fires notifies.
+blending up to 6 clips, joint matrices for GPU skinning). An `AnimGraph` is a state machine of clip,
+1D or 2D blend-space states with parameter-driven, crossfading transitions (2D: barycentric in the
+smallest triangle of samples around the point, the nearest edge outside them); the editor's
+animation player steps it each frame and fires notifies.
+
+**Morph targets**: `import_skinned` reads each blend channel's full shape as sparse per-vertex
+offsets (`MorphTarget` / `MorphDelta`, moved into model space like the vertices); `import_clips`
+samples animated channel weights at 30 fps into the clip. Each frame the animation player takes a
+weight per target (a SkeletalMesh Morphs row, else the playing clips' curves blended like the pose),
+and when the set of weights changes it mixes the offsets into a copy of the bind pose on the CPU
+(`apply_morphs`) and uploads it as that object's own vertex buffer, which the skinning shader then
+uses instead of the shared one.
 
 ## Audio
 
 miniaudio behind `audio::AudioSystem`: voices in Sound Class groups, each class routed through its
 Submix effect chain into a master group, an environment reverb and the device. Per-voice low-pass
-filters (Audio Volume muffling), 3D attenuation, concurrency limits, Sound Mixes (stacked volume
-adjustments with fades). Sound Cues are graphs evaluated when played (random, mixer, delay,
+filters, 3D attenuation, concurrency limits, Sound Mixes (stacked volume adjustments with fades).
+A voice's low-pass is the lower of what its caller sets (Audio Volume walls, occlusion when a
+physics ray from the listener is blocked) and its class's mix cutoff (adjusters faded in log space,
+inherited down the class tree). The project's Base Sound Mix is pushed whenever Play starts.
+`audio::waveform` decodes a file into per-column peaks for thumbnails. Sound Cues are graphs evaluated when played (random, mixer, delay,
 modulator...).
 
 ## Particles
 
 `particles::ParticleSystem` (a data asset of up to 8 emitters) and `ParticleInstance` (the CPU
-simulation: spawn rate and bursts, shapes, cone directions, gravity, wind, drag, colour and size over
-life, spin, local or world space). Each frame the editor builds camera-facing quads (sorted back to
+simulation: spawn rate and bursts, shapes, cone directions, gravity, wind, drag, colour and size from start to
+end or along Over Life keys (`size_at` / `color_at`), spin, local or world space). A Particle Effect
+with Auto Destroy is deleted by the editor loop once its instance reports `finished()` (Play only). Each frame the editor builds camera-facing quads (sorted back to
 front for alpha) and draws them after the opaque meshes.
 
 ## AI
@@ -241,7 +287,10 @@ front for alpha) and draws them after the opaque meshes.
 - `ai::BehaviorTree` is a flat array of nodes built from a `.lsdbt` graph; `BtRunner` ticks it from
   the root every frame (reactive selectors abort lower-priority branches; sequences remember where
   they were), against a `Blackboard` of named numbers and locations. Movement, random points and Lua
-  tasks are provided by the Play session through `BtHost`. Perception (sight range, field of view,
+  tasks are provided by the Play session through `BtHost`. Decorators and services are nodes with
+  one child: Condition (re-tested every tick, aborting its child when false), Loop, Cooldown (a
+  per-node time kept through aborts), Time Limit, Force Success and Service (a Lua call every
+  interval). Perception (sight range, field of view,
   physics line of sight; hearing by reported noises) writes into the blackboard.
 
 ## UI

@@ -133,6 +133,12 @@ world-anchored elements, the UI window with a designer canvas, documents' own Ja
 QuickJS-ng), game user settings with key rebinding, localisation, crash reports, frustum culling, auto
 LODs, asset validation, platform settings, Tracy / `stat unit`, smoke tests, Git source control in the
 Content Browser, a remote console (`-remote`), video-memory scaling.
+Since then (Nov 2026): multi-mesh files as parts + Create Prefab from Parts; morph targets (also
+animated in takes); 2D blend spaces; mesh Normals (Smooth by default, Solid / Import / Auto Smooth);
+Box UV; per-mesh LOD screen sizes, Max Draw Distance, Cull Distance Volumes; sound occlusion, mix
+low-pass, Base Sound Mix; particle Over Life keys and Auto Destroy; BT decorators / services;
+localisation {0} / plurals; lsd.save_objects; Blueprint panels in the graph window (My Blueprint,
+variable Details, Palette); thumbnails for materials (sphere), sounds (waveform), BT / Lua tiles.
 Post pass (draw_post, when a Post Process Volume applies): SSAO, TAA, depth of field, bloom, ACES,
 grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /

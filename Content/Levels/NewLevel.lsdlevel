@@ -35,11 +35,11 @@
     },
      "StaticMesh": {
       "mesh": "Cube",
-      "material": "",
+      "material": "77e5eb97a4ac6d8af4488e59230d8404",
       "color": {
-        "r": 0.541176498,
-        "g": 0.541176498,
-        "b": 0.556862772,
+        "r": 0.279945165,
+        "g": 0.279945314,
+        "b": 0.814671814,
         "a": 1
       },
       "collision": true,
@@ -492,7 +492,7 @@
       }
     },
      "AIController": {
-      "behavior_tree": "",
+      "behavior_tree": "6ddfd059159b1ea7080c3a1389847909",
       "sight_range": 15,
       "sight_angle": 120,
       "hearing_range": 12
