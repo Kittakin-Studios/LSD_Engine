@@ -629,6 +629,11 @@ follows unsaved changes. Drag the system into the viewport to place a **Particle
 | Wait, Random Location, Set Key, Clear Key | waiting, patrols, blackboard edits |
 | Run Script | calls a function of the agent's Lua script (return true / false / nothing = running) |
 | Is Set, Compare | conditions on blackboard keys |
+| Blackboard Condition | decorator: runs its one child only while Key <Op> Value holds (or is set / not set), stopping it the moment it does not |
+| Loop, Cooldown, Time Limit, Force Success | decorators: repeat the child, rest after it, give up after a time, ignore its failure |
+| Service | calls a Lua function every Interval seconds while its child runs (update a target key, look around) |
+
+Unreal attaches decorators and services to a node; here they are nodes with one child that wrap it.
 
 Perception fills the blackboard: **CanSeePlayer** (1 while in sight range, field of view and line
 of sight), **PlayerLocation** (last seen), **NoiseLocation** / **HeardNoise** (from

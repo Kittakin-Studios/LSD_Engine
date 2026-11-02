@@ -343,6 +343,20 @@ NodeDef g_bt_defs[] = {
      {kParent, {"Key", PinType::String, "CanSeePlayer"}}, 0, {}, 0, nullptr, {}},
     {"BtCompare", "Compare", "Conditions", "Succeeds if Key <Op> Value (Op: > < == !=)",
      {kParent, {"Key", PinType::String, "Health"}, {"Op", PinType::String, "<"}, {"Value", PinType::Float, "30"}}, 0, {}, 0, nullptr, {}},
+    // Decorators and services: one child each (Unreal attaches them to a node; here they wrap it).
+    {"BtCondition", "Blackboard Condition", "Decorators",
+     "Runs its child only while Key <Op> Value holds (Op: > < == != , is set, not set) and stops it the moment it does not (Unreal's Blackboard decorator, aborts self)",
+     {kParent, {"Key", PinType::String, "CanSeePlayer"}, {"Op", PinType::String, "is set"}, {"Value", PinType::Float, "0"}}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtLoop", "Loop", "Decorators", "Runs its child this many times (0 = forever); fails if the child fails",
+     {kParent, {"Count", PinType::Float, "3"}}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtCooldown", "Cooldown", "Decorators", "Fails for this many seconds after its child last finished (attacks, barks)",
+     {kParent, {"Seconds", PinType::Float, "5"}}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtTimeLimit", "Time Limit", "Decorators", "Fails its child if it runs longer than this (give up the chase)",
+     {kParent, {"Seconds", PinType::Float, "10"}}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtForceSuccess", "Force Success", "Decorators", "Its child's failure counts as success (optional steps in a sequence)",
+     {kParent}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
+    {"BtService", "Service", "Services", "Calls a function of the agent's Lua script every so often while its child runs (update a key, look around)",
+     {kParent, {"Function", PinType::String, "bt_update_target"}, {"Interval", PinType::Float, "0.5"}}, 0, {{"", PinType::Exec, ""}}, 0, nullptr, {}},
 };
 
 constexpr char kLuaPrelude[] = R"lua(-- Generated from a visual script (.lsdgraph). Edit the graph, not this file.

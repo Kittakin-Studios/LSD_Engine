@@ -56,6 +56,19 @@ bool Blackboard::is_set(const char* name) const {
     return e && (e->vector || e->value[0] != 0.0f);
 }
 
+namespace {
+
+// Compare / Condition: key <op> value, or (Condition) set / not set.
+bool test_key(const Blackboard& board, const BtNode& n) {
+    if (n.op == 4) return board.is_set(n.key);
+    if (n.op == 5) return !board.is_set(n.key);
+    const Blackboard::Entry* e = board.find(n.key);
+    const f32 v = e ? e->value[0] : 0.0f;
+    return n.op == 0 ? v > n.value : n.op == 1 ? v < n.value : n.op == 2 ? v == n.value : v != n.value;
+}
+
+} // namespace
+
 // ---- Runner ----
 
 void BtRunner::abort(const BehaviorTree& tree, u32 index, const BtHost& host) {
@@ -141,13 +154,56 @@ BtStatus BtRunner::run(const BehaviorTree& tree, u32 index, Blackboard& board, c
         case BtType::IsSet:
             result = board.is_set(n.key) ? BtStatus::Success : BtStatus::Failure;
             break;
-        case BtType::Compare: {
-            const Blackboard::Entry* e = board.find(n.key);
-            const f32 v = e ? e->value[0] : 0.0f;
-            const bool ok = n.op == 0 ? v > n.value : n.op == 1 ? v < n.value : n.op == 2 ? v == n.value : v != n.value;
-            result = ok ? BtStatus::Success : BtStatus::Failure;
+        case BtType::Compare:
+            result = test_key(board, n) ? BtStatus::Success : BtStatus::Failure;
+            break;
+        case BtType::Condition:
+            // Checked every tick it is reached, so a running child is cut off as soon as it no longer holds.
+            if (!n.child_count || !test_key(board, n)) {
+                if (n.child_count) abort(tree, n.children[0], host);
+                break;
+            }
+            result = run(tree, n.children[0], board, host, dt);
+            break;
+        case BtType::Loop: {
+            if (!n.child_count) break;
+            if (!resumed) s.child = 0;  // runs done
+            result = run(tree, n.children[0], board, host, dt);
+            if (result == BtStatus::Success) {
+                s.child += 1;
+                const bool forever = n.value <= 0.0f;
+                result = forever || static_cast<f32>(s.child) < n.value ? BtStatus::Running : BtStatus::Success;  // again next tick
+            }
             break;
         }
+        case BtType::Cooldown:
+            if (!n.child_count || (!resumed && clock_ < cooldown_until_[index])) break;
+            result = run(tree, n.children[0], board, host, dt);
+            if (result != BtStatus::Running) cooldown_until_[index] = clock_ + n.value;
+            break;
+        case BtType::TimeLimit:
+            if (!n.child_count) break;
+            s.time = (resumed ? s.time : 0.0f) + dt;
+            if (s.time > n.value) {
+                abort(tree, n.children[0], host);
+                break;
+            }
+            result = run(tree, n.children[0], board, host, dt);
+            break;
+        case BtType::ForceSuccess:
+            if (!n.child_count) break;
+            result = run(tree, n.children[0], board, host, dt) == BtStatus::Running ? BtStatus::Running : BtStatus::Success;
+            break;
+        case BtType::Service:
+            if (!n.child_count) break;
+            // On entry, then every `value` seconds while the branch stays active.
+            s.time = resumed ? s.time + dt : n.value;
+            if (s.time >= n.value) {
+                s.time = 0.0f;
+                if (host.run_script) host.run_script(host.user, n.text, dt);
+            }
+            result = run(tree, n.children[0], board, host, dt);
+            break;
         case BtType::RandomLocation: {
             Vec3 point;
             if (host.position && host.random_point && host.random_point(host.user, host.position(host.user), n.value, point)) {
@@ -173,6 +229,7 @@ void BtRunner::tick(const BehaviorTree& tree, Blackboard& board, const BtHost& h
         tree_ = &tree;
     }
     moved_ = false;
+    clock_ += dt;
     for (State& s : states_) s.ok = false;
     if (tree.count) run(tree, 0, board, host, dt);
 }

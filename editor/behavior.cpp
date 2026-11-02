@@ -46,6 +46,12 @@ struct Builder {
                  : std::strcmp(t, "BtRunScript") == 0      ? BtType::RunScript
                  : std::strcmp(t, "BtIsSet") == 0          ? BtType::IsSet
                  : std::strcmp(t, "BtCompare") == 0        ? BtType::Compare
+                 : std::strcmp(t, "BtCondition") == 0      ? BtType::Condition
+                 : std::strcmp(t, "BtLoop") == 0           ? BtType::Loop
+                 : std::strcmp(t, "BtCooldown") == 0       ? BtType::Cooldown
+                 : std::strcmp(t, "BtTimeLimit") == 0      ? BtType::TimeLimit
+                 : std::strcmp(t, "BtForceSuccess") == 0   ? BtType::ForceSuccess
+                 : std::strcmp(t, "BtService") == 0        ? BtType::Service
                                                            : BtType::Root;
         if (n.type == BtType::Root && std::strcmp(t, "BtRoot") != 0) return fail("Not a behaviour tree node", &node);
         // Settings by pin (index 0 is the parent wire).
@@ -55,7 +61,14 @@ struct Builder {
                 std::snprintf(n.key, sizeof n.key, "%s", node.values[1]);
                 n.value = static_cast<f32>(std::atof(node.values[2]));
                 break;
-            case BtType::Wait: n.value = static_cast<f32>(std::atof(node.values[1])); break;
+            case BtType::Wait:
+            case BtType::Loop:
+            case BtType::Cooldown:
+            case BtType::TimeLimit: n.value = static_cast<f32>(std::atof(node.values[1])); break;
+            case BtType::Service:
+                std::snprintf(n.text, sizeof n.text, "%s", node.values[1]);
+                n.value = static_cast<f32>(std::atof(node.values[2]));
+                break;
             case BtType::SetKey:
                 std::snprintf(n.key, sizeof n.key, "%s", node.values[1]);
                 std::snprintf(n.text, sizeof n.text, "%s", node.values[2]);
@@ -63,10 +76,12 @@ struct Builder {
             case BtType::ClearKey:
             case BtType::IsSet: std::snprintf(n.key, sizeof n.key, "%s", node.values[1]); break;
             case BtType::RunScript: std::snprintf(n.text, sizeof n.text, "%s", node.values[1]); break;
-            case BtType::Compare: {
+            case BtType::Compare:
+            case BtType::Condition: {
                 std::snprintf(n.key, sizeof n.key, "%s", node.values[1]);
                 const char* op = node.values[2];
-                n.op = std::strcmp(op, "<") == 0 ? 1 : std::strcmp(op, "==") == 0 ? 2 : std::strcmp(op, "!=") == 0 ? 3 : 0;
+                n.op = std::strcmp(op, "<") == 0 ? 1 : std::strcmp(op, "==") == 0 ? 2 : std::strcmp(op, "!=") == 0 ? 3
+                     : std::strcmp(op, "is set") == 0 ? 4 : std::strcmp(op, "not set") == 0 ? 5 : 0;
                 n.value = static_cast<f32>(std::atof(node.values[3]));
                 break;
             }

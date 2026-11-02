@@ -115,6 +115,58 @@ static void bt_tests() {
     (void)done;
     (void)chase;
     (void)patrol;
+
+    // Decorators and a service, each on its own small tree.
+    auto fresh = [&](BtType type, f32 value, const char* key = "", const char* text = "") {
+        t = BehaviorTree{};
+        const u32 r = add(BtType::Root), d = add(type, key, value, text);
+        link(r, d);
+        return d;
+    };
+    // Loop 3 x a one-tick script = success on the third tick.
+    const u32 deco1 = fresh(BtType::Loop, 3.0f);
+    link(deco1, add(BtType::RunScript, "", 0, "bt_done"));
+    BtRunner looper;
+    agent.scripts = 0;
+    for (int i = 0; i < 3; ++i) looper.tick(t, board, host, 0.1f);
+    CHECK(agent.scripts == 3 && looper.active(ids, 16) == 3);  // root, loop, script: done (not running)
+    // Blackboard Condition (is set): a running Wait is cut off the tick the key is cleared.
+    const u32 cond = fresh(BtType::Condition, 0.0f, "Alert");
+    t.nodes[cond].op = 4;
+    link(cond, add(BtType::Wait, "", 10.0f));
+    BtRunner guard;
+    Blackboard alert;
+    alert.set("Alert", 1.0f);
+    guard.tick(t, alert, host, 0.1f);
+    CHECK(guard.active(ids, 16) == 3);  // waiting under the condition
+    alert.clear("Alert");
+    guard.tick(t, alert, host, 0.1f);
+    CHECK(guard.active(ids, 16) == 0);  // the condition failed (so did the root): the Wait was stopped
+    // Cooldown 1 s: the script runs, then is refused until a second has passed.
+    const u32 deco2 = fresh(BtType::Cooldown, 1.0f);
+    link(deco2, add(BtType::RunScript, "", 0, "bt_done"));
+    BtRunner cooled;
+    agent.scripts = 0;
+    for (int i = 0; i < 5; ++i) cooled.tick(t, board, host, 0.3f);  // at 0.3 runs; 0.6, 0.9, 1.2 refused; 1.5 runs again
+    CHECK(agent.scripts == 2);
+    // Time Limit 0.5 s on a 10 s Wait: failed (and stopped) after the limit; Force Success hides a failure.
+    const u32 deco3 = fresh(BtType::TimeLimit, 0.5f);
+    link(deco3, add(BtType::Wait, "", 10.0f));
+    BtRunner limited;
+    for (int i = 0; i < 3; ++i) limited.tick(t, board, host, 0.2f);  // 0.6 s: over the limit (the next tick starts it again)
+    CHECK(limited.active(ids, 16) == 0);  // failed, the Wait stopped
+    const u32 deco4 = fresh(BtType::ForceSuccess, 0.0f);
+    link(deco4, add(BtType::IsSet, "Nothing"));
+    BtRunner forced;
+    forced.tick(t, board, host, 0.1f);
+    CHECK(forced.active(ids, 16) == 2);  // root and the decorator succeeded; the condition itself failed
+    // Service every 0.5 s over a long Wait: on entry, then at 0.5 and 1.0 s.
+    const u32 deco5 = fresh(BtType::Service, 0.5f, "", "bt_update");
+    link(deco5, add(BtType::Wait, "", 10.0f));
+    BtRunner serviced;
+    agent.scripts = 0;
+    for (int i = 0; i < 11; ++i) serviced.tick(t, board, host, 0.1f);
+    CHECK(agent.scripts == 3);
 }
 
 int main() {

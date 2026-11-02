@@ -21,6 +21,14 @@ enum class BtType : u8 {
     Compare,         // condition: key <op> value (op: 0 >, 1 <, 2 ==, 3 !=)
     RandomLocation,  // key = a reachable point within value metres
     RunScript,       // text: a Lua function on the agent: true = success, false = failure, nil = running
+    // Decorators and services (Unreal's, as nodes with one child):
+    Condition,       // runs the child only while key <op> value holds (op 0-3 as Compare, 4 is set, 5 is not set);
+                     // aborts it the moment it stops holding (Unreal's Blackboard decorator, Observer Aborts Self)
+    Loop,            // runs the child `value` times (0 = forever); fails when the child fails
+    Cooldown,        // fails for `value` seconds after the child last finished
+    TimeLimit,       // fails the child if it runs longer than `value` seconds
+    ForceSuccess,    // the child's failure counts as success
+    Service,         // text: a Lua function called every `value` seconds while the child runs (its result ignored)
 };
 
 constexpr u32 kMaxBtChildren = 4;
@@ -94,6 +102,8 @@ private:
     void abort(const BehaviorTree& tree, u32 index, const BtHost& host);
     const BehaviorTree* tree_ = nullptr;
     State states_[kMaxBtNodes];
+    f32 clock_ = 0.0f;                  // seconds this runner has ticked
+    f32 cooldown_until_[kMaxBtNodes] = {};  // Cooldown: kept through aborts
     bool moved_ = false;  // a Move To was started this tick: an interrupted one must not stop it
 };
 
