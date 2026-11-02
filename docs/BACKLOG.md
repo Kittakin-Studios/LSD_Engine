@@ -139,6 +139,7 @@ visual-script sounds, `stat audio`.
 - [x] Audio import: .wav .ogg .flac .mp3 dropped into Content become Sound assets (settings in their .meta); waveform thumbnails in the Content Browser (`audio::waveform`, cached like mesh thumbnails)
 - [~] Texture import (stb_image): PNG, JPG, TGA, BMP, PSD as Texture assets, mips built on load (colour mips averaged in linear light), Max Size per texture, sRGB / linear chosen by the material slot, the image as its Content Browser thumbnail, hot reload on save; needs EXR / HDR, BC compression in the data compiler, streaming
 - [~] Multiple meshes and materials per imported file; scene import as a prefab [Combine Meshes off]: parts (one per mesh node and material, FBX and glTF) as `<guid>#<k>` mesh keys compiled to their own .lsdmesh; Mesh > Create Prefab from Parts writes a prefab (a child per part with its node's pivot and transform; shear from non-uniformly scaled parents stays in the part's vertices) and a Material per file material (colour, metallic, roughness, base colour texture matched by file name); normal maps and glTF metallic-roughness maps matched too; needs the file's nested hierarchy (parts are all children of the root) (skeletal meshes, skeletons, animations: see Animation)
+- [x] Mesh normals per asset (import settings > Normals): Import / Smooth / Flat / Auto Smooth with a smoothing angle, smoothing by topology (shared positions, so UV seams leave no shading seams), area-weighted [Blender Shade Smooth / Auto Smooth, Unreal Normal Import Method]; rigged meshes keep the file's normals for now
 - [x] Reimport on source change, import settings per asset, batch import: changed sources recompile on the next scan, right-click > Reimport, each asset's .meta settings in Details (Save / Revert), File > Import... (several files), dropping files or whole folders (sub-folders kept)
 - [x] Live link to Blender/Maya: re-export pushes into the running editor and game **(S)** [Live Link]: Editor Preferences > Live Link Folder is watched each second; new / changed exports are copied into Content/LiveLink and hot-reload in the editor and Play (file based: a DCC add-on would have to be our own code, no GPL)
 
@@ -220,6 +221,36 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [x] Automated tests run from the editor: unit tests + "play this level for N seconds" smoke tests [Automation]: Tools > Smoke Test Level / `test.Smoke [s]` plays the level and reports the errors it logs; `-smoketest=<s>` does it headless for CI (exit code 0 / 1); Tools > Run Unit Tests / `test.Unit` runs ctest in the background into Saved/Logs/UnitTests.log
 - [~] Source control from the Content Browser (Git LFS, Perforce): check out, diff, history: Git status badges (M / A / R), History, Diff Against Last Commit, Submit (asset + .meta); needs Perforce, check out / locking (Git LFS locks), revert, a changelist window
 
+## Milestone 7 — Gameplay languages (C, C++, JavaScript)
+
+Gameplay so far is Lua and visual scripts. This milestone adds native code (C and C++, like Unreal's
+C++ project modules) and JavaScript, all on one API, while UI stays HTML / CSS with its own `.js`.
+
+Exit test: in one level, a door opened by a C++ behaviour and a pickup counted by a JavaScript script,
+edited and reloaded while the editor runs, then packaged and run from another folder.
+
+The shared core: every engine call scripts make already goes through `ScriptHost` (plain C function
+pointers) and the reflection tables. Both become the C API, so every language sees the same calls.
+
+### C and C++
+
+- [ ] C API (`engine/game_api/include/lsd/lsd_game.h`, plain C, versioned): entities (create, destroy, find, name, parent), transforms, components by type name through reflection (get / set fields, add, remove, has), input actions, traces and overlaps, spawn, sounds and mixes, UI documents, save games, timers, logging; `ScriptHost` calls exposed one to one [Unreal C++ API]
+- [ ] Game module: `Source/` in the project builds `Game.dll` with the engine's presets (MSVC / Clang), linked only against the C API; Tools > Compile (and Ctrl+Alt+F11) builds it, errors in the Message Log [C++ project module]
+- [ ] C++ layer: header-only wrappers over the C API (`lsd::game::Entity`, typed component access, `Vec3`, events) so C++ reads like the engine's own code
+- [ ] Native Script component: picks a behaviour class from the loaded module by name (like Script picks a .lua); `on_start`, `on_update(dt)`, `on_stop`, `on_hit`, `on_overlap`, UI actions; C behaviours register a struct of function pointers [Actor / Component Tick]
+- [ ] Your own components: `LSD_STRUCT(Component)` structs in `Source/` run through `lsd_reflect_gen`; the component registry becomes runtime (no fixed limit of 48) so they get Details, save / load, undo, Play copies and Lua / JS access like built-in ones [UCLASS / UPROPERTY]
+- [ ] Hot reload: the DLL is loaded from a copy (rebuilds are never locked); on reload, module components and behaviour state are saved through reflection, the old DLL unloaded, the new one loaded and the data restored; failing builds keep the old one running [Live Coding]
+- [ ] Debugging: a generated `.vscode/launch.json` / Visual Studio attach to the editor (F5), breakpoints in game code; crash reports name the module and line
+- [ ] Packaging: the module's Release build ships beside the exe and loads in game mode; a missing or older module is reported at start
+- [ ] Templates: File > New C++ Class (behaviour, component) writes the files into `Source/` [Add C++ Class]
+
+### JavaScript
+
+- [ ] `.js` Script assets: the Script component takes `.js` as well as `.lua`, on QuickJS-ng (already used by UI documents); the same events and the same `lsd` API [Puerts / UnrealJS-style scripting]
+- [ ] One binding list: the `lsd` functions are declared once and bound to Lua and JavaScript from it, so the two cannot drift apart
+- [ ] Hot reload of `.js` files (state kept in `self`), errors per script like Lua
+- [ ] Debugging: errors and logs with file and line; breakpoints later (QuickJS has no debugger of its own)
+
 ## v2 (after the vertical slice)
 
 - World: level streaming volumes, terrain (sculpt, paint layers, heightmaps, holes), foliage painting + procedural scatter rules, water bodies (lake, river, ocean) [Landscape, Foliage, PCG, Water]
@@ -235,7 +266,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - Audio: procedural audio graphs, spatial audio, dynamic music system [MetaSounds, Quartz]
 - Data: editor utility scripts and widgets (Lua + visual script running in the editor) [Editor Utility Widgets]
 - Assets: size map and asset audit, redirectors fix-up, bulk property editing [Size Map, Asset Audit, Property Matrix]
-- Build: plugins, C++ hot reload, DLC / patch packages [Live Coding, Chunking]
+- Build: plugins, DLC / patch packages [Chunking] (C++ hot reload moved to milestone 7)
 - Collaboration: multi-user editing in one level [Multi-User Editing]
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 - VR / XR via OpenXR **(S)**

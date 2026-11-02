@@ -62,7 +62,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs).
 
 | Area | Decision |
 | --- | --- |
-| Language | C++20 engine and editor; LuaJIT gameplay; visual scripts compiled to Lua |
+| Language | C++20 engine and editor. Gameplay: LuaJIT and visual scripts (compiled to Lua) now; milestone 7 adds C / C++ (a `Game.dll` from `Source/` over the C API `lsd_game.h`, hot reloaded) and JavaScript scripts (QuickJS-ng), all on one binding list over `ScriptHost` + reflection. UI: HTML / CSS (RmlUi) + each document's `.js` |
 | Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (UI only until the Vulkan SDK is installed). Built-in shaders are HLSL + a GLSL mirror kept in step |
 | Architecture | Data-oriented: entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets, hot reload everywhere |
 | Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
@@ -125,6 +125,7 @@ comments for the *why*. A known limitation gets `// shortcut: <limit>, <when to 
 | 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Exit test works |
 | 5 | Content editors: materials + material graphs, animation + anim graphs, audio, particles | Exit test works |
 | 6 | Vertical slice | Done: exit test works on this PC (package runs from another folder); every planned item in, some partial (BACKLOG [~]) |
+| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | Planned (BACKLOG milestone 7, ARCHITECTURE "Planned: C, C++ and JavaScript gameplay") |
 
 Milestone 6 has: packaging + game mode, save games, sky / height fog / post-process volume, navmesh +
 Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,

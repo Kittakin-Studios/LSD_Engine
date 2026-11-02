@@ -176,6 +176,36 @@ the graph window compiles its own preview 0.3 s after each edit.
   code template (`$1` inputs, `$o1` outputs, `#0` exec chains), so a graph runs exactly like a
   hand-written script and the two cannot drift apart.
 
+### Planned: C, C++ and JavaScript gameplay (milestone 7)
+
+One API, several languages. Everything a script can do already goes through two plain-data
+layers: `ScriptHost` (C function pointers the game fills in) and the reflection tables (component
+types and fields by name). They become the public C API:
+
+```text
+ Game.dll (C / C++, Source/)      .lua scripts        .js scripts        visual scripts (.lsdgraph)
+        |                              |                    |                       | compiled to Lua
+ lsd_game.h (C ABI) + C++ wrappers   LuaJIT bindings     QuickJS bindings  ---------+
+        \______________________________|____________________/
+                     one binding list over ScriptHost + reflection
+                                       |
+                        World, physics, audio, UI, AI (unchanged)
+```
+
+- **Game module**: `Source/` builds `Game.dll` against `lsd_game.h` only (a C header, so C works
+  and the ABI does not depend on the engine's compiler settings). The editor copies the DLL before
+  loading it, so rebuilding is never blocked by the file lock, and reloads it when a build finishes.
+- **Native Script** component: names a behaviour the module registered (a C++ class or a C struct of
+  function pointers); the play session calls its events where it calls Lua's today.
+- **Module components**: `LSD_STRUCT(Component)` in `Source/` goes through `lsd_reflect_gen` like
+  engine headers; the world's component registry becomes runtime so these types get pools,
+  Details, save / load, undo and Play copies. On hot reload their data is written out through
+  reflection and read back into the new types by field name (added fields take defaults).
+- **JavaScript**: the Script component accepts `.js`; a JS script system on QuickJS-ng mirrors the
+  Lua one (own environment per instance, `self`, events, reload on change). The `lsd` functions are
+  declared once and bound to both Lua and JS from that list.
+- UI keeps HTML / CSS on RmlUi with each document's own `.js` (`engine/ui/src/ui_script.*`).
+
 ## Animation
 
 ozz-animation behind `anim::SkinnedModel` (mesh + skeleton from FBX), `Clip` (every take, sampled

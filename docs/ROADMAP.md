@@ -12,3 +12,4 @@ Full detail: [engine plan doc](https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW
 | 4 | Gameplay layer | Prefabs, components, Lua + visual scripting, input, physics, movement | A character runs, input wired with no code |
 | 5 | Content editors | Material and animation graphs, audio assets and mixes, particle editor | Audio worked example works end to end |
 | 6 | Vertical slice | Lighting, post, UI designer, navmesh, behaviour trees, save game, packaging | Packaged level runs on another PC |
+| 7 | Gameplay languages | C / C++ game module (C API, C++ wrappers, Native Script, own components, hot reload), JavaScript gameplay scripts | A door opens from a C++ behaviour, a pickup from a JavaScript one, in the packaged game |
