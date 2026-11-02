@@ -3,7 +3,8 @@
 How to use LSD_Engine to build a game. Written for people who know Unreal Engine: every feature is
 mapped to its Unreal name. For how the engine works inside, see [ARCHITECTURE.md](ARCHITECTURE.md);
 for step-by-step projects, see [EXAMPLES.md](EXAMPLES.md); for game code in C / C++ and every
-command, see [CODING.md](CODING.md).
+command, see [CODING.md](CODING.md); to start coding step by step, see
+[How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md).
 
 Contents
 
