@@ -26,6 +26,8 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Widget = "Choice:Box,Mesh", Tooltip = "Box: the bounds (fast). Mesh: the triangles themselves (arches, ramps, stairs; Unreal's Use Complex As Simple)")
     u32 collision_shape = 0;
     LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "The surface's friction and bounciness") char physical_material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Box-projected UVs from the object's size: one texture tile per metre on every face, however it is scaled (blockout walls and floors)")
+    bool box_uv = false;
 };
 
 // Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),

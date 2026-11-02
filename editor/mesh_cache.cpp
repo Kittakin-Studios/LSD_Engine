@@ -3,6 +3,7 @@
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/log.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -84,17 +85,33 @@ bool MeshCache::load(CachedMesh& entry) {
     asset::MeshBounds bounds;
     asset::Guid guid;
     i32 part = -1;
-    if (!asset::parse_mesh_key(entry.key, guid, part)) {
+    char key[80];  // without a "|box:" suffix
+    std::snprintf(key, sizeof key, "%s", entry.key);
+    Vec3 box;
+    char* suffix = std::strstr(key, "|box:");
+    const bool boxed = suffix && std::sscanf(suffix + 5, "%f,%f,%f", &box.x, &box.y, &box.z) == 3;
+    if (suffix) *suffix = '\0';
+    if (!asset::parse_mesh_key(key, guid, part)) {
         if (entry.gpu.index_count) return true;  // built-ins never change
-        if (!make_builtin(entry.key, allocator_, data)) return false;
+        if (!make_builtin(key, allocator_, data)) return false;
         bounds = asset::compute_bounds(data);
     } else {
         char compiled[300];
-        if (!asset::compile_mesh_key(registry_, entry.key, data_dir_, allocator_, compiled, sizeof compiled)) return false;
+        if (!asset::compile_mesh_key(registry_, key, data_dir_, allocator_, compiled, sizeof compiled)) return false;
         const i64 time = file_time(compiled);
         if (entry.gpu.index_count && time == entry.compiled_time) return true;  // already current
         if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
         entry.compiled_time = time;
+    }
+    if (boxed) {  // project each vertex onto the plane its normal faces most, in metres
+        for (u32 i = 0; i < data.vertex_count; ++i) {
+            rhi::MeshVertex& v = data.vertices[i];
+            const f32 x = v.position[0] * box.x, y = v.position[1] * box.y, z = v.position[2] * box.z;
+            const f32 ax = std::fabs(v.normal[0]), ay = std::fabs(v.normal[1]), az = std::fabs(v.normal[2]);
+            const bool side_x = ax >= ay && ax >= az, side_y = !side_x && ay >= az;
+            v.uv[0] = side_x ? (v.normal[0] > 0.0f ? y : -y) : side_y ? (v.normal[1] > 0.0f ? -x : x) : x;
+            v.uv[1] = side_x || side_y ? -z : (v.normal[2] > 0.0f ? -y : y);  // walls upright
+        }
     }
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
     destroy_lods(device_, entry);
@@ -138,6 +155,14 @@ const CachedMesh* MeshCache::get(const char* key) {
     if (entry.failed) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", key);
     meshes_.push_back(entry);
     return entry.failed ? nullptr : &meshes_[meshes_.size() - 1];
+}
+
+const CachedMesh* MeshCache::get_box_uv(const char* mesh, Vec3 scale) {
+    auto cm = [](f32 v) { return std::round(std::fabs(v) * 100.0f) / 100.0f; };
+    char key[80];
+    std::snprintf(key, sizeof key, "%s|box:%g,%g,%g", mesh, static_cast<f64>(cm(scale.x)), static_cast<f64>(cm(scale.y)), static_cast<f64>(cm(scale.z)));
+    const CachedMesh* boxed = get(key);
+    return boxed ? boxed : get(mesh);
 }
 
 void MeshCache::hot_reload() {

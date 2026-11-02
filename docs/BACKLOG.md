@@ -84,7 +84,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 - [~] Play-in-Editor (Alt+P / Esc): play in the viewport from the Player Start, mouse capture (Shift+F1), Pause + frame step (]), Eject / Possess (F8: editor camera and selection while the game runs), changes revert on Stop; Simulate (Alt+S, `simulate`: runs ejected with the editor camera); needs play in a new window [PIE]
 - [x] Keep simulation changes: copy a property or object from PIE back to the editor world [Keep Simulation Changes]: Outliner right-click > Keep Simulation Changes (K while ejected) copies the selected objects' components back into the level on Stop, as one undo step
 - [x] Volumes: Blocking, Kill and Trigger (on_overlap_begin / end to scripts; point tests for now), Post Process, Audio, Nav Mesh Bounds, Nav Modifier (cut out of the navmesh), Lightmass Importance
-- [~] Blockout: basic shapes scaled with the gizmo, collision on by default; needs box UVs, resize handles [BSP / Modeling Mode basics]
+- [~] Blockout: basic shapes scaled with the gizmo, collision on by default; Box UV on the Static Mesh (box-projected, one tile per metre at any scale: a cached mesh variant per size); needs resize handles [BSP / Modeling Mode basics]
 - [x] Visual debugging: draw debug lines/shapes/text from scripts, persistent or for N seconds: `lsd.draw_line` / `draw_sphere` / `draw_box` / `draw_text` and Draw Debug Line / Sphere / String nodes, drawn over the viewport through the player's camera (editor only, always on top)
 
 ## Milestone 4 — Gameplay layer

@@ -15,7 +15,7 @@ namespace lsd::editor {
 
 struct CachedMesh {
     static constexpr u32 kMaxLods = 4;  // LOD 0 is `gpu`; the others share its vertices
-    char key[40];
+    char key[80];  // the component's mesh, plus "|box:x,y,z" for a Box UV variant
     render::GpuMesh gpu;
     rhi::BufferHandle lod_indices[kMaxLods];  // [0] unused
     u32 lod_index_count[kMaxLods];
@@ -36,6 +36,10 @@ public:
 
     // nullptr if the mesh cannot be loaded.
     const CachedMesh* get(const char* key);
+    // A copy of `mesh` with box-projected UVs at `scale` (one texture tile per metre on every face;
+    // Unreal's BSP / Modeling auto UVs), so scaled blockout shapes do not stretch their textures.
+    // shortcut: one variant per distinct scale (rounded to 1 cm); fine for blockouts, not for thousands of sizes
+    const CachedMesh* get_box_uv(const char* mesh, Vec3 scale);
     void hot_reload();
 
     // The mesh's positions and triangles on the CPU, for mesh and convex collision; read on first

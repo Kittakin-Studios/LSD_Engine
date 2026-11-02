@@ -761,8 +761,8 @@ UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in L
 | Category | Components |
 | --- | --- |
 | Common | Transform |
-| Rendering | Static Mesh |
-| Animation | Skeletal Mesh |
+| Rendering | Static Mesh (**Box UV**: one texture tile per metre on every face however it is scaled, for blockout walls and floors) |
+| Animation | Skeletal Mesh (**Morphs**: morph target weights) |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
 | Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) follows it |

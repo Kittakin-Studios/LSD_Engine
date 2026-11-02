@@ -323,9 +323,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::world::Entity e = world.owner(type, i);
         if ((!stats.playing || stats.ejected) && world.hidden_in_hierarchy(e)) continue;  // hidden in the editor, not in the game
-        const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
-        if (!mesh) continue;
         const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
+                                    lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
+        const lsd::editor::CachedMesh* mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
+        if (!mesh) continue;
         const lsd::Mat4 mvp = view_proj * m;
         if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
             ++stats.stat_culled;
