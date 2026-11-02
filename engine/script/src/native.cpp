@@ -363,14 +363,14 @@ void ScriptSystem::add_natives(world::Entity root) {
             if (!inside) continue;
         }
         const auto& component = *static_cast<const world::NativeScript*>(world_->at(type, i));
-        if (!component.behaviour[0]) continue;
-        const lsd_behaviour* b = module_->find(component.behaviour);
+        if (!component.script[0]) continue;
+        const lsd_behaviour* b = module_->find(component.script);
         if (!b) {
-            LSD_LOG_WARN("game", "%s: no behaviour '%s' in the game module (Tools > Compile Game Code)", world_->name(e), component.behaviour);
+            LSD_LOG_WARN("game", "%s: no C / C++ script '%s' in the game code (Tools > Compile Game Code)", world_->name(e), component.script);
             continue;
         }
         if (native_count_ == sizeof natives_ / sizeof natives_[0]) {
-            LSD_LOG_WARN("game", "Too many native behaviours: %s does not run", world_->name(e));
+            LSD_LOG_WARN("game", "Too many C / C++ scripts: %s does not run", world_->name(e));
             continue;
         }
         void* state = make_state(*b);

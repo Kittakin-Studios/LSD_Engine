@@ -330,13 +330,13 @@ struct Script {
     LSD_PROPERTY(Save) List<ScriptProperty, 16> properties;
 };
 
-// A C / C++ behaviour from the project's game module (Source/ -> Game.dll, lsd_game.h): the same
-// events as a Script, written in native code (Unreal: an Actor Component class from your C++ module).
+// A C or C++ script from the project's game code (Source/ -> Game.dll, lsd_game.h): the same events
+// as a Lua Script, compiled (Unreal: an Actor Component class from your C++ module).
 LSD_STRUCT(Component, Category = "Gameplay")
 struct NativeScript {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Behaviour", Tooltip = "A behaviour the game module registered (Tools > Compile Game Code builds it)") char behaviour[64] = "";
-    // This object's values for the behaviour's properties (shown in Details under it).
+    LSD_PROPERTY(Edit, Widget = "NativeScript", Tooltip = "A C / C++ script from Source/ (Tools > New C / C++ Script makes one, Compile Game Code builds them)") char script[64] = "";
+    // This object's values for the script's properties (shown in Details under it).
     LSD_PROPERTY(Save) List<ScriptProperty, 16> properties;
 };
 

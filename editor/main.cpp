@@ -837,21 +837,24 @@ void register_console(EditorState& s) {
     }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
     console::add_command("game.Compile",[](void*, const char*) { lsd::editor::game_module::compile(); }, &s,
                          "Tools > Compile Game Code: build Source/ into Binaries/Game.dll (it reloads by itself)");
-    console::add_command("game.NewBehaviour", [](void*, const char* args) {
+    console::add_command("game.NewScript", [](void*, const char* args) {  // "Door" or "Door c"
+        char name[64] = "", language[8] = "";
+        std::sscanf(args, "%63s %7s", name, language);
+        const bool c = std::strcmp(language, "c") == 0 || std::strcmp(language, "C") == 0;
         char message[300];
-        if (lsd::editor::game_module::new_behaviour(args, message, sizeof message)) {
+        if (lsd::editor::game_module::new_script(name, c, message, sizeof message)) {
             LSD_LOG_INFO("game", "%s", message);
             lsd::editor::game_module::compile();
         } else {
             LSD_LOG_WARN("game", "%s", message);
         }
-    }, &s, "game.NewBehaviour <Name>: Tools > New C++ Behaviour (Source/<Name>.cpp from the template), then compile");
-    console::add_command("game.Behaviours", [](void*, const char*) {
+    }, &s, "game.NewScript <Name> [c]: Tools > New C / C++ Script (Source/<Name>.cpp, or .c with c), then compile");
+    console::add_command("game.Scripts", [](void*, const char*) {
         const lsd::script::NativeModule& m = lsd::editor::game_module::module();
-        std::string out = lsd::editor::game_module::loaded() ? "" : "(no game module loaded: compile Source/ first)\n";
+        std::string out = lsd::editor::game_module::loaded() ? "" : "(no C / C++ scripts loaded: compile Source/ first)\n";
         for (lsd::u32 i = 0; i < m.count; ++i) out += std::string(m.names[i]) + "\n";
-        lsd::editor::remote::print(out.empty() ? "(the game module registers no behaviours)" : out.c_str());
-    }, &s, "The C / C++ behaviours the loaded game module registered");
+        lsd::editor::remote::print(out.empty() ? "(the game code has no scripts)" : out.c_str());
+    }, &s, "The C / C++ scripts the compiled game code has");
     console::add_command("log.Tail", [](void*, const char* args) {
         const int n = args[0] ? std::atoi(args) : 50;
         lsd::editor::remote::print(lsd::editor::recent_log(n > 0 ? static_cast<lsd::u32>(n) : 50u).c_str());

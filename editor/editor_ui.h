@@ -163,7 +163,7 @@ struct EditorState {
     GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
     bool user_settings_changed = false;         // main.cpp applies and saves them
     bool show_debugger = false;        // Tools > Lua Debugger
-    bool new_behaviour_popup = false;  // Tools > New C++ Behaviour asks for a name
+    bool new_script_popup = false;     // Tools > New C / C++ Script asks for a name and language
     static constexpr u32 kMaxKept = 64;
     world::Entity kept[kMaxKept];             // Keep Simulation Changes: copied back into the level when Play stops
     u32 kept_count = 0;

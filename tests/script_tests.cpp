@@ -260,7 +260,7 @@ struct Climber {
         if (std::strcmp(name, "ping") == 0) lsd::game::call(other, "pong", self);
     }
 };
-LSD_BEHAVIOUR(Climber)
+LSD_SCRIPT(Climber)
 LSD_GAME_MODULE()
 
 // A C behaviour registered by hand, as a .c file would.
@@ -282,7 +282,7 @@ static void test_native_behaviours() {
     c.state_size = sizeof(int);
     c.on_start = c_start;
     lsd_api_ptr->register_behaviour(module.registry(), &c);
-    CHECK(module.count == 2 && module.find("Climber") && module.find("Pusher") && module.find("Climber")->property_count == 1);
+    CHECK(module.count == 3 && module.find("Climber") && module.find("CMover") && module.find("Pusher") && module.find("Climber")->property_count == 1);
     char text[32];
     script::native_property_default(*module.find("Climber"), module.find("Climber")->properties[0], text, sizeof text);
     CHECK(std::strcmp(text, "2") == 0);
@@ -295,29 +295,32 @@ static void test_native_behaviours() {
         World w(heap);
         const Entity a = w.create("A"), b = w.create("B"), p = w.create("P");
         auto* native = w.add<NativeScript>(a);
-        std::snprintf(native->behaviour, sizeof native->behaviour, "Climber");
+        std::snprintf(native->script, sizeof native->script, "Climber");
         ScriptProperty speed;
         std::snprintf(speed.name, sizeof speed.name, "speed");
         std::snprintf(speed.value, sizeof speed.value, "4");
         native->properties.push_back(speed);
         std::snprintf(w.add<Script>(b)->script, sizeof(Script::script), "graph");
-        std::snprintf(w.add<NativeScript>(p)->behaviour, sizeof(NativeScript::behaviour), "Pusher");
+        std::snprintf(w.add<NativeScript>(p)->script, sizeof(NativeScript::script), "Pusher");
+        const Entity m = w.create("M");
+        std::snprintf(w.add<NativeScript>(m)->script, sizeof(NativeScript::script), "CMover");
         script::ScriptHost host;
         script::ScriptSystem scripts;
         scripts.set_native_module(&module);
         scripts.start(w, host, path_of, nullptr);
-        CHECK(scripts.native_count() == 2 && scripts.error_count() == 0);
+        CHECK(scripts.native_count() == 3 && scripts.error_count() == 0);
         CHECK(w.get<Transform>(b)->position.z == 7.0f);   // Lua -> C++ -> Lua
         CHECK(w.get<Transform>(p)->position.x == 5.0f);   // the C behaviour started
         scripts.update(0.5f);
         CHECK(std::fabs(w.get<Transform>(a)->position.z - 2.0f) < 1e-5f);  // speed 4 from the object's override
+        CHECK(std::fabs(w.get<Transform>(m)->position.x - 0.5f) < 1e-5f);  // the self-registered C script ran
         CHECK(scripts.send(a, "on_hit", b) == 1 && scripts.send(a, "on_hit", b) == 1);
         CHECK(w.get<Transform>(a)->rotation.z == 20.0f);
         CHECK(scripts.run("assert(lsd.call(lsd.find('A'), 'ping', lsd.find('B')) == 1)"));  // reaches the behaviour
         scripts.stop_natives();  // a module reload: stop, swap, start again
         CHECK(scripts.native_count() == 0);
         scripts.start_natives();
-        CHECK(scripts.native_count() == 2);
+        CHECK(scripts.native_count() == 3);
         scripts.stop();
         CHECK(scripts.native_count() == 0);
     }

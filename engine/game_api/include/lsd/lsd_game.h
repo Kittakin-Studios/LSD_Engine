@@ -53,6 +53,9 @@ typedef struct lsd_behaviour {
     int property_count;
 } lsd_behaviour;
 
+/* A C / C++ script is the same thing: code on an object through its Native Script component. */
+typedef lsd_behaviour lsd_script;
+
 typedef struct lsd_registry lsd_registry;
 
 /* Everything the engine offers, filled in by the engine. Use the lsd_* functions below. */
@@ -131,6 +134,23 @@ extern const lsd_api* lsd_api_ptr;
 #endif
 
 static inline void lsd_register_behaviour(lsd_registry* r, const lsd_behaviour* b) { lsd_api_ptr->register_behaviour(r, b); }
+static inline void lsd_register_script(lsd_registry* r, const lsd_script* s) { lsd_api_ptr->register_behaviour(r, s); }
+
+/* C scripts register themselves when the module loads: after a function that calls
+ * lsd_register_script, put LSD_C_SCRIPT(that_function) in the same .c file. The module's
+ * LSD_GAME_MODULE() (GameModule.cpp) collects them. */
+void lsd_game_add_c_script(void (*register_fn)(lsd_registry* registry));
+#if defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+/* A pointer in the C runtime's initializer table: runs when the DLL loads, before any C++ static. */
+#define LSD_C_SCRIPT(register_fn)                                                                       \
+    static void lsd_auto_##register_fn(void) { lsd_game_add_c_script(register_fn); }                  \
+    __declspec(allocate(".CRT$XCU")) void (*lsd_auto_ptr_##register_fn)(void) = lsd_auto_##register_fn; \
+    __pragma(comment(linker, "/include:lsd_auto_ptr_" #register_fn))
+#else
+#define LSD_C_SCRIPT(register_fn)                                                                       \
+    __attribute__((constructor)) static void lsd_auto_##register_fn(void) { lsd_game_add_c_script(register_fn); }
+#endif
 
 static inline void lsd_vlog(int error, const char* format, va_list args) {
     char text[1024];

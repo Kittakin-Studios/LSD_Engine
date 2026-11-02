@@ -1,5 +1,5 @@
 #pragma once
-// The project's game code (Unreal: the project's C++ module). Source/ builds Binaries/Game.dll against
+// The project's C / C++ scripts (Unreal: the project's C++ module). Source/ builds Binaries/Game.dll against
 // lsd_game.h; the editor loads it from a copy (so a rebuild is never blocked by the loaded file) and
 // reloads it whenever the file changes, also during Play. Packaged games load it once.
 #include "lsd/script/native.h"
@@ -18,8 +18,8 @@ void compile();
 bool compiling();
 void shutdown();  // waits for a running compile
 
-// Tools > New C++ Behaviour: Source/<Name>.cpp from a template, plus Source/CMakeLists.txt and
-// Source/GameModule.cpp when they are missing. False with the reason in `message`.
-bool new_behaviour(const char* name, char* message, usize capacity);
+// Tools > New C / C++ Script: Source/<Name>.cpp (or .c when `c`) from a template, plus
+// Source/CMakeLists.txt and Source/GameModule.cpp when they are missing. False with the reason in `message`.
+bool new_script(const char* name, bool c, char* message, usize capacity);
 
 } // namespace lsd::editor::game_module

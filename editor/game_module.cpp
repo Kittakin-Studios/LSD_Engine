@@ -168,17 +168,16 @@ else()
 endif()
 )";
 
-constexpr char kGameModule[] = R"(// The game module's entry point (exactly one per module). Behaviours register themselves with
-// LSD_BEHAVIOUR in their own files; a C behaviour calls lsd_register_behaviour from a function
-// passed to LSD_GAME_MODULE_C instead (see docs/CODING.md).
+constexpr char kGameModule[] = R"(// The game code's entry point (exactly one): it collects every C++ script (LSD_SCRIPT) and every
+// C script (LSD_C_SCRIPT) in Source/ when the editor or the game loads Game.dll. Leave it as it is.
 #include <lsd/game.hpp>
 
 LSD_GAME_MODULE()
 )";
 
-constexpr char kBehaviour[] = R"(// $NAME: a behaviour (Unreal: an Actor Component class). Put it on an object: Details > Add
-// Component > Native Script, Behaviour = $NAME. Tools > Compile Game Code (Ctrl+Alt+F11) builds it;
-// it reloads by itself, also while playing. Every command: docs/CODING.md.
+constexpr char kCppScript[] = R"(// $NAME: a C++ script (Unreal: an Actor Component class). Put it on an object: Details > Add
+// Component > Native Script, Script = $NAME. Tools > Compile Game Code (Ctrl+Alt+F11) builds it; it
+// reloads by itself, also while playing. Every command: docs/CODING.md.
 #include <lsd/game.hpp>
 
 using namespace lsd::game;
@@ -199,7 +198,58 @@ struct $NAME {
     // Also available: on_stop(self), on_hit(self, other), on_overlap_begin(self, other),
     // on_overlap_end(self, other), on_event(self, name, other) for lsd.call / Call Event / UI actions.
 };
-LSD_BEHAVIOUR($NAME)
+LSD_SCRIPT($NAME)
+)";
+
+constexpr char kCScript[] = R"(/* $NAME: a C script (Unreal: an Actor Component class). Put it on an object: Details > Add
+ * Component > Native Script, Script = $NAME. Tools > Compile Game Code (Ctrl+Alt+F11) builds it; it
+ * reloads by itself, also while playing. Every command: docs/CODING.md (C names start with lsd_). */
+#include <lsd/lsd_game.h>
+#include <stdlib.h>
+
+/* Per-object state. */
+typedef struct $NAME {
+    float speed; /* degrees a second; each object can change it in Details */
+} $NAME;
+
+static void* $NAME_create(void) {
+    $NAME* state = ($NAME*)calloc(1, sizeof($NAME));
+    if (state) state->speed = 90.0f; /* defaults */
+    return state;
+}
+
+static void $NAME_destroy(void* state) { free(state); }
+
+static void $NAME_start(lsd_entity self, void* state) {
+    (void)state;
+    lsd_log("%s: $NAME started", lsd_name(self));
+}
+
+static void $NAME_update(lsd_entity self, void* state, float dt) {
+    lsd_vec3 r = lsd_rotation(self);
+    r.z += (($NAME*)state)->speed * dt;
+    lsd_set_rotation(self, r);
+}
+
+/* Also available: on_stop, on_hit, on_overlap_begin, on_overlap_end, on_event (see lsd_game.h). */
+
+static const lsd_property $NAME_properties[] = {
+    {"speed", LSD_FLOAT, offsetof($NAME, speed), 0},
+};
+
+static void $NAME_register(lsd_registry* registry) {
+    lsd_script script = {0};
+    script.name = "$NAME";
+    script.state_size = sizeof($NAME);
+    script.create = $NAME_create;
+    script.destroy = $NAME_destroy;
+    script.on_start = $NAME_start;
+    script.on_update = $NAME_update;
+    script.properties = $NAME_properties;
+    script.property_count = 1;
+    lsd_register_script(registry, &script);
+}
+LSD_C_SCRIPT($NAME_register)
 )";
 
 } // namespace
@@ -243,7 +293,7 @@ bool load() {
         unload();
         return false;
     }
-    LSD_LOG_INFO("game", "Game code loaded: %u behaviour%s", g_module.count, g_module.count == 1 ? "" : "s");
+    LSD_LOG_INFO("game", "C / C++ scripts loaded: %u", g_module.count);
     return true;
 }
 
@@ -260,7 +310,7 @@ void compile() {
     if (g_compiling) return;
     std::error_code error;
     if (!fs::exists("Source/CMakeLists.txt", error)) {
-        LSD_LOG_WARN("compile", "No game code yet: Tools > New C++ Behaviour makes Source/ with a first behaviour");
+        LSD_LOG_WARN("compile", "No C / C++ scripts yet: Tools > New C / C++ Script makes Source/ with a first one");
         return;
     }
     const std::string include = api_include_dir();
@@ -292,21 +342,24 @@ void shutdown() {
     if (g_compile.joinable()) g_compile.join();
 }
 
-bool new_behaviour(const char* name, char* message, usize capacity) {
+bool new_script(const char* name, bool c, char* message, usize capacity) {
     bool valid = name && std::isalpha(static_cast<unsigned char>(name[0]));
-    for (const char* c = name; valid && *c; ++c) valid = std::isalnum(static_cast<unsigned char>(*c)) || *c == '_';
+    for (const char* ch = name; valid && *ch; ++ch) valid = std::isalnum(static_cast<unsigned char>(*ch)) || *ch == '_';
     if (!valid) {
-        std::snprintf(message, capacity, "A behaviour name is a C++ name: letters, digits and _, starting with a letter");
+        std::snprintf(message, capacity, "A script name is a C / C++ name: letters, digits and _, starting with a letter");
         return false;
     }
     std::error_code error;
     fs::create_directories("Source", error);
-    const fs::path file = fs::path("Source") / (std::string(name) + ".cpp");
-    if (fs::exists(file, error)) {
-        std::snprintf(message, capacity, "%s already exists", file.generic_string().c_str());
-        return false;
+    const fs::path file = fs::path("Source") / (std::string(name) + (c ? ".c" : ".cpp"));
+    for (const char* extension : {".c", ".cpp"}) {  // one script per name, whatever its language
+        const fs::path existing = fs::path("Source") / (std::string(name) + extension);
+        if (fs::exists(existing, error)) {
+            std::snprintf(message, capacity, "%s already exists", existing.generic_string().c_str());
+            return false;
+        }
     }
-    std::string text = kBehaviour;
+    std::string text = c ? kCScript : kCppScript;
     for (usize at; (at = text.find("$NAME")) != std::string::npos;) text.replace(at, 5, name);
     const bool ok = write_if_missing("Source/CMakeLists.txt", kCMakeLists) && write_if_missing("Source/GameModule.cpp", kGameModule) && write_if_missing(file, text);
     std::snprintf(message, capacity, ok ? "Wrote %s: compiling it now" : "Could not write %s", file.generic_string().c_str());

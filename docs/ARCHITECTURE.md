@@ -234,7 +234,10 @@ function pointers, state size or create / destroy, property offsets) into a `Nat
 events sent at start reach them, then calls their `on_start`; `update`, `send`, `broadcast` and Lua's
 `lsd.call` / `lsd.broadcast` reach them; `on_hit` / overlaps map to their fields, other names to
 `on_event`. The C++ layer turns a struct's member functions into those pointers with `requires`
-checks and registers it from a static `Registrar`. The editor loads `Binaries/Game.dll` from a
+checks and registers it from a static `Registrar`. A C file's `LSD_C_SCRIPT(fn)` puts a pointer in
+the C runtime's initializer table (`.CRT$XCU` on MSVC, `constructor` elsewhere) that hands `fn` to
+`lsd_game_add_c_script`, defined by `LSD_GAME_MODULE()`, so C and C++ scripts register alike. User
+wording is "C / C++ script"; the C API keeps `lsd_behaviour` with `lsd_script` as its alias. The editor loads `Binaries/Game.dll` from a
 numbered copy in `Intermediate/GameModule/`, checks it once a second, and on a change runs
 `stop_natives` -> reload -> `start_natives` (state starts over). Tools > Compile Game Code writes
 `Intermediate/compile_game.bat` (vcvars from vswhere, CMake + Ninja, Debug with the release C

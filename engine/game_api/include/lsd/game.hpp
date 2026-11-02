@@ -1,5 +1,5 @@
-// lsd/game.hpp: the C++ layer over lsd_game.h (header-only). A behaviour is a plain struct with the
-// events it wants as members; LSD_BEHAVIOUR(Type) registers it. One source file says LSD_GAME_MODULE().
+// lsd/game.hpp: the C++ layer over lsd_game.h (header-only). A C++ script is a plain struct with the
+// events it wants as members; LSD_SCRIPT(Type) registers it. One source file says LSD_GAME_MODULE().
 //
 //   struct Door {
 //       float open_angle = 90.0f;                                   // default for every object
@@ -9,7 +9,7 @@
 //       void on_start(lsd::game::Entity self) {}
 //       void on_update(lsd::game::Entity self, float dt) {}
 //   };
-//   LSD_BEHAVIOUR(Door)
+//   LSD_SCRIPT(Door)
 //
 // Events (all optional): on_start(self), on_update(self, dt), on_stop(self), on_hit(self, other),
 // on_overlap_begin(self, other), on_overlap_end(self, other), on_event(self, name, other).
@@ -166,18 +166,26 @@ template <typename T> struct Registrar {
     }
 };
 
+inline std::vector<void (*)(lsd_registry*)>& c_scripts() {  // C files' LSD_C_SCRIPT registrations
+    static std::vector<void (*)(lsd_registry*)> list;
+    return list;
+}
+
 inline void register_all(lsd_registry* registry) {
     for (auto* fn : registrars()) fn(registry);
+    for (auto* fn : c_scripts()) fn(registry);
 }
 
 } // namespace detail
 } // namespace lsd::game
 
-#define LSD_BEHAVIOUR(Type) static ::lsd::game::detail::Registrar<Type> lsd_registrar_##Type(#Type);
+#define LSD_SCRIPT(Type) static ::lsd::game::detail::Registrar<Type> lsd_registrar_##Type(#Type);
+#define LSD_BEHAVIOUR(Type) LSD_SCRIPT(Type)  // the earlier name
 
 // The module's entry point: in exactly one .cpp file of Source/.
 #define LSD_GAME_MODULE()                                                                   \
     static void lsd_register_cpp(lsd_registry* registry) { ::lsd::game::detail::register_all(registry); } \
     extern "C" {                                                                            \
+    void lsd_game_add_c_script(void (*fn)(lsd_registry*)) { ::lsd::game::detail::c_scripts().push_back(fn); } \
     LSD_GAME_MODULE_C(lsd_register_cpp)                                                     \
     }

@@ -54,7 +54,7 @@ target_link_libraries(lsd_physics_tests PRIVATE lsd_physics)
 lsd_configure_target(lsd_physics_tests)
 add_test(NAME physics COMMAND lsd_physics_tests)
 
-add_executable(lsd_script_tests script_tests.cpp)
+add_executable(lsd_script_tests script_tests.cpp c_script.c)  # c_script.c: a self-registering C script
 target_link_libraries(lsd_script_tests PRIVATE lsd_script lsd_asset)
 target_compile_definitions(lsd_script_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 lsd_configure_target(lsd_script_tests)

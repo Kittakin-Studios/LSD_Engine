@@ -7,7 +7,7 @@ There are three ways to script, and you can mix them in one level:
 | --- | --- | --- |
 | **Lua script** (`.lua`) | A Blueprint event graph written as text | Sections 1-6, 8 |
 | **Visual Script** (`.lsdgraph`) | The Blueprint event graph | Section 7 |
-| **C / C++ behaviour** (`Source/*.cpp` -> `Game.dll`) | A C++ Actor Component class | Section 11 |
+| **C / C++ script** (`Source/*.cpp` / `*.c` -> `Game.dll`) | A C++ Actor Component class | Section 11 |
 
 They get the same events (start, update, hit, overlap...), use commands with the same names
 (`lsd.find` in Lua, `find` in C++, `lsd_find` in C) and can send each other events.
@@ -319,23 +319,28 @@ done: while it is on, any program on this PC could send the editor commands.
 
 ## 11. C / C++ instead of Lua
 
-The same jobs in compiled C++ (Unreal: a C++ Actor Component). Full reference: [CODING.md](CODING.md).
+The same jobs in compiled C or C++ (Unreal: a C++ Actor Component). Full reference: [CODING.md](CODING.md).
 
 **One-time:** Visual Studio 2022 or newer with **Desktop development with C++** (already there if
 you build the engine).
 
-**Make a behaviour:**
+**Make a script:**
 
-1. **Tools > New C++ Behaviour...**, type a name (letters and digits, e.g. `Door`), click **Create**.
-2. The editor writes `Source/Door.cpp` (plus `Source/CMakeLists.txt` and `Source/GameModule.cpp`
-   the first time) and compiles. The **Output Log** shows the build, then
-   *Game code loaded: 1 behaviour*.
-3. Open `Source/Door.cpp` in VS Code (File > Open Folder on the project, or Ctrl+P and type it).
+1. **Tools > New C / C++ Script...**. Pick the language with the **C++ | C** switch, type a name
+   (letters and digits, e.g. `Door`), click **Create**.
+2. The editor writes `Source/Door.cpp` (or `Source/Door.c`), plus `Source/CMakeLists.txt` and
+   `Source/GameModule.cpp` the first time, and compiles. The **Output Log** shows the build, then
+   *C / C++ scripts loaded: 1*.
+3. Open the file in VS Code (File > Open Folder on the project, or Ctrl+P and type its name).
+
+C and C++ scripts can sit side by side in `Source/`; pick per script. C++ reads shorter (the example
+below); C is the plain-C version of the same thing ([CODING.md](CODING.md#writing-it-in-plain-c)
+shows a whole C script).
 
 **Put it on an object:**
 
 1. Select the object, **Details > Add Component > Native Script**.
-2. In **Behaviour**, pick `Door`. Its properties appear below as **Behaviour properties**; change
+2. In **Script**, pick `Door`. Its properties appear below as **Script properties**; change
    them per object like a Lua script's.
 
 **Write the code** (the template spins the object; here is the door from section 8 in C++):
@@ -356,7 +361,7 @@ struct Door {
         }
     }
 };
-LSD_BEHAVIOUR(Door)
+LSD_SCRIPT(Door)
 ```
 
 | Lua | C++ |
@@ -377,16 +382,16 @@ LSD_BEHAVIOUR(Door)
 1. Save the file, press **Ctrl+Alt+F11** (Tools > Compile Game Code).
 2. Errors show in red in the Output Log with file and line; fix and compile again. The old code
    keeps running meanwhile.
-3. When it succeeds the editor loads the new code by itself, **even during Play** (behaviours restart
+3. When it succeeds the editor loads the new code by itself, **even during Play** (scripts restart
    with fresh state).
 
 **Debug:** Visual Studio: **Debug > Attach to Process > lsd_editor.exe**. VS Code: Run and Debug >
 create a launch.json > **C++ (Windows): Attach**, pick `lsd_editor.exe`. Set breakpoints in your
 `.cpp`, then Play.
 
-**Mixing:** a C++ behaviour can `call(e, "unlock")` an object's Lua script (`function unlock(self,
+**Mixing:** a C or C++ script can `call(e, "unlock")` an object's Lua script (`function unlock(self,
 other)`) or a visual script's Custom Event `unlock`; Lua's `lsd.call(e, "unlock")` and Call Event on
-Object nodes reach the behaviour's `on_event(self, name, other)`.
+Object nodes reach the script's `on_event(self, name, other)`.
 
 **Claude Code** can do all of this through the Claude MCP plugin (section 10): it writes
-`Source/*.cpp` and runs `game.Compile`, `game.NewBehaviour` and `game.Behaviours` as console commands.
+`Source/*.cpp` / `*.c` and runs `game.Compile`, `game.NewScript <Name> [c]` and `game.Scripts` as console commands.

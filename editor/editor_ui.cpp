@@ -139,7 +139,7 @@ void draw_scatter(world::InstancedStaticMesh& ism) {
     if (ImGui::Button("Clear")) ism.instances.count = 0;
 }
 
-// Per-object values over a script's or behaviour's defaults (name, default as text); only changed
+// Per-object values over a Lua or C / C++ script's defaults (name, default as text); only changed
 // values are kept in `overrides`.
 void draw_property_overrides(const std::vector<std::pair<std::string, std::string>>& defaults, List<world::ScriptProperty, 16>& overrides);
 
@@ -156,9 +156,9 @@ void draw_script_properties(EditorState& s, world::Script& script) {
     draw_property_overrides(defaults, script.properties);
 }
 
-// The same for a Native Script: the defaults come from a fresh state of the C / C++ behaviour.
+// The same for a Native Script: the defaults come from a fresh state of the C / C++ script.
 void draw_native_properties(world::NativeScript& native) {
-    const lsd_behaviour* b = game_module::module().find(native.behaviour);
+    const lsd_behaviour* b = game_module::module().find(native.script);
     if (!b || b->property_count == 0) return;
     std::vector<std::pair<std::string, std::string>> defaults;
     for (int i = 0; i < b->property_count; ++i) {
@@ -166,7 +166,7 @@ void draw_native_properties(world::NativeScript& native) {
         script::native_property_default(*b, b->properties[i], text, sizeof text);
         defaults.emplace_back(b->properties[i].name, text);
     }
-    ImGui::SeparatorText("Behaviour properties");
+    ImGui::SeparatorText("Script properties");
     draw_property_overrides(defaults, native.properties);
 }
 
@@ -2434,7 +2434,7 @@ bool details_widget(void* user, const reflect::Property& p, u8* field, bool& cha
         changed |= tag_picker(s, reinterpret_cast<char*>(field), p.size);
         return true;
     }
-    if (std::strcmp(p.widget, "Behaviour") == 0) {  // a C / C++ behaviour from the game module
+    if (std::strcmp(p.widget, "NativeScript") == 0) {  // a C / C++ script from the game code
         char* value = reinterpret_cast<char*>(field);
         const script::NativeModule& m = game_module::module();
         ImGui::SetNextItemWidth(-1);
@@ -2449,10 +2449,10 @@ bool details_widget(void* user, const reflect::Property& p, u8* field, bool& cha
                     changed = true;
                 }
             }
-            if (m.count == 0) ImGui::TextDisabled(game_module::loaded() ? "The game module has no behaviours" : "No game code yet: Tools > New C++ Behaviour");
+            if (m.count == 0) ImGui::TextDisabled(game_module::loaded() ? "The game code has no scripts" : "No C / C++ scripts yet: Tools > New C / C++ Script");
             ImGui::EndCombo();
         }
-        if (value[0] && !m.find(value)) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "Not in the loaded game module (compile it?)");
+        if (value[0] && !m.find(value)) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "Not in the compiled game code (Ctrl+Alt+F11?)");
         return true;
     }
     if (std::strncmp(p.widget, "Asset:", 6) == 0) {
@@ -4527,8 +4527,8 @@ void draw_menu_bar(EditorState& s) {
         ImGui::Separator();
         if (ImGui::MenuItem("Compile Game Code", "Ctrl+Alt+F11", false, !game_module::compiling())) game_module::compile();
         ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
-        if (ImGui::MenuItem("New C++ Behaviour...")) s.new_behaviour_popup = true;
-        ImGui::SetItemTooltip("Writes Source/<Name>.cpp from a template (Unreal's Tools > New C++ Class)");
+        if (ImGui::MenuItem("New C / C++ Script...")) s.new_script_popup = true;
+        ImGui::SetItemTooltip("Writes Source/<Name>.cpp or .c from a template (Unreal's Tools > New C++ Class)");
         ImGui::Separator();
         ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
         ImGui::SetItemTooltip("Breakpoints, stepping, call stack, locals and watch for Lua scripts (visual scripts: breakpoints on nodes)");
@@ -5121,18 +5121,24 @@ void draw_editor(EditorState& s) {
     if (s.particle_editor) s.particle_editor->draw(s);
     source_control::draw();
     remote::draw_window(&s.show_remote_console);
-    if (s.new_behaviour_popup) {  // Tools > New C++ Behaviour
-        ImGui::OpenPopup("New C++ Behaviour");
-        s.new_behaviour_popup = false;
+    if (s.new_script_popup) {  // Tools > New C / C++ Script
+        ImGui::OpenPopup("New C / C++ Script");
+        s.new_script_popup = false;
     }
-    if (ImGui::BeginPopupModal("New C++ Behaviour", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginPopupModal("New C / C++ Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         static char name[64] = "Spinner";
-        ImGui::TextUnformatted("A behaviour runs on objects with a Native Script component.");
-        ImGui::TextDisabled("Writes Source/<Name>.cpp, then compiles the game code.");
+        static int language = 0;  // 0 C++, 1 C
+        ImGui::TextUnformatted("Language:");
+        ImGui::SameLine();
+        ImGui::RadioButton("C++", &language, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("C", &language, 1);
+        ImGui::TextDisabled("Writes Source/<Name>%s, then compiles the game code. It runs on objects", language ? ".c" : ".cpp");
+        ImGui::TextDisabled("with a Native Script component, like a Lua script on a Script component.");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         const bool enter = ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
         if (ImGui::Button("Create") || enter) {
-            if (game_module::new_behaviour(name, s.status, sizeof s.status)) {
+            if (game_module::new_script(name, language == 1, s.status, sizeof s.status)) {
                 LSD_LOG_INFO("game", "%s", s.status);
                 game_module::compile();
                 ImGui::CloseCurrentPopup();
