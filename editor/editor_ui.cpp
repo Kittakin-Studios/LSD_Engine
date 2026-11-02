@@ -1272,6 +1272,37 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
             }
         }
     }
+    // A selected AI Controller's perception (Unreal's AI debugger view): the sight cone flat at the
+    // object's height out to sight range, and the hearing range as a ring.
+    const reflect::TypeInfo& ai_type = reflect::type_of<world::AIController>();
+    for (u32 i = 0; i < s.world->count(ai_type); ++i) {
+        const Entity e = s.world->owner(ai_type, i);
+        if (!s.is_selected(e) || s.world->hidden_in_hierarchy(e)) continue;
+        const auto* ai = static_cast<const world::AIController*>(s.world->at(ai_type, i));
+        const Mat4 m = s.world->world_matrix(e);
+        const Vec3 origin{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        const f32 yaw = std::atan2(m.at(1, 0), m.at(0, 0));
+        auto ring_point = [&](f32 angle, f32 radius) { return origin + Vec3{std::cos(angle), std::sin(angle), 0.0f} * radius; };
+        auto polyline = [&](auto point_at, u32 segments, ImU32 color) {
+            ImVec2 a, b;
+            bool has_a = project(view_proj, point_at(0u), pos, size, a);
+            for (u32 k = 1; k <= segments; ++k) {
+                const bool has_b = project(view_proj, point_at(k), pos, size, b);
+                if (has_a && has_b) dl->AddLine(a, b, color, 1.5f);
+                a = b;
+                has_a = has_b;
+            }
+        };
+        constexpr u32 kSegments = 48;
+        const f32 half = radians(std::fmin(ai->sight_angle, 360.0f)) * 0.5f;
+        const ImU32 sight = IM_COL32(90, 230, 120, 220), hearing = IM_COL32(110, 170, 255, 160);
+        // Origin, along the left edge, round the arc, back along the right edge.
+        polyline([&](u32 k) {
+            if (k == 0 || k == kSegments + 2) return origin;
+            return ring_point(yaw - half + 2.0f * half * static_cast<f32>(k - 1) / kSegments, ai->sight_range);
+        }, kSegments + 2, sight);
+        polyline([&](u32 k) { return ring_point(6.2831853f * static_cast<f32>(k) / kSegments, ai->hearing_range); }, kSegments, hearing);
+    }
     // Physics Joints: a ring at the pivot and a line along the axis.
     const reflect::TypeInfo& joint_type = reflect::type_of<world::PhysicsJoint>();
     for (u32 i = 0; i < s.world->count(joint_type); ++i) {

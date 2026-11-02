@@ -628,7 +628,8 @@ follows unsaved changes. Drag the system into the viewport to place a **Particle
 
 Perception fills the blackboard: **CanSeePlayer** (1 while in sight range, field of view and line
 of sight), **PlayerLocation** (last seen), **NoiseLocation** / **HeardNoise** (from
-`lsd.report_noise`). While playing, the open tree's running branch glows green.
+`lsd.report_noise`). While playing, the open tree's running branch glows green. Select an object
+with an AI Controller to see its sight cone (green) and hearing range (blue) in the viewport.
 
 ---
 
