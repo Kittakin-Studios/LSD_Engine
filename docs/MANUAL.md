@@ -82,14 +82,21 @@ Settings, Editor Preferences), **Tools** (smoke test, unit tests) and **Window**
 Settings, Message Log, **Layout**). While playing it shows **Stop / Pause / Eject**. Window > Layout
 saves the panel arrangement under a name (Unreal's Save Layout As), loads one back, or resets to the default.
 
-### Workspaces (the tabs under the menu bar)
+### Panel tabs and workspaces (the two rows under the menu bar)
 
-Like Blender's workspace tabs, each tab is a whole arrangement of the panels for one job; the
-editor's original arrangement is **Layout**, and it is unchanged.
+**Panel tabs** (the top row, like Unreal's tabs across the top of the editor): the first tab is
+**Level** (the viewport, Outliner, Details, Content Browser). An editor you open from Layout (double-click
+a Material Graph, a Timeline, a mesh..., or Tools > Lua Debugger) opens as its own full-screen tab
+next to it and comes forward. Click a tab to switch; its **x** (or middle-click) closes it, saving a
+changed graph like the window's own close did. Drag tabs to reorder them. Play always shows the Level.
+
+**Workspaces** (the second row, only on the Level tab) are Blender's workspace tabs: each is a whole
+arrangement of the level's panels for one job; the original arrangement is **Layout**, and it is
+unchanged.
 
 | Tab | What it shows | Editor area (asset editors opened there dock in it) |
 | --- | --- | --- |
-| **Layout** | Viewport, Outliner, Details, Content Browser (the original) | none: editors float, as before |
+| **Layout** | Viewport, Outliner, Details, Content Browser (the original) | none: editors open as panel tabs |
 | **Modeling** | Viewport with an editor beside it | Mesh Editor, Prefab editor |
 | **Shading** | Content Browser left, viewport, node editor under it | Material Graphs (Blender's Shader Editor) |
 | **Animation** | Viewport, editor along the bottom | Timelines (Sequencer), Animation Graphs |

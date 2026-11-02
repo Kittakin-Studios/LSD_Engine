@@ -330,10 +330,17 @@ function that splits the dockspace with DockBuilder, always splitting panels *of
 the remaining node stays the transparent central node the 3D view draws through, and returns its
 editor area node, where an always-present placeholder window (`Editors`) is docked. Switching saves
 the ImGui ini of the active workspace to `Saved/Layouts/Workspaces/<name>.ini` and loads the target's
-(or builds it fresh) before the dockspace is submitted. Asset editors call `dock_in_workspace()`
-before `ImGui::Begin`: `SetNextWindowDockID(<node holding the placeholder>, Appearing)`, so they
-join the editor area as tabs; in Layout there is no placeholder, so they float as before. User
-workspaces are copies of an ini plus the built-in they came from (for their editor area).
+(or builds it fresh) before the dockspace is submitted. User workspaces are copies of an ini plus the
+built-in they came from (for their editor area).
+
+Above it, a second side bar holds the **panel tabs** (`draw_panel_tabs`): `Level`, then one tab per
+asset editor. Asset editors open with `begin_editor(title, &open)` instead of `ImGui::Begin`
+(`editor/workspaces.h`). With an editor area in the active workspace it docks there
+(`SetNextWindowDockID`, Appearing; Always when it was a panel tab). Otherwise it is a panel tab:
+keyed by the title's `###` id, it is a borderless window filling the work rect while its tab is
+active, and not begun at all (returns false) while another is. A tab's x sets `*open` false on the
+editor's next draw, so the editor runs its own close. While an editor tab is active the workspace row
+and the 3D viewport are skipped (`viewport_count` 0); Play selects the Level tab.
 
 ## Editor plugins and the Claude MCP bridge
 

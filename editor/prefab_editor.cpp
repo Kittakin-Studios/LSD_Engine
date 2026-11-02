@@ -158,11 +158,7 @@ void draw_prefab_editor(EditorState& s) {
     std::snprintf(title, sizeof title, "%s%s - Prefab###PrefabEditor", g_pw.name, g_pw.dirty ? "*" : "");
     ImGui::SetNextWindowSize(ImVec2(1100, 620), ImGuiCond_FirstUseEver);
     bool open = true;
-    dock_in_workspace();  // into the active workspace's editor area, if it has one
-    if (!ImGui::Begin(title, &open)) {
-        ImGui::End();
-        return;
-    }
+    if (!begin_editor(title, &open)) return;  // a panel tab, or the workspace's editor area
     if (!open) {
         ImGui::End();
         close_window();

@@ -161,11 +161,7 @@ void draw_mesh_editor(EditorState& s) {
     std::snprintf(title, sizeof title, "%s%s - Mesh Editor###MeshEditor", g_mw.name, g_mw.meta_dirty ? "*" : "");
     ImGui::SetNextWindowSize(ImVec2(980, 600), ImGuiCond_FirstUseEver);
     bool open = true;
-    dock_in_workspace();  // into the active workspace's editor area, if it has one
-    if (!ImGui::Begin(title, &open)) {
-        ImGui::End();
-        return;
-    }
+    if (!begin_editor(title, &open)) return;  // a panel tab, or the workspace's editor area
     if (!open) {
         g_mw.open = false;
         ImGui::End();

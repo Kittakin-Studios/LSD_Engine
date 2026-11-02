@@ -205,6 +205,7 @@ void install_output_log();
 void clear_output_log();
 // The last `count` Output Log lines as text, oldest first ("[channel] message" per line).
 std::string recent_log(u32 count);
+bool open_asset(EditorState& s, const asset::AssetRecord& record);  // what a double-click in the Content Browser does; false if nothing
 
 // Loads Config/editor_theme.json into theme if it exists.
 void load_theme(EditorTheme& theme);

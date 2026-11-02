@@ -1054,6 +1054,65 @@ void draw_editor_area(EditorState& s) {
 
 ImGuiID g_editor_area = 0;  // this frame's editor area dock node, 0 for none
 
+// ---- Panel tabs (Unreal's document tabs): the Level, then asset editors opened outside an editor area ----
+
+constexpr char kLevelTab[] = "###LevelTab";
+struct PanelTab {
+    std::string id;     // the window's ### part (stable while its title shows a name or a *)
+    std::string label;  // the window's title
+    bool seen;          // its editor drew this frame; the tab goes when it stops
+};
+std::vector<PanelTab> g_tabs;  // shortcut: std in editor-only code, a handful of tabs
+std::string g_active_tab = kLevelTab;
+std::string g_select_tab;  // select this tab in the bar (it keeps its own selection)
+std::string g_close_tab;   // closed with its x: the editor sees *open turn false on its next draw
+std::string g_focused_tab;  // the editor tab last given focus
+
+std::string window_id(const char* title) {
+    const char* hash = std::strstr(title, "###");
+    return hash ? hash : title;
+}
+
+void draw_panel_tabs(EditorState& s) {
+    std::erase_if(g_tabs, [](const PanelTab& t) { return !t.seen; });
+    for (PanelTab& t : g_tabs) t.seen = false;
+    const bool active_alive = std::any_of(g_tabs.begin(), g_tabs.end(), [](const PanelTab& t) { return t.id == g_active_tab; });
+    if (g_active_tab != kLevelTab && !active_alive) g_select_tab = kLevelTab;  // its editor closed
+    if (s.playing && !s.ejected && g_active_tab != kLevelTab) g_select_tab = kLevelTab;  // Play shows the level
+    const f32 height = ImGui::GetFrameHeight() + 6.0f;
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
+    if (ImGui::BeginViewportSideBar("##panel_tabs", ImGui::GetMainViewport(), ImGuiDir_Up, height, flags)) {
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginTabBar("##panels", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_Reorderable)) {
+                auto tab = [&](const std::string& id, const char* label, bool* open) {
+                    const ImGuiTabItemFlags tab_flags = g_select_tab == id ? ImGuiTabItemFlags_SetSelected : 0;
+                    if (ImGui::BeginTabItem(label, open, tab_flags)) {
+                        if (g_select_tab.empty()) g_active_tab = id;
+                        ImGui::EndTabItem();
+                    }
+                };
+                tab(kLevelTab, "Level###LevelTab", nullptr);
+                ImGui::SetItemTooltip("The level: viewport, Outliner, Details, Content Browser and the workspaces under this row");
+                for (const PanelTab& t : g_tabs) {
+                    bool open = true;
+                    tab(t.id, t.label.c_str(), &open);
+                    if (!open) g_close_tab = t.id;
+                }
+                ImGui::EndTabBar();
+            }
+            ImGui::EndMenuBar();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    if (!g_select_tab.empty()) {
+        g_active_tab = g_select_tab;
+        g_select_tab.clear();
+    }
+    if (g_active_tab == kLevelTab) g_focused_tab.clear();
+}
+
 // Panels draw their own themed tab bars, so the dock nodes hide theirs.
 bool begin_panel(const char* name) {
     ImGuiWindowClass window_class;
@@ -3261,6 +3320,37 @@ void start_rename(EditorState& s, asset::Guid guid, const char* folder, const ch
 }
 
 // Opens a level, asking first if the current one has unsaved changes.
+void request_open(EditorState& s, const char* path);
+
+bool open_record(EditorState& s, const asset::AssetRecord& r) {
+    if (r.type == asset::AssetType::Level) {
+        char path[300];
+        s.registry->source_path(r, path, sizeof path);
+        request_open(s, path);
+    } else if (r.type == asset::AssetType::Script) {
+        open_external(s, r);
+    } else if (r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree) {
+        open_graph(s, r);
+    } else if (r.type == asset::AssetType::Table) {
+        open_table(s, r);
+    } else if (r.type == asset::AssetType::Sound) {
+        toggle_preview(s, r);
+    } else if (s.particle_editor && asset_matches(r, "ParticleSystem")) {
+        s.particle_editor->open(s, r);
+    } else if (asset_matches(r, "Timeline")) {
+        open_timeline_editor(s, r);
+    } else if (r.type == asset::AssetType::Mesh) {
+        open_mesh_editor(s, r);
+    } else if (r.type == asset::AssetType::Prefab) {
+        open_prefab_editor(s, r);
+    } else if (r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) {
+        open_ui_editor(s, r);
+    } else {
+        return false;
+    }
+    return true;
+}
+
 void request_open(EditorState& s, const char* path) {
     if (s.history->dirty()) {
         std::snprintf(g_confirm_open, sizeof g_confirm_open, "%s", path);
@@ -3994,23 +4084,7 @@ void draw_asset_grid(EditorState& s) {
             s.registry->load_meta(r, s.selected_meta);
             s.status[0] = '\0';
             if (r.type == asset::AssetType::Data) load_selected_data(s, r);
-            if (level && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                char path[300];
-                s.registry->source_path(r, path, sizeof path);
-                request_open(s, path);
-            }
-            if (r.type == asset::AssetType::Script && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_external(s, r);
-            if ((r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree) &&
-                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                open_graph(s, r);
-            }
-            if (r.type == asset::AssetType::Table && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_table(s, r);
-            if (r.type == asset::AssetType::Sound && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toggle_preview(s, r);
-            if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) s.particle_editor->open(s, r);
-            if (asset_matches(r, "Timeline") && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_timeline_editor(s, r);
-            if (r.type == asset::AssetType::Mesh && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_mesh_editor(s, r);
-            if (r.type == asset::AssetType::Prefab && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_prefab_editor(s, r);
-            if ((r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_ui_editor(s, r);
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_record(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
             if (level && ImGui::MenuItem("Open Level")) {
@@ -5086,7 +5160,9 @@ void draw_game(EditorState& s) {
 void draw_editor(EditorState& s) {
     ImGuizmo::BeginFrame();
     draw_menu_bar(s);
-    draw_workspace_tabs(s);
+    draw_panel_tabs(s);
+    const bool level_tab = g_active_tab == kLevelTab;
+    if (level_tab) draw_workspace_tabs(s);  // the workspaces belong to the Level tab
     const ImGuiViewport* main = ImGui::GetMainViewport();
     const ImGuiID dockspace = ImHashStr("EditorDockspace");
     if (s.workspace_request[0]) {
@@ -5105,7 +5181,7 @@ void draw_editor(EditorState& s) {
     draw_details_panel(s);
     draw_content_browser(s);
     draw_editor_area(s);
-    {  // asset editors opened from now on dock where the editor area is (dock_in_workspace)
+    {  // asset editors opened from now on dock where the editor area is (begin_editor)
         const WorkspaceDef* def = find_workspace_def(s.settings, s.settings.workspace);
         const ImGuiWindow* area = def && def->hint ? ImGui::FindWindowByName(kEditorAreaWindow) : nullptr;
         g_editor_area = area && area->DockNode ? area->DockNode->ID : 0;
@@ -5159,7 +5235,9 @@ void draw_editor(EditorState& s) {
     handle_shortcuts(s);
 
     // The central node is left empty and transparent: the 3D viewport shows through it.
-    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspace)) {
+    s.viewport_count = 0;  // an editor's tab covers the level: nothing renders behind it
+    const ImGuiDockNode* central = level_tab ? ImGui::DockBuilderGetCentralNode(dockspace) : nullptr;
+    if (central) {
         const u32 panes = s.playing && !s.ejected ? 1u : s.panes;  // the game plays in one big viewport
         s.viewport_count = panes;
         g_request_active = -1;
@@ -5235,8 +5313,53 @@ void make_default_level(world::World& w) {
     w.add<world::PlayerStart>(w.create("PlayerStart"));
 }
 
-void dock_in_workspace() {
-    if (g_editor_area) ImGui::SetNextWindowDockID(g_editor_area, ImGuiCond_Appearing);
+bool open_asset(EditorState& s, const asset::AssetRecord& record) { return open_record(s, record); }
+
+bool begin_editor(const char* title, bool* open) {
+    const std::string id = window_id(title);
+    auto it = std::find_if(g_tabs.begin(), g_tabs.end(), [&](const PanelTab& t) { return t.id == id; });
+    if (g_editor_area) {  // the workspace's editor area holds it, inside the Level
+        if (it != g_tabs.end()) {  // it was a panel tab: move it in
+            g_tabs.erase(it);
+            ImGui::SetNextWindowDockID(g_editor_area, ImGuiCond_Always);
+        } else {
+            ImGui::SetNextWindowDockID(g_editor_area, ImGuiCond_Appearing);
+        }
+        if (!ImGui::Begin(title, open)) {
+            ImGui::End();
+            return false;
+        }
+        return true;
+    }
+    if (it == g_tabs.end()) {  // just opened: its tab comes forward, like Unreal's asset editors
+        g_tabs.push_back({id, title, true});
+        it = g_tabs.end() - 1;
+        g_select_tab = id;
+    }
+    it->label = title;
+    it->seen = true;
+    const bool closing = g_close_tab == id;
+    if (closing) {
+        *open = false;  // the editor runs its own close (saving a changed graph...)
+        g_close_tab.clear();
+    } else if (g_active_tab != id) {
+        return false;  // behind another tab
+    }
+    const ImGuiViewport* main = ImGui::GetMainViewport();  // fills the space under the panel tabs
+    ImGui::SetNextWindowPos(main->WorkPos);
+    ImGui::SetNextWindowSize(main->WorkSize);
+    ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+    if (g_focused_tab != id) {  // once per switch: other windows (Preferences...) can still come forward
+        ImGui::SetNextWindowFocus();
+        g_focused_tab = id;
+    }
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+    if (!ImGui::Begin(title, open, flags)) {
+        ImGui::End();
+        return false;
+    }
+    return true;
 }
 
 void apply_layout_file(const char* path, char* status, usize status_capacity) {

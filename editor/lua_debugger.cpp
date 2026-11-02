@@ -110,11 +110,7 @@ void draw_window(EditorState& s, bool* open) {
     if (!*open) return;
     ImGui::SetNextWindowSize(ImVec2(1000, 560), ImGuiCond_FirstUseEver);
     if (g_stop) ImGui::SetNextWindowFocus();
-    dock_in_workspace();  // into the active workspace's editor area, if it has one
-    if (!ImGui::Begin("Lua Debugger", open)) {
-        ImGui::End();
-        return;
-    }
+    if (!begin_editor("Lua Debugger", open)) return;  // a panel tab, or the workspace's editor area
     // Toolbar: the controls work while stopped (F5 / F10 / F11 / Shift+F11 like Visual Studio).
     ImGui::BeginDisabled(!g_stop);
     const bool shift = ImGui::GetIO().KeyShift;

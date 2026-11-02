@@ -57,11 +57,7 @@ void ParticleEditor::draw(EditorState& s) {
     char title[128];
     std::snprintf(title, sizeof title, "%s - Particle Editor###ParticleEditor", name_);
     ImGui::SetNextWindowSize(ImVec2(560, 720), ImGuiCond_FirstUseEver);
-    dock_in_workspace();  // into the active workspace's editor area, if it has one
-    if (!ImGui::Begin(title, &open_)) {
-        ImGui::End();
-        return;
-    }
+    if (!begin_editor(title, &open_)) return;  // a panel tab, or the workspace's editor area
     const particles::ParticleSystem* system = this->system(s);
     if (!system) {
         ImGui::TextDisabled("The asset could not be read.");

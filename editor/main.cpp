@@ -72,6 +72,8 @@
 
 namespace {
 
+bool g_screenshot = false;  // the screenshot command: capture the next frame
+
 namespace fs = std::filesystem;
 using lsd::editor::EditorState;
 
@@ -763,6 +765,7 @@ void register_console(EditorState& s) {
         e.motion.y = y;
         SDL_PushEvent(&e);
         for (const SDL_EventType type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            SDL_Delay(100);  // like a hand: hover first, then press (tabs select on press, buttons on release)
             e = SDL_Event{};
             e.type = type;
             e.button.windowID = window;
@@ -832,6 +835,18 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
+    console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
+                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL: -rhi=opengl)");
+    console::add_command("asset.Open", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (lsd::usize i = 0; i < st.registry->count(); ++i) {
+            const lsd::asset::AssetRecord& r = st.registry->get(i);
+            if (std::strcmp(r.name, args) != 0) continue;
+            lsd::editor::remote::print(lsd::editor::open_asset(st, r) ? "opened" : "nothing opens this type");
+            return;
+        }
+        lsd::editor::remote::print("no asset with that name (asset.List)");
+    }, &s, "asset.Open <name>: open an asset in its editor, like a double-click in the Content Browser");
     console::add_command("workspace", [](void* user, const char* args) {
         std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
     }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
@@ -1903,7 +1918,7 @@ int main(int argc, char** argv) {
         device->render_debug_ui();
         state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
         LSD_PROFILE_FRAME();
-        if (frame == screenshot_frame && !device->capture_frame("Saved/screenshot.bmp")) {
+        if ((frame == screenshot_frame || std::exchange(g_screenshot, false)) && !device->capture_frame("Saved/screenshot.bmp")) {
             LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl for now.");
         }
         device->end_frame();
