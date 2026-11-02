@@ -10,6 +10,7 @@ endif()
 
 add_library(lsd_audio STATIC
   src/audio.cpp
+  src/voice_io.cpp
 )
 target_include_directories(lsd_audio PUBLIC include)
 target_link_libraries(lsd_audio PUBLIC lsd_foundation lsd_reflect PRIVATE lsd_miniaudio)

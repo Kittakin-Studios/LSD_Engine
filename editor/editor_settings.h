@@ -126,6 +126,14 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "Text chat to players near the speaker") bool chat_proximity = false;
     LSD_PROPERTY(Edit, Category = "Chat", Units = "m", Min = 1, Max = 1000) f32 proximity_range = 30.0f;
     LSD_PROPERTY(Edit, Category = "Chat", Tooltip = "The built-in chat box in Play (Enter to type); off: make your own with on_chat and lsd.chat") bool chat_box = true;
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Voice chat in multiplayer games (the microphone opens only when this is on)") bool voice_chat = true;
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Talk to your team") bool voice_team = true;
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Talk to everyone (the All key)") bool voice_all = false;
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Talk to your squad inside the team") bool voice_squad = false;
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Players near you hear you, quieter with distance (Chat > Proximity Range)") bool voice_proximity = false;
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Hold to talk on the first of team, proximity, squad, all that is on (SDL key name)") char push_to_talk_key[24] = "V";
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Hold to talk to everyone (when Voice All is on)") char talk_to_all_key[24] = "B";
+    LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Always transmitting instead of push-to-talk") bool open_mic = false;
     LSD_PROPERTY(Edit, Category = "Gameplay Tags", Tooltip = "The tags the Details tag picker offers (dotted: Damage.Fire is under Damage)")
     List<GameplayTagDef, 128> gameplay_tags;
 };

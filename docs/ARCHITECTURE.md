@@ -251,6 +251,14 @@ RGBA8 target, two targets ping-pong per post chain. An EXPOSE pass multiplies th
 bloom and the tonemapper see the adapted image. Sky reflections (both mesh shaders) use the
 `sky_radiance` gradient along the reflection and an analytic split-sum BRDF instead of cubemaps.
 
+**Voice chat**: `net::VoiceEncoder` / `VoiceDecoder` wrap Opus (48 kHz mono, 20 ms frames, in-band
+FEC, concealment for lost packets). The client sends kVoice (unreliable) to the server, which routes
+kVoiceOut with the chat rules (never back to the speaker; the voice channel switches are separate
+from text). `audio::VoiceIO` (miniaudio) captures into a lock-free ring the game thread reads as
+frames and mixes speakers from one ring each, starting a speaker once 60 ms is buffered and again
+after it runs dry. PlaySession reads the microphone every frame (dropping it unless push-to-talk is
+held, so nothing stale is sent) and scales proximity voice by distance between avatars.
+
 **Vehicles, transports, movers** (play_session.cpp, end of file): Mover and Vehicle objects get a
 kinematic body and a `Moving` record instead of a static body; `update_rides` runs before the physics
 step (E to board, Mover routes and start / repeat conditions, the driven vehicle's arcade model with

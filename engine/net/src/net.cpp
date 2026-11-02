@@ -20,7 +20,8 @@ namespace lsd::net {
 namespace {
 
 // Message types (first byte of every packet).
-enum Msg : u8 { kWelcome = 1, kSpawn, kDestroy, kSnapshot, kOwnerState, kEvent, kPlayerJoined, kPlayerLeft, kChat, kGroup };
+enum Msg : u8 { kWelcome = 1, kSpawn, kDestroy, kSnapshot, kOwnerState, kEvent, kPlayerJoined, kPlayerLeft, kChat, kGroup, kVoice, kVoiceOut };
+constexpr u32 kMaxVoiceBytes = 1000;
 constexpr u8 kReliable = 0, kUnreliable = 1;  // ENet channels
 constexpr u32 kLevelIdBit = 0x80000000u;      // ids from level objects' names; spawned ones count up below it
 constexpr u32 kMaxEntriesPerPacket = 40;      // 28 bytes each: packets stay under a typical MTU
@@ -157,6 +158,7 @@ struct NetSession::Impl {
     explicit Impl(NetSession& s) : self(s) {}
 
     void queue(NetEvent::Kind kind, u32 from, const char* name, std::string text = {}) {
+        if (kind == NetEvent::Kind::Voice && events.size() > 256) return;  // nobody is taking them: drop audio, never grow
         Pending p;
         p.event.kind = kind;
         p.event.from = from;
@@ -312,6 +314,12 @@ struct NetSession::Impl {
             if (r.ok && channel <= static_cast<u8>(ChatChannel::Proximity)) route_chat(from, static_cast<ChatChannel>(channel), text);
             break;
         }
+        case kVoice: {
+            const u8 channel = r.u8_();
+            const std::string packet = r.str(kMaxVoiceBytes);
+            if (r.ok && channel <= static_cast<u8>(ChatChannel::Proximity)) route_voice(from, static_cast<ChatChannel>(channel), packet);
+            break;
+        }
         default: break;  // unknown or server-only messages from a client: ignored
         }
     }
@@ -323,6 +331,30 @@ struct NetSession::Impl {
         case ChatChannel::Proximity: return settings.chat_proximity;
         default: return settings.chat_all;
         }
+    }
+
+    bool voice_on(ChatChannel c) const {
+        switch (c) {
+        case ChatChannel::Team: return settings.voice_team;
+        case ChatChannel::Squad: return settings.voice_squad;
+        case ChatChannel::Proximity: return settings.voice_proximity;
+        default: return settings.voice_all;
+        }
+    }
+
+    // Voice goes to the same listeners chat would, except the speaker (who does not hear itself).
+    void route_voice(u32 from, ChatChannel channel, const std::string& packet) {
+        if (!voice_on(channel) || packet.empty()) return;
+        Writer w;
+        w.u8_(kVoiceOut);
+        w.u8_(static_cast<u8>(channel));
+        w.u32_(from);
+        w.u32_(static_cast<u32>(packet.size()));
+        w.put(packet.data(), packet.size());
+        for (const Peer& p : peers) {
+            if (p.id != from && hears(from, p.id, channel)) send_to(p.peer, w, kUnreliable);
+        }
+        if (from != kServerPlayer && hears(from, kServerPlayer, channel)) queue(NetEvent::Kind::Voice, from, chat_channel_name(channel), packet);
     }
 
     bool avatar_position(u32 player, Vec3& out) const {  // the first object the player owns
@@ -518,6 +550,13 @@ struct NetSession::Impl {
         case kGroup: {
             const u32 player = r.u32_(), team = r.u32_(), squad = r.u32_();
             if (r.ok) groups[player] = {team, squad};
+            break;
+        }
+        case kVoiceOut: {
+            const u8 channel = r.u8_();
+            const u32 from = r.u32_();
+            const std::string packet = r.str(kMaxVoiceBytes);
+            if (r.ok && channel <= static_cast<u8>(ChatChannel::Proximity)) queue(NetEvent::Kind::Voice, from, chat_channel_name(static_cast<ChatChannel>(channel)), packet);
             break;
         }
         default: break;
@@ -741,6 +780,7 @@ bool NetSession::take_event(NetEvent& out) {
     impl_->current = std::move(p.text);
     out = p.event;
     out.json = impl_->current.c_str();
+    out.size = static_cast<u32>(impl_->current.size());
     return true;
 }
 
@@ -767,6 +807,26 @@ u32 NetSession::player_squad(u32 player) const {
     if (!impl_) return 0;
     const auto it = impl_->groups.find(player);
     return it == impl_->groups.end() ? 0 : it->second.squad;
+}
+
+bool NetSession::voice_channel_on(ChatChannel channel) const { return impl_ && impl_->voice_on(channel); }
+
+bool NetSession::player_position(u32 player, Vec3& out) const { return impl_ && impl_->avatar_position(player, out); }
+
+bool NetSession::send_voice(ChatChannel channel, const u8* packet, u32 bytes) {
+    if (!impl_ || !packet || !bytes || bytes > kMaxVoiceBytes || !impl_->voice_on(channel)) return false;
+    if (mode_ == Mode::Server) {
+        impl_->route_voice(kServerPlayer, channel, std::string(reinterpret_cast<const char*>(packet), bytes));
+        return true;
+    }
+    if (!impl_->welcomed) return false;
+    Writer w;
+    w.u8_(kVoice);
+    w.u8_(static_cast<u8>(channel));
+    w.u32_(bytes);
+    w.put(packet, bytes);
+    impl_->send_to(impl_->server, w, kUnreliable);
+    return true;
 }
 
 bool NetSession::send_chat(ChatChannel channel, const char* text) {

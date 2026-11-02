@@ -298,7 +298,8 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - [x] Script events: Run on Server, Multicast, Run on Owning Client, has_authority, joins / leaves, teams and squads
 - [x] Text chat: all / team / squad (optional) / proximity (optional), routed by the server; built-in chat box or your own
 - [x] Play with N players in the editor (listen server + game windows); -server / -dedicated / -connect for packages
-- [ ] Voice chat (team / all / proximity), lag compensation for hits, server-side move checks, relevancy (only nearby objects), level travel together, a server browser / sessions, replicating component fields beyond the transform
+- [x] Voice chat: Opus, push-to-talk (V team / first channel on, B all) or open mic; team, all (optional), squad (optional), proximity (optional, fades with distance); routed by the server; per-speaker jitter buffers
+- [ ] Lag compensation for hits, server-side move checks, relevancy (only nearby objects), level travel together, a server browser / sessions, replicating component fields beyond the transform
 
 ## 2D (Paper2D)
 

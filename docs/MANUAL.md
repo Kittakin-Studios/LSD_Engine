@@ -400,6 +400,14 @@ game is single player and nothing networked runs. On:
   default, with a range). The server routes every line (a client cannot pick who hears it). The
   built-in **Chat Box** (Enter to type, Tab for the channel, Esc to cancel) can be turned off to make
   your own with `lsd.chat(channel, text)` and `on_chat(self, from, channel, text)`.
+- **Voice chat** (Project Settings > Voice; on by default in multiplayer games): hold **V** to talk
+  to your team (or, if team voice is off, the first of proximity / squad / all that is on), hold **B**
+  to talk to everyone when **Voice All** is on, or tick **Open Mic**. **Voice Squad** and **Voice
+  Proximity** are optional; proximity voice gets quieter with distance and is silent past Chat >
+  Proximity Range. Opus at about 24 kbit/s per speaker; the server decides who hears whom, like chat;
+  each speaker plays through a short jitter buffer, so a slow network costs a little delay, not
+  stutter. The chat box shows *Talking* while you transmit. The microphone opens only when voice chat
+  is on and the game is multiplayer (never in `-nosound` runs).
 - Packaged games: `-server` hosts, `-dedicated` hosts without a player, `-connect=address[:port]`
   joins (port 7777 by default). Tick rate, port and max players are in the same settings.
 

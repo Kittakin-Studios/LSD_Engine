@@ -15,7 +15,12 @@
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/localization.h"
 #include "lsd/input/input.h"
+#include "lsd/audio/voice_io.h"
 #include "lsd/net/net.h"
+#include "lsd/net/voice.h"
+
+#include <memory>
+#include <unordered_map>
 #include "lsd/physics/physics.h"
 #include "lsd/script/script.h"
 #include "lsd/world/components.h"
@@ -39,6 +44,10 @@ struct NetPlay {
     char address[64] = "127.0.0.1";
     net::NetSettings settings;
     char avatar[64] = "Cube";  // how each player looks to the others: a mesh asset or a shape by name
+    bool voice = false;          // voice chat (off in silent runs)
+    bool open_mic = false;
+    char push_to_talk_key[24] = "V";
+    char talk_to_all_key[24] = "B";
 };
 
 class PlaySession {
@@ -79,6 +88,8 @@ public:
     };
     const std::vector<ChatLine>& chat_log() const { return chat_; }
     bool send_chat(const char* channel, const char* text);  // this machine's player says something
+    bool talking() const { return talking_; }               // voice chat: transmitting now
+    f32 voice_level(u32 player) const { return voice_.level(player); }
     // Vehicles and movers for scripts: 0 enter vehicle e, 1 exit, 2 the driven vehicle (entity value),
     // 3 ride transport e, 4 get off, 5 start mover e, 6 stop it, 7 restart it. 0 = refused / none.
     u32 ride_command(world::World& world, int what, world::Entity e);
@@ -132,6 +143,13 @@ private:
     static world::Entity net_spawn(void* user, const char* asset, const char* name, Vec3 position, Vec3 rotation);
     void net_receive(world::World& world, f32 dt);
     void net_send(world::World& world, f32 dt);
+    // Voice chat: the microphone, a decoder per speaker, playback.
+    audio::VoiceIO voice_;
+    std::unique_ptr<net::VoiceEncoder> encoder_;
+    std::unordered_map<u32, std::unique_ptr<net::VoiceDecoder>> decoders_;
+    bool talking_ = false;
+    void hear(u32 speaker, const char* channel, const u8* packet, u32 bytes);
+    void talk(const input::InputFrame& frame);
     // Vehicles, transports and movers: objects moved by Play itself, on kinematic bodies.
     struct Moving {
         world::Entity entity, spline;

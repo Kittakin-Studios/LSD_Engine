@@ -13,6 +13,7 @@
 #include "graph_editor.h"
 #include "paper2d.h"
 
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_scancode.h>
 
 #include "lsd/asset/data_asset.h"
@@ -271,6 +272,10 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 
 void PlaySession::stop() {
     net_.shutdown();  // tells the others first
+    voice_.stop();
+    encoder_.reset();
+    decoders_.clear();
+    talking_ = false;
     my_avatar_ = {};
     moving_.clear();
     driving_ = riding_ = {};
@@ -403,6 +408,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             my_avatar_ = make_avatar(world, "Player 0", feet_, true);
             net_.set_owner(world, my_avatar_, net::kServerPlayer);
         }
+        if (ok && net_play_.voice && voice_.start(!net_play_.dedicated)) encoder_ = std::make_unique<net::VoiceEncoder>();
     }
     if (world.settings().level_script[0]) {  // the Level Blueprint: a script on an object of its own
         std::snprintf(world.add<world::Script>(world.create("LevelScript"))->script, sizeof(world::Script::script), "%s", world.settings().level_script);
@@ -1170,6 +1176,7 @@ void PlaySession::send_hits() {
 
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
     net_receive(world, dt);  // other machines' moves and events first
+    talk(frame);
     LSD_PROFILE_SCOPE("play");
     if (!physics_) return;
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
@@ -1356,6 +1363,44 @@ world::Entity PlaySession::net_spawn(void* user, const char* asset, const char* 
     return e;
 }
 
+void PlaySession::hear(u32 speaker, const char* channel, const u8* packet, u32 bytes) {
+    std::unique_ptr<net::VoiceDecoder>& decoder = decoders_[speaker];
+    if (!decoder) decoder = std::make_unique<net::VoiceDecoder>();
+    f32 frame[net::kVoiceFrame];
+    if (!decoder->decode(packet, bytes, frame)) return;
+    f32 gain = 1.0f;
+    if (std::strcmp(channel, "proximity") == 0) {  // quieter with distance, silent at the range
+        Vec3 there;
+        const f32 range = net_play_.settings.proximity_range;
+        gain = net_.player_position(speaker, there) && range > 0.0f ? std::clamp(1.0f - length(there - feet_) / range, 0.0f, 1.0f) : 0.0f;
+    }
+    voice_.play(speaker, frame, gain);
+}
+
+// Push-to-talk (or an open mic): the microphone's 20 ms frames, encoded and sent while talking;
+// otherwise read and dropped, so nothing old is sent when the key goes down.
+void PlaySession::talk(const input::InputFrame& frame) {
+    talking_ = false;
+    if (!encoder_ || !voice_.capturing()) return;
+    auto held = [&](const char* name) {
+        const SDL_Scancode k = name[0] ? SDL_GetScancodeFromName(name) : SDL_SCANCODE_UNKNOWN;
+        return k != SDL_SCANCODE_UNKNOWN && frame.keys && static_cast<i32>(k) < frame.key_count && frame.keys[k];
+    };
+    net::ChatChannel channel = net::ChatChannel::Team;
+    bool any = false;
+    for (net::ChatChannel c : {net::ChatChannel::Team, net::ChatChannel::Proximity, net::ChatChannel::Squad, net::ChatChannel::All}) {
+        if (!any && net_.voice_channel_on(c)) channel = c, any = true;
+    }
+    if (held(net_play_.talk_to_all_key) && net_.voice_channel_on(net::ChatChannel::All)) channel = net::ChatChannel::All, talking_ = true;
+    else talking_ = any && (net_play_.open_mic || held(net_play_.push_to_talk_key));
+    f32 pcm[net::kVoiceFrame];
+    u8 packet[net::kMaxVoicePacket];
+    while (voice_.read_frame(pcm)) {
+        if (!talking_) continue;
+        if (const u32 bytes = encoder_->encode(pcm, packet, sizeof packet)) net_.send_voice(channel, packet, bytes);
+    }
+}
+
 bool PlaySession::send_chat(const char* channel, const char* text) {
     net::ChatChannel c;
     return net_.active() && net::parse_chat_channel(channel, c) && net_.send_chat(c, text);
@@ -1379,6 +1424,7 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
         case net::NetEvent::Kind::PlayerLeft: scripts_.net_call("on_player_left", ev.from, "[]"); break;
         case net::NetEvent::Kind::Connected: scripts_.net_call("on_connected", ev.from, "[]"); break;
         case net::NetEvent::Kind::Disconnected: scripts_.net_call("on_disconnected", 0, "[]"); break;
+        case net::NetEvent::Kind::Voice: hear(ev.from, ev.name, reinterpret_cast<const u8*>(ev.json), ev.size); break;
         case net::NetEvent::Kind::Chat: {
             ChatLine line{};
             line.from = ev.from;

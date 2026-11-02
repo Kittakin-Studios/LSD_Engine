@@ -30,6 +30,11 @@ struct NetSettings {
     bool chat_squad = false;
     bool chat_proximity = false;
     f32 proximity_range = 30.0f;  // metres between the players' avatars (their owned objects)
+    // Voice chat channels (the same groups as text; proximity uses the same range).
+    bool voice_all = false;
+    bool voice_team = true;
+    bool voice_squad = false;
+    bool voice_proximity = false;
 };
 
 // Player 0 is the server's own (a listen server); clients get 1, 2, 3...
@@ -43,11 +48,12 @@ const char* chat_channel_name(ChatChannel channel);  // "all", "team", "squad", 
 bool parse_chat_channel(const char* name, ChatChannel& out);
 
 struct NetEvent {
-    enum class Kind : u8 { Call, PlayerJoined, PlayerLeft, Connected, Disconnected, Chat };
+    enum class Kind : u8 { Call, PlayerJoined, PlayerLeft, Connected, Disconnected, Chat, Voice };
     Kind kind = Kind::Call;
     u32 from = 0;         // Call / Chat: the sender's player id; Joined / Left: the player
     char name[64] = "";   // Call: the event (a script function's name); Chat: the channel's name
-    const char* json = "";  // Call: its arguments as a JSON array; Chat: the text (valid until the next take_event)
+    const char* json = "";  // Call: its arguments as a JSON array; Chat: the text; Voice: an Opus packet (valid until the next take_event)
+    u32 size = 0;           // its length in bytes
 };
 
 struct NetStats {
@@ -103,6 +109,12 @@ public:
     // Text chat from this machine's player. False if the channel is off, the text is empty, or there
     // is no session. Delivered as Chat events (to the sender too); the server routes and checks it.
     bool send_chat(ChatChannel channel, const char* text);
+    // Voice chat: one Opus packet (20 ms) from this machine's player. Unreliable (late audio is useless);
+    // the server routes it like chat. Delivered as Voice events to the listeners (not the speaker).
+    bool send_voice(ChatChannel channel, const u8* packet, u32 bytes);
+    bool voice_channel_on(ChatChannel channel) const;
+    // Where a player's avatar is (proximity voice gets quieter with distance); false if unknown.
+    bool player_position(u32 player, Vec3& out) const;
 
     struct Impl;
 

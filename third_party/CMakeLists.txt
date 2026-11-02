@@ -334,3 +334,21 @@ if(MSVC)
 else()
   target_compile_options(enet PRIVATE -w)
 endif()
+
+# Opus (BSD-3-Clause): the voice chat codec (engine/net/voice). Its own CMake, library only.
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(opus
+  GIT_REPOSITORY https://github.com/xiph/opus.git
+  GIT_TAG v1.5.2
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(opus)
+if(MSVC)
+  target_compile_options(opus PRIVATE /w)
+else()
+  target_compile_options(opus PRIVATE -w)
+endif()

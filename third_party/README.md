@@ -17,4 +17,5 @@ Fetched by `CMakeLists.txt` at configure time, pinned to a tag. Only permissive 
 | RmlUi | 6.0 | MIT | game UI: HTML / CSS documents |
 | QuickJS-ng | v0.16.2 | MIT | JavaScript for UI documents' scripts |
 | ENet | v1.3.18 | MIT | multiplayer: reliable UDP (engine/net) |
+| Opus | v1.5.2 | BSD-3-Clause | voice chat codec (engine/net) |
 | Tracy | v0.11.1 | BSD-3-Clause | CPU profiler client, only with -DLSD_TRACY=ON |

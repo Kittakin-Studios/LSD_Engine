@@ -1166,6 +1166,10 @@ void draw_chat_box(lsd::editor::PlaySession& play, const lsd::editor::ProjectSet
     const lsd::net::NetSession& net = play.network();
     const lsd::net::NetStats stats = net.stats();
     ImGui::TextDisabled("%s, player %u%s  %.0f ms", net.mode() == lsd::net::Mode::Server ? "Server" : "Client", net.player_id(), net.connected() ? "" : " (connecting)", stats.ping_ms);
+    if (play.talking()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "  Talking");
+    }
     ImGui::BeginChild("##lines", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
     for (const auto& l : play.chat_log()) {
         const ImVec4 color = std::strcmp(l.channel, "team") == 0 ? ImVec4(0.45f, 0.8f, 1.0f, 1.0f)
@@ -1914,6 +1918,14 @@ int main(int argc, char** argv) {
             net_play.settings.chat_proximity = pr.chat_proximity;
             net_play.settings.proximity_range = pr.proximity_range;
             std::snprintf(net_play.avatar, sizeof net_play.avatar, "%s", pr.player_avatar);
+            net_play.voice = pr.voice_chat && !no_sound;  // silent runs never open the microphone
+            net_play.open_mic = pr.open_mic;
+            net_play.settings.voice_team = pr.voice_team;
+            net_play.settings.voice_all = pr.voice_all;
+            net_play.settings.voice_squad = pr.voice_squad;
+            net_play.settings.voice_proximity = pr.voice_proximity;
+            std::snprintf(net_play.push_to_talk_key, sizeof net_play.push_to_talk_key, "%s", pr.push_to_talk_key);
+            std::snprintf(net_play.talk_to_all_key, sizeof net_play.talk_to_all_key, "%s", pr.talk_to_all_key);
             play.set_network(net_play);
             if (pr.multiplayer && !game_mode && pr.play_players > 1) {
                 const std::string level = "Saved/MultiplayerPlay" + std::string(lsd::world::kLevelExtension);

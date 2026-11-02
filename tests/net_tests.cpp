@@ -1,5 +1,6 @@
 // Multiplayer tests: a server and a client in one process over loopback, each with its own world.
 #include "lsd/net/net.h"
+#include "lsd/net/voice.h"
 #include "lsd/world/components.h"
 
 #include <chrono>
@@ -47,6 +48,7 @@ int main() {
         CHECK(client.join(client_world, "127.0.0.1:27651", settings));
 
         std::string server_calls, client_calls, server_chat, client_chat;
+        u32 server_voice = 0;  // voice bytes the server's player heard
         u32 joined = 0;
         auto pump = [&](f32 seconds, auto&& each_frame) {
             for (f32 t = 0; t < seconds; t += 0.016f) {
@@ -60,6 +62,7 @@ int main() {
                     if (ev.kind == net::NetEvent::Kind::PlayerJoined) joined = ev.from;
                     if (ev.kind == net::NetEvent::Kind::Call) server_calls += std::string(ev.name) + ev.json + std::to_string(ev.from) + ";";
                     if (ev.kind == net::NetEvent::Kind::Chat) server_chat += std::string(ev.name) + ":" + ev.json + ";";
+                    if (ev.kind == net::NetEvent::Kind::Voice) server_voice += ev.size;
                 }
                 while (client.take_event(ev)) {
                     if (ev.kind == net::NetEvent::Kind::Call) client_calls += std::string(ev.name) + ev.json + ";";
@@ -124,6 +127,33 @@ int main() {
         client.send_chat(net::ChatChannel::Team, "secret");
         pump(0.3f, [] {});
         CHECK(server_chat.size() == 20 && !has(server_chat, "secret"));  // the server's player is on another team
+
+        // Voice: an Opus round trip keeps the sound; team voice reaches team mates only.
+        net::VoiceEncoder encoder;
+        net::VoiceDecoder decoder;
+        CHECK(encoder.ok() && decoder.ok());
+        f32 tone[net::kVoiceFrame], heard[net::kVoiceFrame];
+        u8 packet[net::kMaxVoicePacket];
+        u32 bytes = 0;
+        f64 energy_in = 0, energy_out = 0;
+        for (int round = 0; round < 5; ++round) {  // a few frames: the codec settles in
+            for (u32 i = 0; i < net::kVoiceFrame; ++i) tone[i] = 0.5f * std::sin(6.2831853f * 440.0f * static_cast<f32>(round * net::kVoiceFrame + i) / 48000.0f);
+            bytes = encoder.encode(tone, packet, sizeof packet);
+            CHECK(bytes > 0 && bytes < 200);  // ~24 kbit/s: about 60 bytes per 20 ms
+            CHECK(decoder.decode(packet, bytes, heard));
+        }
+        for (u32 i = 0; i < net::kVoiceFrame; ++i) energy_in += tone[i] * tone[i], energy_out += heard[i] * heard[i];
+        CHECK(energy_out > energy_in * 0.5 && energy_out < energy_in * 2.0);
+        CHECK(decoder.decode(nullptr, 0, heard));  // a lost packet is concealed, not an error
+        CHECK(client.send_voice(net::ChatChannel::Team, packet, bytes));
+        CHECK(!client.send_voice(net::ChatChannel::All, packet, bytes));  // voice to everyone is off unless the game turns it on
+        pump(0.3f, [] {});
+        CHECK(server_voice == 0);  // the server's player is on team 2
+        server.set_player_group(0, 1, 0);
+        pump(0.2f, [] {});
+        client.send_voice(net::ChatChannel::Team, packet, bytes);
+        pump(0.3f, [] {});
+        CHECK(server_voice == bytes);
 
         client.shutdown();
         pump(0.3f, [] {});
