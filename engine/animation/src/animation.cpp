@@ -151,7 +151,10 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
     // Scale on the root scales the skinned result; the bind matrices are in unscaled space.
     out.vertices.clear();
     out.indices.clear();
+    out.morphs.clear();
+    out.morph_deltas.clear();
     std::vector<u32> tri;
+    std::vector<u32> corner_vertex;  // this mesh's output vertices -> its ufbx vertex (morph offsets are per vertex)
     out.bounds_min = {1e30f, 1e30f, 1e30f};
     out.bounds_max = {-1e30f, -1e30f, -1e30f};
     for (usize m = 0; m < scene->meshes.count; ++m) {
@@ -192,10 +195,13 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
             return t;
         }();
         tri.resize(mesh->max_face_triangles * 3);
+        const u32 first_vertex = static_cast<u32>(out.vertices.size());
+        corner_vertex.clear();
         for (usize f = 0; f < mesh->faces.count; ++f) {
             const u32 count = ufbx_triangulate_face(tri.data(), tri.size(), mesh, mesh->faces.data[f]);
             for (u32 i = 0; i < count * 3; ++i) {
                 const u32 index = tri[i];
+                corner_vertex.push_back(mesh->vertex_indices.data[index]);
                 const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, index);
                 const ufbx_vec3 n = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, index) : ufbx_vec3{0, 0, 1};
                 const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, index) : ufbx_vec2{0, 0};
@@ -248,6 +254,25 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
                     out.bounds_min = vmin(out.bounds_min, wp);
                     out.bounds_max = vmax(out.bounds_max, wp);
                 }
+            }
+        }
+        // Morph targets: each blend channel's full-weight shape, moved into model space like the vertices.
+        for (const ufbx_blend_deformer* blend : mesh->blend_deformers) {
+            for (const ufbx_blend_channel* channel : blend->channels) {
+                const ufbx_blend_shape* shape = channel->target_shape;
+                if (!shape) continue;
+                MorphTarget target;
+                std::snprintf(target.name, sizeof target.name, "%s", channel->name.data);
+                target.first = static_cast<u32>(out.morph_deltas.size());
+                for (usize k = 0; k < corner_vertex.size(); ++k) {
+                    const ufbx_vec3 o = ufbx_get_blend_shape_vertex_offset(shape, corner_vertex[k]);
+                    if (o.x == 0.0 && o.y == 0.0 && o.z == 0.0) continue;
+                    const bool weighted = skin->vertices.data[corner_vertex[k]].num_weights > 0;
+                    const Vec3 d = transform_vector(weighted ? into_main : unweighted, {static_cast<f32>(o.x), static_cast<f32>(o.y), static_cast<f32>(o.z)});
+                    out.morph_deltas.push_back({first_vertex + static_cast<u32>(k), {d.x, d.y, d.z}});
+                }
+                target.count = static_cast<u32>(out.morph_deltas.size()) - target.first;
+                if (target.count) out.morphs.push_back(target);
             }
         }
     }

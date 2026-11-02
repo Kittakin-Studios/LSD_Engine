@@ -526,6 +526,14 @@ at the object when the clip passes that time in Play.
   **VerticalSpeed** and **InAir** automatically; set your own with `lsd.set_anim_param` or the
   Set Anim Parameter node.
 
+**Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them
+with the rigged FBX. The Mesh Editor lists them under **Morph Targets**: click one to preview it
+(the slider sets the preview weight) and its name is copied. On the Skeletal Mesh, add rows to
+**Morphs** (name + weight 0..1), or from a script `lsd.set_morph(e, "Smile", 0.7)` / the **Set Morph
+Target** node (on a Character it finds the mesh below it). Several targets with the same name (head,
+teeth, brows) move together. Shapes are mixed on the CPU when a weight changes, so animate a few
+faces at a time, not crowds.
+
 ---
 
 ## 12. Audio
@@ -799,6 +807,7 @@ Audio and animation
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
 | `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | |
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
+| `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 
 AI
 

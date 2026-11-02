@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -34,6 +35,10 @@ struct MeshWindow {
     EditorState* state = nullptr;
     anim::Pose pose;
     Mat4 view_proj;
+    char morph[64] = "";      // the morph target previewed, at morph_weight
+    f32 morph_weight = 1.0f;
+    rhi::BufferHandle morphed;
+    u64 morphed_for = 0;      // what `morphed` was built from (0 = rebuild)
 };
 MeshWindow g_mw;
 
@@ -86,6 +91,8 @@ void open_mesh_editor(EditorState& s, const asset::AssetRecord& record) {
     g_mw.meta_dirty = false;
     g_mw.bone = -1;
     g_mw.zoom = 1.0f;
+    g_mw.morph[0] = '\0';
+    g_mw.morphed_for = 0;
     ImGui::SetWindowFocus("###MeshEditor");
 }
 
@@ -120,6 +127,19 @@ void render_mesh_editor(rhi::Device& device, const f32 background[4]) {
     if (skinned) {
         g_mw.pose.sample(*skinned->model, nullptr, 0.0f, false);  // the rest pose
         draw.vertices = skinned->vertices;
+        if (g_mw.morph[0]) {  // the previewed morph target mixed into the rest pose
+            u32 bits;
+            std::memcpy(&bits, &g_mw.morph_weight, sizeof bits);
+            const u64 want = (static_cast<u64>(skinned->vertices.value) << 32 | bits);  // picking another morph clears morphed_for
+            if (want != g_mw.morphed_for || !g_mw.morphed.valid()) {
+                if (g_mw.morphed.valid()) device.destroy_buffer(g_mw.morphed);
+                std::vector<rhi::SkinnedVertex> v(skinned->model->vertices.size());
+                anim::apply_morphs(*skinned->model, [](const char* name) { return std::strcmp(name, g_mw.morph) == 0 ? g_mw.morph_weight : 0.0f; }, v.data());
+                g_mw.morphed = device.create_buffer(rhi::BufferUsage::Vertex, v.data(), v.size() * sizeof(rhi::SkinnedVertex));
+                g_mw.morphed_for = want;
+            }
+            if (g_mw.morphed.valid()) draw.vertices = g_mw.morphed;
+        }
         draw.indices = skinned->indices;
         draw.index_count = skinned->index_count;
         draw.joint_rows = g_mw.pose.joint_rows();
@@ -237,6 +257,28 @@ void draw_mesh_editor(EditorState& s) {
         ImGui::BeginChild("bones", ImVec2(0, 200), ImGuiChildFlags_Borders);
         bone_tree(*skinned->model, -1);
         ImGui::EndChild();
+        if (!skinned->model->morphs.empty()) {
+            ImGui::SeparatorText("Morph Targets");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::SliderFloat("##morph_weight", &g_mw.morph_weight, 0.0f, 1.0f, "Preview weight %.2f")) g_mw.morphed_for = 0;
+            ImGui::BeginChild("morphs", ImVec2(0, 140), ImGuiChildFlags_Borders);
+            const auto& morphs = skinned->model->morphs;
+            for (usize i = 0; i < morphs.size(); ++i) {
+                bool shown_before = false;  // one row per name (several meshes may share it)
+                for (usize k = 0; k < i && !shown_before; ++k) shown_before = std::strcmp(morphs[k].name, morphs[i].name) == 0;
+                if (shown_before) continue;
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Selectable(morphs[i].name, std::strcmp(g_mw.morph, morphs[i].name) == 0)) {
+                    const bool same = std::strcmp(g_mw.morph, morphs[i].name) == 0;
+                    std::snprintf(g_mw.morph, sizeof g_mw.morph, "%s", same ? "" : morphs[i].name);  // click again: back to rest
+                    g_mw.morphed_for = 0;
+                    ImGui::SetClipboardText(morphs[i].name);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            ImGui::TextDisabled("Click: preview it (name copied for SkeletalMesh > Morphs or lsd.set_morph)");
+        }
         ImGui::SeparatorText("Sockets");
         ImGui::BeginDisabled(g_mw.bone < 0);
         if (ImGui::Button("+ Socket on the selected bone")) {
@@ -272,6 +314,7 @@ void draw_mesh_editor(EditorState& s) {
 
 void shutdown_mesh_editor() {
     if (g_mw.device && g_mw.target.valid()) g_mw.device->destroy_texture(g_mw.target);
+    if (g_mw.device && g_mw.morphed.valid()) g_mw.device->destroy_buffer(g_mw.morphed);
     g_mw.target = {};
     g_mw.open = false;
 }

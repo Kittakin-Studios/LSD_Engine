@@ -34,6 +34,7 @@
 //   lsd.push_mix(name), lsd.pop_mix(name)   Sound Mix data assets by name
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
+//   lsd.set_morph(e, name, weight)        a morph target (blend shape) weight on e's skeletal mesh (or its child's)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes.
 //                                         A Curve Vector gives x, y, z; a Curve Color r, g, b, a

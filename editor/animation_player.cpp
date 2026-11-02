@@ -1,5 +1,7 @@
 #include "animation_player.h"
 
+#include "lsd/foundation/hash_id.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +21,46 @@ void fire_notifies(const ClipSet& set, u32 clip, f32 from, f32 to, bool wrapped,
 }
 
 } // namespace
+
+AnimationPlayer::~AnimationPlayer() {
+    for (State& s : states_) {
+        if (s.morphed.valid()) device_.destroy_buffer(s.morphed);
+    }
+}
+
+rhi::BufferHandle AnimationPlayer::vertices(world::Entity e, rhi::BufferHandle model) const {
+    for (const State& s : states_) {
+        if (s.used && s.entity == e) return s.morphed.valid() ? s.morphed : model;
+    }
+    return model;
+}
+
+// shortcut: morphs on the CPU, a new buffer per change (buffers are immutable); move to the GPU
+// (a delta buffer read in the skinning shader) when many faces animate at once
+void AnimationPlayer::update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model) {
+    u64 key = 1469598103934665603ull ^ model.vertices.value;  // a reload makes a new buffer, so a new key
+    bool any = false;
+    for (const world::MorphWeight& m : mesh.morphs) {
+        if (m.weight == 0.0f) continue;
+        u32 bits;
+        std::memcpy(&bits, &m.weight, sizeof bits);
+        key = (key ^ hash64(m.name) ^ bits) * 1099511628211ull;
+        any = true;
+    }
+    if (!any || model.model->morphs.empty()) key = 0;  // nothing to mix: the shared buffer
+    if (key == state.morph_key) return;
+    state.morph_key = key;
+    if (state.morphed.valid()) device_.destroy_buffer(state.morphed);
+    state.morphed = {};
+    if (key == 0) return;
+    std::vector<rhi::SkinnedVertex> morphed(model.model->vertices.size());
+    anim::apply_morphs(*model.model, [&](const char* name) {
+        f32 w = 0.0f;
+        for (const world::MorphWeight& m : mesh.morphs) w = std::strcmp(m.name, name) == 0 ? m.weight : w;
+        return w;
+    }, morphed.data());
+    state.morphed = device_.create_buffer(rhi::BufferUsage::Vertex, morphed.data(), morphed.size() * sizeof(rhi::SkinnedVertex));
+}
 
 const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
     for (const State& s : states_) {
@@ -142,7 +184,11 @@ void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache&
 
 void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds) {
     for (State& s : states_) {  // objects deleted or without the component any more
-        if (s.used && (!world.alive(s.entity) || !world.get<world::SkeletalMesh>(s.entity))) s.used = false;
+        if (!s.used || (world.alive(s.entity) && world.get<world::SkeletalMesh>(s.entity))) continue;
+        s.used = false;
+        if (s.morphed.valid()) device_.destroy_buffer(s.morphed);
+        s.morphed = {};
+        s.morph_key = 0;
     }
     const reflect::TypeInfo& type = reflect::type_of<world::SkeletalMesh>();
     for (u32 i = 0; i < world.count(type); ++i) {
@@ -165,6 +211,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             }
         }
         if (!state) continue;  // more than 256 animated objects: the rest stay still
+        update_morphs(*state, *mesh, *model);
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
 

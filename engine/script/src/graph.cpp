@@ -125,6 +125,8 @@ NodeDef g_defs[] = {
      {kExecIn, {"Name", PinType::String, "Surface"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_audio_param($1, $2)", {}},
     {"SetAnimParam", "Set Anim Parameter", "Animation", "A parameter of the target's Animation Graph (Speed, InAir, or your own)",
      {kExecIn, kTarget, {"Name", PinType::String, "Speed"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_anim_param($1, $2, $3)", {}},
+    {"SetMorph", "Set Morph Target", "Animation", "A morph target (blend shape) weight on the target's skeletal mesh: 0 rest, 1 full",
+     {kExecIn, kTarget, {"Name", PinType::String, "Smile"}, {"Weight", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_morph($1, $2, $3)", {}},
     {"AIMoveTo", "AI Move To", "AI", "Walks the target (it needs a Nav Agent) to a location on the navmesh, round obstacles and other agents",
      {kExecIn, kTarget, {"Location", PinType::Vector, "0,0,0"}}, 0, {kExecOut}, 0, "lsd.move_to($1, $2.x, $2.y, $2.z)", {}},
     {"BbSet", "Set Blackboard Value", "AI", "A number on the target's AI Controller blackboard (its behaviour tree reads it)",

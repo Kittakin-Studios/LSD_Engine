@@ -939,6 +939,31 @@ struct Api {
         if (host.set_anim_param) host.set_anim_param(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_checknumber(L, 3)));
         return 0;
     }
+    // A morph target weight on e's skeletal mesh, or on the first one below it (a Character's mesh).
+    static int set_morph(lua_State* L) {
+        world::World& w = world(L);
+        const world::Entity e = live_entity(L, 1);
+        world::SkeletalMesh* mesh = w.get<world::SkeletalMesh>(e);
+        for (u32 slot = 0; !mesh && slot < w.slot_count(); ++slot) {
+            const world::Entity c = w.entity_at_slot(slot);
+            if (!c.valid() || !w.get<world::SkeletalMesh>(c)) continue;
+            for (world::Entity p = w.parent(c); p.valid() && !mesh; p = w.parent(p)) mesh = p == e ? w.get<world::SkeletalMesh>(c) : nullptr;
+        }
+        if (!mesh) return 0;
+        const char* name = luaL_checkstring(L, 2);
+        const f32 weight = static_cast<f32>(luaL_checknumber(L, 3));
+        for (world::MorphWeight& m : mesh->morphs) {
+            if (std::strcmp(m.name, name) != 0) continue;
+            m.weight = weight;
+            return 0;
+        }
+        if (mesh->morphs.count == mesh->morphs.capacity()) return luaL_error(L, "%s already sets %u morph targets", w.name(e), mesh->morphs.count);
+        world::MorphWeight m;
+        std::snprintf(m.name, sizeof m.name, "%s", name);
+        m.weight = weight;
+        mesh->morphs.push_back(m);
+        return 0;
+    }
     static int set_class_volume(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.set_class_volume) host.set_class_volume(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
@@ -1263,7 +1288,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
-        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

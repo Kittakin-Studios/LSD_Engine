@@ -269,6 +269,14 @@ struct GameMode {
     LSD_PROPERTY(Edit, Tooltip = "Show the mouse cursor (a menu) instead of capturing the mouse for the player") bool show_cursor = false;
 };
 
+// One morph target's weight on a skeletal mesh (Unreal's Set Morph Target).
+LSD_STRUCT()
+struct MorphWeight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The shape key / blend shape name in the FBX (the Mesh Editor lists them)") char name[64] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = rest, 1 = the full shape") f32 weight = 0.0f;
+};
+
 // A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a
 // rigged FBX into the viewport; its animations can come from the same file or another (Mixamo).
 LSD_STRUCT(Component, Category = "Animation")
@@ -284,6 +292,8 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too, so you see the motion while building") bool playing = true;
     LSD_PROPERTY(Edit, Widget = "Asset:AnimGraph", Tooltip = "A state machine (Idle, Walk/Run blend space, Jump...) driven by parameters; replaces the clip above")
     char anim_graph[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Morph targets (blend shapes: faces, correctives) mixed in by weight; scripts set them with lsd.set_morph")
+    List<MorphWeight, 16> morphs;
 };
 
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".

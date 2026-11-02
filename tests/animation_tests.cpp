@@ -142,9 +142,42 @@ static void graph_tests() {
     CHECK(std::strcmp(anim::state_name(once, os), "Land") == 0);
 }
 
+// Morph targets: offsets mixed in by weight, by name, several targets sharing a name together.
+static void morph_tests(const std::string& data) {
+    anim::SkinnedModel model(default_allocator());
+    model.vertices.resize(2);
+    for (rhi::SkinnedVertex& v : model.vertices) v = rhi::SkinnedVertex{};
+    model.vertices[1].position[0] = 1.0f;
+    model.morph_deltas.push_back({1, {0, 0, 2}});
+    model.morph_deltas.push_back({0, {0, 1, 0}});
+    model.morphs.push_back({"Up", 0, 1});
+    model.morphs.push_back({"Up", 1, 1});  // the same name on another mesh
+    rhi::SkinnedVertex out[2];
+    anim::apply_morphs(model, [](const char* name) { return std::strcmp(name, "Up") == 0 ? 0.5f : 0.0f; }, out);
+    CHECK(out[1].position[0] == 1.0f && out[1].position[2] == 1.0f && out[0].position[1] == 0.5f);
+    anim::apply_morphs(model, [](const char*) { return 0.0f; }, out);
+    CHECK(out[1].position[2] == 0.0f && out[0].position[1] == 0.0f);
+
+    // A real rig: Blender shape keys arrive with their names and offsets on our vertices.
+    u32 found = 0;
+    for (const char* name : {"blender_293_barbarian_7400_binary.fbx"}) {
+        anim::SkinnedModel m(default_allocator());
+        char error[256] = "";
+        CHECK(anim::import_skinned((data + "/" + name).c_str(), 1.0f, m, error, sizeof error));
+        std::printf("  %s: %zu morph targets, %zu offsets\n", name, m.morphs.size(), m.morph_deltas.size());
+        for (const anim::MorphTarget& t : m.morphs) {
+            CHECK(t.name[0] && t.count > 0 && t.first + t.count <= m.morph_deltas.size());
+            for (u32 i = t.first; i < t.first + t.count; ++i) CHECK(m.morph_deltas[i].vertex < m.vertices.size());
+        }
+        found += static_cast<u32>(m.morphs.size());
+    }
+    CHECK(found > 0);
+}
+
 int main() {
     graph_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
+    morph_tests(data);
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
     u32 tested_animation = 0;
     for (const char* name : files) {

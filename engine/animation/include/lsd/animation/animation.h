@@ -9,8 +9,20 @@
 
 namespace lsd::anim {
 
+// A morph target (Unreal's Morph Target, Blender's shape key): sparse position offsets from the
+// bind pose. Several meshes of a file may each have one with the same name; they move together.
+struct MorphTarget {
+    char name[64] = "";
+    u32 first = 0, count = 0;  // into SkinnedModel::morph_deltas
+};
+struct MorphDelta {
+    u32 vertex = 0;
+    f32 offset[3] = {0, 0, 0};
+};
+
 struct SkinnedModel {
-    explicit SkinnedModel(Allocator& allocator) : vertices(allocator), indices(allocator), inverse_bind(allocator) {}
+    explicit SkinnedModel(Allocator& allocator)
+        : vertices(allocator), indices(allocator), inverse_bind(allocator), morphs(allocator), morph_deltas(allocator) {}
     ~SkinnedModel();
     SkinnedModel(const SkinnedModel&) = delete;
     SkinnedModel& operator=(const SkinnedModel&) = delete;
@@ -18,6 +30,8 @@ struct SkinnedModel {
     Array<rhi::SkinnedVertex> vertices;  // bind pose, model space (Z up, metres)
     Array<u32> indices;
     Array<Mat4> inverse_bind;            // per skeleton joint
+    Array<MorphTarget> morphs;
+    Array<MorphDelta> morph_deltas;
     Vec3 bounds_min, bounds_max;         // bind pose
     u32 joint_count() const;
     const char* joint_name(u32 joint) const;
@@ -31,6 +45,22 @@ struct SkinnedModel {
 // Reads an FBX with a skinned mesh. Meshes without a skin follow the root. False + `error` if the
 // file has no skeleton or cannot be read.
 bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity);
+
+// The bind pose with morph targets mixed in: `weight(name)` for each target (0 = untouched, 1 = the
+// full shape; outside 0..1 exaggerates). Writes model.vertices.size() vertices to `out`, ready to skin.
+// shortcut: positions only (normals stay the bind pose's), fine for faces; add normal offsets for big shape changes
+template <typename WeightOf>
+void apply_morphs(const SkinnedModel& model, WeightOf weight, rhi::SkinnedVertex* out) {
+    std::memcpy(out, model.vertices.data(), model.vertices.size() * sizeof(rhi::SkinnedVertex));
+    for (const MorphTarget& t : model.morphs) {
+        const f32 w = weight(t.name);
+        if (w == 0.0f) continue;
+        for (u32 i = t.first; i < t.first + t.count; ++i) {
+            const MorphDelta& d = model.morph_deltas[i];
+            for (int k = 0; k < 3; ++k) out[d.vertex].position[k] += d.offset[k] * w;
+        }
+    }
+}
 
 struct Clip {
     Clip() = default;

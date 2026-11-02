@@ -13,9 +13,13 @@ namespace lsd::editor {
 
 class AnimationPlayer {
 public:
+    explicit AnimationPlayer(rhi::Device& device) : device_(device) {}
+    ~AnimationPlayer();
     // `sounds` only in Play (notifies are silent in the editor).
     void update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds);
     const anim::Pose* pose(world::Entity e) const;  // nullptr until the object has been updated
+    // The vertices to skin for `e`: its own morphed copy when morph weights are set, else `model`'s.
+    rhi::BufferHandle vertices(world::Entity e, rhi::BufferHandle model) const;
     // A socket's world transform on e's skinned mesh (the mesh's .meta sockets); false if none.
     bool socket(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* socket, Mat4& out);
     // Attach To Socket components onto their sockets (after update).
@@ -43,8 +47,12 @@ private:
         anim::GraphState graph;
         u32 notify_clip = ~0u;  // graph: the strongest clip last frame and where it was
         f32 notify_ratio = 0.0f;
+        rhi::BufferHandle morphed;  // bind pose + morph targets, rebuilt when the weights change
+        u64 morph_key = 0;
         bool used = false;
     };
+    rhi::Device& device_;
+    void update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model);
     State states_[256];
     struct Ik {
         world::Entity entity;

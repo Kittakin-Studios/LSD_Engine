@@ -144,7 +144,7 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
             if (lsd::length(centre - *light) > range + lsd::length(extent) * 2.0f) continue;  // generous: the pose may reach out
         }
         const lsd::Mat4 mvp = vp * m;
-        device.draw_shadow_caster(model->vertices, model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
+        device.draw_shadow_caster(g_animations->vertices(e, model->vertices), model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
     }
 }
 
@@ -455,7 +455,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         }
         const lsd::Mat4 inv = lsd::affine_inverse(m);
         lsd::rhi::MeshDraw draw{};
-        draw.vertices = model->vertices;
+        draw.vertices = g_animations->vertices(e, model->vertices);
         draw.indices = model->indices;
         draw.index_count = model->index_count;
         draw.joint_rows = pose->joint_rows();
@@ -1085,7 +1085,7 @@ int main(int argc, char** argv) {
     const lsd::rhi::TextureHandle local_shadow_atlas = device->create_shadow_map(lsd::editor::shadow_atlas_size());
     lsd::editor::MaterialCache materials(*texture_cache, registry);
     auto* skinned_cache = new lsd::editor::SkinnedCache(*device, registry);  // deleted before the device
-    auto* animations = new lsd::editor::AnimationPlayer();
+    auto* animations = new lsd::editor::AnimationPlayer(*device);  // deleted before the device (morphed vertex buffers)
     auto* effects = new lsd::editor::ParticlePlayer(*device, allocator, registry, *texture_cache);  // deleted before the textures
     g_skinned = skinned_cache;
     auto* decal_atlas = new lsd::editor::DecalAtlas(*device, allocator, registry);  // deleted before the device
