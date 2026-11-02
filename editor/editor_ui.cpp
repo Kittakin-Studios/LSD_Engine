@@ -288,6 +288,12 @@ bool g_open_save_as = false;
 char g_save_as_name[96] = "";
 bool g_was_using_gizmo[4] = {};  // per viewport
 bool g_alt_duplicated[4] = {};
+bool g_gizmo_busy[4] = {};
+// Shift+drag with the move gizmo: the camera follows the object. The gizmo keeps reading the mouse
+// through the camera as it was when the follow began, or the move would feed on itself.
+// shortcut: releasing Shift mid-drag makes the object jump by how far the camera went; hold it to the end
+bool g_shift_follow[4] = {};
+Vec3 g_follow_camera[4], g_follow_pivot[4];  // the mouse is on (or dragging) the gizmo: Alt+LMB duplicates instead of orbiting
 int g_request_active = -1;       // viewport clicked this frame
 
 // The data asset shown in Details (loaded on selection, written back on Save).
@@ -1175,7 +1181,7 @@ void update_camera(EditorState& s, bool hovered, int index) {
     bool& orbiting = orbiting_by_view[index];
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) looking = true;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) panning = true;
-    if (hovered && io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) orbiting = true;
+    if (hovered && io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !g_gizmo_busy[index]) orbiting = true;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) looking = false;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) panning = false;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) orbiting = false;
@@ -1338,7 +1344,13 @@ bool draw_joint_pivot_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, 
     return busy;
 }
 
-bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+bool draw_gizmo(EditorState& s, const Mat4& camera_view_matrix, const Mat4& proj, ImVec2 pos, ImVec2 size, int index) {
+    Mat4 view = camera_view_matrix;
+    if (g_shift_follow[index]) {
+        EditorCamera start = s.camera;
+        start.position = g_follow_camera[index];
+        view = camera_view(start);
+    }
     const bool editable = s.world->alive(s.selected) && !s.world->locked(s.selected) && !s.game_view && !(s.playing && !s.ejected);
     if (s.spline_point >= 0 && editable) return draw_spline_point_gizmo(s, view, proj, pos, size, index);
     if (s.joint_pivot && editable) return draw_joint_pivot_gizmo(s, view, proj, pos, size, index);
@@ -1426,6 +1438,14 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
         }
         // Every selected object gets the same change, about the pivot.
         const Mat4 delta = m * affine_inverse(before);
+        if (ImGui::GetIO().KeyShift && s.gizmo == GizmoMode::Translate) {  // Shift+drag: the camera comes along (Unreal)
+            if (!g_shift_follow[index]) {
+                g_shift_follow[index] = true;
+                g_follow_camera[index] = s.camera.position;
+                g_follow_pivot[index] = {before.at(0, 3), before.at(1, 3), before.at(2, 3)};
+            }
+            s.camera.position = g_follow_camera[index] + Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - g_follow_pivot[index];
+        }
         Entity roots[EditorState::kMaxSelection];
         const u32 count = selection_roots(s, roots);
         for (u32 i = 0; i < count; ++i) {
@@ -1437,6 +1457,7 @@ bool draw_gizmo(EditorState& s, const Mat4& view, const Mat4& proj, ImVec2 pos, 
         }
         edited(s, alt_duplicated ? "Duplicate" : s.gizmo == GizmoMode::Translate ? "Move" : s.gizmo == GizmoMode::Rotate ? "Rotate" : "Scale");
     }
+    if (!using_now || !ImGui::GetIO().KeyShift) g_shift_follow[index] = false;
     was_using = using_now;
     return using_now || over;
 }
@@ -1715,8 +1736,16 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     ImGui::PopStyleVar();
-    ImGui::InvisibleButton("##surface", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-    const bool hovered = ImGui::IsItemHovered();
+    // ImGuizmo only grabs a click when no widget is hovered: over the gizmo (last frame), the viewport
+    // leaves its click surface out so LMB reaches the arrows.
+    bool hovered;
+    if (g_gizmo_busy[index] && !(s.playing && !s.ejected)) {
+        ImGui::Dummy(size);
+        hovered = ImGui::IsWindowHovered();
+    } else {
+        ImGui::InvisibleButton("##surface", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+        hovered = ImGui::IsItemHovered();
+    }
     if (hovered && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
                     ImGui::IsMouseClicked(ImGuiMouseButton_Middle))) {
         g_request_active = index;
@@ -1752,6 +1781,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     }
 
     const bool gizmo_busy = draw_gizmo(s, view, proj, pos, size, index);
+    g_gizmo_busy[index] = gizmo_busy;
     // Click selects; Ctrl+click toggles, Shift+click adds; a drag from empty space draws a selection box.
     static bool marquee_by_view[4];
     static ImVec2 marquee_start_by_view[4];

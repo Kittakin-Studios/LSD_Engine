@@ -744,6 +744,69 @@ void register_console(EditorState& s) {
             return 0;
         }, nullptr);
     }, &s, "ui.Keys <down|up|enter ...>: keys for the game UI, 0.8 s later (tests)");
+    console::add_command("ui.Drag", [](void*, const char* args) {  // tests: a real LMB drag through SDL's queue
+        struct Drag {
+            float x0, y0, x1, y1;
+            SDL_Keycode modifier;
+        };
+        auto* d = new Drag{};
+        char mod[16] = "";
+        if (std::sscanf(args, "%f %f %f %f %15s", &d->x0, &d->y0, &d->x1, &d->y1, mod) < 4) {
+            delete d;
+            return;
+        }
+        d->modifier = std::strcmp(mod, "shift") == 0 ? SDLK_LSHIFT : std::strcmp(mod, "alt") == 0 ? SDLK_LALT : std::strcmp(mod, "ctrl") == 0 ? SDLK_LCTRL : SDLK_UNKNOWN;
+        SDL_AddTimer(800, [](void* user, SDL_TimerID, Uint32) -> Uint32 {
+            const Drag d = *static_cast<const Drag*>(user);
+            delete static_cast<const Drag*>(user);
+            int window_count = 0;
+            SDL_Window** windows = SDL_GetWindows(&window_count);
+            const SDL_WindowID window = windows && window_count > 0 ? SDL_GetWindowID(windows[0]) : 0;
+            SDL_free(windows);
+            const SDL_Keymod held = d.modifier == SDLK_LSHIFT ? SDL_KMOD_LSHIFT : d.modifier == SDLK_LALT ? SDL_KMOD_LALT : d.modifier == SDLK_LCTRL ? SDL_KMOD_LCTRL : SDL_KMOD_NONE;
+            auto key = [&](bool down) {
+                if (d.modifier == SDLK_UNKNOWN) return;
+                SDL_Event e{};
+                e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                e.key.windowID = window;
+                e.key.key = d.modifier;
+                e.key.scancode = SDL_GetScancodeFromKey(d.modifier, nullptr);
+                e.key.mod = down ? held : SDL_KMOD_NONE;
+                e.key.down = down;
+                SDL_PushEvent(&e);
+            };
+            auto move = [&](float x, float y) {
+                SDL_Event e{};
+                e.type = SDL_EVENT_MOUSE_MOTION;
+                e.motion.windowID = window;
+                e.motion.x = x;
+                e.motion.y = y;
+                SDL_PushEvent(&e);
+            };
+            auto button = [&](bool down) {
+                SDL_Event e{};
+                e.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+                e.button.windowID = window;
+                e.button.button = SDL_BUTTON_LEFT;
+                e.button.down = down;
+                SDL_PushEvent(&e);
+            };
+            move(d.x0, d.y0);
+            SDL_Delay(150);
+            key(true);
+            SDL_Delay(50);
+            button(true);
+            for (int i = 1; i <= 20; ++i) {  // a steady hand: 20 steps over about a second
+                SDL_Delay(50);
+                move(d.x0 + (d.x1 - d.x0) * static_cast<float>(i) / 20.0f, d.y0 + (d.y1 - d.y0) * static_cast<float>(i) / 20.0f);
+            }
+            SDL_Delay(150);
+            button(false);
+            SDL_Delay(50);
+            key(false);
+            return 0;
+        }, d);
+    }, &s, "ui.Drag <x0> <y0> <x1> <y1> [shift|alt|ctrl]: an LMB drag, holding the key, 0.8 s later (tests)");
     console::add_command("ui.Click", [](void*, const char* args) {  // tests: a real click through SDL's queue
         float* at = new float[2];  // each click keeps its own position (several can be queued)
         if (std::sscanf(args, "%f %f", &at[0], &at[1]) != 2) {

@@ -124,7 +124,10 @@ many surfaces stack). **G**: game view (hides editor icons).
 ### Selecting and transforming
 
 Click an object to select it; Ctrl+click to add; drag a box to select many. **W / E / R** switch the
-gizmo to move / rotate / scale; **Ctrl+`** toggles local / world space; Snap (toolbar) uses the snap
+gizmo to move / rotate / scale. Hold **LMB** on an arrow to move along that axis (X red, Y green, Z blue,
+the level's axes in World space), on a square between two arrows to move in that plane;
+**Alt+LMB** drag duplicates and moves the copy; **Shift+LMB** drag brings the camera along with the
+object. **Ctrl+`** toggles local / world space; Snap (toolbar) uses the snap
 steps from Editor Preferences; **Surface** (toolbar) keeps moved objects on the surface under them and
 holding **V** while moving snaps to the nearest vertex of another mesh. **Pivot** (or **Alt+V**) lets the
 gizmo move the pivot the object turns and scales about (right-click it: Reset Pivot). Clicking picks
