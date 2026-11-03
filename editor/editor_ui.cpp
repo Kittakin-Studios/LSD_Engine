@@ -46,6 +46,7 @@
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_internal.h>  // DockBuilder API
@@ -301,7 +302,13 @@ Vec3 g_follow_camera[4], g_follow_pivot[4];  // the mouse is on (or dragging) th
 int g_request_active = -1;       // viewport clicked this frame
 
 // The data asset shown in Details (loaded on selection, written back on Save).
-alignas(16) u8 g_data[32768];
+u8* g_data = nullptr;  // the selected data asset, in g_data_storage (grown to its type's size)
+std::vector<u8> g_data_storage;
+// A buffer of at least `size` bytes for a copy of a reflected struct (operator new: 16-byte aligned on x64).
+u8* grow(std::vector<u8>& storage, usize size) {
+    if (storage.size() < size) storage.resize(size);
+    return storage.data();
+}
 const reflect::TypeInfo* g_data_type = nullptr;
 asset::Guid g_data_guid;
 bool g_data_dirty = false;
@@ -2670,7 +2677,7 @@ void load_selected_data(EditorState& s, const asset::AssetRecord& r) {
     g_data_guid = r.guid;
     g_data_dirty = false;
     if (!g_data_type) return;
-    LSD_ASSERT(g_data_type->size <= sizeof g_data);
+    g_data = grow(g_data_storage, g_data_type->size);
     std::memcpy(g_data, g_data_type->defaults, g_data_type->size);
     char path[300];
     s.registry->source_path(r, path, sizeof path);
@@ -3297,8 +3304,8 @@ void draw_entity_details(EditorState& s) {
         ImGui::PushID(types[i]->name);
         bool keep = true;
         if (ImGui::CollapsingHeader(types[i]->name, i == 0 ? nullptr : &keep, ImGuiTreeNodeFlags_DefaultOpen)) {
-            static u8 before[65536];  // the biggest component: Instanced Static Mesh with 1024 copies, ~37 KB
-            LSD_ASSERT(types[i]->size <= sizeof before);
+            static std::vector<u8> before_storage;  // as big as the biggest component seen (game code can add big ones)
+            u8* before = grow(before_storage, types[i]->size);
             g_details_type = types[i];
             std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
