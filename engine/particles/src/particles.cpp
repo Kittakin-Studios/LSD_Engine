@@ -67,7 +67,7 @@ void ParticleInstance::spawn(const ParticleEmitter& e, Emitter& s, const Mat4& w
     p.spin = (random() * 2.0f - 1.0f) * e.spin;
 }
 
-void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f32 dt, f32 gravity, bool emitting) {
+void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f32 dt, f32 gravity, bool emitting, ParticleCollider* collider) {
     for (u32 i = 0; i < kMaxEmitters; ++i) {
         Emitter& s = emitters_[i];
         if (i >= system.emitters.count || !system.emitters[i].enabled) {
@@ -100,8 +100,30 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
                 continue;
             }
             p.velocity = (p.velocity + local_force * dt) * keep;
+            const Vec3 from = p.position;
             p.position = p.position + p.velocity * dt;
             p.rotation += p.spin * dt;
+            // Collision: the move from -> to against the floor plane or the world; then bounce or die.
+            bool hit = false;
+            Vec3 point, normal{0, 0, 1};
+            if (e.collision == 1 && !e.local_space && from.z >= e.floor_height && p.position.z < e.floor_height) {
+                const f32 t = (from.z - e.floor_height) / (from.z - p.position.z);
+                point = from + (p.position - from) * t;
+                hit = true;
+            } else if (e.collision == 2 && !e.local_space && collider && collider->segment && collider->budget) {
+                --collider->budget;
+                hit = collider->segment(collider->user, from, p.position, point, normal);
+            }
+            if (hit) {
+                if (e.kill_on_hit) {
+                    p = s.particles[--s.count];
+                    continue;
+                }
+                const f32 into = dot(p.velocity, normal);
+                const Vec3 along = p.velocity - normal * into;
+                p.velocity = along * (1.0f - e.friction) - normal * (into * e.bounce);
+                p.position = point + normal * 0.01f;  // just off the surface: the next move starts outside it
+            }
             ++k;
         }
 

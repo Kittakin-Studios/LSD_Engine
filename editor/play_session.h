@@ -89,6 +89,8 @@ public:
     const std::vector<ChatLine>& chat_log() const { return chat_; }
     bool send_chat(const char* channel, const char* text);  // this machine's player says something
     bool talking() const { return talking_; }               // voice chat: transmitting now
+    // The first physics surface on from -> to (particle World collision); false if none or not playing.
+    static bool segment_hit(void* user, Vec3 from, Vec3 to, Vec3& point, Vec3& normal);
     f32 voice_level(u32 player) const { return voice_.level(player); }
     // Vehicles and movers for scripts: 0 enter vehicle e, 1 exit, 2 the driven vehicle (entity value),
     // 3 ride transport e, 4 get off, 5 start mover e, 6 stop it, 7 restart it. 0 = refused / none.

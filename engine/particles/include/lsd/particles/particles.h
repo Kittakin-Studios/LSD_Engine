@@ -66,6 +66,13 @@ struct ParticleEmitter {
     List<LifeColorKey, 8> color_over_life;
     LSD_PROPERTY(Edit, Tooltip = "Particles move with the object (a torch carried around) instead of staying where they were born (a smoke trail)")
     bool local_space = false;
+    // Collision (Niagara's Collision module); world-space emitters only.
+    LSD_PROPERTY(Edit, Category = "Collision", Widget = "Choice:None,Floor,World", Tooltip = "Floor: a flat floor at Floor Height (also in the editor). World: what physics collides with (in Play)")
+    u32 collision = 0;
+    LSD_PROPERTY(Edit, Category = "Collision", Units = "m", Tooltip = "Floor: its height (world Z)") f32 floor_height = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Collision", Min = 0, Max = 1, Tooltip = "Speed kept off the surface (0 = stops dead, 1 = bounces fully)") f32 bounce = 0.4f;
+    LSD_PROPERTY(Edit, Category = "Collision", Min = 0, Max = 1, Tooltip = "Speed lost along the surface on each hit") f32 friction = 0.2f;
+    LSD_PROPERTY(Edit, Category = "Collision", Tooltip = "Dies on its first hit (rain drops, bullets)") bool kill_on_hit = false;
 };
 
 constexpr u32 kMaxEmitters = 8;
@@ -76,7 +83,7 @@ struct ParticleSystem {
     LSD_GENERATED()
     LSD_PROPERTY(Edit) List<ParticleEmitter, 8> emitters;
 };
-// shortcut: over-life keys are straight lines, no curve tangents; collision, mesh and ribbon renderers next.
+// shortcut: over-life keys are straight lines, no curve tangents; mesh and ribbon renderers next.
 
 // A particle's size and colour at `t` (0..1 through its life): the over-life keys, else start -> end.
 f32 size_at(const ParticleEmitter& e, f32 t);
@@ -89,6 +96,13 @@ struct Particle {
     f32 rotation, spin;  // degrees, degrees a second
 };
 
+// World collision for particles: the first surface on the segment from -> to (point and normal); false if none.
+struct ParticleCollider {
+    bool (*segment)(void* user, Vec3 from, Vec3 to, Vec3& point, Vec3& normal) = nullptr;
+    void* user = nullptr;
+    u32 budget = 1024;  // rays an update may cast across all particles (the rest move on unchecked this frame)
+};
+
 // One playing copy of a system (one per ParticleEffect object).
 class ParticleInstance {
 public:
@@ -98,7 +112,8 @@ public:
     ParticleInstance& operator=(const ParticleInstance&) = delete;
 
     // Advances by dt. `world` is the effect's transform; `emitting` false lets the particles die out.
-    void update(const ParticleSystem& system, const Mat4& world, f32 dt, f32 gravity, bool emitting);
+    // `collider`: what World collision tests against (none: World collision does nothing).
+    void update(const ParticleSystem& system, const Mat4& world, f32 dt, f32 gravity, bool emitting, ParticleCollider* collider = nullptr);
     void restart();          // no particles, every emitter back to its start (and its burst)
     bool finished() const;   // nothing alive and nothing more to emit (every emitter non-looping and done)
     u32 count(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].count : 0; }

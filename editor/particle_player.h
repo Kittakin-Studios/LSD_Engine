@@ -18,6 +18,11 @@ public:
 
     // `playing`: in Play (effects with Preview off only run then). dt 0 freezes them (pause).
     void update(const world::World& world, f32 dt, bool playing);
+    // What particles with World collision hit in Play (null: nothing to hit, Floor still works).
+    void set_collider(bool (*segment)(void* user, Vec3 from, Vec3 to, Vec3& point, Vec3& normal), void* user) {
+        collider_.segment = segment;
+        collider_.user = user;
+    }
     // In Play: objects whose Auto Destroy effect finished during the last update (the caller deletes them).
     u32 take_finished(world::Entity* out, u32 capacity);
     // One viewport: `view` gives the camera's axes, so sprites face it.
@@ -57,6 +62,7 @@ private:
     world::Entity finished_[64];
     u32 finished_count_ = 0;
     u32 particle_count_ = 0;
+    particles::ParticleCollider collider_;
 };
 
 } // namespace lsd::editor

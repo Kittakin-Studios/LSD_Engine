@@ -9,8 +9,68 @@ static int g_failures = 0;
 
 using namespace lsd;
 
+// Collision: a floor they bounce on (losing speed), kill on hit, and the World test through a callback.
+static bool slab_at_one(void*, Vec3 from, Vec3 to, Vec3& point, Vec3& normal) {  // a floor at z = 1
+    if (!(from.z >= 1.0f && to.z < 1.0f)) return false;
+    const f32 t = (from.z - 1.0f) / (from.z - to.z);
+    point = from + (to - from) * t;
+    normal = {0, 0, 1};
+    return true;
+}
+
+static void test_collision(Allocator& heap) {
+    particles::ParticleSystem system;
+    system.emitters.count = 1;
+    particles::ParticleEmitter& e = system.emitters[0];
+    e.burst = 1;
+    e.spawn_rate = 0.0f;
+    e.lifetime_min = e.lifetime_max = 100.0f;
+    e.speed_min = e.speed_max = 0.0f;
+    e.gravity_scale = 1.0f;
+    e.collision = 1;
+    e.floor_height = 0.0f;
+    e.bounce = 0.5f;
+    const Mat4 at = translation({0, 0, 2});
+    {
+        particles::ParticleInstance fx(heap);
+        f32 lowest = 10.0f, best_rise = 0.0f;
+        for (int i = 0; i < 300; ++i) {
+            fx.update(system, at, 1.0f / 60.0f, 9.81f, i == 0);
+            const particles::Particle& p = fx.particles(0)[0];
+            lowest = std::fmin(lowest, p.position.z);
+            if (i > 60) best_rise = std::fmax(best_rise, p.position.z);
+        }
+        CHECK(fx.count(0) == 1 && lowest >= 0.0f);           // never under the floor
+        CHECK(best_rise > 0.1f && best_rise < 1.0f);           // bounced back up, but lower than it fell from
+    }
+    {
+        e.kill_on_hit = true;
+        particles::ParticleInstance fx(heap);
+        for (int i = 0; i < 120; ++i) fx.update(system, at, 1.0f / 60.0f, 9.81f, i == 0);
+        CHECK(fx.count(0) == 0);  // died on the floor
+    }
+    {
+        e.kill_on_hit = false;
+        e.collision = 2;  // the world: here a slab at z = 1, through the callback
+        particles::ParticleCollider collider;
+        collider.segment = slab_at_one;
+        particles::ParticleInstance fx(heap);
+        f32 lowest = 10.0f;
+        for (int i = 0; i < 120; ++i) {
+            collider.budget = 1024;
+            fx.update(system, at, 1.0f / 60.0f, 9.81f, i == 0, &collider);
+            lowest = std::fmin(lowest, fx.particles(0)[0].position.z);
+        }
+        CHECK(lowest >= 1.0f);
+        particles::ParticleInstance free_fall(heap);
+        for (int i = 0; i < 120; ++i) free_fall.update(system, at, 1.0f / 60.0f, 9.81f, i == 0);  // no collider: falls through
+        CHECK(free_fall.particles(0)[0].position.z < 0.0f);
+    }
+}
+
 int main() {
     Allocator& heap = default_allocator();
+    test_collision(heap);
     particles::ParticleSystem system;
     system.emitters.count = 1;
     particles::ParticleEmitter& e = system.emitters[0];

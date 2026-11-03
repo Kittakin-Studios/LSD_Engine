@@ -1437,6 +1437,17 @@ void PlaySession::talk(const input::InputFrame& frame) {
     }
 }
 
+bool PlaySession::segment_hit(void* user, Vec3 from, Vec3 to, Vec3& point, Vec3& normal) {
+    const auto& self = *static_cast<const PlaySession*>(user);
+    const Vec3 d = to - from;
+    const f32 len = length(d);
+    physics::RayHit hit;
+    if (!self.physics_ || len < 1e-6f || !self.physics_->raycast(from, d, len, hit)) return false;
+    point = hit.point;
+    normal = hit.normal;
+    return true;
+}
+
 bool PlaySession::send_chat(const char* channel, const char* text) {
     net::ChatChannel c;
     return net_.active() && net::parse_chat_channel(channel, c) && net_.send_chat(c, text);

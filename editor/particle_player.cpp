@@ -98,6 +98,7 @@ void ParticlePlayer::reset() {
 }
 
 void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
+    collider_.budget = 1024;  // World collision rays this frame, for every effect together
     for (Effect& e : effects_) {  // objects deleted or without the component any more
         if (e.used && (!world.alive(e.entity) || !world.get<world::ParticleEffect>(e.entity))) {
             e.used = false;
@@ -130,7 +131,8 @@ void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
             effect->instance->restart();
             continue;
         }
-        effect->instance->update(system->system, world.world_matrix(entity), dt * c->time_scale, world.settings().gravity, c->active);
+        effect->instance->update(system->system, world.world_matrix(entity), dt * c->time_scale, world.settings().gravity, c->active,
+                                 playing && collider_.segment ? &collider_ : nullptr);
         for (u32 k = 0; k < particles::kMaxEmitters; ++k) particle_count_ += effect->instance->count(k);
         if (playing && c->auto_destroy && effect->instance->finished() && finished_count_ < sizeof finished_ / sizeof finished_[0]) {
             finished_[finished_count_++] = entity;

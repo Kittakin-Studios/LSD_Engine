@@ -2239,6 +2239,7 @@ int main(int argc, char** argv) {
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
                            state.playing && !state.paused ? &sounds : nullptr);
         animations->attach_to_sockets(world, *skinned_cache);  // weapons in hands follow this frame's pose
+        effects->set_collider(state.playing ? &lsd::editor::PlaySession::segment_hit : nullptr, &play);  // particles' World collision
         effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : dt, state.playing);
         lsd::world::Entity finished[64];  // Auto Destroy effects that are over (Play only)
         for (lsd::u32 n = effects->take_finished(finished, 64), k = 0; k < n; ++k) {
