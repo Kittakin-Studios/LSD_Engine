@@ -24,3 +24,6 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code plugin data (local sessions, never shared)
+.claude-flow/
