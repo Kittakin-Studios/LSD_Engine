@@ -203,6 +203,9 @@ struct Camera {
     LSD_PROPERTY(Edit, Category = "Player View", Units = "m", Min = 0, Max = 50, Tooltip = "Third Person: how far behind the Camera the view sits (pulled in when a wall is in the way)") f32 arm_length = 3.0f;
     LSD_PROPERTY(Edit, Category = "Player View", Tooltip = "First Person: the view follows this bone (or socket) of the Character's Skeletal Mesh so head bob and crouching move it; UE4 / UE5 rigs: head. Empty: where the Camera is")
     char follow_bone[32] = "";
+    LSD_PROPERTY(Edit, Category = "Player View", Widget = "Choice:Mouse Look,Orbit Bone,Ride Bone",
+                 Tooltip = "Mouse Look: the mouse turns the view; the Camera's own rotation tilts it. Orbit Bone: the mouse circles the view around Follow Bone at Arm Length. Ride Bone: the Camera keeps where you put it relative to Follow Bone and moves only with the bone's animation (the mouse does not turn it)")
+    u32 motion = 0;
 };
 
 // Another level placed in this one (Unreal's Level Instance and level streaming): its objects appear

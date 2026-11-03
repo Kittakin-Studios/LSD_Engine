@@ -611,7 +611,13 @@ Control Rotation). On the Camera, **Player View**:
 | View: First Person | the view sits at the Camera (or at **Follow Bone**) |
 | View: Third Person | the view sits **Arm Length** behind the Camera, pulled in when a wall is in the way |
 | Follow Bone | First Person follows this bone of the Character's skeleton, so head bob and crouching move it: `head` on UE4 / UE5 rigs |
+| Motion: Mouse Look | the mouse turns the view; rotate the Camera object (E) to tilt it, e.g. 10° down |
+| Motion: Orbit Bone | the mouse circles the view around Follow Bone at Arm Length |
+| Motion: Ride Bone | the Camera keeps where you put it relative to Follow Bone (place it in the viewport) and moves and turns only with that bone's animation: a head or body cam |
 | FOV | the player's lens |
+
+Move, rotate and scale the Camera object with the gizmo like any object (it is the Unreal Camera
+component: a child of the Character); scale does not change what a camera sees.
 
 The Character's **Camera Offset** (x forward, y left, z up) shifts the view without a Camera object:
 `0, -0.5, 0.2` looks over the right shoulder. Switch views while playing with the **Set Camera View**

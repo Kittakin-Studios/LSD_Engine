@@ -273,6 +273,7 @@ bool AudioSystem::init(bool use_device) {
 
 void AudioSystem::shutdown() {
     if (!impl_->ready) return;
+    if (impl_->device) ma_engine_stop(&impl_->engine);  // the device thread stops mixing before its sounds and groups go
     stop_all();
     impl_->release_classes();
     impl_->class_count = 0;

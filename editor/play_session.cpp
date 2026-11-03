@@ -549,6 +549,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_view = [](void* user, world::Entity camera, f32 blend) { static_cast<PlaySession*>(user)->set_view(camera, blend); };
     host.camera_shake = [](void* user, f32 strength, f32 seconds, f32 frequency) { static_cast<PlaySession*>(user)->camera_shake(strength, seconds, frequency); };
     camera_view_override_ = 2;  // each Play starts with the Camera's own View
+    bone_ride_valid_ = false;
     host.set_camera_view = [](void* user, u32 view) { static_cast<PlaySession*>(user)->camera_view_override_ = view; };
     host.camera_location = [](void* user) { return static_cast<PlaySession*>(user)->eye(); };
     host.camera_view = [](void* user) -> u32 {
@@ -1354,27 +1355,50 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
     // Camera: the head (or a Camera placed on the Character), moved by Camera Offset, then behind it
-    // on the spring arm, pulled in when a wall is in the way. Mouse look turns it (Unreal's Use Pawn
-    // Control Rotation); the Camera object's own rotation is not used.
+    // on the spring arm, pulled in when a wall is in the way. Mouse Look: the mouse turns it (Unreal's
+    // Use Pawn Control Rotation) and the Camera's own rotation tilts it; Orbit Bone: it circles a bone;
+    // Ride Bone: it moves only with a bone.
     const f32 crouch = crouched_ ? settings_.crouch_height / settings_.height : 1.0f;
     Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height * crouch};
     f32 arm_length = settings_.camera_distance;
+    eye_forward_ = forward();
     const world::Entity cam = player_camera(world);
     if (const auto* pc = cam.valid() ? world.get<world::Camera>(cam) : nullptr) {
-        if (cam != character_) {  // a child placed in the viewport (on the Character itself: only its settings)
-            const Mat4 m = world.world_matrix(cam);
-            head = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - Vec3{0, 0, (1.0f - crouch) * (m.at(2, 3) - feet_.z)};
-        }
+        const bool child = cam != character_;  // placed in the viewport (on the Character itself: only its settings)
+        const Mat4 cam_world = world.world_matrix(cam);
+        if (child) head = Vec3{cam_world.at(0, 3), cam_world.at(1, 3), cam_world.at(2, 3)} - Vec3{0, 0, (1.0f - crouch) * (cam_world.at(2, 3) - feet_.z)};
         const u32 view = camera_view_override_ < 2 ? camera_view_override_ : pc->view;
         arm_length = view == 1 ? pc->arm_length : 0.0f;
         Mat4 bone;
-        if (view == 0 && pc->follow_bone[0] && animations_ && skinned_) {  // the head bone of the Character's skeleton (or a child's)
-            bool found = animations_->socket(world, *skinned_, character_, pc->follow_bone, bone);
+        bool found = false;
+        if (pc->follow_bone[0] && animations_ && skinned_) {  // a bone of the Character's skeleton (or a child's)
+            found = animations_->socket(world, *skinned_, character_, pc->follow_bone, bone);
             for (u32 slot = 0; slot < world.slot_count() && !found; ++slot) {
                 const world::Entity e = world.entity_at_slot(slot);
                 if (e.valid() && world.parent(e) == character_ && world.get<world::SkeletalMesh>(e)) found = animations_->socket(world, *skinned_, e, pc->follow_bone, bone);
             }
-            if (found) head = {bone.at(0, 3), bone.at(1, 3), bone.at(2, 3)};
+        }
+        const Vec3 bone_at = found ? Vec3{bone.at(0, 3), bone.at(1, 3), bone.at(2, 3)} : head;
+        if (pc->motion == 2 && found && child) {  // Ride Bone: where it was put relative to the bone, turned with it
+            if (!bone_ride_valid_) {
+                bone_ride_ = inverse(bone) * cam_world;  // the first frame: how it sits on the bone
+                bone_ride_valid_ = true;
+            }
+            const Mat4 ride = bone * bone_ride_;
+            head = {ride.at(0, 3), ride.at(1, 3), ride.at(2, 3)};
+            eye_forward_ = normalize(Vec3{ride.at(0, 0), ride.at(1, 0), ride.at(2, 0)});
+        } else if (pc->motion == 1) {  // Orbit Bone: the mouse circles the bone
+            head = bone_at;
+            arm_length = pc->arm_length;
+        } else {  // Mouse Look: the Camera's rotation relative to the Character tilts the look
+            if (view == 0 && found) head = bone_at;
+            if (child && world.alive(character_)) {
+                const Mat4 local = inverse(world.world_matrix(character_)) * cam_world;
+                const Vec3 x = normalize(Vec3{local.at(0, 0), local.at(1, 0), local.at(2, 0)});
+                const Vec3 f = forward(), side = normalize(cross(Vec3{0, 0, 1}, f)), up = cross(f, side);
+                const Vec3 turned = f * x.x + side * x.y + up * x.z;  // x is the Camera's forward in the Character's frame
+                if (dot(turned, turned) > 1e-6f) eye_forward_ = normalize(turned);
+            }
         }
     } else if (camera_view_override_ < 2) {  // no Camera on the Character: a script still switches views
         arm_length = camera_view_override_ == 1 ? (settings_.camera_distance > 0.0f ? settings_.camera_distance : 3.0f) : 0.0f;
@@ -1384,7 +1408,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     head = head + Vec3{cy * offset.x - sy * offset.y, sy * offset.x + cy * offset.y, offset.z};
     eye_ = head;
     if (arm_length > 0.0f) {
-        const Vec3 back = forward() * -1.0f;
+        const Vec3 back = eye_forward_ * -1.0f;
         f32 arm = arm_length;
         physics::RayHit hit;
         if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
@@ -1751,7 +1775,7 @@ void PlaySession::update_view(const world::World& world, f32 dt) {
 
 void PlaySession::find_view(const world::World& world) {
     view_eye_ = eye_;
-    view_forward_ = forward();
+    view_forward_ = eye_forward_;
     view_fov_ = 0.0f;
     view_ortho_ = 0.0f;
     const reflect::TypeInfo& camera_type = reflect::type_of<world::Camera>();

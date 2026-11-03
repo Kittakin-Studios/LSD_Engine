@@ -80,6 +80,9 @@ public:
     // A Camera (not Auto Activate) on the player's Character or a child of it: where the player's view sits.
     world::Entity player_camera(const world::World& world) const;
     u32 camera_view_override_ = 2;  // lsd.set_camera_view: 0 first, 1 third, 2 = the Camera's own View
+    Vec3 eye_forward_{1, 0, 0};     // where the player's view looks (forward() turned by the Camera)
+    Mat4 bone_ride_;                // Ride Bone: the Camera relative to its bone, taken on the first frame
+    bool bone_ride_valid_ = false;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
     // Multiplayer: set before start(); off by default (single player).

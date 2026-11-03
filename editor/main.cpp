@@ -885,10 +885,12 @@ void register_console(EditorState& s) {
     }, &s, "Validate Assets: missing references, oversize textures, naming");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
-    console::add_command("debug.Crash", [](void*, const char*) {  // tests the crash reporter
+    console::add_command("debug.Crash", [](void*, const char* args) {  // tests the crash reporter
+        if (std::strcmp(args, "abort") == 0) std::abort();
+        if (std::strcmp(args, "terminate") == 0) std::terminate();
         volatile int* nowhere = nullptr;
         *nowhere = 1;
-    }, &s, "Crash on purpose (writes a crash report to Saved/Crashes)");
+    }, &s, "Crash on purpose (writes a crash report to Saved/Crashes): debug.Crash [abort | terminate]");
     console::add_command("debug.Break", [](void*, const char* args) {  // a Lua breakpoint from the console: debug.Break Content/x.lua 12
         char file[260];
         int line = 0;
@@ -2459,7 +2461,6 @@ int main(int argc, char** argv) {
     lsd::world::set_prefab_resolver(nullptr, nullptr);  // it points at the registry
     lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
-    lsd::log::open_file(nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
@@ -2509,5 +2510,6 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     SDL_DestroyWindow(window);
     SDL_Quit();
+    lsd::log::open_file(nullptr);  // last: a failure while shutting down still reaches the log file
     return exit_code;
 }
