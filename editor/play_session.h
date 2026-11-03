@@ -163,6 +163,7 @@ private:
     };
     std::vector<Moving> moving_;
     world::Entity driving_, riding_;
+    u64 nav_hash_ = 0;  // the navmesh's inputs when it was built (reused across Plays while equal)
     f64 play_clock_ = 0.0;
     bool interact_was_down_ = false;
     void add_moving(const world::World& world, world::Entity e, const CachedMesh* cached, bool solid);

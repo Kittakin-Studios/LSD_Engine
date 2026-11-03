@@ -256,6 +256,13 @@ i32 NavMesh::add_agent(Vec3 position, f32 radius, f32 height, f32 max_speed) {
     return impl_->crowd->addAgent(p, &ap);
 }
 
+void NavMesh::clear_agents() {
+    if (!impl_->crowd) return;
+    for (int i = 0; i < impl_->crowd->getAgentCount(); ++i) {
+        if (impl_->crowd->getAgent(i)->active) impl_->crowd->removeAgent(i);
+    }
+}
+
 void NavMesh::remove_agent(i32 agent) {
     if (impl_->crowd && agent >= 0) impl_->crowd->removeAgent(agent);
 }

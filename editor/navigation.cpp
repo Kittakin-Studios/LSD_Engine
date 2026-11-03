@@ -34,7 +34,8 @@ void add_box(std::vector<f32>& v, std::vector<u32>& idx, const Mat4& m, Vec3 lo,
 
 } // namespace
 
-bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMesh& out) {
+bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMesh& out, u64* input_hash, bool* reused) {
+    if (reused) *reused = false;
     // shortcut: collision boxes (what physics uses), not the meshes' triangles; switch both together.
     std::vector<f32> verts;
     std::vector<u32> idx;
@@ -89,8 +90,23 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
         if (cut.z_min > cut.z_max) std::swap(cut.z_min, cut.z_max);
         cutouts.push_back(cut);
     }
-    return out.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), lo, hi, settings, cutouts.data(),
-                     static_cast<u32>(cutouts.size()));
+    // Unchanged since the last build (FNV-1a over every input): keep the mesh already built.
+    u64 hash = 1469598103934665603ull;
+    auto mix = [&hash](const void* p, usize n) {
+        for (usize i = 0; i < n; ++i) hash = (hash ^ static_cast<const u8*>(p)[i]) * 1099511628211ull;
+    };
+    mix(verts.data(), verts.size() * sizeof(f32));
+    mix(idx.data(), idx.size() * sizeof(u32));
+    mix(&lo, sizeof lo), mix(&hi, sizeof hi), mix(&settings, sizeof settings);
+    mix(cutouts.data(), cutouts.size() * sizeof(ai::NavCutout));
+    if (input_hash && *input_hash == hash && out.valid()) {
+        if (reused) *reused = true;
+        return true;
+    }
+    const bool built = out.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), lo, hi, settings, cutouts.data(),
+                                 static_cast<u32>(cutouts.size()));
+    if (input_hash) *input_hash = built ? hash : 0;
+    return built;
 }
 
 } // namespace lsd::editor

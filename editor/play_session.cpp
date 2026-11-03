@@ -287,7 +287,7 @@ void PlaySession::stop() {
     ui_cursor_ = false;
     ui_follower_count_ = 0;
     scripts_.stop();
-    nav_.clear();
+    nav_.clear_agents();  // the mesh stays for the next Play (rebuilt only if the level changed)
     agent_count_ = 0;
     delete[] brains_;
     brains_ = nullptr;
@@ -423,7 +423,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     add_joints(world, {});
     agent_count_ = 0;
     const u64 nav_start = SDL_GetTicksNS();
-    if (build_level_navmesh(world, *meshes_, nav_)) LSD_LOG_INFO("play", "Navmesh built (%.0f ms)", static_cast<f64>(SDL_GetTicksNS() - nav_start) * 1e-6);
+    bool nav_reused = false;
+    if (build_level_navmesh(world, *meshes_, nav_, &nav_hash_, &nav_reused)) {
+        LSD_LOG_INFO("play", nav_reused ? "Navmesh unchanged: reused (%.0f ms)" : "Navmesh built (%.0f ms)", static_cast<f64>(SDL_GetTicksNS() - nav_start) * 1e-6);
+    } else {
+        nav_.clear();  // no navigation inputs now: nothing left from the last Play
+    }
     brains_ = new Brain[kMaxBrains];
     brain_count_ = 0;
     noise_count_ = 0;

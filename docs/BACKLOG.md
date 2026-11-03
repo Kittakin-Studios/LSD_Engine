@@ -293,7 +293,8 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] `stat dump`: game / render / UI / GPU-wait times, draws, triangles, culled and the UI by panel (the GPU wait was counted as render before)
 - [x] Automatic instancing: opaque Static Meshes with the same mesh, LOD and look draw as one instanced call (872 -> 9 draws in the stress level), shadow casters too (per cascade / tile), Instanced Static Mesh casters in one call; instanced normals use the cofactor matrix, so any scale batches
 - [x] Each Static Mesh's world matrix and mesh worked out once a frame and shared by every pass: render CPU 3.3 -> 1.95 ms at 3000 objects
-- [ ] Navmesh cache between Plays (200 ms at 3000 objects), GPU timings, GPU-driven culling
+- [x] Navmesh reused between Plays while its inputs hash the same (Play start 191 -> 5 ms at 3000 objects)
+- [ ] GPU timings, GPU-driven culling
 
 ## Vehicles, transports, movers
 

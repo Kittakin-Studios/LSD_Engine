@@ -39,6 +39,7 @@ public:
                const NavSettings& settings, const NavCutout* cutouts = nullptr, u32 cutout_count = 0);
     bool valid() const;
     void clear();
+    void clear_agents();  // every crowd agent goes; the mesh stays (reused by the next Play when nothing changed)
 
     // The corners of the shortest path (both ends included); 0 if there is none. `to` may be off the
     // mesh: the path then ends at the nearest point on it.
