@@ -252,6 +252,10 @@ The **Output Log** tab has a console line at the bottom. Type `help` to list eve
 *The Prefab Editor (double-click a prefab): its objects on the left, a preview, and Details for the selected part; Save updates every copy in the level.*
 
 Drop files from Explorer onto the editor window to import them into the open Content Browser folder.
+
+**Back / forward:** with the mouse over the Content Browser, **Mouse 4** goes back to the folder you
+were in before and **Mouse 5** forward again (like a web browser). Anywhere else in the editor, Mouse 4 /
+Mouse 5 go back and forward between the tabs under the menu bar (Level and the asset editors).
 Every asset gets a `.meta` file next to it holding its GUID (its permanent identity) and import
 settings. Rename and move assets in the Content Browser: references keep working because they point
 at the GUID, not the file name. Select an asset and type words into **Tags** in Details (comma-separated,

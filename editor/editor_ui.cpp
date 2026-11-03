@@ -1161,6 +1161,38 @@ ImGuiID g_editor_area = 0;  // this frame's editor area dock node, 0 for none
 
 // ---- Panel tabs (Unreal's document tabs): the Level, then asset editors opened outside an editor area ----
 
+// Back / forward (Mouse 4 / Mouse 5, like a web browser) through places the user moved between: a
+// Content Browser folder, an editor tab. track() each frame records changes; go() moves and returns
+// where to.
+struct NavHistory {
+    std::vector<std::string> back, forward;  // shortcut: std in editor-only code, a few dozen entries
+    std::string now;
+    bool started = false;
+    void track(const std::string& place) {
+        if (!started) {
+            now = place;
+            started = true;
+        } else if (place != now) {
+            back.push_back(now);
+            if (back.size() > 64) back.erase(back.begin());
+            forward.clear();
+            now = place;
+        }
+    }
+    bool go(bool to_back, std::string& out) {
+        std::vector<std::string>& from = to_back ? back : forward;
+        std::vector<std::string>& to = to_back ? forward : back;
+        if (from.empty()) return false;
+        to.push_back(now);
+        now = from.back();
+        from.pop_back();
+        out = now;
+        return true;
+    }
+};
+NavHistory g_folder_history, g_tab_history;
+bool g_content_hovered = false;  // the mouse is over the Content Browser (its back / forward win)
+
 constexpr char kLevelTab[] = "###LevelTab";
 struct PanelTab {
     std::string id;     // the window's ### part (stable while its title shows a name or a *)
@@ -1231,6 +1263,19 @@ void draw_panel_tabs(EditorState& s) {
         g_select_tab.clear();
     }
     if (g_active_tab == kLevelTab) g_focused_tab.clear();
+    // Mouse 4 / Mouse 5 anywhere but the Content Browser: back / forward through the tabs (closed ones skipped).
+    g_tab_history.track(g_active_tab);
+    const bool back = ImGui::IsMouseClicked(3), forward = ImGui::IsMouseClicked(4);
+    if ((back || forward) && !g_content_hovered && !(s.playing && !s.ejected)) {
+        std::string to;
+        while (g_tab_history.go(back, to)) {
+            const bool alive = to == kLevelTab || std::any_of(g_tabs.begin(), g_tabs.end(), [&](const PanelTab& t) { return t.id == to; });
+            if (alive) {
+                g_select_tab = to;
+                break;
+            }
+        }
+    }
 }
 
 // Panels draw their own themed tab bars, so the dock nodes hide theirs.
@@ -4652,7 +4697,14 @@ void draw_content_browser(EditorState& s) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
     const bool open = begin_panel(kContentWindow);
     ImGui::PopStyleVar();
+    g_content_hovered = open && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     if (!open) { ImGui::End(); return; }
+    // Mouse 4 / Mouse 5 over the Content Browser: the previous / next folder (Unreal's history arrows).
+    g_folder_history.track(s.content_folder);
+    if (g_content_hovered && (ImGui::IsMouseClicked(3) || ImGui::IsMouseClicked(4))) {
+        std::string to;
+        if (g_folder_history.go(ImGui::IsMouseClicked(3), to)) std::snprintf(s.content_folder, sizeof s.content_folder, "%s", to.c_str());
+    }
 
     // Blue bar behind the tab row.
     const ImVec2 wp = ImGui::GetWindowPos();
