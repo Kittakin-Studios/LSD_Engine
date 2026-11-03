@@ -196,6 +196,19 @@ struct Camera {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 1000, Tooltip = "Orthographic: how many metres of the world fit the screen's height") f32 ortho_height = 10.0f;
 };
 
+// Another level placed in this one (Unreal's Level Instance and level streaming): its objects appear
+// under this object (they move with it), are not saved into this level, and are picked as this
+// object; open that level to edit them. In Play it can stream: loaded when the player comes within
+// Load Distance, unloaded a little beyond it. Scripts: lsd.load_sublevel / unload_sublevel.
+LSD_STRUCT(Component, Category = "Level")
+struct SubLevel {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Level", Tooltip = "The level to place here") char level[33] = "";
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 100000, Tooltip = "Play: loaded only while the player is this near (0 = always loaded)") f32 load_distance = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Play: loaded when Play starts (off: only by distance or a script)") bool load_at_start = true;
+    LSD_PROPERTY(Edit, Tooltip = "Show it in the editor") bool show_in_editor = true;
+};
+
 // Moves the object by itself (Unreal's Interp To Movement and spline routes): along a direction, back
 // and forth to an offset, or along a Spline object's path, optionally turning. It can wait for its
 // start (Begin Play, the player entering a Trigger Volume, a time of the game, or a script) and run

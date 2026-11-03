@@ -86,6 +86,11 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "lsd.add($1, $2)", {}},
     {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh, particle system or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
+    // ---- Level streaming ----
+    {"LoadStreamLevel", "Load Stream Level", "Levels", "Loads a Sub Level object's level (its scripts and physics start with it)", {kExecIn, kTarget}, 0,
+     {kExecOut, {"Loaded", PinType::Bool, ""}}, 0, "local $o1 = lsd.load_sublevel($1)", {}},
+    {"UnloadStreamLevel", "Unload Stream Level", "Levels", "Removes a Sub Level object's level until it is loaded again", {kExecIn, kTarget}, 0, {kExecOut}, 0,
+     "lsd.unload_sublevel($1)", {}},
     // ---- Vehicles and movers ----
     {"EnterVehicle", "Enter Vehicle", "Vehicles", "The player gets in and drives it: W / S, A / D, Shift boost, Ctrl or Space brake, E gets out", {kExecIn, kTarget}, 0,
      {kExecOut, {"Entered", PinType::Bool, ""}}, 0, "local $o1 = lsd.enter_vehicle($1)", {}},

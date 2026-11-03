@@ -19,6 +19,7 @@
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
+#include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/timeline.h"
@@ -416,6 +417,27 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         std::snprintf(world.add<world::Script>(world.create("LevelScript"))->script, sizeof(world::Script::script), "%s", world.settings().level_script);
     }
 
+    // Sub Levels: present at start only when they load at start and the player is near enough.
+    if (!travel) {
+        const reflect::TypeInfo& sub_type = reflect::type_of<world::SubLevel>();
+        for (u32 i = 0; i < world.count(sub_type); ++i) {
+            const world::Entity e = world.owner(sub_type, i);
+            const auto* sub = static_cast<const world::SubLevel*>(world.at(sub_type, i));
+            const Mat4 m = world.world_matrix(e);
+            const bool near = sub->load_distance <= 0.0f || length(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - feet_) < sub->load_distance;
+            if (!sub->load_at_start || !near) world::unload_sublevel(world, e);
+            else if (!world::sublevel_loaded(world, e)) {
+                asset::Guid guid;
+                const asset::AssetRecord* r = asset::parse_guid(sub->level, guid) ? registry.find(guid) : nullptr;
+                char path[300];
+                if (r && r->type == asset::AssetType::Level) {
+                    registry.source_path(*r, path, sizeof path);
+                    world::load_sublevel(world, e, path);
+                }
+            }
+        }
+    }
+
     // Level geometry is static; RigidBody objects are simulated.
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         if (const world::Entity e = world.entity_at_slot(slot); e.valid()) add_entity_bodies(world, e);
@@ -656,6 +678,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_anim_param = [](void* user, world::Entity e, const char* name, f32 value) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.animations_) self.animations_->set_param(*self.world_, e, name, value);
+    };
+    host.sublevel = [](void* user, world::Entity e, bool load) {
+        auto& self = *static_cast<PlaySession*>(user);
+        return self.world_ && self.stream_sublevel(*self.world_, e, load);
     };
     host.ride = [](void* user, int what, world::Entity e) {
         auto& self = *static_cast<PlaySession*>(user);
@@ -1215,6 +1241,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     if (aboard) velocity = {};
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
     update_rides(world, frame, move, dt);  // vehicles, transports, movers
+    update_sublevels(world);               // level streaming by distance
     for (u32 i = 0; i < simulated_count_; ++i) {  // kinematic rigid bodies go where scripts / timelines put their Transform
         const Simulated& s = simulated_[i];
         if (!s.kinematic || !world.alive(s.entity)) continue;
@@ -1726,6 +1753,49 @@ void PlaySession::update_triggers(world::World& world) {
         }
         scripts_.send(entered[i].trigger, "on_overlap_begin", entered[i].other);
         scripts_.send(entered[i].other, "on_overlap_begin", entered[i].trigger);
+    }
+}
+
+// ---- Sub Levels (level streaming) ----
+
+bool PlaySession::stream_sublevel(world::World& world, world::Entity root, bool load) {
+    const auto* sub = world.alive(root) ? world.get<world::SubLevel>(root) : nullptr;
+    if (!sub) return false;
+    const bool loaded = world::sublevel_loaded(world, root);
+    if (!load) {
+        if (loaded) world::unload_sublevel(world, root);  // their bodies go on the next step (dead objects)
+        return true;
+    }
+    if (loaded) return true;
+    asset::Guid guid;
+    const asset::AssetRecord* r = asset::parse_guid(sub->level, guid) ? registry_->find(guid) : nullptr;
+    if (!r || r->type != asset::AssetType::Level) return false;
+    char path[300];
+    registry_->source_path(*r, path, sizeof path);
+    if (!world::load_sublevel(world, root, path)) return false;
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {  // what came in: bodies, then scripts
+        const world::Entity e = world.entity_at_slot(slot);
+        if (!e.valid()) continue;
+        bool inside = false;  // under one of the root's (just loaded) transient objects
+        for (world::Entity a = e; a.valid() && !inside; a = world.parent(a)) inside = world.parent(a) == root && world.transient(a);
+        if (inside) add_entity_bodies(world, e);
+    }
+    scripts_.attach(root);
+    return true;
+}
+
+// Streaming by distance: in within Load Distance, out past 1.2 times it (no flicker at the edge).
+void PlaySession::update_sublevels(world::World& world) {
+    const reflect::TypeInfo& type = reflect::type_of<world::SubLevel>();
+    for (u32 i = 0; i < world.count(type); ++i) {
+        const world::Entity e = world.owner(type, i);
+        const auto* sub = static_cast<const world::SubLevel*>(world.at(type, i));
+        if (sub->load_distance <= 0.0f || world.transient(world.parent(e))) continue;
+        const Mat4 m = world.world_matrix(e);
+        const f32 d = length(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - feet_);
+        const bool loaded = world::sublevel_loaded(world, e);
+        if (!loaded && d < sub->load_distance) stream_sublevel(world, e, true);
+        else if (loaded && d > sub->load_distance * 1.2f) stream_sublevel(world, e, false);
     }
 }
 

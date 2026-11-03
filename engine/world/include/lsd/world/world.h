@@ -50,6 +50,9 @@ public:
     void set_hidden(Entity entity, bool hidden);
     void set_locked(Entity entity, bool locked);
     bool hidden_in_hierarchy(Entity entity) const;  // it or any parent is hidden
+    // Transient objects are not saved with the level (a Sub Level's contents, loaded from their own file).
+    bool transient(Entity entity) const;
+    void set_transient(Entity entity, bool transient);
     // Outliner folder (Unreal's Outliner folders): editor-only grouping with no transform, "" = none.
     const char* folder(Entity entity) const;
     void set_folder(Entity entity, const char* folder);
@@ -88,6 +91,7 @@ private:
     struct Record {
         u32 generation;
         bool alive;
+        bool transient;
         bool hidden;
         bool locked;
         char name[64];

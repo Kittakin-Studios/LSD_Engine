@@ -53,6 +53,13 @@ bool read_integer(reflect::JsonReader& r, long long& out) {
     return r.ok;
 }
 
+bool in_transient(const World& world, Entity e) {  // it or an ancestor is a Sub Level's content
+    for (; e.valid(); e = world.parent(e)) {
+        if (world.transient(e)) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 void save_level(const World& world, Array<char>& out) {
@@ -68,7 +75,7 @@ void save_level(const World& world, Array<char>& out) {
     bool first = true;
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         const Entity e = world.entity_at_slot(slot);
-        if (!e.valid()) continue;
+        if (!e.valid() || in_transient(world, e)) continue;  // Sub Level contents live in their own file
         const Entity parent = world.parent(e);
         std::snprintf(line, sizeof line, "%s\n    {\"id\": %u, \"name\": ", first ? "" : ",", e.value);
         append(out, line);
@@ -166,6 +173,68 @@ bool load_level(World& world, const char* text, usize length) {
     }
     if (!r.ok) world.clear();
     return r.ok;
+}
+
+bool sublevel_loaded(const World& world, Entity root) {
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {
+        const Entity e = world.entity_at_slot(slot);
+        if (e.valid() && world.transient(e) && world.parent(e) == root) return true;
+    }
+    return false;
+}
+
+void unload_sublevel(World& world, Entity root) {
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {
+        const Entity e = world.entity_at_slot(slot);
+        if (e.valid() && world.transient(e) && world.parent(e) == root) world.destroy(e);  // its children go with it
+    }
+}
+
+bool load_sublevel(World& world, Entity root, const char* path) {
+    if (!world.alive(root)) return false;
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    Allocator& heap = default_allocator();
+    Array<char> text(heap);
+    char chunk[8192];
+    for (usize n; (n = std::fread(chunk, 1, sizeof chunk, file)) > 0;) {
+        const usize at = text.size();
+        text.resize(at + n);
+        std::memcpy(text.data() + at, chunk, n);
+    }
+    std::fclose(file);
+    World source(heap);
+    if (!load_level(source, text.data(), text.size())) return false;
+    unload_sublevel(world, root);
+    // Copy every object (components are plain data), then rebuild the hierarchy under `root`.
+    u32 type_count = 0;
+    const reflect::TypeInfo* const* types = component_types(type_count);
+    Array<Entity> copies(heap);
+    copies.resize(source.slot_count());
+    for (u32 slot = 0; slot < source.slot_count(); ++slot) {
+        const Entity from = source.entity_at_slot(slot);
+        copies[slot] = {};
+        if (!from.valid()) continue;
+        const Entity to = world.create(source.name(from));
+        for (u32 t = 0; t < type_count; ++t) {
+            const void* component = source.get(from, *types[t]);
+            if (!component) continue;
+            void* copy = world.add(to, *types[t]);
+            if (copy) std::memcpy(copy, component, types[t]->size);
+        }
+        world.set_hidden(to, source.hidden(from));
+        world.set_locked(to, true);
+        copies[slot] = to;
+    }
+    for (u32 slot = 0; slot < source.slot_count(); ++slot) {
+        const Entity from = source.entity_at_slot(slot);
+        if (!from.valid() || !copies[slot].valid()) continue;
+        const Entity parent = source.parent(from);
+        const Entity new_parent = parent.valid() && copies[parent.index()].valid() ? copies[parent.index()] : root;
+        world.set_parent(copies[slot], new_parent, false);  // local transforms: the level moves with `root`
+        if (new_parent == root) world.set_transient(copies[slot], true);  // its top objects mark the whole branch
+    }
+    return true;
 }
 
 bool save_level_file(const World& world, const char* path) {

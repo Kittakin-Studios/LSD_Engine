@@ -173,6 +173,9 @@ private:
     void drive(world::World& world, Moving& m, const world::Vehicle& v, const input::InputFrame& frame, input::Value move, f32 dt, Vec3& at);
     void update_rides(world::World& world, const input::InputFrame& frame, input::Value move, f32 dt);
     void place_rider(world::World& world);
+    // Sub Levels in Play: load / unload (scripts and physics of what loads start at once).
+    bool stream_sublevel(world::World& world, world::Entity root, bool load);
+    void update_sublevels(world::World& world);
     void vehicle_view(const world::World& world);
     world::Entity spawn(const char* name, Vec3 position);  // during Play: bodies and scripts too
     void start_game_mode(world::World& world);

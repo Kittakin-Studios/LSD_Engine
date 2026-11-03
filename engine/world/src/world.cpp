@@ -59,6 +59,7 @@ void init_types() {
         &reflect::type_of<Mover>(),
         &reflect::type_of<Vehicle>(),
         &reflect::type_of<Transport>(),
+        &reflect::type_of<SubLevel>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     for (const reflect::TypeInfo* t : types) g_types[g_type_count++] = t;
@@ -136,7 +137,7 @@ void World::init_record(u32 slot, u32 generation, const char* name) {
     Record& r = records_[slot];
     r.generation = generation;
     r.alive = true;
-    r.hidden = r.locked = false;
+    r.hidden = r.locked = r.transient = false;
     std::snprintf(r.name, sizeof r.name, "%s", name);
     r.folder[0] = '\0';
     r.parent = {};
@@ -236,6 +237,15 @@ void World::set_hidden(Entity e, bool value) {
 
 void World::set_locked(Entity e, bool value) {
     if (Record* r = record(e)) r->locked = value;
+}
+
+bool World::transient(Entity e) const {
+    const Record* r = record(e);
+    return r && r->transient;
+}
+
+void World::set_transient(Entity e, bool value) {
+    if (Record* r = record(e)) r->transient = value;
 }
 
 const char* World::folder(Entity e) const {

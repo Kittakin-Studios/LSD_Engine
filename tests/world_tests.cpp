@@ -370,8 +370,57 @@ static void test_timeline() {  // Sequencer basics: eased transforms, values, ke
     CHECK(world::keys_crossed(t, 1, 1.5f, 2.0f, fired, 4) == 0);  // exactly at `from` does not fire again
 }
 
+// Sub-levels: another level's objects under a root, moved with it, not saved with this level.
+static void test_sublevel() {
+    using namespace lsd;
+    HeapAllocator heap("sublevel");
+    {
+        static const char kHouse[] = LSD_TEST_TEMP_DIR "/House.lsdlevel";
+        world::World house(heap);
+        const world::Entity wall = house.create("Wall");
+        house.get<world::Transform>(wall)->position = {1, 2, 0};
+        house.add<world::StaticMesh>(wall);
+        const world::Entity lamp = house.create("Lamp");
+        house.set_parent(lamp, wall, false);
+        house.get<world::Transform>(lamp)->position = {0, 0, 3};
+        CHECK(world::save_level_file(house, kHouse));
+
+        world::World w(heap);
+        const world::Entity floor = w.create("Floor");
+        const world::Entity root = w.create("HouseHere");
+        w.get<world::Transform>(root)->position = {10, 0, 0};
+        CHECK(!world::sublevel_loaded(w, root));
+        CHECK(world::load_sublevel(w, root, kHouse));
+        CHECK(world::sublevel_loaded(w, root));
+        world::Entity copied_lamp;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const world::Entity e = w.entity_at_slot(slot);
+            if (e.valid() && std::strcmp(w.name(e), "Lamp") == 0) copied_lamp = e;
+        }
+        CHECK(copied_lamp.valid() && w.locked(copied_lamp));
+        const Mat4 m = copied_lamp.valid() ? w.world_matrix(copied_lamp) : Mat4{};
+        CHECK(std::fabs(m.at(0, 3) - 11.0f) < 1e-4f && std::fabs(m.at(1, 3) - 2.0f) < 1e-4f && std::fabs(m.at(2, 3) - 3.0f) < 1e-4f);  // moved with the root
+        Array<char> text(heap);
+        world::save_level(w, text);
+        text.push_back('\0');
+        CHECK(std::strstr(text.data(), "HouseHere") && !std::strstr(text.data(), "\"Wall\"") && !std::strstr(text.data(), "\"Lamp\""));  // not saved here
+        CHECK(world::load_sublevel(w, root, kHouse));  // again: replaces, no duplicates
+        u32 walls = 0;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) walls += w.entity_at_slot(slot).valid() && std::strcmp(w.name(w.entity_at_slot(slot)), "Wall") == 0;
+        CHECK(walls == 1);
+        world::unload_sublevel(w, root);
+        CHECK(!world::sublevel_loaded(w, root) && w.alive(floor) && w.alive(root));
+        u32 alive = 0;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) alive += w.entity_at_slot(slot).valid();
+        CHECK(alive == 2);
+        CHECK(!world::load_sublevel(w, root, LSD_TEST_TEMP_DIR "/NoSuchLevel.lsdlevel"));
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
     test_math();
+    test_sublevel();
     test_entities();
     test_level_round_trip();
     test_prefab();

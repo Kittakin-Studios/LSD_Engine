@@ -272,7 +272,7 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
     {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
     // Movement prefabs, cubes as placeholders: swap the mesh in Details.
-    {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
+    {"Sub Level", nullptr, "SubLevel"}, {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
 };
 
 // Volumes are the unit cube scaled by the transform (see components.h).
@@ -494,6 +494,47 @@ bool prefab_path(const EditorState& s, const char* guid_text, char* path, usize 
     if (!r || r->type != asset::AssetType::Prefab) return false;
     s.registry->source_path(*r, path, capacity);
     return true;
+}
+
+// Sub Levels in the editor: shown (loaded) or not as each one asks, and reloaded when its level file
+// changes. Play streams them itself (PlaySession).
+// shortcut: Sub Levels inside a Sub Level's contents are not loaded (no nesting); add a depth limit when needed.
+void update_sublevels(EditorState& s) {
+    struct Shown {
+        char guid[33];
+        i64 time;
+    };
+    static std::unordered_map<u32, Shown> shown;
+    const reflect::TypeInfo& type = reflect::type_of<world::SubLevel>();
+    for (u32 i = 0; i < s.world->count(type); ++i) {
+        const Entity e = s.world->owner(type, i);
+        const auto* sub = static_cast<const world::SubLevel*>(s.world->at(type, i));
+        bool nested = false;
+        for (Entity p = s.world->parent(e); p.valid() && !nested; p = s.world->parent(p)) nested = s.world->transient(p);
+        if (nested) continue;
+        asset::Guid guid;
+        const asset::AssetRecord* r = sub->show_in_editor && asset::parse_guid(sub->level, guid) ? s.registry->find(guid) : nullptr;
+        if (r && r->type != asset::AssetType::Level) r = nullptr;
+        const bool loaded = world::sublevel_loaded(*s.world, e);
+        if (!r) {
+            if (loaded) world::unload_sublevel(*s.world, e);
+            shown.erase(e.value);
+            continue;
+        }
+        const auto it = shown.find(e.value);
+        const bool current = loaded && it != shown.end() && std::strcmp(it->second.guid, sub->level) == 0 && it->second.time == r->source_time;
+        if (current) continue;
+        char path[300];
+        s.registry->source_path(*r, path, sizeof path);
+        if (world::load_sublevel(*s.world, e, path)) {
+            Shown entry{};
+            std::snprintf(entry.guid, sizeof entry.guid, "%s", sub->level);
+            entry.time = r->source_time;
+            shown[e.value] = entry;
+        } else {
+            shown.erase(e.value);
+        }
+    }
 }
 
 // The prefab instance an object belongs to: itself or its nearest ancestor with a PrefabInstance.
@@ -5420,6 +5461,7 @@ void draw_editor(EditorState& s) {
 
     prune_selection(s);  // undo or delete may have removed selected objects
     update_pcg(s);       // before the undo step below, so it holds the rebuilt copies
+    if (!s.playing) update_sublevels(s);
     // One undo step per finished edit: wait until drags and text fields are released.
     if (s.pending_edit[0] && (s.playing || (!ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
         if (!s.playing) {

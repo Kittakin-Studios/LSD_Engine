@@ -48,7 +48,7 @@ the first-person player is temporary until Jolt + Character Movement in mileston
 ### World and levels
 
 - [x] World: entities as generational handles, one packed pool per reflected component type, transforms + parent/child hierarchy (`engine/world`)
-- [~] Levels: new / open / save / save as (`.lsdlevel` JSON text in Content/Levels), last level reopens on start, unsaved-changes prompts, File > Recent Levels (10, newest first); needs sub-levels
+- [x] Levels: new / open / save / save as (`.lsdlevel` JSON text in Content/Levels), last level reopens on start, unsaved-changes prompts, File > Recent Levels (10, newest first); sub-levels: a Sub Level object places another level (its contents under it, moved with it, never saved into this level, reloaded when the file changes), streamed in Play by Load Distance or lsd.load_sublevel / Load Stream Level nodes [Level Instance, Level Streaming]
 - [x] Autosave and crash recovery: asks to save on quit, autosaves unsaved levels to Saved/Autosaves (default every 5 min), offers to restore after a crash
 - [x] Duplicate (Ctrl+D, Alt+drag with the gizmo), Cut / Copy / Paste (Ctrl+X/C/V) as level text, also between levels and to a text editor
 - [x] Groups: Ctrl+G puts the selection under a new "Group" empty, Shift+G ungroups [Group Actors]

@@ -350,6 +350,17 @@ indoors. Screen-space reflections add what is on screen on top.
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
 
+### Sub-levels and streaming
+
+Place tab > **Sub Level** (Unreal's Level Instance / level streaming): pick a **Level** in Details and
+that level's objects appear under this object, moving with it. They are not saved into this level
+(open the sub-level to edit them; the copy here updates when you save it) and clicking them selects
+the Sub Level object. In Play a sub-level is loaded from the start, or, with **Load Distance**, only
+while the player is that near (it unloads a little further away); untick **Load at Start** to load it
+only from scripts: `lsd.load_sublevel(e)` / `lsd.unload_sublevel(e)` or the **Load / Unload Stream
+Level** nodes. Their scripts and physics start and stop with them. Sub-levels inside sub-levels are
+not loaded yet.
+
 ### Vehicles, transports and moving meshes
 
 Three ready-made objects in the **Place** tab, coloured cubes as placeholders (put your own mesh in

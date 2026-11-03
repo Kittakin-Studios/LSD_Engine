@@ -125,6 +125,9 @@
 // array: const [x, y, z] = lsd.position(self.entity)), `var properties = { speed: 5 }`, console.log.
 //   lsd.js_call(path, function, ...) -> result   a function of a .js file (what JavaScript nodes compile to)
 //
+// Level streaming: lsd.load_sublevel(e) / lsd.unload_sublevel(e) -> ok, for an object with a Sub Level
+// component (its scripts and physics start with it). Load Distance streams them by themselves.
+//
 // Vehicles and movers (Place tab: Drivable Vehicle, Transport, Moving Mesh):
 //   lsd.enter_vehicle(e) / lsd.exit_vehicle() -> ok, lsd.vehicle() -> e | nil   (E does it too)
 //   lsd.ride(e) / lsd.stop_riding() -> ok   a Transport (train, ferry, lift)
@@ -237,6 +240,7 @@ struct ScriptHost {
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
     // Vehicles and movers: 0 enter vehicle, 1 exit, 2 driven vehicle, 3 ride, 4 get off, 5 / 6 / 7 start / stop / restart a mover.
     u32 (*ride)(void* user, int what, world::Entity e) = nullptr;
+    bool (*sublevel)(void* user, world::Entity e, bool load) = nullptr;  // a Sub Level object: load / unload its level
     // Multiplayer (all null when it is off: scripts then see a standalone game).
     int (*net_mode)(void* user) = nullptr;   // 0 standalone, 1 server, 2 client
     u32 (*net_player)(void* user) = nullptr; // this machine's player id (0 = the server's own)
