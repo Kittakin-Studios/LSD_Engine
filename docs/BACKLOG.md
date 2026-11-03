@@ -230,7 +230,9 @@ Gameplay so far is Lua and visual scripts. This milestone adds native code (C an
 C++ project modules) and JavaScript, all on one API, while UI stays HTML / CSS with its own `.js`.
 
 Exit test: in one level, a door opened by a C++ behaviour and a pickup counted by a JavaScript script,
-edited and reloaded while the editor runs, then packaged and run from another folder.
+edited and reloaded while the editor runs, then packaged and run from another folder. **Passed (Nov 2026)**:
+both edited during Play carried on from where they were (the door's height property and the pickup's
+`self` kept), and the packaged game run from Build/<Project>/ logged both.
 
 The shared core: every engine call scripts make already goes through `ScriptHost` (plain C function
 pointers) and the reflection tables. Both become the C API, so every language sees the same calls.
