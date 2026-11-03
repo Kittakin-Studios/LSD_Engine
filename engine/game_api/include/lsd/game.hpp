@@ -263,6 +263,36 @@ template <auto Fn> struct NodeRegistrar {
     }
 };
 
+// ---- Components (LSD_COMPONENT) ----
+
+template <typename T> struct Component {
+    static inline const char* name = "";
+    static inline const char* category = nullptr;
+    static void register_it(lsd_registry* registry) {
+        static_assert(std::is_trivially_copyable_v<T>, "components are plain data: numbers, bool, char arrays");
+        static Properties<T> props;
+        props.list.clear();
+        T::properties(props);
+        static const T defaults{};
+        static lsd_component c{};
+        c.name = name;
+        c.size = sizeof(T);
+        c.defaults = &defaults;
+        c.fields = props.list.data();
+        c.field_count = static_cast<int>(props.list.size());
+        c.category = category;
+        lsd_register_component(registry, &c);
+    }
+};
+
+template <typename T> struct ComponentRegistrar {
+    ComponentRegistrar(const char* name, const char* category) {
+        Component<T>::name = name;
+        Component<T>::category = category;
+        registrars().push_back(&Component<T>::register_it);
+    }
+};
+
 inline void register_all(lsd_registry* registry) {
     for (auto* fn : registrars()) fn(registry);
     for (auto* fn : c_scripts()) fn(registry);
@@ -278,6 +308,13 @@ inline void register_all(lsd_registry* registry) {
 // `category` once compiled: LSD_NODE(heal, "Health", "target, amount = 10", "Adds health").
 // Pins: numbers, bool, const char*, Vec3, Entity (an object; defaults to the graph's own). The node id
 // is "Cpp_<function>". LSD_PURE_NODE: no exec pins, called when its result is needed (BlueprintPure).
+// A struct of your own as a component (Unreal: UCLASS + UPROPERTY): plain data with a static
+// properties(Properties<T>&) listing the fields Details shows and levels save, like a script's.
+//   struct Health { float hp = 100; int32_t armor = 0; static void properties(lsd::game::Properties<Health>& p) {...} };
+//   LSD_COMPONENT(Health, "Combat")
+// Read and write it by name: lsd_get_number(e, "Health", "hp", &v), lsd.get(e, "Health") in Lua.
+#define LSD_COMPONENT(Type, category) static ::lsd::game::detail::ComponentRegistrar<Type> lsd_component_##Type(#Type, category);
+
 #define LSD_NODE(fn, category, pins, tooltip) \
     static ::lsd::game::detail::NodeRegistrar<&fn> lsd_node_##fn(#fn, category, pins, tooltip, false);
 #define LSD_PURE_NODE(fn, category, pins, tooltip) \

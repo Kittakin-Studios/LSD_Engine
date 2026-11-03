@@ -303,6 +303,7 @@ bool load() {
         return false;
     }
     LSD_LOG_INFO("game", "C / C++ scripts loaded: %u", g_module.count);
+    if (const u32 components = script::register_native_components(g_module)) LSD_LOG_INFO("game", "Components of your own: %u", components);
     return true;
 }
 

@@ -58,6 +58,19 @@ typedef lsd_behaviour lsd_script;
 
 typedef struct lsd_registry lsd_registry;
 
+/* Your own components (Unreal: a UCLASS with UPROPERTYs): plain data on objects, picked in Details >
+ * Add Component, edited and saved with the level, undoable, and read / written by name like built-in
+ * ones (lsd_get_number, lsd.get / lsd.set in Lua, Get / Set Component Value nodes). Fields are the
+ * same lsd_property list behaviours use (float, int32, bool, char[N]). */
+typedef struct lsd_component {
+    const char* name;            /* the type: what Add Component lists and levels save */
+    size_t size;                 /* the struct's size */
+    const void* defaults;        /* a default instance (size bytes; copied); NULL = all zero */
+    const lsd_property* fields;  /* shown and saved; other bytes are kept as they are */
+    int field_count;
+    const char* category;        /* Add Component group; NULL = "Game" */
+} lsd_component;
+
 /* Visual-script nodes from game code (Unreal: BlueprintCallable / BlueprintPure functions). A node
  * passes its inputs as values; the function fills *result when it has an output. */
 enum lsd_value_type { LSD_VALUE_NONE = -1, LSD_VALUE_NUMBER = 0, LSD_VALUE_BOOL = 1, LSD_VALUE_TEXT = 2, LSD_VALUE_VECTOR = 3, LSD_VALUE_OBJECT = 4 };
@@ -137,6 +150,7 @@ typedef struct lsd_api {
     void (*draw_line)(lsd_vec3 a, lsd_vec3 b, lsd_vec3 color, float seconds);
     /* Added later; fields are only ever added at the end, so older modules keep working. */
     void (*register_function)(lsd_registry* registry, const lsd_function* function);
+    void (*register_component)(lsd_registry* registry, const lsd_component* component);
 } lsd_api;
 
 /* Set by LSD_GAME_MODULE before register_fn runs. */
@@ -166,6 +180,8 @@ static inline void lsd_register_script(lsd_registry* r, const lsd_script* s) { l
 /* A visual-script node (in the node menu once the module is compiled); call it from a register
  * function like lsd_register_script. */
 static inline void lsd_register_function(lsd_registry* r, const lsd_function* f) { lsd_api_ptr->register_function(r, f); }
+/* A component type of your own (see lsd_component); register it from the same function as your scripts. */
+static inline void lsd_register_component(lsd_registry* r, const lsd_component* c) { lsd_api_ptr->register_component(r, c); }
 
 /* C scripts register themselves when the module loads: after a function that calls
  * lsd_register_script, put LSD_C_SCRIPT(that_function) in the same .c file. The module's

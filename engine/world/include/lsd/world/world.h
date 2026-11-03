@@ -18,6 +18,9 @@ constexpr u32 kMaxComponentTypes = 64;
 
 // Component types the world knows, in "Add Component" order. Transform is always first.
 const reflect::TypeInfo* const* component_types(u32& count);
+// Adds a component type made at run time (game code's own components); false if the name is taken or
+// all kMaxComponentTypes are in use. The TypeInfo must stay alive while the program runs.
+bool register_component_type(const reflect::TypeInfo& type);
 const reflect::TypeInfo* find_component_type(const char* name);  // by TypeInfo name, e.g. "StaticMesh"
 
 class World {
@@ -111,8 +114,8 @@ private:
     Allocator& allocator_;
     Array<Record> records_;
     Array<u32> free_slots_;
-    Pool pools_[kMaxComponentTypes];
-    u32 pool_count_ = 0;
+    mutable Pool pools_[kMaxComponentTypes];  // grows (pool_index) when game code registers a type
+    mutable u32 pool_count_ = 0;
     WorldSettings settings_;
 };
 

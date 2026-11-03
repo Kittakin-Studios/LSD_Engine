@@ -4,10 +4,14 @@
 #include "lsd/script/graph.h"
 #include "lsd/script/script.h"
 #include "lsd/world/components.h"
+#include "lsd/world/world.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
+#include <string>
+#include <deque>
 
 namespace lsd::script {
 
@@ -49,6 +53,89 @@ u32 register_native_nodes(const NativeModule& module) {
         const PinType result = pin_type(f.output_type);
         register_call_node(id, f.title ? f.title : name, f.category ? f.category : "Game", f.tooltip, pins, count,
                            f.output_type == LSD_VALUE_NONE ? nullptr : &result, f.pure != 0, call);
+        ++registered;
+    }
+    return registered;
+}
+
+namespace {
+// Reflection for the module's component types: kept for the whole run (worlds hold pointers to it).
+struct RuntimeType {
+    reflect::TypeInfo info;
+    std::vector<reflect::Property> properties;
+    std::vector<std::string> strings;  // names, kept stable (reserved)
+    std::vector<u8> defaults;
+    u32 signature;  // size and fields: a rebuild that changes them needs a restart
+};
+std::deque<RuntimeType> g_runtime_types;
+
+u32 signature_of(const NativeModule::Component& c) {
+    u32 h = 2166136261u;
+    auto mix = [&h](const void* p, usize n) {
+        for (usize i = 0; i < n; ++i) h = (h ^ static_cast<const u8*>(p)[i]) * 16777619u;
+    };
+    mix(&c.size, sizeof c.size);
+    for (u32 i = 0; i < c.field_count; ++i) {
+        mix(c.field_names[i], std::strlen(c.field_names[i]));
+        mix(&c.fields[i].type, sizeof c.fields[i].type);
+        mix(&c.fields[i].offset, sizeof c.fields[i].offset);
+        mix(&c.fields[i].size, sizeof c.fields[i].size);
+    }
+    return h;
+}
+} // namespace
+
+u32 register_native_components(const NativeModule& module) {
+    u32 registered = 0;
+    for (u32 k = 0; k < module.component_count; ++k) {
+        const NativeModule::Component& c = module.components[k];
+        const u32 signature = signature_of(c);
+        bool known = false;
+        for (RuntimeType& t : g_runtime_types) {
+            if (std::strcmp(t.info.name, c.name) != 0) continue;
+            known = true;
+            if (t.signature != signature) LSD_LOG_WARN("game", "Component %s changed its fields: restart the editor to use the new layout (objects keep the old one until then)", c.name);
+            else std::memcpy(t.defaults.data(), c.defaults, c.size);  // new defaults apply to new components
+        }
+        if (known) continue;
+        if (world::find_component_type(c.name)) {
+            LSD_LOG_ERROR("game", "Component %s: the engine already has a component of that name", c.name);
+            continue;
+        }
+        RuntimeType& t = g_runtime_types.emplace_back();
+        t.strings.reserve(c.field_count + 2);
+        t.strings.emplace_back(c.name);
+        t.strings.emplace_back(c.category);
+        t.defaults.assign(c.defaults, c.defaults + c.size);
+        for (u32 i = 0; i < c.field_count; ++i) {
+            const lsd_property& f = c.fields[i];
+            t.strings.emplace_back(c.field_names[i]);
+            reflect::Property p{};
+            p.name = t.strings.back().c_str();
+            p.type = f.type == LSD_FLOAT ? reflect::FieldType::F32 : f.type == LSD_INT ? reflect::FieldType::I32 : f.type == LSD_BOOL ? reflect::FieldType::Bool : reflect::FieldType::String;
+            p.offset = static_cast<u32>(f.offset);
+            p.size = f.type == LSD_TEXT ? static_cast<u32>(f.size) : f.type == LSD_BOOL ? 1u : 4u;
+            p.flags = reflect::kEdit;
+            p.category = "";
+            p.tooltip = "";
+            p.units = "";
+            t.properties.push_back(p);
+        }
+        t.info.name = t.strings[0].c_str();
+        t.info.id = HashId(t.info.name);
+        t.info.size = c.size;
+        t.info.alignment = 16;
+        t.info.flags = reflect::kComponent;
+        t.info.category = t.strings[1].c_str();
+        t.info.properties = t.properties.data();
+        t.info.property_count = static_cast<u32>(t.properties.size());
+        t.info.defaults = t.defaults.data();
+        t.signature = signature;
+        if (!world::register_component_type(t.info)) {
+            LSD_LOG_ERROR("game", "Component %s: no room for more component types", c.name);
+            g_runtime_types.pop_back();
+            continue;
+        }
         ++registered;
     }
     return registered;
@@ -137,6 +224,29 @@ struct NativeApi {
         m.functions[m.function_count] = *f;
         std::snprintf(m.function_names[m.function_count], sizeof m.function_names[0], "%s", f->name);
         ++m.function_count;
+    }
+    static void register_component(lsd_registry* registry, const lsd_component* c) {
+        auto& m = *reinterpret_cast<NativeModule*>(registry);
+        if (!c || !c->name || !c->size || m.component_count == NativeModule::kMaxComponents) return;
+        if (c->size > sizeof(NativeModule::Component::defaults)) {
+            LSD_LOG_ERROR("game", "Component %s is %zu bytes; the limit is %zu", c->name, c->size, sizeof(NativeModule::Component::defaults));
+            return;
+        }
+        NativeModule::Component& out = m.components[m.component_count++];
+        out = {};
+        std::snprintf(out.name, sizeof out.name, "%s", c->name);
+        std::snprintf(out.category, sizeof out.category, "%s", c->category ? c->category : "Game");
+        out.size = static_cast<u32>(c->size);
+        if (c->defaults) std::memcpy(out.defaults, c->defaults, c->size);
+        for (int i = 0; i < c->field_count && out.field_count < 32; ++i) {
+            const lsd_property& f = c->fields[i];
+            const usize width = f.type == LSD_TEXT ? f.size : f.type == LSD_BOOL ? 1 : 4;
+            if (!f.name || f.offset + width > c->size) continue;  // outside the struct: refused, never read
+            std::snprintf(out.field_names[out.field_count], sizeof out.field_names[0], "%s", f.name);
+            out.fields[out.field_count] = f;
+            out.fields[out.field_count].name = out.field_names[out.field_count];
+            ++out.field_count;
+        }
     }
     static void log(int error, const char* text) {
         if (error) LSD_LOG_ERROR("game", "%s", text);
@@ -391,6 +501,7 @@ const lsd_api* native_api() {
         NativeApi::broadcast,
         NativeApi::draw_line,
         NativeApi::register_function,
+        NativeApi::register_component,
     };
     return &api;
 }

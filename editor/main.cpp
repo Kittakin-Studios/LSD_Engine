@@ -1621,6 +1621,8 @@ int main(int argc, char** argv) {
                                 : game_mode              ? state.project.game_default_level
                                 : state.settings.last_level[0] ? state.settings.last_level
                                                          : state.project.editor_startup_level;
+    // Game code first: its own components must be known before a level that uses them is read.
+    lsd::editor::game_module::load();  // the project's C / C++ scripts and components (Binaries/Game.dll), if any
     if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
 
     // Crash recovery: a lock file left behind means the last session did not exit cleanly.
@@ -1731,8 +1733,7 @@ int main(int argc, char** argv) {
     play.set_skinned(skinned_cache);
     static DebugFrameContext debug_context;
     debug_context = {device, window, &state};
-    lsd::editor::game_module::load();  // the project's C / C++ behaviours (Binaries/Game.dll), if any
-    register_script_nodes(registry);  // with its nodes
+    register_script_nodes(registry);  // with the game code's nodes (loaded before the startup level)
     play.scripts().set_native_module(&lsd::editor::game_module::module());
     lsd::editor::debugger::attach(play.scripts());
     lsd::editor::debugger::set_frame_callback(debug_frame, &debug_context);

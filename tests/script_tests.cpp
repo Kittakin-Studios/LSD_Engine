@@ -276,7 +276,60 @@ static float lift_by(lsd::game::Entity target, float height) {
 LSD_NODE(lift_by, "Moves", "target, height = 2", "Raises the object")
 static float half(float value) { return value * 0.5f; }
 LSD_PURE_NODE(half, "Math", "value", "")
+
+// A component of the game's own.
+struct Health {
+    float hp = 100.0f;
+    int32_t armor = 3;
+    bool alive = true;
+    char title[16] = "Knight";
+    static void properties(lsd::game::Properties<Health>& p) {
+        p.add("hp", &Health::hp);
+        p.add("armor", &Health::armor);
+        p.add("alive", &Health::alive);
+        p.add("title", &Health::title);
+    }
+};
+LSD_COMPONENT(Health, "Combat")
 LSD_GAME_MODULE()
+
+static void test_native_components() {
+    HeapAllocator heap("components");
+    {
+        World early(heap);  // made before the type exists: its pool appears when first used
+        const Entity knight = early.create("Knight");
+        auto* module = new script::NativeModule();  // big: not on the stack
+        CHECK(lsd_game_register(script::native_api(), module->registry()) == 1);
+        CHECK(module->component_count == 1);
+        CHECK(script::register_native_components(*module) == 1);
+        CHECK(script::register_native_components(*module) == 0);  // already known: kept
+        const reflect::TypeInfo* type = find_component_type("Health");
+        CHECK(type && type->property_count == 4 && std::strcmp(type->category, "Combat") == 0);
+        auto* health = type ? static_cast<Health*>(early.add(knight, *type)) : nullptr;
+        CHECK(health && health->hp == 100.0f && health->armor == 3 && health->alive && std::strcmp(health->title, "Knight") == 0);
+
+        // Lua reads and writes it by name, like a built-in component.
+        script::ScriptSystem scripts;
+        scripts.start(early, {}, path_of, nullptr);
+        char line[200];
+        std::snprintf(line, sizeof line, "local h = lsd.get(%u, 'Health') assert(h.hp == 100 and h.armor == 3 and h.title == 'Knight') lsd.set(%u, 'Health', {hp = 42, title = 'Paladin'})",
+                      knight.value, knight.value);
+        CHECK(scripts.run(line));
+        scripts.stop();
+        CHECK(health && health->hp == 42.0f && std::strcmp(health->title, "Paladin") == 0);
+
+        // Saved with the level and read back.
+        Array<char> text(heap);
+        save_level(early, text);
+        World later(heap);
+        CHECK(load_level(later, text.data(), text.size()));
+        const Entity again = later.entity_at_slot(knight.slot());
+        const auto* loaded = type && again.valid() ? static_cast<const Health*>(later.get(again, *type)) : nullptr;
+        CHECK(loaded && loaded->hp == 42.0f && loaded->armor == 3 && std::strcmp(loaded->title, "Paladin") == 0);
+        delete module;
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
 
 static void test_native_nodes() {
     using namespace lsd::script;
@@ -952,6 +1005,7 @@ int main() {
     test_javascript();
     test_js_nodes();
     test_native_nodes();
+    test_native_components();
     test_data_table();
     test_graph();
     test_graph_variables();

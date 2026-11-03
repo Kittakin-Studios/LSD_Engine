@@ -6,7 +6,13 @@
 
 namespace lsd::world {
 
-const reflect::TypeInfo* const* component_types(u32& count) {
+namespace {
+// The built-in types, then those game code registers (register_component_type).
+const reflect::TypeInfo* g_types[kMaxComponentTypes];
+u32 g_type_count = 0;
+
+void init_types() {
+    if (g_type_count) return;
     static const reflect::TypeInfo* const types[] = {
         &reflect::type_of<Transform>(),
         &reflect::type_of<StaticMesh>(),
@@ -55,8 +61,25 @@ const reflect::TypeInfo* const* component_types(u32& count) {
         &reflect::type_of<Transport>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
-    count = static_cast<u32>(sizeof types / sizeof types[0]);
-    return types;
+    for (const reflect::TypeInfo* t : types) g_types[g_type_count++] = t;
+}
+} // namespace
+
+const reflect::TypeInfo* const* component_types(u32& count) {
+    init_types();
+    count = g_type_count;
+    return g_types;
+}
+
+bool register_component_type(const reflect::TypeInfo& type) {
+    init_types();
+    for (u32 i = 0; i < g_type_count; ++i) {
+        if (g_types[i] == &type) return true;
+        if (std::strcmp(g_types[i]->name, type.name) == 0) return false;  // the name is taken
+    }
+    if (g_type_count == kMaxComponentTypes) return false;
+    g_types[g_type_count++] = &type;
+    return true;
 }
 
 const reflect::TypeInfo* find_component_type(const char* name) {
@@ -96,6 +119,15 @@ bool World::alive(Entity e) const { return record(e) != nullptr; }
 i32 World::pool_index(const reflect::TypeInfo& type) const {
     for (u32 i = 0; i < pool_count_; ++i) {
         if (pools_[i].type == &type) return static_cast<i32>(i);
+    }
+    // A type game code registered after this world was made: its pool is added now (empty until used).
+    u32 count = 0;
+    const reflect::TypeInfo* const* types = component_types(count);
+    for (u32 i = pool_count_; i < count; ++i) {
+        pools_[i].type = types[i];
+        pools_[i].stride = (types[i]->size + 15u) & ~15u;
+        pool_count_ = i + 1;
+        if (types[i] == &type) return static_cast<i32>(i);
     }
     return -1;
 }

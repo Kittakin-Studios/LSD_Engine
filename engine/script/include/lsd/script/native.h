@@ -18,9 +18,24 @@ struct NativeModule {
     char function_names[kMaxFunctions][64];
     u32 function_count = 0;
 
+    // Component types the module registered (copied: the module's own data lives in its DLL).
+    static constexpr u32 kMaxComponents = 16;
+    struct Component {
+        char name[64];
+        char category[32];
+        u32 size;
+        lsd_property fields[32];
+        char field_names[32][48];
+        u32 field_count;
+        u8 defaults[4096];
+    };
+    Component components[kMaxComponents];
+    u32 component_count = 0;
+
     void clear() {
         count = 0;
         function_count = 0;
+        component_count = 0;
     }
     const lsd_behaviour* find(const char* name) const;
     const lsd_function* find_function(const char* name) const;
@@ -33,6 +48,9 @@ const lsd_api* native_api();
 
 // The module's functions as visual-script nodes ("Cpp_<name>", calling lsd.native_call). Returns how many.
 u32 register_native_nodes(const NativeModule& module);
+// The module's component types into the world's component list (Details, saving, undo, Lua, nodes).
+// A type registered before keeps its layout: a rebuild that changes one is reported (restart to apply).
+u32 register_native_components(const NativeModule& module);
 
 // A property's default as text ("90", "true", "Door"), read from a fresh state of the behaviour.
 void native_property_default(const lsd_behaviour& behaviour, const lsd_property& property, char* out, usize capacity);
