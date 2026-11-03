@@ -678,6 +678,15 @@ float4 ps_expose(VsOut i) : SV_Target {
     const float4 e = t1.SampleLevel(clamp_linear, float2(0.5, 0.5), 0);
     return float4(encode(tap(t0, i.uv) * exp2((e.r + e.g / 255.0) * 32.0 - 16.0)), 1.0);
 }
+// The selection outline (see the GLSL): empty here in the mask, something within 2 pixels; tint_tm = colour.
+float4 ps_outline(VsOut i) : SV_Target {
+    const float here = t0.SampleLevel(clamp_linear, i.uv, 0).r;
+    float around = 0.0;
+    [unroll] for (int y = -2; y <= 2; ++y) {
+        [unroll] for (int x = -2; x <= 2; ++x) around = max(around, t0.SampleLevel(clamp_linear, i.uv + float2(x, y) * texel.xy, 0).r);
+    }
+    return float4(tint_tm.rgb, saturate(around * 4.0) * (1.0 - saturate(here * 4.0)) * tint_tm.a);
+}
 float4 ps_composite(VsOut i) : SV_Target {
     float3 c = tap(t0, i.uv);
     if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
@@ -1720,6 +1729,38 @@ public:
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
     }
 
+    void draw_outline(const MeshDraw* draws, u32 count, const f32 color[4], const f32 viewport[4]) override {
+        const u32 w = static_cast<u32>(viewport[2]), h = static_cast<u32>(viewport[3]);
+        if (!count || !w || !h) return;
+        if (outline_size_[0] != w || outline_size_[1] != h) {  // the mask: one per viewport size, kept
+            destroy_texture(outline_mask_);
+            outline_mask_ = create_render_target(w, h);
+            outline_size_[0] = w;
+            outline_size_[1] = h;
+        }
+        const f32 clear[4] = {0, 0, 0, 0};
+        set_render_target(outline_mask_, clear);
+        for (u32 i = 0; i < count; ++i) {  // each as plain white: only where it covers matters
+            MeshDraw d = draws[i];
+            d.unlit = true;
+            d.wireframe = false;
+            d.debug_view = 0;
+            d.blend = 0;
+            d.alpha_cutoff = 0.0f;
+            d.material_shader = {};
+            d.base_color_texture = {};
+            d.color[0] = d.color[1] = d.color[2] = d.color[3] = 1.0f;
+            draw_mesh(d);
+        }
+        f32 k[48] = {};
+        k[0] = 1.0f / static_cast<f32>(w);
+        k[1] = 1.0f / static_cast<f32>(h);
+        for (int c = 0; c < 4; ++c) k[8 + c] = color[c];
+        post_pass(post_outline_.Get(), {}, viewport, outline_mask_, {}, {}, k);
+        set_render_target({}, nullptr);  // the mask back to a shader resource
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+
     void begin_frame(const f32 clear_color[4]) override {
         frame_ = swapchain_->GetCurrentBackBufferIndex();
         wait_for_fence(frame_fence_values_[frame_]);
@@ -2161,7 +2202,7 @@ private:
         };
         const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
                                  {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_},
-                                 {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}};
+                                 {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}, {"ps_outline", &post_outline_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
@@ -2170,6 +2211,16 @@ private:
             pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
             pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
             pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+            if (std::strcmp(e.name, "ps_outline") == 0) {  // painted over the image
+                D3D12_RENDER_TARGET_BLEND_DESC& b = pso.BlendState.RenderTarget[0];
+                b.BlendEnable = TRUE;
+                b.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+                b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+                b.BlendOp = D3D12_BLEND_OP_ADD;
+                b.SrcBlendAlpha = D3D12_BLEND_ONE;
+                b.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+                b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            }
             pso.SampleMask = UINT_MAX;
             pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
             pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -2394,6 +2445,8 @@ private:
     HANDLE fence_event_ = nullptr;
     u64 fence_value_ = 0;
     u64 frame_fence_values_[kBackBufferCount] = {};
+    TextureHandle outline_mask_;  // the selection outline's mask, sized to the last viewport
+    u32 outline_size_[2] = {};
     ComPtr<ID3D12QueryHeap> timestamp_heap_;  // GPU timings: kGpuTimestamps per frame in flight
     ComPtr<ID3D12Resource> timestamp_readback_;
     u64 timestamp_frequency_ = 0;
@@ -2431,7 +2484,7 @@ private:
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
-    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_;
+    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

@@ -73,6 +73,9 @@
 #include <string>
 
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
+// The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
+std::vector<lsd::rhi::MeshDraw> g_outline;
+constexpr lsd::f32 kOutlineColor[4] = {1.0f, 0.55f, 0.08f, 1.0f};
 
 // input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
 lsd::u64 g_held_until[SDL_SCANCODE_COUNT] = {};
@@ -487,6 +490,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     static BlendQueue translucent;  // reused each call: no allocation once it has grown
     translucent.clear();
     static std::vector<BatchItem> batch;  // opaque meshes waiting to be drawn instanced
+    g_outline.clear();  // this view's selected objects, gathered below
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
@@ -551,11 +555,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
         draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
-        if ((!stats.playing || stats.ejected) && stats.is_selected(e)) {  // shortcut: selection tint until the outline post-process exists
-            draw.color[0] = 1.0f;
-            draw.color[1] = 0.85f;
-            draw.color[2] = 0.25f;
-        }
+        if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
         if (blend_view(stats, draw, lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f), eye, translucent)) continue;
         if (can_batch(draw, m)) {  // drawn below with the others like it
             batch.push_back({batch_key(draw), draw, m});
@@ -601,11 +601,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.alpha_cutoff = cutoff;
             draw.unlit = !lit || (editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision));
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
-            if (editor_view && stats.is_selected(e)) {
-                draw.color[0] = 1.0f;
-                draw.color[1] = 0.85f;
-                draw.color[2] = 0.25f;
-            }
+            if (editor_view && stats.is_selected(e)) g_outline.push_back(draw);
             device.draw_mesh(draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
@@ -2401,6 +2397,10 @@ int main(int argc, char** argv) {
                 if (v == 0) device->gpu_timestamp(2);
                 device->draw_post(post);
                 if (v == 0) device->gpu_timestamp(3);
+            }
+            if (!g_outline.empty() && (!state.playing || state.ejected)) {
+                device->draw_outline(g_outline.data(), static_cast<lsd::u32>(g_outline.size()), kOutlineColor, pixels);
+                g_outline.clear();
             }
             if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
                 play.place_ui_followers(world, view_proj, pixels);

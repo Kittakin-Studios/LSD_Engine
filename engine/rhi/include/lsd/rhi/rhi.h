@@ -333,6 +333,10 @@ public:
     virtual void draw_ui(const UiDraw& draw) = 0;
     // Bloom, tonemap, grading and FXAA from a scene target into the window (see PostDraw).
     virtual void draw_post(const PostDraw& post) = 0;
+    // The selection outline (Unreal's orange outline): `draws` (meshes as drawn this frame, any
+    // material) go into a mask, then the edge of their silhouette is painted in `color` over the window
+    // in `viewport` (pixels), through anything in front of them. Backends without it draw nothing.
+    virtual void draw_outline(const MeshDraw* draws, u32 count, const f32 color[4], const f32 viewport[4]) { (void)draws, (void)count, (void)color, (void)viewport; }
     // A render target's pixels (RGBA8, rows top to bottom, width * height * 4 bytes). Call after
     // end_frame: it waits for the GPU. False if the handle is not a render target.
     virtual bool read_render_target(TextureHandle target, u8* rgba) = 0;

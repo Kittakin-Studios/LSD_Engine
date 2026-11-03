@@ -556,6 +556,13 @@ void main() {
 #elif defined(EXPOSE)
     vec4 e = textureLod(t1, vec2(0.5), 0.0);
     o_color = vec4(encode(tap(t0, v_uv) * exp2((e.r + e.g / 255.0) * 32.0 - 16.0)), 1.0);
+#elif defined(OUTLINE)
+    // The selection outline: empty here in the mask, but something within 2 pixels is (u_post[2] = colour).
+    float here = textureLod(t0, v_uv, 0.0).r, around = 0.0;
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) around = max(around, textureLod(t0, v_uv + vec2(x, y) * texel.xy, 0.0).r);
+    }
+    o_color = vec4(tint_tm.rgb, clamp(around * 4.0, 0.0, 1.0) * (1.0 - clamp(here * 4.0, 0.0, 1.0)) * tint_tm.a);
 #elif defined(COMPOSITE)
     vec3 c = tap(t0, v_uv);
     if (bloom.y > 0.0) c += tap(t1, v_uv) * bloom.y;
@@ -1434,7 +1441,8 @@ public:
         return c;
     }
     // One full-screen pass into `target` (invalid: the window, in `window_rect`); `depth_of`: whose depth is t2.
-    void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of, const f32 constants[48]) {
+    void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of, const f32 constants[48],
+                   bool blend = false) {
         const f32 black[4] = {0, 0, 0, 1};
         if (target.valid()) {
             set_render_target(target, black);
@@ -1443,7 +1451,12 @@ public:
             set_viewport(window_rect[0], window_rect[1], window_rect[2], window_rect[3]);
         }
         glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
+        if (blend) {  // over what is there (the outline)
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        } else {
+            glDisable(GL_BLEND);
+        }
         const Target* a = lookup(in0);
         const Target* b = lookup(in1);
         gl_.glUseProgram(post_programs_[program]);
@@ -1576,6 +1589,39 @@ public:
         }
         glEnable(GL_DEPTH_TEST);
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
+    }
+
+    void draw_outline(const MeshDraw* draws, u32 count, const f32 color[4], const f32 viewport[4]) override {
+        const u32 w = static_cast<u32>(viewport[2]), h = static_cast<u32>(viewport[3]);
+        if (!count || !w || !h) return;
+        if (outline_size_[0] != w || outline_size_[1] != h) {  // the mask: one per viewport size, kept
+            destroy_texture(outline_mask_);
+            outline_mask_ = create_render_target(w, h);
+            outline_size_[0] = w;
+            outline_size_[1] = h;
+        }
+        const f32 clear[4] = {0, 0, 0, 0};
+        set_render_target(outline_mask_, clear);
+        for (u32 i = 0; i < count; ++i) {  // each as plain white: only where it covers matters
+            MeshDraw d = draws[i];
+            d.unlit = true;
+            d.wireframe = false;
+            d.debug_view = 0;
+            d.blend = 0;
+            d.alpha_cutoff = 0.0f;
+            d.material_shader = {};
+            d.base_color_texture = {};
+            d.color[0] = d.color[1] = d.color[2] = d.color[3] = 1.0f;
+            draw_mesh(d);
+        }
+        f32 k[48] = {};
+        k[0] = 1.0f / static_cast<f32>(w);
+        k[1] = 1.0f / static_cast<f32>(h);
+        for (int c = 0; c < 4; ++c) k[8 + c] = color[c];
+        post_pass(12, {}, viewport, outline_mask_, {}, {}, k, true);
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     }
 
     void draw_test_triangle(f32 scale, f32 rotation_radians) override {
@@ -1858,7 +1904,7 @@ private:
         particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
         const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
                                                    "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n",
-                                                   "#define METER\n", "#define EXPOSE\n"};
+                                                   "#define METER\n", "#define EXPOSE\n", "#define OUTLINE\n"};
         for (u32 i = 0; i < kPostPrograms; ++i) {
             std::string fragment = kPostFragmentShader;
             fragment.insert(fragment.find('\n') + 1, post_defines[i]);
@@ -1894,6 +1940,8 @@ private:
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint instanced_shadow_program_ = 0;
+    TextureHandle outline_mask_;  // the selection outline's mask, sized to the last viewport
+    u32 outline_size_[2] = {};
     static constexpr u32 kTimingFrames = 4;  // GPU timings: a ring of query sets, read kTimingFrames frames later
     GLuint timing_queries_[kTimingFrames][kGpuTimestamps] = {};
     u32 timestamps_set_[kTimingFrames] = {};
@@ -1913,7 +1961,7 @@ private:
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
     GLint particle_mvp_ = -1, particle_hdr_ = -1;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
-    static constexpr u32 kPostPrograms = 12;
+    static constexpr u32 kPostPrograms = 13;
     GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof, ssr, meter, expose
     GLint post_uniforms_[kPostPrograms] = {};
     PostChain post_chains_[4];
