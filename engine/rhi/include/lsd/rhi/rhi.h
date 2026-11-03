@@ -129,7 +129,7 @@ struct MeshDraw {
     // Instancing (Unreal's Instanced Static Mesh): when set, the mesh is drawn once per instance in
     // one call; each instance's world matrix is given as its first three rows (12 floats). mvp is
     // then the view-projection; world / normal_matrix are unused. Built-in material only (no Material
-    // Graph, no skinning); normals assume uniform scale per instance.
+    // Graph, no skinning); normals are right under any scale (cofactor matrix).
     const f32* instance_rows = nullptr;
     u32 instance_count = 0;
 };
@@ -312,6 +312,9 @@ public:
     virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
                                     const f32* joint_rows = nullptr, u32 joint_count = 0) = 0;  // joints: a skinned caster
+    // Many copies of one caster in one call: `rows` holds each copy's world matrix as 3 rows (12 floats);
+    // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it.
+    virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) = 0;
     virtual void end_shadow_pass() = 0;
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     // The decal atlas the LightSetup's decal rectangles point into (an sRGB texture); for draw_mesh.

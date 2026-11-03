@@ -86,7 +86,9 @@ void main() {
     vec4 local_pos = vec4(position, 1.0);
     vec3 world_pos = vec3(dot(r0, local_pos), dot(r1, local_pos), dot(r2, local_pos));
     gl_Position = u_mvp * vec4(world_pos, 1.0);  // u_mvp is the view-projection here
-    v_normal = vec3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+    // Normals by the cofactor matrix (det * inverse transpose): right under any scale (see the HLSL).
+    vec3 c0 = vec3(r0.x, r1.x, r2.x), c1 = vec3(r0.y, r1.y, r2.y), c2 = vec3(r0.z, r1.z, r2.z);
+    v_normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;
     v_wpos = world_pos;
     v_uv = a_uv;
     return;
@@ -397,9 +399,16 @@ layout(std140, binding = 3) uniform MaterialParams { vec4 lsd_params[16]; };
 constexpr char kShadowVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
 uniform mat4 u_mvp;
+#ifdef INSTANCED
+layout(std140, binding = 2) uniform Instances { vec4 instance_rows[768]; };  // 3 rows per copy: its world matrix
+#endif
 void main() {
     vec3 position = a_pos, normal = vec3(0.0, 0.0, 1.0);
     skin(position, normal);
+#ifdef INSTANCED
+    vec4 p = vec4(position, 1.0);
+    position = vec3(dot(instance_rows[gl_InstanceID * 3], p), dot(instance_rows[gl_InstanceID * 3 + 1], p), dot(instance_rows[gl_InstanceID * 3 + 2], p));
+#endif
     gl_Position = u_mvp * vec4(position, 1.0);
 }
 )";
@@ -1255,6 +1264,22 @@ public:
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_INT, nullptr);
     }
 
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+        const Buffer* vb = lookup(vertices);
+        const Buffer* ib = lookup(indices);
+        if (!vb || !ib || !in_shadow_pass_ || !rows || !count) return;
+        gl_.glUseProgram(instanced_shadow_program_);
+        gl_.glUniformMatrix4fv(instanced_shadow_mvp_, 1, GL_FALSE, view_proj);
+        gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
+        gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
+        gl_.glBindVertexArray(mesh_vao_);
+        for (u32 first = 0; first < count; first += kMaxJoints) {  // the rows' buffer holds 256 copies a call
+            const u32 n = count - first < kMaxJoints ? count - first : kMaxJoints;
+            upload_joints(rows + first * 12, n);
+            gl_.glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(n));
+        }
+    }
+
     void end_shadow_pass() override {
         if (!in_shadow_pass_) return;
         in_shadow_pass_ = false;
@@ -1718,6 +1743,13 @@ private:
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
         shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
+        {
+            std::string instanced = with_skinning(kShadowVertexShader, false);
+            instanced.insert(instanced.find('\n') + 1, "#define INSTANCED\n");
+            instanced_shadow_program_ = link(instanced.c_str(), kShadowFragmentShader);
+            if (!instanced_shadow_program_) return false;
+            instanced_shadow_mvp_ = gl_.glGetUniformLocation(instanced_shadow_program_, "u_mvp");
+        }
         skinned_shadow_program_ = link(with_skinning(kShadowVertexShader, true).c_str(), kShadowFragmentShader);
         skinned_shadow_mvp_ = gl_.glGetUniformLocation(skinned_shadow_program_, "u_mvp");
         if (!skinned_program_.id || !instanced_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
@@ -1821,6 +1853,8 @@ private:
     GLuint decal_texture_ = 0;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
+    GLuint instanced_shadow_program_ = 0;
+    GLint instanced_shadow_mvp_ = -1;
     GLuint joint_ubo_ = 0;
     GLuint param_ubo_ = 0;
     GLuint sky_program_ = 0;

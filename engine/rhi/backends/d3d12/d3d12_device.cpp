@@ -188,7 +188,9 @@ VsOut vs_main(VsIn i) {
     const float4 local = float4(position, 1);
     const float3 world_pos = float3(dot(r0, local), dot(r1, local), dot(r2, local));
     o.pos = mul(mvp, float4(world_pos, 1));  // mvp is the view-projection here
-    o.normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+    // Normals by the cofactor matrix (det * inverse transpose): right under any scale, uniform or not.
+    const float3 c0 = float3(r0.x, r1.x, r2.x), c1 = float3(r0.y, r1.y, r2.y), c2 = float3(r0.z, r1.z, r2.z);
+    o.normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;
     o.wpos = world_pos;
     o.uv = i.uv;
     return o;
@@ -406,6 +408,13 @@ float4 vs_main(float3 pos : POSITION, uint4 joints : BLENDINDICES, float4 weight
         r2 += joint_rows[joints[k] * 3 + 2] * weights[k];
     }
     const float4 p = float4(pos, 1);
+    return mul(mvp, float4(dot(r0, p), dot(r1, p), dot(r2, p), 1));
+}
+#elif defined(INSTANCED)
+cbuffer Instances : register(b2) { float4 instance_rows[768]; };  // 3 rows per copy: its world matrix
+float4 vs_main(float3 pos : POSITION, uint instance : SV_InstanceID) : SV_Position {
+    const float4 p = float4(pos, 1);
+    const float4 r0 = instance_rows[instance * 3], r1 = instance_rows[instance * 3 + 1], r2 = instance_rows[instance * 3 + 2];
     return mul(mvp, float4(dot(r0, p), dot(r1, p), dot(r2, p), 1));
 }
 #else
@@ -1343,6 +1352,27 @@ public:
         list_->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
     }
 
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+        const Buffer* vb = lookup(vertices);
+        const Buffer* ib = lookup(indices);
+        if (!vb || !ib || shadow_pass_ < 0 || !rows || !count) return;
+        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRoot32BitConstants(0, 16, view_proj, 0);
+        list_->SetPipelineState(instanced_shadow_pipeline_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), sizeof(MeshVertex)};
+        const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
+        list_->IASetVertexBuffers(0, 1, &vbv);
+        list_->IASetIndexBuffer(&ibv);
+        for (u32 first = 0; first < count; first += kMaxJoints) {  // the rows' buffer holds 256 copies a call
+            const u32 n = count - first < kMaxJoints ? count - first : kMaxJoints;
+            const D3D12_GPU_VIRTUAL_ADDRESS buffer = upload_joints(rows + first * 12, n);
+            if (!buffer) return;
+            list_->SetGraphicsRootConstantBufferView(7, buffer);
+            list_->DrawIndexedInstanced(index_count, n, 0, 0, 0);
+        }
+    }
+
     void end_shadow_pass() override {
         if (shadow_pass_ < 0) return;
         transition(shadow_maps_[shadow_pass_].resource.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -2061,6 +2091,7 @@ private:
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
                create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
                create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 3}, kInstancedDefines, instanced_shadow_pipeline_) &&
                create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_) && create_sky_pipeline() &&
                create_ui_pipeline() && create_post_pipelines();
     }
@@ -2328,6 +2359,7 @@ private:
     ComPtr<ID3D12PipelineState> skinned_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_wire_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_shadow_pipeline_;
+    ComPtr<ID3D12PipelineState> instanced_shadow_pipeline_;
     ComPtr<ID3D12Resource> joint_buffers_[kBackBufferCount];
     u8* joint_mapped_[kBackBufferCount] = {};
     u32 joint_offset_ = 0;

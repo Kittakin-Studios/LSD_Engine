@@ -255,7 +255,11 @@ bloom and the tonemapper see the adapted image. Sky reflections (both mesh shade
 quadratic); the editor caches look keys up through `editor/key_index.h` (FNV-64 to slot, confirmed by
 a compare); the Outliner's hierarchy uses per-frame child lists; shadow passes cull casters against
 each cascade's side planes only, since pancaking keeps casters in front of the near plane. `stat dump`
-prints the frame's CPU parts with the GPU / vsync wait separated.
+prints the frame's CPU parts with the GPU / vsync wait separated. Automatic instancing (main.cpp
+`can_batch` / `draw_batches`): eligible opaque draws are keyed by an FNV hash of everything but the
+transform, sorted, and runs of 2+ become one `draw_mesh` with `instance_rows`; shadow casters group by
+vertex / index buffer into `draw_shadow_instances` (an INSTANCED shadow shader in both backends,
+chunks of 256). `FrameMeshes` holds each Static Mesh's world matrix and mesh for the frame.
 
 **Voice chat**: `net::VoiceEncoder` / `VoiceDecoder` wrap Opus (48 kHz mono, 20 ms frames, in-band
 FEC, concealment for lost packets). The client sends kVoice (unreliable) to the server, which routes

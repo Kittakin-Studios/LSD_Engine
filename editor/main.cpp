@@ -186,11 +186,61 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
         const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
         if (!mesh) continue;
         instance_rows(world, e, *ism, rows, &matrices);
-        for (const lsd::Mat4& m : matrices) {
-            const lsd::Mat4 mvp = vp * m;
-            device.draw_shadow_caster(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, mvp.m);  // shortcut: one call per copy in shadow maps
+        device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), ism->instances.count);
+    }
+}
+
+// Every Static Mesh's world matrix and plain mesh (null: hidden or missing), worked out once a frame
+// and shared by the shadow passes and the main pass (each used to recompute them: 5+ times a frame).
+struct FrameMeshes {
+    std::vector<lsd::Mat4> world;
+    std::vector<const lsd::editor::CachedMesh*> mesh;
+    void fill(lsd::world::World& w, lsd::editor::MeshCache& meshes, bool skip_hidden) {
+        const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
+        const lsd::u32 n = w.count(type);
+        world.resize(n);
+        mesh.resize(n);
+        for (lsd::u32 i = 0; i < n; ++i) {
+            const lsd::world::Entity e = w.owner(type, i);
+            const bool hidden = skip_hidden && w.hidden_in_hierarchy(e);
+            mesh[i] = hidden ? nullptr : meshes.get(static_cast<const lsd::world::StaticMesh*>(w.at(type, i))->mesh);
+            world[i] = mesh[i] ? w.world_matrix(e) : lsd::Mat4{};
         }
     }
+};
+FrameMeshes g_frame_meshes;
+
+// Shadow casters of the same mesh and LOD, gathered per cascade / tile and drawn instanced.
+struct Caster {
+    lsd::rhi::BufferHandle vertices, indices;
+    lsd::u32 count;
+    lsd::Mat4 world;
+};
+
+void draw_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, std::vector<Caster>& casters) {
+    std::sort(casters.begin(), casters.end(), [](const Caster& a, const Caster& b) {
+        return a.vertices.value != b.vertices.value ? a.vertices.value < b.vertices.value : a.indices.value < b.indices.value;
+    });
+    static std::vector<lsd::f32> rows;
+    for (size_t i = 0; i < casters.size();) {
+        size_t end = i + 1;
+        while (end < casters.size() && casters[end].vertices.value == casters[i].vertices.value && casters[end].indices.value == casters[i].indices.value) ++end;
+        const Caster& c = casters[i];
+        if (end - i == 1) {
+            const lsd::Mat4 mvp = vp * c.world;
+            device.draw_shadow_caster(c.vertices, c.indices, c.count, mvp.m);
+        } else {
+            rows.clear();
+            for (size_t k = i; k < end; ++k) {
+                for (int r = 0; r < 3; ++r) {
+                    for (int col = 0; col < 4; ++col) rows.push_back(casters[k].world.at(r, col));
+                }
+            }
+            device.draw_shadow_instances(c.vertices, c.indices, c.count, vp.m, rows.data(), static_cast<lsd::u32>(end - i));
+        }
+        i = end;
+    }
+    casters.clear();
 }
 
 // This frame's Cull Distance Volumes (filled by draw_world before any pass): the inverse of each
@@ -281,24 +331,24 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     device.begin_shadow_pass(atlas);
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
+    static std::vector<Caster> casters;
     for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]); ++c) {
         device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
         lsd::Mat4 vp;
         std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
-        for (lsd::u32 i = 0; i < world.count(type); ++i) {
-            const lsd::world::Entity e = world.owner(type, i);
-            if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        for (lsd::u32 i = 0; i < world.count(type) && i < g_frame_meshes.mesh.size(); ++i) {
             const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
-            const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
+            const lsd::editor::CachedMesh* mesh = g_frame_meshes.mesh[i];  // null: hidden or missing
             if (!mesh) continue;
-            const lsd::Mat4 m = world.world_matrix(e);
+            const lsd::Mat4& m = g_frame_meshes.world[i];
             lsd::rhi::BufferHandle indices;
             lsd::u32 count = 0;
             const lsd::Mat4 mvp = vp * m;
             if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
             if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-            device.draw_shadow_caster(mesh->gpu.vertices, indices, count, mvp.m);
+            casters.push_back({mesh->gpu.vertices, indices, count, m});
         }
+        draw_casters(device, vp, casters);
         draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
         draw_instanced_casters(device, vp, world, meshes, skip_hidden);
     }
@@ -311,6 +361,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     device.begin_shadow_pass(atlas);
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
+    static std::vector<Caster> casters;
     for (lsd::u32 li = 0; li < lights.count; ++li) {
         const lsd::rhi::GpuLight& light = lights.lights[li];
         if (light.shadow_tile < 0.0f) continue;
@@ -321,13 +372,11 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
             device.set_viewport(lights.local_tiles[t][0] * size, lights.local_tiles[t][1] * size, lights.local_tiles[t][2] * size, lights.local_tiles[t][2] * size);
             lsd::Mat4 vp;
             std::memcpy(vp.m, lights.local_matrices[t], sizeof vp.m);
-            for (lsd::u32 i = 0; i < world.count(type); ++i) {
-                const lsd::world::Entity e = world.owner(type, i);
-                if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+            for (lsd::u32 i = 0; i < world.count(type) && i < g_frame_meshes.mesh.size(); ++i) {
                 const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
-                const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
+                const lsd::editor::CachedMesh* mesh = g_frame_meshes.mesh[i];  // null: hidden or missing
                 if (!mesh) continue;
-                const lsd::Mat4 m = world.world_matrix(e);
+                const lsd::Mat4& m = g_frame_meshes.world[i];
                 // Skip meshes whose bounding sphere does not reach the light.
                 const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
                 const lsd::Vec3 extent = lsd::transform_vector(m, (mesh->bounds_max - mesh->bounds_min) * 0.5f);
@@ -337,8 +386,9 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 lsd::rhi::BufferHandle indices;
                 lsd::u32 count = 0;
                 if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-                device.draw_shadow_caster(mesh->gpu.vertices, indices, count, mvp.m);
+                casters.push_back({mesh->gpu.vertices, indices, count, m});
             }
+            draw_casters(device, vp, casters);
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
             draw_instanced_casters(device, vp, world, meshes, skip_hidden);
         }
@@ -361,6 +411,62 @@ using BlendQueue = std::vector<std::pair<lsd::f32, lsd::rhi::MeshDraw>>;
 
 // The Overdraw view mode: every mesh adds a little light, without a depth test. Otherwise translucent
 // and additive draws wait (with their distance) until the opaque ones are done; true when queued.
+// Automatic instancing: opaque Static Meshes with the same mesh, LOD and look are drawn as one
+// instanced call (Unreal's auto-instancing). Material Graphs and translucency are drawn one by one
+// as before; mirrored objects (negative scale) too, since their triangles face the other way.
+struct BatchItem {
+    lsd::u64 key;
+    lsd::rhi::MeshDraw draw;
+    lsd::Mat4 world;
+};
+
+bool can_batch(const lsd::rhi::MeshDraw& d, const lsd::Mat4& m) {
+    const lsd::Vec3 c0{m.at(0, 0), m.at(1, 0), m.at(2, 0)}, c1{m.at(0, 1), m.at(1, 1), m.at(2, 1)}, c2{m.at(0, 2), m.at(1, 2), m.at(2, 2)};
+    const bool mirrored = lsd::dot(lsd::cross(c0, c1), c2) < 0.0f;
+    return !d.material_shader.valid() && d.blend == 0 && !d.wireframe && d.debug_view != 4 && !mirrored;
+}
+
+lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transform
+    lsd::u64 h = 1469598103934665603ull;
+    auto mix = [&h](const void* p, size_t n) {
+        for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const lsd::u8*>(p)[i]) * 1099511628211ull;
+    };
+    mix(&d.vertices.value, 4), mix(&d.indices.value, 4), mix(&d.index_count, 4), mix(d.color, sizeof d.color);
+    mix(&d.metallic, 4), mix(&d.roughness, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
+    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.alpha_cutoff, 4);
+    const lsd::u32 flags = (d.unlit ? 1u : 0u) | (d.pixel_art ? 2u : 0u) | (d.debug_view << 2);
+    mix(&flags, 4);
+    return h;
+}
+
+void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const lsd::Mat4& view_proj, EditorState& stats) {
+    std::sort(items.begin(), items.end(), [](const BatchItem& a, const BatchItem& b) { return a.key < b.key; });
+    static std::vector<lsd::f32> rows;
+    for (size_t i = 0; i < items.size();) {
+        size_t end = i + 1;
+        while (end < items.size() && items[end].key == items[i].key) ++end;
+        lsd::rhi::MeshDraw draw = items[i].draw;
+        if (end - i == 1) {
+            device.draw_mesh(draw);  // alone: its own mvp / normals, as before
+        } else {
+            rows.clear();
+            for (size_t k = i; k < end; ++k) {
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 4; ++c) rows.push_back(items[k].world.at(r, c));
+                }
+            }
+            std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+            draw.instance_rows = rows.data();
+            draw.instance_count = static_cast<lsd::u32>(end - i);
+            device.draw_mesh(draw);
+        }
+        ++stats.stat_draws;
+        stats.stat_triangles += draw.index_count / 3 * static_cast<lsd::u32>(end - i);
+        i = end;
+    }
+    items.clear();
+}
+
 bool blend_view(const EditorState& stats, lsd::rhi::MeshDraw& draw, lsd::Vec3 centre, lsd::Vec3 eye, BlendQueue& queue) {
     if ((!stats.playing || stats.ejected) && stats.view_mode == lsd::editor::ViewMode::Overdraw) {
         draw.blend = 3;
@@ -378,6 +484,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     LSD_PROFILE_SCOPE("draw_world");
     static BlendQueue translucent;  // reused each call: no allocation once it has grown
     translucent.clear();
+    static std::vector<BatchItem> batch;  // opaque meshes waiting to be drawn instanced
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
@@ -386,6 +493,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
     const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
     gather_cull_volumes(world);
+    g_frame_meshes.fill(world, meshes, skip_hidden);  // matrices and meshes once, for every pass below
     if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
     if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
     if (scene_target.valid()) {  // the post pass reads it: draw into the scene target (after the shadow passes)
@@ -405,7 +513,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::world::Entity e = world.owner(type, i);
         if ((!stats.playing || stats.ejected) && world.hidden_in_hierarchy(e)) continue;  // hidden in the editor, not in the game
-        const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Mat4 m = i < g_frame_meshes.world.size() && g_frame_meshes.mesh[i] ? g_frame_meshes.world[i] : world.world_matrix(e);
         const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
                                     lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
         const lsd::editor::CachedMesh* mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
@@ -446,10 +554,15 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.color[2] = 0.25f;
         }
         if (blend_view(stats, draw, lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f), eye, translucent)) continue;
+        if (can_batch(draw, m)) {  // drawn below with the others like it
+            batch.push_back({batch_key(draw), draw, m});
+            continue;
+        }
         device.draw_mesh(draw);
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3;
     }
+    draw_batches(device, batch, view_proj, stats);
     // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask.
     // shortcut: they cast no shadows; add them to the shadow passes when lit 2D scenes need it.
     {

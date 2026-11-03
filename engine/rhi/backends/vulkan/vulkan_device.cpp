@@ -207,6 +207,7 @@ public:
     TextureHandle create_shadow_map(u32) override { return {}; }
     void begin_shadow_pass(TextureHandle) override {}
     void draw_shadow_caster(BufferHandle, BufferHandle, u32, const f32*, const f32*, u32) override {}
+    void draw_shadow_instances(BufferHandle, BufferHandle, u32, const f32*, const f32*, u32) override {}
     void end_shadow_pass() override {}
     void set_shadow_map(TextureHandle, TextureHandle) override {}
     void set_decal_atlas(TextureHandle) override {}
