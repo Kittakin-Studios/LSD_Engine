@@ -1875,6 +1875,56 @@ u32 ScriptSystem::broadcast(const char* function, const char* text) {
     return called + native_event({}, function, {}, true);
 }
 
+bool ScriptSystem::call_api(const char* function, const char* json_args, std::string& out) {
+    out.clear();
+    if (!lua_ || !function || function[0] == '_') {
+        out = "{\"error\": \"not playing, or a hidden function\"}";
+        return false;
+    }
+    const int base = lua_gettop(lua_);
+    lua_getglobal(lua_, "lsd");
+    lua_getfield(lua_, -1, function);
+    lua_remove(lua_, -2);
+    if (!lua_isfunction(lua_, -1)) {
+        lua_settop(lua_, base);
+        out = std::string("{\"error\": \"no lsd.") + function + "\"}";
+        return false;
+    }
+    int args = 0;
+    const char* c = json_args && *json_args ? json_args : "[]";
+    if (!read_json(lua_, c, 0) || !lua_istable(lua_, -1)) {
+        lua_settop(lua_, base);
+        out = "{\"error\": \"the arguments must be a JSON array\"}";
+        return false;
+    }
+    const int list = lua_gettop(lua_);
+    args = static_cast<int>(lua_objlen(lua_, list));
+    lua_checkstack(lua_, args + 4);
+    for (int i = 1; i <= args; ++i) lua_rawgeti(lua_, list, i);
+    lua_remove(lua_, list);
+    if (lua_pcall(lua_, args, LUA_MULTRET, 0) != 0) {
+        const char* error = lua_tostring(lua_, -1);
+        LSD_LOG_ERROR("game", "lsd_lua_call(%s): %s", function, error ? error : "error");
+        out = "{\"error\": \"see the Output Log\"}";
+        lua_settop(lua_, base);
+        return false;
+    }
+    const int results = lua_gettop(lua_) - base;
+    if (results == 0) {  // nothing returned: an empty list (an empty Lua table would read as {})
+        out = "[]";
+        return true;
+    }
+    lua_createtable(lua_, results, 0);  // the results as one list (nil becomes null)
+    for (int i = 1; i <= results; ++i) {
+        lua_pushvalue(lua_, base + i);
+        lua_rawseti(lua_, -2, i);
+    }
+    const bool ok = write_json(lua_, lua_gettop(lua_), out, 0);
+    if (!ok) out = "{\"error\": \"a result cannot be written as JSON (a function?)\"}";
+    lua_settop(lua_, base);
+    return ok;
+}
+
 void ScriptSystem::net_call(const char* function, u32 from, const char* json) {
     if (!lua_) return;
     const int base = lua_gettop(lua_);

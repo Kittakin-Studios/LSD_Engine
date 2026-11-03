@@ -149,6 +149,8 @@
 #include "lsd/world/world.h"
 #include "lsd/world/curve.h"
 
+#include <string>
+
 struct lua_State;
 struct lua_Debug;
 
@@ -277,6 +279,9 @@ public:
     int call_task(world::Entity target, const char* function, f32 dt);
     // Calls `function(self, text)` on every script that defines it (UI actions). Returns how many.
     u32 broadcast(const char* function, const char* text);
+    // lsd.<function>(args...) with a JSON array of arguments; the results as a JSON array in `out`.
+    // False (and the error in `out`) if there is no such function, the JSON is bad or it raised one.
+    bool call_api(const char* function, const char* json_args, std::string& out);
     // A network event: `function(self, from, ...)` on every script that defines it, the arguments
     // from a JSON array (multiplayer events, chat, players joining).
     void net_call(const char* function, u32 from, const char* json);

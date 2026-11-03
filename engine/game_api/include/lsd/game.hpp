@@ -16,6 +16,8 @@
 #pragma once
 #include "lsd/lsd_game.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -105,6 +107,91 @@ inline void ui_set_text(int doc, const char* id, const char* text) { lsd_ui_set_
 inline int call(Entity target, const char* event, Entity other = 0) { return lsd_call(target, event, other); }
 inline int broadcast(const char* event) { return lsd_broadcast(event); }
 inline void draw_line(Vec3 a, Vec3 b, Vec3 color = {1, 0, 0}, float seconds = 0) { lsd_draw_line(a, b, color, seconds); }
+
+// ---- Everything else: any lsd.* function of the Lua API ----
+
+// The results of api(): a JSON array, read by position (numbers, text, true / false).
+struct ApiResult {
+    bool ok = false;
+    std::string json;
+    // The i-th result as a number (0 if missing or not a number).
+    double number(int i = 0) const {
+        const char* p = item(i);
+        return p ? std::strtod(p, nullptr) : 0.0;
+    }
+    bool boolean(int i = 0) const {
+        const char* p = item(i);
+        return p && std::strncmp(p, "true", 4) == 0;
+    }
+    std::string text(int i = 0) const {  // a JSON string's characters (\" and \\ unescaped)
+        const char* p = item(i);
+        std::string out;
+        if (!p || *p != '"') return out;
+        for (++p; *p && *p != '"'; ++p) out += *p == '\\' && p[1] ? *++p : *p;
+        return out;
+    }
+
+private:
+    const char* item(int i) const {  // the start of the i-th top-level item of the array
+        const char* p = json.c_str();
+        if (*p != '[') return nullptr;
+        int depth = 0, index = 0;
+        bool in_text = false;
+        for (++p; *p; ++p) {
+            if (index == i && depth == 0 && !in_text && *p != ' ' && *p != ',') return *p == ']' ? nullptr : p;
+            if (in_text) {
+                if (*p == '\\' && p[1]) ++p;
+                else if (*p == '"') in_text = false;
+            } else if (*p == '"') {
+                in_text = true;
+            } else if (*p == '[' || *p == '{') {
+                ++depth;
+            } else if (*p == ']' || *p == '}') {
+                if (depth-- == 0) return nullptr;
+            } else if (*p == ',' && depth == 0) {
+                ++index;
+            }
+        }
+        return nullptr;
+    }
+};
+
+namespace detail {
+inline void json_arg(std::string& out, double v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.17g", v);
+    out += b;
+}
+inline void json_arg(std::string& out, bool v) { out += v ? "true" : "false"; }
+inline void json_arg(std::string& out, const char* v) {
+    out += '"';
+    for (const char* c = v ? v : ""; *c; ++c) {
+        if (*c == '"' || *c == '\\') out += '\\';
+        if (static_cast<unsigned char>(*c) >= 0x20) out += *c;
+    }
+    out += '"';
+}
+inline void json_arg(std::string& out, const std::string& v) { json_arg(out, v.c_str()); }
+inline void json_arg(std::string& out, Vec3 v) {  // a vector spreads into x, y, z (the Lua API's convention)
+    json_arg(out, static_cast<double>(v.x)), out += ',', json_arg(out, static_cast<double>(v.y)), out += ',', json_arg(out, static_cast<double>(v.z));
+}
+template <typename T> std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>> json_arg(std::string& out, T v) { json_arg(out, static_cast<double>(v)); }
+} // namespace detail
+
+// Calls lsd.<function>(args...) the way a Lua script would: api("play_music", "Theme", 2),
+// api("set_view", camera, 1.5), api("spline_length", track).number(). Objects are their Entity
+// (a number); a Vec3 counts as x, y, z.
+template <typename... Args> ApiResult api(const char* function, Args... args) {
+    std::string json = "[";
+    bool first = true;
+    ((json += first ? "" : ",", first = false, detail::json_arg(json, args)), ...);
+    json += "]";
+    ApiResult r;
+    char out[4096];
+    r.ok = lsd_lua_call(function, json.c_str(), out, sizeof out) != 0;
+    r.json = out;
+    return r;
+}
 
 // ---- Behaviours ----
 

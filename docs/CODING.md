@@ -344,11 +344,21 @@ Console variables (`r.ForceLOD 1` and so on) are listed by `help` too.
 - **Clean room.** Write everything yourself; never paste Stingray / Bitsquid code or anything shown
   on screen in talks ([CLEAN_ROOM.md](CLEAN_ROOM.md)).
 
-## Not in C / C++ yet
+## Everything else: any Lua command from C / C++
 
-These are Lua-only for now (call them from Lua, or send an event to a Lua script that does):
-box / capsule traces and overlaps, splines, curves and data tables, music and mixes, IK, morphs,
-sockets, timelines, blackboards and perception, `set_view`, UI cursor / follow / values, settings,
-key rebinding, text and languages, save games, timers (`after` / `every`), Game Instance data,
-debug spheres / boxes / text. Still planned for C++: keeping script state across a reload
-([BACKLOG.md](BACKLOG.md), milestone 7).
+The commands above have typed C / C++ versions. Every other `lsd.*` command (box / capsule traces
+and overlaps, splines, curves and data tables, music and mixes, IK, morphs, sockets, timelines,
+blackboards, `set_view`, the UI cursor / follow / values, settings, key rebinding, text and languages,
+save games, Game Instance data, debug spheres / boxes / text...) is one call away, with the same name
+and arguments as in Lua, so C / C++ never lags behind the Lua API:
+
+```cpp
+api("play_music", "Theme", 2.0);                       // lsd.play_music("Theme", 2)
+float length = api("spline_length", track).number();   // results by position
+api("set_view", camera, 1.5);
+api("save_game", "slot1", 42);
+```
+
+In C: `lsd_lua_call("play_music", "[\"Theme\", 2]", out, sizeof out)` with the arguments as a JSON
+array; `out` receives the results as a JSON array. Not reachable this way: commands that take a
+function (`lsd.after` / `lsd.every`: count time in `on_update` instead).

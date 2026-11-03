@@ -151,6 +151,10 @@ typedef struct lsd_api {
     /* Added later; fields are only ever added at the end, so older modules keep working. */
     void (*register_function)(lsd_registry* registry, const lsd_function* function);
     void (*register_component)(lsd_registry* registry, const lsd_component* component);
+    /* Any lsd.<function> of the Lua API (music, timelines, splines, save games, IK, UI, settings...):
+     * arguments as a JSON array, results written into `result` as a JSON array. 1 on success; 0 on
+     * an error (logged; `result` holds {"error": "..."} when there is room) or when not playing. */
+    int (*lua_call)(const char* function, const char* json_args, char* result, size_t capacity);
 } lsd_api;
 
 /* Set by LSD_GAME_MODULE before register_fn runs. */
@@ -180,6 +184,12 @@ static inline void lsd_register_script(lsd_registry* r, const lsd_script* s) { l
 /* A visual-script node (in the node menu once the module is compiled); call it from a register
  * function like lsd_register_script. */
 static inline void lsd_register_function(lsd_registry* r, const lsd_function* f) { lsd_api_ptr->register_function(r, f); }
+/* Every lsd.<function> of the Lua API, the same list scripts use, so C never lags behind:
+ *   char out[256]; lsd_lua_call("play_music", "[\"Theme\", 2]", out, sizeof out);
+ *   lsd_lua_call("spline_length", "[42]", out, sizeof out);  -> out = "[18.5]"            */
+static inline int lsd_lua_call(const char* function, const char* json_args, char* result, size_t capacity) {
+    return lsd_api_ptr->lua_call(function, json_args, result, capacity);
+}
 /* A component type of your own (see lsd_component); register it from the same function as your scripts. */
 static inline void lsd_register_component(lsd_registry* r, const lsd_component* c) { lsd_api_ptr->register_component(r, c); }
 

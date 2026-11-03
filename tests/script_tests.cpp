@@ -442,6 +442,18 @@ static void test_native_behaviours() {
         scripts.set_native_module(&module);
         scripts.start(w, host, path_of, nullptr);
         CHECK(scripts.native_count() == 3 && scripts.error_count() == 0);
+        // Any lsd.* command from C / C++: by name, arguments and results as JSON.
+        const lsd::game::ApiResult where = lsd::game::api("position", a.value);
+        CHECK(where.ok && where.number(2) == w.get<Transform>(a)->position.z);
+        CHECK(lsd::game::api("name", a.value).text() == "A");
+        CHECK(lsd::game::api("has_tag", a.value, "Nope").ok && !lsd::game::api("has_tag", a.value, "Nope").boolean());
+        CHECK(!lsd::game::api("no_such_command").ok && !lsd::game::api("_tick").ok);  // unknown and hidden: refused
+        char out[128];
+        CHECK(lsd_lua_call("set_position", "[1, 2, 3]", out, sizeof out) == 0);  // 1 is not a live object: an error, not a crash
+        std::snprintf(out, sizeof out, "[%u, 0, 0, 9]", a.value);
+        char result[64];
+        CHECK(lsd_lua_call("set_position", out, result, sizeof result) == 1 && w.get<Transform>(a)->position.z == 9.0f && std::strcmp(result, "[]") == 0);
+        w.get<Transform>(a)->position = {};  // back where it was: the checks below measure from there
         CHECK(w.get<Transform>(b)->position.z == 7.0f);   // Lua -> C++ -> Lua
         CHECK(w.get<Transform>(p)->position.x == 5.0f);   // the C behaviour started
         scripts.update(0.5f);

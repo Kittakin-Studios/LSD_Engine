@@ -298,6 +298,13 @@ struct NativeApi {
             ++out.field_count;
         }
     }
+    static int lua_call(const char* function, const char* json_args, char* result, size_t capacity) {
+        std::string out;
+        const bool ok = active && active->call_api(function, json_args, out);
+        if (!active) out = "{\"error\": \"not playing\"}";
+        if (result && capacity) std::snprintf(result, capacity, "%s", out.c_str());
+        return ok ? 1 : 0;
+    }
     static void log(int error, const char* text) {
         if (error) LSD_LOG_ERROR("game", "%s", text);
         else LSD_LOG_INFO("game", "%s", text);
@@ -552,6 +559,7 @@ const lsd_api* native_api() {
         NativeApi::draw_line,
         NativeApi::register_function,
         NativeApi::register_component,
+        NativeApi::lua_call,
     };
     return &api;
 }
