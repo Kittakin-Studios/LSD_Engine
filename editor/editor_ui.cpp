@@ -4216,8 +4216,12 @@ void draw_asset_grid(EditorState& s) {
         ImGui::EndGroup();
         ImGui::PopID();
     }
+    const u32 generation = s.registry->generation();
     for (usize n = 0; n < count; ++n, ++tile) {
-        const asset::AssetRecord& r = s.registry->get(hits[n]);
+        // A tile's menu can rescan (Duplicate, Create Material, Reimport...): the rest of `hits` is
+        // stale then, so stop and draw the new list next frame. `r` is a copy for the same reason.
+        if (s.registry->generation() != generation) break;
+        const asset::AssetRecord r = s.registry->get(hits[n]);
         const bool level = r.type == asset::AssetType::Level;
         ImGui::PushID(static_cast<int>(hits[n]));
         if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();

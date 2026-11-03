@@ -50,6 +50,9 @@ public:
 
     usize count() const { return records_.size(); }
     const AssetRecord& get(usize i) const { return records_[i]; }
+    // Changes whenever the records change (a scan found something): indices and references taken
+    // before are stale.
+    u32 generation() const { return generation_; }
     const AssetRecord* find(Guid guid) const;
     const char* content_dir() const { return content_dir_; }
 
@@ -80,6 +83,7 @@ private:
     Array<AssetRecord> records_;
     char content_dir_[256] = "";
     Async* async_ = nullptr;
+    u32 generation_ = 0;
     u32 sync_scans_ = 0;  // bumped by scan(): an async walk started before it is stale
 };
 
