@@ -792,6 +792,11 @@ debugger for JS yet (use `console.log`); the Lua Debugger lists Lua files only.
   Function, **+** adds one), **Variables** lists the declared variables (**+** adds one). Drag a
   variable onto the canvas for Get / Set (hold Ctrl for Get, Alt for Set). Names used by Get / Set
   nodes but not declared are listed greyed with **Declare**.
+- **Collapse to Function** (Unreal's Collapse Nodes / Collapse to Function): select nodes, right-click
+  one > **Collapse to Function**. They move below the graph under a new Function (rename it on its
+  node), and a **Call Function** takes their place with the wires rerouted: values coming in become
+  its A / B / C, a value going out comes back as Result through a Return. The selection needs one
+  white wire in and may have one white wire out, 3 values in and 1 value out (no events); Ctrl+Z undoes it.
 - **Details** (under My Blueprint, for the selected variable): Name (Enter renames it and every Get /
   Set follows), Type, Default, **Instance Editable** (numbers, booleans and text: each object using
   the script can change it in its Details, under the Script), Tooltip, how many nodes use it

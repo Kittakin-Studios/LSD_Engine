@@ -1300,6 +1300,26 @@ void draw_graph_editor(EditorState& s) {
             w.dirty = true;
         }
         if (ImGui::BeginPopupContextItem("node_menu")) {
+            if (w.kind == script::GraphKind::Script && ImGui::MenuItem("Collapse to Function", nullptr, false, !w.selection.empty())) {
+                char name[32] = "NewFunction";
+                for (int k = 2;; ++k) {  // a name no other Function has
+                    bool taken = false;
+                    for (const GraphNode& other : g.nodes) taken = taken || (std::strcmp(other.type, "FunctionEntry") == 0 && std::strcmp(other.values[0], name) == 0);
+                    if (!taken) break;
+                    std::snprintf(name, sizeof name, "NewFunction%d", k);
+                }
+                const std::vector<u32> ids = is_selected(w, n.id) ? w.selection : std::vector<u32>{n.id};
+                u32 call = 0;
+                char problem[160];
+                const bool ok = script::collapse_to_function(g, ids.data(), static_cast<u32>(ids.size()), name, call, problem, sizeof problem);
+                std::snprintf(w.message, sizeof w.message, ok ? "Collapsed into %s (rename it on its Function node)" : "Collapse to Function: %s", ok ? name : problem);
+                w.message_is_error = !ok;
+                if (ok) select_only(w, call);
+                w.dirty = w.dirty || ok;
+                ImGui::EndPopup();
+                ImGui::PopID();
+                break;  // the node array changed
+            }
             if (w.kind == script::GraphKind::Script && ImGui::MenuItem("Toggle Breakpoint", "F9")) {
                 const std::string lua = lua_path_for(w.guid);
                 if (const i32 line = node_first_line(lua, n.id)) debugger::toggle(lua.c_str(), line);
