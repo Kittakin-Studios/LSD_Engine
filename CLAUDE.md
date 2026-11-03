@@ -155,5 +155,8 @@ Graphics: sky reflections without cubemaps, auto exposure, a default look withou
 atmosphere from the sun's height.
 Post pass (draw_post, a volume's values or the defaults): SSAO, TAA, depth of field, bloom, ACES,
 grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).
+Also: selection outline (orange silhouette), GPU time per stage in `stat dump`, sub-levels + distance
+streaming (Sub Level component), particle collision (Floor / World) and Mesh / Ribbon renderers,
+spawn / destroy reusing script slots, Compiler Results and Event Dispatchers in visual scripts.
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
 LFS locking, UI resize handles and data bindings, per-mesh LOD screen sizes.

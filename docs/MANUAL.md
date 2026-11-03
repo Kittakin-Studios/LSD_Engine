@@ -142,7 +142,8 @@ many surfaces stack). **G**: game view (hides editor icons).
 
 ### Selecting and transforming
 
-Click an object to select it; Ctrl+click to add; drag a box to select many. **W / E / R** switch the
+Click an object to select it; Ctrl+click to add; drag a box to select many. Selected meshes and
+sprites get an orange outline, like Unreal's. **W / E / R** switch the
 gizmo to move / rotate / scale. Hold **LMB** on an arrow to move along that axis (X red, Y green, Z blue,
 the level's axes in World space), on a square between two arrows to move in that plane;
 **Alt+LMB** drag duplicates and moves the copy; **Shift+LMB** drag brings the camera along with the
@@ -699,8 +700,9 @@ debugger for JS yet (use `console.log`); the Lua Debugger lists Lua files only.
 
 **The panels** (Unreal's Blueprint editor), on the left of the graph window (drag its edge to resize):
 
-- **My Blueprint**: **Event Graph** lists the events in the graph (click one to jump to it; **+** adds a
-  Custom Event), **Functions** lists them (click to jump, drag one onto the canvas for a Call
+- **My Blueprint**: **Event Graph** lists the built-in events in the graph (click one to jump to it);
+  **Event Dispatchers** lists the Custom Events (click to jump, **+** adds one, drag one onto the
+  canvas for a Call Event that fires it on every object that has it); **Functions** lists them (click to jump, drag one onto the canvas for a Call
   Function, **+** adds one), **Variables** lists the declared variables (**+** adds one). Drag a
   variable onto the canvas for Get / Set (hold Ctrl for Get, Alt for Set). Names used by Get / Set
   nodes but not declared are listed greyed with **Declare**.
@@ -763,6 +765,9 @@ level's one-off moments. It runs on an object named LevelScript while the level 
 **New Visual Script** makes a Blueprint-style event graph. White exec wires set the order; coloured
 wires carry values. **Save + Compile** (Ctrl+S) turns it into Lua; pick the graph on a Script
 component exactly like a `.lua` file. Playing objects pick up changes within half a second.
+When the graph has problems (an event twice, white wires in a loop, an unknown node), **Compiler
+Results** lists every one under the toolbar, a line each; click a line to select its node and centre
+the view on it.
 
 A worked example (press a key, trace, tell the hit object) is in
 [How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md#worked-example-press-a-key-to-interact-with-what-you-look-at).
@@ -875,6 +880,23 @@ add **Size Over Life** keys (time 0..1 through the life, times Size Start) to pu
 and **Color Over Life** keys for fire-to-smoke colour ramps; they replace the start / end blend.
 From a script, `lsd.spawn("PS_Explosion", x, y, z)` puts one at a point; it deletes itself when
 it has played out (**Auto Destroy** on the Particle Effect, for non-looping systems).
+
+**Renderer** (Niagara's renderers), per emitter:
+
+| Renderer | Draws | Use it for |
+| --- | --- | --- |
+| Sprite | a camera-facing quad per particle (texture or a soft dot) | fire, smoke, sparks |
+| Mesh | a lit mesh per particle in one instanced draw (**Mesh**: an asset or `Cube` / `Sphere`; Size scales it, Spin turns it, or **Align To Velocity** points its +X where it flies; one colour per emitter) | rocks, debris, shell casings |
+| Ribbon | one strip through the particles from oldest to newest, facing the camera, as wide as their size and coloured by their age | trails behind swords, rockets, magic |
+
+For a trail, give a Ribbon emitter a steady spawn rate, speed 0 and world space, and move the object:
+the particles stay where they were born and the ribbon joins them.
+
+**Collision** (Niagara's Collision module), world-space emitters only: **Floor** bounces off a flat
+floor at **Floor Height** (also in the editor); **World** hits whatever physics collides with (in
+Play; up to 1024 rays a frame for all effects together). **Bounce** is the speed kept off the
+surface, **Friction** the speed lost along it, **Kill On Hit** removes the particle at its first hit
+(rain, bullets).
 
 Double-click it to open the **Particle Editor**: a preview (orbit with the mouse), play / pause /
 restart, speed, a timeline to scrub and per-emitter particle counts. Edit in Details; the preview
@@ -1059,6 +1081,9 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 - **Window > Memory** / **memreport** (console): memory per allocator, the process's RAM and the video memory budget.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
+- **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU
+  time per stage (shadows, scene, post, UI; timestamp queries on D3D12 and OpenGL), draws and the
+  editor UI's time per panel (Unreal's `stat gpu` + `stat unit` in one line).
 - **Tracy** (Unreal Insights): configure with `-DLSD_TRACY=ON`, build, run, and connect the Tracy
   profiler v0.11.1 to see every frame's timeline.
 - Logs: `Saved/Logs/Editor.log` (Game.log in a packaged game); the previous run is kept as

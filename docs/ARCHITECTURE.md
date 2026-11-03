@@ -68,9 +68,12 @@ Widget / Category). From that:
 
 ## World
 
-`world::World` holds entities (generational handles, names, parent links, hidden / locked flags)
-and one packed pool per component type (up to 32 types, listed in `components.h` and registered in
-`world.cpp`). World transforms are computed from the hierarchy. A level file (`.lsdlevel`) is JSON:
+`world::World` holds entities (generational handles, names, parent links, hidden / locked /
+transient flags) and one packed pool per component type (up to 64 types: the engine's, listed in
+`components.h` and registered in `world.cpp`, plus game-code components registered at run time with
+`register_component_type`; pools are made on first use). Transient objects (a streamed sub-level's)
+are not saved with the level; `load_sublevel` / `unload_sublevel` add and remove a level's objects
+under a Sub Level object. World transforms are computed from the hierarchy. A level file (`.lsdlevel`) is JSON:
 World Settings then each entity with its components as reflected JSON. Prefabs (`.lsdprefab`) are
 the same format for a sub-tree; instances remember per-field overrides.
 
@@ -194,11 +197,14 @@ parameter values cost nothing.
   `on_start` / `on_update` / events and a `self` table. `ScriptSystem` reloads a script when its file
   changes (keeping `self`), and stops a script that errors until it is fixed. The `lsd` table is
   implemented in C++ (`script.cpp`); the game supplies callbacks (`ScriptHost`) for spawning,
-  sounds, navigation, UI, settings...
+  sounds, navigation, UI, settings... Instances live in fixed slots (256 Lua / JS, 256 C / C++);
+  `attach` (a spawned object's scripts) reuses the slot of a destroyed object, so spawning and
+  destroying can go on for the whole session.
 - **Graphs** (`script/graph.h`): one data model and canvas for four node libraries: visual scripts,
   sound cues, material graphs and behaviour trees. A visual script compiles to Lua: each node is a
   code template (`$1` inputs, `$o1` outputs, `#0` exec chains), so a graph runs exactly like a
-  hand-written script and the two cannot drift apart.
+  hand-written script and the two cannot drift apart. The compiler keeps going after a problem
+  and reports every one, a line each naming its node (the editor's Compiler Results).
 - **Declared variables** (`script::GraphVariable`, saved in the `.lsdgraph`): the compiler emits
   `properties = {...}` for Instance Editable numbers / booleans / text (the Details panel reads that
   table to offer per-object values) and `defaults = {...}` for the rest; `ScriptSystem` copies both
@@ -384,8 +390,14 @@ modulator...).
 `particles::ParticleSystem` (a data asset of up to 8 emitters) and `ParticleInstance` (the CPU
 simulation: spawn rate and bursts, shapes, cone directions, gravity, wind, drag, colour and size from start to
 end or along Over Life keys (`size_at` / `color_at`), spin, local or world space). A Particle Effect
-with Auto Destroy is deleted by the editor loop once its instance reports `finished()` (Play only). Each frame the editor builds camera-facing quads (sorted back to
-front for alpha) and draws them after the opaque meshes.
+with Auto Destroy is deleted by the editor loop once its instance reports `finished()` (Play only).
+Collision is part of `update`: Floor is a plane test; World asks a `ParticleCollider` (a segment
+callback plus a ray budget per frame) that the Play session answers with a Jolt ray cast. Each frame
+the editor (`ParticlePlayer`) draws every emitter by its renderer: Sprite builds camera-facing quads
+(`build_sprites`, sorted back to front for alpha), Ribbon builds one strip through the particles
+sorted by age (`build_ribbon`, the same vertex format and pipeline), both drawn after the opaque
+meshes; Mesh sends one instanced `draw_mesh` per emitter (a 3x4 matrix per particle) through the
+lit mesh pipeline.
 
 ## AI
 
