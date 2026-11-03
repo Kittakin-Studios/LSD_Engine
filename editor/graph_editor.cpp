@@ -499,20 +499,47 @@ bool section(const char* title, bool* add, const char* add_tip) {
 void draw_my_blueprint(GraphWindow& w) {
     Graph& g = *w.graph;
     bool add = false;
-    // Graphs: the events that start chains (Unreal's Event Graph entries).
-    if (section("Event Graph", &add, "Add a Custom Event (an event dispatcher other scripts can call)")) {
+    // Graphs: the built-in events that start chains (Unreal's Event Graph entries).
+    if (section("Event Graph", nullptr, nullptr)) {
         for (const GraphNode& n : g.nodes) {
             const script::NodeDef* def = script::find_node_def(n.type);
-            if (!def || !script::is_event(*def) || std::strcmp(n.type, "FunctionEntry") == 0) continue;
+            if (!def || !script::is_event(*def) || std::strcmp(n.type, "FunctionEntry") == 0 || std::strcmp(n.type, "CustomEvent") == 0) continue;
             char label[96];
-            if (std::strcmp(n.type, "CustomEvent") == 0) std::snprintf(label, sizeof label, "%s (custom)##%u", n.values[0], n.id);
-            else std::snprintf(label, sizeof label, "%s##%u", def->title, n.id);
+            std::snprintf(label, sizeof label, "%s##%u", def->title, n.id);
             if (ImGui::Selectable(label, w.selected == n.id)) focus_node(w, n);
         }
     }
+    // Event Dispatchers: this script's Custom Events; drag one out for a Call Event that fires it.
+    if (section("Event Dispatchers", &add, "Add an Event Dispatcher (a Custom Event other scripts can call)")) {
+        for (const GraphNode& n : g.nodes) {
+            if (std::strcmp(n.type, "CustomEvent") != 0) continue;
+            char label[96];
+            std::snprintf(label, sizeof label, "%s##%u", n.values[0], n.id);
+            if (ImGui::Selectable(label, w.selected == n.id)) focus_node(w, n);
+            ImGui::SetItemTooltip("Drag onto the graph: Call Event %s (every object that has it)", n.values[0]);
+            if (ImGui::BeginDragDropSource()) {
+                char payload[48];
+                std::snprintf(payload, sizeof payload, "CallEvent:%s", n.values[0]);
+                ImGui::SetDragDropPayload(kNodePayload, payload, sizeof payload);
+                ImGui::Text("Call %s", n.values[0]);
+                ImGui::EndDragDropSource();
+            }
+        }
+    }
     if (add) {
+        char name[32] = "NewEventDispatcher";
+        for (int k = 2;; ++k) {  // a name no other Custom Event has
+            bool taken = false;
+            for (const GraphNode& n : g.nodes) taken = taken || (std::strcmp(n.type, "CustomEvent") == 0 && std::strcmp(n.values[0], name) == 0);
+            if (!taken) break;
+            std::snprintf(name, sizeof name, "NewEventDispatcher%d", k);
+        }
         const ImVec2 at = view_centre(w);
-        if (GraphNode* n = g.add("CustomEvent", at.x, at.y)) focus_node(w, *n);
+        if (GraphNode* n = g.add("CustomEvent", at.x, at.y)) {
+            std::snprintf(n->values[0], sizeof n->values[0], "%s", name);
+            select_only(w, n->id);
+            focus_node(w, *n);
+        }
         w.dirty = true;
     }
     // Functions.
@@ -780,9 +807,11 @@ void canvas_drops(GraphWindow& w, ImVec2 canvas, ImVec2 size, ImVec2 at) {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kNodePayload)) {
             const char* id = static_cast<const char*>(p->Data);
-            if (std::strncmp(id, "CallFunction:", 13) == 0) {
-                if (GraphNode* n = w.graph->add("CallFunction", at.x, at.y)) {
-                    std::snprintf(n->values[1], sizeof n->values[1], "%s", id + 13);
+            if (std::strncmp(id, "CallFunction:", 13) == 0 || std::strncmp(id, "CallEvent:", 10) == 0) {  // a Function or Event Dispatcher dragged out
+                const char* colon = std::strchr(id, ':');
+                const std::string type(id, colon);
+                if (GraphNode* n = w.graph->add(type.c_str(), at.x, at.y)) {
+                    std::snprintf(n->values[1], sizeof n->values[1], "%s", colon + 1);
                     select_only(w, n->id);
                 }
             } else if (GraphNode* n = w.graph->add(id, at.x, at.y)) {
