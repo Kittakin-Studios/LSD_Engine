@@ -70,6 +70,20 @@ editor reopens the last level you had open. The project lives next to the execut
 
 ## 2. The editor
 
+![The editor](images/editor_overview.jpg)
+*The editor: 1 menu bar, 2 Play / Simulate / New Window, 3 the Level tab and one tab per open asset editor, 4 workspaces, 5 viewport toolbar, 6 viewport, 7 Outliner, 8 Details, 9 Content Browser (with Place and Output Log), 10 the dock where asset editors open.*
+
+**The menus** (Unreal's main menu): click a name in the menu bar.
+
+| | |
+| --- | --- |
+| ![File menu](images/menu_file.jpg) | **File**: new / open / save levels, recent levels, Validate Assets, Import, Package Project. |
+| ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
+| ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console. |
+| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Validate Assets, Package Project. |
+| ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic). |
+| ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
+
 | Panel | Where | Unreal equivalent |
 | --- | --- | --- |
 | Viewport | Top-left | Level Viewport |
@@ -83,6 +97,21 @@ Settings, Message Log, **Layout**). While playing it shows **Stop / Pause / Ejec
 saves the panel arrangement under a name (Unreal's Save Layout As), loads one back, or resets to the default.
 
 ### Level modes (click the Level tab)
+
+![Click the Level tab to pick a mode (Unreal's Modes)](images/level_modes_menu.jpg)
+*Click the Level tab to pick a mode (Unreal's Modes): Select, 3D Modeling, Foliage, Landscape, Animation Sequence, PCG, VFX, 2D.*
+
+![Landscape mode](images/mode_landscape.jpg)
+*Landscape mode: its tools open on the left of the viewport (Create, Sculpt, Smooth, Flatten).*
+
+![Foliage mode](images/mode_foliage.jpg)
+*Foliage mode: pick a mesh, set brush size and density, then paint on surfaces with LMB (Shift+LMB erases).*
+
+![3D Modeling mode](images/mode_modeling.jpg)
+*3D Modeling mode: place blockout shapes (Cube, Sphere, Plane) with Box UV and collision.*
+
+![PCG mode](images/mode_pcg.jpg)
+*PCG mode: add a PCG Volume; it scatters a mesh on the surfaces inside its box.*
 
 Like Unreal's mode dropdown: click the **Level** tab (when it is showing) and a list opens: **Select**
 (the default), **3D Modeling**, **Foliage**, **Landscape**, **Animation Sequence**, **PCG** and **VFX**.
@@ -102,6 +131,15 @@ In Foliage and Landscape a ring shows the brush; clicks paint instead of selecti
 still move the camera). Every stroke is one undo step.
 
 ### Panel tabs and workspaces (the two rows under the menu bar)
+
+| | |
+| --- | --- |
+| ![Modeling workspace](images/ws_modeling.jpg) | ![Shading workspace](images/ws_shading.jpg) |
+| *Modeling: a big viewport, mesh and prefab editors docked on the left.* | *Shading: material graphs dock under the viewport.* |
+| ![Animation workspace](images/ws_animation.jpg) | ![Scripting workspace](images/ws_scripting.jpg) |
+| *Animation: timelines and animation graphs.* | *Scripting: the Lua Debugger and visual scripts beside a small viewport.* |
+| ![UI workspace](images/ws_ui.jpg) | ![Effects workspace](images/ws_effects.jpg) |
+| *UI: UI documents and their designer.* | *Effects: particle systems and sound cues.* |
 
 **Panel tabs** (the top row, like Unreal's tabs across the top of the editor): the first tab is
 **Level** (the viewport, Outliner, Details, Content Browser). An editor you open from Layout (double-click
@@ -130,6 +168,9 @@ active workspace. Console: `workspace Shading`.
 
 ### Moving around the viewport
 
+![The viewport toolbar](images/viewport_toolbar.jpg)
+*The viewport toolbar: view (Perspective / Lit / 1x1 / Show / Grid), gizmo (Move / Rotate / Scale, World or Local, Surface, Pivot, Snap and its step), camera speed.*
+
 Unreal's controls: hold the **right mouse button** and use **W A S D Q E** to fly, the mouse to
 look; **middle mouse** pans; **Alt + left mouse** orbits; **F** frames the selection; the mouse wheel
 during a fly changes speed. **Alt+G / J / H / K**: perspective / top / front / right view. The layout
@@ -141,6 +182,9 @@ the grid, axis gizmo, navigation (P), **Bounds** (yellow mesh boxes) and **Colli
 many surfaces stack). **G**: game view (hides editor icons).
 
 ### Selecting and transforming
+
+![The Outliner (Unreal's World Outliner)](images/outliner.jpg)
+*The Outliner (Unreal's World Outliner): every object in the level; click to select, the eye hides it, the lock stops it being picked. Hierarchy shows parents and children.*
 
 Click an object to select it; Ctrl+click to add; drag a box to select many. Selected meshes and
 sprites get an orange outline, like Unreal's. **W / E / R** switch the
@@ -161,6 +205,9 @@ The Outline tab's **type filter** lists only objects with a chosen component (St
 
 ### Details
 
+![Details for the selected object](images/details.jpg)
+*Details for the selected object: one block per component (Transform, Static Mesh...), + Add Component at the bottom, Search details at the top.*
+
 The Details panel shows the selected object's components (each a collapsible section) or the
 selected asset's settings. Every field has a tooltip. Right-click a field for **Reset to Default**.
 Select several objects to edit them together. **Add Component** at the bottom adds any component.
@@ -173,6 +220,9 @@ restore the autosave, and the Message Log names the crash report folder (`Saved/
 
 ### Console
 
+![The Output Log tab (beside Content and Place)](images/output_log.jpg)
+*The Output Log tab (beside Content and Place): filters for messages, warnings and errors, and the console line at the bottom.*
+
 The **Output Log** tab has a console line at the bottom. Type `help` to list every command. A few:
 `stat unit` (frame timings), `stat audio`, `view top`, `viewmode wireframe`, `validate`, `package`,
 `test.Smoke`. While playing, `lua <code>` runs Lua (e.g. `lua lsd.log(lsd.time())`).
@@ -180,6 +230,15 @@ The **Output Log** tab has a console line at the bottom. Type `help` to list eve
 ---
 
 ## 3. Content and assets
+
+![The Content Browser](images/content_browser.jpg)
+*The Content Browser: folders on the left (and Collections), assets on the right with search, type filter, sort and list / tile view. Double-click an asset to open its editor.*
+
+![The Mesh Editor (double-click a mesh)](images/ed_mesh.jpg)
+*The Mesh Editor (double-click a mesh): preview, size and triangle counts, import settings (scale, normals), LOD screen sizes; Save / Reimport.*
+
+![The Prefab Editor (double-click a prefab)](images/ed_prefab.jpg)
+*The Prefab Editor (double-click a prefab): its objects on the left, a preview, and Details for the selected part; Save updates every copy in the level.*
 
 Drop files from Explorer onto the editor window to import them into the open Content Browser folder.
 Every asset gets a `.meta` file next to it holding its GUID (its permanent identity) and import
@@ -270,6 +329,12 @@ Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `
 ---
 
 ## 4. Building a level
+
+![The Place tab (Unreal's Place Actors)](images/place_tab.jpg)
+*The Place tab (Unreal's Place Actors): drag a shape, light, volume, camera, vehicle... into the viewport.*
+
+![Window > World Settings](images/win_world_settings.jpg)
+*Window > World Settings: Kill Z, gravity, exposure, Game Mode, Level Script and navigation settings for this level.*
 
 - **File > New Level** starts with a floor and a Player Start (add lights from the Place tab).
 - Drag meshes from the Content Browser into the viewport, or use the **Place** tab for built-in
@@ -425,6 +490,9 @@ game is single player and nothing networked runs. On:
 
 ### 2D games (Paper2D)
 
+![The Level tab's 2D mode](images/mode_2d.jpg)
+*The Level tab's 2D mode: 2D View (orthographic, top-down on the X / Z plane), New Sprite / Tile Map, and the tile palette for painting.*
+
 Click the Level tab > **2D**. The panel's **2D View** looks along +Y without perspective (H in
 the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z plane.
 
@@ -469,6 +537,9 @@ neighbours. Direct light and shadows stay real-time. Rebuild after moving walls 
 
 ### Simple Materials
 
+![A Material asset is edited in Details](images/det_material.jpg)
+*A Material asset is edited in Details: base colour (or texture), metallic, roughness, normal / ORM textures, emissive, blend mode, opacity.*
+
 **New Material** creates a physically based material: base colour (+ texture), metallic, roughness,
 normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive. Drop it on an
 object or pick it in the object's Static Mesh > Material. Edits show immediately. **Blend Mode**:
@@ -479,6 +550,9 @@ Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip:
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 
 ### Material Graphs
+
+![The Material Graph editor](images/ed_material_graph.jpg)
+*The Material Graph editor: node Palette on the left, the graph in the middle, a live preview (sphere or cube) on the right. Save updates every object that uses it.*
 
 **New Material Graph** opens a node graph (Unreal's Material Editor). Right-click to add nodes; drag
 from a pin to wire. The preview on the right (sphere or cube) updates 0.3 s after each change.
@@ -501,6 +575,9 @@ lists the graph's parameters (button **Add the graph's parameters**) to set per 
 
 ## 7. Playing and the player
 
+![Play in the editor](images/play_in_editor.jpg)
+*Play in the editor: the viewport becomes the game. Esc stops, Pause pauses, F8 ejects to fly around; the top line says so.*
+
 **Keep Simulation Changes**: while playing, right-click objects in the Outliner (or press K when
 ejected with F8) to keep what Play did to them (where physics dropped them, changed properties):
 when you stop, they keep it, as one undo step.
@@ -522,6 +599,9 @@ Inside a **Water Volume** (Place tab) it swims at **Swim Speed** where you look,
 Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Speed, VerticalSpeed and InAir.
 
 ### Input (Enhanced Input)
+
+![An Input Action (IA_Interact) in Details](images/det_input_action.jpg)
+*An Input Action (IA_Interact) in Details: value type, trigger (Down, Pressed, Hold...), trigger time, chord action.*
 
 - **Input Action** data assets: Move (2D axis), Look, Jump (button), with a **Trigger** (Pressed,
   Released, Hold, Tap...), a **Chord Action** (counts only while another action is held too: Shift + E,
@@ -627,6 +707,9 @@ The full `lsd` API is listed in [section 19](#lua-api).
 
 ### Debugging scripts
 
+![Tools > Lua Debugger](images/win_lua_debugger.jpg)
+*Tools > Lua Debugger: Continue / Step Over / Step Into / Step Out, the script file, call stack, locals and watches.*
+
 **Tools > Lua Debugger** (Visual Studio style): pick a script, click a line number (or hover a line
 and press F9) for a breakpoint, then Play. When the line runs the game freezes and the debugger
 shows where it stopped, the call stack (click a frame), its locals and `self`'s fields, and a watch
@@ -697,6 +780,9 @@ with `lsd.set` / `lsd.save_game`. `lsd.after(2, () => ...)` takes a JS function.
 debugger for JS yet (use `console.log`); the Lua Debugger lists Lua files only.
 
 ## 10. Visual scripting
+
+![A visual script (Interact_System)](images/ed_visual_script.jpg)
+*A visual script (Interact_System): My Blueprint on the left (Event Graph, Event Dispatchers, Functions, Variables), nodes and wires on the canvas, Save + Compile at the top.*
 
 **The panels** (Unreal's Blueprint editor), on the left of the graph window (drag its edge to resize):
 
@@ -872,6 +958,12 @@ Unreal's Sequencer, the basics. Content Browser > New Data Asset > **Timeline**,
 
 ## 13. Particles
 
+![The Particle Editor (double-click a Particle System)](images/ed_particles.jpg)
+*The Particle Editor (double-click a Particle System): Pause / Restart / Loop / Speed, the preview, and the emitters in Details on the right.*
+
+![A Particle System's emitters in Details](images/det_particle_asset.jpg)
+*A Particle System's emitters in Details: spawn rate, burst, duration, looping, max particles, lifetime, shape...*
+
 **New Data Asset > Particle System** (Unreal's Niagara System), up to 8 emitters each with: spawn
 rate, burst, duration and looping, lifetime, shape (point, sphere, box), direction and cone spread,
 speed, gravity, wind, drag, start / end colour and size, spin, texture (or a soft dot), Alpha or
@@ -907,6 +999,9 @@ follows unsaved changes. Drag the system into the viewport to place a **Particle
 
 ## 14. AI
 
+![The Behavior Tree editor](images/ed_behavior_tree.jpg)
+*The Behavior Tree editor: Palette on the left (Tree, Composites, Tasks, Conditions, Decorators, Services), Root > Sequence > Random Location / Move To / Wait on the canvas.*
+
 1. Place a **Nav Mesh Bounds** volume around the walkable area (optional: without one the whole
    level is used). Press **P** to see the navmesh in green. World Settings > Navigation sets agent
    radius / height, step height, slope and cell size. A **Nav Modifier Volume** cuts its box out of the
@@ -939,6 +1034,9 @@ with an AI Controller to see its sight cone (green) and hearing range (blue) in 
 ---
 
 ## 15. Game UI
+
+![The UI window (double-click a ](images/ed_ui.jpg)
+*The UI window (double-click a .rml document): + Text / Button / Image / Panel, the live preview / designer canvas on the left, the HTML / CSS code on the right.*
 
 Game UI is HTML / CSS (RmlUi) with a designer like UMG's: **New UI Document** creates a `.rml` file
 with a starter panel. Double-click it to open the **UI window**: code on the right, a live preview
@@ -1002,6 +1100,12 @@ button:focus, button:hover { background-color: #EEA70E; }
 ---
 
 ## 16. Saving, settings and languages
+
+![Edit > Project Settings (saved in Config/project](images/win_project_settings.jpg)
+*Edit > Project Settings (saved in Config/project.json, shared with the team): description, maps, multiplayer, chat, voice, localisation, platform...*
+
+![Edit > Editor Preferences (per user, Saved/editor_settings](images/win_preferences.jpg)
+*Edit > Editor Preferences (per user, Saved/editor_settings.json): startup, autosave, camera speed, snapping, Content Browser, plugins.*
 
 **Save games** (Unreal's SaveGame): any Lua value made of numbers, strings, booleans and tables.
 
@@ -1069,6 +1173,15 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 ---
 
 ## 18. Testing and profiling
+
+![`stat unit` in the console](images/stat_unit.jpg)
+*`stat unit` in the console: frame rate and the time per part of the frame, top-right of the viewport.*
+
+![Window > Memory](images/win_memory.jpg)
+*Window > Memory: RAM and video memory in use, and each allocator's size and blocks.*
+
+![Tools > Remote Console](images/win_remote_console.jpg)
+*Tools > Remote Console: connect to a game started with -remote and type console commands into it.*
 
 - **Tools > Smoke Test Level**: plays the level for 5 seconds and reports every error logged.
   On a build server: `lsd_editor.exe -nosound -level=Content/Levels/Main.lsdlevel -smoketest=10`

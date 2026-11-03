@@ -4,6 +4,9 @@ The engine's design, module by module. For using it, see [MANUAL.md](MANUAL.md).
 
 ## The big picture
 
+![The editor (which is also the game)](images/editor_overview.jpg)
+*The editor (which is also the game): viewport, Outliner, Details, Content Browser and the asset editor dock.*
+
 ```text
                  ┌──────────────────────────── editor/ (lsd_editor.exe) ───────────────────────────┐
                  │  main.cpp: window, frame loop, rendering        editor_ui.cpp: panels (ImGui)   │
@@ -387,6 +390,9 @@ modulator...).
 
 ## Particles
 
+![The Particle Editor previewing a system simulated by ParticleInstance](images/ed_particles.jpg)
+*The Particle Editor previewing a system simulated by ParticleInstance.*
+
 `particles::ParticleSystem` (a data asset of up to 8 emitters) and `ParticleInstance` (the CPU
 simulation: spawn rate and bursts, shapes, cone directions, gravity, wind, drag, colour and size from start to
 end or along Over Life keys (`size_at` / `color_at`), spin, local or world space). A Particle Effect
@@ -424,6 +430,9 @@ translated as documents load; switching language reloads them in place.
 
 ## Level modes
 
+![The Level tab's mode menu](images/level_modes_menu.jpg)
+*The Level tab's mode menu.*
+
 `EditorState::mode` (the Level tab's list, `editor/editor_modes.*`). The mode panel draws the active
 mode's tools; `mode_brush` runs in `draw_viewport` after the gizmo and, in Foliage / Landscape, takes the
 LMB (selection is skipped) and paints at the surface under the mouse (`surface_ray` = the editor's
@@ -436,6 +445,9 @@ box (seeded, so the layout is stable) into an ISM on its `output` object; `updat
 a hash of its rules and box changes, after the mouse is released and before the frame's undo commit.
 
 ## Workspaces
+
+![The Scripting workspace](images/ws_scripting.jpg)
+*The Scripting workspace: a saved arrangement of the same panels.*
 
 The tab strip is a viewport side bar under the main menu bar (`draw_workspace_tabs`), so the
 dockspace below shrinks to fit. A built-in workspace (`kWorkspaces` in `editor/editor_ui.cpp`) is a

@@ -33,6 +33,9 @@ Make that VS Code:
 
 ## 2. Make a script
 
+![Make a script in the Content Browser (right-click > New Lua Script, or New Visual Script), in a folder such as Script/](images/content_browser.jpg)
+*Make a script in the Content Browser (right-click > New Lua Script, or New Visual Script), in a folder such as Script/.*
+
 1. In the **Content Browser** (bottom panel), open the folder you want it in (for example
    `Content/Scripts`; right-click empty space > **New Folder** to make one).
 2. **Right-click empty space** in the asset area > **New Lua Script**.
@@ -87,6 +90,9 @@ end
 
 ## 4. Put it on an object
 
+![Select the object, + Add Component > Script in Details, then pick your script](images/details.jpg)
+*Select the object, + Add Component > Script in Details, then pick your script.*
+
 1. Click the object in the **viewport** or the **Outliner** (top right).
 2. In **Details** (bottom right), scroll down and click **Add Component** > **Script**.
 3. In the new Script section, click the **Script** dropdown and pick `Door` (or **drag** the script's
@@ -98,6 +104,9 @@ Many objects can use the same script; each runs its own copy with its own `self`
 
 ## 5. Run it
 
+![Press Play; edits to the script reload while it runs](images/play_in_editor.jpg)
+*Press Play; edits to the script reload while it runs.*
+
 1. Click **Play** on the toolbar (or **Alt+P**). **Simulate** (**Alt+S**) runs it with the editor
    camera instead of the player.
 2. Watch the **Output Log** tab (bottom): `lsd.log(...)` lines appear there.
@@ -108,6 +117,9 @@ Try a line without a script: in the console box at the bottom of the Output Log,
 `lua lsd.log(lsd.name(lsd.player()))` and press Enter.
 
 ## 6. Debug it
+
+![Tools > Lua Debugger](images/win_lua_debugger.jpg)
+*Tools > Lua Debugger: set breakpoints, step, read locals and the call stack.*
 
 This is the window in the screenshot: **Tools > Lua Debugger**.
 
@@ -131,6 +143,9 @@ This is the window in the screenshot: **Tools > Lua Debugger**.
 state before you press Play.
 
 ## 7. Visual scripts instead of code
+
+![The visual script editor (this is Interact_System, the worked example below)](images/ed_visual_script.jpg)
+*The visual script editor (this is Interact_System, the worked example below).*
 
 The same things with nodes and wires (Blueprints):
 
@@ -318,6 +333,9 @@ plugin's tools: `console` (play, stop, save, open...), `lua` (while playing), `l
 done: while it is on, any program on this PC could send the editor commands.
 
 ## 11. C / C++ instead of Lua
+
+![Tools > New C / C++ Script, Compile Game Code (Ctrl+Alt+F11) and Set Up Debugging (VS Code)](images/menu_tools.jpg)
+*Tools > New C / C++ Script, Compile Game Code (Ctrl+Alt+F11) and Set Up Debugging (VS Code).*
 
 The same jobs in compiled C or C++ (Unreal: a C++ Actor Component). Full reference: [CODING.md](CODING.md).
 

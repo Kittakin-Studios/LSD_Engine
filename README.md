@@ -13,14 +13,31 @@ The full plan (architecture, feature spec, editor layout, roadmap) lives in the
 
 ## Status
 
-Milestone 0 — project skeleton:
+![The LSD_Engine editor](docs/images/editor_overview.jpg)
+*The editor: menu bar, Play, workspaces, viewport, Outliner, Details, Content Browser and the asset editor dock.*
 
-- [x] CMake project with backend and plugin options
-- [x] Foundation: types, logging, asserts, heap and arena allocators, generational handles, hashed IDs
-- [x] Hardware report: CPU brand, cores, SIMD features, RAM
-- [x] Adapter scoring, automatic GPU selection and quality-preset recommendation
-- [x] Milestone 1: job system, SDL3 window, D3D12 / Vulkan 1.3 / OpenGL 4.6 backends drawing a
-      triangle, reflection code generator, JSON save/load, Dear ImGui Details panel from reflection
+| # | Milestone | State |
+| --- | --- | --- |
+| 0-2 | Core, RHI, reflection, assets, Content Browser | Done |
+| 3 | Editor shell: viewport, gizmos, Outliner, Details, undo, Play-in-Editor | Done |
+| 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Done |
+| 5 | Content editors: materials, animation, audio, particles | Done |
+| 6 | Vertical slice: packaging, save games, AI, game UI, localisation, profiling | Done |
+| 7 | Gameplay languages: C / C++ game code, JavaScript scripts | Done |
+
+Since then: multiplayer (one checkbox), text and voice chat, vehicles / transports / movers, 2D
+(Paper2D), sub-level streaming, Unreal-style post-processing, mesh and ribbon particles. Every feature
+by milestone is in [docs/BACKLOG.md](docs/BACKLOG.md).
+
+## Documentation
+
+| Document | What is in it |
+| --- | --- |
+| [MANUAL](docs/MANUAL.md) | How to use the engine, panel by panel, with pictures |
+| [EXAMPLES](docs/EXAMPLES.md) | Step-by-step tutorials (a first level, a HUD, a guard AI, a menu, a campfire, shipping) |
+| [How to code in LSD_Engine](docs/How%20to%20code%20in%20LSD_Engine.md) | Lua and visual scripts from scratch |
+| [CODING](docs/CODING.md) | C / C++ gameplay and every command |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | How the engine works inside |
 
 ## Building
 
