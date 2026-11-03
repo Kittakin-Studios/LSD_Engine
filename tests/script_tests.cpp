@@ -1175,6 +1175,20 @@ assert(lsd.spawn("Nothing", 0, 0, 0) == nil)
         const u32 before = scripts.script_count();
         scripts.attach(w.entity_at_slot(w.slot_count() - 1));
         CHECK(scripts.script_count() == before + 1 && scripts.run("assert(started == 'Spawned', started)"));
+        // Spawn and destroy many more than the 256 script slots: a destroyed object's slot is reused.
+        CHECK(scripts.run("lsd.destroy(lsd.find('Spawned'))"));
+        bool all_started = true;
+        for (int i = 0; i < 600 && all_started; ++i) {
+            CHECK(scripts.run("_G.e = lsd.spawn('Mover', 0, 0, 0) started = nil"));
+            world::Entity spawned;
+            for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+                const world::Entity e = w.entity_at_slot(slot);
+                if (w.alive(e) && std::strcmp(w.name(e), "Spawned") == 0) spawned = e;
+            }
+            scripts.attach(spawned);
+            all_started = scripts.run("assert(started == 'Spawned') lsd.destroy(e)");
+        }
+        CHECK(all_started && scripts.script_count() == before + 1);
         CHECK(scripts.run(R"(
 local e, x, y, z, nx, ny, nz = lsd.raycast(0, 0, 5, 0, 0, -1, 10)
 assert(e == lsd.find("Mover") and z == 5 and nz == 1)

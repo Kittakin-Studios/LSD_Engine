@@ -1183,7 +1183,7 @@ behaviour tree tasks `name(self, dt)`.
 | `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, D3D12 debug layer |
 | `-level=<path>`, `-play`, `-game` | open a level, start Play, run as the game |
 | `-nosound` | no audio device |
-| `-exec="<console line>"` | run a console command after startup (repeatable) |
+| `-exec="<console line>"` | run a console command on the first frame, after `-play` has started (repeatable) |
 | `-smoketest=<seconds>`, `-frames=<n>`, `-screenshot=<n>` | automation |
 | `-remote[=port]` | listen for the editor's **Tools > Remote Console** (this PC only, port 7780 by default): type console commands into a running game, e.g. `stat unit`, `r.ForceLOD 2` |
 | `-import=<file>`, `-place=<asset>`, `-select=<name>` | scripted setup |

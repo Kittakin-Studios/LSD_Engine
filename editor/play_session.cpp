@@ -30,6 +30,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 
 namespace lsd::editor {
 
@@ -273,6 +275,7 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 }
 
 void PlaySession::stop() {
+    prefab_text_.clear();  // edits between sessions are read again
     net_.shutdown();  // tells the others first
     voice_.stop();
     encoder_.reset();
@@ -976,7 +979,12 @@ world::Entity PlaySession::create_spawn(world::World& world, const char* name, V
         asset::to_string(prefab->guid, world.add<world::PrefabInstance>(e)->prefab);
         char path[300];
         registry_->source_path(*prefab, path, sizeof path);
-        world::update_instance_from_file(world, e, path, true);
+        std::string& text = prefab_text_[path];
+        if (text.empty()) {  // shortcut: an edit to the prefab during Play shows on the next Play, read it per spawn if that matters
+            std::ifstream file(path, std::ios::binary);
+            text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        world::update_instance(world, e, text.data(), text.size(), true);
     } else {
         std::snprintf(world.add<world::StaticMesh>(e)->mesh, sizeof(world::StaticMesh::mesh), "%s", key);
     }

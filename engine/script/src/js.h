@@ -14,6 +14,7 @@ void destroy(Host* host);  // after lua_close: Lua holds JS functions (timers) u
 // Runs `path` as instance `slot` and fills the Lua environment table on top of the stack with its
 // functions (and its `properties` / `defaults` as tables). A reload keeps the slot's `self`. False on error (logged).
 bool load(Host* host, u32 slot, const char* path);
+void release(Host* host, u32 slot);  // the slot's object is gone: its context goes (the next load starts fresh)
 bool is_js(const char* path);
 // lsd.js_call(path, function, ...): what JavaScript nodes compile to. `host` is created on the first call.
 void register_lua(lua_State* L, Host** host);

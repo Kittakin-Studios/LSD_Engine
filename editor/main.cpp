@@ -1719,7 +1719,6 @@ int main(int argc, char** argv) {
     effects->set_meshes(&meshes);  // the Mesh renderer
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
-    for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);
     if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg));
 
     lsd::audio::AudioSystem audio;
@@ -2139,6 +2138,8 @@ int main(int argc, char** argv) {
         }
         state.simulate_requested = false;
         state.play_requested = false;
+        for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);  // first frame: every command registered, -play started
+        exec_count = 0;
         if (state.stop_requested && state.playing) {
             stop_play_clients();  // the other players' windows close with the session
             // Keep Simulation Changes: copy the kept objects' components before the level reverts.

@@ -105,7 +105,7 @@ IA_Move / IA_Look / IA_Jump assets in its Details (Content Browser > New Input S
 - [x] Prefab editor window with its own viewport and component tree [Blueprint Editor viewport]: double-click a prefab: its own world, orbit preview (static meshes), object tree (+ Child, Delete), components (edit, add, remove); Save updates every placed copy (overrides kept); no gizmo in the preview yet
 - [x] Components added from a list: mesh, light, camera, spring arm, audio, collision, movement, script, spline [Actor Components]: Details > + Add Component lists every type; new Camera (FOV, Auto Activate, `lsd.set_view`), Rotating Movement, Projectile Movement (gravity, follows velocity, on_hit, destroy on hit); spring arm is the Character's Camera Distance
 - [x] Exposed properties per instance with ranges and tooltips [EditAnywhere]: a Lua script's `properties = { ... }` shows under its Script in Details (number, bool, text), each object keeps its own values (Reset to the default) and gets them on self before on_start; ranges / tooltips per property later
-- [~] Spawn / destroy at runtime: `lsd.spawn(name, x, y, z)` (prefab, mesh asset or built-in shape; gets physics and scripts), `lsd.destroy`; needs object pools
+- [x] Spawn / destroy at runtime: `lsd.spawn(name, x, y, z)` (prefab, mesh asset or built-in shape; gets physics and scripts), `lsd.destroy`; a destroyed object's script slots are reused (spawn and destroy run on forever), prefab files read once per Play; about 0.15 ms per scripted physics prefab in Release, so no object pools [SpawnActor]
 
 ### Scripting
 

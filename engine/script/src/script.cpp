@@ -1522,39 +1522,52 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
 
 void ScriptSystem::attach(world::Entity root) {
     if (!lua_) return;
-    const u32 first = count_;
+    static u32 added[256];  // slots filled now (reused ones are anywhere, not only at the end)
+    u32 added_count = 0;
     const reflect::TypeInfo& type = reflect::type_of<world::Script>();
     for (u32 i = 0; i < world_->count(type); ++i) {
         const world::Entity e = world_->owner(type, i);
         bool inside = false;
         for (world::Entity p = e; p.valid() && !inside; p = world_->parent(p)) inside = p == root;
-        if (inside) add_instance(e, static_cast<const world::Script*>(world_->at(type, i))->script);
+        if (!inside) continue;
+        const u32 slot = add_instance(e, static_cast<const world::Script*>(world_->at(type, i))->script);
+        if (slot != kNoSlot) added[added_count++] = slot;
     }
-    for (u32 i = first; i < count_; ++i) {
-        if (!instances_[i].failed) call(instances_[i], "on_start", nullptr, 0);
+    for (u32 k = 0; k < added_count; ++k) {
+        if (!instances_[added[k]].failed) call(instances_[added[k]], "on_start", nullptr, 0);
     }
-    const u32 first_native = native_count_;
-    add_natives(root);
-    for (u32 i = first_native; i < native_count_; ++i) {
-        const NativeInstance& n = natives_[i];
+    added_count = 0;
+    add_natives(root, added, &added_count);
+    for (u32 k = 0; k < added_count; ++k) {
+        const NativeInstance n = natives_[added[k]];  // a copy: on_start may spawn (attach adds natives)
         if (n.behaviour->on_start) n.behaviour->on_start(n.entity.value, n.state);
     }
 }
 
-void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
-    if (!guid[0]) return;
-    if (count_ == sizeof instances_ / sizeof instances_[0]) {
+u32 ScriptSystem::add_instance(world::Entity entity, const char* guid) {
+    if (!guid[0]) return kNoSlot;
+    u32 slot = 0;
+    while (slot < count_ && world_->alive(instances_[slot].entity)) ++slot;  // a destroyed object's slot first
+    if (slot == sizeof instances_ / sizeof instances_[0]) {
         LSD_LOG_WARN("script", "Too many scripts: %s does not run", world_->name(entity));
-        return;
+        return kNoSlot;
     }
-    Instance& instance = instances_[count_];
+    Instance& instance = instances_[slot];
+    if (slot < count_) {  // let go of the old one: its refs and JS context
+        if (instance.self > 0) luaL_unref(lua_, LUA_REGISTRYINDEX, instance.self);
+        if (instance.env > 0) luaL_unref(lua_, LUA_REGISTRYINDEX, instance.env);
+        if (js_) js::release(js_, slot);
+    } else {
+        ++count_;
+    }
     instance = Instance{};
     instance.entity = entity;
+    instance.failed = true;
     if (!path_of_ || !path_of_(path_user_, guid, instance.path, sizeof instance.path)) {
         LSD_LOG_WARN("script", "%s: its Script asset is missing", world_->name(entity));
-        return;
+        return kNoSlot;
     }
-    ++count_;
+    instance.failed = false;
     // Its self table: { entity = <handle>, name = "<name>" }.
     lua_newtable(lua_);
     lua_pushnumber(lua_, entity.value);
@@ -1569,7 +1582,7 @@ void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
     lua_setfield(lua_, -2, "__index");
     lua_setmetatable(lua_, -2);
     instance.env = luaL_ref(lua_, LUA_REGISTRYINDEX);
-    if (!load(instance)) return;
+    if (!load(instance)) return slot;
     // A visual script's `defaults` (declared variables), then the exposed properties: the script's
     // defaults (its `properties` table), then this object's values.
     lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.self);
@@ -1599,6 +1612,7 @@ void ScriptSystem::add_instance(world::Entity entity, const char* guid) {
         }
     }
     lua_pop(lua_, 1);
+    return slot;
 }
 
 // ---- Debugging ----

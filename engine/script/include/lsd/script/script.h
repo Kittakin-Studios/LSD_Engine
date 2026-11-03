@@ -313,7 +313,8 @@ private:
         const lsd_behaviour* behaviour;
         void* state;
     };
-    void add_natives(world::Entity root);  // invalid root: the whole world
+    // Invalid root: the whole world. `added` (optional) gets the slots filled.
+    void add_natives(world::Entity root, u32* added = nullptr, u32* added_count = nullptr);
     // Hot reload keeps state: stop_natives saves every running script's properties as text (by object,
     // script and property name); the next start_natives puts back those that still exist. Stop clears it.
     struct KeptState;
@@ -337,7 +338,9 @@ private:
         int self = 0;
         bool failed = false;
     };
-    void add_instance(world::Entity entity, const char* guid);
+    // Returns its slot (kNoSlot: none); a destroyed object's slot is reused, so spawn / destroy runs on.
+    static constexpr u32 kNoSlot = ~0u;
+    u32 add_instance(world::Entity entity, const char* guid);
     bool load(Instance& instance);  // false if it failed
     bool call(Instance& instance, const char* function, const f64* args, int arg_count);
 

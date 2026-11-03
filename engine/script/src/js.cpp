@@ -424,6 +424,15 @@ void destroy(Host* h) {
     delete h;
 }
 
+void release(Host* host, u32 slot) {
+    if (slot >= kSlots) return;
+    Item& item = host->items[slot];
+    if (!item.ctx) return;
+    JS_FreeValue(item.ctx, item.self);
+    JS_FreeContext(item.ctx);
+    item = Item{};
+}
+
 bool load(Host* host, u32 slot, const char* path) {
     Host& h = *host;
     lua_State* L = h.L;

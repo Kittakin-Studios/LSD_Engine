@@ -566,7 +566,7 @@ const lsd_api* native_api() {
 
 // ---- Running behaviours (ScriptSystem's native half) ----
 
-void ScriptSystem::add_natives(world::Entity root) {
+void ScriptSystem::add_natives(world::Entity root, u32* added, u32* added_count) {
     if (!world_ || !module_) return;
     bool missing_reported = false;
     const reflect::TypeInfo& type = reflect::type_of<world::NativeScript>();
@@ -589,10 +589,13 @@ void ScriptSystem::add_natives(world::Entity root) {
             }
             continue;
         }
-        if (native_count_ == sizeof natives_ / sizeof natives_[0]) {
+        u32 slot = 0;
+        while (slot < native_count_ && world_->alive(natives_[slot].entity)) ++slot;  // a destroyed object's slot first
+        if (slot == sizeof natives_ / sizeof natives_[0]) {
             LSD_LOG_WARN("game", "Too many C / C++ scripts: %s does not run", world_->name(e));
             continue;
         }
+        if (slot < native_count_) free_state(*natives_[slot].behaviour, natives_[slot].state);
         void* state = make_state(*b);
         for (const world::ScriptProperty& own : component.properties) {  // this object's values
             for (int k = 0; k < b->property_count; ++k) {
@@ -607,7 +610,9 @@ void ScriptSystem::add_natives(world::Entity root) {
                 }
             }
         }
-        natives_[native_count_++] = {e, b, state};
+        natives_[slot] = {e, b, state};
+        if (slot == native_count_) ++native_count_;
+        if (added) added[(*added_count)++] = slot;
     }
 }
 

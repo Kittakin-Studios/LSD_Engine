@@ -20,6 +20,7 @@
 #include "lsd/net/voice.h"
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include "lsd/physics/physics.h"
 #include "lsd/script/script.h"
@@ -136,6 +137,7 @@ private:
     u32 add_body(world::Entity e, const physics::BodyDesc& desc);
     world::Entity body_entity(u32 body) const;
     world::Entity create_spawn(world::World& world, const char* name, Vec3 position);
+    std::unordered_map<std::string, std::string> prefab_text_;  // spawned prefabs' files, read once a session
     // Multiplayer: the session, avatars and what the network asked scripts to do.
     NetPlay net_play_;
     net::NetSession net_;
