@@ -416,6 +416,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     meshes_ = &meshes;
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
+    live_gravity_ = world.settings().gravity;
     start_game_mode(world);  // may spawn the player and a GameMode object first
     // Multiplayer: host or join before any body or script exists (clients make replicated bodies
     // kinematic; scripts may ask lsd.net_mode() in on_start).
@@ -483,6 +484,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     if (world.count(character_type) > 0) {
         character_ = world.owner(character_type, 0);
         settings_ = *world.get<world::Character>(character_);
+        live_character_ = settings_;  // live edits compare with this
         decompose_trs(world.world_matrix(character_), feet_, rotation, scale);
         yaw_ = radians(rotation.z);
         pitch_ = 0.0f;
@@ -951,7 +953,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         d.plane_2d = rigid->lock_2d;
         apply_material(d, rigid->physical_material);
         const u32 body = add_body(e, d);
-        simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic || remote};
+        simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic || remote, rigid->mass, rigid->friction, rigid->bounciness};
         return;
     }
     if (world.get<world::Mover>(e) || world.get<world::Vehicle>(e)) {  // moved by Play: kinematic, carries what stands on it
@@ -1241,11 +1243,54 @@ void PlaySession::send_hits() {
     }
 }
 
+void PlaySession::apply_live_edits(world::World& world) {
+    if (world.settings().gravity != live_gravity_) {
+        live_gravity_ = world.settings().gravity;
+        physics_->set_gravity(live_gravity_);
+    }
+    // The player's Character: tuning, camera, input, capsule.
+    if (const auto* c = world.alive(character_) ? world.get<world::Character>(character_) : nullptr; c && std::memcmp(c, &live_character_, sizeof *c) != 0) {
+        const world::Character before = live_character_;
+        live_character_ = *c;
+        const world::Character resolved = settings_;  // keeps the built-in actions a Character without input assets got
+        settings_ = *c;
+        if (!wired_) {
+            std::memcpy(settings_.move_action, resolved.move_action, sizeof settings_.move_action);
+            std::memcpy(settings_.look_action, resolved.look_action, sizeof settings_.look_action);
+            std::memcpy(settings_.jump_action, resolved.jump_action, sizeof settings_.jump_action);
+        }
+        if (std::strcmp(before.mapping_context, c->mapping_context) != 0 && registry_ && load_asset(*registry_, c->mapping_context, context_)) {
+            wired_ = true;
+            settings_ = *c;
+        }
+        if (before.height != c->height && !crouched_) physics_->set_character_height(c->height);
+        if (before.radius != c->radius || before.max_slope != c->max_slope || before.step_height != c->step_height) {
+            physics_->set_character_limits(c->radius, c->max_slope, c->step_height);
+        }
+    }
+    // Rigid bodies: mass, friction, bounciness.
+    for (u32 i = 0; i < simulated_count_; ++i) {
+        Simulated& s = simulated_[i];
+        const auto* rigid = world.alive(s.entity) ? world.get<world::RigidBody>(s.entity) : nullptr;
+        if (!rigid) continue;
+        if (rigid->friction != s.friction || rigid->bounciness != s.bounciness) {
+            s.friction = rigid->friction;
+            s.bounciness = rigid->bounciness;
+            if (!rigid->physical_material[0]) physics_->set_body_material(s.body, s.friction, s.bounciness);
+        }
+        if (rigid->mass != s.mass) {
+            s.mass = rigid->mass;
+            physics_->set_body_mass(s.body, s.mass);
+        }
+    }
+}
+
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
     net_receive(world, dt);  // other machines' moves and events first
     talk(frame);
     LSD_PROFILE_SCOPE("play");
     if (!physics_) return;
+    apply_live_edits(world);  // Details edits made while playing apply now
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
     input_.update(frame, dt);
     char held[32] = "";

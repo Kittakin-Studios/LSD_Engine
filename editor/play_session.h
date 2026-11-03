@@ -79,6 +79,10 @@ public:
     Vec3 forward() const;
     // A Camera (not Auto Activate) on the player's Character or a child of it: where the player's view sits.
     world::Entity player_camera(const world::World& world) const;
+    // Live editing: Details edits during Play take effect the same frame (compared with last frame's copy).
+    void apply_live_edits(world::World& world);
+    world::Character live_character_{};
+    f32 live_gravity_ = 0.0f;
     u32 camera_view_override_ = 2;  // lsd.set_camera_view: 0 first, 1 third, 2 = the Camera's own View
     Vec3 eye_forward_{1, 0, 0};     // where the player's view looks (forward() turned by the Camera)
     Mat4 bone_ride_;                // Ride Bone: the Camera relative to its bone, taken on the first frame
@@ -131,6 +135,7 @@ private:
         Vec3 scale;
         Vec3 centre;  // bounds centre in the entity's local space (unscaled)
         bool kinematic = false;  // follows its Transform instead of writing to it
+        f32 mass = 0.0f, friction = 0.0f, bounciness = 0.0f;  // as last applied (live edits compare with these)
     };
 
     static constexpr u32 kMaxBodies = 8192;

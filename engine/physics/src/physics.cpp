@@ -156,6 +156,7 @@ struct PhysicsWorld::Impl {
     std::vector<u32> broken;  // joints snapped since take_broken_joints
     std::vector<Joint> joints;
     f32 step_height = 0.4f;
+    f32 character_height = 1.8f;
     f32 character_radius = 0.35f;
 };
 
@@ -492,11 +493,39 @@ void PhysicsWorld::create_character(const CharacterDesc& desc) {
     impl_->character->SetListener(&impl_->contacts);
     impl_->step_height = desc.step_height;
     impl_->character_radius = desc.radius;
+    impl_->character_height = desc.height;
+}
+
+void PhysicsWorld::set_character_limits(f32 radius, f32 max_slope_degrees, f32 step_height) {
+    JPH::CharacterVirtual* c = impl_->character.GetPtr();
+    if (!c) return;
+    c->SetMaxSlopeAngle(JPH::DegreesToRadians(max_slope_degrees));
+    impl_->step_height = step_height;
+    if (radius != impl_->character_radius && radius > 0.01f) {
+        const f32 old = impl_->character_radius;
+        impl_->character_radius = radius;
+        if (!set_character_height(impl_->character_height)) impl_->character_radius = old;  // would not fit here: keeps the old one
+    }
+}
+
+void PhysicsWorld::set_body_material(u32 body, f32 friction, f32 restitution) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    bodies.SetFriction(impl_->bodies[body], friction);
+    bodies.SetRestitution(impl_->bodies[body], restitution);
+}
+
+void PhysicsWorld::set_body_mass(u32 body, f32 mass) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid() || mass <= 0.0f) return;
+    JPH::BodyLockWrite lock(impl_->system.GetBodyLockInterface(), impl_->bodies[body]);
+    if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) return;
+    lock.GetBody().GetMotionProperties()->ScaleToMass(mass);
 }
 
 bool PhysicsWorld::set_character_height(f32 height) {
     JPH::CharacterVirtual* c = impl_->character.GetPtr();
     if (!c) return false;
+    impl_->character_height = height;
     const f32 radius = impl_->character_radius;
     const f32 half_height = std::fmax(height * 0.5f - radius, 0.05f);
     const JPH::RefConst<JPH::Shape> shape = z_capsule(half_height, radius, JPH::Vec3(0, 0, half_height + radius));

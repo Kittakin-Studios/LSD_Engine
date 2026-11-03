@@ -208,6 +208,13 @@ The Outline tab's **type filter** lists only objects with a chosen component (St
 ![Details for the selected object](images/details.jpg)
 *Details for the selected object: one block per component (Transform, Static Mesh...), + Add Component at the bottom, Search details at the top.*
 
+**Live editing:** every edit takes effect as you make it, while playing too: objects' components,
+the player's Character (speeds, camera, capsule, input), rigid bodies (mass, friction, bounciness),
+World Settings gravity, and data assets selected in the Content Browser (materials, particle
+systems, curves...: written as you edit, at most ten times a second, and reloaded at once; **Revert**
+goes back to how it was when you selected it). Mesh import settings are the exception: Save reimports
+the file (a big mesh would stall frames if it reimported while you drag a slider).
+
 **Hover help everywhere:** rest the mouse on any property, button, menu item, Place tab item or
 component in **+ Add Component** for a short description of what it does.
 

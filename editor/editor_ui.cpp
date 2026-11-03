@@ -305,6 +305,7 @@ int g_request_active = -1;       // viewport clicked this frame
 // The data asset shown in Details (loaded on selection, written back on Save).
 u8* g_data = nullptr;  // the selected data asset, in g_data_storage (grown to its type's size)
 std::vector<u8> g_data_storage;
+std::vector<u8> g_data_original;  // the selected data asset as it was when selected (Revert)
 // A buffer of at least `size` bytes for a copy of a reflected struct (operator new: 16-byte aligned on x64).
 u8* grow(std::vector<u8>& storage, usize size) {
     if (storage.size() < size) storage.resize(size);
@@ -2720,6 +2721,7 @@ void load_selected_data(EditorState& s, const asset::AssetRecord& r) {
     char path[300];
     s.registry->source_path(r, path, sizeof path);
     if (!asset::load_data_asset(path, *g_data_type, g_data)) std::snprintf(s.status, sizeof s.status, "Could not read %s", r.path);
+    g_data_original.assign(g_data, g_data + g_data_type->size);  // what Revert goes back to
 }
 
 // Graph of one curve's keys: drag keys, double-click to add one, right-click a key to delete it; the
@@ -2933,17 +2935,25 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     }
     char path[300];
     s.registry->source_path(r, path, sizeof path);
-    ImGui::BeginDisabled(!g_data_dirty);
-    if (with_tip(ImGui::Button("Save"), "Writes the asset to disk")) {
+    // Live editing: changes are written as you make them (at most ten times a second, so a drag does
+    // not write every frame) and everything using the asset reloads it at once, in Play too.
+    static u64 last_write = 0;
+    if (g_data_dirty && SDL_GetTicks() - last_write >= 100) {
         if (asset::save_data_asset(path, *g_data_type, g_data)) {
             g_data_dirty = false;
-            std::snprintf(s.status, sizeof s.status, "Saved %s", r.path);
-            s.registry->scan();
+            s.reload_assets_now = true;
         }
+        last_write = SDL_GetTicks();
     }
-    ImGui::SameLine();
-    if (with_tip(ImGui::Button("Revert"), "Throws away unsaved changes and reloads it from disk")) load_selected_data(s, r);
+    const bool changed = g_data_original.size() == g_data_type->size && std::memcmp(g_data_original.data(), g_data, g_data_type->size) != 0;
+    ImGui::BeginDisabled(!changed);
+    if (with_tip(ImGui::Button("Revert"), "Back to how it was when you selected it (edits apply live as you make them)")) {
+        std::memcpy(g_data, g_data_original.data(), g_data_type->size);
+        g_data_dirty = true;
+    }
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("Live: edits apply as you make them");
     ImGui::BeginChild("DataRows");
     const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
     if (g_data_type == &reflect::type_of<world::Curve>() && draw_curve_editor(reinterpret_cast<world::Curve*>(g_data)->keys)) g_data_dirty = true;

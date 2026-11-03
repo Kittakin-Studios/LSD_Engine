@@ -1857,7 +1857,8 @@ int main(int argc, char** argv) {
         last_tick = now;
 
         // Pick up new, changed and deleted files once a second; recompile what changed.
-        if (SDL_GetTicks() - last_scan > 1000) {
+        if (SDL_GetTicks() - last_scan > 1000 || state.reload_assets_now) {
+            state.reload_assets_now = false;
             if (!game_mode) lsd::editor::live_link_sync(state.settings.live_link_folder, kContentDir, state.status, sizeof state.status);  // copied files show up in this scan
             if (registry.scan_async()) register_script_nodes(registry);
             meshes.hot_reload();
