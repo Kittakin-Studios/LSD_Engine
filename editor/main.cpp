@@ -148,10 +148,11 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const lsd::world::Entity e = world.owner(type, i);
         if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
-        const lsd::editor::SkinnedEntry* model = g_skinned->get(static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i))->mesh);
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i));
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
         const lsd::anim::Pose* pose = g_animations->pose(e);
         if (!model || !pose || !pose->joint_count()) continue;
-        const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
         if (light && range > 0.0f) {
             const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
             const lsd::Vec3 extent = lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f);
@@ -689,7 +690,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
         const lsd::anim::Pose* pose = g_animations->pose(e);
         if (!model || !pose || !pose->joint_count()) continue;
-        const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
         const lsd::Mat4 mvp = view_proj * m;
         // Bind-pose bounds grown by half their size: animation moves limbs out of the rest pose.
         const lsd::Vec3 grow = (model->model->bounds_max - model->model->bounds_min) * 0.5f;

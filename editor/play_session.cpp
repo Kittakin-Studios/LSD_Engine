@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 
@@ -359,6 +360,36 @@ bool PlaySession::action_guid(const asset::AssetRegistry& registry, const char* 
     return false;
 }
 
+void PlaySession::apply_rebinds() {
+    if (!user_settings_ || !registry_) return;
+    for (const KeyBinding& b : user_settings_->key_bindings) {  // the player's rebound keys
+        char guid[33];
+        if (!action_guid(*registry_, b.action, guid)) continue;
+        for (input::KeyMapping& m : context_.mappings) {
+            if (std::strcmp(m.action, guid) == 0 && SDL_strcasecmp(m.key, b.from) == 0) std::snprintf(m.key, sizeof m.key, "%s", b.to);
+        }
+    }
+}
+
+// The newest change time of the Character's Mapping Context and its Input Actions' files.
+i64 PlaySession::input_files_stamp() const {
+    if (!registry_ || !wired_) return 0;
+    i64 newest = 0;
+    auto stamp = [&](const char* guid_text) {
+        asset::Guid guid;
+        const asset::AssetRecord* r = asset::parse_guid(guid_text, guid) ? registry_->find(guid) : nullptr;
+        if (!r) return;
+        char path[300];
+        registry_->source_path(*r, path, sizeof path);
+        std::error_code error;
+        const i64 t = static_cast<i64>(std::filesystem::last_write_time(path, error).time_since_epoch().count());
+        if (!error && t > newest) newest = t;
+    };
+    stamp(settings_.mapping_context);
+    for (const input::KeyMapping& m : context_.mappings) stamp(m.action);
+    return newest;
+}
+
 void PlaySession::apply_input() {
     input_.clear();
     input_.add_context(context_);
@@ -522,16 +553,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             LSD_LOG_INFO("play", "No Character or Player Start in the level: playing from the camera.");
         }
     }
-    if (user_settings_) {  // the player's rebound keys
-        for (const KeyBinding& b : user_settings_->key_bindings) {
-            char guid[33];
-            if (!action_guid(registry, b.action, guid)) continue;
-            for (input::KeyMapping& m : context_.mappings) {
-                if (std::strcmp(m.action, guid) == 0 && SDL_strcasecmp(m.key, b.from) == 0) std::snprintf(m.key, sizeof m.key, "%s", b.to);
-            }
-        }
-    }
+    apply_rebinds();
     apply_input();
+    input_stamp_ = input_files_stamp();
     key_held_[0] = key_pressed_[0] = 0;
     spawn_ = feet_;
     spawn_yaw_ = yaw_;
@@ -1266,6 +1290,18 @@ void PlaySession::apply_live_edits(world::World& world) {
         if (before.height != c->height && !crouched_) physics_->set_character_height(c->height);
         if (before.radius != c->radius || before.max_slope != c->max_slope || before.step_height != c->step_height) {
             physics_->set_character_limits(c->radius, c->max_slope, c->step_height);
+        }
+    }
+    // Input: the Mapping Context or an Input Action edited (keys, triggers): reloaded, rebinds kept.
+    // Four checks a second: a few file times, nothing per frame.
+    if (wired_ && SDL_GetTicks() - input_checked_ >= 250) {
+        input_checked_ = SDL_GetTicks();
+        const i64 now = input_files_stamp();
+        if (now != input_stamp_ && registry_ && load_asset(*registry_, settings_.mapping_context, context_)) {
+            input_stamp_ = input_files_stamp();
+            apply_rebinds();
+            apply_input();
+            LSD_LOG_INFO("play", "Input reloaded (Mapping Context / Input Actions changed)");
         }
     }
     // Rigid bodies: mass, friction, bounciness.

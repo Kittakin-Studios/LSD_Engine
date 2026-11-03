@@ -457,6 +457,9 @@ LSD_STRUCT(Component, Category = "Animation", Tooltip = "Shows a rigged, animate
 struct SkeletalMesh {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "An FBX with a skeleton and skin") char mesh[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Auto,+X,+Y,-X,-Y",
+                 Tooltip = "Which way the character's front points in its file; it is turned to face the object's forward (+X, where the Character walks and the camera looks). Auto: Unreal rigs (UE4 / UE5 exports face -Y here, Unreal's Blueprint turns them -90) are turned; others face +X")
+    u32 facing = 0;
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for the mesh (empty: its own colour)") char material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX holding the animation, matched by bone names; empty = the mesh's own file") char animation[33] = "";

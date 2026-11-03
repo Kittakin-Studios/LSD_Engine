@@ -6,6 +6,8 @@
 #include "lsd/asset/asset_meta.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/rhi/rhi.h"
+#include "lsd/world/components.h"
+#include "lsd/world/world.h"
 
 namespace lsd::editor {
 
@@ -16,7 +18,15 @@ struct SkinnedEntry {
     u32 index_count = 0;
     i64 modified = 0;
     bool failed = false;
+    bool unreal_rig = false;  // UE4 / UE5 bone names: its front points down -Y in the file
 };
+
+// The turn (degrees about Z) that makes a skeletal mesh face its object's +X: its Facing setting,
+// Auto = Unreal rigs turned +90 (their front is -Y), others not turned.
+f32 facing_yaw(const world::SkeletalMesh& mesh, const SkinnedEntry* model);
+// Where a skeletal mesh is drawn: its object's matrix, turned by facing_yaw. Use it (not
+// world_matrix) for drawing, picking, sockets and IK.
+Mat4 skeletal_matrix(const world::World& world, world::Entity e, const world::SkeletalMesh& mesh, const SkinnedEntry* model);
 
 // One animation file's clips on one model's skeleton, plus its notifies (from its .meta).
 struct ClipSet {

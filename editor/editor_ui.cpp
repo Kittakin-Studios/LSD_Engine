@@ -700,9 +700,21 @@ void local_bounds(EditorState& s, Entity e, Vec3& local_lo, Vec3& local_hi) {
         }
     }
     if (const auto* skeletal = s.world->get<world::SkeletalMesh>(e); skeletal && s.skinned) {
-        if (const SkinnedEntry* model = s.skinned->get(skeletal->mesh)) {  // the rest pose
+        if (const SkinnedEntry* model = s.skinned->get(skeletal->mesh)) {  // the rest pose, turned by its Facing
             local_lo = model->model->bounds_min;
             local_hi = model->model->bounds_max;
+            const f32 yaw = facing_yaw(*skeletal, model);
+            if (yaw != 0.0f) {
+                const Mat4 turn = rotation_z(radians(yaw));
+                Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+                for (int c = 0; c < 8; ++c) {
+                    const Vec3 p = transform_point(turn, {c & 1 ? local_hi.x : local_lo.x, c & 2 ? local_hi.y : local_lo.y, c & 4 ? local_hi.z : local_lo.z});
+                    lo = {std::fmin(lo.x, p.x), std::fmin(lo.y, p.y), std::fmin(lo.z, p.z)};
+                    hi = {std::fmax(hi.x, p.x), std::fmax(hi.y, p.y), std::fmax(hi.z, p.z)};
+                }
+                local_lo = lo;
+                local_hi = hi;
+            }
         }
     }
 }
@@ -827,9 +839,10 @@ bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hi
     for (u32 i = 0; i < s.world->count(skinned_type) && s.skinned; ++i) {  // rigged meshes by their rest-pose box
         const Entity e = s.world->owner(skinned_type, i);
         if (e == ignore || s.world->hidden_in_hierarchy(e) || (pickable && s.world->locked(e))) continue;
-        const SkinnedEntry* model = s.skinned->get(static_cast<const world::SkeletalMesh*>(s.world->at(skinned_type, i))->mesh);
+        const auto* component = static_cast<const world::SkeletalMesh*>(s.world->at(skinned_type, i));
+        const SkinnedEntry* model = s.skinned->get(component->mesh);
         if (!model) continue;
-        const Mat4 inv = affine_inverse(s.world->world_matrix(e));
+        const Mat4 inv = affine_inverse(skeletal_matrix(*s.world, e, *component, model));
         f32 t;
         if (ray_box(transform_point(inv, ray.origin), transform_vector(inv, ray.dir), model->model->bounds_min, model->model->bounds_max, t) && t < hit_t) {
             hit_t = t;
@@ -4074,6 +4087,9 @@ void draw_asset_grid(EditorState& s) {
     } else {
         count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
     }
+    // The registry as `hits` saw it: menus below (New..., Delete, Duplicate, Reimport) rescan, and the
+    // tiles stop drawing for this frame when they did.
+    const u32 generation = s.registry->generation();
     std::sort(hits, hits + count, [&](usize a, usize b) {
         const asset::AssetRecord &x = s.registry->get(a), &y = s.registry->get(b);
         switch (s.settings.sort_by) {
@@ -4271,7 +4287,6 @@ void draw_asset_grid(EditorState& s) {
         ImGui::EndGroup();
         ImGui::PopID();
     }
-    const u32 generation = s.registry->generation();
     for (usize n = 0; n < count; ++n, ++tile) {
         // A tile's menu can rescan (Duplicate, Create Material, Reimport...): the rest of `hits` is
         // stale then, so stop and draw the new list next frame. `r` is a copy for the same reason.

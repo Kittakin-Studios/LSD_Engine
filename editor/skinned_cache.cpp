@@ -72,8 +72,24 @@ bool SkinnedCache::load(SkinnedEntry& e) {
     e.vertices = device_.create_buffer(rhi::BufferUsage::Vertex, e.model->vertices.data(), e.model->vertices.size() * sizeof(rhi::SkinnedVertex));
     e.indices = device_.create_buffer(rhi::BufferUsage::Index, e.model->indices.data(), e.model->indices.size() * sizeof(u32));
     e.index_count = static_cast<u32>(e.model->indices.size());
+    e.unreal_rig = anim::model_rig(*e.model) != anim::Rig::Other;
     e.failed = !e.vertices.valid() || !e.indices.valid();
     return !e.failed;
+}
+
+f32 facing_yaw(const world::SkeletalMesh& mesh, const SkinnedEntry* model) {
+    switch (mesh.facing) {
+        case 1: return 0.0f;     // +X: already forward
+        case 2: return -90.0f;   // +Y
+        case 3: return 180.0f;   // -X
+        case 4: return 90.0f;    // -Y
+        default: return model && model->unreal_rig ? 90.0f : 0.0f;
+    }
+}
+
+Mat4 skeletal_matrix(const world::World& world, world::Entity e, const world::SkeletalMesh& mesh, const SkinnedEntry* model) {
+    const f32 yaw = facing_yaw(mesh, model);
+    return yaw == 0.0f ? world.world_matrix(e) : world.world_matrix(e) * rotation_z(radians(yaw));
 }
 
 const SkinnedEntry* SkinnedCache::get(const char* guid) {

@@ -81,6 +81,10 @@ public:
     world::Entity player_camera(const world::World& world) const;
     // Live editing: Details edits during Play take effect the same frame (compared with last frame's copy).
     void apply_live_edits(world::World& world);
+    void apply_rebinds();              // the player's rebound keys onto context_
+    i64 input_files_stamp() const;     // newest change of the Mapping Context and its Input Actions
+    i64 input_stamp_ = 0;
+    u64 input_checked_ = 0;
     world::Character live_character_{};
     f32 live_gravity_ = 0.0f;
     u32 camera_view_override_ = 2;  // lsd.set_camera_view: 0 first, 1 third, 2 = the Camera's own View

@@ -77,7 +77,7 @@ private:
     u32 ik_count_ = 0;
     GroundProbe probe_ = nullptr;
     void* probe_user_ = nullptr;
-    void apply_ik(world::World& world, State& state, const anim::SkinnedModel& model);
+    void apply_ik(world::World& world, State& state, const SkinnedEntry& model);
 };
 
 } // namespace lsd::editor

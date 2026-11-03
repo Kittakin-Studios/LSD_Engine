@@ -210,7 +210,8 @@ The Outline tab's **type filter** lists only objects with a chosen component (St
 
 **Live editing:** every edit takes effect as you make it, while playing too: objects' components,
 the player's Character (speeds, camera, capsule, input), rigid bodies (mass, friction, bounciness),
-World Settings gravity, and data assets selected in the Content Browser (materials, particle
+World Settings gravity, the player's Mapping Context and Input Actions (keys, triggers: reloaded
+within a quarter second, the player's rebound keys kept), and data assets selected in the Content Browser (materials, particle
 systems, curves...: written as you edit, at most ten times a second, and reloaded at once; **Revert**
 goes back to how it was when you selected it). Mesh import settings are the exception: Save reimports
 the file (a big mesh would stall frames if it reimported while you drag a slider).
@@ -938,6 +939,11 @@ when the rigs or their rest poses differ, each bone copies its rotation as a cha
 pose, UE4's three spine bones drive UE5's five (and back), bones with no driver (twist, helper)
 stay at rest under their parent, and the pelvis's movement is scaled by the height difference. The
 Output Log says when a clip is retargeted. Same-rig animations play unchanged.
+
+**Facing** (Skeletal Mesh): Unreal characters face sideways in their files (Unreal's Character
+Blueprint turns the mesh -90). **Auto** turns recognised Unreal rigs to face the object's forward
+(+X: where a Character walks and its camera looks); pick +X / +Y / -X / -Y for other files whose
+front points elsewhere. Sockets, IK and picking follow the turn.
 
 Drop a rigged FBX into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
 same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip** (Details
