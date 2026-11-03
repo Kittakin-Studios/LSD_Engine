@@ -198,7 +198,8 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
             device.draw_mesh(draw);
             continue;
         }
-        const u32 n = instance.build_sprites(system, k, world, eye, right, up, vertices_, kMaxVertices);
+        const u32 n = emitter.renderer == 2 ? instance.build_ribbon(system, k, world, eye, vertices_, kMaxVertices)
+                                             : instance.build_sprites(system, k, world, eye, right, up, vertices_, kMaxVertices);
         if (!n) continue;
         const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
         device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);

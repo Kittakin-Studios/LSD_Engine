@@ -229,4 +229,53 @@ u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, c
     return n * 6;
 }
 
+u32 ParticleInstance::build_ribbon(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, rhi::ParticleVertex* out, u32 capacity) const {
+    if (emitter >= system.emitters.count || emitter >= kMaxEmitters) return 0;
+    const ParticleEmitter& e = system.emitters[emitter];
+    const Emitter& s = emitters_[emitter];
+    if (s.count < 2) return 0;
+    // Oldest first: the trail runs from where it was to where it is now.
+    static thread_local u32 order[kMaxParticles];
+    for (u32 i = 0; i < s.count; ++i) order[i] = i;
+    std::sort(order, order + s.count, [&s](u32 a, u32 b) { return s.particles[a].age > s.particles[b].age; });
+    auto point = [&](u32 i) { return e.local_space ? transform_point(world, s.particles[order[i]].position) : s.particles[order[i]].position; };
+    auto edge = [&](u32 i, Vec3 along, Vec3& left, Vec3& right_side, f32 color[4], f32& u) {  // the strip's two corners at particle i
+        const Particle& p = s.particles[order[i]];
+        const f32 t = p.lifetime > 0.0f ? p.age / p.lifetime : 1.0f;
+        const Vec3 at = point(i);
+        Vec3 side = cross(along, at - eye);
+        const f32 len = length(side);
+        side = len > 1e-6f ? side * (0.5f * size_at(e, t) / len) : Vec3{};
+        left = at - side;
+        right_side = at + side;
+        const LinearColor lc = color_at(e, t);
+        color[0] = lc.r, color[1] = lc.g, color[2] = lc.b, color[3] = lc.a;
+        u = 1.0f - t;  // texture along the trail: new at 1, dying at 0
+    };
+    u32 n = 0;
+    for (u32 i = 0; i + 1 < s.count && n + 6 <= capacity; ++i) {
+        const Vec3 a = point(i), b = point(i + 1);
+        const Vec3 along = b - a;
+        if (dot(along, along) < 1e-10f) continue;  // two particles in one place: no segment
+        Vec3 al, ar, bl, br;
+        f32 ca[4], cb[4], ua, ub;
+        edge(i, along, al, ar, ca, ua);
+        edge(i + 1, along, bl, br, cb, ub);
+        const Vec3 corners[6] = {al, ar, br, al, br, bl};
+        const f32* colors[6] = {ca, ca, cb, ca, cb, cb};
+        const f32 us[6] = {ua, ua, ub, ua, ub, ub}, vs[6] = {0, 1, 1, 0, 1, 0};
+        for (u32 k = 0; k < 6; ++k) {
+            rhi::ParticleVertex& v = out[n + k];
+            v.position[0] = corners[k].x;
+            v.position[1] = corners[k].y;
+            v.position[2] = corners[k].z;
+            std::memcpy(v.color, colors[k], sizeof v.color);
+            v.uv[0] = us[k];
+            v.uv[1] = vs[k];
+        }
+        n += 6;
+    }
+    return n;
+}
+
 } // namespace lsd::particles

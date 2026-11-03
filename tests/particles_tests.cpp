@@ -68,9 +68,32 @@ static void test_collision(Allocator& heap) {
     }
 }
 
+// Ribbons: one strip through the particles, a segment (6 vertices) between each pair, oldest first.
+static void test_ribbon(Allocator& heap) {
+    particles::ParticleSystem system;
+    system.emitters.count = 1;
+    particles::ParticleEmitter& e = system.emitters[0];
+    e.spawn_rate = 20.0f;
+    e.burst = 0;
+    e.lifetime_min = e.lifetime_max = 5.0f;
+    e.speed_min = e.speed_max = 0.0f;
+    e.renderer = 2;
+    e.size_start = e.size_end = 0.5f;
+    particles::ParticleInstance fx(heap);
+    for (int i = 0; i < 10; ++i) fx.update(system, translation({static_cast<f32>(i), 0, 0}), 0.05f, 9.81f, true);  // the emitter moves along X
+    const u32 count = fx.count(0);
+    static rhi::ParticleVertex vertices[6 * 64];
+    const u32 n = fx.build_ribbon(system, 0, Mat4{}, {0, -10, 0}, vertices, 6 * 64);
+    CHECK(count >= 5 && n == (count - 1) * 6);
+    // Facing the camera (along Y): the strip is 0.5 m wide in Z, centred on the particles.
+    CHECK(std::fabs(std::fabs(vertices[0].position[2] - vertices[1].position[2]) - 0.5f) < 1e-3f && std::fabs(vertices[0].position[1]) < 1e-4f);
+    CHECK(vertices[0].position[0] < vertices[2].position[0]);  // oldest (smaller X) first
+}
+
 int main() {
     Allocator& heap = default_allocator();
     test_collision(heap);
+    test_ribbon(heap);
     particles::ParticleSystem system;
     system.emitters.count = 1;
     particles::ParticleEmitter& e = system.emitters[0];

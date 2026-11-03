@@ -67,7 +67,8 @@ struct ParticleEmitter {
     LSD_PROPERTY(Edit, Tooltip = "Particles move with the object (a torch carried around) instead of staying where they were born (a smoke trail)")
     bool local_space = false;
     // Renderer (Niagara's Sprite / Mesh Renderer).
-    LSD_PROPERTY(Edit, Category = "Renderer", Widget = "Choice:Sprite,Mesh", Tooltip = "Sprite: camera-facing quads. Mesh: a lit mesh per particle (rocks, debris, shell casings)")
+    LSD_PROPERTY(Edit, Category = "Renderer", Widget = "Choice:Sprite,Mesh,Ribbon",
+                 Tooltip = "Sprite: camera-facing quads. Mesh: a lit mesh per particle (rocks, debris, shell casings). Ribbon: a strip through the particles, oldest to newest (trails, swooshes)")
     u32 renderer = 0;
     LSD_PROPERTY(Edit, Category = "Renderer", Widget = "Asset:Mesh", Tooltip = "Mesh renderer: a mesh asset or a shape (Cube, Sphere); Size scales it") char mesh[40] = "Cube";
     LSD_PROPERTY(Edit, Category = "Renderer", Tooltip = "Mesh renderer: points its +X along the way it flies (otherwise it turns by Spin)") bool align_to_velocity = false;
@@ -124,6 +125,9 @@ public:
     u32 count(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].count : 0; }
     const Particle* particles(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].particles : nullptr; }
 
+    // Ribbon renderer: one strip through the particles from oldest to newest, facing the camera, as wide
+    // as their size and coloured by their age; 6 vertices per segment. Returns the vertex count written.
+    u32 build_ribbon(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, rhi::ParticleVertex* out, u32 capacity) const;
     // Two triangles per particle facing the camera (`right` / `up`: the camera's axes in world space),
     // back to front for Alpha blending. Returns the vertex count written (6 per particle, up to capacity).
     u32 build_sprites(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, Vec3 right, Vec3 up,
