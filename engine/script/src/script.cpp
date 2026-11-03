@@ -1411,6 +1411,7 @@ void ScriptSystem::clear_persistent() {
 
 void ScriptSystem::stop() {
     stop_natives();
+    clear_kept();  // a real stop: nothing carries over to the next Play
     if (g_debugged == this) g_debugged = nullptr;
     stepping_ = DebugAction::Continue;
     if (lua_) {  // keep the game instance for the next start (a level change)

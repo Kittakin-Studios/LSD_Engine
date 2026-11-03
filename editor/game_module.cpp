@@ -210,6 +210,55 @@ struct $NAME {
 LSD_SCRIPT($NAME)
 )";
 
+constexpr char kCppComponent[] = R"(// $NAME: a component of your own (Unreal: a UCLASS with UPROPERTYs). After Tools > Compile Game
+// Code it is in Details > Add Component (Game); its fields are edited there, saved with the level, and
+// read or written by name: lsd.get(e, "$NAME") in Lua, the Get / Set $NAME nodes in visual scripts,
+// lsd_get_number(e, "$NAME", "value", &v) in C / C++. Fields: float, int32_t, bool, char[N].
+#include <lsd/game.hpp>
+
+struct $NAME {
+    float value = 1.0f;
+    bool enabled = true;
+
+    static void properties(lsd::game::Properties<$NAME>& p) {  // what Details shows and levels save
+        p.add("value", &$NAME::value);
+        p.add("enabled", &$NAME::enabled);
+    }
+};
+LSD_COMPONENT($NAME, "Game")
+)";
+
+constexpr char kCComponent[] = R"(/* $NAME: a component of your own (Unreal: a UCLASS with UPROPERTYs). After Tools > Compile Game
+ * Code it is in Details > Add Component (Game); its fields are edited there, saved with the level, and
+ * read or written by name: lsd_get_number(e, "$NAME", "value", &v), lsd.get(e, "$NAME") in Lua, the
+ * Get / Set $NAME nodes in visual scripts. Fields: float, int32_t, _Bool, char[N]. */
+#include <lsd/lsd_game.h>
+
+#include <stddef.h>
+
+typedef struct $NAME {
+    float value;
+    _Bool enabled;
+} $NAME;
+
+static void $NAME_register(lsd_registry* registry) {
+    static const lsd_property fields[] = {
+        {"value", LSD_FLOAT, offsetof($NAME, value), 0},
+        {"enabled", LSD_BOOL, offsetof($NAME, enabled), 0},
+    };
+    static const $NAME defaults = {1.0f, 1};
+    lsd_component c = {0};
+    c.name = "$NAME";
+    c.size = sizeof($NAME);
+    c.defaults = &defaults;
+    c.fields = fields;
+    c.field_count = 2;
+    c.category = "Game";
+    lsd_register_component(registry, &c);  /* copied: c can be a local */
+}
+LSD_C_SCRIPT($NAME_register)
+)";
+
 constexpr char kCScript[] = R"(/* $NAME: a C script (Unreal: an Actor Component class). Put it on an object: Details > Add
  * Component > Native Script, Script = $NAME. Tools > Compile Game Code (Ctrl+Alt+F11) builds it; it
  * reloads by itself, also while playing. Every command: docs/CODING.md (C names start with lsd_). */
@@ -303,7 +352,8 @@ bool load() {
         return false;
     }
     LSD_LOG_INFO("game", "C / C++ scripts loaded: %u", g_module.count);
-    if (const u32 components = script::register_native_components(g_module)) LSD_LOG_INFO("game", "Components of your own: %u", components);
+    script::register_native_components(g_module);  // new types join the component list; known ones stay
+    if (g_module.component_count) LSD_LOG_INFO("game", "Components of your own: %u", g_module.component_count);
     return true;
 }
 
@@ -352,7 +402,37 @@ void shutdown() {
     if (g_compile.joinable()) g_compile.join();
 }
 
-bool new_script(const char* name, bool c, char* message, usize capacity) {
+bool write_debug_config(char* message, usize capacity) {
+    // The editor this runs as, by absolute path: F5 in VS Code starts it under the debugger.
+    std::error_code error;
+    const char* base = SDL_GetBasePath();
+#ifdef _WIN32
+    const char* exe = "lsd_editor.exe";
+    const char* debugger = "cppvsdbg";  // the C/C++ extension's Visual Studio debugger
+#else
+    const char* exe = "lsd_editor";
+    const char* debugger = "cppdbg";
+#endif
+    std::string program = (fs::path(base ? base : "") / exe).generic_string();
+    const std::string cwd = fs::current_path(error).generic_string();
+    const fs::path file = ".vscode/launch.json";
+    if (fs::exists(file, error)) {
+        std::snprintf(message, capacity, "%s exists already: add a %s launch of %s there (cwd %s)", file.generic_string().c_str(), debugger, program.c_str(), cwd.c_str());
+        return false;
+    }
+    fs::create_directories(".vscode", error);
+    std::ofstream out(file, std::ios::binary);
+    out << "{\n  // Written by LSD_Engine (Tools > Set Up Debugging): breakpoints in Source/ work in both.\n"
+           "  \"version\": \"0.2.0\",\n  \"configurations\": [\n"
+           "    {\n      \"name\": \"Debug LSD Editor\",\n      \"type\": \"" << debugger << "\",\n      \"request\": \"launch\",\n"
+           "      \"program\": \"" << program << "\",\n      \"cwd\": \"" << cwd << "\",\n      \"args\": []\n    },\n"
+           "    {\n      \"name\": \"Attach to LSD Editor\",\n      \"type\": \"" << debugger << "\",\n      \"request\": \"attach\",\n"
+           "      \"processId\": \"${command:pickProcess}\"\n    }\n  ]\n}\n";
+    std::snprintf(message, capacity, out ? "Wrote %s: F5 in VS Code (C/C++ extension) debugs the editor and your game code" : "Could not write %s", file.generic_string().c_str());
+    return static_cast<bool>(out);
+}
+
+bool new_script(const char* name, bool c, char* message, usize capacity, bool component) {
     bool valid = name && std::isalpha(static_cast<unsigned char>(name[0]));
     for (const char* ch = name; valid && *ch; ++ch) valid = std::isalnum(static_cast<unsigned char>(*ch)) || *ch == '_';
     if (!valid) {
@@ -369,10 +449,15 @@ bool new_script(const char* name, bool c, char* message, usize capacity) {
             return false;
         }
     }
-    std::string text = c ? kCScript : kCppScript;
+    std::string text = component ? (c ? kCComponent : kCppComponent) : (c ? kCScript : kCppScript);
     for (usize at; (at = text.find("$NAME")) != std::string::npos;) text.replace(at, 5, name);
     const bool ok = write_if_missing("Source/CMakeLists.txt", kCMakeLists) && write_if_missing("Source/GameModule.cpp", kGameModule) && write_if_missing(file, text);
     std::snprintf(message, capacity, ok ? "Wrote %s: compiling it now" : "Could not write %s", file.generic_string().c_str());
+    if (ok) {  // the first script also sets up the debugger (left alone when there is a launch.json already)
+        char ignored[512];
+        std::error_code exists_error;
+        if (!fs::exists(".vscode/launch.json", exists_error)) write_debug_config(ignored, sizeof ignored);
+    }
     return ok;
 }
 

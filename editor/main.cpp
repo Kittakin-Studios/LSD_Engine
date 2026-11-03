@@ -1143,18 +1143,19 @@ void register_console(EditorState& s) {
     }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
     console::add_command("game.Compile",[](void*, const char*) { lsd::editor::game_module::compile(); }, &s,
                          "Tools > Compile Game Code: build Source/ into Binaries/Game.dll (it reloads by itself)");
-    console::add_command("game.NewScript", [](void*, const char* args) {  // "Door" or "Door c"
-        char name[64] = "", language[8] = "";
-        std::sscanf(args, "%63s %7s", name, language);
-        const bool c = std::strcmp(language, "c") == 0 || std::strcmp(language, "C") == 0;
+    console::add_command("game.NewScript", [](void*, const char* args) {  // "Door", "Door c", "Health component", "Health c component"
+        char name[64] = "", word1[16] = "", word2[16] = "";
+        std::sscanf(args, "%63s %15s %15s", name, word1, word2);
+        auto said = [&](const char* w) { return std::strcmp(word1, w) == 0 || std::strcmp(word2, w) == 0; };
+        const bool c = said("c") || said("C");
         char message[300];
-        if (lsd::editor::game_module::new_script(name, c, message, sizeof message)) {
+        if (lsd::editor::game_module::new_script(name, c, message, sizeof message, said("component"))) {
             LSD_LOG_INFO("game", "%s", message);
             lsd::editor::game_module::compile();
         } else {
             LSD_LOG_WARN("game", "%s", message);
         }
-    }, &s, "game.NewScript <Name> [c]: Tools > New C / C++ Script (Source/<Name>.cpp, or .c with c), then compile");
+    }, &s, "game.NewScript <Name> [c] [component]: Tools > New C / C++ Script (Source/<Name>.cpp, .c with c; a component of your own with component), then compile");
     console::add_command("game.Scripts", [](void*, const char*) {
         const lsd::script::NativeModule& m = lsd::editor::game_module::module();
         std::string out = lsd::editor::game_module::loaded() ? "" : "(no C / C++ scripts loaded: compile Source/ first)\n";

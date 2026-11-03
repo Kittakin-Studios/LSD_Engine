@@ -4721,6 +4721,11 @@ void draw_menu_bar(EditorState& s) {
         if (ImGui::MenuItem("Compile Game Code", "Ctrl+Alt+F11", false, !game_module::compiling())) game_module::compile();
         ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
         if (ImGui::MenuItem("New C / C++ Script...")) s.new_script_popup = true;
+        if (ImGui::MenuItem("Set Up Debugging (VS Code)")) {
+            game_module::write_debug_config(s.status, sizeof s.status);
+            LSD_LOG_INFO("game", "%s", s.status);
+        }
+        ImGui::SetItemTooltip("Writes .vscode/launch.json: F5 starts the editor under the debugger, breakpoints in Source/ stop");
         ImGui::SetItemTooltip("Writes Source/<Name>.cpp or .c from a template (Unreal's Tools > New C++ Class)");
         ImGui::Separator();
         ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
@@ -5334,17 +5339,24 @@ void draw_editor(EditorState& s) {
     if (ImGui::BeginPopupModal("New C / C++ Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         static char name[64] = "Spinner";
         static int language = 0;  // 0 C++, 1 C
+        static int kind = 0;      // 0 a script, 1 a component
         ImGui::TextUnformatted("Language:");
         ImGui::SameLine();
         ImGui::RadioButton("C++", &language, 0);
         ImGui::SameLine();
         ImGui::RadioButton("C", &language, 1);
-        ImGui::TextDisabled("Writes Source/<Name>%s, then compiles the game code. It runs on objects", language ? ".c" : ".cpp");
-        ImGui::TextDisabled("with a Native Script component, like a Lua script on a Script component.");
+        ImGui::TextUnformatted("Make:    ");
+        ImGui::SameLine();
+        ImGui::RadioButton("Script", &kind, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Component", &kind, 1);
+        ImGui::TextDisabled("Writes Source/<Name>%s, then compiles the game code.", language ? ".c" : ".cpp");
+        if (kind == 0) ImGui::TextDisabled("It runs on objects with a Native Script component, like a Lua script on a Script component.");
+        else ImGui::TextDisabled("Data of your own: Details > Add Component lists it, levels save it, scripts and nodes read it.");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         const bool enter = ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
         if (ImGui::Button("Create") || enter) {
-            if (game_module::new_script(name, language == 1, s.status, sizeof s.status)) {
+            if (game_module::new_script(name, language == 1, s.status, sizeof s.status, kind == 1)) {
                 LSD_LOG_INFO("game", "%s", s.status);
                 game_module::compile();
                 ImGui::CloseCurrentPopup();

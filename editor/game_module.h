@@ -20,6 +20,10 @@ void shutdown();  // waits for a running compile
 
 // Tools > New C / C++ Script: Source/<Name>.cpp (or .c when `c`) from a template, plus
 // Source/CMakeLists.txt and Source/GameModule.cpp when they are missing. False with the reason in `message`.
-bool new_script(const char* name, bool c, char* message, usize capacity);
+// Tools > Set Up Debugging: .vscode/launch.json with "Debug LSD Editor" (F5 starts this editor under the
+// debugger) and "Attach to LSD Editor". Never overwrites one; false with what to add in `message`.
+bool write_debug_config(char* message, usize capacity);
+// `component`: a component of your own (LSD_COMPONENT) instead of a script.
+bool new_script(const char* name, bool c, char* message, usize capacity, bool component = false);
 
 } // namespace lsd::editor::game_module

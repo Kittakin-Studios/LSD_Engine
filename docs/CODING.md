@@ -208,6 +208,19 @@ Events cross languages both ways:
   reach the script's `on_event(self, "unlock", other)`.
 - `broadcast` / `lsd.broadcast` / **Call Event** reach everyone; UI `onclick="start_game"` too.
 
+## Templates, reloads and debugging
+
+- **Tools > New C / C++ Script**: C++ or C, a **Script** (runs on objects with a Native Script) or a
+  **Component** (data of your own, see below). Console: `game.NewScript Door`, `game.NewScript Door c`,
+  `game.NewScript Health component`.
+- **Hot reload**: rebuilding swaps the code, also during Play. A script's properties (what Details
+  shows) keep their values through the swap; its other members start over.
+- **Debugging**: **Tools > Set Up Debugging (VS Code)** (also done by your first new script) writes
+  `.vscode/launch.json`: F5 starts the editor under the debugger (breakpoints in `Source/` stop), or
+  pick *Attach to LSD Editor*. An existing launch.json is never overwritten.
+- **Missing code**: a game started without `Binaries/Game.dll`, or with one older than the level (a
+  Native Script naming a script it does not have), says so in the log at start.
+
 ## Your own components
 
 A plain struct can be a component (Unreal: a UCLASS with UPROPERTYs): after the next compile it is in

@@ -15,6 +15,15 @@
 
 namespace lsd::script {
 
+// What a hot reload keeps of the C / C++ scripts (see stop_natives).
+struct ScriptSystem::KeptState {
+    struct Value {
+        world::Entity entity;
+        std::string script, property, text;
+    };
+    std::vector<Value> values;
+};
+
 const lsd_behaviour* NativeModule::find(const char* name) const {
     for (u32 i = 0; i < count; ++i) {
         if (std::strcmp(names[i], name) == 0) return &behaviours[i];
@@ -551,6 +560,7 @@ const lsd_api* native_api() {
 
 void ScriptSystem::add_natives(world::Entity root) {
     if (!world_ || !module_) return;
+    bool missing_reported = false;
     const reflect::TypeInfo& type = reflect::type_of<world::NativeScript>();
     for (u32 i = 0; i < world_->count(type); ++i) {
         const world::Entity e = world_->owner(type, i);
@@ -563,7 +573,12 @@ void ScriptSystem::add_natives(world::Entity root) {
         if (!component.script[0]) continue;
         const lsd_behaviour* b = module_->find(component.script);
         if (!b) {
-            LSD_LOG_WARN("game", "%s: no C / C++ script '%s' in the game code (Tools > Compile Game Code)", world_->name(e), component.script);
+            if (module_->count == 0) {
+                if (!missing_reported) LSD_LOG_ERROR("game", "No game code is loaded (Binaries/Game.dll missing or not built): the C / C++ scripts of %s and others do not run", world_->name(e));
+                missing_reported = true;
+            } else {
+                LSD_LOG_ERROR("game", "%s: the game code has no C / C++ script '%s' (an older Game.dll? Tools > Compile Game Code, or package again)", world_->name(e), component.script);
+            }
             continue;
         }
         if (native_count_ == sizeof natives_ / sizeof natives_[0]) {
@@ -574,6 +589,14 @@ void ScriptSystem::add_natives(world::Entity root) {
         for (const world::ScriptProperty& own : component.properties) {  // this object's values
             for (int k = 0; k < b->property_count; ++k) {
                 if (std::strcmp(b->properties[k].name, own.name) == 0) property_from_text(b->properties[k], state, own.value);
+            }
+        }
+        if (kept_) {  // a hot reload: as they were
+            for (const KeptState::Value& v : kept_->values) {
+                if (v.entity != e || v.script != b->name) continue;
+                for (int k = 0; k < b->property_count; ++k) {
+                    if (v.property == b->properties[k].name) property_from_text(b->properties[k], state, v.text.c_str());
+                }
             }
         }
         natives_[native_count_++] = {e, b, state};
@@ -589,16 +612,33 @@ void ScriptSystem::create_natives() {
 void ScriptSystem::start_natives() {
     if (native_count_) return;
     create_natives();
+    if (kept_) kept_->values.clear();  // used once
     for (u32 i = 0; i < native_count_; ++i) {
         const NativeInstance n = natives_[i];  // a copy: on_start may spawn (attach adds natives)
         if (n.behaviour->on_start) n.behaviour->on_start(n.entity.value, n.state);
     }
 }
 
+void ScriptSystem::clear_kept() {
+    delete kept_;
+    kept_ = nullptr;
+}
+
 void ScriptSystem::stop_natives() {
     for (u32 i = 0; i < native_count_; ++i) {
         const NativeInstance& n = natives_[i];
         if (n.behaviour->on_stop) n.behaviour->on_stop(n.entity.value, n.state);
+    }
+    // Their properties, for the code that replaces them (a hot reload); after on_stop, as it left them.
+    if (native_count_ && !kept_) kept_ = new KeptState();
+    if (kept_) kept_->values.clear();
+    for (u32 i = 0; i < native_count_; ++i) {
+        const NativeInstance& n = natives_[i];
+        for (int k = 0; k < n.behaviour->property_count; ++k) {
+            char text[256];
+            property_to_text(n.behaviour->properties[k], n.state, text, sizeof text);
+            kept_->values.push_back({n.entity, n.behaviour->name, n.behaviour->properties[k].name, text});
+        }
     }
     for (u32 i = 0; i < native_count_; ++i) free_state(*natives_[i].behaviour, natives_[i].state);
     native_count_ = 0;

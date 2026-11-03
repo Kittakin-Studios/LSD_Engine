@@ -291,7 +291,8 @@ public:
 
     // C / C++ behaviours (Native Script components) from a game module; they start, update and get
     // events with the Lua scripts. Before the module's DLL is unloaded or swapped: stop_natives(),
-    // then start_natives() with the new one (their state starts over, like Live Coding a constructor).
+    // then start_natives() with the new one: properties (what Details shows) keep their values, other
+    // members start over (Live Coding keeps reflected state the same way).
     void set_native_module(const NativeModule* module) { module_ = module; }
     void stop_natives();
     void start_natives();
@@ -304,6 +305,11 @@ private:
         void* state;
     };
     void add_natives(world::Entity root);  // invalid root: the whole world
+    // Hot reload keeps state: stop_natives saves every running script's properties as text (by object,
+    // script and property name); the next start_natives puts back those that still exist. Stop clears it.
+    struct KeptState;
+    KeptState* kept_ = nullptr;
+    void clear_kept();
     void create_natives();                 // the instances, without on_start
     // Native side of an event; returns how many behaviours took it.
     u32 native_event(world::Entity target, const char* event, world::Entity other, bool everyone);

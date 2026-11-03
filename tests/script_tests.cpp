@@ -258,7 +258,10 @@ static void test_traces() {
 struct Climber {
     float speed = 2.0f;
     int hits = 0;
-    static void properties(lsd::game::Properties<Climber>& p) { p.add("speed", &Climber::speed); }
+    static void properties(lsd::game::Properties<Climber>& p) {
+        p.add("speed", &Climber::speed);
+        p.add("hits", &Climber::hits);
+    }
     void on_update(lsd::game::Entity self, float dt) { lsd::game::set_position(self, lsd::game::position(self) + lsd::game::Vec3(0, 0, speed * dt)); }
     void on_hit(lsd::game::Entity self, lsd::game::Entity) { lsd::game::set_rotation(self, {0, 0, 10.0f * static_cast<float>(++hits)}); }
     void on_event(lsd::game::Entity self, const char* name, lsd::game::Entity other) {
@@ -412,7 +415,7 @@ static void test_native_behaviours() {
     c.state_size = sizeof(int);
     c.on_start = c_start;
     lsd_api_ptr->register_behaviour(module.registry(), &c);
-    CHECK(module.count == 3 && module.find("Climber") && module.find("CMover") && module.find("Pusher") && module.find("Climber")->property_count == 1);
+    CHECK(module.count == 3 && module.find("Climber") && module.find("CMover") && module.find("Pusher") && module.find("Climber")->property_count == 2);
     char text[32];
     script::native_property_default(*module.find("Climber"), module.find("Climber")->properties[0], text, sizeof text);
     CHECK(std::strcmp(text, "2") == 0);
@@ -451,6 +454,7 @@ static void test_native_behaviours() {
         CHECK(scripts.native_count() == 0);
         scripts.start_natives();
         CHECK(scripts.native_count() == 3);
+        CHECK(scripts.send(a, "on_hit", b) == 1 && w.get<Transform>(a)->rotation.z == 30.0f);  // hits kept through the reload (2 + 1)
         scripts.stop();
         CHECK(scripts.native_count() == 0);
     }
