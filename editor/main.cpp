@@ -72,6 +72,8 @@
 #include <cctype>
 #include <string>
 
+bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
+
 // input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
 lsd::u64 g_held_until[SDL_SCANCODE_COUNT] = {};
 
@@ -495,6 +497,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     gather_cull_volumes(world);
     g_frame_meshes.fill(world, meshes, skip_hidden);  // matrices and meshes once, for every pass below
     if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
+    if (std::exchange(g_gpu_mark_shadows, false)) device.gpu_timestamp(1);  // the first view's shadows: the frame's main cost
     if (local_shadows) draw_local_shadows(device, lights, local_atlas, world, meshes, skip_hidden, eye, stats.force_lod);
     if (scene_target.valid()) {  // the post pass reads it: draw into the scene target (after the shadow passes)
         device.set_render_target(scene_target, scene_clear);
@@ -774,6 +777,16 @@ void register_console(EditorState& s) {
             LSD_LOG_INFO("stat", "%s", line);
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
                           st.stat_panel_ms[2], st.stat_panel_ms[3], st.stat_panel_ms[4]);
+            lsd::editor::remote::print(line);
+            if (st.stat_gpu_valid) {  // sections between the marks (a mark not set that frame: its section is folded into the next)
+                const lsd::f64* t = st.stat_gpu_ms;
+                auto span = [t](int from, int to) { return t[to] >= 0.0 && t[from] >= 0.0 ? t[to] - t[from] : 0.0; };
+                const int scene_from = t[1] >= 0.0 ? 1 : 0, post_from = t[2] >= 0.0 ? 2 : scene_from;
+                std::snprintf(line, sizeof line, "gpu: shadows %.2f, scene %.2f, post %.2f, ui %.2f, total %.2f ms", span(0, 1), span(scene_from, 2), span(post_from, 3),
+                              span(t[3] >= 0.0 ? 3 : post_from, 4), t[4]);
+            } else {
+                std::snprintf(line, sizeof line, "gpu: no timings from this graphics backend yet");
+            }
             lsd::editor::remote::print(line);
         } else LSD_LOG_WARN("console", "stat: try 'stat fps', 'stat audio' or 'stat dump'");
     }, &s, "stat fps | stat audio | stat dump: toggle the fps / draw call or the active sounds overlay; dump prints the frame's numbers");
@@ -2265,6 +2278,8 @@ int main(int argc, char** argv) {
         decal_atlas->update(world);  // before the frame: the atlas may be rebuilt
         device->begin_frame(clear_color);
         state.stat_wait_ms = timer.lap();  // the GPU (and vsync) holding the CPU back: not part of render
+        device->gpu_timestamp(0);  // GPU timings (stat dump): 0 start, 1 sun shadows, 2 scene, 3 post, 4 UI
+        g_gpu_mark_shadows = true;
         thumbnails.render(clear_color);
         particle_editor->render(*device, clear_color);
         lsd::editor::render_graph_preview(state, clear_color);
@@ -2383,7 +2398,9 @@ int main(int argc, char** argv) {
             if (scene.valid()) {
                 post.scene = scene;
                 for (int c = 0; c < 4; ++c) post.viewport[c] = pixels[c];
+                if (v == 0) device->gpu_timestamp(2);
                 device->draw_post(post);
+                if (v == 0) device->gpu_timestamp(3);
             }
             if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
                 play.place_ui_followers(world, view_proj, pixels);
@@ -2392,6 +2409,8 @@ int main(int argc, char** argv) {
             }
         }
         device->render_debug_ui();
+        device->gpu_timestamp(4);
+        state.stat_gpu_valid = device->gpu_timings(state.stat_gpu_ms);
         state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
         LSD_PROFILE_FRAME();
         if ((frame == screenshot_frame || std::exchange(g_screenshot, false)) && !device->capture_frame("Saved/screenshot.bmp")) {

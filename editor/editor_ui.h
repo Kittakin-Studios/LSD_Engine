@@ -71,6 +71,8 @@ struct EditorState {
     f32 stat_game_ms = 0.0f, stat_render_ms = 0.0f, stat_ui_ms = 0.0f;  // stat unit (CPU)
     f32 stat_wait_ms = 0.0f;  // waiting for the GPU / vsync at the frame's start (not CPU work)
     f32 stat_panel_ms[5] = {};  // stat dump: Outliner, Details, Content Browser, viewports, the rest of the UI
+    f64 stat_gpu_ms[8] = {};    // GPU: frame start -> sun shadows -> scene -> post -> UI (ms from the start; -1 unset)
+    bool stat_gpu_valid = false;
     EditorCamera bookmarks[10];  // Ctrl+0..9 stores, 0..9 jumps (like Unreal)
     bool bookmark_set[10] = {};
     int details_tab = 0;

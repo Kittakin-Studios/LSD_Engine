@@ -218,7 +218,7 @@ Exit test: a packaged level runs on another PC. **Works on this PC** (Build/<Pro
 - [x] Panel tabs above the workspaces: Level, then each asset editor opened outside an editor area as its own full-screen tab (close with x, reorder by dragging; Play shows the Level) [Unreal's editor tabs]
 - [x] Editor plugins + Claude MCP: Editor Preferences > Plugins (enable, click for settings); Claude MCP lets Claude Code drive the editor (console, Lua in Play, objects, assets, Output Log) through `lsd_mcp` over 127.0.0.1 [Edit > Plugins]
 - [~] Connect the editor to a running game (this PC or another): remote console, push hot reloads, live tweak values **(S)**: remote console on this PC (game with `-remote[=port]`, Tools > Remote Console sends lines and shows what they logged); needs other machines (with a password), pushed hot reloads, live tweaks
-- [~] Profilers: Tracy, stat overlays (fps, draw calls, voices), memory per system, GPU timings [Unreal Insights]: Tracy v0.11.1 with -DLSD_TRACY=ON (LSD_PROFILE_SCOPE / LSD_PROFILE_FRAME in lsd/foundation/profile.h; zones on the frame, UI, game, scripts, draw_world), `stat unit` (game / render / UI CPU ms, draws, triangles, culled, engine memory), `stat audio`; needs GPU timings, memory per system
+- [~] Profilers: Tracy, stat overlays (fps, draw calls, voices), memory per system, GPU timings [Unreal Insights]: Tracy v0.11.1 with -DLSD_TRACY=ON (LSD_PROFILE_SCOPE / LSD_PROFILE_FRAME in lsd/foundation/profile.h; zones on the frame, UI, game, scripts, draw_world), `stat unit` (game / render / UI CPU ms, draws, triangles, culled, engine memory), `stat audio`; GPU timings per stage in `stat dump`; needs memory per system
 - [x] Asset validation before packaging: missing references, oversize textures, naming rules [Data Validation]: File > Validate Assets / `validate` and before every Package: GUIDs in levels, prefabs, data assets and graphs that name no asset, textures over Project Settings > Validation > Max Texture Size, optional name prefixes (SM_, T_, M_, MI_, BT_, UI_...), all in the Message Log
 - [x] Crash reporting: minidump + log saved, shown on next start (moved up from v2): the log always goes to Saved/Logs/Editor.log (or Game.log, the last one kept as -previous); a crash writes Saved/Crashes/<date-time>/crash.dmp + log.txt and the next start warns in the Message Log (`lsd::install_crash_reporting`, console `debug.Crash` to try it)
 - [x] Automated tests run from the editor: unit tests + "play this level for N seconds" smoke tests [Automation]: Tools > Smoke Test Level / `test.Smoke [s]` plays the level and reports the errors it logs; `-smoketest=<s>` does it headless for CI (exit code 0 / 1); Tools > Run Unit Tests / `test.Unit` runs ctest in the background into Saved/Logs/UnitTests.log
@@ -296,7 +296,8 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Automatic instancing: opaque Static Meshes with the same mesh, LOD and look draw as one instanced call (872 -> 9 draws in the stress level), shadow casters too (per cascade / tile), Instanced Static Mesh casters in one call; instanced normals use the cofactor matrix, so any scale batches
 - [x] Each Static Mesh's world matrix and mesh worked out once a frame and shared by every pass: render CPU 3.3 -> 1.95 ms at 3000 objects
 - [x] Navmesh reused between Plays while its inputs hash the same (Play start 191 -> 5 ms at 3000 objects)
-- [ ] GPU timings, GPU-driven culling
+- [x] GPU timings: timestamp queries in D3D12 and OpenGL (read a frame or two later, no stall), `stat dump` prints shadows / scene / post / UI (3000 objects: 1.3 ms of GPU on this PC; post is the largest part)
+- [ ] GPU-driven culling
 
 ## Vehicles, transports, movers
 

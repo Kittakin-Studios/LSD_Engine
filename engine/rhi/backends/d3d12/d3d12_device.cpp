@@ -1723,6 +1723,20 @@ public:
     void begin_frame(const f32 clear_color[4]) override {
         frame_ = swapchain_->GetCurrentBackBufferIndex();
         wait_for_fence(frame_fence_values_[frame_]);
+        if (timestamps_set_[frame_] && timestamp_readback_ && timestamp_frequency_) {  // this slot's last frame has finished: its timings
+            const D3D12_RANGE range{sizeof(u64) * frame_ * kGpuTimestamps, sizeof(u64) * (frame_ + 1) * kGpuTimestamps};
+            u64* ticks = nullptr;
+            if (SUCCEEDED(timestamp_readback_->Map(0, &range, reinterpret_cast<void**>(&ticks)))) {
+                const u64* t = ticks + frame_ * kGpuTimestamps;
+                for (u32 i = 0; i < kGpuTimestamps; ++i) {
+                    gpu_ms_[i] = (timestamps_set_[frame_] >> i) & 1u ? static_cast<f64>(t[i] - t[0]) * 1000.0 / static_cast<f64>(timestamp_frequency_) : -1.0;
+                }
+                const D3D12_RANGE nothing{0, 0};
+                timestamp_readback_->Unmap(0, &nothing);
+                have_timings_ = true;
+            }
+            timestamps_set_[frame_] = 0;
+        }
         allocators_[frame_]->Reset();
         list_->Reset(allocators_[frame_].Get(), nullptr);
 
@@ -1793,9 +1807,51 @@ public:
         ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), list_.Get());
     }
 
+    void gpu_timestamp(u32 slot) override {
+        if (slot >= kGpuTimestamps) return;
+        if (!timestamp_heap_) {  // made on first use: frames that never ask cost nothing
+            D3D12_QUERY_HEAP_DESC desc{};
+            desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+            desc.Count = kBackBufferCount * kGpuTimestamps;
+            D3D12_HEAP_PROPERTIES heap{};
+            heap.Type = D3D12_HEAP_TYPE_READBACK;
+            D3D12_RESOURCE_DESC buffer{};
+            buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            buffer.Width = sizeof(u64) * kBackBufferCount * kGpuTimestamps;
+            buffer.Height = 1;
+            buffer.DepthOrArraySize = 1;
+            buffer.MipLevels = 1;
+            buffer.SampleDesc.Count = 1;
+            buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            if (FAILED(device_->CreateQueryHeap(&desc, IID_PPV_ARGS(&timestamp_heap_))) ||
+                FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&timestamp_readback_)))) {
+                timestamp_heap_.Reset();
+                return;
+            }
+            queue_->GetTimestampFrequency(&timestamp_frequency_);
+        }
+        list_->EndQuery(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frame_ * kGpuTimestamps + slot);
+        timestamps_set_[frame_] |= 1u << slot;
+    }
+
+    bool gpu_timings(f64 out_ms[kGpuTimestamps]) override {
+        if (!have_timings_) return false;
+        for (u32 i = 0; i < kGpuTimestamps; ++i) out_ms[i] = gpu_ms_[i];
+        return true;
+    }
+
     void end_frame() override {
         if (current_target_ >= 0) set_render_target({}, nullptr);
         transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        if (timestamps_set_[frame_]) {  // this frame's timestamps into the readback buffer, read when the frame is done
+            u32 last = 0;
+            for (u32 i = 0; i < kGpuTimestamps; ++i) last = (timestamps_set_[frame_] >> i) & 1u ? i : last;
+            for (u32 i = 0; i <= last; ++i) {  // every slot up to the last is resolved: fill the unset ones
+                if (!((timestamps_set_[frame_] >> i) & 1u)) list_->EndQuery(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frame_ * kGpuTimestamps + i);
+            }
+            list_->ResolveQueryData(timestamp_heap_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, frame_ * kGpuTimestamps, last + 1, timestamp_readback_.Get(),
+                                    sizeof(u64) * frame_ * kGpuTimestamps);
+        }
         list_->Close();
         ID3D12CommandList* lists[] = {list_.Get()};
         queue_->ExecuteCommandLists(1, lists);
@@ -2338,6 +2394,12 @@ private:
     HANDLE fence_event_ = nullptr;
     u64 fence_value_ = 0;
     u64 frame_fence_values_[kBackBufferCount] = {};
+    ComPtr<ID3D12QueryHeap> timestamp_heap_;  // GPU timings: kGpuTimestamps per frame in flight
+    ComPtr<ID3D12Resource> timestamp_readback_;
+    u64 timestamp_frequency_ = 0;
+    u32 timestamps_set_[kBackBufferCount] = {};
+    f64 gpu_ms_[kGpuTimestamps] = {};
+    bool have_timings_ = false;
     ComPtr<IDXGISwapChain3> swapchain_;
     ComPtr<ID3D12Resource> back_buffers_[kBackBufferCount];
     ComPtr<ID3D12DescriptorHeap> rtv_heap_;

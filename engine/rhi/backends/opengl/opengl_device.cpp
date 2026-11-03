@@ -745,6 +745,11 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLDEBUGMESSAGECALLBACKPROC, glDebugMessageCallback)    \
     X(PFNGLCLIPCONTROLPROC, glClipControl)                          \
     X(PFNGLDRAWELEMENTSINSTANCEDPROC, glDrawElementsInstanced)      \
+    X(PFNGLGENQUERIESPROC, glGenQueries)                            \
+    X(PFNGLDELETEQUERIESPROC, glDeleteQueries)                      \
+    X(PFNGLQUERYCOUNTERPROC, glQueryCounter)                        \
+    X(PFNGLGETQUERYOBJECTIVPROC, glGetQueryObjectiv)                \
+    X(PFNGLGETQUERYOBJECTUI64VPROC, glGetQueryObjectui64v)          \
     X(PFNGLCREATEBUFFERSPROC, glCreateBuffers)                      \
     X(PFNGLNAMEDBUFFERSTORAGEPROC, glNamedBufferStorage)            \
     X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers)                      \
@@ -1581,7 +1586,42 @@ public:
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
 
-    void end_frame() override { SDL_GL_SwapWindow(window_); }
+    void end_frame() override {
+        SDL_GL_SwapWindow(window_);
+        timing_frame_ = (timing_frame_ + 1) % kTimingFrames;
+        // The ring slot this frame will use was written kTimingFrames frames ago: its results are in by now
+        // (asked without waiting; not ready yet: skipped this time).
+        const u32 set = timestamps_set_[timing_frame_];
+        if (!set) return;
+        GLint ready = 0;
+        u32 last = 0;
+        for (u32 i = 0; i < kGpuTimestamps; ++i) last = (set >> i) & 1u ? i : last;
+        gl_.glGetQueryObjectiv(timing_queries_[timing_frame_][last], GL_QUERY_RESULT_AVAILABLE, &ready);
+        if (ready) {
+            GLuint64 t0 = 0;
+            gl_.glGetQueryObjectui64v(timing_queries_[timing_frame_][0], GL_QUERY_RESULT, &t0);
+            for (u32 i = 0; i < kGpuTimestamps; ++i) {
+                GLuint64 t = 0;
+                if ((set >> i) & 1u) gl_.glGetQueryObjectui64v(timing_queries_[timing_frame_][i], GL_QUERY_RESULT, &t);
+                gpu_ms_[i] = (set >> i) & 1u ? static_cast<f64>(t - t0) * 1e-6 : -1.0;
+            }
+            have_timings_ = true;
+        }
+        timestamps_set_[timing_frame_] = 0;
+    }
+
+    void gpu_timestamp(u32 slot) override {
+        if (slot >= kGpuTimestamps) return;
+        if (!timing_queries_[0][0]) gl_.glGenQueries(static_cast<GLsizei>(kTimingFrames * kGpuTimestamps), &timing_queries_[0][0]);
+        gl_.glQueryCounter(timing_queries_[timing_frame_][slot], GL_TIMESTAMP);
+        timestamps_set_[timing_frame_] |= 1u << slot;
+    }
+
+    bool gpu_timings(f64 out_ms[kGpuTimestamps]) override {
+        if (!have_timings_) return false;
+        for (u32 i = 0; i < kGpuTimestamps; ++i) out_ms[i] = gpu_ms_[i];
+        return true;
+    }
 
     bool capture_frame(const char* bmp_path) override {
         const u32 row_bytes = (width_ * 3 + 3) & ~3u;  // BMP rows are 4-byte aligned
@@ -1854,6 +1894,12 @@ private:
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint instanced_shadow_program_ = 0;
+    static constexpr u32 kTimingFrames = 4;  // GPU timings: a ring of query sets, read kTimingFrames frames later
+    GLuint timing_queries_[kTimingFrames][kGpuTimestamps] = {};
+    u32 timestamps_set_[kTimingFrames] = {};
+    u32 timing_frame_ = 0;
+    f64 gpu_ms_[kGpuTimestamps] = {};
+    bool have_timings_ = false;
     GLint instanced_shadow_mvp_ = -1;
     GLuint joint_ubo_ = 0;
     GLuint param_ubo_ = 0;

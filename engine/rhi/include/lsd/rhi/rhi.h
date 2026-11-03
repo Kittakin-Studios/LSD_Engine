@@ -342,6 +342,12 @@ public:
     virtual void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) = 0;
     virtual void draw_test_triangle(f32 scale, f32 rotation_radians) = 0;
     virtual void end_frame() = 0;  // presents
+    // GPU timings (stat dump): a timestamp at `slot` in this frame's GPU work; gpu_timings gives the
+    // last finished frame's milliseconds from slot 0 to each slot (negative: not set that frame).
+    // Read a frame or two later, so the CPU never waits for them. Backends without it return false.
+    static constexpr u32 kGpuTimestamps = 8;
+    virtual void gpu_timestamp(u32 slot) { (void)slot; }
+    virtual bool gpu_timings(f64 out_ms[kGpuTimestamps]) { (void)out_ms; return false; }
 
     // Saves the current frame (call before end_frame) as a 24-bit BMP. Debug aid; OpenGL only for now.
     virtual bool capture_frame(const char* bmp_path) { (void)bmp_path; return false; }
