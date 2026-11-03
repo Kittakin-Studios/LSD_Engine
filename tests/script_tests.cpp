@@ -4,6 +4,7 @@
 #include "lsd/script/graph.h"
 #include "lsd/script/material_graph.h"
 #include "lsd/script/script.h"
+#include "lsd/world/level.h"
 #include "lsd/world/user_types.h"
 #include "lsd/asset/data_asset.h"
 #include "lsd/game.hpp"
@@ -318,14 +319,37 @@ static void test_native_components() {
         scripts.stop();
         CHECK(health && health->hp == 42.0f && std::strcmp(health->title, "Paladin") == 0);
 
+        // Visual scripts: the typed Get / Set nodes of its fields, and the generic Set Component Value.
+        CHECK(script::register_native_nodes(*module) >= 8);
+        CHECK(script::find_node_def("Cpp_Get_Health_hp") && script::find_node_def("Cpp_Set_Health_armor"));
+        script::Graph g(default_allocator());
+        const u32 start = g.add("OnStart", 0, 0)->id;
+        const u32 set_armor = g.add("Cpp_Set_Health_armor", 200, 0)->id;
+        const u32 read_hp = g.add("Cpp_Get_Health_hp", 0, 200)->id;
+        const u32 set_title = g.add("SetComponentValue", 400, 0)->id;
+        std::snprintf(g.find(set_title)->values[3], 64, "title");
+        std::snprintf(g.find(set_title)->values[4], 64, "Hero");
+        CHECK(g.connect(start, 0, set_armor, 0) && g.connect(read_hp, 0, set_armor, 2) && g.connect(set_armor, 0, set_title, 0));
+        Array<char> lua(default_allocator());
+        char error[256];
+        CHECK(script::compile_graph(g, lua, error, sizeof error));
+        lua.push_back('\0');
+        write(kGraphLua, lua.data());
+        std::snprintf(early.add<Script>(knight)->script, sizeof(Script::script), "graph");
+        script::ScriptSystem graph_scripts;
+        graph_scripts.start(early, {}, path_of, nullptr);
+        graph_scripts.stop();
+        CHECK(health && health->armor == 42 && std::strcmp(health->title, "Hero") == 0);  // armor = hp; title by name
+        script::clear_custom_nodes();
+
         // Saved with the level and read back.
         Array<char> text(heap);
         save_level(early, text);
         World later(heap);
         CHECK(load_level(later, text.data(), text.size()));
-        const Entity again = later.entity_at_slot(knight.slot());
+        const Entity again = later.entity_at_slot(knight.index());
         const auto* loaded = type && again.valid() ? static_cast<const Health*>(later.get(again, *type)) : nullptr;
-        CHECK(loaded && loaded->hp == 42.0f && loaded->armor == 3 && std::strcmp(loaded->title, "Paladin") == 0);
+        CHECK(loaded && loaded->hp == 42.0f && loaded->armor == 42 && std::strcmp(loaded->title, "Hero") == 0);
         delete module;
     }
     CHECK(heap.allocated_bytes() == 0);
@@ -336,7 +360,7 @@ static void test_native_nodes() {
     NativeModule module;
     CHECK(lsd_game_register(native_api(), module.registry()) == 1);
     CHECK(module.find_function("lift_by") && module.find_function("half") && module.find_function("half")->pure);
-    CHECK(register_native_nodes(module) == 2);
+    CHECK(register_native_nodes(module) == 2 + 8);  // two functions, a Get and a Set per Health field
     const NodeDef* lift = find_node_def("Cpp_lift_by");
     CHECK(lift && lift->input_count == 3 && lift->output_count == 2 && std::strcmp(lift->inputs[1].default_value, "self") == 0 &&
           std::strcmp(lift->inputs[2].default_value, "2") == 0 && std::strcmp(lift->category, "Moves") == 0);

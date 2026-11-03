@@ -273,7 +273,10 @@ template <typename T> struct Component {
         static Properties<T> props;
         props.list.clear();
         T::properties(props);
-        static const T defaults{};
+        // Filled at run time: MSVC drops char-array initialisers ("Knight" -> "") from a constant-
+        // initialised `static const T defaults{}`; a T{} made here is right.
+        static T defaults;
+        defaults = T{};
         static lsd_component c{};
         c.name = name;
         c.size = sizeof(T);

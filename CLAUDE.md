@@ -128,7 +128,7 @@ comments for the *why*. A known limitation gets `// shortcut: <limit>, <when to 
 | 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Exit test works |
 | 5 | Content editors: materials + material graphs, animation + anim graphs, audio, particles | Exit test works |
 | 6 | Vertical slice | Done: exit test works on this PC (package runs from another folder); every planned item in, some partial (BACKLOG [~]) |
-| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | C / C++ works (Native Script, Game.dll from Source/, compile + reload in the editor, docs/CODING.md); JavaScript scripts (`.js` on the Script component, `engine/script/src/js.*`), JavaScript and C / C++ nodes (`LSD_NODE`) work; module components planned |
+| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | C / C++ works (Native Script, Game.dll from Source/, compile + reload in the editor, docs/CODING.md); JavaScript scripts (`.js` on the Script component, `engine/script/src/js.*`), JavaScript and C / C++ nodes (`LSD_NODE`), game-code components (`LSD_COMPONENT`) work |
 
 Milestone 6 has: packaging + game mode, save games, sky / height fog / post-process volume, navmesh +
 Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,

@@ -208,6 +208,36 @@ Events cross languages both ways:
   reach the script's `on_event(self, "unlock", other)`.
 - `broadcast` / `lsd.broadcast` / **Call Event** reach everyone; UI `onclick="start_game"` too.
 
+## Your own components
+
+A plain struct can be a component (Unreal: a UCLASS with UPROPERTYs): after the next compile it is in
+Details > Add Component under its category, edited in Details, saved with the level, undoable, and
+read / written by name everywhere a built-in component is.
+
+```cpp
+struct Health {
+    float hp = 100;
+    int32_t armor = 0;
+    bool alive = true;
+    char title[16] = "Knight";
+    static void properties(Properties<Health>& p) {  // what Details shows and levels save
+        p.add("hp", &Health::hp);
+        p.add("armor", &Health::armor);
+        p.add("alive", &Health::alive);
+        p.add("title", &Health::title);
+    }
+};
+LSD_COMPONENT(Health, "Combat")
+```
+
+Fields are `float`, `int32_t`, `bool` and `char[N]` (up to 32 fields, 4 KB). Use it from C++ with
+`lsd_get_number(e, "Health", "hp", &v)` / `lsd_set_number`, from Lua / JavaScript with
+`lsd.get(e, "Health")` and `lsd.set(e, "Health", {hp = 50})`, and from visual scripts with the typed
+**Get Health hp** / **Set Health hp** nodes (a menu category per component) or the generic **Get /
+Set Component Value**, **Has Component**, **Add Component**. In C, fill an `lsd_component` and call
+`lsd_register_component`. Changing a component's fields while the editor runs is reported: restart
+the editor to use the new layout (objects keep the old one until then).
+
 ## Your functions as nodes
 
 Any plain function can become a visual-script node (Unreal: a `BlueprintCallable` /
@@ -307,5 +337,5 @@ These are Lua-only for now (call them from Lua, or send an event to a Lua script
 box / capsule traces and overlaps, splines, curves and data tables, music and mixes, IK, morphs,
 sockets, timelines, blackboards and perception, `set_view`, UI cursor / follow / values, settings,
 key rebinding, text and languages, save games, timers (`after` / `every`), Game Instance data,
-debug spheres / boxes / text. Still planned for C++: your own reflected components in `Source/` and
-keeping script state across a reload ([BACKLOG.md](BACKLOG.md), milestone 7).
+debug spheres / boxes / text. Still planned for C++: keeping script state across a reload
+([BACKLOG.md](BACKLOG.md), milestone 7).

@@ -261,6 +261,16 @@ transform, sorted, and runs of 2+ become one `draw_mesh` with `instance_rows`; s
 vertex / index buffer into `draw_shadow_instances` (an INSTANCED shadow shader in both backends,
 chunks of 256). `FrameMeshes` holds each Static Mesh's world matrix and mesh for the frame.
 
+**Game-code components**: `lsd_api.register_component` copies an `lsd_component` (name, size,
+defaults, `lsd_property` fields) into the NativeModule; `register_native_components` (on every module
+load) builds a `reflect::TypeInfo` with engine-owned properties / defaults and calls
+`world::register_component_type`, which appends to the component list (64 at most). A World made
+earlier gets the pool on first use (`pool_index` adds it; every record already holds 64 slots), so
+Details, JSON save / load, undo, Lua's lsd.get / set and the C API work unchanged. A rebuild that
+changes a type's fields is detected by a signature and reported (pools keep the old stride until a
+restart). `register_native_nodes` adds a typed Get / Set node per field. The C++ layer fills the
+defaults at run time (MSVC drops char-array initialisers of a constant-initialised static).
+
 **Voice chat**: `net::VoiceEncoder` / `VoiceDecoder` wrap Opus (48 kHz mono, 20 ms frames, in-band
 FEC, concealment for lost packets). The client sends kVoice (unreliable) to the server, which routes
 kVoiceOut with the chat rules (never back to the speaker; the voice channel switches are separate

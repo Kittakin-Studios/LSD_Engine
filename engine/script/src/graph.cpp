@@ -75,6 +75,15 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "__addrot($1, $2)", {}},
     {"SetColor", "Set Color", "Rendering", "Recolours an object's Static Mesh (r, g, b from 0 to 1)", {kExecIn, kTarget, {"Color", PinType::Vector, "1,0,0"}}, 0,
      {kExecOut}, 0, "__color($1, $2)", {}},
+    // ---- Any component by name (built-in ones and the game code's own) ----
+    {"GetComponentValue", "Get Component Value", "Components", "A field of an object's component by name (as in Details); none if it has no such component",
+     {kTarget, {"Component", PinType::String, "Health"}, {"Field", PinType::String, "hp"}}, 0, {{"Value", PinType::Any, ""}}, 0, nullptr, {"(lsd.has($0, $1) and lsd.get($0, $1)[$2] or nil)"}},
+    {"SetComponentValue", "Set Component Value", "Components", "Writes one field of an object's component by name", {kExecIn, kTarget, {"Component", PinType::String, "Health"},
+     {"Field", PinType::String, "hp"}, {"Value", PinType::Any, "0"}}, 0, {kExecOut}, 0, "lsd.set($1, $2, {[$3] = $4})", {}},
+    {"HasComponent", "Has Component", "Components", "Does the object have this component?", {kTarget, {"Component", PinType::String, "Health"}}, 0,
+     {{"Has", PinType::Bool, ""}}, 0, nullptr, {"lsd.has($0, $1)"}},
+    {"AddComponent", "Add Component", "Components", "Adds a component (at its defaults) to the object", {kExecIn, kTarget, {"Component", PinType::String, "Health"}}, 0,
+     {kExecOut}, 0, "lsd.add($1, $2)", {}},
     {"Spawn", "Spawn", "Objects", "Creates a prefab, mesh, particle system or shape (Cube, Sphere) by name", {kExecIn, {"Name", PinType::String, "Cube"}, {"Location", PinType::Vector, "0,0,2"}}, 0,
      {kExecOut, {"Spawned", PinType::Entity, ""}}, 0, "local $o1 = __spawn($1, $2)", {}},
     // ---- Vehicles and movers ----

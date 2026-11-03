@@ -31,6 +31,47 @@ const lsd_function* NativeModule::find_function(const char* name) const {
 
 u32 register_native_nodes(const NativeModule& module) {
     u32 registered = 0;
+    // The game code's components: a typed Get and Set node per field (Unreal's Get / Set nodes of a
+    // Blueprint variable), in a menu category named after the component.
+    for (u32 k = 0; k < module.component_count; ++k) {
+        const NativeModule::Component& c = module.components[k];
+        if (std::strpbrk(c.name, "\"\\\n")) continue;  // names go into Lua strings
+        for (u32 i = 0; i < c.field_count; ++i) {
+            const char* field = c.field_names[i];
+            if (std::strpbrk(field, "\"\\\n")) continue;
+            const int t = c.fields[i].type;
+            const PinType type = t == LSD_BOOL ? PinType::Bool : t == LSD_TEXT ? PinType::String : PinType::Float;
+            char id[160], title[160], code[256];
+            std::snprintf(id, sizeof id, "Cpp_Get_%s_%s", c.name, field);
+            std::snprintf(title, sizeof title, "Get %s %s", c.name, field);
+            std::snprintf(code, sizeof code, "(lsd.has($0, \"%s\") and lsd.get($0, \"%s\")[\"%s\"] or nil)", c.name, c.name, field);
+            NodeDef get{};
+            get.id = id;
+            get.title = title;
+            get.category = c.name;
+            get.tooltip = "";
+            get.inputs[0] = {"Target", PinType::Entity, "self"};
+            get.outputs[0] = {field, type, ""};
+            get.code = "";
+            get.output_code[0] = code;
+            register_node(get);
+            std::snprintf(id, sizeof id, "Cpp_Set_%s_%s", c.name, field);
+            std::snprintf(title, sizeof title, "Set %s %s", c.name, field);
+            std::snprintf(code, sizeof code, "lsd.set($1, \"%s\", {[\"%s\"] = $2})", c.name, field);
+            NodeDef set{};
+            set.id = id;
+            set.title = title;
+            set.category = c.name;
+            set.tooltip = "";
+            set.inputs[0] = {"In", PinType::Exec, ""};
+            set.inputs[1] = {"Target", PinType::Entity, "self"};
+            set.inputs[2] = {field, type, t == LSD_BOOL ? "false" : t == LSD_TEXT ? "" : "0"};
+            set.outputs[0] = {"Out", PinType::Exec, ""};
+            set.code = code;
+            register_node(set);
+            registered += 2;
+        }
+    }
     for (u32 i = 0; i < module.function_count; ++i) {
         const lsd_function& f = module.functions[i];
         const char* name = module.function_names[i];
