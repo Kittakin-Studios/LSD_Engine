@@ -18,6 +18,7 @@ public:
 
     // `playing`: in Play (effects with Preview off only run then). dt 0 freezes them (pause).
     void update(const world::World& world, f32 dt, bool playing);
+    void set_meshes(class MeshCache* meshes) { meshes_ = meshes; }  // for the Mesh renderer
     // What particles with World collision hit in Play (null: nothing to hit, Floor still works).
     void set_collider(bool (*segment)(void* user, Vec3 from, Vec3 to, Vec3& point, Vec3& normal), void* user) {
         collider_.segment = segment;
@@ -63,6 +64,7 @@ private:
     u32 finished_count_ = 0;
     u32 particle_count_ = 0;
     particles::ParticleCollider collider_;
+    class MeshCache* meshes_ = nullptr;
 };
 
 } // namespace lsd::editor

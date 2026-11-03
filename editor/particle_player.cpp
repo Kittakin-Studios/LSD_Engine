@@ -1,7 +1,10 @@
 #include "particle_player.h"
 
+#include "mesh_cache.h"
+
 #include "lsd/asset/data_asset.h"
 
+#include <vector>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -152,9 +155,51 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
     const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
     for (u32 k = 0; k < system.emitters.count; ++k) {
+        const particles::ParticleEmitter& emitter = system.emitters[k];
+        if (emitter.renderer == 1) {  // a lit mesh per particle, in one instanced draw
+            const CachedMesh* mesh = meshes_ ? meshes_->get(emitter.mesh) : nullptr;
+            const u32 count = instance.count(k);
+            if (!mesh || !count) continue;
+            static std::vector<f32> rows;
+            rows.clear();
+            const particles::Particle* ps = instance.particles(k);
+            for (u32 i = 0; i < count; ++i) {
+                const particles::Particle& p = ps[i];
+                const f32 t = p.lifetime > 0.0f ? p.age / p.lifetime : 0.0f;
+                const f32 size = particles::size_at(emitter, t);
+                Vec3 position = emitter.local_space ? transform_point(world, p.position) : p.position;
+                Vec3 rotation{0.0f, 0.0f, p.rotation};
+                if (emitter.align_to_velocity && dot(p.velocity, p.velocity) > 1e-6f) {
+                    const Vec3 v = emitter.local_space ? transform_vector(world, p.velocity) : p.velocity;
+                    rotation = {0.0f, -degrees(std::atan2(v.z, std::sqrt(v.x * v.x + v.y * v.y))), degrees(std::atan2(v.y, v.x))};
+                }
+                const Mat4 m = trs(position, rotation, {size, size, size});
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 4; ++c) rows.push_back(m.at(r, c));
+                }
+            }
+            rhi::MeshDraw draw{};
+            draw.vertices = mesh->gpu.vertices;
+            draw.indices = mesh->gpu.indices;
+            draw.index_count = mesh->gpu.index_count;
+            std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+            draw.camera_position[0] = eye.x;
+            draw.camera_position[1] = eye.y;
+            draw.camera_position[2] = eye.z;
+            // shortcut: one colour for every copy (instances carry no colour yet): the start colour.
+            draw.color[0] = emitter.color_start.r;
+            draw.color[1] = emitter.color_start.g;
+            draw.color[2] = emitter.color_start.b;
+            draw.color[3] = 1.0f;
+            draw.roughness = 0.6f;
+            if (emitter.texture[0]) draw.base_color_texture = textures_.get(emitter.texture, true);
+            draw.instance_rows = rows.data();
+            draw.instance_count = count;
+            device.draw_mesh(draw);
+            continue;
+        }
         const u32 n = instance.build_sprites(system, k, world, eye, right, up, vertices_, kMaxVertices);
         if (!n) continue;
-        const particles::ParticleEmitter& emitter = system.emitters[k];
         const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
         device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);
     }

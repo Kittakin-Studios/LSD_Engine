@@ -1716,6 +1716,7 @@ int main(int argc, char** argv) {
         lsd::u32 frame = 0;
         bool valid = false;
     } taa_history[4];
+    effects->set_meshes(&meshes);  // the Mesh renderer
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
     for (int i = 0; i < exec_count; ++i) lsd::console::execute(exec_args[i]);

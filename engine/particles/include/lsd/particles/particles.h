@@ -66,6 +66,11 @@ struct ParticleEmitter {
     List<LifeColorKey, 8> color_over_life;
     LSD_PROPERTY(Edit, Tooltip = "Particles move with the object (a torch carried around) instead of staying where they were born (a smoke trail)")
     bool local_space = false;
+    // Renderer (Niagara's Sprite / Mesh Renderer).
+    LSD_PROPERTY(Edit, Category = "Renderer", Widget = "Choice:Sprite,Mesh", Tooltip = "Sprite: camera-facing quads. Mesh: a lit mesh per particle (rocks, debris, shell casings)")
+    u32 renderer = 0;
+    LSD_PROPERTY(Edit, Category = "Renderer", Widget = "Asset:Mesh", Tooltip = "Mesh renderer: a mesh asset or a shape (Cube, Sphere); Size scales it") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Category = "Renderer", Tooltip = "Mesh renderer: points its +X along the way it flies (otherwise it turns by Spin)") bool align_to_velocity = false;
     // Collision (Niagara's Collision module); world-space emitters only.
     LSD_PROPERTY(Edit, Category = "Collision", Widget = "Choice:None,Floor,World", Tooltip = "Floor: a flat floor at Floor Height (also in the editor). World: what physics collides with (in Play)")
     u32 collision = 0;
