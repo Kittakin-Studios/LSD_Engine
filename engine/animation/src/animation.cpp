@@ -15,6 +15,7 @@
 #include <ozz/animation/runtime/sampling_job.h>
 #include <ozz/animation/runtime/skeleton.h>
 #include <ozz/base/maths/simd_math.h>
+#include <ozz/base/maths/quaternion.h>
 #include <ozz/base/maths/simd_quaternion.h>
 #include <ozz/base/maths/soa_transform.h>
 #include <ufbx.h>
@@ -92,6 +93,59 @@ SkinnedModel::~SkinnedModel() { delete impl; }
 u32 SkinnedModel::joint_count() const { return impl && impl->skeleton ? static_cast<u32>(impl->skeleton->num_joints()) : 0; }
 const char* SkinnedModel::joint_name(u32 joint) const { return impl->skeleton->joint_names()[joint]; }
 i32 SkinnedModel::joint_parent(u32 joint) const { return impl->skeleton->joint_parents()[joint]; }
+
+Rig detect_rig(const char* const* names, u32 count) {
+    auto has = [&](const char* bone) {
+        for (u32 i = 0; i < count; ++i) {
+            if (names[i] && std::strcmp(names[i], bone) == 0) return true;
+        }
+        return false;
+    };
+    if (!has("pelvis") || !has("spine_01") || !has("thigh_l") || !has("head") || !has("upperarm_l")) return Rig::Other;
+    if (has("spine_05")) return has("upperarm_twist_01_l") || has("lowerarm_twist_01_l") ? Rig::UE5Manny : Rig::UE5MannySimple;
+    if (has("spine_03")) return Rig::UE4Mannequin;
+    return Rig::Other;
+}
+
+const char* rig_name(Rig rig) {
+    switch (rig) {
+        case Rig::UE4Mannequin: return "UE4 Mannequin";
+        case Rig::UE5Manny: return "UE5 Manny";
+        case Rig::UE5MannySimple: return "UE5 Manny (Simple)";
+        default: return "Other";
+    }
+}
+
+const char* rig_source_bone(Rig target, Rig source, const char* bone) {
+    const bool ue5_target = target == Rig::UE5Manny || target == Rig::UE5MannySimple;
+    const bool ue5_source = source == Rig::UE5Manny || source == Rig::UE5MannySimple;
+    struct Pair {
+        const char* target;
+        const char* source;
+    };
+    // UE4's three spine bones spread over UE5's five (and back); the neck likewise.
+    static const Pair kFromUe4[] = {{"spine_02", "spine_02"}, {"spine_03", "spine_02"}, {"spine_04", "spine_03"}, {"spine_05", "spine_03"}, {"neck_02", "neck_01"}};
+    static const Pair kFromUe5[] = {{"spine_02", "spine_03"}, {"spine_03", "spine_05"}, {"neck_01", "neck_02"}};
+    const Pair* pairs = nullptr;
+    usize n = 0;
+    if (ue5_target && source == Rig::UE4Mannequin) {
+        pairs = kFromUe4;
+        n = sizeof kFromUe4 / sizeof kFromUe4[0];
+    } else if (target == Rig::UE4Mannequin && ue5_source) {
+        pairs = kFromUe5;
+        n = sizeof kFromUe5 / sizeof kFromUe5[0];
+    }
+    for (usize i = 0; i < n; ++i) {
+        if (std::strcmp(pairs[i].target, bone) == 0) return pairs[i].source;
+    }
+    return bone;
+}
+
+Rig model_rig(const SkinnedModel& model) {
+    std::vector<const char*> names(model.joint_count());
+    for (u32 j = 0; j < model.joint_count(); ++j) names[j] = model.joint_name(j);
+    return detect_rig(names.data(), static_cast<u32>(names.size()));
+}
 
 i32 SkinnedModel::find_joint(const char* name) const {
     if (!impl || !impl->skeleton || !name) return -1;
@@ -356,11 +410,60 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
             rest[j].scale = ozz::math::Float3(sx[lane], sy[lane], sz[lane]);
         }
     }
+    // Which bone of the file drives each joint: the same name, or across UE4 / UE5 rigs its counterpart.
+    std::vector<const char*> file_names;
+    for (usize i = 0; i < scene->nodes.count; ++i) file_names.push_back(scene->nodes.data[i]->name.data);
+    const Rig source_rig = detect_rig(file_names.data(), static_cast<u32>(file_names.size()));
+    const Rig target_rig = model_rig(model);
     std::vector<const ufbx_node*> nodes(joints, nullptr);
     for (u32 j = 0; j < joints; ++j) {
         if (std::strcmp(skeleton.joint_names()[j], "Root") == 0) continue;  // keeps the model's conversion and scale
-        nodes[j] = ufbx_find_node(scene, skeleton.joint_names()[j]);
+        nodes[j] = ufbx_find_node(scene, rig_source_bone(target_rig, source_rig, skeleton.joint_names()[j]));
     }
+    // Retarget when the rigs differ or a driving bone rests differently (another character's
+    // animation): copy each bone's world-space change from its rest pose instead of its local values.
+    namespace om = ozz::math;
+    const auto parents = skeleton.joint_parents();
+    std::vector<om::Quaternion> target_rest_world(joints);
+    std::vector<om::Float3> target_rest_position(joints), target_rest_scale(joints);
+    for (u32 j = 0; j < joints; ++j) {
+        const int p = parents[j];
+        if (p < 0) {
+            target_rest_world[j] = rest[j].rotation;
+            target_rest_position[j] = rest[j].translation;
+            target_rest_scale[j] = rest[j].scale;
+        } else {
+            target_rest_world[j] = target_rest_world[p] * rest[j].rotation;
+            target_rest_position[j] = target_rest_position[p] + om::TransformVector(target_rest_world[p], target_rest_scale[p] * rest[j].translation);
+            target_rest_scale[j] = target_rest_scale[p] * rest[j].scale;
+        }
+    }
+    auto world_rotation = [](const ufbx_node* node, const ufbx_anim* anim, f64 time) {
+        om::Quaternion r = om::Quaternion::identity();
+        for (const ufbx_node* n = node; n; n = n->parent) r = to_ozz(anim ? ufbx_evaluate_transform(anim, n, time) : n->local_transform).rotation * r;
+        return r;
+    };
+    bool retarget = source_rig != target_rig && source_rig != Rig::Other && target_rig != Rig::Other &&
+                    !((source_rig == Rig::UE5Manny || source_rig == Rig::UE5MannySimple) && (target_rig == Rig::UE5Manny || target_rig == Rig::UE5MannySimple));
+    std::vector<om::Quaternion> source_rest_world(joints, om::Quaternion::identity());
+    for (u32 j = 0; j < joints; ++j) {
+        if (!nodes[j]) continue;
+        source_rest_world[j] = world_rotation(nodes[j], nullptr, 0.0);
+        const om::Quaternion local = to_ozz(nodes[j]->local_transform).rotation;
+        const f32 d = std::fabs(local.x * rest[j].rotation.x + local.y * rest[j].rotation.y + local.z * rest[j].rotation.z + local.w * rest[j].rotation.w);
+        if (d < 0.996f) retarget = true;  // more than about 10 degrees apart at rest
+    }
+    // The pelvis moves (walks, crouches) scaled by how much taller the target stands.
+    f32 height_ratio = 1.0f;
+    i32 pelvis = -1;
+    for (u32 j = 0; j < joints && pelvis < 0; ++j) {
+        if (std::strcmp(skeleton.joint_names()[j], "pelvis") == 0) pelvis = static_cast<i32>(j);
+    }
+    if (pelvis >= 0 && nodes[static_cast<u32>(pelvis)]) {
+        const f64 source_height = nodes[static_cast<u32>(pelvis)]->node_to_world.m23;
+        if (source_height > 1e-3) height_ratio = target_rest_position[static_cast<u32>(pelvis)].z / static_cast<f32>(source_height);
+    }
+    if (retarget) LSD_LOG_INFO("anim", "%s: retargeting %s animation onto a %s", path, rig_name(source_rig), rig_name(target_rig));
     u32 written = 0;
     for (usize s = 0; s < scene->anim_stacks.count && written < capacity; ++s) {
         const ufbx_anim_stack* stack = scene->anim_stacks.data[s];
@@ -370,13 +473,39 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
         raw.duration = static_cast<f32>(length);
         raw.tracks.resize(joints);
         const u32 frames = static_cast<u32>(std::ceil(length * 30.0)) + 1;
+        std::vector<om::Transform> retargeted;  // frame-major, when retargeting
+        if (retarget) {
+            retargeted.resize(static_cast<usize>(frames) * joints);
+            std::vector<om::Quaternion> world(joints);
+            for (u32 f = 0; f < frames; ++f) {
+                const f64 t = begin + (f + 1 == frames ? length : static_cast<f64>(f) / 30.0);
+                for (u32 j = 0; j < joints; ++j) {
+                    const int p = parents[j];
+                    const om::Quaternion parent_world = p < 0 ? om::Quaternion::identity() : world[p];
+                    om::Transform local = rest[j];
+                    if (nodes[j]) {
+                        const om::Quaternion change = world_rotation(nodes[j], stack->anim, t) * om::Conjugate(source_rest_world[j]);
+                        world[j] = change * target_rest_world[j];
+                        local.rotation = om::Conjugate(parent_world) * world[j];
+                        if (static_cast<i32>(j) == pelvis || std::strcmp(skeleton.joint_names()[j], "root") == 0) {
+                            const om::Float3 moved = to_ozz(ufbx_evaluate_transform(stack->anim, nodes[j], t)).translation - to_ozz(nodes[j]->local_transform).translation;
+                            local.translation = rest[j].translation + moved * height_ratio;
+                        }
+                    } else {
+                        world[j] = parent_world * rest[j].rotation;  // no driver (twist and helper bones): stays at rest under its parent
+                    }
+                    retargeted[static_cast<usize>(f) * joints + j] = local;
+                }
+            }
+        }
         for (u32 j = 0; j < joints; ++j) {
             auto& track = raw.tracks[j];
             ozz::math::Quaternion previous = rest[j].rotation;
             for (u32 f = 0; f < frames; ++f) {
                 const f64 t = f + 1 == frames ? length : static_cast<f64>(f) / 30.0;
                 ozz::math::Transform local = rest[j];
-                if (nodes[j]) local = to_ozz(ufbx_evaluate_transform(stack->anim, nodes[j], begin + t));
+                if (retarget) local = retargeted[static_cast<usize>(f) * joints + j];
+                else if (nodes[j]) local = to_ozz(ufbx_evaluate_transform(stack->anim, nodes[j], begin + t));
                 // Keep neighbouring rotations in the same hemisphere so interpolation takes the short way.
                 const f32 d = local.rotation.x * previous.x + local.rotation.y * previous.y + local.rotation.z * previous.z + local.rotation.w * previous.w;
                 if (d < 0.0f) local.rotation = ozz::math::Quaternion(-local.rotation.x, -local.rotation.y, -local.rotation.z, -local.rotation.w);

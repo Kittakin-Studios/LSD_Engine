@@ -236,7 +236,27 @@ static void morph_tests(const std::string& data) {
     if (scene) ufbx_free_scene(scene);
 }
 
+// Unreal rigs by bone names; UE4 <-> UE5 spine and neck pairings.
+static void rig_tests() {
+    using anim::Rig;
+    const char* ue4[] = {"root", "pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head", "thigh_l", "upperarm_l", "upperarm_twist_01_l"};
+    const char* manny[] = {"root", "pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05", "neck_01", "neck_02", "head", "thigh_l", "upperarm_l", "upperarm_twist_01_l"};
+    const char* simple[] = {"root", "pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05", "neck_01", "neck_02", "head", "thigh_l", "upperarm_l", "cc_base_l_eye"};
+    const char* other[] = {"Hips", "Spine", "Head", "LeftUpLeg"};
+    CHECK(anim::detect_rig(ue4, 10) == Rig::UE4Mannequin);
+    CHECK(anim::detect_rig(manny, 13) == Rig::UE5Manny);
+    CHECK(anim::detect_rig(simple, 13) == Rig::UE5MannySimple);  // a Character Creator export with UE5 names, no twist bones
+    CHECK(anim::detect_rig(other, 4) == Rig::Other);
+    CHECK(std::strcmp(anim::rig_source_bone(Rig::UE5Manny, Rig::UE4Mannequin, "spine_05"), "spine_03") == 0);
+    CHECK(std::strcmp(anim::rig_source_bone(Rig::UE5MannySimple, Rig::UE4Mannequin, "neck_02"), "neck_01") == 0);
+    CHECK(std::strcmp(anim::rig_source_bone(Rig::UE4Mannequin, Rig::UE5Manny, "spine_03"), "spine_05") == 0);
+    CHECK(std::strcmp(anim::rig_source_bone(Rig::UE5Manny, Rig::UE5MannySimple, "spine_05"), "spine_05") == 0);  // same family: by name
+    CHECK(std::strcmp(anim::rig_source_bone(Rig::UE5Manny, Rig::UE4Mannequin, "hand_l"), "hand_l") == 0);
+    CHECK(std::strcmp(anim::rig_name(Rig::UE5MannySimple), "UE5 Manny (Simple)") == 0);
+}
+
 int main() {
+    rig_tests();
     graph_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
     morph_tests(data);

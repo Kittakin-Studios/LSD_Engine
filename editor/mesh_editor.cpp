@@ -252,6 +252,12 @@ void draw_mesh_editor(EditorState& s) {
     }
     if (skinned) {
         ImGui::SeparatorText("Skeleton");
+        {  // which humanoid rig: animations from the other Unreal rigs retarget onto it
+            const anim::Rig rig = anim::model_rig(*skinned->model);
+            ImGui::Text("Rig: %s", anim::rig_name(rig));
+            ImGui::SetItemTooltip(rig == anim::Rig::Other ? "Not an Unreal-named rig: animations match bones by name only"
+                                                          : "Animations made on UE4 Mannequin, UE5 Manny or Manny (Simple) play on it (retargeted when the rigs or rest poses differ)");
+        }
         ImGui::BeginChild("bones", ImVec2(0, 200), ImGuiChildFlags_Borders);
         bone_tree(*skinned->model, -1);
         ImGui::EndChild();

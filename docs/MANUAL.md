@@ -906,6 +906,22 @@ vanish sooner than houses). For rigged meshes: the bone
 tree (click a bone to see it in the preview) and **Sockets**: select a bone, **+ Socket**, move it
 with Offset / Turn, Save. Then give a prop **Attach To Socket** (the character's object name and
 the socket) to carry it, or ask a script: `lsd.socket(e, "Hand_R")` -> x, y, z, fx, fy, fz.
+A bone's name works wherever a socket's does (Attach To Socket, a Camera's Follow Bone).
+
+**Unreal rigs** (the Mesh Editor's Skeleton section shows **Rig**): characters with Unreal's bone
+names are recognised, whoever made them (Character Creator, Mixamo-to-UE exports...):
+
+| Rig | Recognised by |
+| --- | --- |
+| UE4 Mannequin | `pelvis`, `spine_01`–`spine_03`, `neck_01` |
+| UE5 Manny | `spine_01`–`spine_05`, `neck_01`–`neck_02`, twist bones (`upperarm_twist_01_l`...) |
+| UE5 Manny (Simple) | the UE5 bones without twist bones (extra helper bones such as `cc_base_*` are fine) |
+
+An animation made on any of them plays on the others (Unreal's IK Retargeter, done on import):
+when the rigs or their rest poses differ, each bone copies its rotation as a change from its rest
+pose, UE4's three spine bones drive UE5's five (and back), bones with no driver (twist, helper)
+stay at rest under their parent, and the pelvis's movement is scaled by the height difference. The
+Output Log says when a clip is retargeted. Same-rig animations play unchanged.
 
 Drop a rigged FBX into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
 same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip** (Details
