@@ -123,7 +123,7 @@ bool save_graph_file(const Graph& graph, const char* path);
 bool load_graph_file(Graph& graph, const char* path);
 
 // Lua for the graph. On a problem (unknown node, exec loop, an event used twice) returns false
-// with a message naming the node.
+// with every problem, a line each naming its node: "<title> (node <id>): <what>".
 bool compile_graph(const Graph& graph, Array<char>& lua, char* error, usize error_capacity);
 // Reads a .lsdgraph and writes the Lua next to where the game loads it.
 bool compile_graph_file(const char* graph_path, const char* lua_path, char* error, usize error_capacity);

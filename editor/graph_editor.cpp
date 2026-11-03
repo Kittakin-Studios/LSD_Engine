@@ -72,7 +72,7 @@ struct GraphWindow {
     i32 drop_variable = -1;     // a variable dropped on the canvas, waiting for Get / Set
     ImVec2 drop_at;
     ImVec2 view_size{800.0f, 600.0f};  // the canvas on screen last frame (new nodes go to its middle)
-    char message[256] = "";
+    char message[2048] = "";  // a compile's errors: one line each
     bool message_is_error = false;
     // Material Graph preview: recompiled a moment after the graph last changed.
     rhi::Device* device = nullptr;
@@ -387,7 +387,7 @@ void save_and_compile(EditorState& s) {
     }
     std::error_code error;
     std::filesystem::create_directories(kGraphLuaDir, error);
-    char problem[256];
+    char problem[2048];
     if (script::compile_graph_file(w.path, lua_path_for(w.guid).c_str(), problem, sizeof problem)) {
         std::snprintf(w.message, sizeof w.message, "Saved and compiled");
         w.message_is_error = false;
@@ -396,7 +396,7 @@ void save_and_compile(EditorState& s) {
         w.message_is_error = true;
         LSD_LOG_ERROR("graph", "%s: %s", w.name, problem);
     }
-    std::snprintf(s.status, sizeof s.status, "%s: %s", w.name, w.message);
+    std::snprintf(s.status, sizeof s.status, "%s: %.*s", w.name, static_cast<int>(std::strcspn(w.message, "\n")), w.message);
 }
 
 void node_menu(GraphWindow& w) {
@@ -1089,7 +1089,26 @@ void draw_graph_editor(EditorState& s) {
         }
         ImGui::SameLine();
     }
-    if (w.message[0]) ImGui::TextColored(w.message_is_error ? ImVec4(1, 0.4f, 0.4f, 1) : ImVec4(0.5f, 1, 0.5f, 1), "%s", w.message);
+    if (w.message[0] && w.message_is_error && std::strchr(w.message, '\n')) {  // Compiler Results: a line per problem, click to go to its node
+        ImGui::NewLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.4f, 0.4f, 1));
+        int k = 0;
+        for (const char* line = w.message; *line; ++k) {
+            const char* end = std::strchr(line, '\n');
+            const std::string text(line, end ? end : line + std::strlen(line));
+            line = end ? end + 1 : line + text.size();
+            ImGui::PushID(k);
+            const char* at = std::strstr(text.c_str(), "(node ");
+            if (ImGui::Selectable(text.c_str()) && at) {
+                if (const GraphNode* n = w.graph->find(static_cast<u32>(std::strtoul(at + 6, nullptr, 10)))) {
+                    select_only(w, n->id);
+                    focus_node(w, *n);
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::PopStyleColor();
+    } else if (w.message[0]) ImGui::TextColored(w.message_is_error ? ImVec4(1, 0.4f, 0.4f, 1) : ImVec4(0.5f, 1, 0.5f, 1), "%s", w.message);
     else ImGui::TextDisabled("Right-click: add node. Drag from a pin: wire. Middle / right drag: pan. Wheel: zoom. Drag on empty space: select. Ctrl+C / V / D / Z / Y.");
 
     const bool material = w.kind == script::GraphKind::Material;

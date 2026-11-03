@@ -496,12 +496,16 @@ struct Compiler {
     usize error_capacity;
     bool ok = true;
 
+    // Every problem, one line each (Unreal's Compiler Results): "<title> (node <id>): <what>".
     void fail(const GraphNode& node, const char* what) {
-        if (ok) {
-            const NodeDef* def = find_node_def(node.type);
-            std::snprintf(error, error_capacity, "%s (node %u): %s", def ? def->title : node.type, node.id, what);
-        }
+        if (ok && error_capacity) error[0] = '\0';
         ok = false;
+        const NodeDef* def = find_node_def(node.type);
+        char line[300];
+        std::snprintf(line, sizeof line, "%s (node %u): %s\n", def ? def->title : node.type, node.id, what);
+        if (std::strstr(error, line)) return;  // the same node seen again through another wire
+        const usize used = std::strlen(error);
+        if (used + std::strlen(line) < error_capacity) std::memcpy(error + used, line, std::strlen(line) + 1);
     }
 
     // Lua for input `pin` of a node: the wire's source, or the typed value.

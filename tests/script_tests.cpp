@@ -200,6 +200,12 @@ static void test_graph() {
     CHECK(g.link_into(b, 0) == nullptr);
     g.add("OnStart", 0, 900);
     CHECK(!compile_graph(g, lua, error, sizeof error) && std::strstr(error, "twice"));
+    // Every problem at once, a line each (Compiler Results).
+    g.add("OnStart", 0, 1100);
+    CHECK(!compile_graph(g, lua, error, sizeof error));
+    int lines = 0;
+    for (const char* c = error; *c; ++c) lines += *c == '\n';
+    CHECK(lines == 2 && std::strstr(error, "(node "));
 }
 
 static void write(const char* path, const char* text);
