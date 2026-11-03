@@ -120,6 +120,8 @@ docs/               MANUAL, ARCHITECTURE, EXAMPLES, BACKLOG, ROADMAP, CLEAN_ROOM
 Conventions: namespace `lsd`, snake_case functions, PascalCase types, systems take an `Allocator&`,
 no STL in hot paths (editor-time code may use it, marked `shortcut:`), `LSD_LOG_*` macros, one-line
 comments for the *why*. A known limitation gets `// shortcut: <limit>, <when to upgrade>`.
+Hover help: every property shown in Details has a `Tooltip`, every component an `LSD_STRUCT(... Tooltip = ...)`,
+every editor button / menu item / checkbox a tooltip (`with_tip(ImGui::Button(...), "...")` from `editor/tips.h`).
 
 ## Status
 

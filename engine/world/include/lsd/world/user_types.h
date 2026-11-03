@@ -8,21 +8,21 @@ namespace lsd::world {
 LSD_STRUCT()
 struct EnumEntry {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char name[48] = "";
+    LSD_PROPERTY(Edit, Tooltip = "One of the enum's values") char name[48] = "";
 };
 
 // A list of names; lsd.enum("E_Weapon") -> {Sword = 0, Bow = 1, [0] = "Sword", [1] = "Bow"}.
 LSD_STRUCT(Category = "Data")
 struct UserEnum {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) List<EnumEntry, 64> values;
+    LSD_PROPERTY(Edit, Tooltip = "The values to pick from (Unreal's Enumeration)") List<EnumEntry, 64> values;
 };
 
 LSD_STRUCT()
 struct StructField {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char name[48] = "";
-    LSD_PROPERTY(Edit, Widget = "Choice:Number,Boolean,Text,Vector") u32 type = 0;
+    LSD_PROPERTY(Edit, Tooltip = "The field's name") char name[48] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Number,Boolean,Text,Vector", Tooltip = "What the field holds") u32 type = 0;
     LSD_PROPERTY(Edit, Tooltip = "Number: 1.5, Boolean: true, Text: anything, Vector: 1, 2, 3") char default_value[64] = "";
 };
 
@@ -30,14 +30,14 @@ struct StructField {
 LSD_STRUCT(Category = "Data")
 struct UserStruct {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) List<StructField, 32> fields;
+    LSD_PROPERTY(Edit, Tooltip = "The struct's fields (Unreal's Structure)") List<StructField, 32> fields;
 };
 
 LSD_STRUCT()
 struct NodePin {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char name[32] = "";
-    LSD_PROPERTY(Edit, Widget = "Choice:Exec,Number,Boolean,Text,Vector,Object") u32 type = 1;
+    LSD_PROPERTY(Edit, Tooltip = "The pin's name on the node") char name[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Exec,Number,Boolean,Text,Vector,Object", Tooltip = "What the pin carries: Exec (white, the order things run), or a value") u32 type = 1;
     LSD_PROPERTY(Edit, Tooltip = "Inputs: the value when nothing is wired (Object: self)") char default_value[48] = "";
 };
 
@@ -48,10 +48,10 @@ struct NodePin {
 LSD_STRUCT(Category = "Data")
 struct ScriptNode {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char category[32] = "Custom";
-    LSD_PROPERTY(Edit) char tooltip[128] = "";
-    LSD_PROPERTY(Edit) List<NodePin, 6> inputs;
-    LSD_PROPERTY(Edit) List<NodePin, 4> outputs;
+    LSD_PROPERTY(Edit, Tooltip = "Where the node is listed in the node menu") char category[32] = "Custom";
+    LSD_PROPERTY(Edit, Tooltip = "The help shown when hovering the node") char tooltip[128] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The node's input pins") List<NodePin, 6> inputs;
+    LSD_PROPERTY(Edit, Tooltip = "The node's output pins") List<NodePin, 4> outputs;
     LSD_PROPERTY(Edit, Tooltip = "Exec nodes: Lua with $1.. (inputs), $o0.. (outputs), #0 (what comes next)") char code[512] = "";
     LSD_PROPERTY(Edit, Tooltip = "Pure nodes: the first output's Lua expression, e.g. ($1 * $2)") char expression[256] = "";
 };

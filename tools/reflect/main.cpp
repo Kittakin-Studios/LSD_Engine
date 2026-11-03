@@ -105,6 +105,7 @@ struct Struct {
     std::string qualified_name;  // ns::Name
     unsigned flags = 0;
     std::string category = "\"\"";
+    std::string tooltip = "\"\"";
     bool has_generated = false;
     int line = 0;
     std::vector<Field> fields;
@@ -221,12 +222,13 @@ private:
     void parse_struct(const std::vector<Arg>& args, int line) {
         Struct s;
         s.line = line;
-        check_args(args, {"Component", "Color", "Vector"}, {"Category"}, "LSD_STRUCT");
+        check_args(args, {"Component", "Color", "Vector"}, {"Category", "Tooltip"}, "LSD_STRUCT");
         for (const Arg& a : args) {
             if (a.key == "Component") s.flags |= 1u;
             if (a.key == "Color") s.flags |= 2u;
             if (a.key == "Vector") s.flags |= 4u;
             if (a.key == "Category") s.category = a.value;
+            if (a.key == "Tooltip") s.tooltip = a.value;
         }
         if (!is("struct") && !is("class")) { error(peek().line, "LSD_STRUCT must be followed by a struct"); return; }
         ++i_;
@@ -383,7 +385,7 @@ std::string generate(const std::vector<Struct>& structs, const std::string& incl
         o << "    static const Self defaults = Self();\n";
         o << "    static const ::lsd::reflect::TypeInfo info{\"" << s.qualified_name.substr(s.qualified_name.rfind(':') == std::string::npos ? 0 : s.qualified_name.rfind(':') + 1)
           << "\", LSD_ID(\"" << s.qualified_name << "\"), sizeof(Self), alignof(Self), " << s.flags << "u, "
-          << s.category << ", " << (s.fields.empty() ? "nullptr" : "properties") << ", " << s.fields.size() << "u, &defaults};\n";
+          << s.category << ", " << (s.fields.empty() ? "nullptr" : "properties") << ", " << s.fields.size() << "u, &defaults, " << s.tooltip << "};\n";
         o << "    return info;\n}\n";
     }
     return o.str();

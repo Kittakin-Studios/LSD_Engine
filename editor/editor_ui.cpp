@@ -1,4 +1,5 @@
 #include "editor_ui.h"
+#include "tips.h"
 #include "graph_editor.h"
 #include "lighting.h"
 #include "material_cache.h"
@@ -117,9 +118,9 @@ void draw_scatter(world::InstancedStaticMesh& ism) {
     static float radius = 10.0f, min_scale = 0.8f, max_scale = 1.2f;
     ImGui::SeparatorText("Scatter");
     ImGui::DragInt("Count", &count, 1.0f, 1, static_cast<int>(ism.instances.capacity()));
-    ImGui::DragFloat("Radius (m)", &radius, 0.1f, 0.1f, 1000.0f);
+    with_tip(ImGui::DragFloat("Radius (m)", &radius, 0.1f, 0.1f, 1000.0f), "Radius around the object in which Scatter places copies");
     ImGui::DragFloatRange2("Scale", &min_scale, &max_scale, 0.01f, 0.05f, 10.0f);
-    if (ImGui::Button("Scatter")) {  // the edit is undoable like any Details change
+    if (with_tip(ImGui::Button("Scatter"), "Places Count copies at random inside Radius, on the ground")) {  // the edit is undoable like any Details change
         u32 seed = 0x9E3779B9u ^ static_cast<u32>(ism.instances.count * 7919u + static_cast<u32>(count));
         auto random = [&seed] {
             seed ^= seed << 13;
@@ -139,7 +140,7 @@ void draw_scatter(world::InstancedStaticMesh& ism) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear")) ism.instances.count = 0;
+    if (with_tip(ImGui::Button("Clear"), "Removes every copy")) ism.instances.count = 0;
 }
 
 // Per-object values over a Lua or C / C++ script's defaults (name, default as text); only changed
@@ -205,7 +206,7 @@ void draw_property_overrides(const std::vector<std::pair<std::string, std::strin
         }
         if (own) {
             ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) {  // back to the script's default
+            if (with_tip(ImGui::SmallButton("Reset"), "Back to the value the script itself sets")) {  // back to the script's default
                 changed = fallback;
                 edited_now = true;
             }
@@ -1081,12 +1082,12 @@ void draw_workspace_tabs(EditorState& s) {
                     }
                     if (tooltip) ImGui::SetItemTooltip("%s", tooltip);
                     if (ImGui::BeginPopupContextItem()) {
-                        if (ImGui::MenuItem("Reset to Default")) {  // forget its saved arrangement
+                        if (with_tip(ImGui::MenuItem("Reset to Default"), "Puts this workspace's panels back where they started")) {  // forget its saved arrangement
                             std::error_code ec;
                             std::filesystem::remove(workspace_file(name), ec);
                             if (active) s.reset_layout = true;
                         }
-                        if (custom && !active && ImGui::MenuItem("Delete")) {
+                        if (custom && !active && with_tip(ImGui::MenuItem("Delete"), "Removes this workspace tab")) {
                             for (u32 k = 0; k < s.settings.workspaces.count; ++k) {
                                 if (std::strcmp(s.settings.workspaces[k].name, name) == 0) s.settings.workspaces.remove(k);
                             }
@@ -1103,9 +1104,9 @@ void draw_workspace_tabs(EditorState& s) {
                 if (ImGui::BeginPopup("New Workspace")) {
                     static char name[32] = "My Workspace";
                     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-                    const bool enter = ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
+                    const bool enter = with_tip(ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue), "Name of the new workspace tab");
                     const bool taken = find_workspace_def(s.settings, name) != nullptr || std::strcmp(name, s.settings.workspace) == 0;
-                    if ((ImGui::Button("Create") || enter) && asset::valid_name(name) && !taken && s.settings.workspaces.count < s.settings.workspaces.capacity()) {
+                    if ((with_tip(ImGui::Button("Create"), "Makes the workspace from the current arrangement of panels") || enter) && asset::valid_name(name) && !taken && s.settings.workspaces.count < s.settings.workspaces.capacity()) {
                         const WorkspaceDef* base = find_workspace_def(s.settings, s.settings.workspace);
                         CustomWorkspace c;
                         std::snprintf(c.name, sizeof c.name, "%s", name);
@@ -1247,6 +1248,43 @@ bool toggle_button(const char* label, bool on) {
     const bool clicked = ImGui::Button(label);
     if (on) ImGui::PopStyleColor();
     return clicked;
+}
+
+const char* place_tip(const char* label) {  // what each Place item is, for its tooltip
+    if (std::strcmp(label, "Cube") == 0) return "A 1 m box: blockout, walls, platforms";
+    if (std::strcmp(label, "Sphere") == 0) return "A 1 m ball";
+    if (std::strcmp(label, "Plane") == 0) return "A flat 1 m square: floors, ground";
+    if (std::strcmp(label, "Player Start") == 0) return "Where the player appears when Play starts (without a Character)";
+    if (std::strcmp(label, "Character") == 0) return "A walking player: capsule, WASD / mouse controls, jump, crouch; add a Skeletal Mesh and Camera as children";
+    if (std::strcmp(label, "Blocking Volume") == 0) return "An invisible wall the player and physics cannot pass";
+    if (std::strcmp(label, "Kill Volume") == 0) return "The player dies (respawns) on entering it: pits, lava";
+    if (std::strcmp(label, "Trigger Volume") == 0) return "Sends overlap events to scripts when something enters or leaves it";
+    if (std::strcmp(label, "Spline") == 0) return "A curve you shape with points: paths, rails, routes for movers and AI";
+    if (std::strcmp(label, "Sound Emitter") == 0) return "Plays a sound from this spot, louder when near";
+    if (std::strcmp(label, "Particle Effect") == 0) return "Plays a Particle System here: fire, smoke, sparks";
+    if (std::strcmp(label, "Sky") == 0) return "The sky gradient and sun disc (follows the Directional Light)";
+    if (std::strcmp(label, "Height Fog") == 0) return "Fog that thickens lower down and with distance";
+    if (std::strcmp(label, "Post Process Volume") == 0) return "The look inside its box (or everywhere): exposure, bloom, colour grading, depth of field";
+    if (std::strcmp(label, "Lightmass Importance Volume") == 0) return "Where Build Lighting bakes light probes in detail";
+    if (std::strcmp(label, "Decal") == 0) return "Projects an image onto surfaces in its box: stains, signs, cracks";
+    if (std::strcmp(label, "Nav Mesh Bounds") == 0) return "Where AI navigation is built (press P to see it)";
+    if (std::strcmp(label, "Nav Modifier Volume") == 0) return "AI paths go round its box";
+    if (std::strcmp(label, "Cull Distance Volume") == 0) return "Hides small meshes inside it when far away (faster frames)";
+    if (std::strcmp(label, "Water Volume") == 0) return "Water the Character swims in";
+    if (std::strcmp(label, "Nav Agent") == 0) return "An AI walker that paths around the level (Move To, Behavior Trees)";
+    if (std::strcmp(label, "AI Controller") == 0) return "An AI with a Behavior Tree, sight and hearing";
+    if (std::strcmp(label, "Audio Volume") == 0) return "Reverb inside its box: rooms, caves, halls";
+    if (std::strcmp(label, "Directional Light") == 0) return "Sunlight: lights everything from one direction, casts shadows; turn it to set the time of day";
+    if (std::strcmp(label, "Point Light") == 0) return "A bulb: light in every direction from a point";
+    if (std::strcmp(label, "Spot Light") == 0) return "A cone of light: torches, street lamps, stage lights";
+    if (std::strcmp(label, "Sky Light") == 0) return "Soft ambient light from the sky and ground";
+    if (std::strcmp(label, "Camera") == 0) return "A camera to look through: cutscenes, fixed views, or the player's view as a Character's child";
+    if (std::strcmp(label, "Empty") == 0) return "An object with only a transform: a parent to group others, a script holder, a marker";
+    if (std::strcmp(label, "Sub Level") == 0) return "Places another level here; it can stream in and out by distance";
+    if (std::strcmp(label, "Drivable Vehicle") == 0) return "A car the player enters (E) and drives with WASD, Shift boost, Ctrl brake";
+    if (std::strcmp(label, "Transport (Ride)") == 0) return "A train, lift or boat the player rides along its route without driving";
+    if (std::strcmp(label, "Moving Mesh (Mover)") == 0) return "A mesh that moves by itself: a direction, back and forth, or along a spline; on a trigger or a timer";
+    return "";
 }
 
 // ---- Viewport ----
@@ -2042,7 +2080,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
         static const char* const kViewKeys[] = {"Alt+G", "Alt+J", "Alt+H", "Alt+K"};
         static const char* const kModes[] = {"Lit", "Unlit", "Wireframe", "Normals", "Lighting Only", "Collision", "Overdraw"};
         static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2", "", "Alt+6", "Alt+C", "Alt+0"};
-        if (ImGui::Button(kViews[static_cast<int>(s.camera.view)])) ImGui::OpenPopup("ViewMenu");
+        if (with_tip(ImGui::Button(kViews[static_cast<int>(s.camera.view)]), "Camera view: Perspective, or flat Top / Front / Right views (keys in the menu)")) ImGui::OpenPopup("ViewMenu");
         if (ImGui::BeginPopup("ViewMenu")) {
             for (int v = 0; v < 4; ++v) {
                 if (ImGui::MenuItem(kViews[v], kViewKeys[v], static_cast<int>(s.camera.view) == v)) set_view(s, static_cast<ViewType>(v));
@@ -2050,7 +2088,7 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(kModes[static_cast<int>(s.view_mode)])) ImGui::OpenPopup("ModeMenu");
+        if (with_tip(ImGui::Button(kModes[static_cast<int>(s.view_mode)]), "View mode: Lit, Unlit, Wireframe, Normals, Lighting Only, Collision shapes, Overdraw (how often each pixel is drawn)")) ImGui::OpenPopup("ModeMenu");
         if (ImGui::BeginPopup("ModeMenu")) {
             for (int m = 0; m < 7; ++m) {
                 if (ImGui::MenuItem(kModes[m], kModeKeys[m], static_cast<int>(s.view_mode) == m)) s.view_mode = static_cast<ViewMode>(m);
@@ -2065,30 +2103,30 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             return;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Show")) ImGui::OpenPopup("ShowMenu");
+        if (with_tip(ImGui::Button("Show"), "What the viewport draws: grid, gizmo, navmesh, bounds, collision, game view, stats")) ImGui::OpenPopup("ShowMenu");
         if (ImGui::BeginPopup("ShowMenu")) {
-            ImGui::Checkbox("Grid", &s.show_grid);
-            ImGui::Checkbox("Axis gizmo", &s.show_axis_gizmo);
-            ImGui::Checkbox("Navigation (P)", &s.show_navigation);
-            ImGui::Checkbox("Bounds", &s.show_bounds);
-            ImGui::Checkbox("Collision", &s.show_collision);
-            ImGui::Checkbox("Game view (G)", &s.game_view);
-            ImGui::Checkbox("Stats (stat fps)", &s.show_stats);
+            with_tip(ImGui::Checkbox("Grid", &s.show_grid), "The floor grid");
+            with_tip(ImGui::Checkbox("Axis gizmo", &s.show_axis_gizmo), "The axis arrows in the corner");
+            with_tip(ImGui::Checkbox("Navigation (P)", &s.show_navigation), "Where AI can walk, in green");
+            with_tip(ImGui::Checkbox("Bounds", &s.show_bounds), "Boxes around every mesh");
+            with_tip(ImGui::Checkbox("Collision", &s.show_collision), "The shapes physics uses");
+            with_tip(ImGui::Checkbox("Game view (G)", &s.game_view), "Hides editor-only things (icons, volumes, gizmos) to see what the player sees");
+            with_tip(ImGui::Checkbox("Stats (stat fps)", &s.show_stats), "Frame rate, draw calls and triangles in the corner");
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (toggle_button("Grid", s.show_grid)) s.show_grid = !s.show_grid;
+        if (with_tip(toggle_button("Grid", s.show_grid), "Shows the floor grid")) s.show_grid = !s.show_grid;
         ImGui::SameLine();
         ImGui::TextDisabled("|");
         ImGui::SameLine();
         if (toggle_button("Move", s.gizmo == GizmoMode::Translate)) s.gizmo = GizmoMode::Translate;
-        ImGui::SetItemTooltip("W");
+        ImGui::SetItemTooltip("Move (W): drag an arrow to move along it, a square between two to move in that plane");
         ImGui::SameLine();
         if (toggle_button("Rotate", s.gizmo == GizmoMode::Rotate)) s.gizmo = GizmoMode::Rotate;
-        ImGui::SetItemTooltip("E");
+        ImGui::SetItemTooltip("Rotate (E): drag a ring to turn around that axis");
         ImGui::SameLine();
         if (toggle_button("Scale", s.gizmo == GizmoMode::Scale)) s.gizmo = GizmoMode::Scale;
-        ImGui::SetItemTooltip("R");
+        ImGui::SetItemTooltip("Scale (R): drag a handle to resize along it, the centre to resize evenly");
         ImGui::SameLine();
         if (ImGui::Button(s.gizmo_local ? "Local" : "World")) s.gizmo_local = !s.gizmo_local;
         ImGui::SetItemTooltip("Gizmo space (Ctrl+`)");
@@ -2099,15 +2137,15 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
         if (toggle_button("Pivot", s.pivot_edit)) s.pivot_edit = !s.pivot_edit;
         ImGui::SetItemTooltip("Alt+V: the gizmo moves the pivot the object turns and scales about (right-click: reset)");
         if (ImGui::BeginPopupContextItem("pivot_menu")) {
-            if (ImGui::MenuItem("Reset Pivot")) s.pivot_offset = {};
+            if (with_tip(ImGui::MenuItem("Reset Pivot"), "Puts the pivot back at the object's origin")) s.pivot_offset = {};
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (toggle_button("Snap", s.settings.snap)) s.settings.snap = !s.settings.snap;
+        if (with_tip(toggle_button("Snap", s.settings.snap), "Moves, turns and scales go in steps (the box next to it sets the step)")) s.settings.snap = !s.settings.snap;
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70.0f);
         f32* step = s.gizmo == GizmoMode::Translate ? &s.settings.snap_move : s.gizmo == GizmoMode::Rotate ? &s.settings.snap_angle : &s.settings.snap_scale;
-        ImGui::DragFloat("##snap", step, 0.05f, 0.01f, 360.0f, s.gizmo == GizmoMode::Rotate ? "%.0f deg" : s.gizmo == GizmoMode::Translate ? "%.2f m" : "%.2f");
+        with_tip(ImGui::DragFloat("##snap", step, 0.05f, 0.01f, 360.0f, s.gizmo == GizmoMode::Rotate ? "%.0f deg" : s.gizmo == GizmoMode::Translate ? "%.2f m" : "%.2f"), "Snap step for the current gizmo (drag to change)");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(90.0f);
         ImGui::SliderFloat("##speed", &s.settings.camera_speed, 0.5f, 50.0f, "speed %.1f", ImGuiSliderFlags_Logarithmic);
@@ -2247,7 +2285,7 @@ void draw_folder_row(EditorState& s, const char* folder, f32 row_height, ImDrawL
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopupContextItem("folder_row_menu")) {
-        if (ImGui::MenuItem("Rename")) {
+        if (with_tip(ImGui::MenuItem("Rename"), "Renames the object (F2)")) {
             std::snprintf(g_renaming_folder, sizeof g_renaming_folder, "%s", folder);
             std::snprintf(g_folder_name, sizeof g_folder_name, "%s", folder);
         }
@@ -2352,14 +2390,14 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             if (const auto* m = s.world->get<world::SkeletalMesh>(e); m && !used.valid()) asset::parse_guid(m->mesh, used);
             if (const auto* m = s.world->get<world::Script>(e); m && !used.valid()) asset::parse_guid(m->script, used);
             if (const auto* m = s.world->get<world::SoundEmitter>(e); m && !used.valid()) asset::parse_guid(m->sound, used);
-            if (ImGui::MenuItem("Find in Content Browser", "Ctrl+B", false, used.valid())) find_in_content_browser(s, used);
-            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate_selected(s);
-            if (ImGui::MenuItem("Detach", nullptr, false, s.world->parent(e).valid())) {
+            if (with_tip(ImGui::MenuItem("Find in Content Browser", "Ctrl+B", false, used.valid()), "Shows the asset this object uses in the Content Browser")) find_in_content_browser(s, used);
+            if (with_tip(ImGui::MenuItem("Duplicate", "Ctrl+D"), "Copies the selection in place")) duplicate_selected(s);
+            if (with_tip(ImGui::MenuItem("Detach", nullptr, false, s.world->parent(e).valid()), "Unparents it: it stays where it is but no longer moves with its parent")) {
                 s.world->set_parent(e, {});
                 edited(s, "Detach");
             }
-            if (ImGui::MenuItem("Delete", "Delete")) delete_selected(s);
-            if (ImGui::BeginMenu("Move to Folder", !s.playing)) {
+            if (with_tip(ImGui::MenuItem("Delete", "Delete"), "Removes the selection from the level (undoable)")) delete_selected(s);
+            if (with_tip(ImGui::BeginMenu("Move to Folder", !s.playing), "Puts the selection in an Outliner folder (folders only organise; they do not move objects)")) {
                 std::set<std::string> folders;
                 for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
                     const Entity other = s.world->entity_at_slot(slot);
@@ -2369,14 +2407,14 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
                     if (ImGui::MenuItem(f.c_str())) move_selection_to_folder(s, f.c_str());
                 }
                 if (!folders.empty()) ImGui::Separator();
-                if (ImGui::MenuItem("New Folder")) {
+                if (with_tip(ImGui::MenuItem("New Folder"), "Makes a new Outliner folder for the selection")) {
                     char name[64] = "NewFolder";
                     for (int n = 2; folders.count(name); ++n) std::snprintf(name, sizeof name, "NewFolder%d", n);
                     move_selection_to_folder(s, name);
                     std::snprintf(g_renaming_folder, sizeof g_renaming_folder, "%s", name);  // name it at once, like Unreal
                     std::snprintf(g_folder_name, sizeof g_folder_name, "%s", name);
                 }
-                if (s.world->folder(e)[0] && ImGui::MenuItem("Remove from Folder")) move_selection_to_folder(s, "");
+                if (s.world->folder(e)[0] && with_tip(ImGui::MenuItem("Remove from Folder"), "Takes the selection out of its folder")) move_selection_to_folder(s, "");
                 ImGui::EndMenu();
             }
             ImGui::Separator();
@@ -2448,7 +2486,7 @@ void draw_outliner(EditorState& s) {
             static const reflect::TypeInfo* type_filter = nullptr;
             ImGui::SetNextItemWidth(120.0f);
             if (ImGui::BeginCombo("##type", type_filter ? type_filter->name : "All types")) {
-                if (ImGui::Selectable("All types", !type_filter)) type_filter = nullptr;
+                if (with_tip(ImGui::Selectable("All types", !type_filter), "Lists every kind of asset")) type_filter = nullptr;
                 u32 n_types = 0;
                 const reflect::TypeInfo* const* types = world::component_types(n_types);
                 for (u32 i = 0; i < n_types; ++i) {
@@ -2513,7 +2551,7 @@ bool asset_picker(EditorState& s, const char* type, char* guid_text, usize capac
     asset::Guid guid;
     const asset::AssetRecord* current = asset::parse_guid(guid_text, guid) ? s.registry->find(guid) : nullptr;
     if (ImGui::BeginCombo("##value", current ? current->name : guid_text[0] ? "(missing asset)" : "None")) {
-        if (ImGui::Selectable("None", !guid_text[0])) {
+        if (with_tip(ImGui::Selectable("None", !guid_text[0]), "No asset")) {
             guid_text[0] = '\0';
             changed = true;
         }
@@ -2551,7 +2589,7 @@ bool asset_picker(EditorState& s, const char* type, char* guid_text, usize capac
 bool key_picker(char* key, usize capacity) {
     bool changed = false;
     if (g_listening_key == key) {
-        ImGui::Button("Press a key... (Esc cancels)", ImVec2(-1.0f, 0));
+        with_tip(ImGui::Button("Press a key... (Esc cancels)", ImVec2(-1.0f, 0)), "Press the key, mouse button or gamepad button to use; Esc keeps the old one");
         int count = 0;
         const bool* keys = SDL_GetKeyboardState(&count);
         for (int k = 0; k < count; ++k) {
@@ -2643,7 +2681,7 @@ bool details_widget(void* user, const reflect::Property& p, u8* field, bool& cha
         const script::NativeModule& m = game_module::module();
         ImGui::SetNextItemWidth(-1);
         if (ImGui::BeginCombo("##value", value[0] ? value : "None")) {
-            if (ImGui::Selectable("None", !value[0])) {
+            if (with_tip(ImGui::Selectable("None", !value[0]), "No value")) {
                 value[0] = '\0';
                 changed = true;
             }
@@ -2896,7 +2934,7 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     char path[300];
     s.registry->source_path(r, path, sizeof path);
     ImGui::BeginDisabled(!g_data_dirty);
-    if (ImGui::Button("Save")) {
+    if (with_tip(ImGui::Button("Save"), "Writes the asset to disk")) {
         if (asset::save_data_asset(path, *g_data_type, g_data)) {
             g_data_dirty = false;
             std::snprintf(s.status, sizeof s.status, "Saved %s", r.path);
@@ -2904,7 +2942,7 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Revert")) load_selected_data(s, r);
+    if (with_tip(ImGui::Button("Revert"), "Throws away unsaved changes and reloads it from disk")) load_selected_data(s, r);
     ImGui::EndDisabled();
     ImGui::BeginChild("DataRows");
     const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
@@ -3262,7 +3300,7 @@ void draw_entity_details(EditorState& s) {
         } else {
             if (root == e) ImGui::TextDisabled("Prefab instance, %u override%s (gold *)", override_count, override_count == 1 ? "" : "s");
             else ImGui::TextDisabled("Part of prefab instance %s, %u override%s", w.name(root), override_count, override_count == 1 ? "" : "s");
-            if (ImGui::Button("Apply to Prefab") && !s.playing) {
+            if (with_tip(ImGui::Button("Apply to Prefab"), "Writes this copy's changes into the prefab: every copy in every level updates") && !s.playing) {
                 world::save_prefab_file(w, root, path);
                 w.get<world::PrefabInstance>(root)->overrides.count = 0;  // its values are the prefab's now
                 const u32 others = refresh_instances(s, guid, root);
@@ -3271,7 +3309,7 @@ void draw_entity_details(EditorState& s) {
             }
             ImGui::SetItemTooltip("Saves this instance's children and components to the prefab and updates every other instance in the level");
             ImGui::SameLine();
-            if (ImGui::Button("Revert") && !s.playing) {
+            if (with_tip(ImGui::Button("Revert"), "Throws away this copy's changes: back to the prefab") && !s.playing) {
                 w.get<world::PrefabInstance>(root)->overrides.count = 0;
                 world::update_instance_from_file(w, root, path);
                 prune_selection(s);
@@ -3279,7 +3317,7 @@ void draw_entity_details(EditorState& s) {
             }
             ImGui::SetItemTooltip("Throws away every change to this instance (except its placement) and reloads it from the prefab. One value: right-click it > Revert to Prefab");
             ImGui::SameLine();
-            if (ImGui::Button("Browse")) {
+            if (with_tip(ImGui::Button("Browse"), "Shows the prefab in the Content Browser")) {
                 select(s, {});
                 asset::Guid id;
                 if (asset::parse_guid(guid, id)) s.selected_asset = id;
@@ -3313,7 +3351,7 @@ void draw_entity_details(EditorState& s) {
             if (types[i] == &reflect::type_of<world::Spline>()) {  // point tools; points are moved in the viewport
                 auto& points = static_cast<world::Spline*>(component)->points;
                 const bool has_point = s.spline_point >= 0 && static_cast<u32>(s.spline_point) < points.count;
-                if (ImGui::Button("Add Point") && points.count < points.capacity()) {
+                if (with_tip(ImGui::Button("Add Point"), "Adds a point after the selected one (drag points in the viewport)") && points.count < points.capacity()) {
                     // After the selected point (or at the end), continuing the curve's direction.
                     const u32 after = has_point ? static_cast<u32>(s.spline_point) : points.count - 1;
                     const Vec3 a = points.count ? points[after] : Vec3{};
@@ -3332,7 +3370,7 @@ void draw_entity_details(EditorState& s) {
                     edited(s, "Add Spline Point");
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Remove Point") && has_point && points.count > 2) {
+                if (with_tip(ImGui::Button("Remove Point"), "Removes the selected point") && has_point && points.count > 2) {
                     points.remove(static_cast<u32>(s.spline_point));
                     static_cast<world::Spline*>(component)->tangents.remove(static_cast<u32>(s.spline_point));  // no-op past its end
                     s.spline_point = -1;
@@ -3365,10 +3403,10 @@ void draw_entity_details(EditorState& s) {
         ImGui::PopID();
     }
     ImGui::Spacing();
-    if (ImGui::Button("+ Add Component", ImVec2(-1.0f, 0))) ImGui::OpenPopup("AddComponent");
+    if (with_tip(ImGui::Button("+ Add Component", ImVec2(-1.0f, 0)), "Adds a component: a mesh, light, script, physics, sound... (Unreal's Add Component)")) ImGui::OpenPopup("AddComponent");
     if (ImGui::BeginPopup("AddComponent")) {
         for (u32 i = 1; i < type_count; ++i) {
-            if (!w.get(e, *types[i]) && ImGui::MenuItem(types[i]->name)) {
+            if (!w.get(e, *types[i]) && with_tip(ImGui::MenuItem(types[i]->name), types[i]->tooltip)) {
                 w.add(e, *types[i]);
                 edited(s, "Add Component");
             }
@@ -3391,12 +3429,12 @@ void draw_details_panel(EditorState& s) {
             } else if (selected) {
                 ImGui::Text("%s", selected->name);
                 ImGui::TextDisabled("%s  |  Content/%s", asset::to_string(selected->type), selected->path);
-                if (ImGui::Button("Save")) {
+                if (with_tip(ImGui::Button("Save"), "Writes the import settings and reimports the asset")) {
                     // The data compiler sees the new settings and rebuilds; placed copies update live.
                     std::snprintf(s.status, sizeof s.status, s.registry->save_meta(*selected, s.selected_meta) ? "Saved %s.meta" : "Could not save %s.meta", selected->name);
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Revert")) s.registry->load_meta(*selected, s.selected_meta);
+                if (with_tip(ImGui::Button("Revert"), "Throws away unsaved changes to the settings")) s.registry->load_meta(*selected, s.selected_meta);
                 if (selected->type == asset::AssetType::Sound || selected->type == asset::AssetType::Cue) {
                     ImGui::SameLine();
                     if (ImGui::Button(s.sounds && s.sounds->audio()->playing(s.preview_voice) ? "Stop" : "Play")) toggle_preview(s, *selected);
@@ -3608,7 +3646,7 @@ void draw_file_dialogs(EditorState& s) {
         const bool enter = ImGui::InputText("##name", s.rename_buffer, sizeof s.rename_buffer, ImGuiInputTextFlags_EnterReturnsTrue);
         const bool ok = asset::valid_name(s.rename_buffer);
         if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Not a valid name");
-        if ((ImGui::Button("Rename") || enter) && ok) {
+        if ((with_tip(ImGui::Button("Rename"), "Renames it (references keep working: they use its ID)") || enter) && ok) {
             char error[200] = "";
             bool done = false;
             if (const asset::AssetRecord* r = s.rename_asset.valid() ? s.registry->find(s.rename_asset) : nullptr) {
@@ -3636,7 +3674,7 @@ void draw_file_dialogs(EditorState& s) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Keeps the old name") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -3671,7 +3709,7 @@ void draw_file_dialogs(EditorState& s) {
             }
         }
         else ImGui::Text("Delete the empty folder Content/%s?", s.delete_folder);
-        if (ImGui::Button("Delete")) {
+        if (with_tip(ImGui::Button("Delete"), "Deletes for good (the file goes to nowhere, not the Recycle Bin)")) {
             char error[200] = "";
             bool done = false;
             if (many) {
@@ -3700,7 +3738,7 @@ void draw_file_dialogs(EditorState& s) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Keeps it") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -3904,7 +3942,7 @@ void reference_row(EditorState& s, const std::string& guid, bool missing_ok) {
         ImGui::SameLine();
         const asset::AssetRecord* pick = s.selected_asset.valid() ? s.registry->find(s.selected_asset) : nullptr;
         ImGui::BeginDisabled(!pick);
-        if (ImGui::SmallButton("Replace with selected")) {  // fix a broken reference with the Content Browser's selection
+        if (with_tip(ImGui::SmallButton("Replace with selected"), "Points this broken reference at the asset selected in the Content Browser")) {  // fix a broken reference with the Content Browser's selection
             char to[33];
             asset::to_string(pick->guid, to);
             const u32 n = replace_references(*s.registry, guid, to);
@@ -3937,7 +3975,7 @@ void draw_reference_viewer(EditorState& s) {
     asset::Guid target;
     asset::parse_guid(g_reference_target.c_str(), target);
     const asset::AssetRecord* r = s.registry->find(target);
-    if (ImGui::Button("Refresh")) g_references.build(*s.registry);
+    if (with_tip(ImGui::Button("Refresh"), "Looks again for what uses what")) g_references.build(*s.registry);
     ImGui::SameLine();
     if (!r) {
         ImGui::TextDisabled("The asset is gone.");
@@ -4051,7 +4089,7 @@ void draw_asset_grid(EditorState& s) {
     }
     // Right-click on empty space: New Folder.
     if (ImGui::BeginPopupContextWindow("grid_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        if (ImGui::MenuItem("New Folder")) {
+        if (with_tip(ImGui::MenuItem("New Folder"), "Makes a folder here")) {
             std::error_code error;
             const std::filesystem::path base = std::filesystem::path(kContentDir) / s.content_folder;
             std::filesystem::path dir = base / "NewFolder";
@@ -4059,7 +4097,7 @@ void draw_asset_grid(EditorState& s) {
             std::filesystem::create_directories(dir, error);
             start_rename(s, {}, join_folder(s.content_folder, dir.filename().string().c_str()).c_str(), dir.filename().string().c_str());
         }
-        if (ImGui::BeginMenu("New Data Asset")) {
+        if (with_tip(ImGui::BeginMenu("New Data Asset"), "Makes a data asset (Material, Input Action, Sound Class, Curve, Game Mode...) here")) {
             u32 type_count = 0;
             const reflect::TypeInfo* const* types = asset::data_types(type_count);
             for (u32 i = 0; i < type_count; ++i) {
@@ -4067,7 +4105,7 @@ void draw_asset_grid(EditorState& s) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("New Visual Script")) {
+        if (with_tip(ImGui::MenuItem("New Visual Script"), "Makes a Blueprint-style visual script here")) {
             const std::string path = create_graph_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "NewVisualScript");
             s.registry->scan();
             if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
@@ -4077,7 +4115,7 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A node graph (like a Blueprint event graph); double-click to edit, pick it in a Script component");
-        if (ImGui::MenuItem("New Data Table")) {
+        if (with_tip(ImGui::MenuItem("New Data Table"), "Makes a Data Table (rows and columns, edited like a spreadsheet) here")) {
             const std::string path = create_table_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "DT_New");
             s.registry->scan();
             if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
@@ -4089,7 +4127,7 @@ void draw_asset_grid(EditorState& s) {
         ImGui::SetItemTooltip("A spreadsheet (.csv) of rows and columns; read it with lsd.table() or Get Table Value. Dropping a .csv here imports one too");
         if (ImGui::MenuItem("New Material")) create_data_asset(s, reflect::type_of<render::Material>());
         ImGui::SetItemTooltip("Base colour, metallic, roughness, normal / ORM maps, emissive. Drag it onto an object in the viewport");
-        if (ImGui::MenuItem("New Material Graph")) {
+        if (with_tip(ImGui::MenuItem("New Material Graph"), "Makes a node-based material (Unreal's Material Editor) here")) {
             const std::string path = create_material_graph_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "M_New");
             s.registry->scan();
             if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
@@ -4099,7 +4137,7 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A material built from nodes (textures, maths, Time, Fresnel...) like Unreal's Material Editor. Double-click to edit; drag onto an object");
-        if (ImGui::MenuItem("New UI Document")) {
+        if (with_tip(ImGui::MenuItem("New UI Document"), "Makes an HTML / CSS game UI document (Unreal's Widget Blueprint) here")) {
             const std::string path = create_ui_document((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "UI_New");
             s.registry->scan();
             if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
@@ -4109,7 +4147,7 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("Game UI in HTML / CSS (Unreal's Widget Blueprint): a HUD or a menu. Open it from Lua (lsd.ui_open) or as the Game Mode's HUD");
-        if (ImGui::MenuItem("New Behavior Tree")) {
+        if (with_tip(ImGui::MenuItem("New Behavior Tree"), "Makes an AI Behavior Tree here")) {
             const std::string path = create_behavior_tree_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "BT_New");
             s.registry->scan();
             if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
@@ -4119,7 +4157,7 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("AI decisions as a tree (Selector, Sequence, Move To, Wait, conditions...). Pick it on an AI Controller");
-        if (ImGui::MenuItem("New Sound Cue")) {
+        if (with_tip(ImGui::MenuItem("New Sound Cue"), "Makes a Sound Cue (sounds mixed by nodes: random, modulate, concatenate) here")) {
             const std::string path = create_cue_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SC_New");
             s.registry->scan();
             if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
@@ -4135,7 +4173,7 @@ void draw_asset_grid(EditorState& s) {
         ImGui::SetItemTooltip("A .js file with on_start / on_update and the same lsd API as Lua; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
         ImGui::SetItemTooltip("Creates IA_Move, IA_Look, IA_Jump and IMC_Default mapped to WASD, mouse, Space and a gamepad");
-        if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(s.content_folder);
+        if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(s.content_folder);
         ImGui::EndPopup();
     }
     if (s.selected_asset.valid() && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2)) {
@@ -4146,14 +4184,14 @@ void draw_asset_grid(EditorState& s) {
     g_open_new_collection = false;
     if (ImGui::BeginPopupModal("New Collection", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        const bool enter = ImGui::InputText("Name", g_new_collection, sizeof g_new_collection, ImGuiInputTextFlags_EnterReturnsTrue);
-        if ((ImGui::Button("Create") || enter) && g_new_collection[0]) {
+        const bool enter = with_tip(ImGui::InputText("Name", g_new_collection, sizeof g_new_collection, ImGuiInputTextFlags_EnterReturnsTrue), "Name of the new collection");
+        if ((with_tip(ImGui::Button("Create"), "Makes the collection and adds the selected assets") || enter) && g_new_collection[0]) {
             for (u32 k = 0; k < s.asset_selection_count; ++k) add_to_collection(s, g_new_collection, s.asset_selection[k]);
             std::snprintf(s.active_collection, sizeof s.active_collection, "%s", g_new_collection);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Keeps things as they are") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -4192,13 +4230,13 @@ void draw_asset_grid(EditorState& s) {
         folder_drop_target(s, folder_path.c_str());
         if (ImGui::BeginPopupContextItem("folder_menu")) {
             if (ImGui::MenuItem(is_favourite(s, folder_path.c_str()) ? "Remove from Favourites" : "Add to Favourites")) toggle_favourite(s, folder_path.c_str());
-            if (ImGui::MenuItem("Rename")) start_rename(s, {}, folder_path.c_str(), folders[f]);
-            if (ImGui::MenuItem("Delete...")) {
+            if (with_tip(ImGui::MenuItem("Rename"), "Renames the folder (assets inside keep working)")) start_rename(s, {}, folder_path.c_str(), folders[f]);
+            if (with_tip(ImGui::MenuItem("Delete..."), "Deletes the folder (only when it is empty)")) {
                 s.delete_asset = {};
                 std::snprintf(s.delete_folder, sizeof s.delete_folder, "%s", folder_path.c_str());
                 s.open_delete = true;
             }
-            if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(folder_path.c_str());
+            if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(folder_path.c_str());
             ImGui::EndPopup();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -4258,21 +4296,21 @@ void draw_asset_grid(EditorState& s) {
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) open_record(s, r);
         }
         if (ImGui::BeginPopupContextItem("asset_menu")) {
-            if (level && ImGui::MenuItem("Open Level")) {
+            if (level && with_tip(ImGui::MenuItem("Open Level"), "Opens this level in the editor")) {
                 char path[300];
                 s.registry->source_path(r, path, sizeof path);
                 request_open(s, path);
             }
-            if (r.type == asset::AssetType::Script && ImGui::MenuItem("Edit Script")) open_external(s, r);
-            if (r.type == asset::AssetType::Graph && ImGui::MenuItem("Edit Visual Script")) open_graph(s, r);
-            if (r.type == asset::AssetType::Table && ImGui::MenuItem("Edit Data Table")) open_table(s, r);
-            if (s.particle_editor && asset_matches(r, "ParticleSystem") && ImGui::MenuItem("Open Particle Editor")) s.particle_editor->open(s, r);
-            if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && ImGui::MenuItem("Play / Stop")) toggle_preview(s, r);
-            if (r.type == asset::AssetType::Cue && ImGui::MenuItem("Edit Sound Cue")) open_graph(s, r);
-            if (r.type == asset::AssetType::MaterialGraph && ImGui::MenuItem("Edit Material Graph")) open_graph(s, r);
-            if (r.type == asset::AssetType::BehaviorTree && ImGui::MenuItem("Edit Behavior Tree")) open_graph(s, r);
-            if ((r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) && ImGui::MenuItem("Edit UI")) open_ui_editor(s, r);
-            if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && ImGui::MenuItem("Create Material Instance")) {
+            if (r.type == asset::AssetType::Script && with_tip(ImGui::MenuItem("Edit Script"), "Opens the script in your code editor (VS Code)")) open_external(s, r);
+            if (r.type == asset::AssetType::Graph && with_tip(ImGui::MenuItem("Edit Visual Script"), "Opens the visual script's node graph")) open_graph(s, r);
+            if (r.type == asset::AssetType::Table && with_tip(ImGui::MenuItem("Edit Data Table"), "Opens the table's rows and columns")) open_table(s, r);
+            if (s.particle_editor && asset_matches(r, "ParticleSystem") && with_tip(ImGui::MenuItem("Open Particle Editor"), "Opens the Particle Editor with a preview")) s.particle_editor->open(s, r);
+            if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && with_tip(ImGui::MenuItem("Play / Stop"), "Plays the sound (or stops it)")) toggle_preview(s, r);
+            if (r.type == asset::AssetType::Cue && with_tip(ImGui::MenuItem("Edit Sound Cue"), "Opens the Sound Cue's node graph")) open_graph(s, r);
+            if (r.type == asset::AssetType::MaterialGraph && with_tip(ImGui::MenuItem("Edit Material Graph"), "Opens the material's node graph")) open_graph(s, r);
+            if (r.type == asset::AssetType::BehaviorTree && with_tip(ImGui::MenuItem("Edit Behavior Tree"), "Opens the tree's node graph")) open_graph(s, r);
+            if ((r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle) && with_tip(ImGui::MenuItem("Edit UI"), "Opens the UI window: designer canvas and code")) open_ui_editor(s, r);
+            if (r.type == asset::AssetType::Data && std::strcmp(r.data_type, "Material") == 0 && with_tip(ImGui::MenuItem("Create Material Instance"), "Makes a Material Instance: a copy whose values you override without touching this material")) {
                 render::MaterialInstance instance;
                 asset::to_string(r.guid, instance.parent);
                 char base[64];
@@ -4287,7 +4325,7 @@ void draw_asset_grid(EditorState& s) {
                     }
                 }
             }
-            if (r.type == asset::AssetType::Texture && ImGui::MenuItem("Create Material")) {  // like Unreal: a material using this texture
+            if (r.type == asset::AssetType::Texture && with_tip(ImGui::MenuItem("Create Material"), "Makes a Material that uses this texture")) {  // like Unreal: a material using this texture
                 render::Material m;
                 asset::to_string(r.guid, m.base_color_texture);
                 char base[64];
@@ -4302,21 +4340,21 @@ void draw_asset_grid(EditorState& s) {
                     }
                 }
             }
-            if (r.type == asset::AssetType::Table && ImGui::MenuItem("Open in External Program")) open_external(s, r);
+            if (r.type == asset::AssetType::Table && with_tip(ImGui::MenuItem("Open in External Program"), "Opens the table's .csv in Excel or your spreadsheet program")) open_external(s, r);
             if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
-            if (asset_matches(r, "Timeline") && ImGui::MenuItem("Edit Timeline")) open_timeline_editor(s, r);
+            if (asset_matches(r, "Timeline") && with_tip(ImGui::MenuItem("Edit Timeline"), "Opens the Timeline editor (tracks and keys)")) open_timeline_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Open Mesh Editor")) open_mesh_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) create_parts_prefab(s, r);
             if (r.type == asset::AssetType::Mesh) ImGui::SetItemTooltip("One object per mesh and material in the file, with Materials made from the file's (Unreal: Combine Meshes off)");
-            if (r.type == asset::AssetType::Prefab && ImGui::MenuItem("Edit Prefab")) open_prefab_editor(s, r);
-            if (ImGui::MenuItem("Reference Viewer...")) open_reference_viewer(s, r.guid);
-            if (ImGui::MenuItem("Duplicate")) duplicate_asset(s, r);
-            if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Texture || r.type == asset::AssetType::Sound) && ImGui::MenuItem("Reimport")) {
+            if (r.type == asset::AssetType::Prefab && with_tip(ImGui::MenuItem("Edit Prefab"), "Opens the Prefab Editor")) open_prefab_editor(s, r);
+            if (with_tip(ImGui::MenuItem("Reference Viewer..."), "Shows what this asset uses and what uses it")) open_reference_viewer(s, r.guid);
+            if (with_tip(ImGui::MenuItem("Duplicate"), "Makes a copy of the asset next to it")) duplicate_asset(s, r);
+            if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Texture || r.type == asset::AssetType::Sound) && with_tip(ImGui::MenuItem("Reimport"), "Reads the source file again (after editing it in Blender, Photoshop...)")) {
                 for (u32 k = 0; k < s.asset_selection_count; ++k) {
                     if (const asset::AssetRecord* each = s.registry->find(s.asset_selection[k])) reimport_asset(s, *each);
                 }
             }
-            if (ImGui::BeginMenu("Add to Collection")) {
+            if (with_tip(ImGui::BeginMenu("Add to Collection"), "Adds the selected assets to a collection (a group across folders)")) {
                 const char* names[64];
                 const u32 n_names = collection_names(s, names);
                 for (u32 c = 0; c < n_names; ++c) {
@@ -4325,22 +4363,22 @@ void draw_asset_grid(EditorState& s) {
                     }
                 }
                 if (n_names) ImGui::Separator();
-                if (ImGui::MenuItem("New Collection...")) {
+                if (with_tip(ImGui::MenuItem("New Collection..."), "Makes a new collection for the selected assets")) {
                     std::snprintf(g_new_collection, sizeof g_new_collection, "Collection%u", n_names + 1);
                     g_open_new_collection = true;
                 }
                 ImGui::EndMenu();
             }
-            if (s.active_collection[0] && ImGui::MenuItem("Remove from Collection")) {
+            if (s.active_collection[0] && with_tip(ImGui::MenuItem("Remove from Collection"), "Takes the selected assets out of this collection (they are not deleted)")) {
                 for (u32 k = 0; k < s.asset_selection_count; ++k) remove_from_collection(s, s.active_collection, s.asset_selection[k]);
             }
             source_control::asset_menu(r.path);
-            if (ImGui::MenuItem("Rename", "F2")) start_rename(s, r.guid, "", r.name);
+            if (with_tip(ImGui::MenuItem("Rename", "F2"), "Renames the asset (references keep working: they use its ID)")) start_rename(s, r.guid, "", r.name);
             if (ImGui::MenuItem(s.asset_selection_count > 1 ? "Delete Selected..." : "Delete...")) {
                 s.delete_asset = r.guid;
                 s.open_delete = true;
             }
-            if (ImGui::MenuItem("Show in Explorer")) show_in_explorer(r.folder);
+            if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens the asset's folder in Windows Explorer")) show_in_explorer(r.folder);
             ImGui::EndPopup();
         }
         if (ImGui::BeginDragDropSource()) {
@@ -4433,7 +4471,7 @@ void draw_place_panel(EditorState& s) {
             ImGui::Text("Place %s", item.label);
             ImGui::EndDragDropSource();
         }
-        ImGui::SetItemTooltip("Drag into the viewport, or double-click to place in front of the camera");
+        ImGui::SetItemTooltip("%s%sDrag into the viewport, or double-click to place in front of the camera", place_tip(item.label), place_tip(item.label)[0] ? "\n" : "");
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 c(p.x + kTile * 0.5f, p.y + kTile * 0.5f);
         const bool start = item.component && (std::strcmp(item.component, "PlayerStart") == 0 || std::strcmp(item.component, "Character") == 0);
@@ -4502,13 +4540,13 @@ void draw_output_log(EditorState& s) {
     ImGui::SetNextItemWidth(220.0f);
     ImGui::InputTextWithHint("##log_filter", "Filter", filter, sizeof filter);
     ImGui::SameLine();
-    ImGui::Checkbox("Messages", &show_info);
+    with_tip(ImGui::Checkbox("Messages", &show_info), "Shows information lines");
     ImGui::SameLine();
-    ImGui::Checkbox("Warnings", &show_warnings);
+    with_tip(ImGui::Checkbox("Warnings", &show_warnings), "Shows warnings (yellow)");
     ImGui::SameLine();
-    ImGui::Checkbox("Errors", &show_errors);
+    with_tip(ImGui::Checkbox("Errors", &show_errors), "Shows errors (red)");
     ImGui::SameLine();
-    if (ImGui::Button("Clear")) clear_output_log();
+    if (with_tip(ImGui::Button("Clear"), "Empties the log")) clear_output_log();
 
     const f32 input_height = ImGui::GetFrameHeightWithSpacing();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, vec4(t.content_area));
@@ -4615,7 +4653,7 @@ void draw_content_browser(EditorState& s) {
                         s.search[0] = s.active_collection[0] = '\0';
                     }
                     if (ImGui::BeginPopupContextItem("favourite_menu")) {
-                        if (ImGui::MenuItem("Remove from Favourites")) toggle_favourite(s, path);
+                        if (with_tip(ImGui::MenuItem("Remove from Favourites"), "Unpins this folder from the top of the tree")) toggle_favourite(s, path);
                         ImGui::EndPopup();
                     }
                     ImGui::PopID();
@@ -4695,9 +4733,9 @@ static void note_recent_level(EditorState& s) {
 void draw_menu_bar(EditorState& s) {
     note_recent_level(s);
     if (!ImGui::BeginMainMenuBar()) return;
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Level", "Ctrl+N", false, !s.playing)) request_new(s);
-        if (ImGui::BeginMenu("Open Level", !s.playing)) {
+    if (with_tip(ImGui::BeginMenu("File"), "Levels: new, open, save; validating and packaging")) {
+        if (with_tip(ImGui::MenuItem("New Level", "Ctrl+N", false, !s.playing), "Starts an empty level")) request_new(s);
+        if (with_tip(ImGui::BeginMenu("Open Level", !s.playing), "Opens one of the project's levels")) {
             bool any = false;
             for (usize i = 0; i < s.registry->count(); ++i) {
                 const asset::AssetRecord& r = s.registry->get(i);
@@ -4714,7 +4752,7 @@ void draw_menu_bar(EditorState& s) {
             if (!any) ImGui::TextDisabled("No levels yet: File > Save Level As");
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Recent Levels", !s.playing && s.settings.recent_levels.count > 0)) {
+        if (with_tip(ImGui::BeginMenu("Recent Levels", !s.playing && s.settings.recent_levels.count > 0), "Levels opened recently")) {
             for (u32 i = 0; i < s.settings.recent_levels.count; ++i) {
                 const char* path = s.settings.recent_levels[i].path;
                 ImGui::PushID(static_cast<int>(i));
@@ -4725,10 +4763,10 @@ void draw_menu_bar(EditorState& s) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Save Level", "Ctrl+S", false, !s.playing)) request_save(s, false);
-        if (ImGui::MenuItem("Save Level As...", "Ctrl+Shift+S", false, !s.playing)) request_save(s, true);
+        if (with_tip(ImGui::MenuItem("Save Level", "Ctrl+S", false, !s.playing), "Writes the level to disk")) request_save(s, false);
+        if (with_tip(ImGui::MenuItem("Save Level As...", "Ctrl+Shift+S", false, !s.playing), "Writes the level under a new name")) request_save(s, true);
         ImGui::Separator();
-        if (ImGui::MenuItem("Validate Assets")) {
+        if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems (missing files, broken references) and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);
             std::snprintf(s.status, sizeof s.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
             if (n) s.show_message_log = true;
@@ -4740,28 +4778,28 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Build/<Project Name>/: the game in a folder that runs on another PC (opens Project Settings > Game Default Level)");
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, s.history->can_undo() && !s.playing)) s.history->undo(*s.world);
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, s.history->can_redo() && !s.playing)) s.history->redo(*s.world);
+    if (with_tip(ImGui::BeginMenu("Edit"), "Undo, copy and paste, grouping; Editor Preferences and Project Settings")) {
+        if (with_tip(ImGui::MenuItem("Undo", "Ctrl+Z", false, s.history->can_undo() && !s.playing), "Takes back the last change")) s.history->undo(*s.world);
+        if (with_tip(ImGui::MenuItem("Redo", "Ctrl+Y", false, s.history->can_redo() && !s.playing), "Does again what Undo took back")) s.history->redo(*s.world);
         ImGui::Separator();
         const bool has = s.world->alive(s.selected) && !s.playing;
-        if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, has)) duplicate_selected(s);
-        if (ImGui::MenuItem("Group", "Ctrl+G", false, has)) group_selection(s);
-        if (ImGui::MenuItem("Ungroup", "Shift+G", false, has)) ungroup_selection(s);
-        if (ImGui::MenuItem("Select All", "Ctrl+A", false, !s.playing)) {
+        if (with_tip(ImGui::MenuItem("Duplicate", "Ctrl+D", false, has), "Copies the selection in place")) duplicate_selected(s);
+        if (with_tip(ImGui::MenuItem("Group", "Ctrl+G", false, has), "Puts the selection under a new parent object so they move together")) group_selection(s);
+        if (with_tip(ImGui::MenuItem("Ungroup", "Shift+G", false, has), "Takes the selection out of its group")) ungroup_selection(s);
+        if (with_tip(ImGui::MenuItem("Select All", "Ctrl+A", false, !s.playing), "Selects every object in the level")) {
             for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
         }
-        if (ImGui::MenuItem("Cut", "Ctrl+X", false, has)) {
+        if (with_tip(ImGui::MenuItem("Cut", "Ctrl+X", false, has), "Copies the selection and removes it")) {
             copy_selection(s);
             delete_selected(s);
         }
-        if (ImGui::MenuItem("Copy", "Ctrl+C", false, has)) copy_selection(s);
-        if (ImGui::MenuItem("Paste", "Ctrl+V", false, !s.playing)) paste(s);
-        if (ImGui::MenuItem("Delete", "Delete", false, has)) delete_selected(s);
-        if (ImGui::MenuItem("Drop to Floor", "End", false, has)) drop_to_floor(s);
+        if (with_tip(ImGui::MenuItem("Copy", "Ctrl+C", false, has), "Copies the selection (paste it in this or another level)")) copy_selection(s);
+        if (with_tip(ImGui::MenuItem("Paste", "Ctrl+V", false, !s.playing), "Puts copied objects into the level")) paste(s);
+        if (with_tip(ImGui::MenuItem("Delete", "Delete", false, has), "Removes the selection")) delete_selected(s);
+        if (with_tip(ImGui::MenuItem("Drop to Floor", "End", false, has), "Moves the selection down until it rests on what is below")) drop_to_floor(s);
         ImGui::Separator();
-        ImGui::MenuItem("Editor Preferences", nullptr, &s.show_preferences);
-        ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings);
+        with_tip(ImGui::MenuItem("Editor Preferences", nullptr, &s.show_preferences), "Your own editor settings: camera speed, snapping, autosave, theme, plugins");
+        with_tip(ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings), "The game's settings, shared with the team: maps, multiplayer, languages, platform");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Tools")) {
@@ -4772,8 +4810,8 @@ void draw_menu_bar(EditorState& s) {
         ImGui::Separator();
         if (ImGui::MenuItem("Compile Game Code", "Ctrl+Alt+F11", false, !game_module::compiling())) game_module::compile();
         ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
-        if (ImGui::MenuItem("New C / C++ Script...")) s.new_script_popup = true;
-        if (ImGui::MenuItem("Set Up Debugging (VS Code)")) {
+        if (with_tip(ImGui::MenuItem("New C / C++ Script..."), "Makes a C or C++ script or component in Source/ and opens it in VS Code")) s.new_script_popup = true;
+        if (with_tip(ImGui::MenuItem("Set Up Debugging (VS Code)"), "Writes VS Code launch settings so F5 debugs the game code")) {
             game_module::write_debug_config(s.status, sizeof s.status);
             LSD_LOG_INFO("game", "%s", s.status);
         }
@@ -4791,15 +4829,15 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
         if (ImGui::MenuItem("Build Navigation", "P")) s.show_navigation = true;  // the navmesh rebuilds while it is shown
         ImGui::SetItemTooltip("Builds and shows the navmesh (it keeps rebuilding while shown)");
-        if (ImGui::MenuItem("Validate Assets")) {
+        if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);
             std::snprintf(s.status, sizeof s.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
             if (n) s.show_message_log = true;
         }
-        if (ImGui::MenuItem("Package Project", nullptr, false, !s.playing)) s.package_requested = true;
+        if (with_tip(ImGui::MenuItem("Package Project", nullptr, false, !s.playing), "Builds the shippable game into Build/<Project Name>/")) s.package_requested = true;
         ImGui::EndMenu();
     }
-    if (s.user_settings && ImGui::BeginMenu("Settings")) {  // Unreal's toolbar Settings > Engine Scalability
+    if (s.user_settings && with_tip(ImGui::BeginMenu("Settings"), "Graphics quality (Low to Epic)")) {  // Unreal's toolbar Settings > Engine Scalability
         static const char* kQuality[] = {"Low", "Medium", "High", "Epic"};
         ImGui::TextDisabled("Engine Scalability");
         for (u32 q = 0; q < 4; ++q) {
@@ -4810,18 +4848,18 @@ void draw_menu_bar(EditorState& s) {
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Window")) {
-        ImGui::MenuItem("Undo History", nullptr, &s.show_history);
-        ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings);
-        ImGui::MenuItem("Message Log", nullptr, &s.show_message_log);
-        ImGui::MenuItem("Memory", nullptr, &s.show_memory);
+    if (with_tip(ImGui::BeginMenu("Window"), "Panels to show: Undo History, World Settings, Message Log, Memory, Layout")) {
+        with_tip(ImGui::MenuItem("Undo History", nullptr, &s.show_history), "Every change you made; click one to go back to it");
+        with_tip(ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings), "This level's settings: gravity, Kill Z, Game Mode, Level Script, navigation");
+        with_tip(ImGui::MenuItem("Message Log", nullptr, &s.show_message_log), "Warnings and errors from imports, validation and packaging");
+        with_tip(ImGui::MenuItem("Memory", nullptr, &s.show_memory), "Memory used: RAM, video memory and each allocator");
         ImGui::Separator();
-        if (ImGui::BeginMenu("Layout")) {  // Unreal's Window > Load Layout / Save Layout
+        if (with_tip(ImGui::BeginMenu("Layout"), "Save and load panel arrangements")) {  // Unreal's Window > Load Layout / Save Layout
             static char name[64] = "My Layout";
             ImGui::SetNextItemWidth(160.0f);
             ImGui::InputText("##layout_name", name, sizeof name);
             ImGui::SameLine();
-            if (ImGui::Button("Save Layout As") && asset::valid_name(name)) {
+            if (with_tip(ImGui::Button("Save Layout As"), "Saves the current arrangement of panels under this name") && asset::valid_name(name)) {
                 std::error_code ec;
                 std::filesystem::create_directories(kLayoutDir, ec);
                 const std::string path = std::string(kLayoutDir) + "/" + name + ".ini";
@@ -4834,7 +4872,7 @@ void draw_menu_bar(EditorState& s) {
                 if (entry.path().extension() != ".ini") continue;
                 if (ImGui::MenuItem(entry.path().stem().string().c_str())) std::snprintf(s.load_layout, sizeof s.load_layout, "%s", entry.path().generic_string().c_str());
             }
-            if (ImGui::MenuItem("Reset to Default")) s.reset_layout = true;
+            if (with_tip(ImGui::MenuItem("Reset to Default"), "Puts every panel back where it started")) s.reset_layout = true;
             ImGui::EndMenu();
         }
         ImGui::EndMenu();
@@ -4849,16 +4887,16 @@ void draw_menu_bar(EditorState& s) {
         if (!s.play_window_open) {
             if (ImGui::MenuItem("New Window", "Alt+N")) s.play_window_requested = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays the level as it is now in a window of its own, as the packaged game would (Unreal's New Editor Window); the editor stays free");
-        } else if (ImGui::MenuItem("Close Window")) {
+        } else if (with_tip(ImGui::MenuItem("Close Window"), "Closes the game window that Play opened")) {
             s.close_play_window = true;
         }
         ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_x));
-        if (ImGui::MenuItem("Stop", "Esc")) s.stop_requested = true;
+        if (with_tip(ImGui::MenuItem("Stop", "Esc"), "Stops playing (Esc)")) s.stop_requested = true;
         ImGui::PopStyleColor();
         if (ImGui::MenuItem(s.paused ? "Resume" : "Pause", "Pause")) s.paused = !s.paused;
-        if (s.paused && ImGui::MenuItem("Step", "]")) s.step_requested = true;
+        if (s.paused && with_tip(ImGui::MenuItem("Step", "]"), "Advances the paused game one frame")) s.step_requested = true;
         if (ImGui::MenuItem(s.ejected ? "Possess" : "Eject", "F8")) {
             s.ejected = !s.ejected;
             s.mouse_captured = !s.ejected;
@@ -4888,12 +4926,12 @@ void draw_level_dialogs(EditorState& s) {
     }
     if (ImGui::BeginPopupModal("Restore Autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("The editor did not close properly last time.\nAn autosave newer than the level was found:\n  %s", s.recovery_path);
-        if (ImGui::Button("Restore")) {
+        if (with_tip(ImGui::Button("Restore"), "Opens the autosave the editor made before it closed unexpectedly")) {
             s.restore_requested = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Ignore")) {
+        if (with_tip(ImGui::Button("Ignore"), "Keeps the last saved level and drops the autosave")) {
             s.recovery_path[0] = '\0';
             ImGui::CloseCurrentPopup();
         }
@@ -4903,18 +4941,18 @@ void draw_level_dialogs(EditorState& s) {
     s.quit_requested = false;
     if (ImGui::BeginPopupModal("Quit", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Save changes to %s before closing?", s.level_path[0] ? s.level_path : "the untitled level");
-        if (ImGui::Button("Save")) {
+        if (with_tip(ImGui::Button("Save"), "Saves the level, then continues")) {
             s.quit_after_save = true;
             request_save(s, false);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Don't Save")) {
+        if (with_tip(ImGui::Button("Don't Save"), "Continues and loses the unsaved changes")) {
             s.quit_confirmed = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Goes back to editing") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -4924,13 +4962,13 @@ void draw_level_dialogs(EditorState& s) {
 
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("The current level has unsaved changes. Discard them?");
-        if (ImGui::Button("Discard")) {
+        if (with_tip(ImGui::Button("Discard"), "Loses the unsaved changes")) {
             if (g_confirm_new) s.new_level_requested = true;
             else std::snprintf(s.open_level_requested, sizeof s.open_level_requested, "%s", g_confirm_open);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Goes back to editing") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (ImGui::BeginPopupModal("Save Level As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -4939,12 +4977,12 @@ void draw_level_dialogs(EditorState& s) {
         const bool enter = ImGui::InputText("##level_name", g_save_as_name, sizeof g_save_as_name, ImGuiInputTextFlags_EnterReturnsTrue);
         const bool ok = asset::valid_name(g_save_as_name);
         if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Not a valid name");
-        if ((ImGui::Button("Save") || enter) && ok) {
+        if ((with_tip(ImGui::Button("Save"), "Saves the level under this name in Content/Levels") || enter) && ok) {
             std::snprintf(s.save_as_requested, sizeof s.save_as_requested, "%s/%s%s", kLevelsFolder, g_save_as_name, world::kLevelExtension);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (with_tip(ImGui::Button("Cancel"), "Does not save") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             s.quit_after_save = false;
             ImGui::CloseCurrentPopup();
         }
@@ -4996,7 +5034,7 @@ void draw_message_log(EditorState& s) {
     if (ImGui::Begin("Message Log", &s.show_message_log)) {
         std::lock_guard<std::mutex> lock(g_log_mutex);
         g_unread_errors = g_unread_warnings = 0;  // seen
-        if (ImGui::Button("Clear")) g_messages_count = 0;
+        if (with_tip(ImGui::Button("Clear"), "Empties the list")) g_messages_count = 0;
         ImGui::SameLine();
         ImGui::TextDisabled("Warnings and errors from imports, saves and the engine (all lines are in the Output Log)");
         ImGui::Separator();
@@ -5030,9 +5068,9 @@ void draw_project_settings(EditorState& s) {
     if (ImGui::Begin("Project Settings", &s.show_project_settings)) {
         constexpr char kProjectPath[] = "Config/project.json";
         ImGui::TextDisabled("%s (shared with the team: commit it)", kProjectPath);
-        if (ImGui::Button("Save")) std::snprintf(s.status, sizeof s.status, reflect::save_file(s.project, kProjectPath) ? "Saved %s" : "Could not save %s", kProjectPath);
+        if (with_tip(ImGui::Button("Save"), "Writes the Project Settings to Config/project.json")) std::snprintf(s.status, sizeof s.status, reflect::save_file(s.project, kProjectPath) ? "Saved %s" : "Could not save %s", kProjectPath);
         ImGui::SameLine();
-        if (ImGui::Button("Use Current Level as Game Default") && s.level_path[0]) std::snprintf(s.project.game_default_level, sizeof s.project.game_default_level, "%s", s.level_path);
+        if (with_tip(ImGui::Button("Use Current Level as Game Default"), "The packaged game starts in the level open now") && s.level_path[0]) std::snprintf(s.project.game_default_level, sizeof s.project.game_default_level, "%s", s.level_path);
         const DetailsStyle style{{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}};
         draw_details(reflect::type_of<ProjectSettings>(), &s.project, &style);
     }
@@ -5070,7 +5108,7 @@ void draw_claude_mcp(EditorState& s) {
                        "and Lua, list the level's objects and the assets, read the Output Log. Scripts Claude writes into "
                        "Content/ reload by themselves.");
     ImGui::Spacing();
-    ImGui::Checkbox("Enabled", &set.mcp_enabled);
+    with_tip(ImGui::Checkbox("Enabled", &set.mcp_enabled), "Lets Claude Code drive the editor (place objects, run commands) through the MCP bridge");
     ImGui::SameLine(0, 24);
     int port = static_cast<int>(set.mcp_port);
     ImGui::SetNextItemWidth(90);
@@ -5086,12 +5124,12 @@ void draw_claude_mcp(EditorState& s) {
     const std::string command = "claude mcp add lsd-engine -- \"" + bridge + "\" --port " + port_text;
     ImGui::TextWrapped("1. Copy this command and run it in a terminal (or ask Claude Code to run it):");
     ImGui::TextDisabled("%s", command.c_str());
-    if (ImGui::Button("Copy Command")) {
+    if (with_tip(ImGui::Button("Copy Command"), "Copies the command that adds the editor to Claude Code")) {
         ImGui::SetClipboardText(command.c_str());
         std::snprintf(s.status, sizeof s.status, "Copied the claude mcp add command");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Write .mcp.json")) {  // project-scoped server: Claude Code asks once to trust it
+    if (with_tip(ImGui::Button("Write .mcp.json"), "Writes .mcp.json in the project so Claude Code finds the editor by itself")) {  // project-scoped server: Claude Code asks once to trust it
         std::error_code error;
         if (std::filesystem::exists(".mcp.json", error)) {
             std::snprintf(s.status, sizeof s.status, "A .mcp.json is already there: use Copy Command instead (it is left as it is)");
@@ -5155,14 +5193,14 @@ void draw_preferences_window(EditorState& s) {
         if (ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen)) draw_details(reflect::type_of<EditorSettings>(), &s.settings, &style);
         if (ImGui::CollapsingHeader("Theme", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::TextDisabled("%s", kThemePath);
-            if (ImGui::Button("Save Theme")) std::snprintf(s.status, sizeof s.status, reflect::save_file(t, kThemePath) ? "Saved %s" : "Could not save %s", kThemePath);
+            if (with_tip(ImGui::Button("Save Theme"), "Writes these colours to Config/editor_theme.json")) std::snprintf(s.status, sizeof s.status, reflect::save_file(t, kThemePath) ? "Saved %s" : "Could not save %s", kThemePath);
             ImGui::SameLine();
-            if (ImGui::Button("Reload")) {
+            if (with_tip(ImGui::Button("Reload"), "Reads the theme file again")) {
                 reflect::load_file(t, kThemePath);
                 apply_theme(t);
             }
             ImGui::SameLine();
-            if (ImGui::Button("Reset")) {
+            if (with_tip(ImGui::Button("Reset"), "Back to the original colours")) {
                 t = EditorTheme{};
                 apply_theme(t);
             }
@@ -5401,20 +5439,20 @@ void draw_editor(EditorState& s) {
         static int kind = 0;      // 0 a script, 1 a component
         ImGui::TextUnformatted("Language:");
         ImGui::SameLine();
-        ImGui::RadioButton("C++", &language, 0);
+        with_tip(ImGui::RadioButton("C++", &language, 0), "A C++ file using lsd/game.hpp (classes, LSD_NODE, LSD_COMPONENT)");
         ImGui::SameLine();
-        ImGui::RadioButton("C", &language, 1);
+        with_tip(ImGui::RadioButton("C", &language, 1), "A plain C file using lsd_game.h");
         ImGui::TextUnformatted("Make:    ");
         ImGui::SameLine();
-        ImGui::RadioButton("Script", &kind, 0);
+        with_tip(ImGui::RadioButton("Script", &kind, 0), "Behaviour for an object: on_start, on_update, events (Native Script component)");
         ImGui::SameLine();
-        ImGui::RadioButton("Component", &kind, 1);
+        with_tip(ImGui::RadioButton("Component", &kind, 1), "A new component type with fields shown in Details");
         ImGui::TextDisabled("Writes Source/<Name>%s, then compiles the game code.", language ? ".c" : ".cpp");
         if (kind == 0) ImGui::TextDisabled("It runs on objects with a Native Script component, like a Lua script on a Script component.");
         else ImGui::TextDisabled("Data of your own: Details > Add Component lists it, levels save it, scripts and nodes read it.");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        const bool enter = ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue);
-        if (ImGui::Button("Create") || enter) {
+        const bool enter = with_tip(ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue), "Name of the new script (letters, digits, _)");
+        if (with_tip(ImGui::Button("Create"), "Makes the file in Source/ and opens it in VS Code") || enter) {
             if (game_module::new_script(name, language == 1, s.status, sizeof s.status, kind == 1)) {
                 LSD_LOG_INFO("game", "%s", s.status);
                 game_module::compile();
@@ -5422,7 +5460,7 @@ void draw_editor(EditorState& s) {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Does not make anything")) ImGui::CloseCurrentPopup();
         ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", s.status);
         ImGui::EndPopup();
     }

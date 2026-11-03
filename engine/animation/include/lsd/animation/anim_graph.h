@@ -20,26 +20,26 @@ struct BlendSample {
 LSD_STRUCT()
 struct AnimState {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char name[32] = "Idle";
+    LSD_PROPERTY(Edit, Tooltip = "The state's name: transitions go to it by this name") char name[32] = "Idle";
     LSD_PROPERTY(Edit, Tooltip = "The animation it plays (ignored when it has blend samples)") u32 clip = 0;
     LSD_PROPERTY(Edit, Tooltip = "Blend space: the parameter that picks between the samples (e.g. Speed); empty = just the clip")
     char blend_parameter[32] = "";
     LSD_PROPERTY(Edit, Tooltip = "2D blend space (Unreal's Blend Space): a second parameter (e.g. Direction); the samples' Position Y place them on it")
     char blend_parameter_y[32] = "";
-    LSD_PROPERTY(Edit) List<BlendSample, 8> samples;
-    LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 play_rate = 1.0f;
-    LSD_PROPERTY(Edit) bool looping = true;
+    LSD_PROPERTY(Edit, Tooltip = "1D blend space: clips placed along the Blend parameter (e.g. walk at 1.5, run at 5); blended by where the parameter is") List<BlendSample, 8> samples;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the state's clip (1 = as made, 2 = twice as fast)") f32 play_rate = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends (off: holds the last frame)") bool looping = true;
 };
 
 LSD_STRUCT()
 struct AnimTransition {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "The state it leaves; empty = from any state") char from[32] = "";
-    LSD_PROPERTY(Edit) char to[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The state to go to when the condition holds") char to[32] = "";
     LSD_PROPERTY(Edit, Tooltip = "Parameter it tests (Speed, InAir...)") char parameter[32] = "Speed";
     LSD_PROPERTY(Edit, Widget = "Choice:Greater,Less,True,False,Finished", Tooltip = "True / False: the parameter is non-zero / zero. Finished: the state's clip ended")
     u32 condition = 0;
-    LSD_PROPERTY(Edit) f32 value = 0.1f;
+    LSD_PROPERTY(Edit, Tooltip = "What the parameter is compared with (Greater / Less)") f32 value = 0.1f;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Crossfade time") f32 blend_time = 0.2f;
 };
 
@@ -48,7 +48,7 @@ struct AnimGraph {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX whose animations the clip numbers refer to; empty = the mesh's own") char animation[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "The state it starts in; empty = the first") char entry_state[32] = "";
-    LSD_PROPERTY(Edit) List<AnimState, 16> states;
+    LSD_PROPERTY(Edit, Tooltip = "The graph's states; the first is where it starts (Unreal's Entry)") List<AnimState, 16> states;
     LSD_PROPERTY(Edit, Tooltip = "Checked in order every frame; the first that matches wins") List<AnimTransition, 32> transitions;
 };
 

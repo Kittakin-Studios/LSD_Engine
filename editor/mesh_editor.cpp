@@ -1,4 +1,5 @@
 #include "mesh_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "mesh_cache.h"
@@ -238,12 +239,12 @@ void draw_mesh_editor(EditorState& s) {
     DetailsStyle style;
     style.categories = "Asset,Import,LOD";
     if (draw_details(reflect::type_of<asset::AssetMeta>(), &g_mw.meta, &style)) g_mw.meta_dirty = true;
-    if (ImGui::Button("Save")) {
+    if (with_tip(ImGui::Button("Save"), "Writes the import settings and reimports the mesh")) {
         g_mw.meta_dirty = !s.registry->save_meta(g_mw.record, g_mw.meta);
         std::snprintf(s.status, sizeof s.status, g_mw.meta_dirty ? "Could not save %s.meta" : "Saved %s.meta (it reimports)", g_mw.name);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Reimport")) {
+    if (with_tip(ImGui::Button("Reimport"), "Reads the source file again (after editing it in Blender)")) {
         char source[300];
         s.registry->source_path(g_mw.record, source, sizeof source);
         std::error_code error;
@@ -285,7 +286,7 @@ void draw_mesh_editor(EditorState& s) {
         }
         ImGui::SeparatorText("Sockets");
         ImGui::BeginDisabled(g_mw.bone < 0);
-        if (ImGui::Button("+ Socket on the selected bone")) {
+        if (with_tip(ImGui::Button("+ Socket on the selected bone"), "Adds a socket (a named attach point) on the bone selected in the tree")) {
             asset::MeshSocket sock;
             std::snprintf(sock.name, sizeof sock.name, "Socket%u", g_mw.meta.sockets.count + 1);
             std::snprintf(sock.bone, sizeof sock.bone, "%s", skinned->model->joint_name(static_cast<u32>(g_mw.bone)));
@@ -301,7 +302,7 @@ void draw_mesh_editor(EditorState& s) {
             ImGui::SameLine();
             ImGui::TextDisabled("on %s", sock.bone);
             ImGui::SameLine();
-            if (ImGui::SmallButton("X")) remove = static_cast<i32>(i);
+            if (with_tip(ImGui::SmallButton("X"), "Removes this socket")) remove = static_cast<i32>(i);
             g_mw.meta_dirty |= ImGui::DragFloat3("Offset", &sock.position.x, 0.005f);
             g_mw.meta_dirty |= ImGui::DragFloat3("Turn", &sock.rotation.x, 0.5f);
             ImGui::PopID();

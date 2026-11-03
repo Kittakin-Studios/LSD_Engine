@@ -208,6 +208,9 @@ The Outline tab's **type filter** lists only objects with a chosen component (St
 ![Details for the selected object](images/details.jpg)
 *Details for the selected object: one block per component (Transform, Static Mesh...), + Add Component at the bottom, Search details at the top.*
 
+**Hover help everywhere:** rest the mouse on any property, button, menu item, Place tab item or
+component in **+ Add Component** for a short description of what it does.
+
 The Details panel shows the selected object's components (each a collapsible section) or the
 selected asset's settings. Every field has a tooltip. Right-click a field for **Reset to Default**.
 Select several objects to edit them together. **Add Component** at the bottom adds any component.

@@ -1,4 +1,5 @@
 #include "timeline_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "timeline_player.h"
@@ -168,7 +169,7 @@ void draw_timeline_editor(EditorState& s) {
         moved = true;
     }
     // Toolbar
-    if (ImGui::Button("Save")) save(s);
+    if (with_tip(ImGui::Button("Save"), "Writes the timeline to disk")) save(s);
     ImGui::SameLine();
     if (ImGui::Button(g_tl.previewing ? "Pause" : "Preview")) g_tl.previewing = !g_tl.previewing;
     ImGui::SameLine();
@@ -176,15 +177,15 @@ void draw_timeline_editor(EditorState& s) {
     moved |= ImGui::SliderFloat("##time", &g_tl.playhead, 0.0f, tl.length, "%.2f s");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
-    if (ImGui::DragFloat("Length", &tl.length, 0.05f, 0.1f, 3600.0f, "%.1f s")) g_tl.dirty = true;
+    if (with_tip(ImGui::DragFloat("Length", &tl.length, 0.05f, 0.1f, 3600.0f, "%.1f s"), "How long the timeline plays")) g_tl.dirty = true;
     ImGui::SameLine();
-    if (ImGui::Button("Key")) {
+    if (with_tip(ImGui::Button("Key"), "Records the selected track's object as it is now, at the playhead")) {
         add_key(s);
         moved = true;
     }
     ImGui::SetItemTooltip("A key at the playhead on the selected track: the object's position / rotation / value now");
     ImGui::SameLine();
-    if (ImGui::Button("+ Track")) {
+    if (with_tip(ImGui::Button("+ Track"), "Adds a track for the object selected in the level")) {
         world::TimelineTrack t;
         if (s.world->alive(s.selected)) std::snprintf(t.object, sizeof t.object, "%s", s.world->name(s.selected));
         if (tl.tracks.push_back(t)) {
@@ -242,7 +243,7 @@ void draw_timeline_editor(EditorState& s) {
             if (ImGui::InputTextWithHint("##prop", "Comp.field", track.property, sizeof track.property)) g_tl.dirty = true;
         }
         ImGui::SameLine();
-        if (ImGui::SmallButton("X")) remove_track = static_cast<i32>(i);
+        if (with_tip(ImGui::SmallButton("X"), "Removes this track and its keys")) remove_track = static_cast<i32>(i);
         // Its row on the ruler: keys as diamonds; click to select, drag to move in time.
         const f32 y = at.y + row * 0.5f;
         dl->AddLine(ImVec2(ruler_x, y), ImVec2(ruler_x + ruler_w, y), IM_COL32(70, 70, 80, 255));
@@ -304,17 +305,17 @@ void draw_timeline_editor(EditorState& s) {
     if (g_tl.key >= 0 && g_tl.key < static_cast<i32>(tl.keys.count)) {
         world::TimelineKey& k = tl.keys[static_cast<u32>(g_tl.key)];
         const auto type = k.track < tl.tracks.count ? static_cast<world::TrackType>(tl.tracks[k.track].type) : world::TrackType::Transform;
-        bool changed = ImGui::DragFloat("Time", &k.time, 0.01f, 0.0f, tl.length, "%.2f s");
+        bool changed = with_tip(ImGui::DragFloat("Time", &k.time, 0.01f, 0.0f, tl.length, "%.2f s"), "When the key is");
         if (type == world::TrackType::Transform) {
             changed |= ImGui::DragFloat3("Position", &k.position.x, 0.05f);
             changed |= ImGui::DragFloat3("Rotation", &k.rotation.x, 0.5f);
         } else if (type == world::TrackType::Property) {
-            changed |= ImGui::DragFloat("Value", &k.value, 0.05f);
+            changed |= with_tip(ImGui::DragFloat("Value", &k.value, 0.05f), "The value at this key");
         } else {
             const char* hint = type == world::TrackType::Event ? "function to call (Custom Event name)" : type == world::TrackType::Sound ? "sound name" : "Camera object name";
             changed |= ImGui::InputTextWithHint("Text", hint, k.text, sizeof k.text);
         }
-        if (ImGui::Button("Delete Key") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Delete))) {
+        if (with_tip(ImGui::Button("Delete Key"), "Removes the selected key") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Delete))) {
             tl.keys.remove(static_cast<u32>(g_tl.key));
             g_tl.key = -1;
             changed = true;

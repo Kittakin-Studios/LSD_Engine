@@ -1,4 +1,5 @@
 #include "source_control.h"
+#include "tips.h"
 
 #include "lsd/foundation/log.h"
 #include "lsd/foundation/types.h"
@@ -145,21 +146,21 @@ char status(const char* content_path) {
 }
 
 void asset_menu(const char* content_path) {
-    if (!g_enabled || !ImGui::BeginMenu("Source Control")) return;
+    if (!g_enabled || !with_tip(ImGui::BeginMenu("Source Control"), "Git: history, diff and submit for this asset")) return;
     const std::string path = content_path;
     const char code = status(content_path);
     if (!safe(path)) {
         ImGui::TextDisabled("Rename it first: its path has characters git commands cannot take");
     } else {
-        if (ImGui::MenuItem("History")) show("History", path, "log -n 50 --date=short --format=\"%h  %ad  %an  %s\" -- " + pathspec(path));
-        if (ImGui::MenuItem("Diff Against Last Commit", nullptr, false, code == 'M' || code == 'R')) show("Diff", path, "diff HEAD -- " + pathspec(path));
-        if (ImGui::MenuItem("Submit...", nullptr, false, code != 0)) {
+        if (with_tip(ImGui::MenuItem("History"), "The last 50 commits that changed it")) show("History", path, "log -n 50 --date=short --format=\"%h  %ad  %an  %s\" -- " + pathspec(path));
+        if (with_tip(ImGui::MenuItem("Diff Against Last Commit", nullptr, false, code == 'M' || code == 'R'), "What changed since the last commit")) show("Diff", path, "diff HEAD -- " + pathspec(path));
+        if (with_tip(ImGui::MenuItem("Submit...", nullptr, false, code != 0), "Commits the asset and its .meta with a message")) {
             g_submit_path = path;
             g_message[0] = '\0';
             g_open_submit = true;
         }
     }
-    if (ImGui::MenuItem("Refresh Status")) refresh();
+    if (with_tip(ImGui::MenuItem("Refresh Status"), "Asks Git again what changed")) refresh();
     ImGui::EndMenu();
 }
 
@@ -181,7 +182,7 @@ void draw() {
         ImGui::InputTextMultiline("Description", g_message, sizeof g_message, ImVec2(480, 90));
         const bool ok = g_message[0] != '\0';
         ImGui::BeginDisabled(!ok);
-        if (ImGui::Button("Submit")) {
+        if (with_tip(ImGui::Button("Submit"), "Commits with this message")) {
             // The message goes through a file: no quoting problems whatever it says.
             const char* message_file = "Saved/commit_message.txt";
             std::error_code ec;
@@ -201,7 +202,7 @@ void draw() {
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (with_tip(ImGui::Button("Cancel"), "Does not commit") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }

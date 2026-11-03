@@ -1,4 +1,5 @@
 #include "particle_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include <imgui.h>
@@ -68,13 +69,13 @@ void ParticleEditor::draw(EditorState& s) {
     // Toolbar.
     if (ImGui::Button(paused_ ? "Play" : "Pause")) paused_ = !paused_;
     ImGui::SameLine();
-    if (ImGui::Button("Restart")) scrub_to(*system, 0.0f);
+    if (with_tip(ImGui::Button("Restart"), "Plays the system again from the start")) scrub_to(*system, 0.0f);
     ImGui::SameLine();
     ImGui::Checkbox("Loop", &loop_);
     ImGui::SetItemTooltip("Start again when every emitter has finished (non-looping systems)");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
-    ImGui::SliderFloat("Speed", &speed_, 0.05f, 4.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
+    with_tip(ImGui::SliderFloat("Speed", &speed_, 0.05f, 4.0f, "%.2fx", ImGuiSliderFlags_Logarithmic), "Preview speed (slow motion or fast forward)");
 
     // Simulate.
     const auto start = std::chrono::steady_clock::now();

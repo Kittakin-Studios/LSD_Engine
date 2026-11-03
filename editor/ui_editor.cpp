@@ -1,4 +1,5 @@
 #include "ui_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "rml_edit.h"
@@ -262,13 +263,13 @@ void draw_element_details(UiWindow& w) {
     std::string text;
     if (rml_text(w.text, w.selected.c_str(), text)) {
         std::snprintf(buffer, sizeof buffer, "%s", text.c_str());
-        if (ImGui::InputText("Text", buffer, sizeof buffer)) {
+        if (with_tip(ImGui::InputText("Text", buffer, sizeof buffer), "The element's text")) {
             rml_set_text(w.text, w.selected.c_str(), buffer);
             edited(w);
         }
     }
     std::snprintf(buffer, sizeof buffer, "%s", rml_attribute(w.text, w.selected.c_str(), "onclick").c_str());
-    if (ImGui::InputText("On Click", buffer, sizeof buffer)) {
+    if (with_tip(ImGui::InputText("On Click", buffer, sizeof buffer), "The Lua function called when it is clicked (the document's script)")) {
         rml_set_attribute(w.text, w.selected.c_str(), "onclick", buffer);
         edited(w);
     }
@@ -283,7 +284,7 @@ void draw_element_details(UiWindow& w) {
             edited(w);
         }
     }
-    if (ImGui::Button("Delete Element")) {
+    if (with_tip(ImGui::Button("Delete Element"), "Removes the element from the document")) {
         rml_remove(w.text, w.selected.c_str());
         w.selected.clear();
         edited(w);
@@ -305,7 +306,7 @@ void draw_ui_editor(EditorState& s) {
         if (w.dirty) save(s);
         w.open = false;
     }
-    if (ImGui::Button("Save") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) save(s);
+    if (with_tip(ImGui::Button("Save"), "Writes the document; open copies in Play reload") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) save(s);
     ImGui::SameLine();
     if (w.message[0]) ImGui::TextUnformatted(w.message);
     else ImGui::TextDisabled("HTML / CSS (RmlUi). onclick=\"name\" calls the Lua function name(self, element_id). Fonts: family sans, or a .ttf in Content/Fonts");
@@ -349,7 +350,7 @@ void draw_ui_editor(EditorState& s) {
         }
         ImGui::EndTabItem();
     }
-    if (!w.style_sheet && ImGui::BeginTabItem("Details", nullptr, w.show_details ? ImGuiTabItemFlags_SetSelected : 0)) {
+    if (!w.style_sheet && with_tip(ImGui::BeginTabItem("Details", nullptr, w.show_details ? ImGuiTabItemFlags_SetSelected : 0), "The selected element's text, click action and style")) {
         draw_element_details(w);
         ImGui::EndTabItem();
     }
