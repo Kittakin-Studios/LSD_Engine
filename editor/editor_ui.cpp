@@ -4793,8 +4793,14 @@ void draw_menu_bar(EditorState& s) {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_y));
         if (ImGui::MenuItem("Play", "Alt+P")) s.play_requested = true;
         if (ImGui::MenuItem("Simulate", "Alt+S")) s.play_requested = s.simulate_requested = true;
-        ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the level with the editor camera: physics, scripts and AI, nobody possessed (F8 possesses)");
+        if (!s.play_window_open) {
+            if (ImGui::MenuItem("New Window", "Alt+N")) s.play_window_requested = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays the level as it is now in a window of its own, as the packaged game would (Unreal's New Editor Window); the editor stays free");
+        } else if (ImGui::MenuItem("Close Window")) {
+            s.close_play_window = true;
+        }
+        ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_x));
         if (ImGui::MenuItem("Stop", "Esc")) s.stop_requested = true;
@@ -5137,6 +5143,7 @@ void handle_shortcuts(EditorState& s) {
         return;
     }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P)) s.play_requested = true;
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N) && !s.playing && !s.play_window_open) s.play_window_requested = true;
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) s.play_requested = s.simulate_requested = true;
     if (!io.KeyAlt && !io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_P, false)) s.show_navigation = !s.show_navigation;
     if (io.KeyAlt && !io.WantTextInput) {  // Unreal's viewport keys

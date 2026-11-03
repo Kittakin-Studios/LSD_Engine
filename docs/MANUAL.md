@@ -496,7 +496,10 @@ when you stop, they keep it, as one undo step.
 Press **Play** (or **Alt+P**). **Esc** stops; **Pause** pauses (`]` steps a frame); **F8** ejects to
 fly around the running game; **Shift+F1** frees the mouse. Changes made while playing are undone
 when Play stops, like Unreal's PIE. **Simulate** (**Alt+S**, next to Play) runs physics, scripts and AI
-while you keep the editor camera and selection (F8 possesses the player). The menu bar's **Settings >
+while you keep the editor camera and selection (F8 possesses the player). **New Window** (**Alt+N**)
+plays the level as it is now, unsaved edits included, in a window of its own, the way the packaged
+game runs (Unreal's New Editor Window PIE); the editor stays free to edit, and the button becomes
+**Close Window**. The menu bar's **Settings >
 Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings.
 
 The player is the first object with a **Character** component; without one, a default walker

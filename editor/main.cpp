@@ -1051,7 +1051,12 @@ void register_console(EditorState& s) {
         return 0;
         }, at);
     }, &s, "ui.Click <x> <y>: click the game UI at window pixels, 0.8 s later (tests)");
-    console::add_command("play", [](void* user, const char*) { static_cast<EditorState*>(user)->play_requested = true; }, &s, "Start Play-in-Editor");
+    console::add_command("play", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        if (std::strcmp(args, "window") == 0) st.play_window_requested = true;  // Play in a new window
+        else if (std::strcmp(args, "close") == 0) st.close_play_window = true;
+        else st.play_requested = true;
+    }, &s, "play: Play-in-Editor; play window: in a new window (Alt+N); play close: close that window");
     console::add_command("simulate", [](void* user, const char*) {
         auto& st = *static_cast<EditorState*>(user);
         st.play_requested = st.simulate_requested = true;
@@ -1261,6 +1266,22 @@ void register_script_nodes(const lsd::asset::AssetRegistry& registry) {
 
 // Multiplayer Play in the editor: the other players' game windows (closed on Stop).
 std::vector<SDL_Process*> g_play_clients;
+
+// Play in a new window: the game as its own process on a saved copy of the level (closed with the editor).
+SDL_Process* g_play_window = nullptr;
+lsd::u64 g_play_window_deadline = 0;  // asked to close: ended for good if still running by then (ms)
+
+// Asks the window to close (the game quits as on its own close button); `now`: end it at once (editor exit).
+void close_play_window(bool now = false) {
+    if (!g_play_window) return;
+    SDL_KillProcess(g_play_window, now);
+    if (now) {
+        SDL_DestroyProcess(g_play_window);
+        g_play_window = nullptr;
+    } else if (!g_play_window_deadline) {
+        g_play_window_deadline = SDL_GetTicks() + 2000;
+    }
+}
 
 void stop_play_clients() {
     for (SDL_Process* p : g_play_clients) {
@@ -2025,6 +2046,29 @@ int main(int argc, char** argv) {
                 state.stop_requested = true;
             }
         }
+        // Play in a new window (Alt+N): the level as it is now, unsaved edits too, played by a game process.
+        if (std::exchange(state.play_window_requested, false) && !g_play_window && !state.playing) {
+            lsd::Array<char> text(allocator);
+            lsd::world::save_level(world, text);
+            const std::string level = "Saved/PlayInWindow" + std::string(lsd::world::kLevelExtension);
+            if (FILE* f = std::fopen(level.c_str(), "wb")) {
+                std::fwrite(text.data(), 1, text.size(), f);
+                std::fclose(f);
+            }
+            const std::string level_flag = "-level=" + level;
+            const char* args[] = {argv[0], "-game", level_flag.c_str(), no_sound ? "-nosound" : nullptr, nullptr};
+            g_play_window = SDL_CreateProcess(args, false);
+            if (g_play_window) LSD_LOG_INFO("editor", "Playing in a new window");
+            else LSD_LOG_ERROR("editor", "Could not open the play window: %s", SDL_GetError());
+        }
+        if (std::exchange(state.close_play_window, false)) close_play_window();
+        if (g_play_window && g_play_window_deadline && SDL_GetTicks() > g_play_window_deadline) close_play_window(true);  // did not close when asked
+        if (g_play_window && SDL_WaitProcess(g_play_window, false, nullptr)) {  // its window was closed (Esc in the game)
+            SDL_DestroyProcess(g_play_window);
+            g_play_window = nullptr;
+        }
+        if (!g_play_window) g_play_window_deadline = 0;
+        state.play_window_open = g_play_window != nullptr;
         if (state.play_requested && !state.playing) {
             const lsd::u64 snapshot_start = SDL_GetTicksNS();
             lsd::world::save_level(world, play_snapshot);
@@ -2387,6 +2431,7 @@ int main(int argc, char** argv) {
     if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
     stop_play_clients();
+    close_play_window(true);
     lsd::editor::game_module::shutdown();
     lsd::editor::game_module::unload();  // after Play stopped: no behaviour runs its code any more
     audio.shutdown();

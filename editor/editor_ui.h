@@ -165,6 +165,9 @@ struct EditorState {
     bool reset_layout = false;         // Window > Layout > Reset to Default (of the active workspace)
     char workspace_request[32] = "";   // a workspace tab was clicked: switched before the next dockspace
     bool simulate_requested = false;   // with play_requested: start ejected (Simulate, Alt+S)
+    bool play_window_requested = false;  // Play in a new window (Alt+N): the game as its own process
+    bool close_play_window = false;
+    bool play_window_open = false;       // set by main.cpp while that window runs
     GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
     bool user_settings_changed = false;         // main.cpp applies and saves them
     bool show_debugger = false;        // Tools > Lua Debugger
