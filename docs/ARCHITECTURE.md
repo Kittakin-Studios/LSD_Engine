@@ -208,6 +208,9 @@ parameter values cost nothing.
   code template (`$1` inputs, `$o1` outputs, `#0` exec chains), so a graph runs exactly like a
   hand-written script and the two cannot drift apart. The compiler keeps going after a problem
   and reports every one, a line each naming its node (the editor's Compiler Results).
+  `collapse_to_function` rewrites a graph in place: the selected nodes move under a new
+  FunctionEntry (+ Return), a CallFunction replaces them and the crossing links are rerouted
+  through its pins (white wire in / out, A-C arguments, Result).
 - **Declared variables** (`script::GraphVariable`, saved in the `.lsdgraph`): the compiler emits
   `properties = {...}` for Instance Editable numbers / booleans / text (the Details panel reads that
   table to offer per-object values) and `defaults = {...}` for the rest; `ScriptSystem` copies both

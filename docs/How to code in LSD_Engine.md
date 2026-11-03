@@ -158,6 +158,9 @@ The same things with nodes and wires (Blueprints):
 5. Put it on an object exactly like a `.lua`: Add Component > **Script** > pick the graph.
 6. Debug: right-click a node > **Toggle Breakpoint** (or select it and press F9). While playing,
    nodes that run glow orange.
+7. Tidy up: select a run of nodes, right-click one > **Collapse to Function**. They become a
+   Function you can call from anywhere in the script (Unreal's Collapse to Function).
+8. Problems on saving are listed under the toolbar (**Compiler Results**); click one to go to its node.
 
 ### Worked example: press a key to interact with what you look at
 
