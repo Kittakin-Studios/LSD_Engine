@@ -170,6 +170,8 @@ struct Character {
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Tooltip = "Turn per unit of Look (per pixel for the mouse)") f32 look_sensitivity = 0.15f;
     LSD_PROPERTY(Edit) bool invert_look_y = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Spring arm length behind the head: 0 = first person") f32 camera_distance = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Moves the view from the head (or from a Camera on this object): x forward, y left, z up. 0, -0.5, 0.2 looks over the right shoulder (Unreal's Socket Offset). Or give this object a child with a Camera and move that in the viewport")
+    Vec3 camera_offset{0.0f, 0.0f, 0.0f};
     LSD_PROPERTY(Edit, Category = "Crouch", Widget = "Asset:InputAction", Tooltip = "Held: crouch (stands up again when there is room)") char crouch_action[33] = "";
     LSD_PROPERTY(Edit, Category = "Crouch", Units = "m", Min = 0.3) f32 crouch_height = 1.1f;
     LSD_PROPERTY(Edit, Category = "Crouch", Units = "m/s", Min = 0) f32 crouch_speed = 2.5f;
@@ -191,9 +193,16 @@ LSD_STRUCT(Component, Category = "Camera")
 struct Camera {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "deg", Min = 10, Max = 170, Tooltip = "Vertical field of view") f32 fov = 60.0f;
-    LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
+    LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera. Off on a Camera that is (or is a child of) the player's Character: the player's view starts where you put it, and mouse look turns it") bool auto_activate = false;
     LSD_PROPERTY(Edit, Tooltip = "No perspective: sizes stay the same at any distance (2D games, strategy views)") bool orthographic = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 1000, Tooltip = "Orthographic: how many metres of the world fit the screen's height") f32 ortho_height = 10.0f;
+    // On the player's Character (or a child of it, not Auto Activate): how the player sees.
+    LSD_PROPERTY(Edit, Category = "Player View", Widget = "Choice:First Person,Third Person",
+                 Tooltip = "On the player's Character: First Person looks from the Camera (or Follow Bone); Third Person looks from behind it on a spring arm of Arm Length. Scripts switch it: lsd.set_camera_view(\"first\" | \"third\")")
+    u32 view = 0;
+    LSD_PROPERTY(Edit, Category = "Player View", Units = "m", Min = 0, Max = 50, Tooltip = "Third Person: how far behind the Camera the view sits (pulled in when a wall is in the way)") f32 arm_length = 3.0f;
+    LSD_PROPERTY(Edit, Category = "Player View", Tooltip = "First Person: the view follows this bone (or socket) of the Character's Skeletal Mesh so head bob and crouching move it; UE4 / UE5 rigs: head. Empty: where the Camera is")
+    char follow_bone[32] = "";
 };
 
 // Another level placed in this one (Unreal's Level Instance and level streaming): its objects appear

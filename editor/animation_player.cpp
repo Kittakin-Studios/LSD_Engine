@@ -178,7 +178,12 @@ bool AnimationPlayer::socket(const world::World& world, const SkinnedCache& cach
         out = world.world_matrix(e) * p->joint_model(static_cast<u32>(j)) * trs(s.position, s.rotation, Vec3{1, 1, 1});
         return true;
     }
-    return false;
+    // No socket of that name: a bone of that name (Unreal attaches to either).
+    const SkinnedEntry* model = const_cast<SkinnedCache&>(cache).get(mesh->mesh);
+    const i32 j = model && model->model ? model->model->find_joint(name) : -1;
+    if (j < 0) return false;
+    out = world.world_matrix(e) * p->joint_model(static_cast<u32>(j));
+    return true;
 }
 
 void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache& cache) {

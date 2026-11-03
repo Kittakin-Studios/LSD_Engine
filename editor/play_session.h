@@ -77,6 +77,9 @@ public:
     bool play_timeline(const char* name, bool loop);
     void stop_timeline(const char* name);
     Vec3 forward() const;
+    // A Camera (not Auto Activate) on the player's Character or a child of it: where the player's view sits.
+    world::Entity player_camera(const world::World& world) const;
+    u32 camera_view_override_ = 2;  // lsd.set_camera_view: 0 first, 1 third, 2 = the Camera's own View
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
     // Multiplayer: set before start(); off by default (single player).

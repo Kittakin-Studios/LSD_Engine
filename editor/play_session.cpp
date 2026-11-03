@@ -311,6 +311,19 @@ void PlaySession::stop() {
     input_.clear();
 }
 
+world::Entity PlaySession::player_camera(const world::World& world) const {
+    if (!world.alive(character_)) return {};
+    const reflect::TypeInfo& type = reflect::type_of<world::Camera>();
+    for (u32 i = 0; i < world.count(type); ++i) {
+        if (static_cast<const world::Camera*>(world.at(type, i))->auto_activate) continue;
+        const world::Entity e = world.owner(type, i);
+        for (world::Entity p = e; p.valid(); p = world.parent(p)) {
+            if (p == character_) return e;
+        }
+    }
+    return {};
+}
+
 Vec3 PlaySession::forward() const {
     return {std::cos(pitch_) * std::cos(yaw_), std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_)};
 }
@@ -535,6 +548,16 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.user = this;
     host.set_view = [](void* user, world::Entity camera, f32 blend) { static_cast<PlaySession*>(user)->set_view(camera, blend); };
     host.camera_shake = [](void* user, f32 strength, f32 seconds, f32 frequency) { static_cast<PlaySession*>(user)->camera_shake(strength, seconds, frequency); };
+    camera_view_override_ = 2;  // each Play starts with the Camera's own View
+    host.set_camera_view = [](void* user, u32 view) { static_cast<PlaySession*>(user)->camera_view_override_ = view; };
+    host.camera_location = [](void* user) { return static_cast<PlaySession*>(user)->eye(); };
+    host.camera_view = [](void* user) -> u32 {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (self.camera_view_override_ < 2) return self.camera_view_override_;
+        const world::Entity cam = self.world_ ? self.player_camera(*self.world_) : world::Entity{};
+        const auto* pc = cam.valid() ? self.world_->get<world::Camera>(cam) : nullptr;
+        return pc ? pc->view : (self.settings_.camera_distance > 0.0f ? 1u : 0u);
+    };
     host.ik = [](void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) {
         auto& self = *static_cast<PlaySession*>(user);
         if (!self.animations_ || !self.world_) return;
@@ -1330,12 +1353,39 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         decompose_trs(world.world_matrix(character_), t, r, scale);
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
     }
-    // Camera: the head, or behind it on the spring arm, pulled in when a wall is in the way.
-    const Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height * (crouched_ ? settings_.crouch_height / settings_.height : 1.0f)};
+    // Camera: the head (or a Camera placed on the Character), moved by Camera Offset, then behind it
+    // on the spring arm, pulled in when a wall is in the way. Mouse look turns it (Unreal's Use Pawn
+    // Control Rotation); the Camera object's own rotation is not used.
+    const f32 crouch = crouched_ ? settings_.crouch_height / settings_.height : 1.0f;
+    Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height * crouch};
+    f32 arm_length = settings_.camera_distance;
+    const world::Entity cam = player_camera(world);
+    if (const auto* pc = cam.valid() ? world.get<world::Camera>(cam) : nullptr) {
+        if (cam != character_) {  // a child placed in the viewport (on the Character itself: only its settings)
+            const Mat4 m = world.world_matrix(cam);
+            head = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - Vec3{0, 0, (1.0f - crouch) * (m.at(2, 3) - feet_.z)};
+        }
+        const u32 view = camera_view_override_ < 2 ? camera_view_override_ : pc->view;
+        arm_length = view == 1 ? pc->arm_length : 0.0f;
+        Mat4 bone;
+        if (view == 0 && pc->follow_bone[0] && animations_ && skinned_) {  // the head bone of the Character's skeleton (or a child's)
+            bool found = animations_->socket(world, *skinned_, character_, pc->follow_bone, bone);
+            for (u32 slot = 0; slot < world.slot_count() && !found; ++slot) {
+                const world::Entity e = world.entity_at_slot(slot);
+                if (e.valid() && world.parent(e) == character_ && world.get<world::SkeletalMesh>(e)) found = animations_->socket(world, *skinned_, e, pc->follow_bone, bone);
+            }
+            if (found) head = {bone.at(0, 3), bone.at(1, 3), bone.at(2, 3)};
+        }
+    } else if (camera_view_override_ < 2) {  // no Camera on the Character: a script still switches views
+        arm_length = camera_view_override_ == 1 ? (settings_.camera_distance > 0.0f ? settings_.camera_distance : 3.0f) : 0.0f;
+    }
+    const Vec3 offset = settings_.camera_offset;
+    const f32 cy = std::cos(yaw_), sy = std::sin(yaw_);
+    head = head + Vec3{cy * offset.x - sy * offset.y, sy * offset.x + cy * offset.y, offset.z};
     eye_ = head;
-    if (settings_.camera_distance > 0.0f) {
+    if (arm_length > 0.0f) {
         const Vec3 back = forward() * -1.0f;
-        f32 arm = settings_.camera_distance;
+        f32 arm = arm_length;
         physics::RayHit hit;
         if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
         eye_ = head + back * arm;
@@ -1712,7 +1762,10 @@ void PlaySession::find_view(const world::World& world) {
             if (static_cast<const world::Camera*>(world.at(camera_type, i))->auto_activate) camera = world.owner(camera_type, i);
         }
     }
-    if (!camera.valid()) return;
+    if (!camera.valid()) {
+        if (const world::Entity own = player_camera(world); own.valid()) view_fov_ = radians(world.get<world::Camera>(own)->fov);  // the player's Camera: its lens
+        return;
+    }
     const Mat4 m = world.world_matrix(camera);
     view_eye_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
     view_forward_ = normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});

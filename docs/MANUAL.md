@@ -598,6 +598,26 @@ held) to crouch to **Crouch Height** at **Crouch Speed**; it stands up again onl
 Inside a **Water Volume** (Place tab) it swims at **Swim Speed** where you look, Jump rising. Animation
 Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Speed, VerticalSpeed and InAir.
 
+**The player's camera** (Unreal's Camera + Spring Arm on the Character): add a child object to the
+Character (Outliner: drag it onto the Character), give it a **Camera** component (Auto Activate off)
+and move it in the viewport; Play looks from where you put it, and mouse look turns it (Use Pawn
+Control Rotation). On the Camera, **Player View**:
+
+| Setting | What it does |
+| --- | --- |
+| View: First Person | the view sits at the Camera (or at **Follow Bone**) |
+| View: Third Person | the view sits **Arm Length** behind the Camera, pulled in when a wall is in the way |
+| Follow Bone | First Person follows this bone of the Character's skeleton, so head bob and crouching move it: `head` on UE4 / UE5 rigs |
+| FOV | the player's lens |
+
+The Character's **Camera Offset** (x forward, y left, z up) shifts the view without a Camera object:
+`0, -0.5, 0.2` looks over the right shoulder. Switch views while playing with the **Set Camera View**
+node (or `lsd.set_camera_view("first" | "third" | "camera")`); **Get Camera Location** and **Is Third
+Person** read it back.
+
+While playing, the mouse belongs to the game: the cursor is hidden and the editor's panels ignore it.
+**Shift+F1** (or a game menu that shows the cursor) gives it back; click the viewport to return.
+
 ### Input (Enhanced Input)
 
 ![An Input Action (IA_Interact) in Details](images/det_input_action.jpg)

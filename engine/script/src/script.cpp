@@ -800,6 +800,24 @@ struct Api {
         }
         return 0;
     }
+    static int set_camera_view(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const char* view = luaL_checkstring(L, 1);
+        const u32 v = std::strcmp(view, "first") == 0 ? 0u : std::strcmp(view, "third") == 0 ? 1u : 2u;
+        if (v == 2 && std::strcmp(view, "camera") != 0) return luaL_argerror(L, 1, "\"first\", \"third\" or \"camera\"");
+        if (host.set_camera_view) host.set_camera_view(host.user, v);
+        return 0;
+    }
+    static int camera_view(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushstring(L, host.camera_view && host.camera_view(host.user) == 1 ? "third" : "first");
+        return 1;
+    }
+    static int camera_location(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        push_vec3(L, host.camera_location ? host.camera_location(host.user) : Vec3{});
+        return 3;
+    }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
     static int ride_call(lua_State* L, int what, bool target) {
         const ScriptHost& host = system(L).host_;
@@ -1473,7 +1491,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
-        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},

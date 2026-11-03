@@ -1891,6 +1891,17 @@ int main(int argc, char** argv) {
         if (state.load_layout[0]) lsd::editor::apply_layout_file(state.load_layout, state.status, sizeof state.status);
         state.load_layout[0] = '\0';
         device->debug_ui_new_frame();
+        {  // While the game has the mouse the editor ignores it: no cursor (the SDL3 backend would show it again every frame), no hovering panels.
+            ImGuiIO& gio = ImGui::GetIO();
+            constexpr ImGuiConfigFlags kGameMouse = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
+            if (state.playing && state.mouse_captured && !state.ejected) {
+                gio.ConfigFlags |= kGameMouse;
+                SDL_HideCursor();
+            } else if (gio.ConfigFlags & kGameMouse) {
+                gio.ConfigFlags &= ~kGameMouse;
+                SDL_ShowCursor();
+            }
+        }
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         {
