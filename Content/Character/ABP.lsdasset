@@ -31,6 +31,14 @@
         "condition": 0,
         "value": 0.100000001,
         "blend_time": 0.200000003
+      },
+      {
+        "from": "Walk",
+        "to": "Idle",
+        "parameter": "Speed",
+        "condition": 1,
+        "value": 0.100000001,
+        "blend_time": 0.200000003
       }
     ]
   }
