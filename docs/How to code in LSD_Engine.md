@@ -51,16 +51,16 @@ Unreal: Content Browser > Add > Blueprint Class.
 1. **Double-click** the script's tile (or right-click it > **Edit Script**). It opens in VS Code.
 2. A new script already contains:
 
-```lua
-function on_start(self)            -- once, when Play starts (BeginPlay)
-  lsd.log("Hello from " .. self.name)
-end
+   ```lua
+   function on_start(self)            -- once, when Play starts (BeginPlay)
+     lsd.log("Hello from " .. self.name)
+   end
 
-function on_update(self, dt)       -- every frame; dt = seconds since the last one (Tick)
-  local x, y, z = lsd.rotation(self.entity)
-  lsd.set_rotation(self.entity, x, y, z + 90 * dt)   -- spin 90 degrees a second
-end
-```
+   function on_update(self, dt)       -- every frame; dt = seconds since the last one (Tick)
+     local x, y, z = lsd.rotation(self.entity)
+     lsd.set_rotation(self.entity, x, y, z + 90 * dt)   -- spin 90 degrees a second
+   end
+   ```
 
 3. Change it and **save (Ctrl+S)**. The engine picks the change up by itself, **even while the game
    is playing**: no compile button, no restart.

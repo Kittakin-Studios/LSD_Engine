@@ -13,7 +13,7 @@ Contents: [Quick start](#quick-start) · [Project layout](#project-layout) ·
 [A script in C++](#a-script-in-c) · [Events](#events) · [Properties](#properties-shown-in-details) ·
 [Command reference](#command-reference) · [Writing it in plain C](#writing-it-in-plain-c) ·
 [Talking to Lua and visual scripts](#talking-to-lua-and-visual-scripts) · [Build, reload, debug, ship](#build-reload-debug-ship) ·
-[Console commands](#console-commands) · [Rules and gotchas](#rules-and-gotchas) · [Not in C / C++ yet](#not-in-c--c-yet)
+[Console commands](#console-commands) · [Rules and gotchas](#rules-and-gotchas) · [Any Lua command from C / C++](#everything-else-any-lua-command-from-c--c)
 
 ## Quick start
 
