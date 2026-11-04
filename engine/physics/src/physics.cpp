@@ -25,7 +25,11 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -155,6 +159,21 @@ struct PhysicsWorld::Impl {
     };
     std::vector<u32> broken;  // joints snapped since take_broken_joints
     std::vector<Joint> joints;
+    struct Vehicle {
+        JPH::Ref<JPH::VehicleConstraint> constraint;
+        u32 body;
+        f32 engine_torque;
+        bool added = true;  // in the system (taken out while its body is kinematic)
+    };
+    std::vector<Vehicle> vehicles;
+    void remove_vehicle(Vehicle& v) {
+        if (!v.constraint) return;
+        if (v.added) {
+            system.RemoveStepListener(v.constraint);
+            system.RemoveConstraint(v.constraint);
+        }
+        v.constraint = nullptr;
+    }
     f32 step_height = 0.4f;
     f32 character_height = 1.8f;
     f32 character_radius = 0.35f;
@@ -170,6 +189,7 @@ PhysicsWorld::PhysicsWorld() {
 }
 
 PhysicsWorld::~PhysicsWorld() {
+    for (auto& v : impl_->vehicles) impl_->remove_vehicle(v);
     for (const auto& joint : impl_->joints) {
         if (joint.constraint) impl_->system.RemoveConstraint(joint.constraint);
     }
@@ -219,6 +239,11 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
         case Shape::Sphere: shape = new JPH::SphereShape(std::fmax(desc.half_extents.x, 0.01f)); break;
         case Shape::Capsule: shape = z_capsule(std::fmax(desc.half_extents.z, 0.01f), std::fmax(desc.half_extents.x, 0.01f), JPH::Vec3::sZero()); break;
     }
+    const Vec3 com = desc.centre_of_mass_offset;
+    if (desc.motion == Motion::Dynamic && (com.x != 0.0f || com.y != 0.0f || com.z != 0.0f)) {
+        const JPH::ShapeSettings::ShapeResult result = JPH::OffsetCenterOfMassShapeSettings(to_jolt(com), shape).Create();
+        if (result.IsValid()) shape = result.Get();
+    }
     JPH::RVec3 position;
     JPH::Quat rotation;
     to_jolt(desc.transform, position, rotation);
@@ -259,6 +284,9 @@ void PhysicsWorld::remove_body(u32 body) {
             impl_->system.RemoveConstraint(joint.constraint);
             joint.constraint = nullptr;
         }
+    }
+    for (auto& v : impl_->vehicles) {
+        if (v.body == body) impl_->remove_vehicle(v);
     }
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     bodies.RemoveBody(impl_->bodies[body]);
@@ -457,6 +485,107 @@ Mat4 PhysicsWorld::body_transform(u32 body) const {
     return out;
 }
 
+u32 PhysicsWorld::add_vehicle(const VehicleDesc& desc) {
+    if (desc.body >= impl_->bodies.size() || impl_->bodies[desc.body].IsInvalid() || desc.wheel_count == 0) {
+        LSD_LOG_WARN("physics", "A vehicle needs a dynamic body and at least one wheel");
+        impl_->vehicles.push_back({nullptr, desc.body, desc.engine_torque});
+        return static_cast<u32>(impl_->vehicles.size() - 1);
+    }
+    JPH::VehicleConstraintSettings settings;
+    settings.mUp = JPH::Vec3::sAxisZ();
+    settings.mForward = JPH::Vec3::sAxisX();
+    settings.mMaxPitchRollAngle = JPH::DegreesToRadians(desc.max_pitch_roll_degrees);
+    auto* controller = new JPH::WheeledVehicleControllerSettings();
+    controller->mEngine.mMaxTorque = desc.engine_torque;
+    controller->mEngine.mMaxRPM = desc.max_rpm;
+    const u32 wheels = desc.wheel_count < kMaxWheels ? desc.wheel_count : kMaxWheels;
+    std::vector<u32> driven;
+    for (u32 i = 0; i < wheels; ++i) {
+        const WheelDesc& w = desc.wheels[i];
+        auto* wheel = new JPH::WheelSettingsWV();
+        wheel->mPosition = to_jolt(w.position);
+        wheel->mSuspensionDirection = -JPH::Vec3::sAxisZ();
+        wheel->mSteeringAxis = JPH::Vec3::sAxisZ();
+        wheel->mWheelUp = JPH::Vec3::sAxisZ();
+        wheel->mWheelForward = JPH::Vec3::sAxisX();
+        wheel->mSuspensionMinLength = 0.0f;
+        wheel->mSuspensionMaxLength = std::fmax(w.suspension_length, 0.01f);
+        wheel->mSuspensionSpring.mFrequency = std::fmax(w.suspension_frequency, 0.1f);
+        wheel->mSuspensionSpring.mDamping = std::clamp(w.suspension_damping, 0.0f, 1.0f);
+        wheel->mRadius = std::fmax(w.radius, 0.05f);
+        wheel->mWidth = std::fmax(w.width, 0.02f);
+        wheel->mMaxSteerAngle = JPH::DegreesToRadians(w.max_steer_degrees);
+        wheel->mMaxBrakeTorque = desc.brake_torque;
+        wheel->mMaxHandBrakeTorque = w.handbrake ? desc.handbrake_torque : 0.0f;
+        settings.mWheels.push_back(wheel);
+        if (w.driven) driven.push_back(i);
+    }
+    // Driven wheels in left / right pairs (by position along the car), each pair a differential
+    // sharing the engine's torque; a wheel without a partner gets one of its own.
+    std::sort(driven.begin(), driven.end(), [&](u32 a, u32 b) { return desc.wheels[a].position.x < desc.wheels[b].position.x; });
+    for (usize i = 0; i < driven.size();) {
+        JPH::VehicleDifferentialSettings diff;
+        const bool pair = i + 1 < driven.size() && std::fabs(desc.wheels[driven[i]].position.x - desc.wheels[driven[i + 1]].position.x) < 0.05f;
+        const u32 a = driven[i], b = pair ? driven[i + 1] : driven[i];
+        const bool a_left = desc.wheels[a].position.y >= desc.wheels[b].position.y;
+        diff.mLeftWheel = static_cast<int>(a_left ? a : b);
+        diff.mRightWheel = pair ? static_cast<int>(a_left ? b : a) : -1;
+        controller->mDifferentials.push_back(diff);
+        i += pair ? 2 : 1;
+    }
+    for (JPH::VehicleDifferentialSettings& d : controller->mDifferentials) d.mEngineTorqueRatio = 1.0f / static_cast<f32>(controller->mDifferentials.size());
+    settings.mController = controller;
+    JPH::Ref<JPH::VehicleConstraint> constraint;
+    {
+        JPH::BodyLockWrite lock(impl_->system.GetBodyLockInterface(), impl_->bodies[desc.body]);
+        if (lock.Succeeded()) constraint = new JPH::VehicleConstraint(lock.GetBody(), settings);
+    }
+    if (!constraint) {
+        impl_->vehicles.push_back({nullptr, desc.body, desc.engine_torque});
+        return static_cast<u32>(impl_->vehicles.size() - 1);
+    }
+    constraint->SetVehicleCollisionTester(new JPH::VehicleCollisionTesterCastCylinder(kMovingLayer));  // hits what the body hits
+    impl_->system.AddConstraint(constraint);
+    impl_->system.AddStepListener(constraint);
+    impl_->vehicles.push_back({constraint, desc.body, desc.engine_torque});
+    return static_cast<u32>(impl_->vehicles.size() - 1);
+}
+
+void PhysicsWorld::drive_vehicle(u32 vehicle, f32 forward, f32 right, f32 brake, f32 handbrake, f32 torque_scale) {
+    if (vehicle >= impl_->vehicles.size() || !impl_->vehicles[vehicle].constraint || !impl_->vehicles[vehicle].added) return;
+    Impl::Vehicle& v = impl_->vehicles[vehicle];
+    auto* controller = static_cast<JPH::WheeledVehicleController*>(v.constraint->GetController());
+    controller->GetEngine().mMaxTorque = v.engine_torque * std::fmax(torque_scale, 0.0f);
+    controller->SetDriverInput(std::clamp(forward, -1.0f, 1.0f), std::clamp(right, -1.0f, 1.0f), std::clamp(brake, 0.0f, 1.0f), std::clamp(handbrake, 0.0f, 1.0f));
+    if (forward != 0.0f || right != 0.0f || brake != 0.0f || handbrake != 0.0f) impl_->system.GetBodyInterface().ActivateBody(impl_->bodies[v.body]);  // a parked car sleeps
+}
+
+Mat4 PhysicsWorld::wheel_transform(u32 vehicle, u32 wheel) const {
+    if (vehicle >= impl_->vehicles.size() || !impl_->vehicles[vehicle].constraint || wheel >= impl_->vehicles[vehicle].constraint->GetWheels().size()) return Mat4{};
+    // The wheel model's right is -Y and up +Z: our x forward, y left, z up.
+    const JPH::RMat44 m = impl_->vehicles[vehicle].constraint->GetWheelWorldTransform(wheel, -JPH::Vec3::sAxisY(), JPH::Vec3::sAxisZ());
+    Mat4 out;
+    for (int c = 0; c < 4; ++c) {
+        const JPH::Vec4 column = c < 3 ? m.GetColumn4(static_cast<JPH::uint>(c)) : JPH::Vec4(JPH::Vec3(m.GetTranslation()), 1.0f);
+        for (int r = 0; r < 4; ++r) out.at(r, c) = column[static_cast<JPH::uint>(r)];
+    }
+    return out;
+}
+
+VehicleState PhysicsWorld::vehicle_state(u32 vehicle) const {
+    VehicleState s;
+    if (vehicle >= impl_->vehicles.size() || !impl_->vehicles[vehicle].constraint) return s;
+    const Impl::Vehicle& v = impl_->vehicles[vehicle];
+    const JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    const JPH::Vec3 forward = bodies.GetRotation(impl_->bodies[v.body]) * JPH::Vec3::sAxisX();
+    s.speed = bodies.GetLinearVelocity(impl_->bodies[v.body]).Dot(forward);
+    const auto* controller = static_cast<const JPH::WheeledVehicleController*>(v.constraint->GetController());
+    s.rpm = controller->GetEngine().GetCurrentRPM();
+    s.gear = controller->GetTransmission().GetCurrentGear();
+    for (const JPH::Wheel* w : v.constraint->GetWheels()) s.wheels_on_ground += w->HasContact() ? 1u : 0u;
+    return s;
+}
+
 void PhysicsWorld::set_gravity(f32 g) { impl_->system.SetGravity(JPH::Vec3(0, 0, -g)); }
 
 void PhysicsWorld::step(f32 dt) {
@@ -520,6 +649,25 @@ void PhysicsWorld::set_body_mass(u32 body, f32 mass) {
     JPH::BodyLockWrite lock(impl_->system.GetBodyLockInterface(), impl_->bodies[body]);
     if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) return;
     lock.GetBody().GetMotionProperties()->ScaleToMass(mass);
+}
+
+void PhysicsWorld::set_body_kinematic(u32 body, bool kinematic) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    if (bodies.GetMotionType(impl_->bodies[body]) == JPH::EMotionType::Static) return;
+    // A vehicle drives only a dynamic body: out of the system while it is kinematic, back after.
+    for (Impl::Vehicle& v : impl_->vehicles) {
+        if (v.body != body || !v.constraint || v.added == !kinematic) continue;
+        if (kinematic) {
+            impl_->system.RemoveStepListener(v.constraint);
+            impl_->system.RemoveConstraint(v.constraint);
+        } else {
+            impl_->system.AddConstraint(v.constraint);
+            impl_->system.AddStepListener(v.constraint);
+        }
+        v.added = !kinematic;
+    }
+    bodies.SetMotionType(impl_->bodies[body], kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
 }
 
 bool PhysicsWorld::set_character_height(f32 height) {

@@ -2,7 +2,7 @@
 
 Every feature planned for LSD_Engine, placed in the milestone that builds it.
 `[x]` done · `[~]` partly done (note says what's missing) · `[ ]` to do.
-Sources: the [engine plan doc](https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW) Feature spec, plus the public
+Sources: the engine's feature spec (see [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md)), plus the public
 feature sets of Unreal Engine 5 and Autodesk Stingray (ideas only, see `docs/CLEAN_ROOM.md`; our own names and formats).
 Unreal names in brackets. **(S)** = idea taken from Stingray's public feature list.
 
@@ -306,7 +306,10 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Drivable Vehicle (Place tab): E in / out, WASD + Shift boost + Ctrl / Space brake, ground following, walls, flying kind, follow camera; Enter / Exit / Get Driven Vehicle nodes [Vehicle Blueprint]
 - [x] Transport (Place tab): hitch a ride with E, no controls; Hitch Ride / Leave Ride nodes
 - [x] Mover (Place tab): direction / back and forth / spline paths, once / loop / ping-pong, pauses, spin; starts at Begin Play, a Trigger, a game time or a script, repeats every N minutes; Start / Stop / Restart Mover nodes [Interp To Movement]
-- [ ] Wheels and suspension (Chaos-style physics vehicles), vehicles in multiplayer (driving on clients), seats for passengers, camera collision for the follow camera
+- [x] Wheels and suspension [Chaos Wheeled Vehicle Movement]: Vehicle > Physics > Model = Physics: a dynamic body on Jolt's wheeled controller (engine torque / max RPM, automatic gearbox, differentials per axle, brakes, handbrake, low centre of mass); four automatic wheels at its box's corners or listed Wheels (position, radius, steers / driven / handbrake) whose Object (a child mesh) spins, steers and bounces with them (rings drawn where there is no mesh); W / S throttle (braking first when rolling the other way), A / D steer, Ctrl brake, Space handbrake, Shift boost; parked cars hold their handbrake
+- [x] Vehicles in multiplayer (driving on clients): a Net Replicated vehicle's seats are handed out by the server; the driver's machine owns the car (a new owner message after spawn) and simulates it, the others keep it kinematic on the replicated Transform; getting out or leaving gives it back to the server
+- [x] Seats for passengers [Seats]: Passenger Seats list; once the driver's seat is taken, players getting in sit there and ride with the follow camera
+- [x] Camera collision for the follow camera [Spring Arm collision test]: pulled in front of walls between the vehicle and the view (the player's own camera already had it)
 
 ## Multiplayer
 

@@ -247,6 +247,19 @@ struct Mover {
 // A vehicle the player drives (Unreal's Chaos Vehicle, arcade-style): E near it gets in or out; W / S
 // throttle and reverse, A / D steer, Shift boost, Ctrl or Space handbrake (a flying one: Space up,
 // Ctrl down). It hugs the ground, stops at walls, and the camera follows behind it.
+// One wheel of a physics Vehicle (Unreal's Wheel Setup): where it sits and what it does; Object names
+// a child to spin, steer and bounce with it (a wheel mesh, like Unreal's wheel bones).
+LSD_STRUCT()
+struct VehicleWheel {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "A child object turned with the wheel (its pivot at the wheel's centre); empty: none") char object[64] = "";
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Where its suspension is fixed, from the vehicle's origin (x forward, y left, z up)") Vec3 position{1.4f, 0.8f, 0.3f};
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 5, Tooltip = "0 = the vehicle's Wheel Radius") f32 radius = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Turns with the steering (front wheels)") bool steers = false;
+    LSD_PROPERTY(Edit, Tooltip = "The engine turns it") bool driven = true;
+    LSD_PROPERTY(Edit, Tooltip = "Locked by the handbrake (Space; usually the rear wheels)") bool handbrake = false;
+};
+
 LSD_STRUCT(Component, Category = "Movement", Tooltip = "A vehicle the player enters and drives (WASD, Shift boost, Ctrl brake)")
 struct Vehicle {
     LSD_GENERATED()
@@ -260,8 +273,27 @@ struct Vehicle {
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Flying: how fast Space / Ctrl climb and sink") f32 climb_speed = 6.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "How near the player must be to get in with E") f32 enter_distance = 3.0f;
     LSD_PROPERTY(Edit, Tooltip = "Where the driver sits, in the vehicle's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
+    LSD_PROPERTY(Edit, Tooltip = "Passenger seats, in the vehicle's own space (Unreal's seats): in multiplayer, players getting in once the driver's seat is taken sit here")
+    List<Vec3, 8> passenger_seats;
     LSD_PROPERTY(Edit, Units = "m", Min = 1, Max = 50, Tooltip = "How far behind the vehicle the driver's view is") f32 camera_distance = 8.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 30, Tooltip = "How high above the vehicle the driver's view is") f32 camera_height = 3.0f;
+    // Physics model (ground vehicles): a dynamic body on wheels (Unreal's Chaos Wheeled Vehicle Movement).
+    LSD_PROPERTY(Edit, Category = "Physics", Widget = "Choice:Arcade,Physics",
+                 Tooltip = "Arcade: moved directly (simple, never flips). Physics: a body on wheels with suspension, an engine and gears; it rolls, bumps and slides (ground vehicles)")
+    u32 model = 0;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "kg", Min = 50, Max = 100000, Tooltip = "How heavy it is (a car about 1500)") f32 mass = 1500.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "N m", Min = 10, Max = 100000, Tooltip = "The engine's pull at full throttle (more: faster off the line, up hills)") f32 engine_torque = 500.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 1000, Max = 20000, Tooltip = "Engine speed limit; the gearbox shifts up near it") f32 max_rpm = 6000.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "N m", Min = 0, Max = 100000, Tooltip = "Each wheel's brake (Ctrl)") f32 brake_torque = 1500.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Widget = "Choice:Rear,Front,All Wheel", Tooltip = "Which wheels the engine drives (the automatic wheels; listed wheels say for themselves)") u32 drive = 0;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "deg", Min = 0, Max = 80, Tooltip = "How far the front wheels turn at full lock") f32 max_steer_angle = 30.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.05, Max = 5, Tooltip = "Wheel radius (the automatic wheels, and listed ones with Radius 0)") f32 wheel_radius = 0.35f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.02, Max = 3, Tooltip = "Tyre width") f32 wheel_width = 0.25f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.01, Max = 3, Tooltip = "Suspension travel, fully up to fully down") f32 suspension_length = 0.3f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "Hz", Min = 0.1, Max = 20, Tooltip = "Suspension stiffness: higher is firmer (a race car 2.5, a truck 1)") f32 suspension_stiffness = 1.5f;
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 0, Max = 1, Tooltip = "0 bounces on and on, 1 settles at once") f32 suspension_damping = 0.5f;
+    LSD_PROPERTY(Edit, Category = "Physics", Tooltip = "The wheels (Unreal's Wheel Setups); empty: four at the corners of its box")
+    List<VehicleWheel, 8> wheels;
 };
 
 // A ride the player hitches without driving (trains, ferries, lifts, cable cars): E near it gets on or

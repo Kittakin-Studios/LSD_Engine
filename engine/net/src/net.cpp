@@ -20,7 +20,7 @@ namespace lsd::net {
 namespace {
 
 // Message types (first byte of every packet).
-enum Msg : u8 { kWelcome = 1, kSpawn, kDestroy, kSnapshot, kOwnerState, kEvent, kPlayerJoined, kPlayerLeft, kChat, kGroup, kVoice, kVoiceOut };
+enum Msg : u8 { kWelcome = 1, kSpawn, kDestroy, kSnapshot, kOwnerState, kEvent, kPlayerJoined, kPlayerLeft, kChat, kGroup, kVoice, kVoiceOut, kOwner };
 constexpr u32 kMaxVoiceBytes = 1000;
 constexpr u8 kReliable = 0, kUnreliable = 1;  // ENet channels
 constexpr u32 kLevelIdBit = 0x80000000u;      // ids from level objects' names; spawned ones count up below it
@@ -507,6 +507,14 @@ struct NetSession::Impl {
             by_id.erase(it);
             break;
         }
+        case kOwner: {  // who moves an object now (a car its driver's machine simulates)
+            const u32 id = r.u32_(), owner = r.u32_();
+            const auto it = r.ok ? by_id.find(id) : by_id.end();
+            if (it == by_id.end()) return;
+            if (auto* rep = replicated(it->second)) rep->owner = owner;
+            tracks.erase(id);  // states from the old owner do not blend into the new one's
+            break;
+        }
         case kSnapshot: {
             const f64 server_time = r.f64_();
             const u16 count = r.u16_();
@@ -605,7 +613,8 @@ struct NetSession::Impl {
             const auto it = by_id.find(id);
             if (it == by_id.end() || !track.count) continue;
             auto* transform = world->alive(it->second) ? world->get<world::Transform>(it->second) : nullptr;
-            if (!transform) continue;
+            const auto* rep = replicated(it->second);
+            if (!transform || (rep && rep->owner == self.player_id_)) continue;  // this machine moves its own objects
             State a = track.s[0], b = track.s[0];
             for (u32 i = 0; i < track.count; ++i) {
                 if (track.s[i].t <= now) a = track.s[i];
@@ -786,7 +795,15 @@ bool NetSession::take_event(NetEvent& out) {
 
 void NetSession::set_owner(world::World& world, world::Entity e, u32 player) {
     auto* r = world.get<world::NetReplicated>(e) ? world.get<world::NetReplicated>(e) : world.add<world::NetReplicated>(e);
+    if (r->owner == player) return;
     r->owner = player;
+    if (!impl_ || mode_ != Mode::Server || !r->net_id) return;  // not yet known to clients: their spawn carries the owner
+    impl_->tracks.erase(r->net_id);  // the old owner's states stop moving it here
+    Writer w;  // a change after the spawn (a car handed to its driver's machine): everyone hears it
+    w.u8_(kOwner);
+    w.u32_(r->net_id);
+    w.u32_(player);
+    impl_->broadcast(w, kReliable);
 }
 
 void NetSession::set_player_group(u32 player, u32 team, u32 squad) {

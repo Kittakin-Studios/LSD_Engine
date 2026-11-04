@@ -980,6 +980,10 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         simulated_[simulated_count_++] = {e, body, scale, centre, rigid->kinematic || remote, rigid->mass, rigid->friction, rigid->bounciness};
         return;
     }
+    if (const auto* vehicle = world.get<world::Vehicle>(e); vehicle && vehicle->model == 1 && vehicle->kind == 0) {  // a body on wheels
+        add_physics_vehicle(world, e, cached, *vehicle);
+        return;
+    }
     if (world.get<world::Mover>(e) || world.get<world::Vehicle>(e)) {  // moved by Play: kinematic, carries what stands on it
         add_moving(world, e, cached, !mesh || mesh->collision);
         return;
@@ -1380,9 +1384,9 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 n = length(swim);
         if (n > 1.0f) swim = swim * (1.0f / n);
         physics_->move_character(swim * settings_.swim_speed, false, 0.0f, dt, true);
-    } else {
+    } else if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; !car || car->vehicle == ~0u) {
         physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
-    }
+    }  // in a Physics vehicle the driver sits inside its body: not moved, so it cannot push the car
     physics_->step(dt);
     u32 broken[16];  // breakable joints that snapped: tell the object that owned the joint
     for (u32 n = physics_->take_broken_joints(broken, 16), k = 0; k < n; ++k) {
@@ -1431,6 +1435,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         if (!world.alive(s.entity) || s.kinematic) continue;  // a script destroyed it; kinematic ones lead, not follow
         world.set_world_matrix(s.entity, physics_->body_transform(s.body) * translation(-mul(s.centre, s.scale)) * scaling(s.scale));
     }
+    update_vehicle_wheels(world);
+    if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; car && car->vehicle != ~0u) place_rider(world);  // on the car where it is now
     if (world.alive(character_)) {
         Vec3 t, r, scale;
         decompose_trs(world.world_matrix(character_), t, r, scale);
@@ -1623,7 +1629,32 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
     net::NetEvent ev;
     while (net_.take_event(ev)) {
         switch (ev.kind) {
-        case net::NetEvent::Kind::Call: scripts_.net_call(ev.name, ev.from, ev.json); break;
+        case net::NetEvent::Kind::Call: {
+            // Vehicle seats (the engine's own calls): ask, answer, leave.
+            u32 id = 0;
+            i32 seat = -1;
+            auto vehicle_of = [&](u32 net_id) {
+                const reflect::TypeInfo& type = reflect::type_of<world::NetReplicated>();
+                for (u32 i = 0; i < world.count(type); ++i) {
+                    if (static_cast<const world::NetReplicated*>(world.at(type, i))->net_id == net_id) return world.owner(type, i);
+                }
+                return world::Entity{};
+            };
+            if (std::strcmp(ev.name, "__seat") == 0 && net_.mode() == net::Mode::Server && std::sscanf(ev.json, "[%u]", &id) == 1) {
+                const i32 given = server_take_seat(world, vehicle_of(id), ev.from);
+                char args[48];
+                std::snprintf(args, sizeof args, "[%u,%d]", id, given);
+                net_.send_event(static_cast<i32>(ev.from), "__seated", args);
+            } else if (std::strcmp(ev.name, "__unseat") == 0 && net_.mode() == net::Mode::Server) {
+                server_free_seats(world, ev.from);
+            } else if (std::strcmp(ev.name, "__seated") == 0 && std::sscanf(ev.json, "[%u,%d]", &id, &seat) == 2) {
+                if (seat >= 0) take_seat(world, vehicle_of(id), seat);
+                else LSD_LOG_INFO("play", "That vehicle is full");
+            } else {
+                scripts_.net_call(ev.name, ev.from, ev.json);
+            }
+            break;
+        }
         case net::NetEvent::Kind::PlayerJoined:
             if (net_.mode() == net::Mode::Server) {  // their avatar, which their machine moves
                 char name[32];
@@ -1632,7 +1663,10 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
             }
             scripts_.net_call("on_player_joined", ev.from, "[]");
             break;
-        case net::NetEvent::Kind::PlayerLeft: scripts_.net_call("on_player_left", ev.from, "[]"); break;
+        case net::NetEvent::Kind::PlayerLeft:
+            if (net_.mode() == net::Mode::Server) server_free_seats(world, ev.from);  // their car is the server's again
+            scripts_.net_call("on_player_left", ev.from, "[]");
+            break;
         case net::NetEvent::Kind::Connected: scripts_.net_call("on_connected", ev.from, "[]"); break;
         case net::NetEvent::Kind::Disconnected: scripts_.net_call("on_disconnected", 0, "[]"); break;
         case net::NetEvent::Kind::Voice: hear(ev.from, ev.name, reinterpret_cast<const u8*>(ev.json), ev.size); break;
@@ -2012,6 +2046,169 @@ void PlaySession::add_moving(const world::World& world, world::Entity e, const C
     moving_.push_back(m);
 }
 
+// A Physics vehicle: a dynamic box fitted to its mesh, its centre of mass low (it should not tip at
+// every corner), on its listed wheels or four at the corners. The body writes its Transform back.
+void PlaySession::add_physics_vehicle(const world::World& world, world::Entity e, const CachedMesh* cached, const world::Vehicle& v) {
+    if (simulated_count_ == sizeof simulated_ / sizeof simulated_[0]) return;
+    Vec3 scale, centre;
+    physics::BodyDesc d = fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi, 0,
+                                      physics::Motion::Dynamic, scale, centre);
+    d.mass = v.mass;
+    d.friction = 0.3f;  // the body sliding on walls; the tyres have their own grip
+    d.centre_of_mass_offset = {0.0f, 0.0f, -d.half_extents.z * 0.9f};
+    const u32 body = add_body(e, d);
+    simulated_[simulated_count_++] = {e, body, scale, centre, false, v.mass, d.friction, 0.0f};
+
+    physics::VehicleDesc vd;
+    vd.body = body;
+    vd.engine_torque = v.engine_torque;
+    vd.max_rpm = v.max_rpm;
+    vd.brake_torque = v.brake_torque;
+    auto wheel = [&](Vec3 at, f32 radius, bool steers, bool driven, bool handbrake) {
+        physics::WheelDesc& w = vd.wheels[vd.wheel_count++];
+        w.position = at;
+        w.radius = radius;
+        w.width = v.wheel_width;
+        w.suspension_length = v.suspension_length;
+        w.suspension_frequency = v.suspension_stiffness;
+        w.suspension_damping = v.suspension_damping;
+        w.max_steer_degrees = steers ? v.max_steer_angle : 0.0f;
+        w.driven = driven;
+        w.handbrake = handbrake;
+    };
+    Moving m;
+    m.entity = e;
+    m.body = body;
+    m.world_scale = scale;
+    const Vec3 body_centre = mul(centre, scale);  // the body sits at the box's centre, the wheels are given from the origin
+    if (v.wheels.count) {
+        for (u32 i = 0; i < v.wheels.count && vd.wheel_count < physics::kMaxWheels; ++i) {
+            const world::VehicleWheel& w = v.wheels[i];
+            wheel(w.position - body_centre, w.radius > 0.0f ? w.radius : v.wheel_radius, w.steers, w.driven, w.handbrake);
+            for (u32 slot = 0; w.object[0] && slot < world.slot_count(); ++slot) {  // its wheel mesh: a child (any depth) of that name
+                const world::Entity c = world.entity_at_slot(slot);
+                if (!c.valid() || c == e || std::strcmp(world.name(c), w.object) != 0) continue;
+                for (world::Entity p = world.parent(c); p.valid(); p = world.parent(p)) {
+                    if (p == e) m.wheel_objects[i] = c;
+                }
+            }
+            if (w.object[0] && !m.wheel_objects[i].valid()) LSD_LOG_WARN("play", "%s: wheel %u: no child object named '%s'", world.name(e), i, w.object);
+        }
+    } else {  // four wheels under the corners of its box, the front ones steering
+        const Vec3 h = d.half_extents;
+        const f32 x = std::max(h.x - v.wheel_radius * 1.2f, h.x * 0.3f), y = std::max(h.y - v.wheel_width * 0.5f, h.y * 0.3f), z = -h.z * 0.75f;
+        for (u32 i = 0; i < 4; ++i) {
+            const bool front = i < 2;
+            wheel({front ? x : -x, i % 2 == 0 ? y : -y, z}, v.wheel_radius, front, v.drive == 2 || (v.drive == 1) == front, !front);
+        }
+    }
+    m.wheel_count = vd.wheel_count;
+    m.vehicle = physics_->add_vehicle(vd);
+    physics_->drive_vehicle(m.vehicle, 0.0f, 0.0f, 0.0f, 1.0f);  // parked
+    m.parked = true;
+    moving_.push_back(m);
+}
+
+// ---- Multiplayer seats: the server decides who sits where; the driver's machine owns the car. ----
+
+i32 PlaySession::server_take_seat(world::World& world, world::Entity vehicle, u32 player) {
+    const auto* v = world.alive(vehicle) ? world.get<world::Vehicle>(vehicle) : nullptr;
+    if (!v) return -1;
+    server_free_seats(world, player);  // one seat per player
+    Seats* s = nullptr;
+    for (Seats& candidate : seats_) s = candidate.vehicle == vehicle ? &candidate : s;
+    if (!s) {
+        seats_.push_back({vehicle, {}});
+        s = &seats_.back();
+        for (i64& p : s->player) p = -1;
+    }
+    const u32 count = 1 + std::min<u32>(v->passenger_seats.count, 8);
+    for (u32 seat = 0; seat < count; ++seat) {
+        if (s->player[seat] >= 0) continue;
+        s->player[seat] = player;
+        if (seat == 0) net_.set_owner(world, vehicle, player);  // the driver's machine simulates it
+        return static_cast<i32>(seat);
+    }
+    return -1;
+}
+
+void PlaySession::server_free_seats(world::World& world, u32 player) {
+    for (Seats& s : seats_) {
+        for (u32 seat = 0; seat < 9; ++seat) {
+            if (s.player[seat] != static_cast<i64>(player)) continue;
+            s.player[seat] = -1;
+            if (seat == 0 && world.alive(s.vehicle)) net_.set_owner(world, s.vehicle, net::kServerPlayer);  // parked: the server's again
+        }
+    }
+}
+
+void PlaySession::take_seat(world::World& world, world::Entity vehicle, i32 seat) {
+    if (!world.alive(vehicle) || seat < 0) return;
+    driving_ = riding_ = {};
+    passenger_seat_ = 0;
+    if (seat == 0) driving_ = vehicle;
+    else {
+        riding_ = vehicle;
+        passenger_seat_ = static_cast<u32>(seat);
+    }
+    scripts_.send(vehicle, "on_enter", character_);
+}
+
+// Physics cars in multiplayer: dynamic on the machine that owns them (the driver's, or the server's
+// when parked), kinematic everywhere else, following the replicated Transform.
+void PlaySession::update_vehicle_authority(world::World& world) {
+    for (Moving& m : moving_) {
+        if (m.vehicle == ~0u || !world.alive(m.entity)) continue;
+        const auto* rep = net_.active() ? world.get<world::NetReplicated>(m.entity) : nullptr;
+        const bool here = !rep || rep->owner == net_.player_id();
+        for (u32 i = 0; i < simulated_count_; ++i) {
+            Simulated& s = simulated_[i];
+            if (s.entity != m.entity || s.kinematic == !here) continue;
+            s.kinematic = !here;
+            physics_->set_body_kinematic(m.body, !here);
+            if (here) m.parked = false;  // parks again (handbrake) unless someone drives it
+        }
+    }
+}
+
+// Driving a Physics vehicle: W / S throttle and reverse (pressing against the way it rolls brakes
+// first), A / D steer, Ctrl brake, Space handbrake, Shift boost (more engine).
+void PlaySession::drive_physics(Moving& m, const world::Vehicle& v, const input::InputFrame& frame, input::Value move) {
+    auto key = [&](SDL_Scancode k) { return frame.keys && static_cast<i32>(k) < frame.key_count && frame.keys[k]; };
+    const physics::VehicleState state = physics_->vehicle_state(m.vehicle);
+    f32 forward = move.y, brake = key(SDL_SCANCODE_LCTRL) ? 1.0f : 0.0f;
+    if ((forward > 0.01f && state.speed < -0.5f) || (forward < -0.01f && state.speed > 0.5f)) {
+        brake = 1.0f;
+        forward = 0.0f;
+    }
+    physics_->drive_vehicle(m.vehicle, forward, move.x, brake, key(SDL_SCANCODE_SPACE) ? 1.0f : 0.0f, key(SDL_SCANCODE_LSHIFT) ? v.boost : 1.0f);
+    m.parked = false;
+}
+
+void PlaySession::update_vehicle_wheels(world::World& world) {
+    for (const Moving& m : moving_) {
+        if (m.vehicle == ~0u || !world.alive(m.entity)) continue;
+        const auto* v = world.get<world::Vehicle>(m.entity);
+        for (u32 i = 0; i < m.wheel_count; ++i) {
+            const Mat4 at = physics_->wheel_transform(m.vehicle, i);
+            if (world.alive(m.wheel_objects[i])) {
+                Vec3 t, r, s;
+                decompose_trs(world.world_matrix(m.wheel_objects[i]), t, r, s);
+                world.set_world_matrix(m.wheel_objects[i], at * scaling(s));
+            } else if (v) {  // no wheel mesh: a ring shows where it is (the placeholder box has no wheels)
+                const f32 radius = i < v->wheels.count && v->wheels[i].radius > 0.0f ? v->wheels[i].radius : v->wheel_radius;
+                Vec3 last{};
+                for (int k = 0; k <= 16; ++k) {
+                    const f32 a = static_cast<f32>(k) * 6.2831853f / 16.0f;
+                    const Vec3 p = transform_point(at, {std::cos(a) * radius, 0.0f, std::sin(a) * radius});
+                    if (k) debug_draw::line(last, p, {0.15f, 0.15f, 0.15f}, 0.0f);
+                    last = p;
+                }
+            }
+        }
+    }
+}
+
 PlaySession::Moving* PlaySession::moving_of(world::Entity e) {
     for (Moving& m : moving_) {
         if (m.entity == e) return &m;
@@ -2154,9 +2351,19 @@ void PlaySession::update_rides(world::World& world, const input::InputFrame& fra
     }
     interact_was_down_ = e_down;
 
+    update_vehicle_authority(world);
     const reflect::TypeInfo& trigger_type = reflect::type_of<world::TriggerVolume>();
     for (Moving& m : moving_) {
         if (!world.alive(m.entity)) continue;
+        const auto* rep = net_.active() ? world.get<world::NetReplicated>(m.entity) : nullptr;
+        if (rep && rep->owner != net_.player_id()) {  // another machine moves it: its body follows the replicated Transform
+            if (m.body != physics::kWorldBody && m.vehicle == ~0u) {
+                Vec3 t, r, s;
+                decompose_trs(world.world_matrix(m.entity), t, r, s);
+                physics_->move_kinematic(m.body, translation(t) * rotation_euler(r) * translation(mul(m.centre, m.scale)), dt);
+            }
+            continue;  // (physics cars: the kinematic-body pass moves them)
+        }
         Vec3 t, rotation, scale;
         decompose_trs(world.world_matrix(m.entity), t, rotation, scale);
         Vec3 at = t;
@@ -2172,6 +2379,14 @@ void PlaySession::update_rides(world::World& world, const input::InputFrame& fra
             }
             if (mover->repeat_minutes > 0.0f && m.started_at >= 0.0 && play_clock_ - m.started_at >= mover->repeat_minutes * 60.0) restart_mover(world, m);
             if (m.running) moved = step_mover(world, m, *mover, dt, at, rotation);
+        }
+        if (m.vehicle != ~0u) {  // a Physics vehicle: its body moves it
+            if (const auto* v = world.get<world::Vehicle>(m.entity); v && m.entity == driving_) drive_physics(m, *v, frame, move);
+            else if (!m.parked) {
+                physics_->drive_vehicle(m.vehicle, 0.0f, 0.0f, 0.0f, 1.0f);  // left: handbrake on
+                m.parked = true;
+            }
+            continue;
         }
         if (const auto* v = world.get<world::Vehicle>(m.entity); v && m.entity == driving_) {
             drive(world, m, *v, frame, move, dt, at);
@@ -2192,7 +2407,9 @@ void PlaySession::place_rider(world::World& world) {
     const auto* t = world.get<world::Transport>(on);
     if (!v && !t) return;
     const Mat4 m = world.world_matrix(on);
-    const Vec3 seat = transform_point(m, v ? v->seat : t->seat) + Vec3{0, 0, 0.02f};
+    const bool passenger = v && on == riding_ && passenger_seat_ > 0 && passenger_seat_ <= v->passenger_seats.count;
+    const Vec3 local = passenger ? v->passenger_seats[passenger_seat_ - 1] : v ? v->seat : t->seat;
+    const Vec3 seat = transform_point(m, local) + Vec3{0, 0, 0.02f};
     physics_->teleport_character(seat);
     feet_ = seat;
     if (v || (t && !t->free_look)) {  // facing the way it travels
@@ -2201,15 +2418,24 @@ void PlaySession::place_rider(world::World& world) {
     }
 }
 
-// Driving: the camera follows behind and above the vehicle.
+// Driving: the camera follows behind and above the vehicle, pulled in front of walls in the way
+// (Unreal's spring arm with collision test).
 void PlaySession::vehicle_view(const world::World& world) {
-    const auto* v = world.alive(driving_) ? world.get<world::Vehicle>(driving_) : nullptr;
+    const world::Entity car = world.alive(driving_) ? driving_ : world.alive(riding_) && passenger_seat_ ? riding_ : world::Entity{};  // driver or passenger
+    const auto* v = car.valid() ? world.get<world::Vehicle>(car) : nullptr;
     if (!v || view_camera_.valid()) return;
-    const Mat4 m = world.world_matrix(driving_);
+    const Mat4 m = world.world_matrix(car);
     const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
     const Vec3 forward = axis_x(m);
+    const Vec3 pivot = at + Vec3{0, 0, 1.0f};
     view_eye_ = at - forward * v->camera_distance + Vec3{0, 0, v->camera_height};
-    view_forward_ = normalize(at + Vec3{0, 0, 1.0f} - view_eye_);
+    u32 own = physics::kWorldBody;  // the vehicle's own body is not in the way
+    for (const Moving& mv : moving_) own = mv.entity == car ? mv.body : own;
+    const Vec3 arm = view_eye_ - pivot;
+    const f32 reach = length(arm);
+    physics::RayHit hit;
+    if (reach > 0.01f && physics_->raycast(pivot, arm, reach, hit, own)) view_eye_ = pivot + arm * (std::max(hit.distance - 0.3f, 0.2f) / reach);
+    view_forward_ = normalize(pivot - view_eye_);
 }
 
 u32 PlaySession::ride_command(world::World& world, int what, world::Entity e) {
@@ -2222,15 +2448,33 @@ u32 PlaySession::ride_command(world::World& world, int what, world::Entity e) {
         physics_->teleport_character(at + left * (half_width + 1.0f) + Vec3{0, 0, 0.1f});
         feet_ = physics_->character_feet();
     };
+    const auto replicated_of = [&](world::Entity v) -> const world::NetReplicated* { return net_.active() && world.alive(v) ? world.get<world::NetReplicated>(v) : nullptr; };
     switch (what) {
     case 0:  // enter a vehicle
         if (!world.alive(e) || !world.get<world::Vehicle>(e) || !moving_of(e)) return 0;
+        if (const auto* rep = replicated_of(e)) {  // multiplayer: the server hands out the seats
+            if (net_.mode() == net::Mode::Server) {
+                const i32 seat = server_take_seat(world, e, net::kServerPlayer);
+                if (seat >= 0) take_seat(world, e, seat);
+                return seat >= 0 ? 1u : 0u;
+            }
+            char args[32];
+            std::snprintf(args, sizeof args, "[%u]", rep->net_id);
+            net_.send_event(net::kToServer, "__seat", args);  // "__seated" comes back
+            return 1;
+        }
         if (world.alive(riding_)) ride_command(world, 4, {});
         driving_ = e;
         scripts_.send(e, "on_enter", character_);
         return 1;
     case 1:  // exit it
         if (!world.alive(driving_)) return 0;
+        if (const auto* rep = replicated_of(driving_)) {  // the seat (and the car) go back to the server
+            char args[32];
+            std::snprintf(args, sizeof args, "[%u]", rep->net_id);
+            if (net_.mode() == net::Mode::Server) server_free_seats(world, net::kServerPlayer);
+            else net_.send_event(net::kToServer, "__unseat", args);
+        }
         if (Moving* m = moving_of(driving_)) m->speed = 0.0f;
         beside(driving_);
         scripts_.send(driving_, "on_exit", character_);
@@ -2245,9 +2489,16 @@ u32 PlaySession::ride_command(world::World& world, int what, world::Entity e) {
         return 1;
     case 4:  // get off
         if (!world.alive(riding_)) return 0;
+        if (const auto* rep = passenger_seat_ ? replicated_of(riding_) : nullptr) {  // a passenger seat goes back
+            char args[32];
+            std::snprintf(args, sizeof args, "[%u]", rep->net_id);
+            if (net_.mode() == net::Mode::Server) server_free_seats(world, net::kServerPlayer);
+            else net_.send_event(net::kToServer, "__unseat", args);
+        }
         beside(riding_);
         scripts_.send(riding_, "on_exit", character_);
         riding_ = {};
+        passenger_seat_ = 0;
         return 1;
     case 5:
     case 6:

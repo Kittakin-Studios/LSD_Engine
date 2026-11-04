@@ -486,6 +486,21 @@ their Static Mesh):
   out (beside it). It hugs the ground (steps and ramps up to half a metre), stops at walls, pushes
   what it hits, and the camera follows behind. Details > Vehicle: Ground or **Flying** (Space climbs,
   Ctrl sinks), top speed, reverse, acceleration, braking, turn rate, boost, the seat, camera distance.
+  The camera stops in front of walls between it and the car.
+  - **Physics model** (Unreal's Chaos Wheeled Vehicle): Details > Vehicle > Physics > **Model =
+    Physics** makes it a real car: a body on wheels with suspension, an engine (torque, max RPM), an
+    automatic gearbox and brakes. It rolls down slopes, bounces over bumps, slides, and can be pushed.
+    W / S throttle (pressing against the way it rolls brakes first), A / D steer, **Ctrl** brake,
+    **Space** handbrake, **Shift** boost. Mass, steering angle, wheel radius / width and the suspension
+    (travel, stiffness, damping) are there too. With no **Wheels** listed it gets four at the corners
+    of its box (front ones steer; Drive picks rear, front or all-wheel). List wheels to place them
+    yourself; a wheel's **Object** names a child mesh (a wheel from Create Prefab from Parts, its pivot
+    at the wheel's centre) that spins, steers and moves with it, like Unreal's wheel bones. Without a
+    wheel mesh, a ring shows each wheel in Play.
+  - **Multiplayer**: give the vehicle **Net Replicated**. The server hands out the seats: the first
+    player in drives (their machine simulates the car, everyone else sees it move), the next ones sit
+    on the **Passenger Seats** (positions in the vehicle's space) with the follow camera. Getting out,
+    or leaving the game, gives the car back to the server.
 - **Transport (Ride)** (blue: trains, ferries, lifts, cable cars): **E** near it hops on, and you
   travel on its seat without driving; **E** gets off. It comes with a Mover going back and forth
   20 m with a 3 s stop at each end: change its route in the Mover (a Spline for rails), or use a

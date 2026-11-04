@@ -102,6 +102,21 @@ int main() {
         pump(0.6f, [&] { client_world.get<Transform>(client_avatar)->position = {7, 0, 1}; });
         CHECK(std::fabs(server_world.get<Transform>(avatar)->position.x - 7.0f) < 1e-3f);
 
+        // Ownership handed over after the spawn (a car to its driver's machine) and back: the Box,
+        // which the server moved, is now moved by the client; then by the server again.
+        server.set_owner(server_world, box, 1);
+        pump(0.3f, [] {});
+        const Entity client_box = find(client_world, "Box");
+        CHECK(client_world.get<NetReplicated>(client_box)->owner == 1);
+        pump(0.6f, [&] { client_world.get<Transform>(client_box)->position = {-4, 2, 0}; });
+        CHECK(std::fabs(server_world.get<Transform>(box)->position.x + 4.0f) < 1e-3f);
+        server.set_owner(server_world, box, net::kServerPlayer);
+        pump(0.3f, [&] { server_world.get<Transform>(box)->position = {9, 0, 0}; });
+        pump(0.4f, [&] { server_world.get<Transform>(box)->position = {9, 0, 0}; });
+        CHECK(client_world.get<NetReplicated>(client_box)->owner == net::kServerPlayer);
+        CHECK(server_world.get<Transform>(box)->position.x == 9.0f);  // the client's old states no longer move it
+        CHECK(std::fabs(client_world.get<Transform>(client_box)->position.x - 9.0f) < 1e-3f);
+
         // Events both ways.
         client.send_event(net::kToServer, "hello", "[1,\"x\"]");
         server.send_event(net::kToEveryone, "boom", "[2]");

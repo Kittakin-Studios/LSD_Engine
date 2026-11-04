@@ -179,13 +179,33 @@ private:
         f64 started_at = -1.0;  // play clock when its run began; -1: not yet
         bool running = false;
         f32 speed = 0, yaw = 0, fall = 0;  // a vehicle's motion
+        // A Physics vehicle: its index in the physics world (none: arcade or not a vehicle), whether
+        // it has been parked (handbrake on, nobody driving), and the child objects its wheels turn.
+        u32 vehicle = ~0u;
+        bool parked = false;
+        world::Entity wheel_objects[physics::kMaxWheels];
+        u32 wheel_count = 0;
     };
     std::vector<Moving> moving_;
     world::Entity driving_, riding_;
+    u32 passenger_seat_ = 0;  // riding_ is a Vehicle: which passenger seat (1..), 0: not a passenger
+    // Multiplayer seats (server): who sits where in each vehicle, seat 0 the driver (who owns it).
+    struct Seats {
+        world::Entity vehicle;
+        i64 player[9];  // -1 free
+    };
+    std::vector<Seats> seats_;
+    i32 server_take_seat(world::World& world, world::Entity vehicle, u32 player);  // -1: full
+    void server_free_seats(world::World& world, u32 player);
+    void take_seat(world::World& world, world::Entity vehicle, i32 seat);  // this machine's player sits there
+    void update_vehicle_authority(world::World& world);  // physics cars: simulated by their owner's machine only
     u64 nav_hash_ = 0;  // the navmesh's inputs when it was built (reused across Plays while equal)
     f64 play_clock_ = 0.0;
     bool interact_was_down_ = false;
     void add_moving(const world::World& world, world::Entity e, const CachedMesh* cached, bool solid);
+    void add_physics_vehicle(const world::World& world, world::Entity e, const CachedMesh* cached, const world::Vehicle& v);
+    void drive_physics(Moving& m, const world::Vehicle& v, const input::InputFrame& frame, input::Value move);
+    void update_vehicle_wheels(world::World& world);  // after the step: wheel objects follow their wheels
     Moving* moving_of(world::Entity e);
     void restart_mover(world::World& world, Moving& m);
     bool step_mover(world::World& world, Moving& m, const world::Mover& mover, f32 dt, Vec3& at, Vec3& rotation);
