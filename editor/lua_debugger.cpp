@@ -1,4 +1,5 @@
 #include "lua_debugger.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "lsd/foundation/log.h"
@@ -115,13 +116,13 @@ void draw_window(EditorState& s, bool* open) {
     // Toolbar: the controls work while stopped (F5 / F10 / F11 / Shift+F11 like Visual Studio).
     ImGui::BeginDisabled(!g_stop);
     const bool shift = ImGui::GetIO().KeyShift;
-    if (ImGui::Button("Continue (F5)") || (g_stop && ImGui::IsKeyPressed(ImGuiKey_F5))) resume(script::DebugAction::Continue);
+    if (with_tip(ImGui::Button("Continue (F5)"), "Runs on until the next breakpoint") || (g_stop && ImGui::IsKeyPressed(ImGuiKey_F5))) resume(script::DebugAction::Continue);
     ImGui::SameLine();
-    if (ImGui::Button("Step Over (F10)") || (g_stop && ImGui::IsKeyPressed(ImGuiKey_F10))) resume(script::DebugAction::StepOver);
+    if (with_tip(ImGui::Button("Step Over (F10)"), "Runs this line and stops at the next") || (g_stop && ImGui::IsKeyPressed(ImGuiKey_F10))) resume(script::DebugAction::StepOver);
     ImGui::SameLine();
-    if (ImGui::Button("Step Into (F11)") || (g_stop && !shift && ImGui::IsKeyPressed(ImGuiKey_F11))) resume(script::DebugAction::StepInto);
+    if (with_tip(ImGui::Button("Step Into (F11)"), "Goes into the function this line calls") || (g_stop && !shift && ImGui::IsKeyPressed(ImGuiKey_F11))) resume(script::DebugAction::StepInto);
     ImGui::SameLine();
-    if (ImGui::Button("Step Out (Shift+F11)") || (g_stop && shift && ImGui::IsKeyPressed(ImGuiKey_F11))) resume(script::DebugAction::StepOut);
+    if (with_tip(ImGui::Button("Step Out (Shift+F11)"), "Runs to the end of this function") || (g_stop && shift && ImGui::IsKeyPressed(ImGuiKey_F11))) resume(script::DebugAction::StepOut);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled(g_stop ? "Stopped: the game waits" : s.playing ? "Running" : "Set breakpoints, then Play");

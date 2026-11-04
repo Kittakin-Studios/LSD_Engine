@@ -2,8 +2,11 @@
 
 #include "lsd/foundation/log.h"
 
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <exception>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -50,7 +53,29 @@ void save_log_and_marker(const char* dir) {
 }
 
 #ifdef _WIN32
-LONG WINAPI on_crash(EXCEPTION_POINTERS* info) {
+// The calling thread's stack, function / file / line per frame, into the log (dbghelp reads the PDB).
+void log_stack() {
+    void* frames[48];
+    const USHORT count = CaptureStackBackTrace(1, 48, frames, nullptr);
+    HANDLE process = GetCurrentProcess();
+    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    SymInitialize(process, nullptr, TRUE);
+    alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256];
+    for (USHORT i = 0; i < count; ++i) {
+        auto* symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
+        symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbol->MaxNameLen = 255;
+        const DWORD64 address = reinterpret_cast<DWORD64>(frames[i]);
+        IMAGEHLP_LINE64 line{};
+        line.SizeOfStruct = sizeof line;
+        DWORD displacement = 0;
+        const bool named = SymFromAddr(process, address, nullptr, symbol);
+        const bool lined = SymGetLineFromAddr64(process, address, &displacement, &line);
+        LSD_LOG_ERROR("crash", "  at %s  %s:%lu", named ? symbol->Name : "?", lined ? line.FileName : "", lined ? line.LineNumber : 0ul);
+    }
+}
+
+void write_report(EXCEPTION_POINTERS* info, const char* why) {
     char dir[300];
     crash_dir(dir, sizeof dir);
     std::error_code error;
@@ -64,8 +89,37 @@ LONG WINAPI on_crash(EXCEPTION_POINTERS* info) {
                           info ? &exception : nullptr, nullptr, nullptr);
         CloseHandle(file);
     }
-    LSD_LOG_ERROR("crash", "Crashed (exception 0x%08lX); report in %s", info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0ul, dir);
+    LSD_LOG_ERROR("crash", "%s; report in %s", why, dir);
+    log_stack();
     save_log_and_marker(dir);
+}
+
+// abort() and std::terminate (a thread left running, an exception out of a destructor): a report
+// with the stack instead of the C runtime's "abort() has been called" box.
+[[noreturn]] void on_terminate() {
+    char why[300] = "Terminated (std::terminate)";
+    if (std::exception_ptr e = std::current_exception()) {
+        try {
+            std::rethrow_exception(e);
+        } catch (const std::exception& x) {
+            std::snprintf(why, sizeof why, "Terminated by an uncaught exception: %s", x.what());
+        } catch (...) {
+            std::snprintf(why, sizeof why, "Terminated by an uncaught exception of an unknown type");
+        }
+    }
+    write_report(nullptr, why);
+    std::_Exit(3);
+}
+
+void on_abort(int) {
+    write_report(nullptr, "Aborted (abort() was called)");
+    std::_Exit(3);
+}
+
+LONG WINAPI on_crash(EXCEPTION_POINTERS* info) {
+    char why[64];
+    std::snprintf(why, sizeof why, "Crashed (exception 0x%08lX)", info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0ul);
+    write_report(info, why);
     return EXCEPTION_EXECUTE_HANDLER;  // end the process (no Windows error dialog)
 }
 #else
@@ -96,6 +150,9 @@ void install_crash_reporting(const char* crash_folder, char* previous, usize cap
     }
 #ifdef _WIN32
     SetUnhandledExceptionFilter(on_crash);
+    std::set_terminate(on_terminate);
+    std::signal(SIGABRT, on_abort);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);  // our report instead of the runtime's dialog
 #else
     std::signal(SIGSEGV, on_signal);
     std::signal(SIGABRT, on_signal);

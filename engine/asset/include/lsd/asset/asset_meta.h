@@ -11,7 +11,7 @@ LSD_STRUCT()
 struct AnimNotify {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Which animation in the file (0 = the first)") u32 clip = 0;
-    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 time = 0.0f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "When in the clip the notify fires") f32 time = 0.0f;
     LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Played at the object (a footstep on the frame the foot lands)") char sound[33] = "";
 };
 
@@ -20,10 +20,10 @@ struct AnimNotify {
 LSD_STRUCT()
 struct MeshSocket {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char name[32] = "";
-    LSD_PROPERTY(Edit) char bone[48] = "";
-    LSD_PROPERTY(Edit, Units = "m") Vec3 position;
-    LSD_PROPERTY(Edit, Units = "deg") Vec3 rotation;
+    LSD_PROPERTY(Edit, Tooltip = "The socket's name: Attach To Socket and lsd.socket use it") char name[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The bone it rides on") char bone[48] = "";
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Offset from the bone") Vec3 position;
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turn from the bone") Vec3 rotation;
 };
 
 LSD_STRUCT(Category = "Asset")
@@ -33,7 +33,7 @@ struct AssetMeta {
     LSD_PROPERTY(Visible, Category = "Asset", Tooltip = "Permanent ID; references use this, not the file name")
     char guid[33] = "";
 
-    LSD_PROPERTY(Visible, Category = "Asset")
+    LSD_PROPERTY(Visible, Category = "Asset", Tooltip = "What kind of asset this is")
     char type[16] = "";
 
     LSD_PROPERTY(Edit, Category = "Asset", Tooltip = "Comma-separated words the Content Browser search also matches (Unreal's asset metadata tags)")
@@ -55,22 +55,22 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "LOD", Min = 0, Max = 2, Tooltip = "LOD 3 (an eighth) below this size") f32 lod3_screen_size = 0.03f;
 
     // Animation files (FBX with takes): notifies, edited in Details, played in Play.
-    LSD_PROPERTY(Edit, Category = "Animation") List<AnimNotify, 16> notifies;
-    LSD_PROPERTY(Edit, Category = "Skeleton") List<MeshSocket, 16> sockets;
+    LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Events at times in this clip (footsteps, sounds, a script call), like Unreal's Anim Notifies") List<AnimNotify, 16> notifies;
+    LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Named points on bones to attach props to (Unreal's Sockets)") List<MeshSocket, 16> sockets;
 
     // Textures. Colour vs data (sRGB vs linear) is decided by the material slot that uses them.
     LSD_PROPERTY(Edit, Category = "Texture", Min = 1, Max = 8192, Tooltip = "Larger images are halved until they fit (Unreal's Maximum Texture Size)")
     u32 max_size = 4096;
 
     // Sound files (Unreal's Sound Wave settings).
-    LSD_PROPERTY(Edit, Category = "Sound", Min = 0, Max = 4) f32 volume = 1.0f;
-    LSD_PROPERTY(Edit, Category = "Sound", Min = 0.1, Max = 4) f32 pitch = 1.0f;
-    LSD_PROPERTY(Edit, Category = "Sound") bool looping = false;
+    LSD_PROPERTY(Edit, Category = "Sound", Min = 0, Max = 4, Tooltip = "Loudness of this sound (1 = as recorded)") f32 volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Sound", Min = 0.1, Max = 4, Tooltip = "Playback speed and pitch (2 = an octave up, twice as fast)") f32 pitch = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Sound", Tooltip = "Plays again from the start when it ends (music, ambience)") bool looping = false;
     LSD_PROPERTY(Edit, Category = "Sound", Tooltip = "Read from disk while playing (long music); off = decoded into memory (short effects)") bool stream = false;
     LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundClass", Tooltip = "Its volume group (Master > SFX > Footsteps...)") char sound_class[33] = "";
     LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundAttenuation", Tooltip = "How it fades with distance; none = defaults (2 m to 40 m)") char attenuation[33] = "";
     LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundConcurrency", Tooltip = "How many of its group may play at once") char concurrency[33] = "";
-    LSD_PROPERTY(Edit, Category = "Sound") char subtitle[128] = "";
+    LSD_PROPERTY(Edit, Category = "Sound", Tooltip = "Text shown at the bottom of the screen while it plays (when subtitles are on)") char subtitle[128] = "";
 };
 
 } // namespace lsd::asset

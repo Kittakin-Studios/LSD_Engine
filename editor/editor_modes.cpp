@@ -1,4 +1,5 @@
 #include "editor_modes.h"
+#include "tips.h"
 
 #include "material_cache.h"
 #include "mesh_cache.h"
@@ -132,7 +133,7 @@ void asset_list(EditorState& s, const char* data_type, const char* empty, bool p
         ImGui::SetItemTooltip("Double-click to edit: Content/%s", r.path);
         if (place) {
             ImGui::SameLine();
-            if (ImGui::SmallButton("Place")) {
+            if (with_tip(ImGui::SmallButton("Place"), "Puts this in the level in front of the camera (or drag it into the viewport)")) {
                 const Entity e = place_object(s, r.name, nullptr, "ParticleEffect", view_target(s));
                 asset::to_string(r.guid, s.world->get<world::ParticleEffect>(e)->system);
             }
@@ -170,12 +171,12 @@ void draw_modeling(EditorState& s) {
     ImGui::Text("%s", s.world->name(s.selected));
     // The basic shapes are 1 m, so their scale is their size in metres.
     if (ImGui::DragFloat3("Size (m)", &t->scale.x, 0.05f, 0.01f, 1000.0f, "%.2f")) mark_edited(s, "Resize");
-    if (ImGui::Button("Snap size to 0.5 m")) {
+    if (with_tip(ImGui::Button("Snap size to 0.5 m"), "Rounds the selected shape's size to half-metre steps (tidy blockouts)")) {
         for (f32* v : {&t->scale.x, &t->scale.y, &t->scale.z}) *v = std::fmax(0.5f, std::round(*v * 2.0f) * 0.5f);
         mark_edited(s, "Resize");
     }
-    if (ImGui::Checkbox("Box UV", &mesh->box_uv)) mark_edited(s, "Box UV");
-    if (ImGui::Checkbox("Collision", &mesh->collision)) mark_edited(s, "Collision");
+    if (with_tip(ImGui::Checkbox("Box UV", &mesh->box_uv), "Projects the texture from the box's sides: one tile per metre at any size, no stretching")) mark_edited(s, "Box UV");
+    if (with_tip(ImGui::Checkbox("Collision", &mesh->collision), "The player and physics bump into it")) mark_edited(s, "Collision");
     hint("W / E / R: move, turn, scale with the gizmo.");
     hint("Extrude, bevel and booleans are not in yet.");
 }
@@ -269,11 +270,11 @@ void foliage_stamp(EditorState& s, Vec3 center, bool erase) {
 void draw_foliage(EditorState& s) {
     ImGui::SeparatorText("Paint");
     mesh_combo(s, "Mesh", g_foliage.mesh, sizeof g_foliage.mesh);
-    ImGui::ColorEdit3("Tint", &g_foliage.color.r);
-    ImGui::DragFloat("Brush Size (m)", &g_foliage.radius, 0.1f, 0.2f, 100.0f, "%.1f");
-    ImGui::DragFloat("Density (per m2)", &g_foliage.density, 0.02f, 0.01f, 20.0f, "%.2f");
+    with_tip(ImGui::ColorEdit3("Tint", &g_foliage.color.r), "Colour of the painted copies");
+    with_tip(ImGui::DragFloat("Brush Size (m)", &g_foliage.radius, 0.1f, 0.2f, 100.0f, "%.1f"), "Radius of the brush circle in the viewport");
+    with_tip(ImGui::DragFloat("Density (per m2)", &g_foliage.density, 0.02f, 0.01f, 20.0f, "%.2f"), "How many copies a stroke puts in each square metre");
     ImGui::DragFloatRange2("Scale", &g_foliage.scale_min, &g_foliage.scale_max, 0.01f, 0.05f, 10.0f, "%.2f");
-    ImGui::Checkbox("Random turn", &g_foliage.random_yaw);
+    with_tip(ImGui::Checkbox("Random turn", &g_foliage.random_yaw), "Each copy gets a random turn so they do not all face the same way");
     hint("LMB drag in the viewport paints; Shift+LMB erases.");
     hint("Copies go to Foliage objects (Instanced Static Meshes).");
     u32 total = 0;
@@ -374,8 +375,8 @@ void sculpt(EditorState& s, Vec3 center, f32 dt, f32 flatten_z) {
 void draw_landscape(EditorState& s) {
     const std::vector<Entity> all = landscapes(*s.world);
     ImGui::SeparatorText("New Landscape");
-    ImGui::DragFloat("Size (m)", &g_new_size, 1.0f, 4.0f, 2000.0f, "%.0f");
-    if (ImGui::Button("Create Landscape")) {
+    with_tip(ImGui::DragFloat("Size (m)", &g_new_size, 1.0f, 4.0f, 2000.0f, "%.0f"), "Width and depth of the new landscape");
+    if (with_tip(ImGui::Button("Create Landscape"), "Adds a flat landscape you can sculpt (Unreal's Landscape > Create)")) {
         const Vec3 at = view_target(s);
         const Entity e = place_object(s, "Landscape", nullptr, "Landscape", {at.x, at.y, 0.0f});
         s.world->get<world::Landscape>(e)->size = g_new_size;
@@ -389,14 +390,14 @@ void draw_landscape(EditorState& s) {
     ImGui::RadioButton("Sculpt", &g_sculpt.tool, 0);
     ImGui::SetItemTooltip("LMB raises, Shift+LMB lowers");
     ImGui::SameLine();
-    ImGui::RadioButton("Smooth", &g_sculpt.tool, 1);
+    with_tip(ImGui::RadioButton("Smooth", &g_sculpt.tool, 1), "Brush that evens out bumps");
     ImGui::SameLine();
     ImGui::RadioButton("Flatten", &g_sculpt.tool, 2);
     ImGui::SetItemTooltip("Levels toward the height where the stroke started");
-    ImGui::DragFloat("Brush Size (m)", &g_sculpt.radius, 0.1f, 0.5f, 200.0f, "%.1f");
-    ImGui::DragFloat("Strength", &g_sculpt.strength, 0.01f, 0.05f, 5.0f, "%.2f");
+    with_tip(ImGui::DragFloat("Brush Size (m)", &g_sculpt.radius, 0.1f, 0.5f, 200.0f, "%.1f"), "Radius of the brush circle in the viewport");
+    with_tip(ImGui::DragFloat("Strength", &g_sculpt.strength, 0.01f, 0.05f, 5.0f, "%.2f"), "How much each stroke raises, lowers or smooths");
     hint("LMB drag on the terrain sculpts (Shift lowers).");
-    if (ImGui::Button("Flatten All")) {
+    if (with_tip(ImGui::Button("Flatten All"), "Sets every height back to flat (undoable)")) {
         for (const Entity e : all) {
             auto* l = s.world->get<world::Landscape>(e);
             for (u32 k = 0; k < l->heights.count; ++k) l->heights[k] = 0.0f;
@@ -419,7 +420,7 @@ u64 pcg_hash(const world::World& w, Entity e) {
 
 void draw_pcg(EditorState& s) {
     ImGui::SeparatorText("Volumes");
-    if (ImGui::Button("Add PCG Volume")) {
+    if (with_tip(ImGui::Button("Add PCG Volume"), "Adds a PCG Volume in front of the camera; it scatters a mesh on the surfaces inside its box")) {
         const Entity e = place_object(s, "PCG Volume", nullptr, "PcgVolume", view_target(s));
         s.world->get<world::Transform>(e)->scale = {12, 12, 4};
         generate_pcg(s, e);
@@ -436,7 +437,7 @@ void draw_pcg(EditorState& s) {
             s.selection_count = 1;
         }
         ImGui::SameLine();
-        if (ImGui::SmallButton("Generate")) {
+        if (with_tip(ImGui::SmallButton("Generate"), "Scatters again with the volume's current settings")) {
             generate_pcg(s, e);
             mark_edited(s, "Generate PCG");
         }
@@ -450,18 +451,18 @@ void draw_pcg(EditorState& s) {
 
 void draw_animation(EditorState& s) {
     ImGui::SeparatorText("Timelines");
-    if (ImGui::Button("New Timeline")) new_data_asset(s, reflect::type_of<world::Timeline>());
+    if (with_tip(ImGui::Button("New Timeline"), "Creates a Timeline asset (Unreal's Level Sequence) in the open Content folder")) new_data_asset(s, reflect::type_of<world::Timeline>());
     ImGui::SameLine();
-    if (ImGui::Button("Animation workspace")) std::snprintf(s.workspace_request, sizeof s.workspace_request, "Animation");
+    if (with_tip(ImGui::Button("Animation workspace"), "Switches to the Animation workspace (timeline and animation editors)")) std::snprintf(s.workspace_request, sizeof s.workspace_request, "Animation");
     asset_list(s, "Timeline", "No Timelines yet: New Timeline makes one in the open Content Browser folder.", false);
     hint("Play one from a script or visual script: Play Timeline.");
 }
 
 void draw_vfx(EditorState& s) {
     ImGui::SeparatorText("Particle Systems");
-    if (ImGui::Button("New Particle System")) new_data_asset(s, reflect::type_of<particles::ParticleSystem>());
+    if (with_tip(ImGui::Button("New Particle System"), "Creates a Particle System asset (Unreal's Niagara System) in the open Content folder")) new_data_asset(s, reflect::type_of<particles::ParticleSystem>());
     ImGui::SameLine();
-    if (ImGui::Button("Effects workspace")) std::snprintf(s.workspace_request, sizeof s.workspace_request, "Effects");
+    if (with_tip(ImGui::Button("Effects workspace"), "Switches to the Effects workspace (particle and sound cue editors)")) std::snprintf(s.workspace_request, sizeof s.workspace_request, "Effects");
     asset_list(s, "ParticleSystem", "No particle systems yet: New Particle System makes one.", true);
 }
 
@@ -509,14 +510,14 @@ void draw_2d(EditorState& s) {
     ImGui::SetItemTooltip("Look along +Y without perspective, like a side-on 2D game (H)");
     ImGui::SeparatorText("New");
     texture_picker(s);
-    if (ImGui::Button("Sprite")) {
+    if (with_tip(ImGui::Button("Sprite"), "Places a Sprite: a flat image facing the 2D camera (pick its Texture in Details)")) {
         const Vec3 at = view_target(s);
         const Entity e = place_object(s, "Sprite", nullptr, "Sprite", {at.x, 0.0f, at.z});
         std::snprintf(s.world->get<world::Sprite>(e)->texture, sizeof(world::Sprite::texture), "%s", g_2d_texture);
     }
     ImGui::SetItemTooltip("The image on a 1 m quad; a sprite sheet: set Columns / Rows and Frame Count in Details");
     ImGui::SameLine();
-    if (ImGui::Button("Tile Map")) {
+    if (with_tip(ImGui::Button("Tile Map"), "Places a Tile Map to paint with the tile palette below")) {
         const Vec3 at = view_target(s);
         const Entity e = place_object(s, "Tile Map", nullptr, "TileMap", {at.x, 0.0f, at.z});
         auto* map = s.world->get<world::TileMap>(e);

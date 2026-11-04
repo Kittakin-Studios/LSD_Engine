@@ -9,8 +9,8 @@ namespace lsd::world {
 LSD_STRUCT()
 struct CurveKey {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "s") f32 time = 0.0f;
-    LSD_PROPERTY(Edit) f32 value = 0.0f;
+    LSD_PROPERTY(Edit, Units = "s", Tooltip = "When this key is") f32 time = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The curve's value at that time") f32 value = 0.0f;
     LSD_PROPERTY(Edit, Widget = "Choice:Smooth,Linear,Constant", Tooltip = "How the curve goes from this key to the next") u32 interp = 0;
     LSD_PROPERTY(Edit, Widget = "Choice:Auto,User", Tooltip = "Smooth keys: Auto takes the slope between the neighbours; User keeps Tangent (drag the key's handle)")
     u32 tangent_mode = 0;
@@ -29,19 +29,19 @@ struct Curve {
 LSD_STRUCT(Category = "Data")
 struct CurveVector {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) List<CurveKey, 64> x = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
-    LSD_PROPERTY(Edit) List<CurveKey, 64> y = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
-    LSD_PROPERTY(Edit) List<CurveKey, 64> z = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the X curve") List<CurveKey, 64> x = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the Y curve") List<CurveKey, 64> y = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the Z curve") List<CurveKey, 64> z = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
 };
 
 // Four curves read together as a colour (fades, day / night ramps, damage flashes).
 LSD_STRUCT(Category = "Data")
 struct CurveColor {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) List<CurveKey, 64> r = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
-    LSD_PROPERTY(Edit) List<CurveKey, 64> g = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
-    LSD_PROPERTY(Edit) List<CurveKey, 64> b = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
-    LSD_PROPERTY(Edit) List<CurveKey, 64> a = {2, {CurveKey{0.0f, 1.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the red curve") List<CurveKey, 64> r = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the green curve") List<CurveKey, 64> g = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the blue curve") List<CurveKey, 64> b = {2, {CurveKey{0.0f, 0.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
+    LSD_PROPERTY(Edit, Tooltip = "Keys of the opacity curve") List<CurveKey, 64> a = {2, {CurveKey{0.0f, 1.0f, 0}, CurveKey{1.0f, 1.0f, 0}}};
 };
 
 // Value at `time`: flat before the first key and after the last. Smooth keys use automatic

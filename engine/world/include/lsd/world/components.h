@@ -7,15 +7,15 @@
 namespace lsd::world {
 
 // Every entity has one (like Unreal's root scene component). Relative to the parent, if any.
-LSD_STRUCT(Component, Category = "Common")
+LSD_STRUCT(Component, Category = "Common", Tooltip = "Where the object is, how it is turned and its size")
 struct Transform {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "m") Vec3 position;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Where it is, relative to its parent (or the world)") Vec3 position;
     LSD_PROPERTY(Edit, Units = "deg", Tooltip = "X, then Y, then Z (same as Blender's XYZ Euler)") Vec3 rotation;
-    LSD_PROPERTY(Edit) Vec3 scale = {1, 1, 1};
+    LSD_PROPERTY(Edit, Tooltip = "Size along each axis (1 = as made)") Vec3 scale = {1, 1, 1};
 };
 
-LSD_STRUCT(Component, Category = "Rendering")
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Shows a mesh (a model or a basic shape), with material, collision and shadows")
 struct StaticMesh {
     LSD_GENERATED()
     // Edited with the editor's mesh picker (asset combo + drag-drop), so saved but not shown as text.
@@ -36,36 +36,36 @@ struct StaticMesh {
 // drawn only in the editor.
 
 // Invisible wall: blocks the player (Unreal's Blocking Volume).
-LSD_STRUCT(Component, Category = "Volumes")
+LSD_STRUCT(Component, Category = "Volumes", Tooltip = "An invisible wall the player and physics cannot pass")
 struct BlockingVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: the player and physics pass through") bool enabled = true;
 };
 
 // Sends the player back to the start when entered (Unreal's Kill Z Volume).
-LSD_STRUCT(Component, Category = "Volumes")
+LSD_STRUCT(Component, Category = "Volumes", Tooltip = "The player respawns on entering it (pits, lava, out of bounds)")
 struct KillVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: entering it does nothing") bool enabled = true;
 };
 
 // Tells scripts when the player or a simulated object enters or leaves it (Unreal's Trigger Box):
 // on_overlap_begin(self, other) / on_overlap_end(self, other) run on both objects' scripts.
-LSD_STRUCT(Component, Category = "Volumes")
+LSD_STRUCT(Component, Category = "Volumes", Tooltip = "Tells scripts when something enters or leaves its box (on_overlap_begin / end)")
 struct TriggerVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: no overlap events") bool enabled = true;
     LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Played here when something enters (no script needed)") char enter_sound[33] = "";
 };
 
 // Changes how the world sounds while the listener is inside (Unreal's Audio Volume): its own
 // reverb, and sounds on the other side of its walls muffled (inside ones heard from outside too).
-LSD_STRUCT(Component, Category = "Volumes")
+LSD_STRUCT(Component, Category = "Volumes", Tooltip = "Reverb for sounds heard inside its box")
 struct AudioVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: its reverb does not apply") bool enabled = true;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Reverb on everything heard while inside") f32 reverb = 0.4f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 room_size = 0.7f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Reverb size: 0 = a small room, 1 = a cathedral") f32 room_size = 0.7f;
     LSD_PROPERTY(Edit, Units = "Hz", Min = 100, Max = 20000, Tooltip = "Sounds through its walls are muffled to this; 20000 = not muffled") f32 muffle = 800.0f;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "How long the reverb takes to change when entering or leaving") f32 fade = 0.5f;
     LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the highest priority wins (a small room inside a big cave)") i32 priority = 0;
@@ -73,19 +73,19 @@ struct AudioVolume {
 
 // A sound in the level (Unreal's Ambient Sound): ambience, a river, a crackling torch. Drag a
 // sound from the Content Browser into the viewport to make one.
-LSD_STRUCT(Component, Category = "Audio")
+LSD_STRUCT(Component, Category = "Audio", Tooltip = "Plays a sound from this spot, louder when near")
 struct SoundEmitter {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Sound") char sound[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "The sound it plays (a Sound or Sound Cue)") char sound[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Starts when Play starts; it follows the object if it moves") bool auto_play = true;
 };
 
 // A particle effect in the level (Unreal's Niagara Component): plays a Particle System data asset
 // at the object. Drag a Particle System from the Content Browser into the viewport to make one.
-LSD_STRUCT(Component, Category = "Effects")
+LSD_STRUCT(Component, Category = "Effects", Tooltip = "Plays a Particle System here")
 struct ParticleEffect {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:ParticleSystem") char system[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:ParticleSystem", Tooltip = "The Particle System it plays") char system[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Emitting; turn off (Details, Lua lsd.set) to let the particles die out") bool active = true;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Slow motion / fast forward") f32 time_scale = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too (preview while placing)") bool preview = true;
@@ -94,23 +94,23 @@ struct ParticleEffect {
 };
 
 // Where Play puts the player; facing = the entity's Z rotation.
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "Where the default player appears when there is no Character")
 struct PlayerStart {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 eye_height = 1.7f;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 walk_speed = 5.0f;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 jump_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Height of the player's eyes above the floor (without a Character)") f32 eye_height = 1.7f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Walking speed of the default player (without a Character)") f32 walk_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Upward speed of a jump (higher jumps higher)") f32 jump_speed = 5.0f;
 };
 
 // Simulated by physics in Play: falls, collides, can be pushed. The shape is fitted to the mesh's bounds.
-LSD_STRUCT(Component, Category = "Physics")
+LSD_STRUCT(Component, Category = "Physics", Tooltip = "Physics: it falls, collides, can be pushed (or moves by script when Kinematic)")
 struct RigidBody {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Choice:Box,Sphere,Capsule,Convex", Tooltip = "Collision shape, fitted to the mesh bounds; Convex wraps the mesh's points") u32 shape = 0;
     LSD_PROPERTY(Edit, Tooltip = "2D physics: moves only in its X-Z plane and turns only around Y (Unreal's Constrain to Plane)") bool lock_2d = false;
-    LSD_PROPERTY(Edit, Units = "kg", Min = 0.01) f32 mass = 10.0f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 friction = 0.5f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
+    LSD_PROPERTY(Edit, Units = "kg", Min = 0.01, Tooltip = "Weight: heavier objects push lighter ones and are harder to move") f32 mass = 10.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Grip on surfaces: 0 = ice, 1 = rubber") f32 friction = 0.5f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much it bounces: 0 = none, 1 = a superball") f32 bounciness = 0.0f;
     LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "Friction and bounciness from a Physical Material (overrides the two above)") char physical_material[33] = "";
     LSD_PROPERTY(Edit, Widget = "Choice:Block All,Debris", Tooltip = "Debris hits only the static level: not the player, not other moving objects")
     u32 collision_preset = 0;
@@ -122,14 +122,14 @@ struct RigidBody {
 LSD_STRUCT(Category = "Physics")
 struct PhysicalMaterial {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Min = 0, Max = 2) f32 friction = 0.5f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 bounciness = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "Grip on surfaces: 0 = ice, 1 = rubber, 2 = sticky") f32 friction = 0.5f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much it bounces: 0 = none, 1 = a superball") f32 bounciness = 0.0f;
 };
 
 // Holds this RigidBody to another object or to the world (Unreal's Physics Constraint): doors,
 // chains, pendulums, drawers, fans. Pivot and axis are in this object's local space (mesh units,
 // so (0, -0.5, 0) is the edge of a cube); the yellow marker in the viewport shows them.
-LSD_STRUCT(Component, Category = "Physics")
+LSD_STRUCT(Component, Category = "Physics", Tooltip = "Links two bodies: a hinge, a slider, a ball joint, a spring, a fixed weld")
 struct PhysicsJoint {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Choice:Fixed,Hinge,Ball,Slider,Cone",
@@ -138,7 +138,7 @@ struct PhysicsJoint {
     LSD_PROPERTY(Edit, Tooltip = "Name of the object to hold on to; empty = the world") char other[64] = "";
     LSD_PROPERTY(Edit, Tooltip = "Where it turns, local") Vec3 pivot;
     LSD_PROPERTY(Edit, Tooltip = "Hinge or slider axis, local") Vec3 axis = {0, 0, 1};
-    LSD_PROPERTY(Edit) bool limited = false;
+    LSD_PROPERTY(Edit, Tooltip = "The joint only turns / slides between Limit Min and Limit Max") bool limited = false;
     LSD_PROPERTY(Edit, Tooltip = "Degrees (hinge) or metres (slider) from where it starts") f32 limit_min = -45.0f;
     LSD_PROPERTY(Edit, Tooltip = "Degrees (hinge) or metres (slider) from where it starts") f32 limit_max = 45.0f;
     LSD_PROPERTY(Edit, Tooltip = "Hinge deg/s or slider m/s; 0 = no motor") f32 motor_speed = 0.0f;
@@ -152,55 +152,67 @@ struct PhysicsJoint {
 // The player's character (Unreal's Character + Character Movement + its input setup). In Play the
 // first Character in the level is possessed; its input comes from the mapping context and actions
 // picked here, so no code is needed to wire it.
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "A player the keyboard, mouse or gamepad controls: walks, jumps, crouches, swims")
 struct Character {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:InputMappingContext") char mapping_context[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:InputMappingContext", Tooltip = "Which keys drive this character (an Input Mapping Context); empty = WASD, mouse, Space") char mapping_context[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = right, y = forward") char move_action[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = turn right, y = look up") char look_action[33] = "";
-    LSD_PROPERTY(Edit, Widget = "Asset:InputAction") char jump_action[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "The Input Action that jumps") char jump_action[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "2D side-scroller: Move's x walks along X only (no turning), Jump jumps; the object's Sprite faces the way it walks") bool side_scroller = false;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 walk_speed = 5.0f;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 jump_speed = 5.0f;
-    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89) f32 max_slope = 45.0f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 step_height = 0.4f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.2) f32 height = 1.8f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.05) f32 radius = 0.35f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 eye_height = 1.65f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Walking speed") f32 walk_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Upward speed of a jump (higher jumps higher)") f32 jump_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground it can walk up") f32 max_slope = 45.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Tallest step it climbs without jumping (stairs, kerbs)") f32 step_height = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.2, Tooltip = "Height of its capsule (what collides)") f32 height = 1.8f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Tooltip = "Radius of its capsule (how close it gets to walls)") f32 radius = 0.35f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Height of the view above the feet (first person, no Camera on the Character)") f32 eye_height = 1.65f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Tooltip = "Turn per unit of Look (per pixel for the mouse)") f32 look_sensitivity = 0.15f;
-    LSD_PROPERTY(Edit) bool invert_look_y = false;
+    LSD_PROPERTY(Edit, Tooltip = "Moving the mouse up looks down") bool invert_look_y = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Spring arm length behind the head: 0 = first person") f32 camera_distance = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Moves the view from the head (or from a Camera on this object): x forward, y left, z up. 0, -0.5, 0.2 looks over the right shoulder (Unreal's Socket Offset). Or give this object a child with a Camera and move that in the viewport")
+    Vec3 camera_offset{0.0f, 0.0f, 0.0f};
     LSD_PROPERTY(Edit, Category = "Crouch", Widget = "Asset:InputAction", Tooltip = "Held: crouch (stands up again when there is room)") char crouch_action[33] = "";
-    LSD_PROPERTY(Edit, Category = "Crouch", Units = "m", Min = 0.3) f32 crouch_height = 1.1f;
-    LSD_PROPERTY(Edit, Category = "Crouch", Units = "m/s", Min = 0) f32 crouch_speed = 2.5f;
-    LSD_PROPERTY(Edit, Category = "Swim", Units = "m/s", Min = 0, Tooltip = "Inside a Water Volume: moves where you look, Jump rises") f32 swim_speed = 3.0f;
+    LSD_PROPERTY(Edit, Category = "Crouch", Units = "m", Min = 0.3, Tooltip = "Capsule height while crouched") f32 crouch_height = 1.1f;
+    LSD_PROPERTY(Edit, Category = "Crouch", Units = "m/s", Min = 0, Tooltip = "Walking speed while crouched") f32 crouch_speed = 2.5f;
+    LSD_PROPERTY(Edit, Category = "Swim", Units = "m/s", Min = 0, Tooltip = "Inside a Water Volume: moves where you look, Jump rises, Crouch dives") f32 swim_speed = 3.0f;
 };
 
 // Water the Character swims in (Unreal's Physics Volume with Water Volume on): the unit cube scaled
 // by the transform, like the other volumes. Swimming starts when the chest is under.
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "Water the Character swims in")
 struct WaterVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: no swimming here") bool enabled = true;
 };
 
 // A camera the game can look through (Unreal's Camera Component / Camera Actor): along its +X.
 // Auto Activate: Play starts looking through it instead of the player's head; lsd.set_view(e)
 // switches to any camera (0: back to the player), Timelines use them for camera cuts.
-LSD_STRUCT(Component, Category = "Camera")
+LSD_STRUCT(Component, Category = "Camera", Tooltip = "A view to look through: cutscenes, fixed views, or the player's view on a Character (first / third person)")
 struct Camera {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "deg", Min = 10, Max = 170, Tooltip = "Vertical field of view") f32 fov = 60.0f;
-    LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera") bool auto_activate = false;
+    LSD_PROPERTY(Edit, Tooltip = "Play starts looking through this camera. Off on a Camera that is (or is a child of) the player's Character: the player's view starts where you put it, and mouse look turns it") bool auto_activate = false;
     LSD_PROPERTY(Edit, Tooltip = "No perspective: sizes stay the same at any distance (2D games, strategy views)") bool orthographic = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 1000, Tooltip = "Orthographic: how many metres of the world fit the screen's height") f32 ortho_height = 10.0f;
+    // On the player's Character (or a child of it, not Auto Activate): how the player sees.
+    LSD_PROPERTY(Edit, Category = "Player View", Widget = "Choice:First Person,Third Person",
+                 Tooltip = "On the player's Character: First Person looks from the Camera (or Follow Bone); Third Person looks from behind it on a spring arm of Arm Length. Scripts switch it: lsd.set_camera_view(\"first\" | \"third\")")
+    u32 view = 0;
+    LSD_PROPERTY(Edit, Category = "Player View", Units = "m", Min = 0, Max = 50, Tooltip = "Third Person: how far behind the Camera the view sits (pulled in when a wall is in the way)") f32 arm_length = 3.0f;
+    LSD_PROPERTY(Edit, Category = "Player View", Tooltip = "First Person: the view follows this bone (or socket) of the Character's Skeletal Mesh so head bob and crouching move it; UE4 / UE5 rigs: head. Empty: where the Camera is")
+    char follow_bone[32] = "";
+    LSD_PROPERTY(Edit, Category = "Player View", Widget = "Choice:Mouse Look,Orbit Bone,Ride Bone",
+                 Tooltip = "Mouse Look: the mouse turns the view; the Camera's own rotation tilts it. Orbit Bone: the mouse circles the view around Follow Bone at Arm Length. Ride Bone: the Camera keeps where you put it relative to Follow Bone and moves only with the bone's animation (the mouse does not turn it)")
+    u32 motion = 0;
 };
 
 // Another level placed in this one (Unreal's Level Instance and level streaming): its objects appear
 // under this object (they move with it), are not saved into this level, and are picked as this
 // object; open that level to edit them. In Play it can stream: loaded when the player comes within
 // Load Distance, unloaded a little beyond it. Scripts: lsd.load_sublevel / unload_sublevel.
-LSD_STRUCT(Component, Category = "Level")
+LSD_STRUCT(Component, Category = "Level", Tooltip = "Places another level here; it can stream in and out by distance")
 struct SubLevel {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Level", Tooltip = "The level to place here") char level[33] = "";
@@ -213,7 +225,7 @@ struct SubLevel {
 // and forth to an offset, or along a Spline object's path, optionally turning. It can wait for its
 // start (Begin Play, the player entering a Trigger Volume, a time of the game, or a script) and run
 // again every so many minutes (120 = every 2 hours). It is solid: what stands on it rides along.
-LSD_STRUCT(Component, Category = "Movement")
+LSD_STRUCT(Component, Category = "Movement", Tooltip = "Moves by itself: a direction, back and forth, or along a spline; on start, a trigger or a timer")
 struct Mover {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Choice:Direction,Back and Forth,Spline", Tooltip = "Direction: forever (or Duration) at Velocity. Back and Forth: to Offset and back. Spline: along a Spline object's route") u32 path = 1;
@@ -235,36 +247,36 @@ struct Mover {
 // A vehicle the player drives (Unreal's Chaos Vehicle, arcade-style): E near it gets in or out; W / S
 // throttle and reverse, A / D steer, Shift boost, Ctrl or Space handbrake (a flying one: Space up,
 // Ctrl down). It hugs the ground, stops at walls, and the camera follows behind it.
-LSD_STRUCT(Component, Category = "Movement")
+LSD_STRUCT(Component, Category = "Movement", Tooltip = "A vehicle the player enters and drives (WASD, Shift boost, Ctrl brake)")
 struct Vehicle {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Choice:Ground,Flying", Tooltip = "Ground: a car, cart or tank on the floor. Flying: a ship or drone that climbs") u32 kind = 0;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 max_speed = 20.0f;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 reverse_speed = 6.0f;
-    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 acceleration = 8.0f;
-    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 braking = 20.0f;
-    LSD_PROPERTY(Edit, Units = "deg/s", Min = 0) f32 turn_rate = 90.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Top speed forward") f32 max_speed = 20.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Top speed backward") f32 reverse_speed = 6.0f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0, Tooltip = "How quickly it speeds up") f32 acceleration = 8.0f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0, Tooltip = "How quickly it slows down when braking") f32 braking = 20.0f;
+    LSD_PROPERTY(Edit, Units = "deg/s", Min = 0, Tooltip = "How fast it steers at full lock") f32 turn_rate = 90.0f;
     LSD_PROPERTY(Edit, Min = 1, Max = 5, Tooltip = "Shift multiplies the top speed by this") f32 boost = 1.6f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Flying: how fast Space / Ctrl climb and sink") f32 climb_speed = 6.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "How near the player must be to get in with E") f32 enter_distance = 3.0f;
     LSD_PROPERTY(Edit, Tooltip = "Where the driver sits, in the vehicle's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
-    LSD_PROPERTY(Edit, Units = "m", Min = 1, Max = 50) f32 camera_distance = 8.0f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 30) f32 camera_height = 3.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 1, Max = 50, Tooltip = "How far behind the vehicle the driver's view is") f32 camera_distance = 8.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 30, Tooltip = "How high above the vehicle the driver's view is") f32 camera_height = 3.0f;
 };
 
 // A ride the player hitches without driving (trains, ferries, lifts, cable cars): E near it gets on or
 // off, and the player travels on its seat. It moves with a Mover or Spline Follower on the same object.
-LSD_STRUCT(Component, Category = "Movement")
+LSD_STRUCT(Component, Category = "Movement", Tooltip = "Something the player rides along its route without driving (trains, lifts, boats)")
 struct Transport {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.5) f32 enter_distance = 4.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "How near the player must be to get on") f32 enter_distance = 4.0f;
     LSD_PROPERTY(Edit, Tooltip = "Where the rider stands, in the object's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
     LSD_PROPERTY(Edit, Tooltip = "The rider can look around while riding (off: faces the way it travels)") bool free_look = true;
 };
 
 // This object replicates in multiplayer (Unreal's Replicates + Replicate Movement): the server's copy
 // is the real one and every client shows it, smoothly. Ignored when multiplayer is off.
-LSD_STRUCT(Component, Category = "Multiplayer")
+LSD_STRUCT(Component, Category = "Multiplayer", Tooltip = "Multiplayer: the server sends this object's movement to every player")
 struct NetReplicated {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Send its position and rotation to the clients (off: it is created and destroyed everywhere, but not moved)") bool replicate_movement = true;
@@ -277,19 +289,19 @@ struct NetReplicated {
 // sheet, on a 1 m quad in the X-Z plane facing -Y (a side-on game looks along +Y: the Front view),
 // pivot at the bottom centre; the Transform's scale sizes it. With Frame Count > 1 it plays that
 // many cells from Frame at FPS (a flipbook); scripts switch animations by setting Frame.
-LSD_STRUCT(Component, Category = "2D")
+LSD_STRUCT(Component, Category = "2D", Tooltip = "A flat image for 2D games, with sprite-sheet frames and flipbook animation")
 struct Sprite {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char texture[33] = "";
-    LSD_PROPERTY(Edit) LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The image (or sprite sheet) it shows") char texture[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour multiplied over the image (white = as is)") LinearColor tint = LinearColor::hex(0xFFFFFF);
     LSD_PROPERTY(Edit, Category = "Sheet", Min = 1, Max = 64, Tooltip = "Cells across the sprite sheet") u32 columns = 1;
     LSD_PROPERTY(Edit, Category = "Sheet", Min = 1, Max = 64, Tooltip = "Cells down") u32 rows = 1;
     LSD_PROPERTY(Edit, Category = "Sheet", Tooltip = "The cell shown, or the animation's first (left to right, then down)") u32 frame = 0;
     LSD_PROPERTY(Edit, Category = "Flipbook", Min = 1, Max = 4096, Tooltip = "Cells the animation plays from Frame; 1 = a still sprite") u32 frame_count = 1;
     LSD_PROPERTY(Edit, Category = "Flipbook", Min = 0, Max = 120, Tooltip = "Frames a second") f32 fps = 12.0f;
-    LSD_PROPERTY(Edit, Category = "Flipbook") bool loop = true;
+    LSD_PROPERTY(Edit, Category = "Flipbook", Tooltip = "The flipbook starts over when it ends") bool loop = true;
     LSD_PROPERTY(Edit, Tooltip = "Mirror left-right (a side-scroller Character sets it from the way it walks)") bool flip_x = false;
-    LSD_PROPERTY(Edit) bool flip_y = false;
+    LSD_PROPERTY(Edit, Tooltip = "Mirror the image upside down") bool flip_y = false;
     LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours, like most 2D games") bool lit = false;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Pixels with less alpha are cut out") f32 alpha_cutoff = 0.5f;
@@ -298,16 +310,16 @@ struct Sprite {
 
 // A grid of tiles from a tileset image (Unreal's Paper2D Tile Map), painted in the 2D level mode:
 // drawn as one mesh in the X-Z plane from its bottom-left corner; solid tiles block in Play.
-LSD_STRUCT(Component, Category = "2D")
+LSD_STRUCT(Component, Category = "2D", Tooltip = "A grid of tiles from a tileset, painted in the 2D mode")
 struct TileMap {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The tileset: an image of equal tiles") char tileset[33] = "";
     LSD_PROPERTY(Edit, Min = 1, Max = 256, Tooltip = "Tiles across the tileset image") u32 tileset_columns = 8;
     LSD_PROPERTY(Edit, Min = 1, Max = 256, Tooltip = "Tiles down the tileset image") u32 tileset_rows = 8;
     LSD_PROPERTY(Edit, Min = 1, Max = 256, Tooltip = "Tiles across the map (width x height at most 4096)") u32 width = 32;
-    LSD_PROPERTY(Edit, Min = 1, Max = 128) u32 height = 16;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 100) f32 tile_size = 1.0f;
-    LSD_PROPERTY(Edit) LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Min = 1, Max = 128, Tooltip = "Rows of tiles") u32 height = 16;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 100, Tooltip = "Size of one tile in the world") f32 tile_size = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Colour multiplied over every tile (white = as is)") LinearColor tint = LinearColor::hex(0xFFFFFF);
     LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours") bool lit = false;
     LSD_PROPERTY(Edit, Tooltip = "Painted tiles block in Play (rows of tiles become boxes)") bool collision = true;
@@ -318,10 +330,10 @@ struct TileMap {
 // A picture projected onto whatever is inside its box (Unreal's Decal Actor): blood, dirt, cracks,
 // signs, road markings. The box is the unit cube scaled by the transform (like the volumes); it
 // projects down its local -Z onto surfaces facing up its +Z. The texture's alpha cuts it out.
-LSD_STRUCT(Component, Category = "Rendering")
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Projects an image onto surfaces inside its box (stains, signs, cracks)")
 struct Decal {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char texture[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The image projected onto surfaces inside its box") char texture[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Multiplies the texture; alpha = opacity") LinearColor tint = LinearColor::hex(0xFFFFFF);
 };
 
@@ -329,30 +341,30 @@ struct Decal {
 LSD_STRUCT()
 struct MeshInstance {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "m") Vec3 position;
-    LSD_PROPERTY(Edit, Units = "deg") Vec3 rotation;
-    LSD_PROPERTY(Edit) Vec3 scale{1.0f, 1.0f, 1.0f};
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Where this copy is, relative to the object") Vec3 position;
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "How this copy is turned") Vec3 rotation;
+    LSD_PROPERTY(Edit, Tooltip = "This copy's size") Vec3 scale{1.0f, 1.0f, 1.0f};
 };
 
 // Many copies of one mesh drawn in a single call (Unreal's Instanced Static Mesh): rocks, grass,
 // fences, crowds of props. Details > Scatter fills it at random over a circle.
 // shortcut: no collision and no per-instance picking; built-in Materials only (a Material Graph
 // draws each copy on its own).
-LSD_STRUCT(Component, Category = "Rendering")
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Many copies of one mesh drawn together (foliage, crowds of props)")
 struct InstancedStaticMesh {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Mesh") char mesh[40] = "Cube";
-    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
-    LSD_PROPERTY(Edit) bool cast_shadows = true;
-    LSD_PROPERTY(Edit) List<MeshInstance, 1024> instances;
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The mesh every copy shows") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for every copy (empty: the mesh's own colour)") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of every copy (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Tooltip = "The copies cast shadows") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Tooltip = "The copies (foliage paints them); drawn together in one go") List<MeshInstance, 1024> instances;
 };
 
 // Terrain sculpted in Landscape mode (Unreal's Landscape): a square grid of heights centred on the
 // object, drawn and collided through the Static Mesh beside it (its mesh is "Landscape:<id>", built
 // from these heights by the editor and the game every time they change).
 // shortcut: one 65 x 65 grid saved in the level, one material; heightmap files and tiles for big worlds
-LSD_STRUCT(Component, Category = "Rendering")
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Sculptable terrain (the Landscape mode)")
 struct Landscape {
     LSD_GENERATED()
     static constexpr u32 kResolution = 65;  // heights per side
@@ -364,17 +376,17 @@ struct Landscape {
 // Scatters copies of a mesh on whatever surfaces are inside this box (Unreal's PCG Volume with a
 // surface sampler): density, slope and scale rules, the same result for the same seed. The copies go
 // to an Instanced Static Mesh on a separate object (`output`), rebuilt when a rule or the box changes.
-LSD_STRUCT(Component, Category = "Procedural")
+LSD_STRUCT(Component, Category = "Procedural", Tooltip = "Scatters a mesh on the surfaces in its box by density, slope and seed")
 struct PcgVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Mesh") char mesh[40] = "Sphere";
-    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0x4F8A3C);
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The mesh it scatters") char mesh[40] = "Sphere";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for the scattered meshes") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the scattered meshes (without a material)") LinearColor color = LinearColor::hex(0x4F8A3C);
     LSD_PROPERTY(Edit, Min = 0, Tooltip = "Copies per 100 square metres of the box's floor (at most 1024)") f32 density = 20.0f;
     LSD_PROPERTY(Edit, Tooltip = "Same seed, same layout; change it for another") u32 seed = 1;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 90, Tooltip = "No copies on surfaces steeper than this") f32 max_slope = 35.0f;
-    LSD_PROPERTY(Edit, Min = 0.01) f32 scale_min = 0.8f;
-    LSD_PROPERTY(Edit, Min = 0.01) f32 scale_max = 1.2f;
+    LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Smallest random size of a scattered mesh") f32 scale_min = 0.8f;
+    LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Largest random size of a scattered mesh") f32 scale_max = 1.2f;
     LSD_PROPERTY(Edit, Tooltip = "Turn each copy at random around Z") bool random_yaw = true;
     LSD_PROPERTY(Edit, Tooltip = "Tilt copies to the surface (rocks on a slope) instead of standing upright") bool align_to_surface = false;
     LSD_PROPERTY(Visible, Tooltip = "The object holding the copies") char output[64] = "";
@@ -382,34 +394,34 @@ struct PcgVolume {
 
 // Keeps this object on a socket of another object's Skeletal Mesh (Unreal's Attach to Socket): a
 // sword in a hand follows the animation. The socket comes from the mesh (Mesh Editor > Sockets).
-LSD_STRUCT(Component, Category = "Animation")
+LSD_STRUCT(Component, Category = "Animation", Tooltip = "Sticks this object to a socket or bone of another object's skeleton (weapons in hands)")
 struct AttachToSocket {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "The object with the Skeletal Mesh, by name") char target[64] = "";
-    LSD_PROPERTY(Edit) char socket[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The socket (or bone) on the target's skeleton to stick to") char socket[32] = "";
 };
 
 // Plants a Skeletal Mesh's feet on the ground under them while playing (Unreal's foot IK): each
 // foot is raised onto steps and slopes with two-bone IK. Bones by name, as in the imported skeleton.
-LSD_STRUCT(Component, Category = "Animation")
+LSD_STRUCT(Component, Category = "Animation", Tooltip = "Plants the skeleton's feet on uneven ground")
 struct FootIK {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char left_foot[48] = "foot_l";
-    LSD_PROPERTY(Edit) char right_foot[48] = "foot_r";
+    LSD_PROPERTY(Edit, Tooltip = "The left foot bone (UE rigs: foot_l)") char left_foot[48] = "foot_l";
+    LSD_PROPERTY(Edit, Tooltip = "The right foot bone (UE rigs: foot_r)") char right_foot[48] = "foot_r";
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 2, Tooltip = "How high above the animated foot the ground may be") f32 max_step = 0.5f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 0.5, Tooltip = "Ankle height above the ground") f32 foot_height = 0.08f;
 };
 
 // Turns the object at a steady rate while playing (Unreal's Rotating Movement).
-LSD_STRUCT(Component, Category = "Movement")
+LSD_STRUCT(Component, Category = "Movement", Tooltip = "Spins the object at a steady rate (fans, coins, wheels)")
 struct RotatingMovement {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "deg/s") Vec3 rate{0.0f, 0.0f, 90.0f};
+    LSD_PROPERTY(Edit, Units = "deg/s", Tooltip = "Spin speed around each axis (Z turns it like a fan)") Vec3 rate{0.0f, 0.0f, 90.0f};
 };
 
 // Flies the object from its start velocity, pulled down by gravity, until it hits something
 // (Unreal's Projectile Movement): it stops there and both get on_hit.
-LSD_STRUCT(Component, Category = "Movement")
+LSD_STRUCT(Component, Category = "Movement", Tooltip = "Flies like a projectile: speed, gravity, bounces, hits")
 struct ProjectileMovement {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "m/s", Tooltip = "Start velocity along the object's own axes (+X forward)") Vec3 velocity{20.0f, 0.0f, 0.0f};
@@ -441,16 +453,19 @@ struct MorphWeight {
 
 // A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a
 // rigged FBX into the viewport; its animations can come from the same file or another (Mixamo).
-LSD_STRUCT(Component, Category = "Animation")
+LSD_STRUCT(Component, Category = "Animation", Tooltip = "Shows a rigged, animated mesh: a clip or an Animation Graph")
 struct SkeletalMesh {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "An FBX with a skeleton and skin") char mesh[33] = "";
-    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Widget = "Choice:Auto,+X,+Y,-X,-Y",
+                 Tooltip = "Which way the character's front points in its file; it is turned to face the object's forward (+X, where the Character walks and the camera looks). Auto: Unreal rigs (UE4 / UE5 exports face -Y here, Unreal's Blueprint turns them -90) are turned; others face +X")
+    u32 facing = 0;
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for the mesh (empty: its own colour)") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX holding the animation, matched by bone names; empty = the mesh's own file") char animation[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Which animation (take) in that file, from 0") u32 clip = 0;
-    LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 play_rate = 1.0f;
-    LSD_PROPERTY(Edit) bool looping = true;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the animation (1 = as made)") f32 play_rate = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends") bool looping = true;
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too, so you see the motion while building") bool playing = true;
     LSD_PROPERTY(Edit, Widget = "Asset:AnimGraph", Tooltip = "A state machine (Idle, Walk/Run blend space, Jump...) driven by parameters; replaces the clip above")
     char anim_graph[33] = "";
@@ -461,7 +476,7 @@ struct SkeletalMesh {
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".
 // Picked from the project's tag list (Project Settings > Gameplay Tags) or typed. Any data asset field
 // with Widget = "Tags" gets the same picker (a tag container).
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "Labels scripts check (Has Tag node, lsd.has_tag): Enemy, Pickup...")
 struct Tags {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Tags", Tooltip = "Comma-separated, e.g. Enemy, Damage.Fire") char tags[256] = "";
@@ -476,10 +491,10 @@ struct ScriptProperty {
     LSD_PROPERTY(Save) char value[64] = "";  // as text: a number, true / false, or a string
 };
 
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "Runs a Lua, JavaScript or visual script on this object in Play")
 struct Script {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Script") char script[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "The Lua, JavaScript or visual script that runs on this object in Play") char script[33] = "";
     // This object's values for the script's `properties = { speed = 5, ... }` (Unreal's Instance
     // Editable variables): shown in Details under the script, set on self before on_start.
     LSD_PROPERTY(Save) List<ScriptProperty, 16> properties;
@@ -487,7 +502,7 @@ struct Script {
 
 // A C or C++ script from the project's game code (Source/ -> Game.dll, lsd_game.h): the same events
 // as a Lua Script, compiled (Unreal: an Actor Component class from your C++ module).
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "Runs a C / C++ script from the game code (Game.dll) on this object")
 struct NativeScript {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "NativeScript", Tooltip = "A C / C++ script from Source/ (Tools > New C / C++ Script makes one, Compile Game Code builds them)") char script[64] = "";
@@ -497,7 +512,7 @@ struct NativeScript {
 
 // A curve through points (Unreal's Spline Component): paths for platforms, enemies and cameras.
 // Select the object to see its points in the viewport; click one to move it with the gizmo.
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "A curve shaped by points: paths, rails, routes for movers and AI")
 struct Spline {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Points the curve passes through, in this object's local space") List<Vec3, 32> points = {2, {Vec3{0, 0, 0}, Vec3{4, 0, 0}}};
@@ -513,25 +528,25 @@ inline void spline_tangents(const Spline& s, Vec3 out[32]) {
 
 // Copies of a mesh placed along this object's Spline (Unreal's spline-placed meshes: fences, rails,
 // lamp posts). They are kept in an Instanced Static Mesh on the same object, rebuilt when the spline changes.
-LSD_STRUCT(Component, Category = "Rendering")
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Repeats a mesh along the object's Spline (fences, rails, pipes)")
 struct SplineMeshes {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Mesh") char mesh[40] = "Cube";
-    LSD_PROPERTY(Edit, Widget = "Asset:Material") char material[33] = "";
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The mesh repeated along the spline (fences, rails, pipes)") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for the repeated meshes") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the repeated meshes (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Tooltip = "Distance between copies along the curve") f32 spacing = 2.0f;
     LSD_PROPERTY(Edit, Tooltip = "Turn each copy to face along the curve") bool follow_curve = true;
     LSD_PROPERTY(Edit, Tooltip = "Scale of each copy") Vec3 scale{1.0f, 1.0f, 1.0f};
-    LSD_PROPERTY(Edit) bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Tooltip = "The repeated meshes cast shadows") bool cast_shadows = true;
 };
 
 // Moves this object along a Spline in Play. With collision it is a moving platform the player rides.
-LSD_STRUCT(Component, Category = "Gameplay")
+LSD_STRUCT(Component, Category = "Gameplay", Tooltip = "Travels along the object's Spline")
 struct SplineFollower {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Name of the object with the Spline") char spline[64] = "";
-    LSD_PROPERTY(Edit, Units = "m/s") f32 speed = 2.0f;
-    LSD_PROPERTY(Edit, Widget = "Choice:Once,Loop,Ping-Pong") u32 mode = 1;
+    LSD_PROPERTY(Edit, Units = "m/s", Tooltip = "How fast it travels along the spline") f32 speed = 2.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Once,Loop,Ping-Pong", Tooltip = "Once: stops at the end. Loop: starts over. Ping-Pong: goes back and forth") u32 mode = 1;
     LSD_PROPERTY(Edit, Tooltip = "Turn to face along the curve") bool face_forward = false;
 };
 
@@ -551,20 +566,20 @@ struct PrefabOverride {
 // other components come from the prefab asset, except the properties listed as overrides: those
 // keep this instance's values when the prefab changes. Apply writes the instance back to the
 // prefab; Revert drops the overrides and reloads.
-LSD_STRUCT(Component, Category = "Prefab")
+LSD_STRUCT(Component, Category = "Prefab", Tooltip = "A copy of a prefab; edits to the prefab update it")
 struct PrefabInstance {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Prefab") char prefab[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Prefab", Tooltip = "The prefab this object is a copy of; edits to the prefab update it") char prefab[33] = "";
     LSD_PROPERTY(Save) List<PrefabOverride, 32> overrides;
 };
 
 // ---- Lights (physical units, like Unreal). Each points along its object's forward axis (+X). ----
 
 // The sun (Unreal's Directional Light): parallel light from far away.
-LSD_STRUCT(Component, Category = "Lights")
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "Sunlight: one direction, lights everything, casts cascaded shadows")
 struct DirectionalLight {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Tooltip = "The sunlight's colour") LinearColor color = LinearColor::hex(0xFFFFFF);
     LSD_PROPERTY(Edit, Units = "lux", Min = 0, Tooltip = "Light on a surface facing it (10 = Unreal's default sun)") f32 intensity = 10.0f;
     LSD_PROPERTY(Edit, Tooltip = "Use the colour temperature instead of the colour") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "1900 candle, 3200 tungsten, 5500 noon sun, 6500 overcast") f32 temperature = 6500.0f;
@@ -573,63 +588,63 @@ struct DirectionalLight {
 };
 
 // A bulb (Unreal's Point Light): shines in every direction.
-LSD_STRUCT(Component, Category = "Lights")
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "A bulb: light in every direction from a point")
 struct PointLight {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Tooltip = "The light's colour") LinearColor color = LinearColor::hex(0xFFFFFF);
     LSD_PROPERTY(Edit, Units = "lm", Min = 0, Tooltip = "Total light: 800 is a household bulb") f32 intensity = 1000.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 10.0f;
-    LSD_PROPERTY(Edit) bool use_temperature = false;
-    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000) f32 temperature = 3200.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color (warm bulbs, cold daylight)") bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
 };
 
 // A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
-LSD_STRUCT(Component, Category = "Lights")
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "A cone of light (torches, street lamps)")
 struct SpotLight {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xFFFFFF);
-    LSD_PROPERTY(Edit, Units = "lm", Min = 0) f32 intensity = 1000.0f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.01) f32 attenuation_radius = 10.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The light's colour") LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "lm", Min = 0, Tooltip = "Brightness (a 100 W bulb is about 1600 lumens)") f32 intensity = 1000.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "How far the light reaches") f32 attenuation_radius = 10.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Full brightness inside this angle from the centre") f32 inner_angle = 20.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 1, Max = 89, Tooltip = "No light outside this angle from the centre") f32 outer_angle = 35.0f;
-    LSD_PROPERTY(Edit) bool use_temperature = false;
-    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000) f32 temperature = 3200.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).
-LSD_STRUCT(Component, Category = "Lights")
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "Soft ambient light from the sky and the ground")
 struct SkyLight {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) LinearColor sky_color = LinearColor::hex(0x4D5C73);
-    LSD_PROPERTY(Edit) LinearColor ground_color = LinearColor::hex(0x292624);
+    LSD_PROPERTY(Edit, Tooltip = "Ambient light from above") LinearColor sky_color = LinearColor::hex(0x4D5C73);
+    LSD_PROPERTY(Edit, Tooltip = "Ambient light bounced from the ground") LinearColor ground_color = LinearColor::hex(0x292624);
     LSD_PROPERTY(Edit, Min = 0, Max = 20, Tooltip = "1 = the editor's default ambient") f32 intensity = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Take the colours from the level's Sky (Unreal's Sky Light capturing the sky): sunsets light the level orange, night dark. Untick to use the colours above") bool capture_sky = true;
 };
 
 // The sky behind everything (Unreal's Sky Atmosphere, as a gradient): colours as they appear, a sun
 // disc in the first Directional Light's direction. Without one the viewport keeps its plain colour.
-LSD_STRUCT(Component, Category = "Environment")
+LSD_STRUCT(Component, Category = "Environment", Tooltip = "The sky gradient and the sun disc, following the Directional Light")
 struct Sky {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Colours from the sun's height (Unreal's Sky Atmosphere): blue day, orange sunrise / sunset, dark night; turn the Directional Light to change the time of day. Untick to use the colours below") bool atmosphere = true;
     LSD_PROPERTY(Edit, Tooltip = "Straight up") LinearColor zenith = LinearColor::hex(0x2F6FC4);
     LSD_PROPERTY(Edit, Tooltip = "At the horizon (match the fog colour for a seamless distance)") LinearColor horizon = LinearColor::hex(0xB8D2EA);
     LSD_PROPERTY(Edit, Tooltip = "Below the horizon") LinearColor ground = LinearColor::hex(0x4A4640);
-    LSD_PROPERTY(Edit, Min = 0, Max = 10) f32 brightness = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How bright the sky is") f32 brightness = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Draw the sun where the Directional Light shines from") bool sun_disc = true;
-    LSD_PROPERTY(Edit, Units = "deg", Min = 0.1, Max = 10) f32 sun_size = 0.8f;
-    LSD_PROPERTY(Edit) LinearColor sun_color = LinearColor::hex(0xFFF2D6);
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0.1, Max = 10, Tooltip = "How big the sun disc looks") f32 sun_size = 0.8f;
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the sun disc") LinearColor sun_color = LinearColor::hex(0xFFF2D6);
 };
 
 // Exponential height fog (Unreal's Exponential Height Fog): thicker low down, thinning with height.
-LSD_STRUCT(Component, Category = "Environment")
+LSD_STRUCT(Component, Category = "Environment", Tooltip = "Fog that thickens lower down and with distance")
 struct HeightFog {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How thick at the fog's height (per metre)") f32 density = 0.01f;
     LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "How fast it thins going up (per metre); 0 = the same everywhere") f32 height_falloff = 0.2f;
-    LSD_PROPERTY(Edit) LinearColor color = LinearColor::hex(0xB8D2EA);
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the fog") LinearColor color = LinearColor::hex(0xB8D2EA);
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "No fog nearer than this") f32 start_distance = 0.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Never thicker than this (1 = can hide everything)") f32 max_opacity = 1.0f;
 };
@@ -639,21 +654,21 @@ struct HeightFog {
 // Unbound; the highest Priority wins.
 // Where Build Lighting puts its light probes (Unreal's Lightmass Importance Volume): the unit cube
 // scaled by the transform. Without one, probes cover all the static meshes.
-LSD_STRUCT(Component, Category = "Environment")
+LSD_STRUCT(Component, Category = "Environment", Tooltip = "Where Build Lighting bakes light probes in detail")
 struct LightmassImportanceVolume {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 20, Tooltip = "Distance between light probes; 0 = as fine as the probe budget (512) allows") f32 probe_spacing = 0.0f;
 };
 
-LSD_STRUCT(Component, Category = "Environment")
+LSD_STRUCT(Component, Category = "Environment", Tooltip = "The look inside its box (or everywhere): exposure, bloom, grading, depth of field, SSAO")
 struct PostProcessVolume {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Everywhere, not just inside the box") bool unbound = true;
-    LSD_PROPERTY(Edit) i32 priority = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the higher priority wins") i32 priority = 0;
     LSD_PROPERTY(Edit, Units = "EV", Min = -10, Max = 10, Tooltip = "Brighter (+) or darker (-) on top of World Settings exposure") f32 exposure_compensation = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Filmic (ACES) curve: soft highlights instead of clipping") bool filmic_tonemapper = true;
     LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "0 = black and white") f32 saturation = 1.0f;
-    LSD_PROPERTY(Edit, Min = 0, Max = 2) f32 contrast = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "Difference between dark and bright (1 = unchanged)") f32 contrast = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Multiplies the image (colour grading gain)") LinearColor tint = LinearColor::hex(0xFFFFFF);
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Darker corners") f32 vignette = 0.3f;
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Glow around bright parts (emissive, the sun's highlights); 0 = off") f32 bloom_intensity = 0.5f;
@@ -677,18 +692,18 @@ struct PostProcessVolume {
 
 // Where the navmesh is built (Unreal's Nav Mesh Bounds Volume): the unit cube scaled by the
 // transform, like the other volumes. Without any, the whole level is used.
-LSD_STRUCT(Component, Category = "AI")
+LSD_STRUCT(Component, Category = "AI", Tooltip = "Where AI navigation is built (P shows it)")
 struct NavMeshBounds {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: ignored when building the navmesh") bool enabled = true;
 };
 
 // Cuts its box out of the navmesh (Unreal's Nav Modifier Volume with the Null area): agents path
 // around it though nothing blocks there (a no-go zone, a hole the player can cross but AI must not).
-LSD_STRUCT(Component, Category = "AI")
+LSD_STRUCT(Component, Category = "AI", Tooltip = "AI paths go round its box")
 struct NavModifierVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: AI may walk through its box again") bool enabled = true;
 };
 
 // One rule of a Cull Distance Volume: objects up to `size` across are hidden beyond `distance`.
@@ -703,34 +718,34 @@ struct CullDistance {
 // Cull Distance Volume): pebbles vanish sooner than houses. Each object uses the rule with the
 // smallest Size that still fits it (the biggest rule for anything larger); a Static Mesh's own Max
 // Draw Distance still applies when it is nearer.
-LSD_STRUCT(Component, Category = "Volumes")
+LSD_STRUCT(Component, Category = "Volumes", Tooltip = "Hides small meshes inside it when far away")
 struct CullDistanceVolume {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) bool enabled = true;
-    LSD_PROPERTY(Edit) List<CullDistance, 8> cull_distances = {3, {{0.5f, 30.0f}, {2.0f, 80.0f}, {10.0f, 250.0f}}};
+    LSD_PROPERTY(Edit, Tooltip = "Off: no culling from this volume") bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "Rules: meshes up to Size are hidden beyond Distance (small things vanish sooner)") List<CullDistance, 8> cull_distances = {3, {{0.5f, 30.0f}, {2.0f, 80.0f}, {10.0f, 250.0f}}};
 };
 
 // Walks on the navmesh in Play, steering round other agents (an AI-controlled pawn): Lua
 // lsd.move_to(e, x, y, z) or the AI Move To node sends it somewhere.
-LSD_STRUCT(Component, Category = "AI")
+LSD_STRUCT(Component, Category = "AI", Tooltip = "An AI walker: paths around the level, avoids others")
 struct NavAgent {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 max_speed = 3.5f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.05) f32 radius = 0.4f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.1) f32 height = 1.8f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Fastest walking speed of this AI") f32 max_speed = 3.5f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Tooltip = "How much room it needs (keeps it off walls and others)") f32 radius = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "How tall it is (low ceilings it cannot pass)") f32 height = 1.8f;
     LSD_PROPERTY(Edit, Tooltip = "Turn to face where it walks") bool face_movement = true;
 };
 
 // Thinks for a Nav Agent (Unreal's AI Controller): runs a Behavior Tree with its own blackboard,
 // and sees / hears the player. Perception sets CanSeePlayer (1 while in view), PlayerLocation (where
 // it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range).
-LSD_STRUCT(Component, Category = "AI")
+LSD_STRUCT(Component, Category = "AI", Tooltip = "An AI brain: a Behavior Tree, sight and hearing")
 struct AIController {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:BehaviorTree") char behavior_tree[33] = "";
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 sight_range = 15.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:BehaviorTree", Tooltip = "The Behavior Tree that decides what it does") char behavior_tree[33] = "";
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it sees the player (CanSeePlayer)") f32 sight_range = 15.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 360, Tooltip = "Field of view, centred on the object's +X") f32 sight_angle = 120.0f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 hearing_range = 12.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it hears noises (lsd.report_noise / Report Noise)") f32 hearing_range = 12.0f;
 };
 
 // How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).
@@ -738,9 +753,9 @@ LSD_STRUCT()
 struct NavSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Tooltip = "How far from walls agents keep") f32 agent_radius = 0.4f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.2) f32 agent_height = 1.8f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 max_step_height = 0.45f;
-    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89) f32 max_slope = 45.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.2, Tooltip = "Height of the walkers the navmesh is built for") f32 agent_height = 1.8f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Tallest step walkers climb") f32 max_step_height = 0.45f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground walkers go up") f32 max_slope = 45.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 1, Tooltip = "Smaller: follows the geometry closer, builds slower") f32 cell_size = 0.15f;
 };
 
@@ -749,12 +764,12 @@ LSD_STRUCT(Category = "World")
 struct WorldSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Units = "m", Tooltip = "Falling below this height respawns the player") f32 kill_z = -50.0f;
-    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0) f32 gravity = 9.81f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0, Tooltip = "Downward pull: 9.81 is Earth, 1.62 the Moon") f32 gravity = 9.81f;
     LSD_PROPERTY(Edit, Min = -10, Max = 20, Tooltip = "Fixed camera exposure (EV100) once the level has lights: higher is darker. 1.5 suits the default 10 lux sun; a 100000 lux real sun wants about 15")
     f32 exposure_ev100 = 1.5f;
     LSD_PROPERTY(Edit, Widget = "Asset:GameMode", Tooltip = "Rules for Play: player prefab and game script") char game_mode[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "This level's own script (Unreal's Level Blueprint): a visual script or Lua file for one-off events; it runs while the level plays") char level_script[33] = "";
-    LSD_PROPERTY(Edit) NavSettings navigation;
+    LSD_PROPERTY(Edit, Tooltip = "How the navmesh is built for AI (agent size, steps, slopes)") NavSettings navigation;
 };
 
 } // namespace lsd::world

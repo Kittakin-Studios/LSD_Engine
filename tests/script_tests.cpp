@@ -120,6 +120,55 @@ static void test_graph_variables() {
     scripts.stop();
 }
 
+// Collapse to Function: the same result after the nodes move into a Function, wires rerouted.
+static void test_collapse_to_function() {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 s1 = g.add("SetVariable", 200, 0)->id, s2 = g.add("SetVariable", 400, 0)->id, pos = g.add("SetPosition", 600, 0)->id;
+    const u32 get_a = g.add("GetVariable", 200, 150)->id, mul = g.add("Multiply", 350, 150)->id, add = g.add("Add", 500, 150)->id;
+    const u32 get_b = g.add("GetVariable", 500, 250)->id, vec = g.add("MakeVector", 600, 150)->id;
+    std::snprintf(g.find(s1)->values[1], 64, "a");
+    std::snprintf(g.find(s1)->values[2], 64, "5");
+    std::snprintf(g.find(s2)->values[1], 64, "b");
+    std::snprintf(g.find(get_a)->values[0], 64, "a");
+    std::snprintf(g.find(get_b)->values[0], 64, "b");
+    std::snprintf(g.find(mul)->values[1], 64, "3");
+    std::snprintf(g.find(add)->values[1], 64, "1");
+    CHECK(g.connect(start, 0, s1, 0) && g.connect(s1, 0, s2, 0) && g.connect(s2, 0, pos, 0) && g.connect(get_a, 0, mul, 0) &&
+          g.connect(mul, 0, s2, 2) && g.connect(mul, 0, add, 0) && g.connect(add, 0, vec, 0) && g.connect(get_b, 0, vec, 1) &&
+          g.connect(vec, 0, pos, 2));
+    // Not collapsible: an event inside, or no white wire in. The graph stays as it was.
+    char error[160];
+    u32 call = 0;
+    const usize nodes = g.nodes.size(), links = g.links.size();
+    const u32 with_event[] = {start, s1};
+    CHECK(!collapse_to_function(g, with_event, 2, "F", call, error, sizeof error) && std::strstr(error, "event"));
+    CHECK(!collapse_to_function(g, &mul, 1, "F", call, error, sizeof error) && std::strstr(error, "white"));
+    CHECK(g.nodes.size() == nodes && g.links.size() == links);
+
+    const u32 body[] = {s2, mul};
+    CHECK(collapse_to_function(g, body, 2, "Triple", call, error, sizeof error));
+    CHECK(g.nodes.size() == nodes + 3 && g.find(call) && std::strcmp(g.find(call)->values[1], "Triple") == 0);
+    Array<char> lua(default_allocator());
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    CHECK(std::strstr(lua.data(), "function Triple(self, a, b, c)"));
+    write(kGraphLua, lua.data());
+    HeapAllocator heap("collapse");
+    {
+        World w(heap);
+        const Entity e = w.create("Thing");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "graph");
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        const Vec3 p = w.get<Transform>(e)->position;
+        CHECK(scripts.error_count() == 0 && p.x == 16.0f && p.y == 15.0f);  // b = a * 3 inside; a * 3 + 1 read through Result
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 static void test_graph() {
     using namespace lsd::script;
     Graph g(default_allocator());
@@ -1054,6 +1103,7 @@ int main() {
     test_native_components();
     test_data_table();
     test_graph();
+    test_collapse_to_function();
     test_graph_variables();
     test_events();
     test_traces();

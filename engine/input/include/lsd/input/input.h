@@ -10,8 +10,8 @@ namespace lsd::input {
 LSD_STRUCT(Category = "Input")
 struct InputAction {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Choice:Button (bool),Axis 1D (float),Axis 2D (Vector2D)") u32 value_type = 0;
-    LSD_PROPERTY(Edit) char description[96] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Button (bool),Axis 1D (float),Axis 2D (Vector2D)", Tooltip = "What it gives: a button (on / off), a 1D axis (a trigger, a scroll) or a 2D axis (a stick, WASD, the mouse)") u32 value_type = 0;
+    LSD_PROPERTY(Edit, Tooltip = "What the action is for (shown in the key rebinding menu)") char description[96] = "";
     LSD_PROPERTY(Edit, Widget = "Choice:Down,Pressed,Released,Hold,Tap",
                  Tooltip = "When the action fires (Unreal's Triggers): Down and Pressed when pushed, Released when let go, Hold after Trigger Time held, Tap when let go within Trigger Time") u32 trigger = 0;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Hold: how long to hold. Tap: the longest press that still counts") f32 trigger_time = 0.5f;
@@ -26,8 +26,8 @@ enum class Trigger : u32 { Down, Pressed, Released, Hold, Tap };
 LSD_STRUCT()
 struct KeyMapping {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:InputAction") char action[33] = "";
-    LSD_PROPERTY(Edit, Widget = "Key") char key[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "The Input Action this key drives") char action[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Key", Tooltip = "The key, mouse button or gamepad control (click, then press it)") char key[32] = "";
     LSD_PROPERTY(Edit, Widget = "Choice:X,Y", Tooltip = "Which part of a 2D action a 1D key drives (Unreal's Swizzle YXZ = Y)") u32 axis = 0;
     LSD_PROPERTY(Edit, Tooltip = "Multiplier; -1 is Unreal's Negate (S and A for Move)") f32 scale = 1.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 0.95, Tooltip = "Values under this read as 0, the rest rescaled to 0..1 (Unreal's Dead Zone modifier); sticks already have 0.15")
@@ -38,7 +38,7 @@ LSD_STRUCT(Category = "Input")
 struct InputMappingContext {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "When two contexts use the same key, the higher priority one gets it") i32 priority = 0;
-    LSD_PROPERTY(Edit) List<KeyMapping, 64> mappings;
+    LSD_PROPERTY(Edit, Tooltip = "Which keys drive which Input Actions (Unreal's Input Mapping Context)") List<KeyMapping, 64> mappings;
 };
 
 // Device state for one frame, filled by the platform layer (SDL in the editor and runtime).

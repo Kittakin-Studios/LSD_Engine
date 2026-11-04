@@ -1,6 +1,8 @@
 # How to code in LSD_Engine
 
 Step by step: where to click to write game code, attach it to an object, run it and debug it.
+For complete first systems to copy (health and stamina bars, sprinting, a hurt zone, a door), see
+[Examples for first timers](Examples/Examples.md).
 There are three ways to script, and you can mix them in one level:
 
 | Way | Unreal equivalent | Where |
@@ -32,6 +34,9 @@ Make that VS Code:
    autocomplete.
 
 ## 2. Make a script
+
+![Make a script in the Content Browser (right-click > New Lua Script, or New Visual Script), in a folder such as Script/](images/content_browser.jpg)
+*Make a script in the Content Browser (right-click > New Lua Script, or New Visual Script), in a folder such as Script/.*
 
 1. In the **Content Browser** (bottom panel), open the folder you want it in (for example
    `Content/Scripts`; right-click empty space > **New Folder** to make one).
@@ -87,6 +92,9 @@ end
 
 ## 4. Put it on an object
 
+![Select the object, + Add Component > Script in Details, then pick your script](images/details.jpg)
+*Select the object, + Add Component > Script in Details, then pick your script.*
+
 1. Click the object in the **viewport** or the **Outliner** (top right).
 2. In **Details** (bottom right), scroll down and click **Add Component** > **Script**.
 3. In the new Script section, click the **Script** dropdown and pick `Door` (or **drag** the script's
@@ -98,6 +106,9 @@ Many objects can use the same script; each runs its own copy with its own `self`
 
 ## 5. Run it
 
+![Press Play; edits to the script reload while it runs](images/play_in_editor.jpg)
+*Press Play; edits to the script reload while it runs.*
+
 1. Click **Play** on the toolbar (or **Alt+P**). **Simulate** (**Alt+S**) runs it with the editor
    camera instead of the player.
 2. Watch the **Output Log** tab (bottom): `lsd.log(...)` lines appear there.
@@ -108,6 +119,9 @@ Try a line without a script: in the console box at the bottom of the Output Log,
 `lua lsd.log(lsd.name(lsd.player()))` and press Enter.
 
 ## 6. Debug it
+
+![Tools > Lua Debugger](images/win_lua_debugger.jpg)
+*Tools > Lua Debugger: set breakpoints, step, read locals and the call stack.*
 
 This is the window in the screenshot: **Tools > Lua Debugger**.
 
@@ -132,6 +146,9 @@ state before you press Play.
 
 ## 7. Visual scripts instead of code
 
+![The visual script editor (this is Interact_System, the worked example below)](images/ed_visual_script.jpg)
+*The visual script editor (this is Interact_System, the worked example below).*
+
 The same things with nodes and wires (Blueprints):
 
 1. Content Browser > right-click empty space > **New Visual Script**, name it, **double-click** it.
@@ -143,6 +160,9 @@ The same things with nodes and wires (Blueprints):
 5. Put it on an object exactly like a `.lua`: Add Component > **Script** > pick the graph.
 6. Debug: right-click a node > **Toggle Breakpoint** (or select it and press F9). While playing,
    nodes that run glow orange.
+7. Tidy up: select a run of nodes, right-click one > **Collapse to Function**. They become a
+   Function you can call from anywhere in the script (Unreal's Collapse to Function).
+8. Problems on saving are listed under the toolbar (**Compiler Results**); click one to go to its node.
 
 ### Worked example: press a key to interact with what you look at
 
@@ -318,6 +338,9 @@ plugin's tools: `console` (play, stop, save, open...), `lua` (while playing), `l
 done: while it is on, any program on this PC could send the editor commands.
 
 ## 11. C / C++ instead of Lua
+
+![Tools > New C / C++ Script, Compile Game Code (Ctrl+Alt+F11) and Set Up Debugging (VS Code)](images/menu_tools.jpg)
+*Tools > New C / C++ Script, Compile Game Code (Ctrl+Alt+F11) and Set Up Debugging (VS Code).*
 
 The same jobs in compiled C or C++ (Unreal: a C++ Actor Component). Full reference: [CODING.md](CODING.md).
 

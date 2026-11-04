@@ -28,8 +28,8 @@
         "z": 0
       },
       "scale": {
-        "x": 20,
-        "y": 20,
+        "x": 99.8000031,
+        "y": 95.5999985,
         "z": 0.200000003
       }
     },
@@ -47,35 +47,6 @@
       "physical_material": "",
       "box_uv": false,
       "max_draw_distance": 0
-    }},
-    {"id": 1, "name": "PlayerStart", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": -160.649994
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "PlayerStart": {
-      "eye_height": 1.70000005,
-      "walk_speed": 5,
-      "jump_speed": 5
-    },
-     "FootIK": {
-      "left_foot": "foot_l",
-      "right_foot": "foot_r",
-      "max_step": 0.5,
-      "foot_height": 0.0799999982
     }},
     {"id": 2, "name": "Sphere", "parent": -1,
      "Transform": {
@@ -154,9 +125,11 @@
         "b": 0.141176477,
         "a": 0.925490201
       },
-      "intensity": 3.00900006
+      "intensity": 3.00900006,
+      "capture_sky": true
     },
      "Sky": {
+      "atmosphere": true,
       "zenith": {
         "r": 0.795098424,
         "g": 0.828382075,
@@ -222,7 +195,12 @@
       "dof_focal_distance": 0,
       "dof_focal_region": 0,
       "dof_transition": 0.00999999978,
-      "dof_max_blur": 0
+      "dof_max_blur": 0,
+      "auto_exposure": true,
+      "exposure_min_ev": -4,
+      "exposure_max_ev": 4,
+      "exposure_speed_up": 3,
+      "exposure_speed_down": 1
     },
      "LightmassImportanceVolume": {
       "probe_spacing": 10.1400003
@@ -470,7 +448,7 @@
       }
     },
      "SoundEmitter": {
-      "sound": "",
+      "sound": "048ece49907e29a7eab4c21b710c7ef9",
       "auto_play": true
     }},
     {"id": 8, "name": "AI Controller", "parent": -1,
@@ -532,6 +510,7 @@
     },
      "SkeletalMesh": {
       "mesh": "b400a445885d50b9205a057d8e2f4319",
+      "facing": 0,
       "material": "",
       "color": {
         "r": 0.225190431,
@@ -612,13 +591,22 @@
       "physical_material": "",
       "box_uv": false,
       "max_draw_distance": 0
+    },
+     "NativeScript": {
+      "script": "Spinner",
+      "properties": [
+        {
+          "name": "speed",
+          "value": "202.9"
+        }
+      ]
     }},
-    {"id": 16777228, "name": "Nav Agent", "parent": -1,
+    {"id": 20971532, "name": "FBX_Char01_Update_Rig", "parent": -1,
      "Transform": {
       "position": {
-        "x": -2.40100002,
-        "y": 5.30600023,
-        "z": 1.10000002
+        "x": 0,
+        "y": 0,
+        "z": 0
       },
       "rotation": {
         "x": 0,
@@ -626,18 +614,85 @@
         "z": 0
       },
       "scale": {
-        "x": 1.64999998,
-        "y": 2.04999995,
-        "z": 1.04999995
+        "x": 0.999999046,
+        "y": 0.999999046,
+        "z": 1
+      }
+    },
+     "SkeletalMesh": {
+      "mesh": "68c55f138f7dc46fa023ad12c9da1467",
+      "facing": 0,
+      "material": "c39afd0b21562b05adbbda77c5bf64f9",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "animation": "68c55f138f7dc46fa023ad12c9da1467",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
+    },
+     "PlayerStart": {
+      "eye_height": 1.70000005,
+      "walk_speed": 5,
+      "jump_speed": 8.89999962
+    },
+     "Character": {
+      "mapping_context": "c8b6ed85dab604aaec3dfd6fb5995fbd",
+      "move_action": "ed2a289fa8fc85e30a7decb691beb51c",
+      "look_action": "d41c977222dd0c34d6f074b93b0b4915",
+      "jump_action": "885c85e1badeb1c4ec360b3c798dd587",
+      "side_scroller": false,
+      "walk_speed": 5,
+      "jump_speed": 5,
+      "max_slope": 45,
+      "step_height": 0.400000006,
+      "height": 1.79999995,
+      "radius": 0.349999994,
+      "eye_height": 1.64999998,
+      "look_sensitivity": 0.150000006,
+      "invert_look_y": false,
+      "camera_distance": 5.80000019,
+      "camera_offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "crouch_action": "",
+      "crouch_height": 1.10000002,
+      "crouch_speed": 2.5,
+      "swim_speed": 3
+    }},
+    {"id": 13, "name": "Water Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 57.3229446,
+        "y": -0.677999973,
+        "z": 1.49999988
+      },
+      "rotation": {
+        "x": 0,
+        "y": -0,
+        "z": 0
+      },
+      "scale": {
+        "x": 20.5499992,
+        "y": 11.8999996,
+        "z": 6.9000001
       }
     },
      "StaticMesh": {
-      "mesh": "Cube",
+      "mesh": "Plane",
       "material": "",
       "color": {
-        "r": 0.327186525,
-        "g": 0.683397651,
-        "b": 0.415207803,
+        "r": 0,
+        "g": 0.552941203,
+        "b": 1,
         "a": 1
       },
       "collision": false,
@@ -646,32 +701,24 @@
       "box_uv": false,
       "max_draw_distance": 0
     },
-     "NavAgent": {
-      "max_speed": 3.5,
-      "radius": 0.400000006,
-      "height": 1.79999995,
-      "face_movement": true
-    }},
-    {"id": 13, "name": "Water Volume", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 3.82294583,
-        "y": -0.528198838,
-        "z": -1.1920929e-07
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 4,
-        "y": 4,
-        "z": 3
-      }
-    },
      "WaterVolume": {
       "enabled": true
+    },
+     "Spline": {
+      "points": [
+        {
+          "x": -0.559647083,
+          "y": -0.0179999992,
+          "z": -0.0649999976
+        },
+        {
+          "x": 0.386999995,
+          "y": -0.0410000011,
+          "z": 0.137999997
+        }
+      ],
+      "closed": false,
+      "tangents": []
     }},
     {"id": 14, "name": "Cube3", "parent": -1,
      "Transform": {

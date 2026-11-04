@@ -23,7 +23,8 @@ public:
     const char* graph_state(SkinnedCache& cache, const world::SkeletalMesh& mesh, world::Entity e, const char** fading_from = nullptr) const;
     // The vertices to skin for `e`: its own morphed copy when morph weights are set, else `model`'s.
     rhi::BufferHandle vertices(world::Entity e, rhi::BufferHandle model) const;
-    // A socket's world transform on e's skinned mesh (the mesh's .meta sockets); false if none.
+    // A socket's world transform on e's skinned mesh (the mesh's .meta sockets), or else a bone of
+    // that name; false if neither.
     bool socket(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* socket, Mat4& out);
     // Attach To Socket components onto their sockets (after update).
     void attach_to_sockets(world::World& world, const SkinnedCache& cache);
@@ -76,7 +77,7 @@ private:
     u32 ik_count_ = 0;
     GroundProbe probe_ = nullptr;
     void* probe_user_ = nullptr;
-    void apply_ik(world::World& world, State& state, const anim::SkinnedModel& model);
+    void apply_ik(world::World& world, State& state, const SkinnedEntry& model);
 };
 
 } // namespace lsd::editor

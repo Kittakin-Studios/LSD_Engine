@@ -42,6 +42,19 @@ struct SkinnedModel {
     Impl* impl = nullptr;  // the ozz skeleton
 };
 
+// Humanoid rigs recognised by their bone names (Unreal's skeletons; any character exported with those
+// names, Character Creator's UE export too). Animations made on one play on the others: when the
+// rigs or their rest poses differ, clips are retargeted (rotations copied as world-space changes from
+// each rig's rest pose, missing spine / neck bones taken from their nearest match, the pelvis's
+// movement scaled by the height difference), like Unreal's IK Retargeter between Mannequin and Manny.
+enum class Rig : u8 { Other, UE4Mannequin, UE5Manny, UE5MannySimple };
+Rig detect_rig(const char* const* bone_names, u32 count);
+const char* rig_name(Rig rig);  // "UE5 Manny", "UE5 Manny (Simple)", "UE4 Mannequin", "Other"
+// The bone of `source` rig that drives `bone` of `target` rig when the names differ (UE4 spine_03
+// drives UE5 spine_04 / spine_05...); `bone` itself when there is no such pairing.
+const char* rig_source_bone(Rig target, Rig source, const char* bone);
+Rig model_rig(const SkinnedModel& model);
+
 // Reads an FBX with a skinned mesh. Meshes without a skin follow the root. False + `error` if the
 // file has no skeleton or cannot be read.
 // `normals` / `smoothing_angle`: as the mesh import settings (asset::MeshNormals; 1 = smooth).

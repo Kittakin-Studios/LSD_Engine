@@ -24,29 +24,29 @@ LSD_STRUCT()
 struct LifeColorKey {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = birth, 1 = death") f32 time = 0.0f;
-    LSD_PROPERTY(Edit) LinearColor color = {1.0f, 1.0f, 1.0f, 1.0f};
+    LSD_PROPERTY(Edit, Tooltip = "The colour at this point of the particle's life") LinearColor color = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 LSD_STRUCT()
 struct ParticleEmitter {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) char name[32] = "Emitter";
-    LSD_PROPERTY(Edit) bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "The emitter's name (shown in the Particle Editor)") char name[32] = "Emitter";
+    LSD_PROPERTY(Edit, Tooltip = "Off: the emitter spawns nothing (to compare without it)") bool enabled = true;
     // Spawn
     LSD_PROPERTY(Edit, Units = "/s", Min = 0, Tooltip = "Particles a second") f32 spawn_rate = 20.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 4096, Tooltip = "Particles all at once when it starts (and each loop)") u32 burst = 0;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "How long it emits; 0 = forever") f32 duration = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Starts again after its duration") bool looping = true;
-    LSD_PROPERTY(Edit, Min = 1, Max = 4096) u32 max_particles = 500;
-    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 lifetime_min = 1.0f;
-    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 lifetime_max = 2.0f;
+    LSD_PROPERTY(Edit, Min = 1, Max = 4096, Tooltip = "At most this many alive at once; the oldest make room") u32 max_particles = 500;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Shortest life of a particle (each gets a random life between Min and Max)") f32 lifetime_min = 1.0f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Longest life of a particle") f32 lifetime_max = 2.0f;
     // Shape and velocity (in the effect's space: rotate the object to aim it)
-    LSD_PROPERTY(Edit, Widget = "Choice:Point,Sphere,Box") u32 shape = 0;
+    LSD_PROPERTY(Edit, Widget = "Choice:Point,Sphere,Box", Tooltip = "Where particles are born: a point, inside a sphere, or inside a box (Shape Size)") u32 shape = 0;
     LSD_PROPERTY(Edit, Units = "m", Tooltip = "Sphere: X is the radius. Box: half its size on each axis") Vec3 shape_size = {0.5f, 0.5f, 0.5f};
     LSD_PROPERTY(Edit, Tooltip = "Where they fly (normalised)") Vec3 direction = {0.0f, 0.0f, 1.0f};
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 180, Tooltip = "Cone around the direction: 0 = straight, 180 = every way") f32 spread = 15.0f;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 speed_min = 1.0f;
-    LSD_PROPERTY(Edit, Units = "m/s", Min = 0) f32 speed_max = 2.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Slowest start speed (random between Min and Max)") f32 speed_min = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Fastest start speed") f32 speed_max = 2.0f;
     // Forces
     LSD_PROPERTY(Edit, Tooltip = "Times the World Settings gravity (0 = floats, negative = rises)") f32 gravity_scale = 0.0f;
     LSD_PROPERTY(Edit, Units = "m/s2", Tooltip = "Constant push (wind, buoyancy), world space") Vec3 acceleration = {};
@@ -56,8 +56,8 @@ struct ParticleEmitter {
     LSD_PROPERTY(Edit, Widget = "Choice:Alpha,Additive", Tooltip = "Additive: glows, adds light (fire, sparks, magic); Alpha: smoke, dust") u32 blend = 0;
     LSD_PROPERTY(Edit, Tooltip = "Colour and opacity at birth (values above 1 glow brighter when Additive)") LinearColor color_start = {1.0f, 1.0f, 1.0f, 1.0f};
     LSD_PROPERTY(Edit, Tooltip = "Colour and opacity at death (0 alpha fades out)") LinearColor color_end = {1.0f, 1.0f, 1.0f, 0.0f};
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 size_start = 0.2f;
-    LSD_PROPERTY(Edit, Units = "m", Min = 0) f32 size_end = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Size when born") f32 size_start = 0.2f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Size when it dies (blended over its life)") f32 size_end = 0.4f;
     LSD_PROPERTY(Edit, Units = "deg/s", Min = 0, Tooltip = "Sprites spin at a random speed up to this, either way") f32 spin = 0.0f;
     // Over life (Niagara's Scale Sprite Size / Scale Color): when set, these replace the start -> end blend.
     LSD_PROPERTY(Edit, Category = "Over Life", Tooltip = "Size over the particle's life, times Size Start (puff up then shrink...); empty = Start to End")
@@ -87,7 +87,7 @@ constexpr u32 kMaxParticles = 4096;  // per emitter
 LSD_STRUCT(Category = "Effects")
 struct ParticleSystem {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) List<ParticleEmitter, 8> emitters;
+    LSD_PROPERTY(Edit, Tooltip = "The system's emitters, each with its own particles (Niagara's emitters); up to 8") List<ParticleEmitter, 8> emitters;
 };
 // shortcut: over-life keys are straight lines, no curve tangents; mesh and ribbon renderers next.
 

@@ -1,4 +1,5 @@
 #include "prefab_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "mesh_cache.h"
@@ -164,7 +165,7 @@ void draw_prefab_editor(EditorState& s) {
         close_window();
         return;
     }
-    if (ImGui::Button("Save")) {
+    if (with_tip(ImGui::Button("Save"), "Writes the prefab: every copy in every level updates")) {
         if (world::save_prefab_file(w, g_pw.root, g_pw.path)) {
             g_pw.dirty = false;
             const u32 updated = refresh_prefabs(s);  // the level's copies take it (keeping their overrides)
@@ -195,7 +196,7 @@ void draw_prefab_editor(EditorState& s) {
     ImGui::BeginChild("objects", ImVec2(220, 0), ImGuiChildFlags_Borders);
     tree(w, g_pw.root);
     ImGui::Separator();
-    if (ImGui::Button("+ Child") && w.alive(g_pw.selected)) {
+    if (with_tip(ImGui::Button("+ Child"), "Adds an object under the selected one") && w.alive(g_pw.selected)) {
         char name[64];
         w.unique_name("Part", name, sizeof name);
         const world::Entity child = w.create(name);
@@ -205,7 +206,7 @@ void draw_prefab_editor(EditorState& s) {
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(g_pw.selected == g_pw.root);
-    if (ImGui::Button("Delete") && w.alive(g_pw.selected)) {
+    if (with_tip(ImGui::Button("Delete"), "Removes the selected object from the prefab") && w.alive(g_pw.selected)) {
         w.destroy(g_pw.selected);
         g_pw.selected = g_pw.root;
         g_pw.dirty = true;
@@ -218,7 +219,7 @@ void draw_prefab_editor(EditorState& s) {
     if (w.alive(g_pw.selected)) {
         char name[64];
         std::snprintf(name, sizeof name, "%s", w.name(g_pw.selected));
-        if (ImGui::InputText("Name", name, sizeof name)) {
+        if (with_tip(ImGui::InputText("Name", name, sizeof name), "The selected object's name")) {
             w.set_name(g_pw.selected, name);
             g_pw.dirty = true;
         }
@@ -237,7 +238,7 @@ void draw_prefab_editor(EditorState& s) {
             }
             ImGui::PopID();
         }
-        if (ImGui::Button("+ Add Component", ImVec2(-1, 0))) ImGui::OpenPopup("add");
+        if (with_tip(ImGui::Button("+ Add Component", ImVec2(-1, 0)), "Adds a component to the selected object")) ImGui::OpenPopup("add");
         if (ImGui::BeginPopup("add")) {
             for (u32 i = 1; i < type_count; ++i) {
                 if (!w.get(g_pw.selected, *types[i]) && types[i] != &reflect::type_of<world::PrefabInstance>() && ImGui::MenuItem(types[i]->name)) {

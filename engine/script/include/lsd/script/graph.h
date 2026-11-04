@@ -115,6 +115,13 @@ struct Graph {
     const GraphLink* link_into(u32 node_id, u32 pin) const;  // the wire feeding an input (data inputs have one)
 };
 
+// Collapse to Function (Unreal's Collapse Nodes / Collapse to Function): the nodes move below the
+// graph under a new Function `name` (values coming in become its A / B / C, the value going out its
+// Return), and a Call Function takes their place with every crossing wire rerouted through it.
+// Needs one white wire in; allows one white wire out, 3 values in and 1 value out. False (graph
+// unchanged, `error` says why) otherwise. `call` gets the new Call Function's id.
+bool collapse_to_function(Graph& graph, const u32* node_ids, u32 count, const char* name, u32& call, char* error, usize error_capacity);
+
 constexpr char kGraphExtension[] = ".lsdgraph";
 
 void save_graph(const Graph& graph, Array<char>& out);

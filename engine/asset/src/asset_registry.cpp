@@ -260,6 +260,7 @@ bool AssetRegistry::apply(const Walk& walk) {
         records_.push_back(record);
         changed = true;
     }
+    if (changed) ++generation_;
     return changed;
 }
 

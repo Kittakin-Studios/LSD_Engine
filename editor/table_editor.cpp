@@ -1,4 +1,5 @@
 #include "table_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "lsd/asset/data_table.h"
@@ -114,14 +115,14 @@ void draw_table_editor(EditorState& s) {
     if (ImGui::Button("Save")) save(s);
     ImGui::SetItemTooltip("Ctrl+S. Playing scripts read the new values on their next lsd.table() call");
     ImGui::SameLine();
-    if (ImGui::Button("+ Row")) {
+    if (with_tip(ImGui::Button("+ Row"), "Adds a row at the bottom")) {
         const u32 rows = row_count();
         t.cells.resize(t.cells.size() + t.columns);
         unique_name(at(rows, 0).text, sizeof(Cell::text), "Row", false);
         t.dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("+ Column") && t.columns < 64) {
+    if (with_tip(ImGui::Button("+ Column"), "Adds a column on the right") && t.columns < 64) {
         const u32 rows = row_count();
         std::vector<Cell> grown(static_cast<usize>(rows) * (t.columns + 1));
         for (u32 r = 0; r < rows; ++r) {
@@ -133,13 +134,13 @@ void draw_table_editor(EditorState& s) {
         t.dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Open in External Program")) {
+    if (with_tip(ImGui::Button("Open in External Program"), "Opens the .csv in Excel or your spreadsheet program")) {
         if (t.dirty) save(s);
         std::error_code error;
         SDL_OpenURL(("file:///" + std::filesystem::absolute(t.path, error).generic_string()).c_str());
     }
     ImGui::SameLine();
-    if (ImGui::Button("Export JSON")) {  // next to the .csv: the same rows with typed values
+    if (with_tip(ImGui::Button("Export JSON"), "Writes the rows as JSON with typed values, next to the .csv")) {  // next to the .csv: the same rows with typed values
         if (t.dirty) save(s);
         asset::DataTable data(default_allocator());
         Array<char> json(default_allocator());
@@ -181,7 +182,7 @@ void draw_table_editor(EditorState& s) {
                 if (r == 0 || c == 0 || misfit) ImGui::PopStyleColor();
                 if (misfit) ImGui::SetItemTooltip("Not a %s (the column's type)", asset::to_string(type));
                 if (r == 0 && c > 0 && ImGui::BeginPopupContextItem("column_menu")) {
-                    if (ImGui::BeginMenu("Type")) {  // Unreal's row struct: the header becomes "Name:type"
+                    if (with_tip(ImGui::BeginMenu("Type"), "What the column holds: text, number, boolean...")) {  // Unreal's row struct: the header becomes "Name:type"
                         for (const asset::ColumnType each : {asset::ColumnType::Auto, asset::ColumnType::Number, asset::ColumnType::Int, asset::ColumnType::Bool,
                                                              asset::ColumnType::String, asset::ColumnType::Vector}) {
                             if (ImGui::MenuItem(asset::to_string(each), nullptr, type == each)) {
@@ -192,7 +193,7 @@ void draw_table_editor(EditorState& s) {
                         }
                         ImGui::EndMenu();
                     }
-                    if (ImGui::MenuItem("Delete Column")) delete_column = static_cast<i32>(c);
+                    if (with_tip(ImGui::MenuItem("Delete Column"), "Removes the column and its values")) delete_column = static_cast<i32>(c);
                     ImGui::EndPopup();
                 }
                 ImGui::PopID();

@@ -1,5 +1,8 @@
 # LSD_Engine Examples
 
+First time in the engine? Do [Examples for first timers](Examples/Examples.md) first (input actions,
+health and stamina bars, interacting), then come back here.
+
 Step-by-step projects, smallest first. Each one names its Unreal equivalent and uses only what the
 [manual](MANUAL.md) describes. Asset names follow the usual prefixes (`UI_`, `M_`, `BT_`...); they
 are only names, use your own.
@@ -16,6 +19,12 @@ are only names, use your own.
 ---
 
 ## 1. A first playable level
+
+![Step 1](images/place_tab.jpg)
+*Step 1: the Place tab. Drag shapes, a Player Start and lights into the viewport.*
+
+![Then press Play](images/play_in_editor.jpg)
+*Then press Play: the level runs in the viewport.*
 
 *Unreal: a blockout level with the Third Person template's character.*
 
@@ -36,6 +45,9 @@ are only names, use your own.
 ---
 
 ## 2. Coins, a score HUD and a save game
+
+![The HUD is a UI document](images/ed_ui.jpg)
+*The HUD is a UI document: double-click it to edit it in the UI window (designer on the left, code on the right).*
 
 *Unreal: overlap events, a UMG HUD widget and a SaveGame object.*
 
@@ -102,6 +114,9 @@ To start over, call `lsd.delete_save("Progress")` (or delete `Saved/SaveGames/Pr
 
 ## 3. A glowing lava material
 
+![The Material Graph editor](images/ed_material_graph.jpg)
+*The Material Graph editor: add nodes from the Palette, wire them to the Material Output, watch the preview.*
+
 *Unreal: a Material with a Panner, Time and emissive, and a Material Instance.*
 
 1. Drop a lava-like texture (`T_Lava.png`) into the Content Browser.
@@ -123,6 +138,9 @@ Emissive is in the same units as lights: with a bright sun and high exposure, ra
 ---
 
 ## 4. A guard that patrols and chases
+
+![The guard's Behavior Tree](images/ed_behavior_tree.jpg)
+*The guard's Behavior Tree: Sequence > Random Location > Move To > Wait for the patrol.*
 
 *Unreal: a Nav Mesh Bounds Volume, an AI Controller with a Behavior Tree and AI Perception.*
 
@@ -155,6 +173,12 @@ end
 ---
 
 ## 5. A main menu for mouse, keyboard and gamepad, in two languages
+
+![The menu is a UI document; buttons get an On Click in Details](images/ed_ui.jpg)
+*The menu is a UI document; buttons get an On Click in Details.*
+
+![Project Settings](images/win_project_settings.jpg)
+*Project Settings: set the Game Default Level and the languages.*
 
 *Unreal: a main menu Widget, Common UI focus navigation and a String Table.*
 
@@ -224,6 +248,9 @@ gamepad A** to press. The language choice is saved in the player's settings.
 
 ## 6. A campfire: particles, sound and light
 
+![PS_Fire in the Particle Editor](images/ed_particles.jpg)
+*PS_Fire in the Particle Editor: tune the emitters in Details while the preview plays.*
+
 *Unreal: a Niagara System, an Ambient Sound and a Point Light, grouped.*
 
 1. **New Data Asset > Particle System** `PS_Fire`. In Details add three emitters:
@@ -243,6 +270,9 @@ gamepad A** to press. The language choice is saved in the player's settings.
 ---
 
 ## 7. A door that opens with a visual script
+
+![A visual script](images/ed_visual_script.jpg)
+*A visual script: events on the left of the canvas, white exec wires for order, coloured wires for values.*
 
 *Unreal: a Blueprint with an overlap event and a timeline-like move.*
 
@@ -272,6 +302,9 @@ end
 ---
 
 ## 8. Ship it
+
+![File > Package Project (also in the Build menu) writes Build/<Project Name>/](images/menu_file.jpg)
+*File > Package Project (also in the Build menu) writes Build/<Project Name>/.*
 
 *Unreal: Project Settings, Package Project, and an automation test on a build machine.*
 

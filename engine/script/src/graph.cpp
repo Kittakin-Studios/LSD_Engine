@@ -4,6 +4,7 @@
 #include "lsd/reflect/json.h"
 
 #include <cctype>
+#include <cmath>
 #include <deque>
 #include <iterator>
 #include <string>
@@ -107,6 +108,10 @@ NodeDef g_defs[] = {
      {kExecIn, {"Camera", PinType::Entity, ""}, {"Blend Time", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_view($1, $2)", {}},
     {"SetViewToPlayer", "Set View Target to Player", "Camera", "Back to the player's own view, blending over Blend Time seconds",
      {kExecIn, {"Blend Time", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_view(nil, $1)", {}},
+    {"SetCameraView", "Set Camera View", "Camera", "Switches the player's view (a Camera on the Character): View is first, third, or camera (back to the Camera's own setting)",
+     {kExecIn, {"View", PinType::String, "third"}}, 0, {kExecOut}, 0, "lsd.set_camera_view($1)", {}},
+    {"GetCameraLocation", "Get Camera Location", "Camera", "Where the player's view is this frame", {}, 0, {{"Location", PinType::Vector, ""}}, 0, nullptr, {"__vec(lsd.camera_location())"}},
+    {"IsThirdPerson", "Is Third Person", "Camera", "True while the player's view is third person", {}, 0, {{"Third", PinType::Bool, ""}}, 0, nullptr, {"(lsd.camera_view() == \"third\")"}},
     {"CameraShake", "Camera Shake", "Camera", "Shakes the view: Strength 1 is a hard hit, fading out over Duration seconds",
      {kExecIn, {"Strength", PinType::Float, "0.5"}, {"Duration", PinType::Float, "0.5"}, {"Frequency", PinType::Float, "12"}}, 0, {kExecOut}, 0,
      "lsd.camera_shake($1, $2, $3)", {}},
@@ -164,6 +169,9 @@ NodeDef g_defs[] = {
     {"UiSetText", "Set UI Text", "UI", "Changes the text of the element with that id (score, health, prompts)",
      {kExecIn, {"Handle", PinType::Float, "0"}, {"Element Id", PinType::String, "score"}, {"Text", PinType::String, ""}}, 0, {kExecOut}, 0,
      "lsd.ui_set_text($1, $2, $3)", {}},
+    {"UiSetAttribute", "Set UI Attribute", "UI", "Sets an attribute of the element with that id: style (\"width: 50%\" for a health bar), class, src...",
+     {kExecIn, {"Handle", PinType::Float, "0"}, {"Element Id", PinType::String, "health_fill"}, {"Attribute", PinType::String, "style"}, {"Value", PinType::String, "width: 100%"}}, 0,
+     {kExecOut}, 0, "lsd.ui_set($1, $2, $3, $4)", {}},
     {"LocText", "Localized Text", "UI", "A string table key's text in the player's language (Unreal's FText from a String Table)",
      {{"Key", PinType::String, "MENU_PLAY"}}, 0, {{"Text", PinType::String, ""}}, 0, nullptr, {"lsd.text($0)"}},
     {"FormatText", "Format Text", "UI", "A string table key's text with {0} and {1} filled in, plurals picked by number (Unreal's Format Text)",
@@ -805,6 +813,119 @@ bool Graph::connect(u32 from, u32 from_pin, u32 to, u32 to_pin) {
         if ((exec && l.from_node == from && l.from_pin == from_pin) || (!exec && l.to_node == to && l.to_pin == to_pin)) links.remove_swap(i);
     }
     links.push_back({from, from_pin, to, to_pin});
+    return true;
+}
+
+bool collapse_to_function(Graph& g, const u32* ids, u32 count, const char* name, u32& call, char* error, usize error_capacity) {
+    auto inside = [&](u32 id) {
+        for (u32 i = 0; i < count; ++i) {
+            if (ids[i] == id) return true;
+        }
+        return false;
+    };
+    auto fail = [&](const char* why) {
+        std::snprintf(error, error_capacity, "%s", why);
+        return false;
+    };
+    auto is_exec = [&](const GraphLink& l) {
+        const GraphNode* n = g.find(l.from_node);
+        const NodeDef* d = n ? find_node_def(n->type) : nullptr;
+        return d && l.from_pin < d->output_count && d->outputs[l.from_pin].type == PinType::Exec;
+    };
+    struct Pin {
+        u32 node, pin;
+        bool operator==(const Pin& o) const { return node == o.node && pin == o.pin; }
+    };
+    f32 min_x = 1e30f, min_y = 1e30f, max_y = -1e30f;
+    for (u32 i = 0; i < count; ++i) {
+        const GraphNode* n = g.find(ids[i]);
+        const NodeDef* d = n ? find_node_def(n->type) : nullptr;
+        if (!d) return fail("a selected node is missing");
+        if (is_event(*d)) return fail("events (and Functions) cannot go inside a Function: leave them out of the selection");
+        min_x = std::fmin(min_x, n->x);
+        min_y = std::fmin(min_y, n->y);
+    }
+    if (count == 0) return fail("select the nodes to collapse");
+    for (const GraphNode& n : g.nodes) max_y = std::fmax(max_y, n.y);
+    // The wires crossing the selection's edge.
+    std::vector<GraphLink> crossing;
+    std::vector<Pin> exec_in, exec_out, data_in, data_out;  // distinct pins on the selection's side (data_in: the outside source)
+    auto add_once = [](std::vector<Pin>& v, Pin p) {
+        for (const Pin& q : v) {
+            if (q == p) return;
+        }
+        v.push_back(p);
+    };
+    for (const GraphLink& l : g.links) {
+        const bool from_in = inside(l.from_node), to_in = inside(l.to_node);
+        if (from_in == to_in) continue;
+        crossing.push_back(l);
+        if (is_exec(l)) add_once(to_in ? exec_in : exec_out, to_in ? Pin{l.to_node, l.to_pin} : Pin{l.from_node, l.from_pin});
+        else add_once(to_in ? data_in : data_out, Pin{l.from_node, l.from_pin});
+    }
+    if (exec_in.size() != 1) return fail("the selection needs exactly one white (exec) wire coming in");
+    if (exec_out.size() > 1) return fail("only one white wire may leave the selection");
+    if (data_in.size() > 3) return fail("at most 3 values may come into the selection (a Function has A, B and C)");
+    if (data_out.size() > 1) return fail("only one value may leave the selection (a Function returns one Result)");
+    // Where the Return goes: the white wire leaving, or else the last exec output with nothing after it.
+    Pin end{0, 0};
+    bool has_end = !exec_out.empty();
+    if (has_end) end = exec_out[0];
+    for (u32 i = 0; i < count && !has_end && !data_out.empty(); ++i) {
+        const GraphNode* n = g.find(ids[i]);
+        const NodeDef* d = find_node_def(n->type);
+        for (u32 p = 0; p < d->output_count && !has_end; ++p) {
+            if (d->outputs[p].type != PinType::Exec) continue;
+            bool linked = false;
+            for (const GraphLink& l : g.links) linked = linked || (l.from_node == n->id && l.from_pin == p);
+            if (!linked) {
+                end = {n->id, p};
+                has_end = true;
+            }
+        }
+    }
+    if (!data_out.empty() && !has_end) return fail("the value going out needs a white output to return from");
+
+    // The body moves below everything, the Function in front of it.
+    const f32 dy = max_y + 400.0f - min_y, dx = 300.0f;
+    for (u32 i = 0; i < count; ++i) {
+        GraphNode* n = g.find(ids[i]);
+        n->x += dx;
+        n->y += dy;
+    }
+    GraphNode* entry = g.add("FunctionEntry", min_x, min_y + dy);
+    const u32 entry_id = entry->id;
+    std::snprintf(entry->values[0], sizeof entry->values[0], "%s", name);
+    GraphNode* c = g.add("CallFunction", min_x, min_y);
+    call = c->id;
+    std::snprintf(c->values[1], sizeof c->values[1], "%s", name);
+    for (usize i = g.links.size(); i-- > 0;) {
+        if (inside(g.links[i].from_node) != inside(g.links[i].to_node)) g.links.remove_swap(i);
+    }
+    g.connect(entry_id, 0, exec_in[0].node, exec_in[0].pin);
+    u32 ret = 0;
+    if (has_end && (!exec_out.empty() || !data_out.empty())) {
+        GraphNode* r = g.add("Return", min_x + dx + 600.0f, min_y + dy + 200.0f);
+        ret = r->id;
+        g.connect(end.node, end.pin, ret, 0);
+    }
+    for (const GraphLink& l : crossing) {
+        const bool to_in = inside(l.to_node);
+        if (is_exec(l)) {
+            if (to_in) g.connect(l.from_node, l.from_pin, call, 0);  // whatever led into the selection leads to the call
+            else g.connect(call, 0, l.to_node, l.to_pin);            // and the call leads on
+            continue;
+        }
+        if (to_in) {  // a value coming in: an argument
+            u32 k = 0;
+            while (!(data_in[k] == Pin{l.from_node, l.from_pin})) ++k;
+            g.connect(l.from_node, l.from_pin, call, 2 + k);
+            g.connect(entry_id, 1 + k, l.to_node, l.to_pin);
+        } else {  // the value going out: returned, then read from Result
+            g.connect(l.from_node, l.from_pin, ret, 1);
+            g.connect(call, 1, l.to_node, l.to_pin);
+        }
+    }
     return true;
 }
 

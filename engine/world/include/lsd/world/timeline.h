@@ -17,26 +17,26 @@ LSD_STRUCT()
 struct TimelineTrack {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "The object's name in the level (Camera Cut and Event tracks need none)") char object[64] = "";
-    LSD_PROPERTY(Edit, Widget = "Choice:Transform,Property,Event,Sound,Camera Cut") u32 type = 0;
+    LSD_PROPERTY(Edit, Widget = "Choice:Transform,Property,Event,Sound,Camera Cut", Tooltip = "What the track animates: an object's Transform, a Property, Events (script calls), Sounds, or Camera Cuts") u32 type = 0;
     LSD_PROPERTY(Edit, Tooltip = "Property tracks: Component.field, e.g. PointLight.intensity") char property[64] = "";
 };
 
 LSD_STRUCT()
 struct TimelineKey {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit) u32 track = 0;
-    LSD_PROPERTY(Edit, Units = "s", Min = 0) f32 time = 0.0f;
-    LSD_PROPERTY(Edit, Units = "m") Vec3 position;
-    LSD_PROPERTY(Edit, Units = "deg") Vec3 rotation;
-    LSD_PROPERTY(Edit) f32 value = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The track the key belongs to") u32 track = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "When the key is") f32 time = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Transform tracks: where the object is at this key") Vec3 position;
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Transform tracks: how it is turned at this key") Vec3 rotation;
+    LSD_PROPERTY(Edit, Tooltip = "Property tracks: the value at this key") f32 value = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Event: the function to call; Sound: the sound; Camera Cut: the camera object") char text[48] = "";
 };
 
 LSD_STRUCT(Category = "Data")
 struct Timeline {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "s", Min = 0.1) f32 length = 5.0f;
-    LSD_PROPERTY(Edit) List<TimelineTrack, 16> tracks;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0.1, Tooltip = "How long the timeline plays") f32 length = 5.0f;
+    LSD_PROPERTY(Edit, Tooltip = "What it animates; each track drives one object") List<TimelineTrack, 16> tracks;
     LSD_PROPERTY(Edit, Tooltip = "Every track's keys, any order") List<TimelineKey, 512> keys;
 };
 

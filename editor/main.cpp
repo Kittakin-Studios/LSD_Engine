@@ -148,10 +148,11 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const lsd::world::Entity e = world.owner(type, i);
         if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
-        const lsd::editor::SkinnedEntry* model = g_skinned->get(static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i))->mesh);
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i));
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
         const lsd::anim::Pose* pose = g_animations->pose(e);
         if (!model || !pose || !pose->joint_count()) continue;
-        const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
         if (light && range > 0.0f) {
             const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
             const lsd::Vec3 extent = lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f);
@@ -689,7 +690,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
         const lsd::anim::Pose* pose = g_animations->pose(e);
         if (!model || !pose || !pose->joint_count()) continue;
-        const lsd::Mat4 m = world.world_matrix(e);
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
         const lsd::Mat4 mvp = view_proj * m;
         // Bind-pose bounds grown by half their size: animation moves limbs out of the rest pose.
         const lsd::Vec3 grow = (model->model->bounds_max - model->model->bounds_min) * 0.5f;
@@ -885,10 +886,12 @@ void register_console(EditorState& s) {
     }, &s, "Validate Assets: missing references, oversize textures, naming");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
-    console::add_command("debug.Crash", [](void*, const char*) {  // tests the crash reporter
+    console::add_command("debug.Crash", [](void*, const char* args) {  // tests the crash reporter
+        if (std::strcmp(args, "abort") == 0) std::abort();
+        if (std::strcmp(args, "terminate") == 0) std::terminate();
         volatile int* nowhere = nullptr;
         *nowhere = 1;
-    }, &s, "Crash on purpose (writes a crash report to Saved/Crashes)");
+    }, &s, "Crash on purpose (writes a crash report to Saved/Crashes): debug.Crash [abort | terminate]");
     console::add_command("debug.Break", [](void*, const char* args) {  // a Lua breakpoint from the console: debug.Break Content/x.lua 12
         char file[260];
         int line = 0;
@@ -927,9 +930,12 @@ void register_console(EditorState& s) {
         }
     }, &s, "Open a UI document (.rml) or style (.rcss) in the UI window");
     console::add_command("input.Hold", [](void*, const char* args) {  // tests / the MCP bridge drive Play
+        // The key's name may have spaces ("Left Shift"); a number at the end is the seconds.
         char name[32] = "";
         float seconds = 1.0f;
-        if (std::sscanf(args, "%31s %f", name, &seconds) < 1) return;
+        std::snprintf(name, sizeof name, "%s", args);
+        if (char* last = std::strrchr(name, ' '); last && std::sscanf(last + 1, "%f", &seconds) == 1) *last = '\0';
+        if (!name[0]) return;
         const SDL_Scancode k = SDL_GetScancodeFromName(name);
         if (k == SDL_SCANCODE_UNKNOWN) {
             LSD_LOG_WARN("input", "input.Hold: no key named %s (W, Space, E...)", name);
@@ -1855,7 +1861,8 @@ int main(int argc, char** argv) {
         last_tick = now;
 
         // Pick up new, changed and deleted files once a second; recompile what changed.
-        if (SDL_GetTicks() - last_scan > 1000) {
+        if (SDL_GetTicks() - last_scan > 1000 || state.reload_assets_now) {
+            state.reload_assets_now = false;
             if (!game_mode) lsd::editor::live_link_sync(state.settings.live_link_folder, kContentDir, state.status, sizeof state.status);  // copied files show up in this scan
             if (registry.scan_async()) register_script_nodes(registry);
             meshes.hot_reload();
@@ -1891,6 +1898,17 @@ int main(int argc, char** argv) {
         if (state.load_layout[0]) lsd::editor::apply_layout_file(state.load_layout, state.status, sizeof state.status);
         state.load_layout[0] = '\0';
         device->debug_ui_new_frame();
+        {  // While the game has the mouse the editor ignores it: no cursor (the SDL3 backend would show it again every frame), no hovering panels.
+            ImGuiIO& gio = ImGui::GetIO();
+            constexpr ImGuiConfigFlags kGameMouse = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
+            if (state.playing && state.mouse_captured && !state.ejected) {
+                gio.ConfigFlags |= kGameMouse;
+                SDL_HideCursor();
+            } else if (gio.ConfigFlags & kGameMouse) {
+                gio.ConfigFlags &= ~kGameMouse;
+                SDL_ShowCursor();
+            }
+        }
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         {
@@ -2200,7 +2218,9 @@ int main(int argc, char** argv) {
             // Devices go to the game only while it has the mouse (not when ejected or the mouse is freed).
             lsd::input::InputFrame devices;
             static bool keys[SDL_SCANCODE_COUNT];
-            if (state.mouse_captured && !state.ejected) {
+            bool scripted_keys = false;  // input.Hold (tests, the MCP bridge) drives the game even without the mouse
+            for (int k = 0; k < SDL_SCANCODE_COUNT && !scripted_keys; ++k) scripted_keys = g_held_until[k] > SDL_GetTicks();
+            if ((state.mouse_captured && !state.ejected) || scripted_keys) {
                 int count = 0;
                 const bool* real = SDL_GetKeyboardState(&count);
                 const lsd::u64 ticks = SDL_GetTicks();
@@ -2448,7 +2468,6 @@ int main(int argc, char** argv) {
     lsd::world::set_prefab_resolver(nullptr, nullptr);  // it points at the registry
     lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
-    lsd::log::open_file(nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
     if (!game_mode) lsd::reflect::save_file(state.settings, kSettingsPath);
     play.stop();
@@ -2498,5 +2517,6 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     SDL_DestroyWindow(window);
     SDL_Quit();
+    lsd::log::open_file(nullptr);  // last: a failure while shutting down still reaches the log file
     return exit_code;
 }

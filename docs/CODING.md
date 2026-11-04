@@ -17,6 +17,9 @@ Contents: [Quick start](#quick-start) · [Project layout](#project-layout) ·
 
 ## Quick start
 
+![Everything for C / C++ code is in the Tools menu](images/menu_tools.jpg)
+*Everything for C / C++ code is in the Tools menu: New C / C++ Script, Compile Game Code, Set Up Debugging (VS Code).*
+
 1. **Tools > New C / C++ Script...**, type a name (e.g. `Spinner`), **Create**. The editor writes
    `Source/Spinner.cpp` from a template and compiles it (the Output Log shows the build).
 2. Select an object, **Details > Add Component > Native Script**, and pick **Spinner** in its
@@ -96,6 +99,9 @@ LSD_SCRIPT(Door)
 | `void on_event(Self self, const char* name, Entity other)` | Any named event: `call` / `broadcast` from any language, Call Event nodes, UI actions (`onclick="name"`) | Custom Event / Interface |
 
 ## Properties shown in Details
+
+![A script's properties show in Details like any component's, with the same widgets](images/details.jpg)
+*A script's properties show in Details like any component's, with the same widgets.*
 
 `static void properties(Properties<T>& p)` lists the fields an object can override; they appear
 under the Native Script as **Script properties**, with **Reset** back to the default. Types:
@@ -295,6 +301,9 @@ A failed build leaves the running code as it was. The build is CMake + Ninja wit
 installed MSVC (`Intermediate/compile_game.bat`); on Linux, the compilers on PATH.
 
 ## Console commands
+
+![Type console commands in the Output Log tab's console line](images/output_log.jpg)
+*Type console commands in the Output Log tab's console line.*
 
 Type these in the console line at the bottom of the Output Log tab, or pass them on start with
 `-exec="<command>"`. `help <prefix>` lists them with their help text.

@@ -4,6 +4,9 @@ The engine's design, module by module. For using it, see [MANUAL.md](MANUAL.md).
 
 ## The big picture
 
+![The editor (which is also the game)](images/editor_overview.jpg)
+*The editor (which is also the game): viewport, Outliner, Details, Content Browser and the asset editor dock.*
+
 ```text
                  ┌──────────────────────────── editor/ (lsd_editor.exe) ───────────────────────────┐
                  │  main.cpp: window, frame loop, rendering        editor_ui.cpp: panels (ImGui)   │
@@ -41,7 +44,10 @@ Principles carried through every module:
   Output Log, an error counter), system info (cores, SIMD, RAM), profiling macros (Tracy).
 - `core`: the job system (workers = cores − 1, counters, waiting threads help with work), console
   variables and commands (the Output Log's command line), crash reporting (an unhandled-exception
-  filter writes a minidump and a copy of the log, and leaves a marker the next start reports).
+  filter writes a minidump and a copy of the log, and leaves a marker the next start reports;
+  `abort()` and `std::terminate` (an exception out of a destructor, a joinable thread destroyed) go
+  through the same report instead of the C runtime's dialog, and every report logs the stack with
+  function, file and line via dbghelp).
 
 ## Reflection
 
@@ -189,7 +195,20 @@ parameter values cost nothing.
    (Jolt CharacterVirtual), followers move along splines, physics steps, transforms are written
    back, triggers and hits become script events, scripts update, AI perceives and its behaviour trees
    tick, Nav Agents move, UI elements following objects are placed, sounds follow their objects.
+   First, `apply_live_edits` applies Details edits made while playing: it compares the player's
+   Character with last frame's copy (speeds, camera, input, capsule radius / slope / step through
+   `PhysicsWorld::set_character_limits`), each Rigid Body's mass / friction / bounciness
+   (`set_body_mass` / `set_body_material`) and gravity, and four times a second the Mapping Context's
+   and Input Actions' file times (reloaded with the player's rebinds kept). Data assets edited in
+   Details save themselves (at most ten times a second) and the caches check their files at once.
 3. **Stop**: everything is released and the level snapshot restored.
+
+**The player's view**: the head (Eye Height), or a Camera (not Auto Activate) on the Character or
+a child of it (`player_camera`): its position, its rotation as an offset to mouse look, First / Third
+Person (Arm Length, wall-pulled), and Motion: Orbit Bone circles a bone, Ride Bone keeps the
+Camera's first-frame offset from a bone. **Skeletal meshes** are drawn, picked, socketed and IK'd
+through `skeletal_matrix()` (`skinned_cache.h`): the object's matrix turned by the mesh's Facing
+(Auto: Unreal rigs, whose front is -Y in the file, turn +90).
 
 ## Scripting
 
@@ -205,6 +224,9 @@ parameter values cost nothing.
   code template (`$1` inputs, `$o1` outputs, `#0` exec chains), so a graph runs exactly like a
   hand-written script and the two cannot drift apart. The compiler keeps going after a problem
   and reports every one, a line each naming its node (the editor's Compiler Results).
+  `collapse_to_function` rewrites a graph in place: the selected nodes move under a new
+  FunctionEntry (+ Return), a CallFunction replaces them and the crossing links are rerouted
+  through its pins (white wire in / out, A-C arguments, Result).
 - **Declared variables** (`script::GraphVariable`, saved in the `.lsdgraph`): the compiler emits
   `properties = {...}` for Instance Editable numbers / booleans / text (the Details panel reads that
   table to offer per-object values) and `defaults = {...}` for the rest; `ScriptSystem` copies both
@@ -387,6 +409,9 @@ modulator...).
 
 ## Particles
 
+![The Particle Editor previewing a system simulated by ParticleInstance](images/ed_particles.jpg)
+*The Particle Editor previewing a system simulated by ParticleInstance.*
+
 `particles::ParticleSystem` (a data asset of up to 8 emitters) and `ParticleInstance` (the CPU
 simulation: spawn rate and bursts, shapes, cone directions, gravity, wind, drag, colour and size from start to
 end or along Over Life keys (`size_at` / `color_at`), spin, local or world space). A Particle Effect
@@ -424,6 +449,9 @@ translated as documents load; switching language reloads them in place.
 
 ## Level modes
 
+![The Level tab's mode menu](images/level_modes_menu.jpg)
+*The Level tab's mode menu.*
+
 `EditorState::mode` (the Level tab's list, `editor/editor_modes.*`). The mode panel draws the active
 mode's tools; `mode_brush` runs in `draw_viewport` after the gizmo and, in Foliage / Landscape, takes the
 LMB (selection is skipped) and paints at the surface under the mouse (`surface_ray` = the editor's
@@ -436,6 +464,9 @@ box (seeded, so the layout is stable) into an ISM on its `output` object; `updat
 a hash of its rules and box changes, after the mouse is released and before the frame's undo commit.
 
 ## Workspaces
+
+![The Scripting workspace](images/ws_scripting.jpg)
+*The Scripting workspace: a saved arrangement of the same panels.*
 
 The tab strip is a viewport side bar under the main menu bar (`draw_workspace_tabs`), so the
 dockspace below shrinks to fit. A built-in workspace (`kWorkspaces` in `editor/editor_ui.cpp`) is a

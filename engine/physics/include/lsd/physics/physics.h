@@ -124,6 +124,11 @@ public:
     void move_character(Vec3 velocity, bool jump, f32 jump_speed, f32 dt, bool swimming = false);
     // Changes the capsule's height, feet staying put (crouching). False, and unchanged, if it would not fit (a ceiling).
     bool set_character_height(f32 height);
+    // Live edits: the capsule's radius (height kept), steepest walkable slope and stair step.
+    void set_character_limits(f32 radius, f32 max_slope_degrees, f32 step_height);
+    // Live edits of a body: friction / bounciness, and its mass (dynamic bodies).
+    void set_body_material(u32 body, f32 friction, f32 restitution);
+    void set_body_mass(u32 body, f32 mass);
     void teleport_character(Vec3 feet);
     Vec3 character_feet() const;
     bool character_on_ground() const;

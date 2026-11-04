@@ -118,8 +118,10 @@ void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32
 }
 
 // After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
-void AnimationPlayer::apply_ik(world::World& world, State& state, const anim::SkinnedModel& model) {
-    const Mat4 to_world = world.world_matrix(state.entity);
+void AnimationPlayer::apply_ik(world::World& world, State& state, const SkinnedEntry& entry) {
+    const anim::SkinnedModel& model = *entry.model;
+    const auto* mesh = world.get<world::SkeletalMesh>(state.entity);
+    const Mat4 to_world = mesh ? skeletal_matrix(world, state.entity, *mesh, &entry) : world.world_matrix(state.entity);
     const Mat4 to_model = inverse(to_world);
     if (const auto* feet = probe_ ? world.get<world::FootIK>(state.entity) : nullptr) {
         for (const char* bone : {feet->left_foot, feet->right_foot}) {
@@ -175,10 +177,15 @@ bool AnimationPlayer::socket(const world::World& world, const SkinnedCache& cach
         const SkinnedEntry* model = const_cast<SkinnedCache&>(cache).get(mesh->mesh);
         const i32 j = model && model->model ? model->model->find_joint(s.bone) : -1;
         if (j < 0) return false;
-        out = world.world_matrix(e) * p->joint_model(static_cast<u32>(j)) * trs(s.position, s.rotation, Vec3{1, 1, 1});
+        out = skeletal_matrix(world, e, *mesh, model) * p->joint_model(static_cast<u32>(j)) * trs(s.position, s.rotation, Vec3{1, 1, 1});
         return true;
     }
-    return false;
+    // No socket of that name: a bone of that name (Unreal attaches to either).
+    const SkinnedEntry* model = const_cast<SkinnedCache&>(cache).get(mesh->mesh);
+    const i32 j = model && model->model ? model->model->find_joint(name) : -1;
+    if (j < 0) return false;
+    out = skeletal_matrix(world, e, *mesh, model) * p->joint_model(static_cast<u32>(j));
+    return true;
 }
 
 void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache& cache) {
@@ -238,7 +245,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             const u32 n = anim::step_graph(*graph, set ? set->clips : nullptr, set ? set->count : 0, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
-            apply_ik(world, *state, *model->model);
+            apply_ik(world, *state, *model);
             update_morphs(*state, *mesh, *model);
             // Notifies follow the strongest clip (a blend space's feet are in step, so one is enough).
             u32 best = 0;
@@ -261,7 +268,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 before = state->time;
         if (clip && mesh->playing) state->time += dt * mesh->play_rate;
         state->pose.sample(*model->model, clip, state->time, mesh->looping);
-        apply_ik(world, *state, *model->model);
+        apply_ik(world, *state, *model);
         f32 ratio = clip && clip->duration > 0.0f ? state->time / clip->duration : 0.0f;  // as Pose::sample does
         ratio = mesh->looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
         state->inputs[0] = {clip, ratio, 1.0f};

@@ -10,14 +10,14 @@ LSD_STRUCT(Category = "Rendering")
 struct Material {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Multiplies the base colour texture") LinearColor base_color = LinearColor::hex(0xFFFFFF);
-    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char base_color_texture[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "An image for the colour (multiplied by Base Color)") char base_color_texture[33] = "";
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = non-metal (wood, plastic, stone), 1 = metal") f32 metallic = 0.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = mirror smooth, 1 = fully rough") f32 roughness = 0.5f;
     LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Tangent-space normal map (OpenGL style, green up)") char normal_texture[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Packed: R ambient occlusion, G roughness, B metallic (glTF / Substance ORM); G and B multiply the values above")
     char orm_texture[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Glow colour (not lit by anything)") LinearColor emissive = LinearColor::hex(0x000000);
-    LSD_PROPERTY(Edit, Min = 0, Max = 100) f32 emissive_strength = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 100, Tooltip = "How bright the glow is (above 1 blooms)") f32 emissive_strength = 1.0f;
     LSD_PROPERTY(Edit, Category = "Blending", Widget = "Choice:Opaque,Masked,Translucent,Additive",
                  Tooltip = "Masked: cut-outs from the base colour alpha (leaves, fences). Translucent: see-through (glass, water). Additive: adds light (fire, glows)")
     u32 blend_mode = 0;
@@ -39,20 +39,20 @@ struct MaterialParameter {
 LSD_STRUCT(Category = "Rendering")
 struct MaterialInstance {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Asset:Material") char parent[33] = "";
-    LSD_PROPERTY(Edit) bool override_base_color = false;
-    LSD_PROPERTY(Edit) LinearColor base_color = LinearColor::hex(0xFFFFFF);
-    LSD_PROPERTY(Edit) bool override_base_color_texture = false;
-    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char base_color_texture[33] = "";
-    LSD_PROPERTY(Edit) bool override_metallic = false;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 metallic = 0.0f;
-    LSD_PROPERTY(Edit) bool override_roughness = false;
-    LSD_PROPERTY(Edit, Min = 0, Max = 1) f32 roughness = 0.5f;
-    LSD_PROPERTY(Edit) bool override_normal_texture = false;
-    LSD_PROPERTY(Edit, Widget = "Asset:Texture") char normal_texture[33] = "";
-    LSD_PROPERTY(Edit) bool override_emissive = false;
-    LSD_PROPERTY(Edit) LinearColor emissive = LinearColor::hex(0x000000);
-    LSD_PROPERTY(Edit, Min = 0, Max = 100) f32 emissive_strength = 1.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "The Material this one starts from; it follows the parent's edits except where overridden") char parent[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Use this instance's Base Color instead of the parent's") bool override_base_color = false;
+    LSD_PROPERTY(Edit, Tooltip = "The colour (when overridden)") LinearColor base_color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Tooltip = "Use this instance's Base Color Texture instead of the parent's") bool override_base_color_texture = false;
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The colour image (when overridden)") char base_color_texture[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Use this instance's Metallic instead of the parent's") bool override_metallic = false;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = paint, plastic, wood; 1 = bare metal") f32 metallic = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Use this instance's Roughness instead of the parent's") bool override_roughness = false;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = mirror-smooth, 1 = matte") f32 roughness = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Use this instance's Normal Texture instead of the parent's") bool override_normal_texture = false;
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Surface bumps (a normal map)") char normal_texture[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Use this instance's glow instead of the parent's") bool override_emissive = false;
+    LSD_PROPERTY(Edit, Tooltip = "Glow colour (black = none)") LinearColor emissive = LinearColor::hex(0x000000);
+    LSD_PROPERTY(Edit, Min = 0, Max = 100, Tooltip = "How bright the glow is (above 1 blooms)") f32 emissive_strength = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Material Graph parents: parameter values by name") List<MaterialParameter, 16> parameters;
 };
 

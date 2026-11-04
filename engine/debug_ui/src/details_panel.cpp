@@ -11,6 +11,12 @@ namespace {
 
 constexpr f32 kLabelWidth = 160.0f;
 
+// Hover help for the widget just drawn; returns the widget's result so it wraps the call.
+bool with_tip(bool result, const char* text) {
+    ImGui::SetItemTooltip("%s", text);
+    return result;
+}
+
 const DetailsStyle* g_style = nullptr;  // set for the duration of draw_details
 u32 g_row = 0;
 
@@ -47,20 +53,20 @@ void draw_label(const reflect::Property& p, const char* label) {
 bool property_menu(const reflect::Property& p, u8* field, const u8* default_field) {
     if (!(p.flags & reflect::kEdit) || !ImGui::BeginPopupContextItem("property_menu")) return false;
     bool changed = false;
-    if (overridden(p) && g_style->revert && ImGui::MenuItem("Revert to Prefab")) g_style->revert(g_style->custom_user, p);
+    if (overridden(p) && g_style->revert && with_tip(ImGui::MenuItem("Revert to Prefab"), "Back to the prefab's value (this copy stops overriding it)")) g_style->revert(g_style->custom_user, p);
     const bool differs = default_field && std::memcmp(field, default_field, p.size) != 0;
-    if (ImGui::MenuItem("Reset to Default", nullptr, false, differs)) {
+    if (with_tip(ImGui::MenuItem("Reset to Default", nullptr, false, differs), "Back to the value a new one has")) {
         std::memcpy(field, default_field, p.size);
         changed = true;
     }
-    if (ImGui::MenuItem("Copy", nullptr, false, p.size <= sizeof g_clip)) {
+    if (with_tip(ImGui::MenuItem("Copy", nullptr, false, p.size <= sizeof g_clip), "Copies this value to paste into another property of the same kind")) {
         std::memcpy(g_clip, field, p.size);
         g_clip_size = p.size;
         g_clip_type = p.type;
         g_clip_struct = p.struct_type;
     }
     const bool fits = g_clip_size == p.size && g_clip_type == p.type && g_clip_struct == p.struct_type;
-    if (ImGui::MenuItem("Paste", nullptr, false, fits)) {
+    if (with_tip(ImGui::MenuItem("Paste", nullptr, false, fits), "Pastes the copied value here")) {
         std::memcpy(field, g_clip, p.size);
         if (p.type == reflect::FieldType::String) field[p.size - 1] = '\0';
         changed = true;
@@ -160,7 +166,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
         if (editable) {
             ImGui::SameLine();
             ImGui::BeginDisabled(count >= p.capacity);
-            if (ImGui::SmallButton("+")) {
+            if (with_tip(ImGui::SmallButton("+"), "Adds an item at the end of the list")) {
                 u8* item = items + count * p.element_size;
                 if (default_item) std::memcpy(item, default_item, p.element_size);
                 else std::memset(item, 0, p.element_size);
@@ -171,7 +177,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
             ImGui::SetItemTooltip("Add (at most %u)", p.capacity);
             ImGui::SameLine();
             ImGui::BeginDisabled(count == 0);
-            if (ImGui::SmallButton("Clear")) {
+            if (with_tip(ImGui::SmallButton("Clear"), "Removes every item from the list")) {
                 count = 0;
                 changed = true;
             }
@@ -190,7 +196,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
                     const bool item_open = ImGui::TreeNodeEx(item_label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
                     if (editable) {
                         ImGui::SameLine(kLabelWidth);
-                        remove = ImGui::SmallButton("Remove");
+                        remove = with_tip(ImGui::SmallButton("Remove"), "Removes this item");
                     }
                     if (item_open) {
                         changed |= draw_fields(*element.struct_type, item, default_item, nullptr);
@@ -201,7 +207,7 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
                     changed |= draw_property(element, item - element.offset, default_item ? default_item - element.offset : nullptr);
                     if (editable) {
                         ImGui::SameLine();
-                        remove = ImGui::SmallButton("x");
+                        remove = with_tip(ImGui::SmallButton("x"), "Removes this item");
                     }
                 }
                 if (remove) {

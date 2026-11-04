@@ -1,4 +1,5 @@
 #include "graph_editor.h"
+#include "tips.h"
 #include "workspaces.h"
 
 #include "lua_debugger.h"
@@ -608,7 +609,7 @@ void draw_my_blueprint(GraphWindow& w) {
             ImGui::PushID(name.c_str());
             ImGui::TextDisabled("%s (used, not declared)", name.c_str());
             ImGui::SameLine();
-            if (ImGui::SmallButton("Declare")) {
+            if (with_tip(ImGui::SmallButton("Declare"), "Adds this name to the declared variables (gets a type and default)")) {
                 script::GraphVariable v;
                 std::snprintf(v.name, sizeof v.name, "%s", name.c_str());
                 v.type = script::PinType::Any;
@@ -639,7 +640,7 @@ void draw_variable_details(GraphWindow& w) {
     char name[32];
     std::snprintf(name, sizeof name, "%s", v.name);
     ImGui::SetNextItemWidth(-60.0f);
-    if (ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue) && name[0] && find_variable(g, name) < 0) {
+    if (with_tip(ImGui::InputText("Name", name, sizeof name, ImGuiInputTextFlags_EnterReturnsTrue), "The variable's name; Enter renames it and every Get / Set using it") && name[0] && find_variable(g, name) < 0) {
         for (GraphNode& n : g.nodes) {  // renaming moves every Get / Set with it
             char* used = is_get_variable(n) ? n.values[0] : is_set_variable(n) ? n.values[1] : nullptr;
             if (used && std::strcmp(used, v.name) == 0) std::snprintf(used, sizeof n.values[0], "%s", name);
@@ -665,7 +666,7 @@ void draw_variable_details(GraphWindow& w) {
         case script::PinType::Float:
         case script::PinType::Any: {
             float f = static_cast<float>(std::atof(v.default_value));
-            if (ImGui::DragFloat("Default", &f, 0.1f)) {
+            if (with_tip(ImGui::DragFloat("Default", &f, 0.1f), "The value it starts with")) {
                 std::snprintf(v.default_value, sizeof v.default_value, "%g", static_cast<double>(f));
                 w.dirty = true;
             }
@@ -673,7 +674,7 @@ void draw_variable_details(GraphWindow& w) {
         }
         case script::PinType::Bool: {
             bool b = std::strcmp(v.default_value, "true") == 0;
-            if (ImGui::Checkbox("Default", &b)) {
+            if (with_tip(ImGui::Checkbox("Default", &b), "The value it starts with")) {
                 std::snprintf(v.default_value, sizeof v.default_value, "%s", b ? "true" : "false");
                 w.dirty = true;
             }
@@ -690,7 +691,7 @@ void draw_variable_details(GraphWindow& w) {
         }
         case script::PinType::Entity: ImGui::TextDisabled("Objects start empty (set them in a graph)"); break;
         default:
-            if (ImGui::InputText("Default", v.default_value, sizeof v.default_value)) w.dirty = true;
+            if (with_tip(ImGui::InputText("Default", v.default_value, sizeof v.default_value), "The value it starts with")) w.dirty = true;
             break;
     }
     const bool scalar = v.type == script::PinType::Float || v.type == script::PinType::Bool || v.type == script::PinType::String;
@@ -707,7 +708,7 @@ void draw_variable_details(GraphWindow& w) {
     }
     ImGui::TextDisabled("%u node%s use it", uses, uses == 1 ? "" : "s");
     ImGui::SameLine();
-    if (ImGui::SmallButton("Find")) {  // the next node using it
+    if (with_tip(ImGui::SmallButton("Find"), "Jumps to the next node that uses this variable")) {  // the next node using it
         const GraphNode* first = nullptr;
         const GraphNode* after = nullptr;
         for (const GraphNode& n : g.nodes) {
@@ -723,7 +724,7 @@ void draw_variable_details(GraphWindow& w) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Delete")) {
+    if (with_tip(ImGui::SmallButton("Delete"), "Removes the variable (its Get / Set nodes stay, greyed)")) {
         g.variables[static_cast<usize>(w.variable)] = g.variables[g.variables.size() - 1];
         g.variables.resize(g.variables.size() - 1);
         w.variable = -1;
@@ -782,14 +783,14 @@ void draw_palette(GraphWindow& w) {
 
 void draw_side_panel(GraphWindow& w) {
     if (ImGui::BeginTabBar("side_tabs")) {
-        if (w.kind == script::GraphKind::Script && ImGui::BeginTabItem("My Blueprint")) {
+        if (w.kind == script::GraphKind::Script && with_tip(ImGui::BeginTabItem("My Blueprint"), "Events, Event Dispatchers, Functions and Variables of this script")) {
             ImGui::BeginChild("my_blueprint", ImVec2(0, w.variable >= 0 ? -230.0f : 0.0f));
             draw_my_blueprint(w);
             ImGui::EndChild();
             draw_variable_details(w);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Palette")) {
+        if (with_tip(ImGui::BeginTabItem("Palette"), "Every node by category: drag one onto the canvas")) {
             ImGui::BeginChild("palette");
             draw_palette(w);
             ImGui::EndChild();
@@ -1020,9 +1021,9 @@ void draw_preview_panel(EditorState& s, GraphWindow& w) {
         ImGui::Image(static_cast<ImTextureID>(s.device->debug_ui_texture(w.preview_target)), ImVec2(side, side), ImVec2(0, flipped ? 1.0f : 0.0f),
                      ImVec2(1, flipped ? 0.0f : 1.0f));
     }
-    if (ImGui::RadioButton("Sphere", !w.preview_cube)) w.preview_cube = false;
+    if (with_tip(ImGui::RadioButton("Sphere", !w.preview_cube), "Preview the material on a sphere")) w.preview_cube = false;
     ImGui::SameLine();
-    if (ImGui::RadioButton("Cube", w.preview_cube)) w.preview_cube = true;
+    if (with_tip(ImGui::RadioButton("Cube", w.preview_cube), "Preview the material on a cube")) w.preview_cube = true;
     if (w.preview_error[0]) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", w.preview_error);
     else ImGui::TextDisabled("Live: follows your edits. Save to update the level.");
 }
@@ -1300,11 +1301,31 @@ void draw_graph_editor(EditorState& s) {
             w.dirty = true;
         }
         if (ImGui::BeginPopupContextItem("node_menu")) {
-            if (w.kind == script::GraphKind::Script && ImGui::MenuItem("Toggle Breakpoint", "F9")) {
+            if (w.kind == script::GraphKind::Script && with_tip(ImGui::MenuItem("Collapse to Function", nullptr, false, !w.selection.empty()), "Moves the selected nodes into a new Function and calls it from here")) {
+                char name[32] = "NewFunction";
+                for (int k = 2;; ++k) {  // a name no other Function has
+                    bool taken = false;
+                    for (const GraphNode& other : g.nodes) taken = taken || (std::strcmp(other.type, "FunctionEntry") == 0 && std::strcmp(other.values[0], name) == 0);
+                    if (!taken) break;
+                    std::snprintf(name, sizeof name, "NewFunction%d", k);
+                }
+                const std::vector<u32> ids = is_selected(w, n.id) ? w.selection : std::vector<u32>{n.id};
+                u32 call = 0;
+                char problem[160];
+                const bool ok = script::collapse_to_function(g, ids.data(), static_cast<u32>(ids.size()), name, call, problem, sizeof problem);
+                std::snprintf(w.message, sizeof w.message, ok ? "Collapsed into %s (rename it on its Function node)" : "Collapse to Function: %s", ok ? name : problem);
+                w.message_is_error = !ok;
+                if (ok) select_only(w, call);
+                w.dirty = w.dirty || ok;
+                ImGui::EndPopup();
+                ImGui::PopID();
+                break;  // the node array changed
+            }
+            if (w.kind == script::GraphKind::Script && with_tip(ImGui::MenuItem("Toggle Breakpoint", "F9"), "Pauses the game when this node runs (F9); step on in the Lua Debugger")) {
                 const std::string lua = lua_path_for(w.guid);
                 if (const i32 line = node_first_line(lua, n.id)) debugger::toggle(lua.c_str(), line);
             }
-            if (ImGui::MenuItem("Delete", "Delete")) {
+            if (with_tip(ImGui::MenuItem("Delete", "Delete"), "Removes the node and its wires")) {
                 const u32 id = n.id;
                 ImGui::EndPopup();
                 ImGui::PopID();

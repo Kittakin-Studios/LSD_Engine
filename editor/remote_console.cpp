@@ -1,4 +1,5 @@
 #include "remote_console.h"
+#include "tips.h"
 
 #include "lsd/core/console.h"
 #include "lsd/foundation/log.h"
@@ -202,7 +203,7 @@ void draw_window(bool* open) {
         ImGui::SetNextItemWidth(100);
         ImGui::InputInt("Port", &g_port, 0);
         ImGui::SameLine();
-        if (ImGui::Button("Connect") && start_sockets()) {
+        if (with_tip(ImGui::Button("Connect"), "Connects to a game started with -remote on this PC") && start_sockets()) {
             g_server = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             const sockaddr_in a = localhost(static_cast<u16>(g_port));
             if (g_server != kNoSocket && ::connect(g_server, reinterpret_cast<const sockaddr*>(&a), sizeof a) == 0) {
@@ -231,7 +232,7 @@ void draw_window(bool* open) {
         }
         ImGui::TextUnformatted("Connected");
         ImGui::SameLine();
-        if (ImGui::Button("Disconnect")) {
+        if (with_tip(ImGui::Button("Disconnect"), "Ends the connection (the game keeps running)")) {
             LSD_CLOSE_SOCKET(g_server);
             g_server = kNoSocket;
         }

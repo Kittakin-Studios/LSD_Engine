@@ -77,6 +77,20 @@ public:
     bool play_timeline(const char* name, bool loop);
     void stop_timeline(const char* name);
     Vec3 forward() const;
+    // A Camera (not Auto Activate) on the player's Character or a child of it: where the player's view sits.
+    world::Entity player_camera(const world::World& world) const;
+    // Live editing: Details edits during Play take effect the same frame (compared with last frame's copy).
+    void apply_live_edits(world::World& world);
+    void apply_rebinds();              // the player's rebound keys onto context_
+    i64 input_files_stamp() const;     // newest change of the Mapping Context and its Input Actions
+    i64 input_stamp_ = 0;
+    u64 input_checked_ = 0;
+    world::Character live_character_{};
+    f32 live_gravity_ = 0.0f;
+    u32 camera_view_override_ = 2;  // lsd.set_camera_view: 0 first, 1 third, 2 = the Camera's own View
+    Vec3 eye_forward_{1, 0, 0};     // where the player's view looks (forward() turned by the Camera)
+    Mat4 bone_ride_;                // Ride Bone: the Camera relative to its bone, taken on the first frame
+    bool bone_ride_valid_ = false;
     bool wired() const { return wired_; }  // true when a Character's input assets drive the player
     bool run_lua(const char* code) { return scripts_.run(code); }  // console `lua`; false when not playing
     // Multiplayer: set before start(); off by default (single player).
@@ -125,6 +139,7 @@ private:
         Vec3 scale;
         Vec3 centre;  // bounds centre in the entity's local space (unscaled)
         bool kinematic = false;  // follows its Transform instead of writing to it
+        f32 mass = 0.0f, friction = 0.0f, bounciness = 0.0f;  // as last applied (live edits compare with these)
     };
 
     static constexpr u32 kMaxBodies = 8192;

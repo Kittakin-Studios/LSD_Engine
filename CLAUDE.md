@@ -3,7 +3,10 @@
 Read this first. It is the short, current summary of how LSD_Engine is built and how to work on it.
 The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to use the engine),
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
-examples), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
+examples), [Examples/Examples.md](docs/Examples/Examples.md) (first-timer tutorial: input actions, health / stamina HUD,
+interact; its scripts were run for real), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
+Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
+the `screenshot` console command and `ui.Click`, in the default layout); retake one when its panel changes.
 
 ## What this is
 
@@ -51,6 +54,7 @@ Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
 `-connect=<host[:port]>` (multiplayer, when Project Settings > Multiplayer is on).
+`input.Hold <key> <seconds>` takes names with spaces ("Left Shift") and drives the game even when the window has no focus.
 Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
@@ -118,6 +122,8 @@ docs/               MANUAL, ARCHITECTURE, EXAMPLES, BACKLOG, ROADMAP, CLEAN_ROOM
 Conventions: namespace `lsd`, snake_case functions, PascalCase types, systems take an `Allocator&`,
 no STL in hot paths (editor-time code may use it, marked `shortcut:`), `LSD_LOG_*` macros, one-line
 comments for the *why*. A known limitation gets `// shortcut: <limit>, <when to upgrade>`.
+Hover help: every property shown in Details has a `Tooltip`, every component an `LSD_STRUCT(... Tooltip = ...)`,
+every editor button / menu item / checkbox a tooltip (`with_tip(ImGui::Button(...), "...")` from `editor/tips.h`).
 
 ## Status
 
@@ -157,6 +163,10 @@ Post pass (draw_post, a volume's values or the defaults): SSAO, TAA, depth of fi
 grading, FXAA. Build > Build Lighting bakes light probes (`editor/light_bake.*`).
 Also: selection outline (orange silhouette), GPU time per stage in `stat dump`, sub-levels + distance
 streaming (Sub Level component), particle collision (Floor / World) and Mesh / Ribbon renderers,
-spawn / destroy reusing script slots, Compiler Results and Event Dispatchers in visual scripts.
+spawn / destroy reusing script slots, Compiler Results, Event Dispatchers and Collapse to Function in visual scripts,
+hover tooltips everywhere (`editor/tips.h`), player camera from a Camera on the Character (First / Third Person, Motion: Mouse
+Look / Orbit Bone / Ride Bone, Follow Bone), Unreal rigs (UE4 / UE5 detection, retarget on import, Skeletal Mesh Facing),
+live editing in Play (`PlaySession::apply_live_edits`: Character, bodies, gravity, input assets) and self-saving data assets,
+crash reports for abort / std::terminate with a symbolised stack in the log, Mouse 4 / 5 back and forward.
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
 LFS locking, UI resize handles and data bindings, per-mesh LOD screen sizes.

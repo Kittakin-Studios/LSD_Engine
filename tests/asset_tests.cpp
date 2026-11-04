@@ -54,6 +54,17 @@ static void test_blender_fbx(const fs::path& root) {
     CHECK(ball.type == asset::AssetType::Mesh && ball.guid.valid());
     CHECK(std::strcmp(ball.name, "Ball") == 0 && std::strcmp(ball.folder, "Props") == 0 && std::strcmp(ball.path, "Props/Ball.fbx") == 0);
     CHECK(fs::exists(content / "Props" / "Ball.fbx.meta"));
+    // The generation changes only when the records do (panels holding indices check it).
+    const u32 generation = registry.generation();
+    registry.scan();
+    CHECK(registry.generation() == generation);
+    fs::copy_file(content / "Props" / "Ball.fbx", content / "Props" / "Ball2.fbx");
+    registry.scan();
+    CHECK(registry.generation() != generation && registry.count() == 2);
+    fs::remove(content / "Props" / "Ball2.fbx");
+    fs::remove(content / "Props" / "Ball2.fbx.meta");
+    registry.scan();
+    CHECK(registry.count() == 1);
 
     // Find it by search (exit test), case-insensitive; folder browsing; no false hits.
     usize hits[8];

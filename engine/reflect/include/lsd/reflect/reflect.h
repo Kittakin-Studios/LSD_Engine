@@ -110,6 +110,7 @@ struct TypeInfo {
     const Property* properties;
     u32 property_count;
     const void* defaults;  // a default-constructed instance: new components start as a copy of it
+    const char* tooltip = "";  // what it is for (LSD_STRUCT Tooltip): + Add Component shows it
 };
 
 template <typename T>
