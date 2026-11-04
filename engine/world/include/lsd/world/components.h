@@ -318,6 +318,13 @@ LSD_STRUCT(Component, Category = "Multiplayer", Tooltip = "Multiplayer: the serv
 struct NetReplicated {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Send its position and rotation to the clients (off: it is created and destroyed everywhere, but not moved)") bool replicate_movement = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Players farther than this from it get no updates of its movement (Unreal's Net Cull Distance: saves bandwidth in big levels); 0 = always sent")
+    f32 relevancy_distance = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0,
+                 Tooltip = "A player's own object (an avatar, a driven car): moves faster than this are refused by the server and it is put back (stops speed and teleport hacks); 0 = no check")
+    f32 max_speed = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "More values the server sends when they change (Unreal's Replicated properties): Component.field, comma-separated, e.g. StaticMesh.color, PointLight.intensity, Tags.tags")
+    char replicated_fields[256] = "";
     LSD_PROPERTY(Visible, Tooltip = "Who moves it: 0 = the server, else that player's machine (their avatar)") u32 owner = 0;
     LSD_PROPERTY(Visible, Tooltip = "Its id on the network (from its name for objects placed in the level)") u32 net_id = 0;
     LSD_PROPERTY(Visible, Tooltip = "What the server spawned it from, so clients make the same") char spawned_from[64] = "";

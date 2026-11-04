@@ -117,6 +117,58 @@ int main() {
         CHECK(server_world.get<Transform>(box)->position.x == 9.0f);  // the client's old states no longer move it
         CHECK(std::fabs(client_world.get<Transform>(client_box)->position.x - 9.0f) < 1e-3f);
 
+        // Replicated Fields: values the server changes reach the client's copy.
+        server_world.add<StaticMesh>(box);
+        client_world.add<StaticMesh>(client_box);
+        std::snprintf(server_world.get<NetReplicated>(box)->replicated_fields, 256, " StaticMesh.color , StaticMesh.nothing, Missing.field");
+        server_world.get<StaticMesh>(box)->color = {0.25f, 0.5f, 1.0f, 1.0f};
+        pump(0.3f, [] {});
+        CHECK(client_world.get<StaticMesh>(client_box)->color.g == 0.5f && client_world.get<StaticMesh>(client_box)->color.b == 1.0f);
+        server_world.get<StaticMesh>(box)->color.r = 0.75f;  // sent again only when it changes
+        pump(0.3f, [] {});
+        CHECK(client_world.get<StaticMesh>(client_box)->color.r == 0.75f);
+
+        // Lag compensation: the server rewinds a moving Box to where the client saw it.
+        f32 moving = 9.0f;
+        pump(1.0f, [&] { server_world.get<Transform>(box)->position.x = (moving += 0.16f); });  // 10 m/s
+        Vec3 rewound;
+        CHECK(server.seen_position(server_world, box, 1, rewound));
+        std::printf("  lag compensation: now x %.2f, player 1 saw x %.2f\n", static_cast<double>(moving), static_cast<double>(rewound.x));
+        CHECK(rewound.x < moving - 0.3f && rewound.x > moving - 3.0f);
+        CHECK(server.seen_position(server_world, box, net::kServerPlayer, rewound) && std::fabs(rewound.x - moving) < 1e-3f);
+        CHECK(!client.seen_position(client_world, client_box, 1, rewound));  // the server keeps the history
+
+        // Relevancy: the Box farther than 5 m from player 1's avatar (at x 7) stops reaching it.
+        server_world.get<NetReplicated>(box)->relevancy_distance = 5.0f;
+        pump(0.4f, [&] { server_world.get<Transform>(box)->position = {8, 0, 0}; });
+        CHECK(std::fabs(client_world.get<Transform>(client_box)->position.x - 8.0f) < 1e-3f);
+        pump(0.6f, [&] { server_world.get<Transform>(box)->position = {60, 0, 0}; });
+        CHECK(client_world.get<Transform>(client_box)->position.x < 20.0f);  // culled for this player
+        pump(0.4f, [&] { server_world.get<Transform>(box)->position = {9, 1, 0}; });
+        CHECK(std::fabs(client_world.get<Transform>(client_box)->position.y - 1.0f) < 1e-3f);  // relevant again
+        server_world.get<NetReplicated>(box)->relevancy_distance = 0.0f;
+
+        // Server-side move check: the client's avatar may move 5 m/s; a 90 m jump is refused and put back.
+        server_world.get<NetReplicated>(avatar)->max_speed = 5.0f;
+        pump(0.3f, [&] { client_world.get<Transform>(client_avatar)->position = {7.5f, 0, 1}; });  // allowed
+        CHECK(std::fabs(server_world.get<Transform>(avatar)->position.x - 7.5f) < 1e-3f);
+        client_calls.clear();
+        client_world.get<Transform>(client_avatar)->position = {97.5f, 0, 1};
+        pump(0.4f, [] {});
+        CHECK(server_world.get<Transform>(avatar)->position.x < 10.0f);
+        CHECK(client_world.get<Transform>(client_avatar)->position.x < 10.0f);  // corrected
+        CHECK(client_calls.find("__corrected[") != std::string::npos);
+        client_calls.clear();
+
+        // The LAN browser finds this server (port + 1), with both players.
+        net::LanGame games[4];
+        u32 found = 0;
+        std::thread browser([&] { found = net::NetSession::find_lan_games(settings.port, 0.5f, games, 4); });  // another machine's browser
+        pump(0.7f, [] {});  // the server keeps running (and answering) meanwhile
+        browser.join();
+        std::printf("  LAN: %u game(s)%s%s\n", found, found ? ", " : "", found ? games[0].address : "");
+        CHECK(found >= 1 && games[0].players == 2 && std::strcmp(games[0].name, "LSD_Engine game") == 0);
+
         // Events both ways.
         client.send_event(net::kToServer, "hello", "[1,\"x\"]");
         server.send_event(net::kToEveryone, "boom", "[2]");

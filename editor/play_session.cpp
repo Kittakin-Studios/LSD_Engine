@@ -38,6 +38,8 @@ namespace lsd::editor {
 
 namespace {
 
+std::string json_string(const char* text);  // a JSON string literal (with Multiplayer, below)
+
 // Action ids of the built-in controls used when the level has no Character (not real asset GUIDs).
 constexpr char kDefaultMove[] = "000000000000000000000000000d0001";
 constexpr char kDefaultLook[] = "000000000000000000000000000d0002";
@@ -451,8 +453,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     start_game_mode(world);  // may spawn the player and a GameMode object first
     // Multiplayer: host or join before any body or script exists (clients make replicated bodies
     // kinematic; scripts may ask lsd.net_mode() in on_start).
-    // shortcut: lsd.open_level ends the session (travel); make the server send the level when games need it.
-    if (net_play_.enabled && !travel) {
+    // After lsd.open_level (travel) the session starts again on the new level: the server hosts it,
+    // clients (told by "__travel") join it again, so everyone arrives together.
+    // shortcut: a full reconnect (a moment of "connecting"); keep the connection across levels when that pause matters
+    if (net_play_.enabled) {
         net_.set_spawner(net_spawn, this);
         const bool ok = net_play_.host ? net_.host(world, net_play_.settings) : net_.join(world, net_play_.address, net_play_.settings);
         if (ok && net_play_.host && !net_play_.dedicated) {
@@ -705,6 +709,13 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             LSD_LOG_WARN("play", "open_level: no level named '%s'", name);
             return false;
         }
+        // Multiplayer travels together (Unreal's seamless ServerTravel, simply): the server takes
+        // everyone along; a client cannot leave on its own.
+        if (self.net_.mode() == net::Mode::Client) {
+            LSD_LOG_WARN("play", "open_level: in multiplayer only the server changes the level");
+            return false;
+        }
+        if (self.net_.mode() == net::Mode::Server) self.net_.send_event(net::kToEveryone, "__travel", ("[" + json_string(r->name) + "]").c_str());
         self.registry_->source_path(*r, self.level_request_, sizeof self.level_request_);
         return true;
     };
@@ -755,6 +766,23 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const auto& net = static_cast<PlaySession*>(user)->net_;
         team = net.player_team(player);
         squad = net.player_squad(player);
+    };
+    host.net_seen_position = [](void* user, u32 entity, u32 player, Vec3& out) {
+        auto& self = *static_cast<PlaySession*>(user);
+        world::Entity e;
+        e.value = entity;
+        return self.world_ && self.net_.seen_position(*self.world_, e, player, out);
+    };
+    host.net_find_games = [](void* user, f32 seconds, char* out, usize capacity) {
+        const auto& self = *static_cast<PlaySession*>(user);
+        net::LanGame games[32];
+        const u32 n = net::NetSession::find_lan_games(self.net_play_.settings.port, std::clamp(seconds, 0.05f, 5.0f), games, 32);
+        usize used = 0;
+        for (u32 k = 0; k < n && used < capacity; ++k) {
+            const int w = std::snprintf(out + used, capacity - used, "%s|%s|%u|%u\n", games[k].address, games[k].name, games[k].players, games[k].max_players);
+            if (w > 0) used += static_cast<usize>(w);
+        }
+        return n;
     };
     host.set_class_volume = [](void* user, const char* name, f32 volume) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_class_volume(name, volume);
@@ -1653,6 +1681,23 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
                 net_.send_event(static_cast<i32>(ev.from), "__seated", args);
             } else if (std::strcmp(ev.name, "__unseat") == 0 && net_.mode() == net::Mode::Server) {
                 server_free_seats(world, ev.from);
+            } else if (std::strcmp(ev.name, "__travel") == 0 && net_.mode() == net::Mode::Client) {  // the server opened a level: follow
+                const char* open = std::strchr(ev.json, '"');
+                const char* close = open ? std::strrchr(ev.json, '"') : nullptr;
+                const std::string level = open && close > open ? std::string(open + 1, static_cast<usize>(close - open - 1)) : std::string();
+                if (const asset::AssetRecord* r = level.empty() ? nullptr : find_asset(asset::AssetType::Level, level.c_str())) {
+                    registry_->source_path(*r, level_request_, sizeof level_request_);  // Play restarts there and joins the server again
+                } else {
+                    LSD_LOG_ERROR("play", "The server opened level '%s', which this machine does not have", level.c_str());
+                }
+            } else if (std::strcmp(ev.name, "__corrected") == 0) {  // the server put our avatar back (a move it refused)
+                f32 x = 0, y = 0, z = 0;
+                const auto* rep = world.alive(my_avatar_) ? world.get<world::NetReplicated>(my_avatar_) : nullptr;
+                if (rep && std::sscanf(ev.json, "[%u,%f,%f,%f]", &id, &x, &y, &z) == 4 && id == rep->net_id && physics_) {
+                    physics_->teleport_character({x, y, z});
+                    feet_ = {x, y, z};
+                }
+                // shortcut: a corrected car (its driver's own) is not put back here; its physics carries on from where the driver had it
             } else if (std::strcmp(ev.name, "__seated") == 0 && std::sscanf(ev.json, "[%u,%d]", &id, &seat) == 2) {
                 if (seat >= 0) take_seat(world, vehicle_of(id), seat);
                 else LSD_LOG_INFO("play", "That vehicle is full");

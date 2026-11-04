@@ -324,7 +324,12 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Text chat: all / team / squad (optional) / proximity (optional), routed by the server; built-in chat box or your own
 - [x] Play with N players in the editor (listen server + game windows); -server / -dedicated / -connect for packages
 - [x] Voice chat: Opus, push-to-talk (V team / first channel on, B all) or open mic; team, all (optional), squad (optional), proximity (optional, fades with distance); routed by the server; per-speaker jitter buffers
-- [ ] Lag compensation for hits, server-side move checks, relevancy (only nearby objects), level travel together, a server browser / sessions, replicating component fields beyond the transform
+- [x] Replicated Fields: Net Replicated > Replicated Fields ("Component.field, ...") sent reliably when their bytes change (resent to late joiners) [Replicated properties]
+- [x] Relevancy: Relevancy Distance per object; snapshots per player skip objects farther from its avatar (one broadcast when nothing is culled) [Net Cull Distance]
+- [x] Server-side move checks: Max Speed per owned object; faster owner states are refused and the owner corrected (avatar teleported back)
+- [x] Lag compensation for hits: the server keeps about 2 s of positions per object; `seen_position` / `lsd.net_seen_position(e, player)` rewinds by that player's half round trip plus the interpolation delay
+- [x] Level travel together: `lsd.open_level` on the server tells clients (`__travel`), everyone restarts Play on the level and reconnects; refused on clients
+- [~] Server browser / sessions: LAN discovery (`find_lan_games`, `lsd.net_find_games`; servers answer on port + 1, broadcast and loopback); needs internet sessions (a master server or a platform's matchmaking), joining from a game menu without restarting Play
 
 ## 2D (Paper2D)
 

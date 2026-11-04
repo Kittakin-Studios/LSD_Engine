@@ -551,6 +551,21 @@ game is single player and nothing networked runs. On:
   is on and the game is multiplayer (never in `-nosound` runs).
 - Packaged games: `-server` hosts, `-dedicated` hosts without a player, `-connect=address[:port]`
   joins (port 7777 by default). Tick rate, port and max players are in the same settings.
+- **Replicated Fields** (Unreal's Replicated properties): Net Replicated > Replicated Fields lists more
+  values to share, `Component.field` comma-separated (`StaticMesh.color, PointLight.intensity,
+  Tags.tags`); the server sends each when it changes, reliably, and players joining later get them.
+- **Relevancy Distance** (Unreal's Net Cull Distance): players farther than this from an object get
+  no updates of its movement, which saves bandwidth in big levels (0 = always sent).
+- **Max Speed** (server-side move check): for objects a player's machine moves (avatars, driven cars),
+  a move faster than this is refused by the server and the player is put back, so speed and teleport
+  hacks do not work (0 = no check).
+- **Lag compensation**: `lsd.net_seen_position(target, player)` on the server gives where `target` was
+  when that player saw it (their half round trip plus the interpolation delay ago). Check a client's
+  shot against it, not against where the target is now, and fast targets hit fairly.
+- **Level travel together**: `lsd.open_level(name)` on the server takes every player to the new level
+  (they reconnect on their own); on a client it is refused (only the server changes the level).
+- **LAN browser**: `lsd.net_find_games(seconds)` lists games hosting on the local network
+  (`{address, name, players, max_players}`) for a join menu; the server answers on its port + 1.
 
 ### 2D games (Paper2D)
 

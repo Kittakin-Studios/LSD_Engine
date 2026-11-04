@@ -20,7 +20,9 @@ namespace lsd::net {
 namespace {
 
 // Message types (first byte of every packet).
-enum Msg : u8 { kWelcome = 1, kSpawn, kDestroy, kSnapshot, kOwnerState, kEvent, kPlayerJoined, kPlayerLeft, kChat, kGroup, kVoice, kVoiceOut, kOwner };
+enum Msg : u8 { kWelcome = 1, kSpawn, kDestroy, kSnapshot, kOwnerState, kEvent, kPlayerJoined, kPlayerLeft, kChat, kGroup, kVoice, kVoiceOut, kOwner, kFields, kCorrection };
+constexpr char kLanQuery[4] = {'L', 'S', 'D', 'Q'};  // a LAN browser asks; servers answer "LSDR"
+constexpr char kLanReply[4] = {'L', 'S', 'D', 'R'};
 constexpr u32 kMaxVoiceBytes = 1000;
 constexpr u8 kReliable = 0, kUnreliable = 1;  // ENet channels
 constexpr u32 kLevelIdBit = 0x80000000u;      // ids from level objects' names; spawned ones count up below it
@@ -149,6 +151,13 @@ struct NetSession::Impl {
     std::unordered_map<u32, world::Entity> by_id;
     std::unordered_map<u32, Track> tracks;
     std::unordered_map<u32, State> last_sent;   // server: what the clients last heard, per object
+    std::unordered_map<u64, std::vector<u8>> sent_fields;  // server: Replicated Fields as last sent (id << 6 | field)
+    struct History {  // server: where each object was, the last second or so (lag compensation)
+        State s[64];
+        u32 head = 0, count = 0;
+    };
+    std::unordered_map<u32, History> history;
+    ENetSocket lan = ENET_SOCKET_NULL;  // server: answers LAN browsers on port + 1
     std::vector<u32> destroyed_level_ids;       // server: told to players who join later
     std::vector<Peer> peers;
     std::unordered_map<u32, Group> groups;
@@ -298,7 +307,25 @@ struct NetSession::Impl {
                 if (!r.ok) break;
                 const auto it = by_id.find(id);
                 const auto* rep = it == by_id.end() ? nullptr : replicated(it->second);
-                if (rep && rep->owner == from) push_state(id, {clock, p, rot});
+                if (!rep || rep->owner != from) continue;
+                // Server-side move check: faster than its Max Speed (with slack for packets arriving
+                // bunched up) is refused, and the owner is told where it really is.
+                const auto t = tracks.find(id);
+                if (rep->max_speed > 0.0f && t != tracks.end() && t->second.count) {
+                    const State& last = t->second.s[t->second.count - 1];
+                    const f64 dt = std::max(clock - last.t, 1.0 / settings.tick_rate);
+                    if (length(p - last.p) > rep->max_speed * static_cast<f32>(dt) * 1.5f + 0.5f) {
+                        Writer c;
+                        c.u8_(kCorrection);
+                        c.u32_(id);
+                        c.vec(last.p);
+                        c.vec(last.r);
+                        send_to(peer, c, kReliable);
+                        LSD_LOG_WARN("net", "Player %u moved %s too fast: put back", from, world->name(it->second));
+                        continue;
+                    }
+                }
+                push_state(id, {clock, p, rot});
             }
             break;
         }
@@ -426,43 +453,163 @@ struct NetSession::Impl {
             tracks.erase(it->first);
             it = by_id.erase(it);
         }
+        send_fields();
         send_timer += dt;
         keyframe_timer += dt;
         if (send_timer < 1.0f / settings.tick_rate) return;
         send_timer = 0.0f;
         const bool keyframe = keyframe_timer >= 1.0f;  // everything once a second: lost packets heal
         if (keyframe) keyframe_timer = 0.0f;
-        Writer w;
-        u16 count = 0;
-        auto flush = [&] {
-            if (!count) return;
-            std::memcpy(w.bytes.data() + 9, &count, 2);
-            broadcast(w, kUnreliable);
-            count = 0;
+        // What moved, once; then each player gets the part relevant to it (Relevancy Distance).
+        struct Entry {
+            u32 id;
+            Vec3 p, r;
+            f32 relevancy;
         };
-        auto begin = [&] {
-            w.bytes.clear();
-            w.u8_(kSnapshot);
-            w.f64_(clock);
-            w.u16_(0);  // count, filled by flush
-        };
-        begin();
+        std::vector<Entry> moved;
+        bool culled = false;
         for (const auto& [id, e] : by_id) {
             const auto* r = replicated(e);
-            if (!r || !r->replicate_movement) continue;
+            if (!r) continue;
             const auto* t = world->get<world::Transform>(e);
+            History& h = history[id];  // every tick, moved or not: lag compensation rewinds through it
+            h.s[h.head] = {clock, world_position(e), t->rotation};
+            h.head = (h.head + 1) % 64;
+            h.count = h.count < 64 ? h.count + 1 : 64;
+            if (!r->replicate_movement) continue;
             const auto sent = last_sent.find(id);
             if (!keyframe && sent != last_sent.end() && length(sent->second.p - t->position) < 1e-4f && length(sent->second.r - t->rotation) < 1e-3f) continue;
             last_sent[id] = {clock, t->position, t->rotation};
+            moved.push_back({id, t->position, t->rotation, r->relevancy_distance});
+            culled = culled || r->relevancy_distance > 0.0f;
+        }
+        auto send_snapshot = [&](ENetPeer* to, bool has_viewer, Vec3 viewer) {
+            Writer w;
+            u16 count = 0;
+            auto begin = [&] {
+                w.bytes.clear();
+                w.u8_(kSnapshot);
+                w.f64_(clock);
+                w.u16_(0);  // count, filled by flush
+            };
+            auto flush = [&] {
+                if (!count) return;
+                std::memcpy(w.bytes.data() + 9, &count, 2);
+                if (to) send_to(to, w, kUnreliable);
+                else broadcast(w, kUnreliable);
+                count = 0;
+            };
+            begin();
+            for (const Entry& m : moved) {
+                if (has_viewer && m.relevancy > 0.0f && length(world_position(by_id[m.id]) - viewer) > m.relevancy) continue;  // too far for this player
+                w.u32_(m.id);
+                w.vec(m.p);
+                w.vec(m.r);
+                if (++count == kMaxEntriesPerPacket) {
+                    flush();
+                    begin();
+                }
+            }
+            flush();
+        };
+        if (!culled) {
+            send_snapshot(nullptr, false, {});  // nothing culled: one broadcast for everyone
+            return;
+        }
+        for (const Peer& p : peers) {
+            Vec3 viewer;
+            const bool has_viewer = avatar_position(p.id, viewer);  // no avatar yet: everything
+            send_snapshot(p.peer, has_viewer, viewer);
+        }
+    }
+
+    Vec3 world_position(world::Entity e) const {
+        const Mat4 m = world->world_matrix(e);
+        return {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    }
+
+    // Replicated Fields: each "Component.field" a replicated object lists, sent (reliably) when its
+    // bytes change. Both machines run the same build, so a field's bytes mean the same on both.
+    void send_fields() {
+        for (const auto& [id, e] : by_id) {
+            const auto* r = replicated(e);
+            if (!r || !r->replicated_fields[0]) continue;
+            Writer w;
+            w.u8_(kFields);
             w.u32_(id);
-            w.vec(t->position);
-            w.vec(t->rotation);
-            if (++count == kMaxEntriesPerPacket) {
-                flush();
-                begin();
+            w.u16_(0);
+            u16 count = 0;
+            const char* list = r->replicated_fields;
+            u32 index = 0;
+            for (const char* at = list; *at && index < 64; ++index) {
+                char name[96];
+                usize n = 0;
+                while (*at && *at != ',' && n + 1 < sizeof name) name[n++] = *at++;
+                name[n] = '\0';
+                if (*at == ',') ++at;
+                while (n > 0 && name[n - 1] == ' ') name[--n] = '\0';
+                const char* start = name;
+                while (*start == ' ') ++start;
+                u8* field = nullptr;
+                u32 size = 0;
+                if (!find_field(e, start, field, size)) continue;
+                std::vector<u8>& sent = sent_fields[static_cast<u64>(id) << 6 | index];
+                if (sent.size() == size && std::memcmp(sent.data(), field, size) == 0) continue;
+                sent.assign(field, field + size);
+                w.str(start, 95);
+                w.u32_(size);
+                w.put(field, size);
+                ++count;
+            }
+            if (!count) continue;
+            std::memcpy(w.bytes.data() + 5, &count, 2);
+            broadcast(w, kReliable);
+        }
+    }
+
+    // "StaticMesh.color" on e: the field's bytes and size (top-level reflected properties).
+    bool find_field(world::Entity e, const char* path, u8*& out, u32& size) const {
+        const char* dot = std::strchr(path, '.');
+        if (!dot) return false;
+        const std::string component(path, static_cast<usize>(dot - path));
+        u32 count = 0;
+        const reflect::TypeInfo* const* types = world::component_types(count);
+        for (u32 i = 0; i < count; ++i) {
+            if (component != types[i]->name) continue;
+            u8* object = static_cast<u8*>(world->get(e, *types[i]));
+            if (!object) return false;
+            for (u32 p = 0; p < types[i]->property_count; ++p) {
+                const reflect::Property& prop = types[i]->properties[p];
+                if (std::strcmp(prop.name, dot + 1) != 0) continue;
+                out = object + prop.offset;
+                size = static_cast<u32>(prop.size);
+                return true;
             }
         }
-        flush();
+        return false;
+    }
+
+    // A LAN browser's question on port + 1: answered with this game's port, name and players.
+    void answer_lan() {
+        if (lan == ENET_SOCKET_NULL) return;
+        char query[16];
+        ENetAddress from{};
+        ENetBuffer buffer;  // its fields are in a different order on Windows and POSIX: set by name
+        buffer.data = query;
+        buffer.dataLength = sizeof query;
+        while (enet_socket_receive(lan, &from, &buffer, 1) >= 4) {
+            if (std::memcmp(query, kLanQuery, 4) != 0) continue;
+            Writer w;
+            w.put(kLanReply, 4);
+            w.u16_(settings.port);
+            w.u32_(static_cast<u32>(peers.size() + 1));
+            w.u32_(settings.max_players);
+            w.str(settings.server_name, 47);
+            ENetBuffer reply;
+            reply.data = w.bytes.data();
+            reply.dataLength = w.bytes.size();
+            enet_socket_send(lan, &from, &reply, 1);
+        }
     }
 
     // ---- Client ----
@@ -505,6 +652,38 @@ struct NetSession::Impl {
             if (world->alive(it->second)) world->destroy(it->second);
             tracks.erase(id);
             by_id.erase(it);
+            break;
+        }
+        case kFields: {  // Replicated Fields: values the server's copy changed
+            const u32 id = r.u32_();
+            const u16 count = r.u16_();
+            const auto it = r.ok ? by_id.find(id) : by_id.end();
+            for (u16 k = 0; k < count && r.ok; ++k) {
+                const std::string name = r.str(95);
+                const u32 size = r.u32_();
+                if (!r.ok || size > 65536) return;
+                std::vector<u8> bytes(size);
+                r.get(bytes.data(), size);
+                u8* field = nullptr;
+                u32 have = 0;
+                if (r.ok && it != by_id.end() && world->alive(it->second) && find_field(it->second, name.c_str(), field, have) && have == size) {
+                    std::memcpy(field, bytes.data(), size);
+                }
+            }
+            break;
+        }
+        case kCorrection: {  // the server refused a move of our own object: it is here
+            const u32 id = r.u32_();
+            const Vec3 p = r.vec(), rot = r.vec();
+            const auto it = r.ok ? by_id.find(id) : by_id.end();
+            if (it == by_id.end() || !world->alive(it->second)) return;
+            if (auto* t = world->get<world::Transform>(it->second)) {
+                t->position = p;
+                t->rotation = rot;
+            }
+            char args[128];
+            std::snprintf(args, sizeof args, "[%u,%.4f,%.4f,%.4f]", id, static_cast<f64>(p.x), static_cast<f64>(p.y), static_cast<f64>(p.z));
+            queue(NetEvent::Kind::Call, kServerPlayer, "__corrected", args);  // the game moves its player there too
             break;
         }
         case kOwner: {  // who moves an object now (a car its driver's machine simulates)
@@ -683,6 +862,18 @@ bool NetSession::host(world::World& world, const NetSettings& settings) {
     mode_ = Mode::Server;
     player_id_ = kServerPlayer;
     impl_->index_level();
+    // LAN browsers find it on port + 1 (a second UDP socket; a game without it still plays).
+    impl_->lan = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    ENetAddress lan_address{};
+    lan_address.host = ENET_HOST_ANY;
+    lan_address.port = static_cast<u16>(settings.port + 1);
+    if (impl_->lan != ENET_SOCKET_NULL &&
+        (enet_socket_set_option(impl_->lan, ENET_SOCKOPT_NONBLOCK, 1) != 0 || enet_socket_set_option(impl_->lan, ENET_SOCKOPT_REUSEADDR, 1) != 0 ||
+         enet_socket_bind(impl_->lan, &lan_address) != 0)) {
+        enet_socket_destroy(impl_->lan);
+        impl_->lan = ENET_SOCKET_NULL;
+        LSD_LOG_WARN("net", "Port %u is taken: this game will not show in LAN browsers", lan_address.port);
+    }
     LSD_LOG_INFO("net", "Hosting on port %u (up to %u players)", settings.port, settings.max_players);
     return true;
 }
@@ -727,6 +918,7 @@ bool NetSession::join(world::World& world, const char* address_text, const NetSe
 
 void NetSession::shutdown() {
     if (!impl_) return;
+    if (impl_->lan != ENET_SOCKET_NULL) enet_socket_destroy(impl_->lan);
     if (impl_->host) {
         if (impl_->server) enet_peer_disconnect_now(impl_->server, 0);
         for (const Impl::Peer& p : impl_->peers) enet_peer_disconnect_now(p.peer, 0);
@@ -748,7 +940,96 @@ void NetSession::receive(world::World& world, f32 dt) {
     impl_->world = &world;
     impl_->clock += dt;
     impl_->pump();
+    if (mode_ == Mode::Server) impl_->answer_lan();
     impl_->apply_tracks();
+}
+
+bool NetSession::seen_position(world::World& world, world::Entity e, u32 player, Vec3& out) const {
+    if (!impl_ || mode_ != Mode::Server || !world.alive(e)) return false;
+    const auto* rep = world.get<world::NetReplicated>(e);
+    const auto h = rep ? impl_->history.find(rep->net_id) : impl_->history.end();
+    if (h == impl_->history.end() || !h->second.count) return false;
+    // The moment that player saw: half its round trip ago, minus how far back clients play others.
+    f64 back = 0.0;
+    if (player != kServerPlayer) {
+        const ENetPeer* peer = impl_->peer_of(player);
+        if (!peer) return false;
+        back = peer->roundTripTime * 0.0005 + impl_->settings.interpolation_delay;
+    }
+    const f64 when = impl_->clock - back;
+    const Impl::History& hist = h->second;
+    // Oldest to newest; between the two around `when`, blended.
+    Vec3 before = hist.s[(hist.head + 64 - hist.count) % 64].p;
+    f64 before_t = hist.s[(hist.head + 64 - hist.count) % 64].t;
+    out = before;
+    for (u32 k = 0; k < hist.count; ++k) {
+        const Impl::State& s = hist.s[(hist.head + 64 - hist.count + k) % 64];
+        if (s.t <= when) {
+            before = s.p;
+            before_t = s.t;
+            out = s.p;
+            continue;
+        }
+        const f32 f = s.t > before_t ? static_cast<f32>((when - before_t) / (s.t - before_t)) : 1.0f;
+        out = before + (s.p - before) * std::clamp(f, 0.0f, 1.0f);
+        break;
+    }
+    return true;
+}
+
+u32 NetSession::find_lan_games(u16 port, f32 seconds, LanGame* out, u32 capacity) {
+    if (g_enet_users++ == 0 && enet_initialize() != 0) {
+        --g_enet_users;
+        return 0;
+    }
+    u32 found = 0;
+    const ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    if (s != ENET_SOCKET_NULL) {
+        enet_socket_set_option(s, ENET_SOCKOPT_BROADCAST, 1);
+        enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
+        ENetAddress to{};
+        to.host = ENET_HOST_BROADCAST;
+        to.port = static_cast<u16>(port + 1);
+        ENetBuffer query;
+        query.data = const_cast<char*>(kLanQuery);
+        query.dataLength = sizeof kLanQuery;
+        enet_socket_send(s, &to, &query, 1);
+        ENetAddress local = to;  // the same PC answers on loopback when broadcast does not reach it
+        enet_address_set_host_ip(&local, "127.0.0.1");
+        enet_socket_send(s, &local, &query, 1);
+        const u32 until = enet_time_get() + static_cast<u32>(seconds * 1000.0f);
+        while (found < capacity && enet_time_get() < until) {
+            u32 wait = ENET_SOCKET_WAIT_RECEIVE;
+            if (enet_socket_wait(s, &wait, 50) != 0 || !(wait & ENET_SOCKET_WAIT_RECEIVE)) continue;
+            u8 bytes[128];
+            ENetAddress from{};
+            ENetBuffer buffer;
+            buffer.data = bytes;
+            buffer.dataLength = sizeof bytes;
+            const int n = enet_socket_receive(s, &from, &buffer, 1);
+            if (n < 4 || std::memcmp(bytes, kLanReply, 4) != 0) continue;
+            Reader r{bytes + 4, static_cast<usize>(n - 4)};
+            const u16 game_port = r.u16_();
+            const u32 players = r.u32_(), max_players = r.u32_();
+            const std::string name = r.str(47);
+            if (!r.ok) continue;
+            char ip[48] = "";
+            enet_address_get_host_ip(&from, ip, sizeof ip);
+            char address[64];
+            std::snprintf(address, sizeof address, "%s:%u", ip, game_port);
+            bool seen = false;  // broadcast and loopback can both reach the same game
+            for (u32 k = 0; k < found; ++k) seen = seen || (std::strcmp(out[k].address, address) == 0) || (std::strcmp(ip, "127.0.0.1") == 0 && out[k].players == players && std::strcmp(out[k].name, name.c_str()) == 0);
+            if (seen) continue;
+            LanGame& g = out[found++];
+            std::snprintf(g.address, sizeof g.address, "%s", address);
+            std::snprintf(g.name, sizeof g.name, "%s", name.c_str());
+            g.players = players;
+            g.max_players = max_players;
+        }
+        enet_socket_destroy(s);
+    }
+    if (--g_enet_users == 0) enet_deinitialize();
+    return found;
 }
 
 void NetSession::send(world::World& world, f32 dt) {

@@ -887,6 +887,41 @@ struct Api {
         lua_pushnumber(L, squad);
         return 2;
     }
+    static int net_seen_position(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        Vec3 p;
+        if (!host.net_seen_position || !host.net_seen_position(host.user, live_entity(L, 1).value, static_cast<u32>(luaL_checknumber(L, 2)), p)) return 0;
+        lua_pushnumber(L, p.x);
+        lua_pushnumber(L, p.y);
+        lua_pushnumber(L, p.z);
+        return 3;
+    }
+    static int net_find_games(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        static char text[8192];
+        text[0] = '\0';
+        const u32 n = host.net_find_games ? host.net_find_games(host.user, static_cast<f32>(luaL_optnumber(L, 1, 0.5)), text, sizeof text) : 0;
+        lua_createtable(L, static_cast<int>(n), 0);
+        int k = 0;
+        for (const char* line = text; *line && k < static_cast<int>(n);) {
+            const char* end = std::strchr(line, '\n');
+            const std::string row(line, end ? static_cast<usize>(end - line) : std::strlen(line));
+            line = end ? end + 1 : line + row.size();
+            const usize a = row.find('|'), b = row.find('|', a + 1), c = row.find('|', b + 1);
+            if (a == std::string::npos || b == std::string::npos || c == std::string::npos) continue;
+            lua_createtable(L, 0, 4);
+            lua_pushstring(L, row.substr(0, a).c_str());
+            lua_setfield(L, -2, "address");
+            lua_pushstring(L, row.substr(a + 1, b - a - 1).c_str());
+            lua_setfield(L, -2, "name");
+            lua_pushnumber(L, std::atof(row.substr(b + 1, c - b - 1).c_str()));
+            lua_setfield(L, -2, "players");
+            lua_pushnumber(L, std::atof(row.substr(c + 1).c_str()));
+            lua_setfield(L, -2, "max_players");
+            lua_rawseti(L, -2, ++k);
+        }
+        return 1;
+    }
     static int call_on(lua_State* L) { return dispatch(L, true); }
     // lsd.native_call(name, ...) -> result: a function the game module registered (C / C++ nodes).
     static int native_call(lua_State* L) {
@@ -1501,7 +1536,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
-        {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
+        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
