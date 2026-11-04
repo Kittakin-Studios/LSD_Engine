@@ -607,7 +607,7 @@
      "SkeletalMesh": {
       "mesh": "68c55f138f7dc46fa023ad12c9da1467",
       "facing": 0,
-      "material": "c39afd0b21562b05adbbda77c5bf64f9",
+      "material": "",
       "color": {
         "r": 0.70588237,
         "g": 0.70588237,
