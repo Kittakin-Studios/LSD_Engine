@@ -53,9 +53,21 @@ fixed versions; it takes a few minutes once.
 
 ### Run the editor
 
+Double-click **`lsd_editor.exe`** in the project folder (`E:\LSD_Engine\LSD_Engine`). Every Release
+build copies itself there (`cmake --build --preset windows-msvc --config Release`); it is not in Git.
+The Debug build, for debugging, stays in the build folder:
+
 ```powershell
 build\windows-msvc\editor\Debug\lsd_editor.exe
 ```
+
+Close the editor before building: Windows locks a running exe, so the build (or its copy to the
+project folder) fails while it is open.
+
+If a build fails at once with `ar.exe` / `ld.exe` from MinGW in the errors, the build folder was
+configured from a terminal without the Visual Studio tools (MinGW was found first on PATH). Delete
+`build\windows-msvc\CMakeCache.txt` and `build\windows-msvc\CMakeFiles\`, then configure again from
+VS Code or a *Developer PowerShell for VS*; the downloaded libraries are kept.
 
 It picks the best graphics card and Direct3D 12. Add `-rhi=opengl` to use OpenGL instead. The
 editor reopens the last level you had open. The project lives next to the executable's working folder:
@@ -967,6 +979,10 @@ at the object when the clip passes that time in Play.
   samples it mixes the three around the value; outside them, the nearest edge.
 - **Transitions**: from a state (or any) to another when a parameter is greater / less / true /
   false, or the clip finished, with a crossfade time.
+- **Clips come from one file**: the graph's **Animation** (empty = the mesh's). Every state's and
+  sample's clip number is a clip in that FBX, so put the idle, walk, run... takes in one FBX (one
+  export with several actions from Blender / Maya). Separate files per animation work on a Skeletal
+  Mesh without a graph, not yet inside one graph.
 - Pick the graph in the Skeletal Mesh's **Anim Graph**. A Character feeds **Speed**,
   **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the
@@ -1232,7 +1248,8 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 ## 17. Packaging and shipping
 
 1. **Edit > Project Settings**: project name, **Game Default Level**, icon, Steam App ID.
-2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release`.
+2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release` (it also
+   refreshes `lsd_editor.exe` in the project folder).
 3. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
 4. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,

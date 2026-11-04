@@ -48,6 +48,7 @@ Requirements: CMake 3.24+, a C++20 compiler (MSVC 2022, Clang 16+ or GCC 13+), N
 # Windows (Visual Studio 2022 developer prompt)
 cmake --preset windows-msvc
 cmake --build --preset windows-msvc
+cmake --build --preset windows-msvc --config Release   # also copies lsd_editor.exe to the project root
 
 # Linux
 cmake --preset linux-clang

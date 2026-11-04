@@ -42,6 +42,9 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 - `cmake --preset windows-msvc` then `cmake --build --preset windows-msvc` (Debug);
   Release: `cmake --build --preset windows-msvc --config Release` (packaging uses it).
 - Tests: `ctest --preset windows-msvc` (15 suites, framework-free, in `tests/`). Keep them passing.
+- Release builds copy themselves to `lsd_editor.exe` in the repo root (gitignored; Charlize double-clicks it).
+  If configure picks MinGW tools (`ar.exe` / `ld.exe` from WinLibs on PATH), delete `build\windows-msvc\CMakeCache.txt`
+  and `CMakeFiles\`, then configure after `vcvars64.bat` (VS 18 Community).
 - Editor: `build\windows-msvc\editor\Debug\lsd_editor.exe`. The same exe is the game (`-game`, or a
   folder with `game.json` from File > Package Project).
 - Both Debug and Release build with **0 warnings**; keep it that way (`/W4`, `-Wall -Wextra -Wpedantic
@@ -61,7 +64,7 @@ Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
 `\n` / `\0` escapes); the scratchpad has `build.bat` (configure + build + ctest), `build_editor.bat`,
 `build_target.bat <targets>`, `build_release.bat`, `configure.bat`. Close Charlize's running editor
-before linking `lsd_editor.exe` (the exe is locked while it runs).
+before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy too).
 
 ## Key decisions
 

@@ -6,4 +6,8 @@ target_link_libraries(lsd_editor PRIVATE lsd_foundation lsd_core lsd_rhi lsd_ren
 lsd_configure_target(lsd_editor)
 if(WIN32)
   set_target_properties(lsd_editor PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+  # Release builds are also copied to the project root: double-click lsd_editor.exe there (the working folder is the project).
+  add_custom_command(TARGET lsd_editor POST_BUILD
+    COMMAND "$<$<CONFIG:Release>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_FILE:lsd_editor>;${PROJECT_SOURCE_DIR}/lsd_editor.exe>"
+    COMMAND_EXPAND_LISTS VERBATIM)
 endif()

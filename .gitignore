@@ -4,6 +4,7 @@ out/
 cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
+/lsd_editor.exe
 
 # IDEs
 .vs/
