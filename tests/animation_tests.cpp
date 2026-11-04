@@ -1,6 +1,7 @@
 // Animation tests: skinned FBX files from ufbx's test data. Our import + ozz sampling + skinning
 // must put vertices where ufbx's own skinning does, at rest and part-way through an animation.
 #include "lsd/animation/anim_graph.h"
+#include "lsd/animation/motion_matching.h"
 
 #include <ufbx.h>
 
@@ -263,10 +264,59 @@ static void rig_tests() {
     CHECK(std::strcmp(anim::rig_name(Rig::UE5MannySimple), "UE5 Manny (Simple)") == 0);
 }
 
+// Motion matching: the path a held direction predicts, a database from a real rig's takes, a frame's
+// own features finding it again, and playback that keeps returning a clip.
+static void motion_matching_tests(const std::string& data) {
+    anim::MotionInput standing;
+    f32 pos[6], face[6];
+    anim::predict_trajectory(standing, pos, face);
+    for (u32 k = 0; k < 6; ++k) CHECK(std::fabs(pos[k]) < 1e-6f);
+    CHECK(std::fabs(face[0] - 1.0f) < 1e-6f && std::fabs(face[1]) < 1e-6f);
+    anim::MotionInput walking;  // facing +Y, asked to walk 2 m/s that way: straight ahead in its own space
+    walking.facing = walking.desired_facing = 1.5707963f;
+    walking.desired_velocity = {0.0f, 2.0f, 0.0f};
+    anim::predict_trajectory(walking, pos, face);
+    CHECK(pos[0] > 0.1f && pos[2] > pos[0] && pos[4] > pos[2] && pos[4] < 2.0f && std::fabs(pos[5]) < 1e-4f);  // speeding up from rest
+    anim::MotionInput turning;
+    turning.desired_facing = 1.0f;
+    anim::predict_trajectory(turning, pos, face);
+    CHECK(face[1] > 0.0f && face[5] > face[1]);  // turning left, further by 1 s
+
+    const std::string path = data + "/maya_kenney_character_7700_binary.fbx";  // skinned, animated, LeftFoot / RightFoot / Hips
+    anim::SkinnedModel model(default_allocator());
+    char error[256] = "";
+    CHECK(anim::import_skinned(path.c_str(), 1.0f, model, error, sizeof error));
+    anim::Clip clips[4];
+    const u32 count = anim::import_clips(path.c_str(), model, clips, 4);
+    const anim::Clip* list[4] = {&clips[0], &clips[1], &clips[2], &clips[3]};
+    const bool loops[4] = {true, true, true, true};
+    anim::MotionDatabase settings;
+    anim::MotionData db(default_allocator());
+    const bool built = count > 0 && db.build(model, list, loops, count, settings, 0.0f);
+    std::printf("  motion database: %u takes, %zu frames\n", db.clip_count, db.frames.size());
+    CHECK(built && db.frames.size() > 10 && db.features.size() == db.frames.size() * anim::kMotionFeatures);
+    if (!built) return;
+    for (u32 k : {0u, static_cast<u32>(db.frames.size() / 2), static_cast<u32>(db.frames.size() - 1)}) {
+        f32 cost = 1.0f;
+        const u32 found = anim::search_motion(db, &db.features[k * anim::kMotionFeatures], &cost);
+        CHECK(cost < 1e-6f && (found == k || cost == 0.0f));
+    }
+    anim::MotionState state;
+    anim::BlendInput inputs[2];
+    for (int i = 0; i < 90; ++i) {
+        const u32 n = anim::step_motion(db, settings, i < 45 ? standing : walking, state, 1.0f / 30.0f, inputs);
+        CHECK(n >= 1 && n <= 2 && inputs[n - 1].clip && inputs[n - 1].ratio >= 0.0f && inputs[n - 1].ratio <= 1.0f);
+        f32 total = 0.0f;
+        for (u32 k = 0; k < n; ++k) total += inputs[k].weight;
+        CHECK(std::fabs(total - 1.0f) < 1e-4f);
+    }
+}
+
 int main() {
     rig_tests();
     graph_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
+    motion_matching_tests(data);
     morph_tests(data);
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
     u32 tested_animation = 0;

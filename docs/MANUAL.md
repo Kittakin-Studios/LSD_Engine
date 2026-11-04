@@ -1036,6 +1036,27 @@ at the object when the clip passes that time in Play.
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the
   Set Anim Parameter node.
 
+**Motion Matching** (built-in locomotion, the technique behind Unreal's Motion Matching and its Game
+Animation Sample): tick **Character > Animation > Motion Matching** and the character's Skeletal Mesh
+animates itself, with no Anim Graph to build. Leave it off to use your own Animation Graph.
+
+- **The clips**: with **Motion Database** empty, it takes every animation FBX next to the character's
+  mesh whose name says locomotion (Idle, Walk, Run, Jog, Sprint, Strafe, Turn, Start, Stop, Pivot).
+  For control, make **New Data Asset > Motion Database**, list the clips (file, take, looping), and
+  pick it in the Character. Animations must be yours to use (your own, or packs licensed for any
+  engine); Epic's sample content is for Unreal only.
+- **How it picks**: every frame of those clips is described by where the feet are and how they and
+  the hips move, and where the character goes over the next second and which way it faces. Every
+  0.1 s (Search Interval) the frame nearest to the current pose plus the path your input asks for is
+  found, and it crossfades there (Blend Time). The capsule still moves the character; the animation
+  follows it. Clips made in place get their movement from the planted foot; root-motion clips use
+  their root (Unreal rigs' `root`) or travelling hips.
+- **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more
+  closely, or stay smoother), Same Clip Window, and the foot / hips bones if their names are unusual
+  (found by name otherwise: foot_l / LeftFoot / CC_Base_L_Foot, pelvis / Hips). Set the Character's
+  Walk Speed near your walk clip's speed (about 1.5 m/s for a walk, 3.5 for a jog) for the best
+  matches. Details > Skeletal Mesh shows what plays: "Motion Matching: Anim_Walk at 0.78 s".
+
 **Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them
 with the rigged FBX. The Mesh Editor lists them under **Morph Targets**: click one to preview it
 (the slider sets the preview weight) and its name is copied. On the Skeletal Mesh, add rows to

@@ -160,6 +160,12 @@ struct Character {
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = turn right, y = look up") char look_action[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "The Input Action that jumps") char jump_action[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "2D side-scroller: Move's x walks along X only (no turning), Jump jumps; the object's Sprite faces the way it walks") bool side_scroller = false;
+    LSD_PROPERTY(Edit, Category = "Animation",
+                 Tooltip = "Built-in locomotion by Motion Matching (like Unreal's Game Animation Sample): the Skeletal Mesh picks the frame of its locomotion clips that best fits where the input takes the character. Off: the Skeletal Mesh's own Anim Graph (or Clip)")
+    bool motion_matching = false;
+    LSD_PROPERTY(Edit, Category = "Animation", Widget = "Asset:MotionDatabase",
+                 Tooltip = "The clips it picks from (a Motion Database); empty: the locomotion clips next to the character's mesh (Idle, Walk, Run, Jog, Strafe, Turn, Start, Stop... in the name)")
+    char motion_database[33] = "";
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Walking speed") f32 walk_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Upward speed of a jump (higher jumps higher)") f32 jump_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground it can walk up") f32 max_slope = 45.0f;

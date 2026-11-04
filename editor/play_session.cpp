@@ -1397,6 +1397,12 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     place_rider(world);  // a driver or rider stays on its seat
     if (animations_ && character_.valid() && dt > 0.0f) {
         animations_->set_param(world, character_, "Speed", std::sqrt(moved.x * moved.x + moved.y * moved.y) / dt);
+        anim::MotionInput motion;  // Motion Matching: where it goes now and where the input takes it
+        motion.velocity = {moved.x / dt, moved.y / dt, 0.0f};
+        const f32 speed = crouched_ ? settings_.crouch_speed : settings_.walk_speed;
+        motion.desired_velocity = aboard ? Vec3{} : Vec3{velocity.x * speed, velocity.y * speed, 0.0f};
+        motion.facing = motion.desired_facing = yaw_;
+        animations_->set_motion_input(character_, motion);
         animations_->set_param(world, character_, "VerticalSpeed", moved.z / dt);
         animations_->set_param(world, character_, "InAir", physics_->character_on_ground() || swimming_ ? 0.0f : 1.0f);
         animations_->set_param(world, character_, "Crouching", crouched_ ? 1.0f : 0.0f);

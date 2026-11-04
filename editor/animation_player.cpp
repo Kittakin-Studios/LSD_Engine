@@ -1,8 +1,12 @@
 #include "animation_player.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/foundation/hash_id.h"
+#include "lsd/foundation/log.h"
 
+#include <cctype>
 #include <cmath>
+#include <initializer_list>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -77,6 +81,107 @@ const char* AnimationPlayer::graph_state(SkinnedCache& cache, const world::Skele
         return anim::state_name(*graph, s.graph);
     }
     return "";
+}
+
+void AnimationPlayer::set_motion_input(world::Entity character, const anim::MotionInput& input) {
+    for (MotionInputs& m : motion_inputs_) {
+        if (m.character == character) {
+            m.input = input;
+            return;
+        }
+    }
+    motion_inputs_.push_back({character, input});
+}
+
+bool AnimationPlayer::motion_readout(world::Entity e, char* out, usize capacity) const {
+    for (const State& s : states_) {
+        if (!s.used || s.entity != e || !s.motion_data || s.motion.clip < 0) continue;
+        std::snprintf(out, capacity, "%s at %.2f s (match %.2f)%s", s.motion_data->names[s.motion.clip], static_cast<f64>(s.motion.time), static_cast<f64>(s.motion.cost),
+                      s.motion.fade < 1.0f && s.motion.previous_clip >= 0 ? ", blending" : "");
+        return true;
+    }
+    return false;
+}
+
+namespace {
+
+bool contains_word(const char* name, std::initializer_list<const char*> words) {
+    char lowered[96];
+    usize i = 0;
+    for (; name[i] && i + 1 < sizeof lowered; ++i) lowered[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(name[i])));
+    lowered[i] = '\0';
+    for (const char* w : words) {
+        if (std::strstr(lowered, w)) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+// The Motion Database `character` asks for, built on `mesh`'s skeleton: its listed clips, or (none
+// listed) every locomotion clip in the mesh's folder (Idle, Walk, Run, Jog, Sprint, Strafe, Turn,
+// Start, Stop, Pivot in the file or take name; one-shots are those that start, stop, turn or pivot).
+const AnimationPlayer::Motion* AnimationPlayer::motion_for(SkinnedCache& cache, const world::SkeletalMesh& mesh, const SkinnedEntry& model, const world::Character& character) {
+    Motion* m = nullptr;
+    for (auto& candidate : motions_) {
+        if (std::strcmp(candidate->mesh, mesh.mesh) == 0 && std::strcmp(candidate->database, character.motion_database) == 0) m = candidate.get();
+    }
+    if (!m) {
+        motions_.push_back(std::make_unique<Motion>());
+        m = motions_.back().get();
+        std::snprintf(m->mesh, sizeof m->mesh, "%s", mesh.mesh);
+        std::snprintf(m->database, sizeof m->database, "%s", character.motion_database);
+    }
+    const asset::AssetRegistry& registry = cache.registry();
+    anim::MotionDatabase settings;
+    u64 key = 1469598103934665603ull;
+    asset::Guid guid;
+    if (m->database[0] && asset::parse_guid(m->database, guid)) {
+        if (const asset::AssetRecord* r = registry.find(guid)) {
+            char path[300];
+            registry.source_path(*r, path, sizeof path);
+            asset::load_data_asset(path, settings);
+            key ^= static_cast<u64>(r->source_time);
+        }
+    }
+    // The clips, each with whether it loops.
+    std::vector<const anim::Clip*> clips;
+    std::vector<char> loops;
+    auto add_set = [&](const char* anim_guid, i32 only, bool looping, bool by_name) {
+        const ClipSet* set = cache.clips(mesh.mesh, anim_guid);
+        if (!set) return;
+        key = (key ^ static_cast<u64>(set->modified) ^ hash64(anim_guid)) * 1099511628211ull;
+        for (u32 c = 0; c < set->count && clips.size() < 64; ++c) {
+            if (only >= 0 && c != static_cast<u32>(only)) continue;
+            clips.push_back(&set->clips[c]);
+            loops.push_back(by_name ? static_cast<char>(!contains_word(set->clips[c].name, {"start", "stop", "turn", "pivot", "land", "jump"})) : static_cast<char>(looping));
+        }
+    };
+    if (settings.clips.count) {
+        for (const anim::MotionClip& c : settings.clips) add_set(c.animation[0] ? c.animation : mesh.mesh, static_cast<i32>(c.clip), c.looping, false);
+    } else if (asset::parse_guid(mesh.mesh, guid)) {
+        const asset::AssetRecord* own = registry.find(guid);
+        for (usize i = 0; own && i < registry.count(); ++i) {
+            const asset::AssetRecord& r = registry.get(i);
+            if (r.type != asset::AssetType::Mesh || std::strcmp(r.folder, own->folder) != 0 || r.guid == own->guid) continue;
+            if (!contains_word(r.name, {"idle", "walk", "run", "jog", "sprint", "strafe", "turn", "start", "stop", "pivot", "locomotion"})) continue;
+            char id[33];
+            asset::to_string(r.guid, id);
+            add_set(id, -1, true, true);
+        }
+    }
+    if (m->key == key && m->key != 0) return m->ok ? m : nullptr;
+    m->key = key;
+    m->settings = settings;
+    bool flags[64] = {};
+    for (usize i = 0; i < loops.size(); ++i) flags[i] = loops[i] != 0;
+    m->ok = m->data.build(*model.model, clips.data(), flags, static_cast<u32>(clips.size()), settings, -radians(facing_yaw(mesh, &model)));
+    if (m->ok) LSD_LOG_INFO("anim", "Motion matching: %u clips, %zu frames", m->data.clip_count, m->data.frames.size());
+    else if (clips.empty()) LSD_LOG_WARN("anim", "Motion matching: no locomotion clips (put Idle / Walk / Run... FBX files next to the character, or list them in a Motion Database)");
+    for (State& s : states_) {  // what was playing indexed the old build
+        if (s.motion_data == &m->data) s.motion = anim::MotionState{};
+    }
+    return m->ok ? m : nullptr;
 }
 
 const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
@@ -237,6 +342,27 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         if (!state) continue;  // more than 256 animated objects: the rest stay still
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+
+        // Motion Matching: the Character (this object or a parent) asks for it; it picks the frames.
+        const world::Character* character = nullptr;
+        world::Entity owner;
+        for (world::Entity p = e; p.valid() && !character; p = world.parent(p)) {
+            if (const auto* c = world.get<world::Character>(p); c && c->motion_matching) character = c, owner = p;
+        }
+        if (const Motion* motion = character ? motion_for(cache, *mesh, *model, *character) : nullptr) {
+            anim::MotionInput input;
+            input.facing = input.desired_facing = std::atan2(m.at(1, 0), m.at(0, 0));  // standing still where it faces
+            for (const MotionInputs& mi : motion_inputs_) input = mi.character == owner ? mi.input : input;
+            state->motion_data = &motion->data;
+            anim::BlendInput* inputs = state->inputs;
+            const u32 n = anim::step_motion(motion->data, motion->settings, input, state->motion, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
+            state->input_count = n;
+            state->pose.sample_blend(*model->model, inputs, n);
+            apply_ik(world, *state, *model);
+            update_morphs(*state, *mesh, *model);
+            continue;
+        }
+        state->motion_data = nullptr;
 
         // Animation Graph: states, blend spaces and crossfades pick the clips.
         if (const anim::AnimGraph* graph = mesh->anim_graph[0] ? cache.graph(mesh->anim_graph) : nullptr) {
