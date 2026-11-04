@@ -1,0 +1,22 @@
+{
+  "guid": "c88869e2a3b0e4791ef7eaab84f38fea",
+  "type": "Data",
+  "tags": "",
+  "import_scale": 1,
+  "normals": 1,
+  "smoothing_angle": 30,
+  "lod1_screen_size": 0.119999997,
+  "lod2_screen_size": 0.0599999987,
+  "lod3_screen_size": 0.0299999993,
+  "notifies": [],
+  "sockets": [],
+  "max_size": 4096,
+  "volume": 1,
+  "pitch": 1,
+  "looping": false,
+  "stream": false,
+  "sound_class": "",
+  "attenuation": "",
+  "concurrency": "",
+  "subtitle": ""
+}

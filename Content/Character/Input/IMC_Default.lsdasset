@@ -1,0 +1,92 @@
+{
+  "type": "InputMappingContext",
+  "data": {
+    "priority": 0,
+    "mappings": [
+      {
+        "action": "ed2a289fa8fc85e30a7decb691beb51c",
+        "key": "W",
+        "axis": 1,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "ed2a289fa8fc85e30a7decb691beb51c",
+        "key": "S",
+        "axis": 1,
+        "scale": -1,
+        "dead_zone": 0
+      },
+      {
+        "action": "ed2a289fa8fc85e30a7decb691beb51c",
+        "key": "D",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "ed2a289fa8fc85e30a7decb691beb51c",
+        "key": "A",
+        "axis": 0,
+        "scale": -1,
+        "dead_zone": 0
+      },
+      {
+        "action": "ed2a289fa8fc85e30a7decb691beb51c",
+        "key": "Gamepad Left Stick",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "d41c977222dd0c34d6f074b93b0b4915",
+        "key": "Mouse XY",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "d41c977222dd0c34d6f074b93b0b4915",
+        "key": "Gamepad Right Stick",
+        "axis": 0,
+        "scale": 12,
+        "dead_zone": 0
+      },
+      {
+        "action": "885c85e1badeb1c4ec360b3c798dd587",
+        "key": "Space",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "885c85e1badeb1c4ec360b3c798dd587",
+        "key": "Gamepad Face Bottom",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "8afe5ffabbe3c4b8f6ae872b0a5bc181",
+        "key": "Mouse XY",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "ccd7c596c5e18ce30974545f645b5643",
+        "key": "Left Shift",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "abda2407c96cfa0cbd69558134430d17",
+        "key": "C",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      }
+    ]
+  }
+}
