@@ -24,6 +24,7 @@
 #include "lua_debugger.h"
 #include "mesh_editor.h"
 #include "mesh_materials.h"
+#include "assistant.h"
 #include "prefab_editor.h"
 #include "timeline_editor.h"
 #include "source_control.h"
@@ -4939,6 +4940,10 @@ void draw_menu_bar(EditorState& s) {
         ImGui::Separator();
         ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
         ImGui::SetItemTooltip("Breakpoints, stepping, call stack, locals and watch for Lua scripts (visual scripts: breakpoints on nodes)");
+        if (s.settings.assistant_enabled) {
+            ImGui::MenuItem("LSD Assistant", nullptr, &s.show_assistant);
+            ImGui::SetItemTooltip("Chat with your own AI model that knows LSD_Engine: questions, plans, scripts it can write into the project");
+        }
         ImGui::MenuItem("Remote Console", nullptr, &s.show_remote_console);
         ImGui::SetItemTooltip("Sends console commands to a game running on this PC with -remote");
         ImGui::EndMenu();
@@ -5279,6 +5284,7 @@ struct Plugin {
 };
 constexpr Plugin kPlugins[] = {
     {"Claude MCP", "Code with Claude Code directly in the editor", &EditorSettings::mcp_enabled, draw_claude_mcp},
+    {"LSD Assistant", "An AI game studio in the editor (your own model)", &EditorSettings::assistant_enabled, assistant::draw_settings},
 };
 
 void draw_plugins(EditorState& s) {
@@ -5588,6 +5594,7 @@ void draw_editor(EditorState& s) {
     draw_mesh_editor(s);
     draw_prefab_editor(s);
     debugger::draw_window(s, &s.show_debugger);
+    assistant::draw_window(s, &s.show_assistant);
     draw_memory_window(s);
     draw_ui_editor(s);
     took(4);

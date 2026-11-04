@@ -56,6 +56,15 @@ struct EditorSettings {
     // Plugins (Editor Preferences > Plugins), not in the Settings list.
     LSD_PROPERTY(Save) bool mcp_enabled = false;  // Claude MCP: listen for tools/mcp/lsd_mcp on 127.0.0.1
     LSD_PROPERTY(Save) u32 mcp_port = 7780;
+    // LSD Assistant (Tools > LSD Assistant): the model it talks to. Saved per user in Saved/ (never in
+    // the project or Git); an empty key falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY.
+    LSD_PROPERTY(Save) bool assistant_enabled = true;
+    LSD_PROPERTY(Save) u32 assistant_provider = 0;  // 0 Anthropic (Claude), 1 OpenAI-compatible (OpenAI, OpenRouter, Ollama, LM Studio...)
+    LSD_PROPERTY(Save) char assistant_endpoint[256] = "";  // empty: the provider's default
+    LSD_PROPERTY(Save) char assistant_model[96] = "claude-opus-5-5";
+    LSD_PROPERTY(Save) char assistant_key[256] = "";
+    LSD_PROPERTY(Save) u32 assistant_effort = 1;  // Claude: 0 low, 1 medium, 2 high
+    LSD_PROPERTY(Save) u32 assistant_role = 0;    // which studio role answers (assistant.cpp's list)
     // Workspace tabs under the menu bar (Blender's Layout / Modeling / Shading...).
     LSD_PROPERTY(Save) char workspace[32] = "Layout";
     LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;
