@@ -1743,6 +1743,33 @@ void ScriptSystem::hook(lua_State* L, lua_Debug* ar) {
     self->update_hook();
 }
 
+bool ScriptSystem::line_hooks_on() { return g_debugged != nullptr; }
+
+bool ScriptSystem::foreign_line(const char* source, i32 line, i32 (*depth)(void*), void (*fill)(void*, DebugStop&), void* user) {
+    ScriptSystem* self = g_debugged;
+    if (!self || self->in_debugger_) return false;
+    if (self->trace_) self->trace_(self->trace_user_, source, line);
+    if (!self->debugger_) return false;
+    // shortcut: step depths are per language (a JS step out into its Lua caller stops at the next marker); share a depth if mixed stepping matters
+    bool stop = self->stepping_ == DebugAction::StepInto;
+    if (self->stepping_ == DebugAction::StepOver) stop = depth(user) <= self->step_depth_;
+    else if (self->stepping_ == DebugAction::StepOut) stop = depth(user) < self->step_depth_;
+    for (u32 i = 0; i < self->breakpoint_count_ && !stop; ++i) {
+        stop = self->breakpoints_[i].line == line && same_source(self->breakpoints_[i].source, source);
+    }
+    if (!stop) return false;
+    static DebugStop info;  // large; one stop at a time
+    info = DebugStop{};
+    fill(user, info);
+    self->in_debugger_ = true;
+    const DebugAction action = self->debugger_(self->debugger_user_, info);
+    self->in_debugger_ = false;
+    self->stepping_ = action;
+    self->step_depth_ = depth(user);
+    self->update_hook();
+    return true;
+}
+
 void ScriptSystem::update_hook() {
     if (!lua_) return;
     const bool on = trace_ || (debugger_ && (breakpoint_count_ || stepping_ != DebugAction::Continue));
@@ -1795,7 +1822,7 @@ bool ScriptSystem::load(Instance& instance) {
     if (js::is_js(instance.path)) {
         if (!js_) js_ = js::create(lua_);
         lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
-        instance.failed = !js::load(js_, static_cast<u32>(&instance - instances_), instance.path);
+        instance.failed = !js::load(js_, static_cast<u32>(&instance - instances_), instance.path, debuggable());
         lua_pop(lua_, 1);
         return !instance.failed;
     }

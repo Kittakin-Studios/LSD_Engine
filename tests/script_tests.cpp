@@ -835,6 +835,96 @@ static void test_debugger() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// JavaScript breakpoints: line markers keep tricky code working (same result as without them), a
+// breakpoint stops on its line with self's fields, a step goes to the next statement.
+struct JsDebugLog {
+    i32 lines[8];
+    u32 count = 0;
+    bool saw_self = false;
+    bool top_frame_named = false;
+};
+static script::DebugAction on_js_stop(void* user, const script::DebugStop& stop) {
+    auto& log = *static_cast<JsDebugLog*>(user);
+    if (log.count < 8) log.lines[log.count++] = stop.frames[0].line;
+    log.top_frame_named = log.top_frame_named || std::strcmp(stop.frames[0].function, "on_start") == 0;
+    for (u32 i = 0; i < stop.frames[0].local_count; ++i) {
+        if (std::strcmp(stop.frames[0].locals[i].name, "self.speed") == 0 && std::strcmp(stop.frames[0].locals[i].value, "5") == 0) log.saw_self = true;
+    }
+    return log.count == 1 ? script::DebugAction::StepOver : script::DebugAction::Continue;
+}
+
+static void test_js_debugger() {
+    const char* lines[] = {
+        "\"use strict\";",                                       // 1
+        "var properties = { speed: 5 };",                         // 2
+        "const table = {",                                        // 3
+        "  a: 1,",                                                // 4
+        "  b: [1, 2,",                                            // 5
+        "      3],",                                              // 6
+        "};",                                                     // 7
+        "class Counter {",                                        // 8
+        "  constructor() { this.n = 0; }",                        // 9
+        "  add(k) {",                                             // 10
+        "    this.n += k;",                                       // 11
+        "    return this;",                                       // 12
+        "  }",                                                    // 13
+        "}",                                                      // 14
+        "function on_start(self) {",                              // 15
+        "  let total = 0;",                                       // 16
+        "  const re = /a{2}\\/b/g;",                              // 17
+        "  const s = `x ${ { k: 1 }.k } y",                       // 18
+        "  z`;",                                                  // 19
+        "  for (let i = 0; i < 3; i++) {",                        // 20
+        "    total += i;",                                        // 21
+        "  }",                                                    // 22
+        "  if (total > 1)",                                       // 23
+        "    total += 10;",                                       // 24
+        "  else",                                                 // 25
+        "    total -= 10;",                                       // 26
+        "  switch (total) {",                                     // 27
+        "    case 13:",                                           // 28
+        "      total += 1;",                                      // 29
+        "      break;",                                           // 30
+        "    default:",                                           // 31
+        "      total = -1;",                                      // 32
+        "  }",                                                    // 33
+        "  const g = () => {",                                    // 34
+        "    return 3;",                                          // 35
+        "  };",                                                   // 36
+        "  const c = new Counter()",                              // 37
+        "    .add(1)",                                            // 38
+        "    .add(2);",                                           // 39
+        "  // 14 + 3 + 3 + 9 + 3 + 100",                          // 40
+        "  const result = total + c.n + table.b.length + s.length + g() + (re.test('aa/b') ? 100 : 0);",  // 41
+        "  lsd.set_position(self.entity, result, 0, 0);",         // 42
+        "}",                                                      // 43
+    };
+    std::string text;
+    for (const char* l : lines) text += std::string(l) + "\n";
+    write(LSD_TEST_TEMP_DIR "/debugged.js", text.c_str());
+    HeapAllocator heap("js debugger");
+    for (int debugged = 0; debugged < 2; ++debugged) {
+        World w(heap);
+        const Entity e = w.create("E");
+        std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "file:debugged.js");
+        JsDebugLog log;
+        script::ScriptSystem scripts;
+        if (debugged) {
+            scripts.set_debugger(on_js_stop, &log);
+            scripts.set_breakpoint(LSD_TEST_TEMP_DIR "/debugged.js", 16, true);
+        }
+        scripts.start(w, {}, path_of, nullptr);
+        CHECK(scripts.error_count() == 0);
+        CHECK(w.get<Transform>(e)->position.x == 132.0f);  // the same answer with and without line markers
+        if (debugged) {
+            CHECK(log.count == 2 && log.lines[0] == 16 && log.lines[1] == 17);  // stopped at 16, stepped to 17
+            CHECK(log.saw_self && log.top_frame_named);
+        }
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Material graphs compile to one shader function; problems name the node.
 static void test_material_graph() {
     using namespace lsd::script;
@@ -1115,6 +1205,7 @@ int main() {
     test_user_types();
     test_custom_nodes();
     test_debugger();
+    test_js_debugger();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

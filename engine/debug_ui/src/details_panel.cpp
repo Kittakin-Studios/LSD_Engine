@@ -293,7 +293,8 @@ bool draw_property(const reflect::Property& p, u8* object, const u8* defaults) {
         case reflect::FieldType::String:
             changed = ImGui::InputText("##value", reinterpret_cast<char*>(field), p.size, read_only ? ImGuiInputTextFlags_ReadOnly : 0);
             break;
-        case reflect::FieldType::Struct: break;
+        case reflect::FieldType::Struct:
+        case reflect::FieldType::Array: break;  // drawn by their own rows
     }
     if (read_only) ImGui::EndDisabled();
     changed |= property_menu(p, field, default_field);

@@ -20,7 +20,7 @@ everything later depends on. Anything a small team does not need to ship a first
 - [x] Reflection code generator (`LSD_STRUCT` / `LSD_PROPERTY`) [UHT]
 - [x] Text serialization with versioning (missing keys keep defaults, unknown keys skipped)
 - [x] Details panel generated from reflection, colour pickers
-- [ ] Linux / Clang build verified (`linux-clang` preset never run since milestone 0)
+- [x] Linux / Clang build verified: `linux-clang` builds with 0 warnings and its 15 test suites pass (Ubuntu 26.04 in WSL, Clang 21, CMake 4.2; packages in README); fixed on the way: LuaJIT's external unwinding, Jolt's unused Vulkan compute shaders off, the MCP bridge's JSON type, Clang-only warnings. Not run there yet: the editor window itself (WSL has no GPU driver set up here)
 - [x] Reflection: Vec3 (one-row X/Y/Z), type defaults (new components, later reset-to-default), enums as dropdowns (`Widget = "Choice:..."`), arrays (`List<T, N>`), asset references (`Widget = "Asset:<Type>"`); no Quat: rotations are Euler degrees by design
 - [x] Memory tracking per allocator shown in a debug panel [memreport]: every heap / arena allocator registers itself (in use, peak or capacity, live blocks), Window > Memory (sortable, plus process RAM and the video memory budget), `memreport` to the log
 
@@ -259,7 +259,7 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - [x] `.js` Script assets: the Script component takes `.js` as well as `.lua`, on QuickJS-ng (already used by UI documents); the same events and the same `lsd` API [Puerts / UnrealJS-style scripting]
 - [x] One binding list (JavaScript's `lsd` is built from the Lua `lsd` table's functions, so every Lua function, prelude ones too, is in JS): the `lsd` functions are declared once and bound to Lua and JavaScript from it, so the two cannot drift apart
 - [x] Hot reload of `.js` files (state kept in `self`), errors per script like Lua
-- [~] Debugging (done: errors with the JS stack, file, line and column; console.log; needs breakpoints): errors and logs with file and line; breakpoints later (QuickJS has no debugger of its own)
+- [x] Debugging: errors with the JS stack, file, line and column; console.log; breakpoints, steps and the call stack in Tools > Lua Debugger (QuickJS has no debugger: `js_instrument.cpp` puts `__lsd_line(line, self)` before each statement that starts a line, on that line, when Play runs with the editor's debugger attached; `ScriptSystem::foreign_line` shares the Lua breakpoints / steps / trace); Locals: self and its fields only (QuickJS cannot read a frame's locals)
 - [x] Nodes from JavaScript (`var nodes = { fn: { inputs, output, pure } }` in any .js; `lsd.js_call` runs them in a shared context per file, reloaded on save): functions a `.js` file exports with a node description appear in the visual script menu (like ScriptNode assets), so designers wire code-written logic without code
 
 ## v2 (after the vertical slice)

@@ -283,8 +283,8 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
                 const u32 index = tri[i];
                 corner_vertex.push_back(mesh->vertex_indices.data[index]);
                 const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, index);
-                const ufbx_vec3 n = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, index) : ufbx_vec3{0, 0, 1};
-                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, index) : ufbx_vec2{0, 0};
+                const ufbx_vec3 n = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, index) : ufbx_vec3{{{0, 0, 1}}};
+                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, index) : ufbx_vec2{{{0, 0}}};
                 rhi::SkinnedVertex v{};
                 const bool weighted = skin->vertices.data[mesh->vertex_indices.data[index]].num_weights > 0;
                 const Vec3 pos = transform_point(weighted ? into_main : unweighted, {static_cast<f32>(p.x), static_cast<f32>(p.y), static_cast<f32>(p.z)});

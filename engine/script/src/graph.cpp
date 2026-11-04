@@ -493,7 +493,8 @@ std::string literal(PinType type, const char* value) {
             if (std::strcmp(value, "true") == 0 || std::strcmp(value, "false") == 0) return value;
             return lua_string(value);
         }
-        case PinType::Exec: break;
+        case PinType::Exec:
+        case PinType::Audio: break;  // an unconnected sound input is no sound
     }
     return "nil";
 }

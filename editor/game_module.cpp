@@ -54,12 +54,6 @@ u32 g_copy_number = 0;
 std::thread g_compile;
 std::atomic<bool> g_compiling{false};
 
-i64 file_stamp(const fs::path& p, bool& exists) {
-    std::error_code error;
-    exists = fs::exists(p, error);
-    return exists ? static_cast<i64>(fs::last_write_time(p, error).time_since_epoch().count()) : 0;
-}
-
 void* open_library(const fs::path& path) {
 #ifdef _WIN32
     return LoadLibraryW(path.wstring().c_str());

@@ -851,8 +851,14 @@ function on_update(self, dt) {
 ```
 
 Tables you get back (`lsd.get`, `lsd.game_instance()`) are copies: change them and hand them back
-with `lsd.set` / `lsd.save_game`. `lsd.after(2, () => ...)` takes a JS function. There is no
-debugger for JS yet (use `console.log`); the Lua Debugger lists Lua files only.
+with `lsd.set` / `lsd.save_game`. `lsd.after(2, () => ...)` takes a JS function.
+
+**Debugging JavaScript**: Tools > Lua Debugger lists `.js` scripts too. Breakpoints, Continue, Step
+Over / Into / Out and the call stack work as for Lua; **Locals** shows `self` and its fields (QuickJS
+has no access to a function's other locals: put a value on `self`, or `console.log` it). Breakpoints
+stop on lines that start a statement; on a line that continues one (a `.then(...)` chain, an object
+literal's fields) the stop comes at the next statement. Only Play from the editor is instrumented; a
+packaged game runs the scripts as written.
 
 ## 10. Visual scripting
 

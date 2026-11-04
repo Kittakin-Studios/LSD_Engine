@@ -39,7 +39,9 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 
 ## Build, run, test
 
-- Windows, MSVC, VS Code + CMake Tools, preset **`windows-msvc`** (Ninja Multi-Config). Linux: `linux-clang`.
+- Windows, MSVC, VS Code + CMake Tools, preset **`windows-msvc`** (Ninja Multi-Config). Linux: `linux-clang`
+  (verified in WSL Ubuntu: sync the sources to `~/lsd` with rsync, `cmake --preset linux-clang`, build, `ctest`;
+  keep it at 0 warnings too, Clang flags things MSVC does not).
 - `cmake --preset windows-msvc` then `cmake --build --preset windows-msvc` (Debug);
   Release: `cmake --build --preset windows-msvc --config Release` (packaging uses it).
 - Tests: `ctest --preset windows-msvc` (15 suites, framework-free, in `tests/`). Keep them passing.
@@ -138,7 +140,7 @@ every editor button / menu item / checkbox a tooltip (`with_tip(ImGui::Button(..
 | 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Exit test works |
 | 5 | Content editors: materials + material graphs, animation + anim graphs, audio, particles | Exit test works |
 | 6 | Vertical slice | Done: exit test works on this PC (package runs from another folder); every planned item in, some partial (BACKLOG [~]) |
-| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | Exit test works. Done: C / C++ scripts and components (`LSD_COMPONENT`), C / C++ and JavaScript nodes, `.js` scripts, every lsd.* command from C / C++ (`lsd_lua_call` / `api()`), hot reload keeping properties, VS Code debugging; open: JavaScript breakpoints (QuickJS has no debugger) |
+| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | Exit test works. Done: C / C++ scripts and components (`LSD_COMPONENT`), C / C++ and JavaScript nodes, `.js` scripts, every lsd.* command from C / C++ (`lsd_lua_call` / `api()`), hot reload keeping properties, VS Code debugging, JavaScript breakpoints (line markers, `engine/script/src/js_instrument.cpp`) |
 
 Milestone 6 has: packaging + game mode, save games, sky / height fog / post-process volume, navmesh +
 Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,

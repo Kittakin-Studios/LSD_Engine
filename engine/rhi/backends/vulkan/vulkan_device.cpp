@@ -12,6 +12,11 @@
 #include <cstring>
 #include <new>
 
+// Vulkan's idiom `VkXxxInfo info{VK_STRUCTURE_TYPE_...}` zeroes the rest (pNext, flags...) on purpose.
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+
 #if LSD_VULKAN_HAVE_SPIRV
 #include "triangle_vs.spv.h"
 #include "triangle_ps.spv.h"

@@ -1505,7 +1505,6 @@ int main(int argc, char** argv) {
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* connect_arg = nullptr; // -connect=<host[:port]>: multiplayer, join that server
-    bool server_arg = false;           // -server: multiplayer, host (a listen server)
     bool dedicated_arg = false;        // -dedicated: host without a player of its own
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
@@ -1528,8 +1527,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
         else if (std::strncmp(argv[i], "-connect=", 9) == 0) connect_arg = argv[i] + 9;
-        else if (std::strcmp(argv[i], "-server") == 0) server_arg = true;
-        else if (std::strcmp(argv[i], "-dedicated") == 0) server_arg = dedicated_arg = true;
+        else if (std::strcmp(argv[i], "-server") == 0) {}  // multiplayer host (a listen server): already the default without -connect
+        else if (std::strcmp(argv[i], "-dedicated") == 0) dedicated_arg = true;
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
         else if (std::strcmp(argv[i], "-remote") == 0) remote_arg = lsd::editor::remote::kDefaultPort;
         else if (std::strncmp(argv[i], "-remote=", 8) == 0) remote_arg = std::atoi(argv[i] + 8);
@@ -1819,7 +1818,7 @@ int main(int argc, char** argv) {
     debug_context = {device, window, &state};
     register_script_nodes(registry);  // with the game code's nodes (loaded before the startup level)
     play.scripts().set_native_module(&lsd::editor::game_module::module());
-    lsd::editor::debugger::attach(play.scripts());
+    if (!game_mode) lsd::editor::debugger::attach(play.scripts());  // a packaged game has no debugger (and runs scripts uninstrumented)
     lsd::editor::debugger::set_frame_callback(debug_frame, &debug_context);
     lsd::console::add_command("lua", [](void* user, const char* args) {
         std::string code(args);

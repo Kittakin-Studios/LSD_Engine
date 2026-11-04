@@ -38,12 +38,14 @@ namespace {
 struct Json {
     enum class Type { Null, Bool, Number, String, Array, Object } type = Type::Null;
     std::string text;  // a string's value, or a number / true / false as written
-    std::vector<std::pair<std::string, Json>> members;  // objects
-    std::vector<Json> items;                            // arrays
+    // Objects: keys[i] names values[i] (two vectors: a pair of a type still being defined is not allowed by libstdc++).
+    std::vector<std::string> keys;
+    std::vector<Json> values;
+    std::vector<Json> items;  // arrays
 
     const Json* get(const char* key) const {
-        for (const auto& m : members) {
-            if (m.first == key) return &m.second;
+        for (size_t i = 0; i < keys.size(); ++i) {
+            if (keys[i] == key) return &values[i];
         }
         return nullptr;
     }
@@ -150,7 +152,8 @@ struct Parser {
                         ok = false;
                         break;
                     }
-                    v.members.emplace_back(std::move(key), value(depth + 1));
+                    v.keys.push_back(std::move(key));
+                    v.values.push_back(value(depth + 1));
                 } else {
                     v.items.push_back(value(depth + 1));
                 }
@@ -226,13 +229,13 @@ bool connect_editor() {
 // Sends `line` and reads the reply up to its closing "." line. False if the connection broke.
 bool exchange(const std::string& line, std::string& reply, bool& timed_out) {
     for (size_t sent = 0; sent < line.size();) {
-        const int n = ::send(g_editor, line.data() + sent, static_cast<int>(line.size() - sent), 0);
+        const int n = static_cast<int>(::send(g_editor, line.data() + sent, static_cast<int>(line.size() - sent), 0));  // ssize_t on POSIX
         if (n <= 0) return false;
         sent += static_cast<size_t>(n);
     }
     char chunk[4096];
     for (;;) {
-        const int n = ::recv(g_editor, chunk, sizeof chunk, 0);
+        const int n = static_cast<int>(::recv(g_editor, chunk, sizeof chunk, 0));
         if (n <= 0) {
 #ifdef _WIN32
             timed_out = n < 0 && WSAGetLastError() == WSAETIMEDOUT;

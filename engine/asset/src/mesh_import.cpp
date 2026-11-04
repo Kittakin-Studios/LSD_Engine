@@ -152,8 +152,8 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
                         const ufbx_vec3 p = ufbx_transform_position(&to_world, ufbx_get_vertex_vec3(&mesh->vertex_position, index));
                         const ufbx_vec3 nrm = mesh->vertex_normal.exists
                             ? ufbx_transform_direction(&normal_to_world, ufbx_get_vertex_vec3(&mesh->vertex_normal, index))
-                            : ufbx_vec3{0, 0, 1};
-                        ufbx_vec2 uv{0, 0};
+                            : ufbx_vec3{{{0, 0, 1}}};
+                        ufbx_vec2 uv{{{0, 0}}};
                         if (mesh->vertex_uv.exists) uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, index);
                         soup->push_back(make_vertex(static_cast<f32>(p.x) * scale, static_cast<f32>(p.y) * scale, static_cast<f32>(p.z) * scale,
                                                     static_cast<f32>(nrm.x), static_cast<f32>(nrm.y), static_cast<f32>(nrm.z),

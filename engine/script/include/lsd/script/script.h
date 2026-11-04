@@ -304,6 +304,13 @@ public:
     void clear_breakpoints();
     bool has_breakpoint(const char* source, i32 line) const;
     void set_line_trace(LineTrace trace, void* user);
+    // A line of a JavaScript script runs (its line markers call this): the same breakpoints, steps and
+    // trace as Lua lines. `depth` gives its call depth (asked only while stepping or stopping), `fill`
+    // writes the stop. True when it stopped (the handler ran). Cheap when nothing is being debugged.
+    static bool foreign_line(const char* source, i32 line, i32 (*depth)(void* user), void (*fill)(void* user, DebugStop& stop), void* user);
+    static bool line_hooks_on();  // breakpoints, a step or a trace are set: foreign_line has work to do
+    // Whether scripts loaded from now on get line markers (a debugger is attached).
+    bool debuggable() const { return debugger_ != nullptr; }
 
     // C / C++ behaviours (Native Script components) from a game module; they start, update and get
     // events with the Lua scripts. Before the module's DLL is unloaded or swapped: stop_natives(),
