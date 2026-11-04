@@ -302,7 +302,7 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Each Static Mesh's world matrix and mesh worked out once a frame and shared by every pass: render CPU 3.3 -> 1.95 ms at 3000 objects
 - [x] Navmesh reused between Plays while its inputs hash the same (Play start 191 -> 5 ms at 3000 objects)
 - [x] GPU timings: timestamp queries in D3D12 and OpenGL (read a frame or two later, no stall), `stat dump` prints shadows / scene / post / UI (3000 objects: 1.3 ms of GPU on this PC; post is the largest part)
-- [ ] GPU-driven culling
+- [~] GPU-driven culling: Instanced Static Meshes with 32+ copies are culled on the GPU (`r.GPUCulling`, on): a compute pass tests each copy's box against the view frustum (`rhi::frustum_planes` / `instance_visible`, the same test on the CPU for the tests), packs the visible rows, and the draw runs through indirect arguments per batch of 256 (D3D12 ExecuteIndirect, OpenGL glDrawElementsIndirect; Vulkan has no meshes yet); needs occlusion culling (a Hi-Z depth pyramid), the same for shadow passes and for ordinary objects (one GPU scene buffer), LOD selection on the GPU
 
 ## Vehicles, transports, movers
 

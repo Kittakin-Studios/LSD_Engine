@@ -416,6 +416,47 @@ constexpr char kShadowFragmentShader[] = R"(#version 460 core
 void main() {}
 )";
 
+// GPU-driven culling (MeshDraw::gpu_cull): pass 0 clears the visible count, pass 1 tests every
+// instance's box against the frustum (the same test as rhi::instance_visible) and packs the visible
+// rows, pass 2 writes one indirect draw per batch of 256 (the instanced shader's uniform block size).
+constexpr char kCullComputeShader[] = R"(#version 460 core
+layout(local_size_x = 64) in;
+layout(std140, binding = 4) uniform Cull { vec4 planes[6]; vec4 box_min; vec4 box_max; uvec4 info; };  // info: count, index count, batches
+layout(std430, binding = 0) readonly buffer RowsIn { vec4 rows_in[]; };
+layout(std430, binding = 1) writeonly buffer RowsOut { vec4 rows_out[]; };
+layout(std430, binding = 2) buffer Args { uint visible; uint pad0, pad1, pad2; uint args[]; };  // then 5 uints per batch
+uniform int u_pass;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (u_pass == 0) {
+        if (i == 0u) visible = 0u;
+        return;
+    }
+    if (u_pass == 2) {
+        if (i >= info.z) return;
+        int n = clamp(int(visible) - int(i * 256u), 0, 256);
+        args[i * 5u] = info.y;
+        args[i * 5u + 1u] = uint(n);
+        args[i * 5u + 2u] = 0u;
+        args[i * 5u + 3u] = 0u;
+        args[i * 5u + 4u] = 0u;
+        return;
+    }
+    if (i >= info.x) return;
+    vec4 r0 = rows_in[i * 3u], r1 = rows_in[i * 3u + 1u], r2 = rows_in[i * 3u + 2u];
+    vec3 c = (box_min.xyz + box_max.xyz) * 0.5, e = (box_max.xyz - box_min.xyz) * 0.5;
+    vec3 wc = vec3(dot(r0.xyz, c) + r0.w, dot(r1.xyz, c) + r1.w, dot(r2.xyz, c) + r2.w);
+    vec3 we = vec3(dot(abs(r0.xyz), e), dot(abs(r1.xyz), e), dot(abs(r2.xyz), e));
+    for (int p = 0; p < 6; ++p) {
+        if (dot(planes[p].xyz, wc) + planes[p].w < -dot(abs(planes[p].xyz), we)) return;
+    }
+    uint slot = atomicAdd(visible, 1u);
+    rows_out[slot * 3u] = r0;
+    rows_out[slot * 3u + 1u] = r1;
+    rows_out[slot * 3u + 2u] = r2;
+}
+)";
+
 constexpr char kLineVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec4 a_color;
@@ -790,7 +831,13 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLGETTEXTUREIMAGEPROC, glGetTextureImage) \
     X(PFNGLNAMEDFRAMEBUFFERDRAWBUFFERPROC, glNamedFramebufferDrawBuffer) \
     X(PFNGLNAMEDFRAMEBUFFERREADBUFFERPROC, glNamedFramebufferReadBuffer) \
-    X(PFNGLVERTEXARRAYATTRIBIFORMATPROC, glVertexArrayAttribIFormat)
+    X(PFNGLVERTEXARRAYATTRIBIFORMATPROC, glVertexArrayAttribIFormat) \
+    X(PFNGLDISPATCHCOMPUTEPROC, glDispatchCompute) \
+    X(PFNGLMEMORYBARRIERPROC, glMemoryBarrier) \
+    X(PFNGLBINDBUFFERRANGEPROC, glBindBufferRange) \
+    X(PFNGLDRAWELEMENTSINDIRECTPROC, glDrawElementsIndirect) \
+    X(PFNGLUNIFORM1IPROC, glUniform1i) \
+    X(PFNGLBINDBUFFERPROC, glBindBuffer)
 
 struct GlFunctions {
 #define LSD_GL_DECLARE(type, name) type name = nullptr;
@@ -866,6 +913,10 @@ public:
         }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
         if (param_ubo_) gl_.glDeleteBuffers(1, &param_ubo_);
+        for (GLuint* b : {&cull_in_, &cull_out_, &cull_args_, &cull_ubo_}) {
+            if (*b) gl_.glDeleteBuffers(1, b);
+        }
+        if (cull_program_) gl_.glDeleteProgram(cull_program_);
         if (ui_ibo_) gl_.glDeleteBuffers(1, &ui_ibo_);
         if (ui_vao_) gl_.glDeleteVertexArrays(1, &ui_vao_);
         for (MaterialShader& m : material_shaders_) {
@@ -1090,6 +1141,7 @@ public:
     }
 
     bool render_targets_flipped() const override { return true; }  // GL textures start at the bottom row
+    bool supports_gpu_culling() const override { return cull_program_ != 0; }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         // GL's window origin is bottom-left; the RHI's is top-left.
@@ -1155,6 +1207,38 @@ public:
         glDepthMask(GL_TRUE);
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
+        // GPU culling: the instances go through the compute passes first; the draw below reads what they keep.
+        const bool culled = instanced && draw.gpu_cull && cull_program_ && draw.instance_count <= kMaxCulledInstances;
+        const u32 batches = culled ? (draw.instance_count + kMaxJoints - 1) / kMaxJoints : 0;
+        if (culled) {
+            struct {
+                f32 planes[6][4];
+                f32 box_min[4], box_max[4];
+                u32 info[4];
+            } cull{};
+            frustum_planes(draw.mvp, cull.planes);
+            std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
+            std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
+            cull.info[0] = draw.instance_count;
+            cull.info[1] = draw.index_count;
+            cull.info[2] = batches;
+            gl_.glNamedBufferSubData(cull_ubo_, 0, sizeof cull, &cull);
+            gl_.glNamedBufferSubData(cull_in_, 0, static_cast<GLsizeiptr>(draw.instance_count) * 48, draw.instance_rows);
+            gl_.glUseProgram(cull_program_);
+            gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 4, cull_ubo_);
+            gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, cull_in_);
+            gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cull_out_);
+            gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cull_args_);
+            gl_.glUniform1i(cull_pass_, 0);
+            gl_.glDispatchCompute(1, 1, 1);
+            gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            gl_.glUniform1i(cull_pass_, 1);
+            gl_.glDispatchCompute((draw.instance_count + 63) / 64, 1, 1);
+            gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            gl_.glUniform1i(cull_pass_, 2);
+            gl_.glDispatchCompute((batches + 63) / 64, 1, 1);
+            gl_.glMemoryBarrier(GL_UNIFORM_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+        }
         const MaterialShader* graph = draw.wireframe || instanced ? nullptr : lookup_material(draw.material_shader);
         const MeshProgram& program = instanced ? instanced_program_ : graph ? (skinned ? graph->skinned : graph->mesh) : skinned ? skinned_program_ : mesh_;
         if (skinned) upload_joints(draw.joint_rows, draw.joint_count);
@@ -1198,7 +1282,15 @@ public:
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(vao, ib->id);
         gl_.glBindVertexArray(vao);
-        if (instanced) {  // batches of kMaxJoints instances through the joint buffer
+        if (culled) {  // each batch's visible rows as the instanced uniform block, its count from the GPU
+            gl_.glBindBuffer(GL_DRAW_INDIRECT_BUFFER, cull_args_);
+            for (u32 b = 0; b < batches; ++b) {
+                gl_.glBindBufferRange(GL_UNIFORM_BUFFER, 2, cull_out_, static_cast<GLintptr>(b) * kMaxJoints * 48, kMaxJoints * 48);
+                gl_.glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, reinterpret_cast<const void*>(static_cast<uintptr_t>(16 + b * 20)));
+            }
+            gl_.glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+            gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 2, joint_ubo_);
+        } else if (instanced) {  // batches of kMaxJoints instances through the joint buffer
             for (u32 first = 0; first < draw.instance_count; first += kMaxJoints) {
                 const u32 n = draw.instance_count - first < kMaxJoints ? draw.instance_count - first : kMaxJoints;
                 upload_joints(draw.instance_rows + first * 12, n);
@@ -1826,6 +1918,19 @@ private:
             instanced_program_.id = link(instanced.c_str(), kMeshFragmentShader);
         }
         mesh_program_ = mesh_.id;
+        if (const GLuint cs = compile(GL_COMPUTE_SHADER, kCullComputeShader)) {  // GPU culling (optional: without it every instance draws)
+            cull_program_ = gl_.glCreateProgram();
+            gl_.glAttachShader(cull_program_, cs);
+            gl_.glLinkProgram(cull_program_);
+            gl_.glDeleteShader(cs);
+            GLint linked = 0;
+            gl_.glGetProgramiv(cull_program_, GL_LINK_STATUS, &linked);
+            if (!linked) {
+                gl_.glDeleteProgram(cull_program_);
+                cull_program_ = 0;
+            }
+            cull_pass_ = cull_program_ ? gl_.glGetUniformLocation(cull_program_, "u_pass") : -1;
+        }
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
         shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
@@ -1877,6 +1982,15 @@ private:
         gl_.glNamedBufferStorage(param_ubo_, kMaxMaterialParams * 16, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateBuffers(1, &joint_ubo_);
         gl_.glNamedBufferStorage(joint_ubo_, kMaxJoints * 48, nullptr, GL_DYNAMIC_STORAGE_BIT);
+        // GPU culling: all instances in, the visible ones out (read back as the instanced uniform block), the counter + draws.
+        gl_.glCreateBuffers(1, &cull_in_);
+        gl_.glNamedBufferStorage(cull_in_, kMaxCulledInstances * 48, nullptr, GL_DYNAMIC_STORAGE_BIT);
+        gl_.glCreateBuffers(1, &cull_out_);
+        gl_.glNamedBufferStorage(cull_out_, kMaxCulledInstances * 48, nullptr, 0);
+        gl_.glCreateBuffers(1, &cull_args_);
+        gl_.glNamedBufferStorage(cull_args_, 16 + (kMaxCulledInstances / kMaxJoints) * 20, nullptr, 0);
+        gl_.glCreateBuffers(1, &cull_ubo_);
+        gl_.glNamedBufferStorage(cull_ubo_, 160, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateVertexArrays(1, &line_vao_);
         attribute(line_vao_, 0, 3, offsetof(LineVertex, position));
         attribute(line_vao_, 1, 4, offsetof(LineVertex, color));
@@ -1950,6 +2064,8 @@ private:
     bool have_timings_ = false;
     GLint instanced_shadow_mvp_ = -1;
     GLuint joint_ubo_ = 0;
+    GLuint cull_program_ = 0, cull_in_ = 0, cull_out_ = 0, cull_args_ = 0, cull_ubo_ = 0;
+    GLint cull_pass_ = -1;
     GLuint param_ubo_ = 0;
     GLuint sky_program_ = 0;
     static constexpr u32 kUiIndexBytes = 2 * 1024 * 1024;

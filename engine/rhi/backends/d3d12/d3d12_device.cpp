@@ -831,10 +831,16 @@ public:
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_rtv_heap_)), "CreateDescriptorHeap (target RTV)")) return false;
         dsv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
-        return create_pipelines();
+        if (!create_pipelines()) return false;
+        if (!create_culling()) {  // optional: gpu_cull draws then draw every instance
+            cull_signature_.Reset();
+            LSD_LOG_WARN("d3d12", "GPU culling is unavailable on this device");
+        }
+        return true;
     }
 
     Backend backend() const override { return Backend::D3D12; }
+    bool supports_gpu_culling() const override { return cull_signature_ != nullptr; }
     const AdapterInfo& adapter() const override { return info_; }
 
     MemoryBudget query_memory_budget() const override {
@@ -1147,6 +1153,10 @@ public:
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
         if (!vb || !ib) return;
+        // GPU culling first (compute), the draw below reads what it keeps.
+        const bool can_cull = draw.gpu_cull && !(draw.joint_rows && draw.joint_count) && draw.instance_rows && draw.instance_count;
+        const u32 cull_batches = (draw.instance_count + kMaxJoints - 1) / kMaxJoints;
+        const bool culled = can_cull && run_culling(draw, cull_batches);
         f32 constants[kRootConstants];
         std::memcpy(constants, draw.mvp, sizeof draw.mvp);
         std::memcpy(constants + 16, draw.normal_matrix, sizeof draw.normal_matrix);
@@ -1187,6 +1197,15 @@ public:
             const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
             list_->IASetVertexBuffers(0, 1, &vbv);
             list_->IASetIndexBuffer(&ibv);
+            if (culled) {  // each batch's visible rows as the instance constants, its count from the GPU
+                for (u32 b = 0; b < cull_batches; ++b) {
+                    list_->SetGraphicsRootConstantBufferView(7, cull_out_->GetGPUVirtualAddress() + static_cast<u64>(b) * kMaxJoints * 48);
+                    list_->ExecuteIndirect(cull_signature_.Get(), 1, cull_args_.Get(), 16 + static_cast<u64>(b) * 20, nullptr, 0);
+                }
+                transition(cull_out_.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                transition(cull_args_.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                return;
+            }
             for (u32 first = 0; first < draw.instance_count; first += kMaxJoints) {
                 const u32 n = draw.instance_count - first < kMaxJoints ? draw.instance_count - first : kMaxJoints;
                 const D3D12_GPU_VIRTUAL_ADDRESS rows = upload_joints(draw.instance_rows + first * 12, n);
@@ -2389,6 +2408,131 @@ private:
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState (shadow)");
     }
 
+    // GPU-driven culling (MeshDraw::gpu_cull): reset the visible count, test every instance's box
+    // against the frustum (as rhi::instance_visible) packing the visible rows, then one indirect draw
+    // per batch of 256 (the instanced shader's constant buffer holds 256). Optional: if it fails to
+    // build, gpu_cull draws simply draw every instance.
+    bool create_culling() {
+        static const char kCull[] = R"(
+cbuffer Cull : register(b0) { float4 planes[6]; float4 box_min; float4 box_max; uint4 info; };  // info: count, index count, batches
+ByteAddressBuffer rows_in : register(t0);
+RWByteAddressBuffer rows_out : register(u0);
+RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 5 uints per batch
+[numthreads(1, 1, 1)] void cull_reset() { args.Store(0, 0); }
+[numthreads(64, 1, 1)] void cull_main(uint3 id : SV_DispatchThreadID) {
+    uint i = id.x;
+    if (i >= info.x) return;
+    float4 r0 = asfloat(rows_in.Load4(i * 48)), r1 = asfloat(rows_in.Load4(i * 48 + 16)), r2 = asfloat(rows_in.Load4(i * 48 + 32));
+    float3 c = (box_min.xyz + box_max.xyz) * 0.5, e = (box_max.xyz - box_min.xyz) * 0.5;
+    float3 wc = float3(dot(r0.xyz, c) + r0.w, dot(r1.xyz, c) + r1.w, dot(r2.xyz, c) + r2.w);
+    float3 we = float3(dot(abs(r0.xyz), e), dot(abs(r1.xyz), e), dot(abs(r2.xyz), e));
+    [unroll] for (int p = 0; p < 6; ++p) {
+        if (dot(planes[p].xyz, wc) + planes[p].w < -dot(abs(planes[p].xyz), we)) return;
+    }
+    uint slot;
+    args.InterlockedAdd(0, 1, slot);
+    rows_out.Store4(slot * 48, asuint(r0));
+    rows_out.Store4(slot * 48 + 16, asuint(r1));
+    rows_out.Store4(slot * 48 + 32, asuint(r2));
+}
+[numthreads(64, 1, 1)] void cull_args(uint3 id : SV_DispatchThreadID) {
+    uint b = id.x;
+    if (b >= info.z) return;
+    int n = clamp(int(args.Load(0)) - int(b * 256), 0, 256);
+    args.Store(16 + b * 20, info.y);
+    args.Store(20 + b * 20, uint(n));
+    args.Store(24 + b * 20, 0);
+    args.Store(28 + b * 20, 0);
+    args.Store(32 + b * 20, 0);
+}
+)";
+        D3D12_ROOT_PARAMETER params[4]{};
+        params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        params[3].Descriptor.ShaderRegister = 1;
+        for (D3D12_ROOT_PARAMETER& p : params) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_ROOT_SIGNATURE_DESC rs{};
+        rs.NumParameters = 4;
+        rs.pParameters = params;
+        ComPtr<ID3DBlob> blob, error;
+        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &error)) ||
+            FAILED(device_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&cull_root_)))) return false;
+        const char* entries[3] = {"cull_reset", "cull_main", "cull_args"};
+        for (u32 k = 0; k < 3; ++k) {
+            ComPtr<ID3DBlob> cs;
+            if (!compile(kCull, sizeof kCull - 1, entries[k], "cs_5_0", cs)) return false;
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature = cull_root_.Get();
+            pso.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+            if (FAILED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&cull_pso_[k])))) return false;
+        }
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        desc.Height = 1;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        desc.Width = static_cast<u64>(kMaxCulledInstances) * 48;  // buffers start in COMMON and promote to UAV on first use
+        if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cull_out_)))) return false;
+        desc.Width = 16 + (kMaxCulledInstances / kMaxJoints) * 20;
+        if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cull_args_)))) return false;
+        D3D12_INDIRECT_ARGUMENT_DESC argument{};
+        argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+        D3D12_COMMAND_SIGNATURE_DESC signature{};
+        signature.ByteStride = 20;
+        signature.NumArgumentDescs = 1;
+        signature.pArgumentDescs = &argument;
+        return SUCCEEDED(device_->CreateCommandSignature(&signature, nullptr, IID_PPV_ARGS(&cull_signature_)));
+    }
+
+    void uav_barrier(ID3D12Resource* resource) {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        b.UAV.pResource = resource;
+        list_->ResourceBarrier(1, &b);
+    }
+
+    // The compute passes for a gpu_cull draw; false (nothing recorded) if it cannot run: draw all.
+    bool run_culling(const MeshDraw& draw, u32 batches) {
+        if (!cull_signature_ || draw.instance_count > kMaxCulledInstances) return false;
+        struct {
+            f32 planes[6][4];
+            f32 box_min[4], box_max[4];
+            u32 info[4];
+        } cull{};
+        frustum_planes(draw.mvp, cull.planes);
+        std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
+        std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
+        cull.info[0] = draw.instance_count;
+        cull.info[1] = draw.index_count;
+        cull.info[2] = batches;
+        const D3D12_GPU_VIRTUAL_ADDRESS constants = upload_constants(&cull, sizeof cull);
+        const D3D12_GPU_VIRTUAL_ADDRESS rows = constants ? upload_constants(draw.instance_rows, draw.instance_count * 48) : 0;
+        if (!rows) return false;
+        list_->SetComputeRootSignature(cull_root_.Get());
+        list_->SetComputeRootConstantBufferView(0, constants);
+        list_->SetComputeRootShaderResourceView(1, rows);
+        list_->SetComputeRootUnorderedAccessView(2, cull_out_->GetGPUVirtualAddress());
+        list_->SetComputeRootUnorderedAccessView(3, cull_args_->GetGPUVirtualAddress());
+        list_->SetPipelineState(cull_pso_[0].Get());
+        list_->Dispatch(1, 1, 1);
+        uav_barrier(cull_args_.Get());
+        list_->SetPipelineState(cull_pso_[1].Get());
+        list_->Dispatch((draw.instance_count + 63) / 64, 1, 1);
+        uav_barrier(cull_args_.Get());
+        list_->SetPipelineState(cull_pso_[2].Get());
+        list_->Dispatch((batches + 63) / 64, 1, 1);
+        transition(cull_out_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        transition(cull_args_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+        return true;
+    }
+
     static bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out,
                         const D3D_SHADER_MACRO* defines = nullptr) {
         ComPtr<ID3DBlob> errors;
@@ -2476,6 +2620,10 @@ private:
     ComPtr<ID3D12PipelineState> skinned_shadow_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_shadow_pipeline_;
     ComPtr<ID3D12Resource> joint_buffers_[kBackBufferCount];
+    ComPtr<ID3D12RootSignature> cull_root_;  // GPU culling (create_culling)
+    ComPtr<ID3D12PipelineState> cull_pso_[3];
+    ComPtr<ID3D12Resource> cull_out_, cull_args_;
+    ComPtr<ID3D12CommandSignature> cull_signature_;
     u8* joint_mapped_[kBackBufferCount] = {};
     u32 joint_offset_ = 0;
     ComPtr<ID3D12Resource> particle_buffers_[kBackBufferCount];

@@ -73,6 +73,7 @@
 #include <cctype>
 #include <string>
 
+bool g_gpu_culling = true;  // r.GPUCulling
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
 std::vector<lsd::rhi::MeshDraw> g_outline;
@@ -661,6 +662,10 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
                 draw.instance_rows = rows.data();
                 draw.instance_count = ism->instances.count;
+                // Many copies (foliage, crowds of props): the GPU drops those outside the view.
+                draw.gpu_cull = g_gpu_culling && ism->instances.count >= 32 && device.supports_gpu_culling();
+                std::memcpy(draw.local_bounds_min, &mesh->bounds_min, sizeof draw.local_bounds_min);
+                std::memcpy(draw.local_bounds_max, &mesh->bounds_max, sizeof draw.local_bounds_max);
                 device.draw_mesh(draw);
                 ++stats.stat_draws;
             } else {
@@ -759,6 +764,7 @@ void register_console(EditorState& s) {
     console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
+    console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
     console::add_variable("editor.Snap", &s.settings.snap, "Snap gizmo moves, rotations and scales");

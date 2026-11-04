@@ -132,7 +132,21 @@ struct MeshDraw {
     // Graph, no skinning); normals are right under any scale (cofactor matrix).
     const f32* instance_rows = nullptr;
     u32 instance_count = 0;
+    // GPU-driven culling of the instances (when the device supports_gpu_culling()): a compute pass
+    // tests each instance's box (the mesh's local bounds under its row matrix) against the frustum of
+    // `mvp` and the draw covers only those inside, without the CPU looking at them.
+    bool gpu_cull = false;
+    f32 local_bounds_min[3] = {};
+    f32 local_bounds_max[3] = {};
 };
+constexpr u32 kMaxCulledInstances = 65536;  // per gpu_cull draw (256 batches of 256)
+
+// The six frustum planes (a, b, c, d with a*x + b*y + c*z + d >= 0 inside) of a column-major
+// view-projection, normalised; the near plane is the looser of the GL and D3D conventions.
+void frustum_planes(const f32 view_proj[16], f32 planes[6][4]);
+// Whether a local box under an instance row matrix (3 rows of 4) touches the frustum: the same test
+// the GPU culling shaders run (so the CPU fallback and tests agree with them).
+bool instance_visible(const f32 planes[6][4], const f32 rows[12], const f32 local_min[3], const f32 local_max[3]);
 constexpr u32 kMaxMaterialParams = 16;
 
 // Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
@@ -366,6 +380,8 @@ public:
     virtual u64 debug_ui_texture(TextureHandle texture) = 0;
     // True when render targets come out upside down in ImGui (OpenGL): flip the UVs.
     virtual bool render_targets_flipped() const { return false; }
+    // MeshDraw::gpu_cull works (compute shaders and indirect draws); else such draws draw every instance.
+    virtual bool supports_gpu_culling() const { return false; }
 };
 
 // Creates a device for desc.backend (Auto = platform default), selecting the GPU with
