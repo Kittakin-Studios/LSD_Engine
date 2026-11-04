@@ -10,6 +10,7 @@
 #include "lsd/game.hpp"
 
 #include <cmath>
+#include <initializer_list>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -167,6 +168,78 @@ static void test_collapse_to_function() {
         scripts.stop();
     }
     CHECK(heap.allocated_bytes() == 0);
+}
+
+// The math library: a node's result through a real compiled graph (On Start -> Set Position, the
+// node feeding X, or the whole vector). Inputs are the node's typed-in values.
+static Vec3 run_math_node(const char* node, std::initializer_list<const char*> values) {
+    using namespace lsd::script;
+    Graph g(default_allocator());
+    const u32 start = g.add("OnStart", 0, 0)->id;
+    const u32 set = g.add("SetPosition", 300, 0)->id;
+    const u32 math = g.add(node, 0, 100)->id;
+    u32 k = 0;
+    for (const char* v : values) std::snprintf(g.find(math)->values[k++], 64, "%s", v);
+    CHECK(g.connect(start, 0, set, 0));
+    const NodeDef* def = find_node_def(node);
+    if (def && def->outputs[0].type == PinType::Vector) {
+        CHECK(g.connect(math, 0, set, 2));
+    } else {
+        const u32 make = g.add("MakeVector", 150, 100)->id;
+        CHECK(g.connect(math, 0, make, 0) && g.connect(make, 0, set, 2));
+    }
+    Array<char> lua(default_allocator());
+    char error[256];
+    CHECK(compile_graph(g, lua, error, sizeof error));
+    lua.push_back('\0');
+    write(LSD_TEST_TEMP_DIR "/math_node.lua", lua.data());
+    World w(default_allocator());
+    const Entity e = w.create("M");
+    std::snprintf(w.add<Script>(e)->script, sizeof(Script::script), "file:math_node.lua");
+    script::ScriptSystem scripts;
+    scripts.start(w, {}, path_of, nullptr);
+    CHECK(scripts.error_count() == 0);
+    const Vec3 p = w.get<Transform>(e)->position;
+    scripts.stop();
+    return p;
+}
+
+static void test_math_nodes() {
+    auto x = [](const char* node, std::initializer_list<const char*> values) { return run_math_node(node, values).x; };
+    auto near = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-4f; };
+    CHECK(near(x("Modulo", {"7", "3"}), 1.0f) && near(x("Modulo", {"5", "0"}), 0.0f));
+    CHECK(near(x("Power", {"2", "10"}), 1024.0f) && near(x("Sqrt", {"16"}), 4.0f) && near(x("Sqrt", {"-4"}), 0.0f));
+    CHECK(near(x("Abs", {"-3.5"}), 3.5f) && near(x("Negate", {"2"}), -2.0f) && near(x("Sign", {"-9"}), -1.0f) && near(x("Sign", {"0"}), 0.0f));
+    CHECK(near(x("Floor", {"-2.5"}), -3.0f) && near(x("Ceil", {"2.1"}), 3.0f) && near(x("Round", {"-2.5"}), -3.0f) && near(x("Round", {"2.4"}), 2.0f));
+    CHECK(near(x("Truncate", {"-2.7"}), -2.0f) && near(x("Frac", {"3.25"}), 0.25f));
+    CHECK(near(x("Min", {"4", "2"}), 2.0f) && near(x("Max", {"4", "2"}), 4.0f) && near(x("Clamp", {"5", "0", "1"}), 1.0f));
+    CHECK(near(x("Lerp", {"10", "20", "0.25"}), 12.5f));
+    CHECK(near(x("MapRangeClamped", {"50", "0", "100", "0", "1"}), 0.5f) && near(x("MapRangeClamped", {"150", "0", "100", "0", "1"}), 1.0f));
+    CHECK(near(x("MapRangeUnclamped", {"150", "0", "100", "0", "1"}), 1.5f));
+    CHECK(near(x("Wrap", {"370", "0", "360"}), 10.0f) && near(x("Wrap", {"-10", "0", "360"}), 350.0f));
+    CHECK(near(x("FInterpTo", {"0", "10", "0.1", "5"}), 5.0f) && near(x("FInterpTo", {"0", "10", "0.1", "0"}), 10.0f));
+    CHECK(near(x("Ease", {"0", "1", "0.5"}), 0.5f) && near(x("Log", {"100", "10"}), 2.0f) && near(x("Pi", {}), 3.14159265f));
+    CHECK(near(x("SelectFloat", {"1", "2", "true"}), 1.0f) && near(x("SelectFloat", {"1", "2", "false"}), 2.0f));
+    CHECK(near(x("CosDeg", {"60"}), 0.5f) && near(x("Atan2", {"1", "1"}), 0.7853982f) && near(x("RadToDeg", {"3.14159265"}), 180.0f));
+    CHECK(near(x("Asin", {"2"}), 1.5707963f));  // clamped into -1..1
+    const Vec3 cross = run_math_node("Cross", {"1,0,0", "0,1,0"});
+    CHECK(near(cross.x, 0) && near(cross.y, 0) && near(cross.z, 1));
+    CHECK(near(x("Dot", {"1,2,3", "4,5,6"}), 32.0f) && near(x("VectorLength", {"3,4,0"}), 5.0f) && near(x("Distance", {"1,1,1", "4,5,1"}), 5.0f));
+    const Vec3 n = run_math_node("Normalize", {"0,3,4"});
+    CHECK(near(n.y, 0.6f) && near(n.z, 0.8f));
+    const Vec3 zero = run_math_node("Normalize", {"0,0,0"});
+    CHECK(near(zero.x, 0) && near(zero.y, 0) && near(zero.z, 0));
+    const Vec3 turned = run_math_node("RotateVectorZ", {"1,0,0", "90"});
+    CHECK(near(turned.x, 0) && near(turned.y, 1));
+    const Vec3 clamped = run_math_node("ClampVectorLength", {"10,0,0", "0", "2"});
+    CHECK(near(clamped.x, 2.0f));
+    for (int i = 0; i < 5; ++i) {
+        const f32 r = x("RandomIntegerInRange", {"3", "5"});
+        CHECK(r >= 3.0f && r <= 5.0f && near(r, std::floor(r)));
+        const f32 f = x("RandomFloatInRange", {"-1", "1"});
+        CHECK(f >= -1.0f && f <= 1.0f);
+        CHECK(near(length(run_math_node("RandomUnitVector", {})), 1.0f));
+    }
 }
 
 static void test_graph() {
@@ -1206,6 +1279,7 @@ int main() {
     test_custom_nodes();
     test_debugger();
     test_js_debugger();
+    test_math_nodes();
     test_material_graph();
     write(kMover, R"(
 function on_start(self)

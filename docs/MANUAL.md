@@ -964,6 +964,19 @@ Node groups: Events (Start, Update, Hit, Overlap Begin / End), Flow (Branch, Seq
 Set Timer), Transform, Objects (Spawn, Destroy, Find, Has Tag), Math, Input, Variables, Data (Data
 Table, Curve), Audio, Animation, AI, UI, Save Game, Utilities (Print String, Game Time).
 
+**Math nodes** (Unreal's math library, same names; type in the node menu's search):
+
+| Group | Nodes |
+| --- | --- |
+| Math | + - * / %, Power, Square Root, Absolute, Negate, Sign, Floor, Ceil, Round, Truncate, Fraction, Min, Max, Clamp, Lerp, Ease (Smooth Step), Map Range Clamped / Unclamped, In Range, Wrap, FInterp To, Nearly Equal, > < >= <= == !=, Select Float, Exp, Log, Pi |
+| Math \| Trig | Sin, Cos, Tan (radians), Sin / Cos / Tan (Degrees), Asin, Acos, Atan, Atan2, Degrees To Radians, Radians To Degrees |
+| Math \| Vector | Make / Break Vector, Vector + - Vector, Vector * Vector, Vector * Float, Vector / Float, Negate Vector, Vector Length, Vector Length XY, Distance, Normalize, Dot Product, Cross Product, Lerp (Vector), Get Unit Direction, VInterp To, Clamp Vector Length, Rotate Vector Around Z, Equal (Vector) |
+| Math \| Random | Random Float, Random Float in Range, Random Integer in Range, Random Bool, Random Unit Vector |
+| Math \| Boolean | NOT, AND, OR, XOR, NAND, Equal (Boolean) |
+
+Divisions by zero give 0 (no errors in Play); angles are radians unless the node says Degrees. FInterp
+To / VInterp To take the frame's Delta Time (On Update's) for smooth follows.
+
 ---
 
 ## 11. Animation
