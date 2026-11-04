@@ -44,7 +44,10 @@ Principles carried through every module:
   Output Log, an error counter), system info (cores, SIMD, RAM), profiling macros (Tracy).
 - `core`: the job system (workers = cores − 1, counters, waiting threads help with work), console
   variables and commands (the Output Log's command line), crash reporting (an unhandled-exception
-  filter writes a minidump and a copy of the log, and leaves a marker the next start reports).
+  filter writes a minidump and a copy of the log, and leaves a marker the next start reports;
+  `abort()` and `std::terminate` (an exception out of a destructor, a joinable thread destroyed) go
+  through the same report instead of the C runtime's dialog, and every report logs the stack with
+  function, file and line via dbghelp).
 
 ## Reflection
 
@@ -192,7 +195,20 @@ parameter values cost nothing.
    (Jolt CharacterVirtual), followers move along splines, physics steps, transforms are written
    back, triggers and hits become script events, scripts update, AI perceives and its behaviour trees
    tick, Nav Agents move, UI elements following objects are placed, sounds follow their objects.
+   First, `apply_live_edits` applies Details edits made while playing: it compares the player's
+   Character with last frame's copy (speeds, camera, input, capsule radius / slope / step through
+   `PhysicsWorld::set_character_limits`), each Rigid Body's mass / friction / bounciness
+   (`set_body_mass` / `set_body_material`) and gravity, and four times a second the Mapping Context's
+   and Input Actions' file times (reloaded with the player's rebinds kept). Data assets edited in
+   Details save themselves (at most ten times a second) and the caches check their files at once.
 3. **Stop**: everything is released and the level snapshot restored.
+
+**The player's view**: the head (Eye Height), or a Camera (not Auto Activate) on the Character or
+a child of it (`player_camera`): its position, its rotation as an offset to mouse look, First / Third
+Person (Arm Length, wall-pulled), and Motion: Orbit Bone circles a bone, Ride Bone keeps the
+Camera's first-frame offset from a bone. **Skeletal meshes** are drawn, picked, socketed and IK'd
+through `skeletal_matrix()` (`skinned_cache.h`): the object's matrix turned by the mesh's Facing
+(Auto: Unreal rigs, whose front is -Y in the file, turn +90).
 
 ## Scripting
 

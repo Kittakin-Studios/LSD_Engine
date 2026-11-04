@@ -1,6 +1,8 @@
 # How to code in LSD_Engine
 
 Step by step: where to click to write game code, attach it to an object, run it and debug it.
+For complete first systems to copy (health and stamina bars, sprinting, a hurt zone, a door), see
+[Examples for first timers](Examples/Examples.md).
 There are three ways to script, and you can mix them in one level:
 
 | Way | Unreal equivalent | Where |

@@ -1,5 +1,8 @@
 # LSD_Engine Examples
 
+First time in the engine? Do [Examples for first timers](Examples/Examples.md) first (input actions,
+health and stamina bars, interacting), then come back here.
+
 Step-by-step projects, smallest first. Each one names its Unreal equivalent and uses only what the
 [manual](MANUAL.md) describes. Asset names follow the usual prefixes (`UI_`, `M_`, `BT_`...); they
 are only names, use your own.

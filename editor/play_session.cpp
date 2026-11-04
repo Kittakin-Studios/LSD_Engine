@@ -1376,6 +1376,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     if (swimming_) {
         Vec3 swim = forward() * move.y + right * move.x;
         if (input_.down(settings_.jump_action)) swim.z += 1.0f;
+        if (settings_.crouch_action[0] && input_.down(settings_.crouch_action)) swim.z -= 1.0f;  // Crouch held dives
         const f32 n = length(swim);
         if (n > 1.0f) swim = swim * (1.0f / n);
         physics_->move_character(swim * settings_.swim_speed, false, 0.0f, dt, true);

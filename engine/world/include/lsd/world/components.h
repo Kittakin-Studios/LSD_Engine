@@ -175,7 +175,7 @@ struct Character {
     LSD_PROPERTY(Edit, Category = "Crouch", Widget = "Asset:InputAction", Tooltip = "Held: crouch (stands up again when there is room)") char crouch_action[33] = "";
     LSD_PROPERTY(Edit, Category = "Crouch", Units = "m", Min = 0.3, Tooltip = "Capsule height while crouched") f32 crouch_height = 1.1f;
     LSD_PROPERTY(Edit, Category = "Crouch", Units = "m/s", Min = 0, Tooltip = "Walking speed while crouched") f32 crouch_speed = 2.5f;
-    LSD_PROPERTY(Edit, Category = "Swim", Units = "m/s", Min = 0, Tooltip = "Inside a Water Volume: moves where you look, Jump rises") f32 swim_speed = 3.0f;
+    LSD_PROPERTY(Edit, Category = "Swim", Units = "m/s", Min = 0, Tooltip = "Inside a Water Volume: moves where you look, Jump rises, Crouch dives") f32 swim_speed = 3.0f;
 };
 
 // Water the Character swims in (Unreal's Physics Volume with Water Volume on): the unit cube scaled

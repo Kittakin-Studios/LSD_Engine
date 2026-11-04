@@ -4,7 +4,8 @@ How to use LSD_Engine to build a game. Written for people who know Unreal Engine
 mapped to its Unreal name. For how the engine works inside, see [ARCHITECTURE.md](ARCHITECTURE.md);
 for step-by-step projects, see [EXAMPLES.md](EXAMPLES.md); for game code in C / C++ and every
 command, see [CODING.md](CODING.md); to start coding step by step, see
-[How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md).
+[How to code in LSD_Engine](How%20to%20code%20in%20LSD_Engine.md). **New to the engine?** Start with
+[Examples for first timers](Examples/Examples.md): input actions, a health and stamina HUD, interacting.
 
 Contents
 
@@ -610,7 +611,7 @@ The player is the first object with a **Character** component; without one, a de
 appears at the Player Start (or the camera). A Character walks, jumps, climbs steps and slopes, and
 can have a third-person camera (**Camera Distance**). Give it a **Crouch Action** (an Input Action,
 held) to crouch to **Crouch Height** at **Crouch Speed**; it stands up again only where there is room.
-Inside a **Water Volume** (Place tab) it swims at **Swim Speed** where you look, Jump rising. Animation
+Inside a **Water Volume** (Place tab) it swims at **Swim Speed** where you look, Jump rising and Crouch diving. Animation
 Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Speed, VerticalSpeed and InAir.
 
 **The player's camera** (Unreal's Camera + Spring Arm on the Character): add a child object to the
@@ -1140,7 +1141,9 @@ button:focus, button:hover { background-color: #EEA70E; }
 ```
 
 - Show it from Lua (`local doc = lsd.ui_open("UI_HUD")`) or as the Game Mode's HUD.
-- Change it: `lsd.ui_set_text(doc, "score", 1250)`, `lsd.ui_set(doc, "bar", "style", "width: 40%")`.
+- Change it: `lsd.ui_set_text(doc, "score", 1250)`, `lsd.ui_set(doc, "bar", "style", "width: 40%")`
+  (nodes **Set UI Text** and **Set UI Attribute**). A worked health and stamina HUD is in
+  [Examples for first timers](Examples/Examples.md).
 - **Events**: `onclick="start_game"` calls `start_game(self, element_id)` in every script that has it.
 - **The document's own script** (a Widget Blueprint's event graph, in JavaScript): put `Menu.js` next
   to `Menu.rml`. It runs when the document opens; its functions answer the document's events before
@@ -1282,7 +1285,7 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 | Animation | Skeletal Mesh (**Morphs**: morph target weights) |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
-| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) follows it |
+| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()` (nodes Set Camera View, Is Third Person, Get Camera Location) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
 | Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |

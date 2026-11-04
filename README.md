@@ -33,6 +33,7 @@ by milestone is in [docs/BACKLOG.md](docs/BACKLOG.md).
 
 | Document | What is in it |
 | --- | --- |
+| [Examples (first timers)](docs/Examples/Examples.md) | Start here: Input Actions (move, look, jump, crouch, sprint, swim, interact), a health and stamina HUD, draining each, a door, step by step |
 | [MANUAL](docs/MANUAL.md) | How to use the engine, panel by panel, with pictures |
 | [EXAMPLES](docs/EXAMPLES.md) | Step-by-step tutorials (a first level, a HUD, a guard AI, a menu, a campfire, shipping) |
 | [How to code in LSD_Engine](docs/How%20to%20code%20in%20LSD_Engine.md) | Lua and visual scripts from scratch |

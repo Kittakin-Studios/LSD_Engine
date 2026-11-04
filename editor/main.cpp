@@ -930,9 +930,12 @@ void register_console(EditorState& s) {
         }
     }, &s, "Open a UI document (.rml) or style (.rcss) in the UI window");
     console::add_command("input.Hold", [](void*, const char* args) {  // tests / the MCP bridge drive Play
+        // The key's name may have spaces ("Left Shift"); a number at the end is the seconds.
         char name[32] = "";
         float seconds = 1.0f;
-        if (std::sscanf(args, "%31s %f", name, &seconds) < 1) return;
+        std::snprintf(name, sizeof name, "%s", args);
+        if (char* last = std::strrchr(name, ' '); last && std::sscanf(last + 1, "%f", &seconds) == 1) *last = '\0';
+        if (!name[0]) return;
         const SDL_Scancode k = SDL_GetScancodeFromName(name);
         if (k == SDL_SCANCODE_UNKNOWN) {
             LSD_LOG_WARN("input", "input.Hold: no key named %s (W, Space, E...)", name);
@@ -2215,7 +2218,9 @@ int main(int argc, char** argv) {
             // Devices go to the game only while it has the mouse (not when ejected or the mouse is freed).
             lsd::input::InputFrame devices;
             static bool keys[SDL_SCANCODE_COUNT];
-            if (state.mouse_captured && !state.ejected) {
+            bool scripted_keys = false;  // input.Hold (tests, the MCP bridge) drives the game even without the mouse
+            for (int k = 0; k < SDL_SCANCODE_COUNT && !scripted_keys; ++k) scripted_keys = g_held_until[k] > SDL_GetTicks();
+            if ((state.mouse_captured && !state.ejected) || scripted_keys) {
                 int count = 0;
                 const bool* real = SDL_GetKeyboardState(&count);
                 const lsd::u64 ticks = SDL_GetTicks();
