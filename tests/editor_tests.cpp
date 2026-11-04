@@ -1,4 +1,5 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
+#include "assistant_core.h"
 #include "light_bake.h"
 #include "references.h"
 
@@ -182,7 +183,63 @@ static void test_references() {  // Reference Viewer: who uses what, and Replace
     std::filesystem::remove_all(dir, error);
 }
 
+// LSD Assistant without the network: what each provider is sent, its replies read back (thinking
+// blocks kept for the next turn, refusals and errors shown), code blocks, and the writable paths.
+static void test_assistant() {
+    using namespace lsd::editor::assistant;
+    Settings claude;
+    claude.key = "k";
+    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", ""}};
+    const std::string body = request_body(claude, "You are LSD Assistant", turns);
+    CHECK(request_url(claude) == "https://api.anthropic.com/v1/messages");
+    CHECK(body.find("\"model\":\"claude-opus-5-5\"") != std::string::npos && body.find("\"cache_control\":{\"type\":\"ephemeral\"}") != std::string::npos);
+    CHECK(body.find("\"effort\":\"medium\"") != std::string::npos && body.find("\"fallbacks\":\"default\"") != std::string::npos);
+    CHECK(body.find("Make a \\\"door\\\"\\nthat opens") != std::string::npos);
+    const std::vector<std::string> headers = request_headers(claude);
+    bool version = false, key = false, beta = false;
+    for (const std::string& h : headers) {
+        version = version || h == "anthropic-version: 2026-10-21";
+        key = key || h == "x-api-key: k";
+        beta = beta || h == "anthropic-beta: server-side-fallback-2026-07-01";
+    }
+    CHECK(version && key && beta);
+    Settings haiku = claude;
+    haiku.model = "claude-haiku-4-5";  // no effort, no fallback on older models
+    const std::string old = request_body(haiku, "s", turns);
+    CHECK(old.find("effort") == std::string::npos && old.find("fallbacks") == std::string::npos);
+
+    const std::string reply = R"({"id":"m","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"abc"},)"
+                              R"({"type":"text","text":"Here:\n```lua Content/Script/Door.lua\nfunction on_start(self) end\n```\nDone \u00e9"}],"stop_reason":"end_turn"})";
+    const Reply r = parse_reply(claude, 200, reply);
+    CHECK(r.ok && r.text.find("Done \xc3\xa9") != std::string::npos && r.raw.find("\"signature\":\"abc\"") != std::string::npos && r.raw.front() == '[');
+    turns.push_back({false, r.text, r.raw});
+    turns.push_back({true, "thanks", ""});
+    const std::string next = request_body(claude, "s", turns);
+    CHECK(next.find("\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"") != std::string::npos);  // sent back unchanged
+    const std::vector<CodeBlock> blocks = code_blocks(r.text);
+    CHECK(blocks.size() == 1 && blocks[0].language == "lua" && blocks[0].path == "Content/Script/Door.lua" && blocks[0].code == "function on_start(self) end\n");
+    CHECK(code_blocks("```cpp\nint x;\n```")[0].path.empty());
+    CHECK(!parse_reply(claude, 200, R"({"content":[],"stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"no"}})").ok);
+    const Reply error = parse_reply(claude, 401, R"({"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}})");
+    CHECK(!error.ok && error.error == "invalid x-api-key");
+    CHECK(!parse_reply(claude, 0, "").ok);
+
+    Settings local;
+    local.provider = kOpenAICompatible;
+    local.endpoint = "http://localhost:11434/v1/";
+    local.model = "llama3.1";
+    CHECK(request_url(local) == "http://localhost:11434/v1/chat/completions");
+    CHECK(request_headers(local).size() == 1);  // no key: no Authorization header
+    CHECK(request_body(local, "sys", {{true, "hi", ""}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
+    const Reply o = parse_reply(local, 200, R"({"choices":[{"message":{"role":"assistant","content":"hello"}}]})");
+    CHECK(o.ok && o.text == "hello");
+
+    CHECK(writable_path("Content/Script/Door.lua") && writable_path("Source/Door.cpp"));
+    CHECK(!writable_path("../evil.lua") && !writable_path("Content/../x") && !writable_path("C:/Windows/x") && !writable_path("/etc/x") && !writable_path("Config/project.json"));
+}
+
 int main() {
+    test_assistant();
     test_undo_redo();
     test_references();
     test_light_bake();

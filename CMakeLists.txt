@@ -1,4 +1,25 @@
 cmake_minimum_required(VERSION 3.24)
+# MSVC builds use MSVC's own linker and librarian, found next to cl.exe: a configure run without the
+# Visual Studio environment (VS Code, a plain terminal) otherwise picks MinGW's ld / ar from PATH,
+# which cannot link MSVC objects. A cache already holding them is corrected too.
+if(CMAKE_HOST_WIN32 AND (CMAKE_C_COMPILER MATCHES "cl(\\.exe)?$" OR CMAKE_CXX_COMPILER MATCHES "cl(\\.exe)?$"))
+  set(_lsd_cl "${CMAKE_CXX_COMPILER}")
+  if(NOT IS_ABSOLUTE "${_lsd_cl}")
+    find_program(_lsd_cl_path NAMES cl.exe cl NO_CACHE)
+    set(_lsd_cl "${_lsd_cl_path}")
+  endif()
+  if(EXISTS "${_lsd_cl}")
+    get_filename_component(_lsd_msvc_bin "${_lsd_cl}" DIRECTORY)
+    foreach(_lsd_tool LINKER:link.exe AR:lib.exe)
+      string(REPLACE ":" ";" _lsd_pair "${_lsd_tool}")
+      list(GET _lsd_pair 0 _lsd_var)
+      list(GET _lsd_pair 1 _lsd_exe)
+      if(EXISTS "${_lsd_msvc_bin}/${_lsd_exe}" AND (NOT CMAKE_${_lsd_var} OR CMAKE_${_lsd_var} MATCHES "[Mm]in[Gg][Ww]|/ld\\.exe$|/ar\\.exe$"))
+        set(CMAKE_${_lsd_var} "${_lsd_msvc_bin}/${_lsd_exe}" CACHE FILEPATH "MSVC ${_lsd_exe}" FORCE)
+      endif()
+    endforeach()
+  endif()
+endif()
 project(LSD_Engine VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)

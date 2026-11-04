@@ -838,6 +838,32 @@ sends each tool call to the editor as a console line over 127.0.0.1, the same ch
 Console. Only programs on this PC can connect; untick the plugin when you are not using it. It is
 editor-only: packaged games never listen.
 
+### LSD Assistant (an AI game studio in the editor)
+
+**Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to do
+something, plan a feature, or have it write a script and apply it. It answers as one of a studio's
+roles, picked at the top of the window: **Engine Expert**, **Gameplay Programmer**, **Technical
+Artist**, **Level Designer**, **Game Designer**, **Producer**, **QA Tester**. Every message carries
+the open level, the selected object (its components and values) and the asset list, so answers fit
+your project (untick **Project context** to leave it out). It knows the engine's Lua API from the
+engine's own documentation and maps Unreal features you name onto LSD_Engine's.
+
+Set it up once in **Edit > Editor Preferences > Plugins > LSD Assistant**:
+
+| Provider | Model | Endpoint | Key |
+| --- | --- | --- | --- |
+| Anthropic (Claude) | `claude-opus-5-5` (best), `claude-sonnet-5-5`, `claude-haiku-5-5` | empty | your Anthropic API key, or `ANTHROPIC_API_KEY` |
+| OpenAI-compatible | the server's model name | empty for OpenAI; `http://localhost:11434/v1` Ollama, `http://localhost:1234/v1` LM Studio, `https://openrouter.ai/api/v1` OpenRouter | its key, `OPENAI_API_KEY`, or none for local servers |
+
+Claude also takes an **Effort** (low: quick answers, high: hard problems). The key is kept on this
+PC only (`Saved/editor_settings.json`, never in the project or Git).
+
+When a reply contains a file (a code block headed like ```` ```lua Content/Script/Door.lua ````),
+the block has **Copy**, **Create** (or **Overwrite**, which asks twice) and, for scripts, **Attach to
+Selected** (a Script component running it, undoable). It may only write inside `Content/` and
+`Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Requests go from this PC straight to the
+endpoint (through the system's `curl`); a failed one puts your message back in the box.
+
 ### C and C++ scripts
 
 Game code can also be C or C++ (Unreal: your project's C++ module): **Tools > New C / C++ Script**

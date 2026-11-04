@@ -174,6 +174,10 @@ hover tooltips everywhere (`editor/tips.h`), player camera from a Camera on the 
 Look / Orbit Bone / Ride Bone, Follow Bone), Unreal rigs (UE4 / UE5 detection, retarget on import, Skeletal Mesh Facing),
 live editing in Play (`PlaySession::apply_live_edits`: Character, bodies, gravity, input assets) and self-saving data assets,
 crash reports for abort / std::terminate with a symbolised stack in the log, Mouse 4 / 5 back and forward.
+LSD Assistant (`editor/assistant.*` UI + curl worker, `editor/assistant_core.*` requests / replies, tested in editor_tests):
+Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), studio roles, project context, writes into Content/ / Source/.
+Motion Matching (`engine/animation/motion_matching.*`): Character > Motion Matching; databases built in `AnimationPlayer::motion_for`.
+The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).
 Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become
 `M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
 (.meta `material_slots`); Skeletal Meshes draw per section with per-object `material_overrides`.
