@@ -451,6 +451,15 @@ struct MorphWeight {
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = rest, 1 = the full shape") f32 weight = 0.0f;
 };
 
+// One material slot of a mesh drawn with another material on this object only (Unreal's Override
+// Materials on a component). Picked in Details > Materials, which lists the mesh's slots.
+LSD_STRUCT()
+struct MaterialOverride {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The mesh's material slot (its material's name in the file)") char slot[64] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drawn with this instead of the slot's material") char material[33] = "";
+};
+
 // A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a
 // rigged FBX into the viewport; its animations can come from the same file or another (Mixamo).
 LSD_STRUCT(Component, Category = "Animation", Tooltip = "Shows a rigged, animated mesh: a clip or an Animation Graph")
@@ -460,8 +469,10 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Widget = "Choice:Auto,+X,+Y,-X,-Y",
                  Tooltip = "Which way the character's front points in its file; it is turned to face the object's forward (+X, where the Character walks and the camera looks). Auto: Unreal rigs (UE4 / UE5 exports face -Y here, Unreal's Blueprint turns them -90) are turned; others face +X")
     u32 facing = 0;
-    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for the mesh (empty: its own colour)") char material[33] = "";
-    LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "One material for the whole mesh, over its material slots (empty: each slot's own material, see Materials below)") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh where no material is set") LinearColor color = LinearColor::hex(0xB4B4B8);
+    // Edited in Details > Materials (one row per slot of the mesh), so saved but not shown as a list.
+    LSD_PROPERTY(Save, Tooltip = "Material slots drawn with another material on this object (Unreal's Override Materials)") List<MaterialOverride, 48> material_overrides;
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX holding the animation, matched by bone names; empty = the mesh's own file") char animation[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Which animation (take) in that file, from 0") u32 clip = 0;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the animation (1 = as made)") f32 play_rate = 1.0f;

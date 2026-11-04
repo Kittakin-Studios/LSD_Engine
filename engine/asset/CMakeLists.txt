@@ -15,6 +15,7 @@ add_library(lsd_asset STATIC
   src/localization.cpp
   src/texture.cpp
   src/mesh_import.cpp
+  src/material_import.cpp
   src/cgltf_impl.cpp
 )
 target_include_directories(lsd_asset PUBLIC include)

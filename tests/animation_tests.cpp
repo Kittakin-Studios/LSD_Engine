@@ -200,7 +200,15 @@ static void morph_tests(const std::string& data) {
         anim::SkinnedModel m(default_allocator());
         char error[256] = "";
         CHECK(anim::import_skinned((data + "/" + name).c_str(), 1.0f, m, error, sizeof error));
-        std::printf("  %s: %zu morph targets, %zu offsets\n", name, m.morphs.size(), m.morph_deltas.size());
+        std::printf("  %s: %zu morph targets, %zu offsets, %zu material sections\n", name, m.morphs.size(), m.morph_deltas.size(), m.sections.size());
+        // Material sections (slots) tile the index list in order, each named once.
+        u32 next = 0;
+        for (usize s = 0; s < m.sections.size(); ++s) {
+            CHECK(m.sections[s].first_index == next);
+            next += m.sections[s].index_count;
+            for (usize t = 0; t < s; ++t) CHECK(std::strcmp(m.sections[t].material, m.sections[s].material) != 0);
+        }
+        CHECK(!m.sections.empty() && next == m.indices.size());
         for (const anim::MorphTarget& t : m.morphs) {
             CHECK(t.name[0] && t.count > 0 && t.first + t.count <= m.morph_deltas.size());
             for (u32 i = t.first; i < t.first + t.count; ++i) CHECK(m.morph_deltas[i].vertex < m.vertices.size());

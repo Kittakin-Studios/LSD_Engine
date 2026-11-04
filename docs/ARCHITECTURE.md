@@ -104,6 +104,17 @@ the same format for a sub-tree; instances remember per-field overrides.
   names and node transform; a part compiles to `DerivedData/<guid>_<k>.lsdmesh` in its node's space,
   with any shear the Transform cannot hold kept in its vertices. Create Prefab from Parts writes a
   prefab with one child per part (placed by the node transform) and a Material per file material.
+- **Material import** (`engine/asset/material_import.*`, `editor/mesh_materials.*`): `list_mesh_materials`
+  reads each file material's values and maps (paths as the exporter wrote them, embedded bytes copied);
+  the editor locates each map (exporter path, the import's source folder, `<name>.fbm`, Content by
+  name, texture-set siblings of the colour map), copies or packs it (`pack_channels`: nearest-sampled
+  to the largest source, any channel per output channel, optional invert) into `<mesh>/Textures`,
+  rescans, writes `M_<mat>` and fills `AssetMeta::material_slots` (by file material name).
+  `anim::import_skinned` groups the indices by material into `SkinnedModel::sections`; `SkinnedCache`
+  keeps an index buffer per section plus the slot materials from the .meta (reloaded when it changes),
+  and `section_material()` resolves a section: the object's `material_overrides`, else its Material,
+  else the slot. The viewport and Mesh Editor draw each section with `MaterialCache::apply`; shadows
+  still draw the whole index buffer once.
 - **Thumbnails** (`editor/thumbnails.*`): meshes are rendered into a 128² target, Materials /
   Instances / Material Graphs as a sphere with `MaterialCache::apply`, sounds drawn on the CPU from
   `audio::waveform` peaks; each is saved as `DerivedData/Thumbnails/<guid>-<source time>.png` and

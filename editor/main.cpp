@@ -15,6 +15,7 @@
 #include "ui_editor.h"
 #include "timeline_editor.h"
 #include "mesh_editor.h"
+#include "mesh_materials.h"
 #include "lua_debugger.h"
 #include "prefab_editor.h"
 
@@ -716,22 +717,30 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.camera_position[0] = eye.x;
         draw.camera_position[1] = eye.y;
         draw.camera_position[2] = eye.z;
-        to_rgba(component->color, draw.color);
         draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
-        materials.apply(component->material, draw);
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
         draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
-        if (editor_view && stats.is_selected(e)) {
-            draw.color[0] = 1.0f;
-            draw.color[1] = 0.85f;
-            draw.color[2] = 0.25f;
+        // One draw per material slot (Unreal's mesh sections), each with its slot's material.
+        for (lsd::u32 s = 0; s < model->section_count; ++s) {
+            lsd::rhi::MeshDraw section = draw;
+            section.indices = model->sections[s].indices;
+            section.index_count = model->sections[s].index_count;
+            const char* material = lsd::editor::section_material(*component, *model, s);
+            if (material[0]) section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;  // the material's own colours
+            else to_rgba(component->color, section.color);
+            materials.apply(material, section);
+            if (editor_view && stats.is_selected(e)) {
+                section.color[0] = 1.0f;
+                section.color[1] = 0.85f;
+                section.color[2] = 0.25f;
+            }
+            if (blend_view(stats, section, lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, eye, translucent)) continue;
+            device.draw_mesh(section);
+            ++stats.stat_draws;
+            stats.stat_triangles += section.index_count / 3;
         }
-        if (blend_view(stats, draw, lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, eye, translucent)) continue;
-        device.draw_mesh(draw);
-        ++stats.stat_draws;
-        stats.stat_triangles += model->index_count / 3;
     }
     // Translucent and additive meshes last, far to near, over everything opaque (they do not write depth).
     std::sort(translucent.begin(), translucent.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
@@ -1140,6 +1149,18 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("no asset with that name (asset.List)");
     }, &s, "asset.Open <name>: open an asset in its editor, like a double-click in the Content Browser");
+    console::add_command("asset.ImportMaterials", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (lsd::usize i = 0; i < st.registry->count(); ++i) {
+            const lsd::asset::AssetRecord r = st.registry->get(i);
+            if (r.type != lsd::asset::AssetType::Mesh || std::strcmp(r.name, args) != 0) continue;
+            lsd::editor::MaterialImportReport report;
+            lsd::editor::import_mesh_materials(*st.registry, r, "", false, report, st.status, sizeof st.status);
+            lsd::editor::remote::print(st.status);
+            return;
+        }
+        lsd::editor::remote::print("no mesh with that name (asset.List)");
+    }, &s, "asset.ImportMaterials <mesh>: Import Materials and Textures for a mesh (as its Content Browser menu)");
     console::add_command("mode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         auto same = [](const char* a, const char* b) {
@@ -1188,6 +1209,27 @@ void register_console(EditorState& s) {
     }, &s, "log.Tail [n]: the last n Output Log lines (default 50)");
 }
 
+// Meshes imported since the last scan: their Content path and the folder they came from (where
+// their textures are), for Import Materials and Textures once the registry knows them.
+std::vector<std::pair<std::string, std::string>> g_pending_material_imports;
+
+// After the registry scan that follows an import: each new mesh's materials and textures (only when
+// its textures are found, so animation-only files bring nothing).
+void import_pending_materials(lsd::asset::AssetRegistry& registry, char* status, lsd::usize capacity) {
+    for (const auto& [path, from] : g_pending_material_imports) {
+        const std::string relative = fs::relative(path, kContentDir).generic_string();
+        for (lsd::usize i = 0; i < registry.count(); ++i) {
+            if (relative != registry.get(i).path) continue;
+            const lsd::asset::AssetRecord mesh = registry.get(i);
+            lsd::editor::MaterialImportReport report;
+            char message[256];
+            if (lsd::editor::import_mesh_materials(registry, mesh, from.c_str(), true, report, message, sizeof message)) std::snprintf(status, capacity, "%s", message);
+            break;
+        }
+    }
+    g_pending_material_imports.clear();
+}
+
 // Copies a file dropped from Explorer into Content/<folder>/, renaming on clash ("Chair_1.fbx").
 // The registry picks it up on the next scan and writes its .meta.
 bool import_file(const char* source, const char* content_folder, char* status, lsd::usize capacity) {
@@ -1227,6 +1269,9 @@ bool import_file(const char* source, const char* content_folder, char* status, l
     // shortcut: a .gltf's external buffer is assumed to be <name>.bin next to it; parse the uri list when textures arrive.
     const fs::path bin = fs::path(src).replace_extension(".bin");
     if (src.extension() == ".gltf" && fs::exists(bin, error)) fs::copy_file(bin, folder / bin.filename(), error);
+    if (lsd::asset::type_from_extension(src.extension().string().c_str()) == lsd::asset::AssetType::Mesh) {
+        g_pending_material_imports.emplace_back(dest.generic_string(), fs::absolute(src, error).parent_path().string());
+    }
     std::snprintf(status, capacity, "Imported %s", dest.generic_string().c_str());
     LSD_LOG_INFO("editor", "%s", status);
     return true;
@@ -1595,6 +1640,7 @@ int main(int argc, char** argv) {
     }, &registry);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
+    import_pending_materials(registry, state.status, sizeof state.status);
     register_script_nodes(registry);
     // The window icon (Project Settings > Platform), editor and game alike.
     lsd::asset::Guid icon_guid;
@@ -1651,6 +1697,7 @@ int main(int argc, char** argv) {
     if (!game_mode) lsd::editor::source_control::start();  // Git badges in the Content Browser
     state.textures = texture_cache;
     state.skinned = skinned_cache;
+    state.materials = &materials;
     state.animations = animations;
     state.device = device;
 
@@ -1850,7 +1897,10 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case SDL_EVENT_DROP_FILE:
-                    if (import_file(event.drop.data, state.content_folder, state.status, sizeof state.status)) registry.scan();
+                    if (import_file(event.drop.data, state.content_folder, state.status, sizeof state.status)) {
+                        registry.scan();
+                        import_pending_materials(registry, state.status, sizeof state.status);
+                    }
                     break;
                 default: break;
             }
@@ -1936,7 +1986,10 @@ int main(int argc, char** argv) {
             lsd::u32 imported = 0;
             for (const std::string& file : chosen) imported += import_file(file.c_str(), state.content_folder, state.status, sizeof state.status) ? 1u : 0u;
             if (chosen.size() > 1) std::snprintf(state.status, sizeof state.status, "Imported %u of %zu files", imported, chosen.size());
-            if (imported) registry.scan();
+            if (imported) {
+                registry.scan();
+                import_pending_materials(registry, state.status, sizeof state.status);
+            }
         }
         if (state.package_requested) {
             state.package_requested = false;

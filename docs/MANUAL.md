@@ -334,10 +334,31 @@ object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 file as one mesh. Right-click it > **Create Prefab from Parts** makes `BP_<name>`: one child object
 per mesh and material in the file (named `Node` or `Node_Material`), each with its node's pivot,
 position, rotation and scale from the DCC (a door turns about its hinge), plus an `M_<material>`
-Material for each material in the file (base colour, metallic, roughness; base colour, normal and
-glTF metallic-roughness textures if Textures with the same file names are already in Content).
-Import the textures first. Drag the prefab into the level and move, hide or re-material its parts
-like any objects.
+Material for each material in the file, made by Import Materials and Textures (below). Drag the
+prefab into the level and move, hide or re-material its parts like any objects.
+
+**Import Materials and Textures** (Unreal's FBX import with Import Materials / Import Textures on):
+importing an FBX, glTF or GLB does it by itself when the file's textures can be found; for a mesh
+already in Content, right-click it > **Import Materials and Textures** (or the console:
+`asset.ImportMaterials <mesh>`). For every material of the file:
+
+1. Its texture maps are found: where the file says (the exporter's path, e.g. `F:\Art\Char.fbm\`),
+   next to the file, in its `<name>.fbm` folder, then any texture in Content with the same file name.
+   Images embedded in the file (FBX *Embed Textures*, GLB) are written out. Maps the file does not
+   connect are found by the texture set's naming next to the colour map: `Hat_Diffuse.png` brings
+   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`
+   (FBX has no metallic / roughness slot, so Blender's never arrive connected).
+2. They are copied into `<mesh folder>/Textures/`, packed into the engine's slots: metallic,
+   roughness and occlusion into one `T_<material>_ORM` (R occlusion, G roughness, B metallic, as
+   Unreal's ORM), an opacity map into the colour's alpha (`T_<material>_BaseColor`, and the material
+   becomes **Masked**: eyelashes, hair cards, lace).
+3. A Material `M_<material>` is made in `<mesh folder>/Materials/` (one that exists is kept, with your
+   edits) and set on the mesh's **Material Slots**.
+
+The mesh asset's Details > **Materials** lists its slots (one per material of the file, like a
+Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. Textures
+use the mesh's own UVs, so each part looks as it did in Blender, Maya or Substance. Missing textures
+are listed in the Output Log; put them next to the file and run the menu again.
 
 **References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
 (click to follow, double-click to find in the Content Browser). Deleting warns about anything that
@@ -967,6 +988,12 @@ same FBX, or another one with the same bone names: the Mixamo workflow) and the 
 lists the file's clips by name and length). With an Animation Graph, Details shows the state it is
 in while it plays. Animations
 play in the editor too.
+
+**Materials on a Skeletal Mesh** (Unreal's Material Slots and Override Materials): the mesh is drawn
+per material of its file, each with its slot's material (see Import Materials and Textures in
+section 3). Details > Skeletal Mesh > **Materials** has a row per slot: pick or drop a material on a
+row to change that slot on this object only; the **<** button goes back to the mesh's. The single
+**Material** field above covers every slot at once (clear it to see the slots).
 
 **Notifies** (Unreal's AnimNotify): in the animation file's Details, add a time and a sound; it plays
 at the object when the clip passes that time in Play.

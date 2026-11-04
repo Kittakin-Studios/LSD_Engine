@@ -2,6 +2,7 @@
 #include "tips.h"
 #include "workspaces.h"
 
+#include "material_cache.h"
 #include "mesh_cache.h"
 #include "skinned_cache.h"
 
@@ -142,10 +143,23 @@ void render_mesh_editor(rhi::Device& device, const f32 background[4]) {
             }
             if (g_mw.morphed.valid()) draw.vertices = g_mw.morphed;
         }
-        draw.indices = skinned->indices;
-        draw.index_count = skinned->index_count;
         draw.joint_rows = g_mw.pose.joint_rows();
         draw.joint_count = g_mw.pose.joint_count();
+        // Each material slot with its material, as the level draws it.
+        const world::SkeletalMesh as_placed{};
+        for (u32 k = 0; k < skinned->section_count; ++k) {
+            rhi::MeshDraw section = draw;
+            section.indices = skinned->sections[k].indices;
+            section.index_count = skinned->sections[k].index_count;
+            const char* material = section_material(as_placed, *skinned, k);
+            if (material[0] && s.materials) {
+                section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;
+                s.materials->apply(material, section);
+            }
+            device.draw_mesh(section);
+        }
+        device.set_render_target({}, nullptr);
+        return;
     } else {
         draw.vertices = mesh->gpu.vertices;
         draw.indices = mesh->gpu.indices;

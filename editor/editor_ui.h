@@ -110,6 +110,7 @@ struct EditorState {
     ThumbnailCache* thumbnails = nullptr;
     class TextureCache* textures = nullptr;  // set by main.cpp (texture thumbnails)
     class SkinnedCache* skinned = nullptr;   // set by main.cpp (rigged meshes: bounds, drop)
+    class MaterialCache* materials = nullptr;  // set by main.cpp (the Mesh Editor's preview shows the material slots)
     class AnimationPlayer* animations = nullptr;  // set by main.cpp (Details: the graph's current state)
     class ParticleEditor* particle_editor = nullptr;  // set by main.cpp
     rhi::Device* device = nullptr;

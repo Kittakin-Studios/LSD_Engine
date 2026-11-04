@@ -3,12 +3,14 @@
 #include "lsd/asset/localization.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
+#include "lsd/asset/material_import.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/array.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <thread>
@@ -375,7 +377,56 @@ static void test_fbx_parts() {
     CHECK(length(lo - elo) < 1e-3f && length(hi - ehi) < 1e-3f);
 }
 
+// Import Materials: a Blender FBX's materials with their maps (embedded images readable), and the
+// channel packing that builds ORM / colour + opacity textures from maps of different sizes.
+static void test_material_import(const fs::path& root) {
+    HeapAllocator heap("materials");
+    char error[256];
+    {
+        asset::ImportedMaterials file(heap);
+        const std::string path = std::string(LSD_UFBX_DATA_DIR) + "/blender_293_embedded_textures_7400_binary.fbx";
+        CHECK(asset::list_mesh_materials(path.c_str(), file, error, sizeof error) && !file.materials.empty());
+        u32 embedded = 0;
+        for (const asset::ImportedMaterial& m : file.materials) {
+            CHECK(m.name[0]);
+            for (const asset::ImportedMap* map : {&m.base_color_map, &m.normal_map, &m.metallic_map, &m.roughness_map, &m.occlusion_map, &m.opacity_map}) {
+                if (!map->embedded) continue;
+                asset::Image image;
+                CHECK(asset::load_image(map->embedded, map->embedded_size, image) && image.width > 0);
+                ++embedded;
+            }
+        }
+        std::printf("  %zu materials, %u embedded maps\n", file.materials.size(), embedded);
+        CHECK(embedded > 0);
+        asset::ImportedMaterials none(heap);
+        CHECK(!asset::list_mesh_materials("missing.fbx", none, error, sizeof error));
+    }
+    CHECK(heap.allocated_bytes() == 0);
+    // A 2x2 map and a 4x4 map packed: the output takes the larger size, the small one sampled by UV.
+    auto make = [](asset::Image& image, u32 size, u8 base) {
+        image.width = image.height = size;
+        image.pixels = static_cast<u8*>(std::malloc(size * size * 4));  // freed by Image (stb frees with free)
+        for (u32 i = 0; i < size * size; ++i) {
+            for (u32 c = 0; c < 4; ++c) image.pixels[i * 4 + c] = static_cast<u8>(base + i * 10 + c);
+        }
+    };
+    asset::Image small, big;
+    make(small, 2, 0);
+    make(big, 4, 100);
+    fs::create_directories(root);
+    const std::string out = (root / "packed.png").string();
+    asset::PackSource r{&small, 0}, g{&big, 1}, b{nullptr, 0, 200}, a{&big, 2, 255, true};
+    CHECK(asset::pack_channels(out.c_str(), r, g, b, a));
+    asset::Image packed;
+    CHECK(asset::load_image(out.c_str(), packed) && packed.width == 4 && packed.height == 4);
+    if (packed.pixels) {
+        const u8* p = &packed.pixels[(1 * 4 + 3) * 4];  // x 3, y 1: small's texel (1, 0), big's texel 7
+        CHECK(p[0] == 10 && p[1] == 100 + 70 + 1 && p[2] == 200 && p[3] == 255 - (100 + 70 + 2));
+    }
+}
+
 int main() {
+    test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();
     test_fbx_parts();
     test_normals();

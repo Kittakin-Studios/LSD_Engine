@@ -20,15 +20,23 @@ struct MorphDelta {
     f32 offset[3] = {0, 0, 0};
 };
 
+// The triangles of a skinned mesh that use one of the file's materials (Unreal's Material Slot /
+// mesh section): drawn with that slot's material.
+struct MeshSection {
+    char material[64] = "";  // the material's name in the file ("" = triangles without a material)
+    u32 first_index = 0, index_count = 0;  // into SkinnedModel::indices
+};
+
 struct SkinnedModel {
     explicit SkinnedModel(Allocator& allocator)
-        : vertices(allocator), indices(allocator), inverse_bind(allocator), morphs(allocator), morph_deltas(allocator) {}
+        : vertices(allocator), indices(allocator), sections(allocator), inverse_bind(allocator), morphs(allocator), morph_deltas(allocator) {}
     ~SkinnedModel();
     SkinnedModel(const SkinnedModel&) = delete;
     SkinnedModel& operator=(const SkinnedModel&) = delete;
 
     Array<rhi::SkinnedVertex> vertices;  // bind pose, model space (Z up, metres)
-    Array<u32> indices;
+    Array<u32> indices;                  // grouped by section
+    Array<MeshSection> sections;         // one per material, in the order the file first uses them
     Array<Mat4> inverse_bind;            // per skeleton joint
     Array<MorphTarget> morphs;
     Array<MorphDelta> morph_deltas;
