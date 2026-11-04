@@ -5,13 +5,13 @@ The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
 examples), [Examples/Examples.md](docs/Examples/Examples.md) (first-timer tutorial: input actions, health / stamina HUD,
 interact; its scripts were run for real), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
-`docs/` is also Charlize's Obsidian vault (settings in the gitignored `docs/.obsidian/`): keep links as
+`docs/` is also the developer's Obsidian vault (settings in the gitignored `docs/.obsidian/`): keep links as
 relative Markdown links, not `[[wikilinks]]`. Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
 the `screenshot` console command and `ui.Click`, in the default layout); retake one when its panel changes.
 
 ## What this is
 
-**LSD_Engine** is a proprietary 3D game engine by **Kittakin Studios** (owner: Charlize Pauli). It
+**LSD_Engine** is a proprietary 3D game engine by **Kittakin Studios** (owner: Richard Pauli, aka Charlize Pauli). It
 takes the *public ideas* behind Bitsquid/Stingray (data-oriented, data-driven, Lua gameplay) and gives
 them an **editor-first workflow like Unreal Engine**: import a file, find it in the Content Browser,
 open it in its own editor, wire it up by clicking. Code is for new behaviour, never for hooking up content.
@@ -20,7 +20,7 @@ open it in its own editor, wire it up by clicking. Code is for new behaviour, ne
 - License: **proprietary, all rights reserved** (`LICENSE`). Never add GPL code; LGPL only as a
   separately linked library. Third-party code is fetched by `third_party/CMakeLists.txt`, pinned, and
   listed with its licence in `third_party/README.md` (MIT / BSD / zlib / FreeType licence only).
-- Plan doc (architecture, spec, editor look, roadmap): <https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW>
+- Plan doc (architecture, spec, editor look, roadmap): [docs/](docs/) — `ROADMAP.md`, `BACKLOG.md`, `ARCHITECTURE.md`, `MANUAL.md`
 
 ## Hard rule: clean room
 

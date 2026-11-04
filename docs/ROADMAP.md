@@ -1,7 +1,7 @@
 # Roadmap
 
 Editor-first order. Each milestone ends with something you can run (its exit test).
-Full detail: [engine plan doc](https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW). Feature checklist: [BACKLOG.md](BACKLOG.md).
+Full detail: [BACKLOG.md](BACKLOG.md) (the feature checklist) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | # | Milestone | Builds | Exit test |
 | --- | --- | --- | --- |
