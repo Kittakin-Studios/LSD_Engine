@@ -185,7 +185,63 @@ static void test_shapes() {
     CHECK(std::fabs(centre(w, crate).z - 0.5f) < 0.05f);  // the crate never noticed
 }
 
+// A four-wheeled car (2 x 4 m box, 1500 kg, rear drive): it settles on its suspension, drives
+// forward under throttle, turns right when steered right, and the handbrake stops it.
+static void test_vehicle() {
+    PhysicsWorld w;
+    w.add_body(box({0, 0, -0.5f}, {500, 500, 0.5f}, Motion::Static));
+    BodyDesc car = box({0, 0, 1.0f}, {2.0f, 1.0f, 0.4f}, Motion::Dynamic);
+    car.mass = 1500.0f;
+    car.centre_of_mass_offset = {0, 0, -0.4f};
+    const u32 body = w.add_body(car);
+    VehicleDesc v;
+    v.body = body;
+    const f32 xs[2] = {1.4f, -1.4f}, ys[2] = {0.8f, -0.8f};
+    for (u32 i = 0; i < 4; ++i) {
+        WheelDesc& wheel = v.wheels[v.wheel_count++];
+        wheel.position = {xs[i / 2], ys[i % 2], -0.3f};
+        wheel.max_steer_degrees = i < 2 ? 30.0f : 0.0f;  // front steers
+        wheel.driven = i >= 2;                           // rear drives
+        wheel.handbrake = i >= 2;
+    }
+    const u32 vehicle = w.add_vehicle(v);
+    for (int i = 0; i < 120; ++i) w.step(1.0f / 60.0f);  // settle
+    const Vec3 rest = centre(w, body);
+    const VehicleState parked = w.vehicle_state(vehicle);
+    std::printf("  vehicle at rest: z %.2f, %u wheels down\n", static_cast<double>(rest.z), parked.wheels_on_ground);
+    CHECK(parked.wheels_on_ground == 4 && rest.z > 0.4f && rest.z < 1.2f && std::fabs(parked.speed) < 0.1f);
+    const Mat4 wheel = w.wheel_transform(vehicle, 0);
+    CHECK(wheel.at(0, 3) > 1.0f && wheel.at(1, 3) > 0.5f && wheel.at(2, 3) > 0.2f && wheel.at(2, 3) < 0.5f);  // front left, at about its radius
+    w.drive_vehicle(vehicle, 1.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 180; ++i) w.step(1.0f / 60.0f);
+    const Vec3 ahead = centre(w, body);
+    const VehicleState driving = w.vehicle_state(vehicle);
+    std::printf("  after 3 s of throttle: x %.1f m, %.1f m/s, gear %d, %.0f rpm\n", static_cast<double>(ahead.x), static_cast<double>(driving.speed), driving.gear,
+                static_cast<double>(driving.rpm));
+    CHECK(ahead.x > 5.0f && driving.speed > 3.0f && driving.gear >= 1 && std::fabs(ahead.y) < 0.5f);
+    w.drive_vehicle(vehicle, 0.5f, 1.0f, 0.0f, 0.0f);  // steer right: Y goes negative (Z up, X forward)
+    for (int i = 0; i < 90; ++i) w.step(1.0f / 60.0f);
+    CHECK(centre(w, body).y < ahead.y - 0.5f);
+    w.drive_vehicle(vehicle, 0.0f, 0.0f, 1.0f, 1.0f);
+    for (int i = 0; i < 300; ++i) w.step(1.0f / 60.0f);
+    CHECK(std::fabs(w.vehicle_state(vehicle).speed) < 0.3f);
+    // Another machine drives it (multiplayer): kinematic, its engine ignored; then ours again.
+    w.set_body_kinematic(body, true);
+    const Vec3 held = centre(w, body);
+    w.drive_vehicle(vehicle, 1.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 60; ++i) w.step(1.0f / 60.0f);
+    CHECK(length(centre(w, body) - held) < 0.01f);
+    w.set_body_kinematic(body, false);
+    w.drive_vehicle(vehicle, 1.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 120; ++i) w.step(1.0f / 60.0f);
+    CHECK(length(centre(w, body) - held) > 1.0f);
+    w.remove_body(body);  // takes its vehicle with it
+    w.drive_vehicle(vehicle, 1.0f, 0.0f, 0.0f, 0.0f);
+    w.step(1.0f / 60.0f);
+}
+
 int main() {
+    test_vehicle();
     PhysicsWorld world;
     world.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));        // floor, top at z = 0
     world.add_body(box({5, 0, 1.0f}, {0.5f, 5, 1.0f}, Motion::Static));        // wall at x = 4.5..5.5

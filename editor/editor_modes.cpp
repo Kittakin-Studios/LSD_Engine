@@ -547,14 +547,20 @@ void draw_2d(EditorState& s) {
     ImGui::Image(ImTextureRef(static_cast<ImTextureID>(image)), size);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const f32 cw = size.x / static_cast<f32>(map->tileset_columns), ch = size.y / static_cast<f32>(map->tileset_rows);
-    for (u32 c = 1; c < map->tileset_columns; ++c) dl->AddLine(ImVec2(at.x + cw * c, at.y), ImVec2(at.x + cw * c, at.y + size.y), IM_COL32(0, 0, 0, 90));
-    for (u32 r = 1; r < map->tileset_rows; ++r) dl->AddLine(ImVec2(at.x, at.y + ch * r), ImVec2(at.x + size.x, at.y + ch * r), IM_COL32(0, 0, 0, 90));
+    for (u32 c = 1; c < map->tileset_columns; ++c) {
+        const f32 x = at.x + cw * static_cast<f32>(c);
+        dl->AddLine(ImVec2(x, at.y), ImVec2(x, at.y + size.y), IM_COL32(0, 0, 0, 90));
+    }
+    for (u32 r = 1; r < map->tileset_rows; ++r) {
+        const f32 y = at.y + ch * static_cast<f32>(r);
+        dl->AddLine(ImVec2(at.x, y), ImVec2(at.x + size.x, y), IM_COL32(0, 0, 0, 90));
+    }
     if (ImGui::IsItemClicked()) {
         const ImVec2 m = ImGui::GetIO().MousePos;
         g_tile = static_cast<u32>((m.y - at.y) / ch) * map->tileset_columns + static_cast<u32>((m.x - at.x) / cw);
     }
-    const u32 col = g_tile % map->tileset_columns, row = g_tile / map->tileset_columns;
-    dl->AddRect(ImVec2(at.x + cw * col, at.y + ch * row), ImVec2(at.x + cw * (col + 1), at.y + ch * (row + 1)), IM_COL32(255, 230, 30, 255), 0.0f, 0, 2.0f);
+    const f32 col = static_cast<f32>(g_tile % map->tileset_columns), row = static_cast<f32>(g_tile / map->tileset_columns);
+    dl->AddRect(ImVec2(at.x + cw * col, at.y + ch * row), ImVec2(at.x + cw * (col + 1.0f), at.y + ch * (row + 1.0f)), IM_COL32(255, 230, 30, 255), 0.0f, 0, 2.0f);
     hint("LMB paints the chosen tile on the map in the viewport, Shift+LMB erases. Use the 2D View.");
 }
 

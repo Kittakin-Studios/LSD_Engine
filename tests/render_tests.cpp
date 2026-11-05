@@ -1,6 +1,7 @@
 // Math and mesh-generation tests (no GPU needed).
 #include "lsd/foundation/math.h"
 #include "lsd/render/mesh.h"
+#include "lsd/rhi/rhi.h"
 
 #include <cmath>
 #include <cstdio>
@@ -73,9 +74,31 @@ static void test_meshes() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// GPU culling's test (the shaders run the same): a camera at the origin looking along +X keeps
+// boxes ahead of it, drops those behind, to the side or past the far plane, keeps one on the edge.
+static void test_culling() {
+    using namespace lsd;
+    const Mat4 view_proj = perspective(1.0f, 16.0f / 9.0f, 0.1f, 100.0f) * look_at({0, 0, 0}, {1, 0, 0}, {0, 0, 1});
+    f32 planes[6][4];
+    rhi::frustum_planes(view_proj.m, planes);
+    const f32 lo[3] = {-0.5f, -0.5f, -0.5f}, hi[3] = {0.5f, 0.5f, 0.5f};
+    auto at = [&](f32 x, f32 y, f32 z, f32 scale = 1.0f) {
+        const f32 rows[12] = {scale, 0, 0, x, 0, scale, 0, y, 0, 0, scale, z};
+        return rhi::instance_visible(planes, rows, lo, hi);
+    };
+    CHECK(at(10, 0, 0));
+    CHECK(!at(-10, 0, 0));    // behind
+    CHECK(!at(10, 40, 0));    // far to the left
+    CHECK(!at(10, 0, -40));   // far below
+    CHECK(!at(150, 0, 0));    // past the far plane
+    CHECK(at(10, 9.0f, 0, 4.0f));  // outside by its centre, but a big box reaching into the view
+    CHECK(at(0.2f, 0, 0));    // right at the camera, partly in front of the near plane
+}
+
 int main() {
     test_math();
     test_meshes();
+    test_culling();
     if (g_failures == 0) std::printf("All render tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

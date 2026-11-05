@@ -1,6 +1,7 @@
 #include "js.h"
 
 #include "lsd/script/graph.h"
+#include "lsd/script/script.h"
 
 #include "lsd/foundation/log.h"
 
@@ -13,6 +14,7 @@ extern "C" {
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -433,7 +435,114 @@ void release(Host* host, u32 slot) {
     item = Item{};
 }
 
-bool load(Host* host, u32 slot, const char* path) {
+// ---- Breakpoints: instrument() puts __lsd_line(line, self) before statements; it reports to the script system. ----
+namespace {
+
+// The JS call stack ("    at on_update (Content/Script/door.js:5:3)" lines), innermost first,
+// without native frames and the debugger's own eval.
+struct JsFrame {
+    std::string function, source;
+    i32 line = 0;
+};
+std::vector<JsFrame> js_stack(JSContext* ctx) {
+    std::vector<JsFrame> frames;
+    JSValue stack = JS_Eval(ctx, "new Error().stack", 17, "<debugger>", JS_EVAL_TYPE_GLOBAL);
+    if (const char* text = JS_IsString(stack) ? JS_ToCString(ctx, stack) : nullptr) {
+        std::stringstream lines(text);
+        std::string row;
+        while (std::getline(lines, row)) {
+            const usize at = row.find("at ");
+            if (at == std::string::npos || row.find("<debugger>") != std::string::npos) continue;
+            std::string where = row.substr(at + 3), function = "(file)";
+            if (const usize open = where.find(" ("); open != std::string::npos && where.back() == ')') {
+                function = where.substr(0, open);
+                where = where.substr(open + 2, where.size() - open - 3);
+            }
+            const usize col = where.rfind(':');
+            const usize ln = col == std::string::npos || col == 0 ? std::string::npos : where.rfind(':', col - 1);
+            if (ln == std::string::npos || function == "__lsd_line") continue;  // native frames
+            frames.push_back({function, where.substr(0, ln), std::atoi(where.c_str() + ln + 1)});
+        }
+        JS_FreeCString(ctx, text);
+    } else {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    }
+    JS_FreeValue(ctx, stack);
+    return frames;
+}
+
+// A value as the debugger shows it: strings and numbers as they are, objects as JSON (cut short).
+void describe_value(JSContext* ctx, JSValueConst v, char* out, usize capacity) {
+    JSValue text = JS_IsObject(v) && !JS_IsFunction(ctx, v) ? JS_JSONStringify(ctx, v, JS_UNDEFINED, JS_UNDEFINED) : JS_DupValue(ctx, v);
+    if (JS_IsException(text)) JS_FreeValue(ctx, JS_GetException(ctx));
+    const char* s = JS_IsException(text) ? nullptr : JS_ToCString(ctx, text);
+    std::snprintf(out, capacity, "%s", s ? s : JS_IsFunction(ctx, v) ? "function" : "?");
+    JS_FreeCString(ctx, s);
+    JS_FreeValue(ctx, text);
+}
+
+struct LineCall {
+    JSContext* ctx;
+    JSValueConst self;
+    const char* source;
+    i32 line;
+};
+
+i32 line_depth(void* user) { return static_cast<i32>(js_stack(static_cast<LineCall*>(user)->ctx).size()); }
+
+void line_fill(void* user, DebugStop& stop) {
+    const LineCall& c = *static_cast<LineCall*>(user);
+    const std::vector<JsFrame> frames = js_stack(c.ctx);
+    for (usize i = 0; i < frames.size() && stop.frame_count < 12; ++i) {
+        DebugFrame& f = stop.frames[stop.frame_count++];
+        std::snprintf(f.function, sizeof f.function, "%s", frames[i].function.c_str());
+        std::snprintf(f.source, sizeof f.source, "%s", i == 0 ? c.source : frames[i].source.c_str());
+        f.line = i == 0 ? c.line : frames[i].line;
+        f.local_count = 0;
+    }
+    if (!stop.frame_count) {  // top-level code
+        DebugFrame& f = stop.frames[stop.frame_count++];
+        std::snprintf(f.function, sizeof f.function, "(file)");
+        std::snprintf(f.source, sizeof f.source, "%s", c.source);
+        f.line = c.line;
+        f.local_count = 0;
+    }
+    // shortcut: QuickJS shows no locals; self and its fields (like Blueprint variables) are what a stop shows
+    DebugFrame& top = stop.frames[0];
+    if (!JS_IsObject(c.self)) return;
+    DebugVariable& whole = top.locals[top.local_count++];
+    std::snprintf(whole.name, sizeof whole.name, "self");
+    describe_value(c.ctx, c.self, whole.value, sizeof whole.value);
+    JSPropertyEnum* names = nullptr;
+    u32 count = 0;
+    if (JS_GetOwnPropertyNames(c.ctx, &names, &count, c.self, JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) != 0) return;
+    for (u32 i = 0; i < count && top.local_count < 40; ++i) {
+        const char* key = JS_AtomToCString(c.ctx, names[i].atom);
+        JSValue v = JS_GetProperty(c.ctx, c.self, names[i].atom);
+        DebugVariable& field = top.locals[top.local_count++];
+        std::snprintf(field.name, sizeof field.name, "self.%s", key ? key : "?");
+        describe_value(c.ctx, v, field.value, sizeof field.value);
+        JS_FreeValue(c.ctx, v);
+        JS_FreeCString(c.ctx, key);
+    }
+    JS_FreePropertyEnum(c.ctx, names, count);
+}
+
+JSValue js_line(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv, int, JSValue* data) {
+    i32 line = 0;
+    if (!ScriptSystem::line_hooks_on() || argc < 1 || JS_ToInt32(ctx, &line, argv[0]) != 0) return JS_UNDEFINED;  // no breakpoints: costs a call
+    const char* source = JS_ToCString(ctx, data[0]);
+    LineCall call{ctx, argc > 1 ? argv[1] : JS_UNDEFINED, source ? source : "", line};
+    if (ScriptSystem::foreign_line(call.source, line, line_depth, line_fill, &call)) {
+        host_of(ctx).deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);  // waiting at a breakpoint is not running long
+    }
+    JS_FreeCString(ctx, source);
+    return JS_UNDEFINED;
+}
+
+} // namespace
+
+bool load(Host* host, u32 slot, const char* path, bool debuggable) {
     Host& h = *host;
     lua_State* L = h.L;
     const int env = lua_gettop(L);
@@ -480,6 +589,12 @@ bool load(Host* host, u32 slot, const char* path) {
         }
     }
     JSValue global = JS_GetGlobalObject(ctx);
+    if (debuggable) {  // line markers report to the debugger; the marker function knows its file
+        JSValue name = JS_NewString(ctx, path);
+        JS_SetPropertyStr(ctx, global, "__lsd_line", JS_NewCFunctionData(ctx, js_line, 2, 0, 1, &name));
+        JS_FreeValue(ctx, name);
+        source = instrument(source);
+    }
     const std::vector<std::string> before = global_names(ctx);
 
     const bool ok = eval(h, ctx, source, path);

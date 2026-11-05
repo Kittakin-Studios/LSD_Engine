@@ -1,0 +1,26 @@
+{
+  "type": "Material",
+  "data": {
+    "base_color": {
+      "r": 1,
+      "g": 1,
+      "b": 1,
+      "a": 1
+    },
+    "base_color_texture": "5b04b34471824c898e19458c41fc9d6c",
+    "metallic": 1,
+    "roughness": 0.597222209,
+    "normal_texture": "0e6a8207715e467c64bfa30cdce21fc8",
+    "orm_texture": "bc845e1b46740e43d3a30f5e3a8a8288",
+    "emissive": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+    },
+    "emissive_strength": 1,
+    "blend_mode": 0,
+    "opacity": 1,
+    "opacity_mask_clip": 0.333000004
+  }
+}

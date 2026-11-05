@@ -9,7 +9,7 @@ A data-oriented, editor-first 3D game engine by Kittakin Studios.
 - **Editor:** Unreal-style workflow — Content Browser, asset editors, Details panel, Play-in-Editor
 
 The full plan (architecture, feature spec, editor layout, roadmap) lives in the
-[engine plan doc](https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW). A summary is in [`docs/`](docs/).
+The full documentation is in [`docs/`](docs/).
 
 ## Status
 
@@ -48,8 +48,13 @@ Requirements: CMake 3.24+, a C++20 compiler (MSVC 2022, Clang 16+ or GCC 13+), N
 # Windows (Visual Studio 2022 developer prompt)
 cmake --preset windows-msvc
 cmake --build --preset windows-msvc
+cmake --build --preset windows-msvc --config Release   # also copies lsd_editor.exe to the project root
 
-# Linux
+# Linux (Ubuntu / Debian; verified on Ubuntu 26.04 with Clang 21). The system packages SDL3 needs:
+sudo apt install clang lld cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev \
+  libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+  wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev libasound2-dev \
+  libpulse-dev libudev-dev libdbus-1-dev libvulkan-dev
 cmake --preset linux-clang
 cmake --build --preset linux-clang
 
@@ -97,5 +102,7 @@ LSD_Engine is written from scratch. See [`docs/CLEAN_ROOM.md`](docs/CLEAN_ROOM.m
 
 ## License
 
-Proprietary — Copyright (c) 2026 Kittakin Studios. All rights reserved. See [LICENSE](LICENSE).
-Third-party components keep their own licences.
+Proprietary — Copyright (c) 2026 Kittakin Studios (Richard Pauli, aka Charlize Pauli). All rights reserved. See [LICENSE](LICENSE).
+Third-party components keep their own licences. The full list of dependencies, versions and
+licences is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — ship it (or its FreeType
+credit line) with the engine, and keep FreeType built under its permissive FreeType Licence.

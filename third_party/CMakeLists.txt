@@ -46,6 +46,8 @@ set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)  # we link the DLL runtime (/MD, /MDd)
 set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
 set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+# Jolt's GPU compute (hair) is unused; with Vulkan headers present it would need dxc to build its shaders (Linux).
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(JoltPhysics
   GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
   GIT_TAG v5.6.0
@@ -194,7 +196,9 @@ target_compile_definitions(luajit PRIVATE _CRT_SECURE_NO_DEPRECATE)
 if(MSVC)
   target_compile_options(luajit PRIVATE /w)
 else()
-  target_compile_options(luajit PRIVATE -w)
+  target_compile_options(luajit PRIVATE -w -funwind-tables)
+  # As LuaJIT's Makefile on x64: errors unwind through C frames with the system unwinder (lj_err.c requires it).
+  target_compile_definitions(luajit PRIVATE LUAJIT_UNWIND_EXTERNAL)
   target_link_libraries(luajit PUBLIC m dl)
 endif()
 
@@ -250,6 +254,12 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # its cmake_minimum_required predates wha
 set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)  # and says so: their notice, not ours to fix
 FetchContent_MakeAvailable(recastnavigation)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
+# Their own warnings (Clang: Detour's memset of a non-trivial struct, ozz's SSE2 notice): theirs, silenced where built.
+foreach(t ozz_base ozz_animation ozz_animation_offline ozz_geometry Recast Detour DetourCrowd DetourTileCache DebugUtils)
+  if(TARGET ${t} AND NOT MSVC)
+    target_compile_options(${t} PRIVATE -w)
+  endif()
+endforeach()
 
 # FreeType: font rasterising for RmlUi (FreeType Licence, the BSD-style option).
 set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)

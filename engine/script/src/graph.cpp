@@ -277,6 +277,97 @@ NodeDef g_defs[] = {
     {"Not", "NOT", "Math", "", {{"A", PinType::Bool, "false"}}, 0, {{"Result", PinType::Bool, ""}}, 0, nullptr, {"not $0"}},
     {"And", "AND", "Math", "", {{"A", PinType::Bool, "false"}, {"B", PinType::Bool, "false"}}, 0, {{"Result", PinType::Bool, ""}}, 0, nullptr, {"$0 and $1"}},
     {"Or", "OR", "Math", "", {{"A", PinType::Bool, "false"}, {"B", PinType::Bool, "false"}}, 0, {{"Result", PinType::Bool, ""}}, 0, nullptr, {"$0 or $1"}},
+    // The math library (Unreal's Kismet Math Library names): floats, trigonometry, vectors, random, booleans.
+#define LSD_F(name) {name, PinType::Float, "0"}
+#define LSD_F1(name) {name, PinType::Float, "1"}
+#define LSD_V(name, value) {name, PinType::Vector, value}
+#define LSD_B(name) {name, PinType::Bool, "false"}
+#define LSD_OUT_F {{"Result", PinType::Float, ""}}, 0
+#define LSD_OUT_V {{"Result", PinType::Vector, ""}}, 0
+#define LSD_OUT_B {{"Result", PinType::Bool, ""}}, 0
+    {"Modulo", "% (Modulo)", "Math", "The remainder of A / B (B 0 gives 0); wraps a counter", {LSD_F("A"), LSD_F1("B")}, 0, LSD_OUT_F, nullptr, {"__mod($0, $1)"}},
+    {"Power", "Power", "Math", "Base to the power of Exp", {LSD_F1("Base"), {"Exp", PinType::Float, "2"}}, 0, LSD_OUT_F, nullptr, {"($0 ^ $1)"}},
+    {"Sqrt", "Square Root", "Math", "Square root (negatives give 0)", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.sqrt(math.max($0, 0))"}},
+    {"Abs", "Absolute", "Math", "Without its sign: |A|", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.abs($0)"}},
+    {"Negate", "Negate", "Math", "-A", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"(-($0))"}},
+    {"Sign", "Sign", "Math", "-1, 0 or 1", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"(($0 > 0 and 1) or ($0 < 0 and -1) or 0)"}},
+    {"Floor", "Floor", "Math", "Rounded down to a whole number", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.floor($0)"}},
+    {"Ceil", "Ceil", "Math", "Rounded up to a whole number", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.ceil($0)"}},
+    {"Round", "Round", "Math", "Rounded to the nearest whole number (halves away from 0)", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"__round($0)"}},
+    {"Truncate", "Truncate", "Math", "The whole part, towards 0 (2.7 -> 2, -2.7 -> -2)", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"__trunc($0)"}},
+    {"Frac", "Fraction", "Math", "The part after the point (repeats 0..1)", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"($0 - math.floor($0))"}},
+    {"Min", "Min", "Math", "The smaller", {LSD_F("A"), LSD_F("B")}, 0, LSD_OUT_F, nullptr, {"math.min($0, $1)"}},
+    {"Max", "Max", "Math", "The larger", {LSD_F("A"), LSD_F("B")}, 0, LSD_OUT_F, nullptr, {"math.max($0, $1)"}},
+    {"Clamp", "Clamp", "Math", "Value kept between Min and Max", {LSD_F("Value"), LSD_F("Min"), LSD_F1("Max")}, 0, LSD_OUT_F, nullptr, {"__clamp($0, $1, $2)"}},
+    {"Lerp", "Lerp", "Math", "A to B by Alpha (0 = A, 1 = B, 0.5 halfway)", {LSD_F("A"), LSD_F1("B"), {"Alpha", PinType::Float, "0.5"}}, 0, LSD_OUT_F, nullptr, {"($0 + ($1 - $0) * $2)"}},
+    {"MapRangeClamped", "Map Range Clamped", "Math", "Value from In Range A..B to Out Range A..B, held inside it (health 0..100 to a bar 0..1)",
+     {LSD_F("Value"), LSD_F("In Range A"), LSD_F1("In Range B"), LSD_F("Out Range A"), LSD_F1("Out Range B")}, 0, LSD_OUT_F, nullptr, {"__maprange($0, $1, $2, $3, $4, true)"}},
+    {"MapRangeUnclamped", "Map Range Unclamped", "Math", "Value from In Range A..B to Out Range A..B, carrying on past the ends",
+     {LSD_F("Value"), LSD_F("In Range A"), LSD_F1("In Range B"), LSD_F("Out Range A"), LSD_F1("Out Range B")}, 0, LSD_OUT_F, nullptr, {"__maprange($0, $1, $2, $3, $4, false)"}},
+    {"InRange", "In Range", "Math", "Min <= Value <= Max", {LSD_F("Value"), LSD_F("Min"), LSD_F1("Max")}, 0, LSD_OUT_B, nullptr, {"($0 >= $1 and $0 <= $2)"}},
+    {"Wrap", "Wrap", "Math", "Value wrapped into Min..Max (angles, looping counters)", {LSD_F("Value"), LSD_F("Min"), LSD_F1("Max")}, 0, LSD_OUT_F, nullptr, {"__wrap($0, $1, $2)"}},
+    {"FInterpTo", "FInterp To", "Math", "Current eased toward Target this frame (Speed: higher = faster; 0 jumps)", {LSD_F("Current"), LSD_F1("Target"), {"Delta Time", PinType::Float, "0.016"}, {"Speed", PinType::Float, "5"}}, 0,
+     LSD_OUT_F, nullptr, {"__finterp($0, $1, $2, $3)"}},
+    {"Ease", "Ease (Smooth Step)", "Math", "A to B by Alpha with a soft start and end", {LSD_F("A"), LSD_F1("B"), {"Alpha", PinType::Float, "0.5"}}, 0, LSD_OUT_F, nullptr, {"__ease($0, $1, $2)"}},
+    {"NearlyEqual", "Nearly Equal", "Math", "A and B within Tolerance", {LSD_F("A"), LSD_F("B"), {"Tolerance", PinType::Float, "0.0001"}}, 0, LSD_OUT_B, nullptr, {"(math.abs($0 - $1) <= $2)"}},
+    {"GreaterEqual", ">=", "Math", "", {LSD_F("A"), LSD_F("B")}, 0, LSD_OUT_B, nullptr, {"$0 >= $1"}},
+    {"LessEqual", "<=", "Math", "", {LSD_F("A"), LSD_F("B")}, 0, LSD_OUT_B, nullptr, {"$0 <= $1"}},
+    {"NotEqual", "!=", "Math", "", {LSD_F("A"), LSD_F("B")}, 0, LSD_OUT_B, nullptr, {"$0 ~= $1"}},
+    {"SelectFloat", "Select Float", "Math", "A when Pick A is true, else B", {LSD_F("A"), LSD_F("B"), LSD_B("Pick A")}, 0, LSD_OUT_F, nullptr, {"(($2) and $0 or $1)"}},
+    {"Exp", "Exp", "Math", "e to the power of A", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.exp($0)"}},
+    {"Log", "Log", "Math", "Logarithm of A in Base (A <= 0 gives 0)", {LSD_F1("A"), {"Base", PinType::Float, "10"}}, 0, LSD_OUT_F, nullptr, {"__log($0, $1)"}},
+    {"Pi", "Pi", "Math", "3.14159...", {}, 0, LSD_OUT_F, nullptr, {"math.pi"}},
+    // Trigonometry: radians like Lua, plus degree versions (Unreal's SinD / CosD...).
+    {"Cos", "Cos", "Math | Trig", "Cosine of radians", {LSD_F("Radians")}, 0, LSD_OUT_F, nullptr, {"math.cos($0)"}},
+    {"Tan", "Tan", "Math | Trig", "Tangent of radians", {LSD_F("Radians")}, 0, LSD_OUT_F, nullptr, {"math.tan($0)"}},
+    {"Asin", "Asin", "Math | Trig", "The angle (radians) whose sine is A", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.asin(__clamp($0, -1, 1))"}},
+    {"Acos", "Acos", "Math | Trig", "The angle (radians) whose cosine is A", {LSD_F1("A")}, 0, LSD_OUT_F, nullptr, {"math.acos(__clamp($0, -1, 1))"}},
+    {"Atan", "Atan", "Math | Trig", "The angle (radians) whose tangent is A", {LSD_F("A")}, 0, LSD_OUT_F, nullptr, {"math.atan($0)"}},
+    {"Atan2", "Atan2", "Math | Trig", "The angle (radians) of the direction (X, Y): heading toward something", {LSD_F("Y"), LSD_F1("X")}, 0, LSD_OUT_F, nullptr, {"math.atan2($0, $1)"}},
+    {"SinDeg", "Sin (Degrees)", "Math | Trig", "Sine of degrees", {LSD_F("Degrees")}, 0, LSD_OUT_F, nullptr, {"math.sin(math.rad($0))"}},
+    {"CosDeg", "Cos (Degrees)", "Math | Trig", "Cosine of degrees", {LSD_F("Degrees")}, 0, LSD_OUT_F, nullptr, {"math.cos(math.rad($0))"}},
+    {"TanDeg", "Tan (Degrees)", "Math | Trig", "Tangent of degrees", {LSD_F("Degrees")}, 0, LSD_OUT_F, nullptr, {"math.tan(math.rad($0))"}},
+    {"DegToRad", "Degrees To Radians", "Math | Trig", "", {LSD_F("Degrees")}, 0, LSD_OUT_F, nullptr, {"math.rad($0)"}},
+    {"RadToDeg", "Radians To Degrees", "Math | Trig", "", {LSD_F("Radians")}, 0, LSD_OUT_F, nullptr, {"math.deg($0)"}},
+    // Vectors.
+    {"VectorSubtract", "Vector - Vector", "Math | Vector", "A - B (from B to A)", {LSD_V("A", "0,0,0"), LSD_V("B", "0,0,0")}, 0, LSD_OUT_V, nullptr, {"__vsub($0, $1)"}},
+    {"VectorMultiply", "Vector * Vector", "Math | Vector", "Each axis times the other's", {LSD_V("A", "1,1,1"), LSD_V("B", "1,1,1")}, 0, LSD_OUT_V, nullptr, {"__vmul($0, $1)"}},
+    {"VectorDivide", "Vector / Float", "Math | Vector", "Each axis divided (by 0 gives 0)", {LSD_V("Vector", "0,0,0"), LSD_F1("Divisor")}, 0, LSD_OUT_V, nullptr, {"__vdivf($0, $1)"}},
+    {"VectorNegate", "Negate Vector", "Math | Vector", "The opposite direction", {LSD_V("Vector", "0,0,0")}, 0, LSD_OUT_V, nullptr, {"__scale($0, -1)"}},
+    {"VectorLength", "Vector Length", "Math | Vector", "How long it is (Unreal's VSize): a speed, a distance", {LSD_V("Vector", "0,0,0")}, 0, LSD_OUT_F, nullptr, {"__vlen($0)"}},
+    {"VectorLengthXY", "Vector Length XY", "Math | Vector", "Its length on the ground (no height)", {LSD_V("Vector", "0,0,0")}, 0, LSD_OUT_F, nullptr, {"math.sqrt($0.x * $0.x + $0.y * $0.y)"}},
+    {"Distance", "Distance", "Math | Vector", "Metres between two points", {LSD_V("A", "0,0,0"), LSD_V("B", "0,0,0")}, 0, LSD_OUT_F, nullptr, {"__vlen(__vsub($0, $1))"}},
+    {"Normalize", "Normalize", "Math | Vector", "The same direction, length 1 (zero stays zero)", {LSD_V("Vector", "1,0,0")}, 0, LSD_OUT_V, nullptr, {"__vnorm($0)"}},
+    {"Dot", "Dot Product", "Math | Vector", "1 same way, 0 at right angles, -1 opposite (for unit vectors): is it in front?", {LSD_V("A", "1,0,0"), LSD_V("B", "1,0,0")}, 0, LSD_OUT_F, nullptr,
+     {"($0.x * $1.x + $0.y * $1.y + $0.z * $1.z)"}},
+    {"Cross", "Cross Product", "Math | Vector", "At right angles to both (A x B)", {LSD_V("A", "1,0,0"), LSD_V("B", "0,1,0")}, 0, LSD_OUT_V, nullptr,
+     {"__vec($0.y * $1.z - $0.z * $1.y, $0.z * $1.x - $0.x * $1.z, $0.x * $1.y - $0.y * $1.x)"}},
+    {"VectorLerp", "Lerp (Vector)", "Math | Vector", "A to B by Alpha", {LSD_V("A", "0,0,0"), LSD_V("B", "1,1,1"), {"Alpha", PinType::Float, "0.5"}}, 0, LSD_OUT_V, nullptr, {"__vlerp($0, $1, $2)"}},
+    {"UnitDirection", "Get Unit Direction", "Math | Vector", "The direction (length 1) from From to To", {LSD_V("From", "0,0,0"), LSD_V("To", "1,0,0")}, 0, LSD_OUT_V, nullptr, {"__vnorm(__vsub($1, $0))"}},
+    {"VInterpTo", "VInterp To", "Math | Vector", "Current eased toward Target this frame (a smooth follow)", {LSD_V("Current", "0,0,0"), LSD_V("Target", "0,0,0"), {"Delta Time", PinType::Float, "0.016"}, {"Speed", PinType::Float, "5"}}, 0,
+     LSD_OUT_V, nullptr, {"__vec(__finterp($0.x, $1.x, $2, $3), __finterp($0.y, $1.y, $2, $3), __finterp($0.z, $1.z, $2, $3))"}},
+    {"ClampVectorLength", "Clamp Vector Length", "Math | Vector", "The same direction, its length kept between Min and Max", {LSD_V("Vector", "0,0,0"), LSD_F("Min"), LSD_F1("Max")}, 0, LSD_OUT_V, nullptr,
+     {"__scale(__vnorm($0), __clamp(__vlen($0), $1, $2))"}},
+    {"RotateVectorZ", "Rotate Vector Around Z", "Math | Vector", "Turned by Degrees about the up axis (left positive)", {LSD_V("Vector", "1,0,0"), LSD_F("Degrees")}, 0, LSD_OUT_V, nullptr, {"__rotz($0, $1)"}},
+    {"VectorEqual", "Equal (Vector)", "Math | Vector", "Each axis within Tolerance", {LSD_V("A", "0,0,0"), LSD_V("B", "0,0,0"), {"Tolerance", PinType::Float, "0.0001"}}, 0, LSD_OUT_B, nullptr,
+     {"(math.abs($0.x - $1.x) <= $2 and math.abs($0.y - $1.y) <= $2 and math.abs($0.z - $1.z) <= $2)"}},
+    // Random.
+    {"RandomFloat", "Random Float", "Math | Random", "0 (included) to 1 (excluded), new every time it is read", {}, 0, LSD_OUT_F, nullptr, {"math.random()"}},
+    {"RandomFloatInRange", "Random Float in Range", "Math | Random", "Min to Max", {LSD_F("Min"), LSD_F1("Max")}, 0, LSD_OUT_F, nullptr, {"($0 + ($1 - $0) * math.random())"}},
+    {"RandomIntegerInRange", "Random Integer in Range", "Math | Random", "A whole number from Min to Max, both included", {LSD_F("Min"), {"Max", PinType::Float, "10"}}, 0, LSD_OUT_F, nullptr, {"__randint($0, $1)"}},
+    {"RandomBool", "Random Bool", "Math | Random", "True or false, half the time each", {}, 0, LSD_OUT_B, nullptr, {"(math.random() < 0.5)"}},
+    {"RandomUnitVector", "Random Unit Vector", "Math | Random", "A random direction, length 1", {}, 0, LSD_OUT_V, nullptr, {"__randdir()"}},
+    // Booleans.
+    {"Xor", "XOR", "Math | Boolean", "True when exactly one is true", {LSD_B("A"), LSD_B("B")}, 0, LSD_OUT_B, nullptr, {"($0 ~= $1)"}},
+    {"Nand", "NAND", "Math | Boolean", "False only when both are true", {LSD_B("A"), LSD_B("B")}, 0, LSD_OUT_B, nullptr, {"(not ($0 and $1))"}},
+    {"BoolEqual", "Equal (Boolean)", "Math | Boolean", "", {LSD_B("A"), LSD_B("B")}, 0, LSD_OUT_B, nullptr, {"($0 == $1)"}},
+#undef LSD_F
+#undef LSD_F1
+#undef LSD_V
+#undef LSD_B
+#undef LSD_OUT_F
+#undef LSD_OUT_V
+#undef LSD_OUT_B
 };
 
 // Sound Cue nodes (editor/sound_cue.cpp plays them). Audio pins carry "what to play".
@@ -406,6 +497,38 @@ local function __forward(e)  -- +X turned by the Euler rotation (X, then Y, then
   return __vec(math.cos(y) * math.cos(z), math.cos(y) * math.sin(z), -math.sin(y))
 end
 local function __div(a, b) if b == 0 then return 0 end return a / b end
+local function __mod(a, b) if b == 0 then return 0 end return math.fmod(a, b) end
+local function __clamp(v, lo, hi) if v < lo then return lo elseif v > hi then return hi end return v end
+local function __round(v) if v >= 0 then return math.floor(v + 0.5) end return -math.floor(-v + 0.5) end
+local function __trunc(v) if v >= 0 then return math.floor(v) end return math.ceil(v) end
+local function __wrap(v, lo, hi) local span = hi - lo if span == 0 then return lo end return lo + (v - lo) % span end
+local function __maprange(v, a, b, c, d, clamped)
+  if b == a then return c end
+  local t = (v - a) / (b - a)
+  if clamped then t = __clamp(t, 0, 1) end
+  return c + (d - c) * t
+end
+local function __finterp(cur, target, dt, speed)
+  if speed <= 0 then return target end
+  local step = (target - cur) * __clamp(dt * speed, 0, 1)
+  return cur + step
+end
+local function __ease(a, b, t) t = __clamp(t, 0, 1) t = t * t * (3 - 2 * t) return a + (b - a) * t end
+local function __log(a, base) if a <= 0 or base <= 0 or base == 1 then return 0 end return math.log(a) / math.log(base) end
+local function __vsub(a, b) return __vec(a.x - b.x, a.y - b.y, a.z - b.z) end
+local function __vmul(a, b) return __vec(a.x * b.x, a.y * b.y, a.z * b.z) end
+local function __vdivf(a, s) if s == 0 then return __vec(0, 0, 0) end return __vec(a.x / s, a.y / s, a.z / s) end
+local function __vlen(a) return math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) end
+local function __vnorm(a) local l = __vlen(a) if l < 1e-8 then return __vec(0, 0, 0) end return __vec(a.x / l, a.y / l, a.z / l) end
+local function __vlerp(a, b, t) return __vec(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t) end
+local function __rotz(v, deg) local r = math.rad(deg) local c, s = math.cos(r), math.sin(r) return __vec(v.x * c - v.y * s, v.x * s + v.y * c, v.z) end
+local function __randint(lo, hi) lo, hi = math.floor(lo), math.floor(hi) if hi < lo then lo, hi = hi, lo end return math.random(lo, hi) end
+local function __randdir()
+  local z = math.random() * 2 - 1
+  local a = math.random() * 2 * math.pi
+  local r = math.sqrt(1 - z * z)
+  return __vec(r * math.cos(a), r * math.sin(a), z)
+end
 local function __setpos(e, v) lsd.set_position(e, v.x, v.y, v.z) end
 local function __addpos(e, v) local x, y, z = lsd.position(e) lsd.set_position(e, x + v.x, y + v.y, z + v.z) end
 local function __setrot(e, v) lsd.set_rotation(e, v.x, v.y, v.z) end
@@ -493,7 +616,8 @@ std::string literal(PinType type, const char* value) {
             if (std::strcmp(value, "true") == 0 || std::strcmp(value, "false") == 0) return value;
             return lua_string(value);
         }
-        case PinType::Exec: break;
+        case PinType::Exec:
+        case PinType::Audio: break;  // an unconnected sound input is no sound
     }
     return "nil";
 }

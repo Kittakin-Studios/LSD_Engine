@@ -23,6 +23,8 @@
 #include "workspaces.h"
 #include "lua_debugger.h"
 #include "mesh_editor.h"
+#include "mesh_materials.h"
+#include "assistant.h"
 #include "prefab_editor.h"
 #include "timeline_editor.h"
 #include "source_control.h"
@@ -3068,8 +3070,8 @@ void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
 
 // Mesh > Create Prefab from Parts (Unreal's import with Combine Meshes off): a prefab with one child
 // per mesh node and material of the file ("<guid>#<k>" meshes in their node's space, placed by the
-// node's transform: pivots stay where the artist put them), and a Material per material of the file,
-// its textures found in Content by file name.
+// node's transform: pivots stay where the artist put them), and a Material per material of the file
+// (Import Materials and Textures: its maps found and copied into Content).
 // shortcut: flat (every part a child of the root); keep the file's node hierarchy if artists need it
 void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     char source[300], error[256];
@@ -3083,7 +3085,10 @@ void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     }
     char guid[33];
     asset::to_string(mesh.guid, guid);
-    std::vector<std::pair<std::string, std::string>> materials;  // file material name -> our Material's GUID
+    MaterialImportReport report;
+    char imported[256];
+    import_mesh_materials(*s.registry, mesh, "", false, report, imported, sizeof imported);
+    const std::vector<std::pair<std::string, std::string>>& materials = report.materials;  // file material name -> our Material's GUID
     world::World w(default_allocator());
     const Entity root = w.create(mesh.name);
     for (usize k = 0; k < parts.size(); ++k) {
@@ -3097,36 +3102,9 @@ void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
         auto* sm = w.add<world::StaticMesh>(child);
         std::snprintf(sm->mesh, sizeof sm->mesh, "%s#%zu", guid, k);
         sm->color = LinearColor::hex(0xFFFFFF);  // the material's own colour
-        if (!p.material[0]) continue;
-        std::string* found = nullptr;
-        for (auto& [name, id] : materials) found = name == p.material ? &id : found;
-        if (!found) {
-            render::Material m;
-            m.base_color.r = p.base_color[0];
-            m.base_color.g = p.base_color[1];
-            m.base_color.b = p.base_color[2];
-            m.base_color.a = p.base_color[3];
-            m.metallic = p.metallic;
-            m.roughness = p.roughness;
-            auto find_texture = [&](const char* wanted, char out[33]) {  // a Texture in Content with that file name
-                for (usize i = 0; wanted[0] && i < s.registry->count() && !out[0]; ++i) {
-                    const asset::AssetRecord& t = s.registry->get(i);
-                    const std::string file = std::filesystem::path(t.path).filename().string();
-                    if (t.type == asset::AssetType::Texture && SDL_strcasecmp(file.c_str(), wanted) == 0) asset::to_string(t.guid, out);
-                }
-            };
-            find_texture(p.texture, m.base_color_texture);
-            find_texture(p.normal_texture, m.normal_texture);
-            find_texture(p.orm_texture, m.orm_texture);
-            const std::string path = new_asset_path(s, (std::string("M_") + p.material).c_str());
-            asset::save_data_asset(path.c_str(), reflect::type_of<render::Material>(), &m);
-            s.registry->scan();
-            char id[33] = "";
-            if (const asset::AssetRecord* r = record_at(s, path)) asset::to_string(r->guid, id);
-            materials.emplace_back(p.material, id);
-            found = &materials.back().second;
+        for (const auto& [name, id] : materials) {
+            if (p.material[0] && name == p.material) std::snprintf(sm->material, sizeof sm->material, "%s", id.c_str());
         }
-        std::snprintf(sm->material, sizeof sm->material, "%s", found->c_str());
     }
     const std::string path = new_asset_path(s, (std::string("BP_") + mesh.name).c_str(), world::kPrefabExtension);
     if (!world::save_prefab_file(w, root, path.c_str())) {
@@ -3280,10 +3258,66 @@ void draw_mesh_slot(EditorState& s, world::StaticMesh& mesh) {
     }
 }
 
+// Skeletal Mesh > Materials (Unreal's Materials list on a mesh component): a row per material slot
+// of the mesh, showing the material it is drawn with; picking another overrides that slot on this
+// object only (Material Overrides), the arrow goes back to the mesh's own.
+void draw_material_slots(EditorState& s, world::SkeletalMesh& mesh) {
+    const SkinnedEntry* model = s.skinned ? s.skinned->get(mesh.mesh) : nullptr;
+    if (!model || !model->section_count) return;
+    if (!ImGui::TreeNodeEx("Materials", ImGuiTreeNodeFlags_DefaultOpen, "Materials (%u slots)", model->section_count)) return;
+    if (mesh.material[0]) ImGui::TextDisabled("Material above is set: it covers every slot (clear it to use these)");
+    u32 k = 0;
+    for (const anim::MeshSection& section : model->model->sections) {
+        if (!section.index_count || k >= model->section_count) continue;
+        const u32 slot = k++;
+        world::MaterialOverride* own = nullptr;
+        u32 own_index = 0;
+        for (u32 i = 0; i < mesh.material_overrides.count; ++i) {
+            if (std::strcmp(mesh.material_overrides[i].slot, section.material) == 0) own = &mesh.material_overrides[i], own_index = i;
+        }
+        char value[33];
+        std::snprintf(value, sizeof value, "%s", own && own->material[0] ? own->material : model->sections[slot].slot_material);
+        ImGui::PushID(static_cast<int>(slot));
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%u %s", slot, section.material[0] ? section.material : "(no material)");
+        ImGui::SetItemTooltip("Element %u: the triangles using \"%s\" in the file", slot, section.material);
+        ImGui::SameLine(160.0f);
+        const bool overridden = own && own->material[0];
+        ImGui::SetNextItemWidth(overridden ? -28.0f : -1.0f);
+        if (asset_picker(s, "Material", value, sizeof value)) {
+            if (std::strcmp(value, model->sections[slot].slot_material) == 0) {
+                if (own) mesh.material_overrides.remove(own_index);  // back to the mesh's own
+            } else if (own) {
+                std::snprintf(own->material, sizeof own->material, "%s", value);
+            } else {
+                world::MaterialOverride o;
+                std::snprintf(o.slot, sizeof o.slot, "%s", section.material);
+                std::snprintf(o.material, sizeof o.material, "%s", value);
+                if (!mesh.material_overrides.push_back(o)) std::snprintf(s.status, sizeof s.status, "Too many material overrides on one object");
+            }
+            edited(s, "Change Material Slot");
+        }
+        if (overridden) {
+            ImGui::SameLine();
+            if (with_tip(ImGui::SmallButton("<"), "Back to the mesh's own material for this slot")) {
+                mesh.material_overrides.remove(own_index);
+                edited(s, "Reset Material Slot");
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::TreePop();
+}
+
 // Skeletal Mesh extras above its properties: the animation file's clips by name (picks Clip), and
 // while an Animation Graph runs, the state it is in (Unreal's live Anim Blueprint debugging).
 void draw_skeletal_readout(EditorState& s, Entity e, world::SkeletalMesh& mesh) {
     if (!s.skinned) return;
+    char motion[160];
+    if (s.animations && s.animations->motion_readout(e, motion, sizeof motion)) {  // the Character's Motion Matching picks the clips
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Motion Matching: %s", motion);
+        return;
+    }
     if (mesh.anim_graph[0] && s.animations) {
         const char* from = "";
         const char* state = s.animations->graph_state(*s.skinned, mesh, e, &from);
@@ -3415,7 +3449,10 @@ void draw_entity_details(EditorState& s) {
             g_details_type = types[i];
             std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
-            if (types[i] == &reflect::type_of<world::SkeletalMesh>()) draw_skeletal_readout(s, e, *static_cast<world::SkeletalMesh*>(component));
+            if (types[i] == &reflect::type_of<world::SkeletalMesh>()) {
+                draw_skeletal_readout(s, e, *static_cast<world::SkeletalMesh*>(component));
+                draw_material_slots(s, *static_cast<world::SkeletalMesh*>(component));
+            }
             if (types[i] == &reflect::type_of<world::Spline>()) {  // point tools; points are moved in the viewport
                 auto& points = static_cast<world::Spline*>(component)->points;
                 const bool has_point = s.spline_point >= 0 && static_cast<u32>(s.spline_point) < points.count;
@@ -4416,6 +4453,12 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Open Mesh Editor")) open_mesh_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) create_parts_prefab(s, r);
             if (r.type == asset::AssetType::Mesh) ImGui::SetItemTooltip("One object per mesh and material in the file, with Materials made from the file's (Unreal: Combine Meshes off)");
+            if (r.type == asset::AssetType::Mesh &&
+                with_tip(ImGui::MenuItem("Import Materials and Textures"),
+                         "A Material per material of the file, with its texture maps copied into Textures/ (metallic / roughness packed into ORM, opacity into the colour's alpha), set on the mesh's Material Slots (Unreal's Import Materials / Import Textures)")) {
+                MaterialImportReport report;
+                import_mesh_materials(*s.registry, r, "", false, report, s.status, sizeof s.status);
+            }
             if (r.type == asset::AssetType::Prefab && with_tip(ImGui::MenuItem("Edit Prefab"), "Opens the Prefab Editor")) open_prefab_editor(s, r);
             if (with_tip(ImGui::MenuItem("Reference Viewer..."), "Shows what this asset uses and what uses it")) open_reference_viewer(s, r.guid);
             if (with_tip(ImGui::MenuItem("Duplicate"), "Makes a copy of the asset next to it")) duplicate_asset(s, r);
@@ -4897,6 +4940,10 @@ void draw_menu_bar(EditorState& s) {
         ImGui::Separator();
         ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
         ImGui::SetItemTooltip("Breakpoints, stepping, call stack, locals and watch for Lua scripts (visual scripts: breakpoints on nodes)");
+        if (s.settings.assistant_enabled) {
+            ImGui::MenuItem("LSD Assistant", nullptr, &s.show_assistant);
+            ImGui::SetItemTooltip("Chat with your own AI model that knows LSD_Engine: questions, plans, scripts it can write into the project");
+        }
         ImGui::MenuItem("Remote Console", nullptr, &s.show_remote_console);
         ImGui::SetItemTooltip("Sends console commands to a game running on this PC with -remote");
         ImGui::EndMenu();
@@ -5237,6 +5284,7 @@ struct Plugin {
 };
 constexpr Plugin kPlugins[] = {
     {"Claude MCP", "Code with Claude Code directly in the editor", &EditorSettings::mcp_enabled, draw_claude_mcp},
+    {"LSD Assistant", "An AI game studio in the editor (your own model)", &EditorSettings::assistant_enabled, assistant::draw_settings},
 };
 
 void draw_plugins(EditorState& s) {
@@ -5546,6 +5594,7 @@ void draw_editor(EditorState& s) {
     draw_mesh_editor(s);
     draw_prefab_editor(s);
     debugger::draw_window(s, &s.show_debugger);
+    assistant::draw_window(s, &s.show_assistant);
     draw_memory_window(s);
     draw_ui_editor(s);
     took(4);

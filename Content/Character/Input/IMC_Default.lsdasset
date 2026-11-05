@@ -67,13 +67,6 @@
         "dead_zone": 0
       },
       {
-        "action": "8afe5ffabbe3c4b8f6ae872b0a5bc181",
-        "key": "Mouse XY",
-        "axis": 0,
-        "scale": 1,
-        "dead_zone": 0
-      },
-      {
         "action": "ccd7c596c5e18ce30974545f645b5643",
         "key": "Left Shift",
         "axis": 0,

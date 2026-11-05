@@ -15,7 +15,7 @@ add_test(NAME reflect_gen_rejects_bad_header
 set_tests_properties(reflect_gen_rejects_bad_header PROPERTIES WILL_FAIL TRUE)
 
 add_executable(lsd_render_tests render_tests.cpp)
-target_link_libraries(lsd_render_tests PRIVATE lsd_render)
+target_link_libraries(lsd_render_tests PRIVATE lsd_render lsd_rhi)
 lsd_configure_target(lsd_render_tests)
 add_test(NAME render COMMAND lsd_render_tests)
 
@@ -34,7 +34,7 @@ lsd_configure_target(lsd_world_tests)
 add_test(NAME world COMMAND lsd_world_tests)
 
 # Editor logic that needs no GPU (undo / redo history).
-add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/transactions.cpp ${PROJECT_SOURCE_DIR}/editor/sound_cue.cpp ${PROJECT_SOURCE_DIR}/editor/rml_edit.cpp
+add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/assistant_core.cpp ${PROJECT_SOURCE_DIR}/editor/transactions.cpp ${PROJECT_SOURCE_DIR}/editor/sound_cue.cpp ${PROJECT_SOURCE_DIR}/editor/rml_edit.cpp
   ${PROJECT_SOURCE_DIR}/editor/light_bake.cpp ${PROJECT_SOURCE_DIR}/editor/lighting.cpp
   ${PROJECT_SOURCE_DIR}/editor/references.cpp)
 target_compile_definitions(lsd_editor_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")

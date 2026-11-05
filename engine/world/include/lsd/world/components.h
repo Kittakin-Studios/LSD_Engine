@@ -160,6 +160,12 @@ struct Character {
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "Axis 2D: x = turn right, y = look up") char look_action[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:InputAction", Tooltip = "The Input Action that jumps") char jump_action[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "2D side-scroller: Move's x walks along X only (no turning), Jump jumps; the object's Sprite faces the way it walks") bool side_scroller = false;
+    LSD_PROPERTY(Edit, Category = "Animation",
+                 Tooltip = "Built-in locomotion by Motion Matching (like Unreal's Game Animation Sample): the Skeletal Mesh picks the frame of its locomotion clips that best fits where the input takes the character. Off: the Skeletal Mesh's own Anim Graph (or Clip)")
+    bool motion_matching = false;
+    LSD_PROPERTY(Edit, Category = "Animation", Widget = "Asset:MotionDatabase",
+                 Tooltip = "The clips it picks from (a Motion Database); empty: the locomotion clips next to the character's mesh (Idle, Walk, Run, Jog, Strafe, Turn, Start, Stop... in the name)")
+    char motion_database[33] = "";
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Walking speed") f32 walk_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Upward speed of a jump (higher jumps higher)") f32 jump_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground it can walk up") f32 max_slope = 45.0f;
@@ -247,6 +253,19 @@ struct Mover {
 // A vehicle the player drives (Unreal's Chaos Vehicle, arcade-style): E near it gets in or out; W / S
 // throttle and reverse, A / D steer, Shift boost, Ctrl or Space handbrake (a flying one: Space up,
 // Ctrl down). It hugs the ground, stops at walls, and the camera follows behind it.
+// One wheel of a physics Vehicle (Unreal's Wheel Setup): where it sits and what it does; Object names
+// a child to spin, steer and bounce with it (a wheel mesh, like Unreal's wheel bones).
+LSD_STRUCT()
+struct VehicleWheel {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "A child object turned with the wheel (its pivot at the wheel's centre); empty: none") char object[64] = "";
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Where its suspension is fixed, from the vehicle's origin (x forward, y left, z up)") Vec3 position{1.4f, 0.8f, 0.3f};
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 5, Tooltip = "0 = the vehicle's Wheel Radius") f32 radius = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Turns with the steering (front wheels)") bool steers = false;
+    LSD_PROPERTY(Edit, Tooltip = "The engine turns it") bool driven = true;
+    LSD_PROPERTY(Edit, Tooltip = "Locked by the handbrake (Space; usually the rear wheels)") bool handbrake = false;
+};
+
 LSD_STRUCT(Component, Category = "Movement", Tooltip = "A vehicle the player enters and drives (WASD, Shift boost, Ctrl brake)")
 struct Vehicle {
     LSD_GENERATED()
@@ -260,8 +279,27 @@ struct Vehicle {
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Flying: how fast Space / Ctrl climb and sink") f32 climb_speed = 6.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "How near the player must be to get in with E") f32 enter_distance = 3.0f;
     LSD_PROPERTY(Edit, Tooltip = "Where the driver sits, in the vehicle's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
+    LSD_PROPERTY(Edit, Tooltip = "Passenger seats, in the vehicle's own space (Unreal's seats): in multiplayer, players getting in once the driver's seat is taken sit here")
+    List<Vec3, 8> passenger_seats;
     LSD_PROPERTY(Edit, Units = "m", Min = 1, Max = 50, Tooltip = "How far behind the vehicle the driver's view is") f32 camera_distance = 8.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 30, Tooltip = "How high above the vehicle the driver's view is") f32 camera_height = 3.0f;
+    // Physics model (ground vehicles): a dynamic body on wheels (Unreal's Chaos Wheeled Vehicle Movement).
+    LSD_PROPERTY(Edit, Category = "Physics", Widget = "Choice:Arcade,Physics",
+                 Tooltip = "Arcade: moved directly (simple, never flips). Physics: a body on wheels with suspension, an engine and gears; it rolls, bumps and slides (ground vehicles)")
+    u32 model = 0;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "kg", Min = 50, Max = 100000, Tooltip = "How heavy it is (a car about 1500)") f32 mass = 1500.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "N m", Min = 10, Max = 100000, Tooltip = "The engine's pull at full throttle (more: faster off the line, up hills)") f32 engine_torque = 500.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 1000, Max = 20000, Tooltip = "Engine speed limit; the gearbox shifts up near it") f32 max_rpm = 6000.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "N m", Min = 0, Max = 100000, Tooltip = "Each wheel's brake (Ctrl)") f32 brake_torque = 1500.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Widget = "Choice:Rear,Front,All Wheel", Tooltip = "Which wheels the engine drives (the automatic wheels; listed wheels say for themselves)") u32 drive = 0;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "deg", Min = 0, Max = 80, Tooltip = "How far the front wheels turn at full lock") f32 max_steer_angle = 30.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.05, Max = 5, Tooltip = "Wheel radius (the automatic wheels, and listed ones with Radius 0)") f32 wheel_radius = 0.35f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.02, Max = 3, Tooltip = "Tyre width") f32 wheel_width = 0.25f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.01, Max = 3, Tooltip = "Suspension travel, fully up to fully down") f32 suspension_length = 0.3f;
+    LSD_PROPERTY(Edit, Category = "Physics", Units = "Hz", Min = 0.1, Max = 20, Tooltip = "Suspension stiffness: higher is firmer (a race car 2.5, a truck 1)") f32 suspension_stiffness = 1.5f;
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 0, Max = 1, Tooltip = "0 bounces on and on, 1 settles at once") f32 suspension_damping = 0.5f;
+    LSD_PROPERTY(Edit, Category = "Physics", Tooltip = "The wheels (Unreal's Wheel Setups); empty: four at the corners of its box")
+    List<VehicleWheel, 8> wheels;
 };
 
 // A ride the player hitches without driving (trains, ferries, lifts, cable cars): E near it gets on or
@@ -280,6 +318,13 @@ LSD_STRUCT(Component, Category = "Multiplayer", Tooltip = "Multiplayer: the serv
 struct NetReplicated {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Send its position and rotation to the clients (off: it is created and destroyed everywhere, but not moved)") bool replicate_movement = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Players farther than this from it get no updates of its movement (Unreal's Net Cull Distance: saves bandwidth in big levels); 0 = always sent")
+    f32 relevancy_distance = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0,
+                 Tooltip = "A player's own object (an avatar, a driven car): moves faster than this are refused by the server and it is put back (stops speed and teleport hacks); 0 = no check")
+    f32 max_speed = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "More values the server sends when they change (Unreal's Replicated properties): Component.field, comma-separated, e.g. StaticMesh.color, PointLight.intensity, Tags.tags")
+    char replicated_fields[256] = "";
     LSD_PROPERTY(Visible, Tooltip = "Who moves it: 0 = the server, else that player's machine (their avatar)") u32 owner = 0;
     LSD_PROPERTY(Visible, Tooltip = "Its id on the network (from its name for objects placed in the level)") u32 net_id = 0;
     LSD_PROPERTY(Visible, Tooltip = "What the server spawned it from, so clients make the same") char spawned_from[64] = "";
@@ -451,6 +496,15 @@ struct MorphWeight {
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = rest, 1 = the full shape") f32 weight = 0.0f;
 };
 
+// One material slot of a mesh drawn with another material on this object only (Unreal's Override
+// Materials on a component). Picked in Details > Materials, which lists the mesh's slots.
+LSD_STRUCT()
+struct MaterialOverride {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The mesh's material slot (its material's name in the file)") char slot[64] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drawn with this instead of the slot's material") char material[33] = "";
+};
+
 // A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a
 // rigged FBX into the viewport; its animations can come from the same file or another (Mixamo).
 LSD_STRUCT(Component, Category = "Animation", Tooltip = "Shows a rigged, animated mesh: a clip or an Animation Graph")
@@ -460,8 +514,10 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Widget = "Choice:Auto,+X,+Y,-X,-Y",
                  Tooltip = "Which way the character's front points in its file; it is turned to face the object's forward (+X, where the Character walks and the camera looks). Auto: Unreal rigs (UE4 / UE5 exports face -Y here, Unreal's Blueprint turns them -90) are turned; others face +X")
     u32 facing = 0;
-    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for the mesh (empty: its own colour)") char material[33] = "";
-    LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "One material for the whole mesh, over its material slots (empty: each slot's own material, see Materials below)") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh where no material is set") LinearColor color = LinearColor::hex(0xB4B4B8);
+    // Edited in Details > Materials (one row per slot of the mesh), so saved but not shown as a list.
+    LSD_PROPERTY(Save, Tooltip = "Material slots drawn with another material on this object (Unreal's Override Materials)") List<MaterialOverride, 48> material_overrides;
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX holding the animation, matched by bone names; empty = the mesh's own file") char animation[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Which animation (take) in that file, from 0") u32 clip = 0;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the animation (1 = as made)") f32 play_rate = 1.0f;

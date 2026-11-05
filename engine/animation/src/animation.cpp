@@ -212,8 +212,19 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
     // Scale on the root scales the skinned result; the bind matrices are in unscaled space.
     out.vertices.clear();
     out.indices.clear();
+    out.sections.clear();
     out.morphs.clear();
     out.morph_deltas.clear();
+    std::vector<u32> triangle_section;  // per triangle written, its section (indices are grouped by it at the end)
+    auto section_of = [&](const char* material) {
+        for (u32 s = 0; s < out.sections.size(); ++s) {
+            if (std::strcmp(out.sections[s].material, material) == 0) return s;
+        }
+        MeshSection section;
+        std::snprintf(section.material, sizeof section.material, "%s", material);
+        out.sections.push_back(section);
+        return static_cast<u32>(out.sections.size() - 1);
+    };
     std::vector<u32> tri;
     std::vector<u32> corner_vertex;  // this mesh's output vertices -> its ufbx vertex (morph offsets are per vertex)
     out.bounds_min = {1e30f, 1e30f, 1e30f};
@@ -258,14 +269,22 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
         tri.resize(mesh->max_face_triangles * 3);
         const u32 first_vertex = static_cast<u32>(out.vertices.size());
         corner_vertex.clear();
+        // Per-instance materials live on the node (as for static meshes), at the mesh's material indices.
+        const ufbx_node* instance = mesh->instances.count ? mesh->instances.data[0] : nullptr;
         for (usize f = 0; f < mesh->faces.count; ++f) {
             const u32 count = ufbx_triangulate_face(tri.data(), tri.size(), mesh, mesh->faces.data[f]);
+            const u32 slot = f < mesh->face_material.count ? mesh->face_material.data[f] : 0;
+            const ufbx_material* material = instance && slot < instance->materials.count ? instance->materials.data[slot]
+                                            : slot < mesh->materials.count                ? mesh->materials.data[slot]
+                                                                                           : nullptr;
+            const u32 section = section_of(material ? material->name.data : "");
+            for (u32 t = 0; t < count; ++t) triangle_section.push_back(section);
             for (u32 i = 0; i < count * 3; ++i) {
                 const u32 index = tri[i];
                 corner_vertex.push_back(mesh->vertex_indices.data[index]);
                 const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, index);
-                const ufbx_vec3 n = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, index) : ufbx_vec3{0, 0, 1};
-                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, index) : ufbx_vec2{0, 0};
+                const ufbx_vec3 n = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, index) : ufbx_vec3{{{0, 0, 1}}};
+                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, index) : ufbx_vec2{{{0, 0}}};
                 rhi::SkinnedVertex v{};
                 const bool weighted = skin->vertices.data[mesh->vertex_indices.data[index]].num_weights > 0;
                 const Vec3 pos = transform_point(weighted ? into_main : unweighted, {static_cast<f32>(p.x), static_cast<f32>(p.y), static_cast<f32>(p.z)});
@@ -338,6 +357,20 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
         }
     }
     if (out.bounds_min.x > out.bounds_max.x) out.bounds_min = out.bounds_max = {};
+    // Triangles grouped by section (counting sort, file order kept inside each), so each section is one range.
+    {
+        std::vector<u32> grouped(out.indices.size());
+        u32 at = 0;
+        for (u32 s = 0; s < out.sections.size(); ++s) {
+            out.sections[s].first_index = at;
+            for (usize t = 0; t < triangle_section.size(); ++t) {
+                if (triangle_section[t] != s) continue;
+                for (int c = 0; c < 3; ++c) grouped[at++] = out.indices[t * 3 + static_cast<usize>(c)];
+            }
+            out.sections[s].index_count = at - out.sections[s].first_index;
+        }
+        std::memcpy(out.indices.data(), grouped.data(), grouped.size() * sizeof(u32));
+    }
     asset::compute_normals(out.vertices.data(), out.vertices.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position),
                            offsetof(rhi::SkinnedVertex, normal), normals, smoothing_angle, out.vertices.allocator());
     if (out.vertices.size() > 0 && joints > 255) LSD_LOG_WARN("anim", "%s: %u joints; vertices can only use the first 256", path, joints);

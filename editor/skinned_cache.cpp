@@ -24,10 +24,19 @@ const asset::AssetRecord* record_of(const asset::AssetRegistry& registry, const 
 
 } // namespace
 
+static void destroy_buffers(rhi::Device& device, SkinnedEntry& e) {
+    if (e.vertices.valid()) device.destroy_buffer(e.vertices);
+    if (e.indices.valid()) device.destroy_buffer(e.indices);
+    for (u32 s = 0; s < e.section_count; ++s) {
+        if (e.sections[s].indices.valid()) device.destroy_buffer(e.sections[s].indices);
+    }
+    e.vertices = e.indices = {};
+    e.section_count = 0;
+}
+
 SkinnedCache::~SkinnedCache() {
     for (u32 i = 0; i < count_; ++i) {
-        if (entries_[i].vertices.valid()) device_.destroy_buffer(entries_[i].vertices);
-        if (entries_[i].indices.valid()) device_.destroy_buffer(entries_[i].indices);
+        destroy_buffers(device_, entries_[i]);
         delete entries_[i].model;
     }
     for (u32 i = 0; i < set_count_; ++i) delete sets_[i];
@@ -55,9 +64,7 @@ const anim::AnimGraph* SkinnedCache::graph(const char* guid) {
 }
 
 bool SkinnedCache::load(SkinnedEntry& e) {
-    if (e.vertices.valid()) device_.destroy_buffer(e.vertices);
-    if (e.indices.valid()) device_.destroy_buffer(e.indices);
-    e.vertices = e.indices = {};
+    destroy_buffers(device_, e);
     e.failed = true;
     const asset::AssetRecord* r = record_of(registry_, e.guid);
     if (!r || r->type != asset::AssetType::Mesh) return false;
@@ -74,7 +81,56 @@ bool SkinnedCache::load(SkinnedEntry& e) {
     e.index_count = static_cast<u32>(e.model->indices.size());
     e.unreal_rig = anim::model_rig(*e.model) != anim::Rig::Other;
     e.failed = !e.vertices.valid() || !e.indices.valid();
+    // shortcut: only the first kMaxMaterialSlots materials of a file are drawn; raise the limit when a mesh needs more
+    for (const anim::MeshSection& section : e.model->sections) {
+        if (e.section_count == asset::kMaxMaterialSlots || !section.index_count) continue;
+        SkinnedEntry::Section& s = e.sections[e.section_count++];
+        s.indices = device_.create_buffer(rhi::BufferUsage::Index, e.model->indices.data() + section.first_index, section.index_count * sizeof(u32));
+        s.index_count = section.index_count;
+    }
+    if (e.model->sections.size() > asset::kMaxMaterialSlots) LSD_LOG_WARN("anim", "%s: %zu materials, only the first %u are drawn", path, e.model->sections.size(), asset::kMaxMaterialSlots);
+    load_slots(e);
     return !e.failed;
+}
+
+// Which model section a drawn section is (empty sections are skipped when the buffers are made).
+static const anim::MeshSection* model_section(const SkinnedEntry& e, u32 section) {
+    u32 k = 0;
+    for (const anim::MeshSection& s : e.model->sections) {
+        if (!s.index_count) continue;
+        if (k++ == section) return &s;
+    }
+    return nullptr;
+}
+
+void SkinnedCache::load_slots(SkinnedEntry& e) {
+    const asset::AssetRecord* r = record_of(registry_, e.guid);
+    for (u32 s = 0; s < e.section_count; ++s) e.sections[s].slot_material[0] = '\0';
+    if (!r || !e.model) return;
+    char path[300];
+    registry_.source_path(*r, path, sizeof path);
+    std::snprintf(path + std::strlen(path), sizeof path - std::strlen(path), ".meta");
+    e.meta_modified = file_time(path);
+    asset::AssetMeta meta;
+    registry_.load_meta(*r, meta);
+    for (u32 s = 0; s < e.section_count; ++s) {
+        const anim::MeshSection* section = model_section(e, s);
+        for (u32 k = 0; section && k < meta.material_slots.count; ++k) {
+            if (std::strcmp(meta.material_slots[k].name, section->material) == 0) {
+                std::snprintf(e.sections[s].slot_material, sizeof e.sections[s].slot_material, "%s", meta.material_slots[k].material);
+            }
+        }
+    }
+}
+
+const char* section_material(const world::SkeletalMesh& mesh, const SkinnedEntry& model, u32 section) {
+    const anim::MeshSection* s = model_section(model, section);
+    for (u32 k = 0; s && k < mesh.material_overrides.count; ++k) {
+        const world::MaterialOverride& o = mesh.material_overrides[k];
+        if (o.material[0] && std::strcmp(o.slot, s->material) == 0) return o.material;
+    }
+    if (mesh.material[0]) return mesh.material;
+    return section < model.section_count ? model.sections[section].slot_material : "";
 }
 
 f32 facing_yaw(const world::SkeletalMesh& mesh, const SkinnedEntry* model) {
@@ -138,7 +194,11 @@ void SkinnedCache::check_files() {
         char path[300];
         if (!r) continue;
         registry_.source_path(*r, path, sizeof path);
-        if (file_time(path) == e.modified) continue;
+        if (file_time(path) == e.modified) {
+            std::snprintf(path + std::strlen(path), sizeof path - std::strlen(path), ".meta");
+            if (!e.failed && file_time(path) != e.meta_modified) load_slots(e);  // Material Slots edited
+            continue;
+        }
         if (load(e)) LSD_LOG_INFO("editor", "Reloaded skinned mesh %s", path);
         for (u32 k = 0; k < set_count_; ++k) {  // its clips were sampled onto the old skeleton
             if (std::strcmp(sets_[k]->model_guid, e.guid) == 0) sets_[k]->modified = -1;

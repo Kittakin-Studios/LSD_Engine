@@ -14,8 +14,18 @@ namespace lsd::editor {
 struct SkinnedEntry {
     char guid[33];
     anim::SkinnedModel* model = nullptr;
-    rhi::BufferHandle vertices, indices;
+    rhi::BufferHandle vertices, indices;  // indices: every section (shadows, one draw)
     u32 index_count = 0;
+    // One draw per material slot: its triangles' indices and the slot's material from the mesh's
+    // .meta (Material Slots; "" = none), refreshed when the .meta changes.
+    struct Section {
+        rhi::BufferHandle indices;
+        u32 index_count = 0;
+        char slot_material[33] = "";
+    };
+    Section sections[asset::kMaxMaterialSlots];
+    u32 section_count = 0;
+    i64 meta_modified = 0;
     i64 modified = 0;
     bool failed = false;
     bool unreal_rig = false;  // UE4 / UE5 bone names: its front points down -Y in the file
@@ -24,6 +34,10 @@ struct SkinnedEntry {
 // The turn (degrees about Z) that makes a skeletal mesh face its object's +X: its Facing setting,
 // Auto = Unreal rigs turned +90 (their front is -Y), others not turned.
 f32 facing_yaw(const world::SkeletalMesh& mesh, const SkinnedEntry* model);
+// The material section `section` of `model` is drawn with on this object: its override in Material
+// Overrides, else the object's one Material, else the slot's material; "" = none (the object's colour).
+const char* section_material(const world::SkeletalMesh& mesh, const SkinnedEntry& model, u32 section);
+
 // Where a skeletal mesh is drawn: its object's matrix, turned by facing_yaw. Use it (not
 // world_matrix) for drawing, picking, sockets and IK.
 Mat4 skeletal_matrix(const world::World& world, world::Entity e, const world::SkeletalMesh& mesh, const SkinnedEntry* model);
@@ -55,6 +69,7 @@ public:
 
 private:
     bool load(SkinnedEntry& e);
+    void load_slots(SkinnedEntry& e);  // the sections' materials from the mesh's .meta
     void load(ClipSet& set, const SkinnedEntry& model);
 
     rhi::Device& device_;

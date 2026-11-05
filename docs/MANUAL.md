@@ -53,9 +53,21 @@ fixed versions; it takes a few minutes once.
 
 ### Run the editor
 
+Double-click **`lsd_editor.exe`** in the project folder (`E:\LSD_Engine\LSD_Engine`). Every Release
+build copies itself there (`cmake --build --preset windows-msvc --config Release`); it is not in Git.
+The Debug build, for debugging, stays in the build folder:
+
 ```powershell
 build\windows-msvc\editor\Debug\lsd_editor.exe
 ```
+
+Close the editor before building: Windows locks a running exe, so the build (or its copy to the
+project folder) fails while it is open.
+
+If a build fails at once with `ar.exe` / `ld.exe` from MinGW in the errors, the build folder was
+configured from a terminal without the Visual Studio tools (MinGW was found first on PATH). Delete
+`build\windows-msvc\CMakeCache.txt` and `build\windows-msvc\CMakeFiles\`, then configure again from
+VS Code or a *Developer PowerShell for VS*; the downloaded libraries are kept.
 
 It picks the best graphics card and Direct3D 12. Add `-rhi=opengl` to use OpenGL instead. The
 editor reopens the last level you had open. The project lives next to the executable's working folder:
@@ -322,10 +334,31 @@ object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 file as one mesh. Right-click it > **Create Prefab from Parts** makes `BP_<name>`: one child object
 per mesh and material in the file (named `Node` or `Node_Material`), each with its node's pivot,
 position, rotation and scale from the DCC (a door turns about its hinge), plus an `M_<material>`
-Material for each material in the file (base colour, metallic, roughness; base colour, normal and
-glTF metallic-roughness textures if Textures with the same file names are already in Content).
-Import the textures first. Drag the prefab into the level and move, hide or re-material its parts
-like any objects.
+Material for each material in the file, made by Import Materials and Textures (below). Drag the
+prefab into the level and move, hide or re-material its parts like any objects.
+
+**Import Materials and Textures** (Unreal's FBX import with Import Materials / Import Textures on):
+importing an FBX, glTF or GLB does it by itself when the file's textures can be found; for a mesh
+already in Content, right-click it > **Import Materials and Textures** (or the console:
+`asset.ImportMaterials <mesh>`). For every material of the file:
+
+1. Its texture maps are found: where the file says (the exporter's path, e.g. `F:\Art\Char.fbm\`),
+   next to the file, in its `<name>.fbm` folder, then any texture in Content with the same file name.
+   Images embedded in the file (FBX *Embed Textures*, GLB) are written out. Maps the file does not
+   connect are found by the texture set's naming next to the colour map: `Hat_Diffuse.png` brings
+   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`
+   (FBX has no metallic / roughness slot, so Blender's never arrive connected).
+2. They are copied into `<mesh folder>/Textures/`, packed into the engine's slots: metallic,
+   roughness and occlusion into one `T_<material>_ORM` (R occlusion, G roughness, B metallic, as
+   Unreal's ORM), an opacity map into the colour's alpha (`T_<material>_BaseColor`, and the material
+   becomes **Masked**: eyelashes, hair cards, lace).
+3. A Material `M_<material>` is made in `<mesh folder>/Materials/` (one that exists is kept, with your
+   edits) and set on the mesh's **Material Slots**.
+
+The mesh asset's Details > **Materials** lists its slots (one per material of the file, like a
+Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. Textures
+use the mesh's own UVs, so each part looks as it did in Blender, Maya or Substance. Missing textures
+are listed in the Output Log; put them next to the file and run the menu again.
 
 **References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
 (click to follow, double-click to find in the Content Browser). Deleting warns about anything that
@@ -453,6 +486,21 @@ their Static Mesh):
   out (beside it). It hugs the ground (steps and ramps up to half a metre), stops at walls, pushes
   what it hits, and the camera follows behind. Details > Vehicle: Ground or **Flying** (Space climbs,
   Ctrl sinks), top speed, reverse, acceleration, braking, turn rate, boost, the seat, camera distance.
+  The camera stops in front of walls between it and the car.
+  - **Physics model** (Unreal's Chaos Wheeled Vehicle): Details > Vehicle > Physics > **Model =
+    Physics** makes it a real car: a body on wheels with suspension, an engine (torque, max RPM), an
+    automatic gearbox and brakes. It rolls down slopes, bounces over bumps, slides, and can be pushed.
+    W / S throttle (pressing against the way it rolls brakes first), A / D steer, **Ctrl** brake,
+    **Space** handbrake, **Shift** boost. Mass, steering angle, wheel radius / width and the suspension
+    (travel, stiffness, damping) are there too. With no **Wheels** listed it gets four at the corners
+    of its box (front ones steer; Drive picks rear, front or all-wheel). List wheels to place them
+    yourself; a wheel's **Object** names a child mesh (a wheel from Create Prefab from Parts, its pivot
+    at the wheel's centre) that spins, steers and moves with it, like Unreal's wheel bones. Without a
+    wheel mesh, a ring shows each wheel in Play.
+  - **Multiplayer**: give the vehicle **Net Replicated**. The server hands out the seats: the first
+    player in drives (their machine simulates the car, everyone else sees it move), the next ones sit
+    on the **Passenger Seats** (positions in the vehicle's space) with the follow camera. Getting out,
+    or leaving the game, gives the car back to the server.
 - **Transport (Ride)** (blue: trains, ferries, lifts, cable cars): **E** near it hops on, and you
   travel on its seat without driving; **E** gets off. It comes with a Mover going back and forth
   20 m with a 3 s stop at each end: change its route in the Mover (a Spline for rails), or use a
@@ -503,6 +551,21 @@ game is single player and nothing networked runs. On:
   is on and the game is multiplayer (never in `-nosound` runs).
 - Packaged games: `-server` hosts, `-dedicated` hosts without a player, `-connect=address[:port]`
   joins (port 7777 by default). Tick rate, port and max players are in the same settings.
+- **Replicated Fields** (Unreal's Replicated properties): Net Replicated > Replicated Fields lists more
+  values to share, `Component.field` comma-separated (`StaticMesh.color, PointLight.intensity,
+  Tags.tags`); the server sends each when it changes, reliably, and players joining later get them.
+- **Relevancy Distance** (Unreal's Net Cull Distance): players farther than this from an object get
+  no updates of its movement, which saves bandwidth in big levels (0 = always sent).
+- **Max Speed** (server-side move check): for objects a player's machine moves (avatars, driven cars),
+  a move faster than this is refused by the server and the player is put back, so speed and teleport
+  hacks do not work (0 = no check).
+- **Lag compensation**: `lsd.net_seen_position(target, player)` on the server gives where `target` was
+  when that player saw it (their half round trip plus the interpolation delay ago). Check a client's
+  shot against it, not against where the target is now, and fast targets hit fairly.
+- **Level travel together**: `lsd.open_level(name)` on the server takes every player to the new level
+  (they reconnect on their own); on a client it is refused (only the server changes the level).
+- **LAN browser**: `lsd.net_find_games(seconds)` lists games hosting on the local network
+  (`{address, name, players, max_players}`) for a join menu; the server answers on its port + 1.
 
 ### 2D games (Paper2D)
 
@@ -790,6 +853,32 @@ sends each tool call to the editor as a console line over 127.0.0.1, the same ch
 Console. Only programs on this PC can connect; untick the plugin when you are not using it. It is
 editor-only: packaged games never listen.
 
+### LSD Assistant (an AI game studio in the editor)
+
+**Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to do
+something, plan a feature, or have it write a script and apply it. It answers as one of a studio's
+roles, picked at the top of the window: **Engine Expert**, **Gameplay Programmer**, **Technical
+Artist**, **Level Designer**, **Game Designer**, **Producer**, **QA Tester**. Every message carries
+the open level, the selected object (its components and values) and the asset list, so answers fit
+your project (untick **Project context** to leave it out). It knows the engine's Lua API from the
+engine's own documentation and maps Unreal features you name onto LSD_Engine's.
+
+Set it up once in **Edit > Editor Preferences > Plugins > LSD Assistant**:
+
+| Provider | Model | Endpoint | Key |
+| --- | --- | --- | --- |
+| Anthropic (Claude) | `claude-opus-5-5` (best), `claude-sonnet-5-5`, `claude-haiku-5-5` | empty | your Anthropic API key, or `ANTHROPIC_API_KEY` |
+| OpenAI-compatible | the server's model name | empty for OpenAI; `http://localhost:11434/v1` Ollama, `http://localhost:1234/v1` LM Studio, `https://openrouter.ai/api/v1` OpenRouter | its key, `OPENAI_API_KEY`, or none for local servers |
+
+Claude also takes an **Effort** (low: quick answers, high: hard problems). The key is kept on this
+PC only (`Saved/editor_settings.json`, never in the project or Git).
+
+When a reply contains a file (a code block headed like ```` ```lua Content/Script/Door.lua ````),
+the block has **Copy**, **Create** (or **Overwrite**, which asks twice) and, for scripts, **Attach to
+Selected** (a Script component running it, undoable). It may only write inside `Content/` and
+`Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Requests go from this PC straight to the
+endpoint (through the system's `curl`); a failed one puts your message back in the box.
+
 ### C and C++ scripts
 
 Game code can also be C or C++ (Unreal: your project's C++ module): **Tools > New C / C++ Script**
@@ -818,8 +907,14 @@ function on_update(self, dt) {
 ```
 
 Tables you get back (`lsd.get`, `lsd.game_instance()`) are copies: change them and hand them back
-with `lsd.set` / `lsd.save_game`. `lsd.after(2, () => ...)` takes a JS function. There is no
-debugger for JS yet (use `console.log`); the Lua Debugger lists Lua files only.
+with `lsd.set` / `lsd.save_game`. `lsd.after(2, () => ...)` takes a JS function.
+
+**Debugging JavaScript**: Tools > Lua Debugger lists `.js` scripts too. Breakpoints, Continue, Step
+Over / Into / Out and the call stack work as for Lua; **Locals** shows `self` and its fields (QuickJS
+has no access to a function's other locals: put a value on `self`, or `console.log` it). Breakpoints
+stop on lines that start a statement; on a line that continues one (a `.then(...)` chain, an object
+literal's fields) the stop comes at the next statement. Only Play from the editor is instrumented; a
+packaged game runs the scripts as written.
 
 ## 10. Visual scripting
 
@@ -910,6 +1005,19 @@ Node groups: Events (Start, Update, Hit, Overlap Begin / End), Flow (Branch, Seq
 Set Timer), Transform, Objects (Spawn, Destroy, Find, Has Tag), Math, Input, Variables, Data (Data
 Table, Curve), Audio, Animation, AI, UI, Save Game, Utilities (Print String, Game Time).
 
+**Math nodes** (Unreal's math library, same names; type in the node menu's search):
+
+| Group | Nodes |
+| --- | --- |
+| Math | + - * / %, Power, Square Root, Absolute, Negate, Sign, Floor, Ceil, Round, Truncate, Fraction, Min, Max, Clamp, Lerp, Ease (Smooth Step), Map Range Clamped / Unclamped, In Range, Wrap, FInterp To, Nearly Equal, > < >= <= == !=, Select Float, Exp, Log, Pi |
+| Math \| Trig | Sin, Cos, Tan (radians), Sin / Cos / Tan (Degrees), Asin, Acos, Atan, Atan2, Degrees To Radians, Radians To Degrees |
+| Math \| Vector | Make / Break Vector, Vector + - Vector, Vector * Vector, Vector * Float, Vector / Float, Negate Vector, Vector Length, Vector Length XY, Distance, Normalize, Dot Product, Cross Product, Lerp (Vector), Get Unit Direction, VInterp To, Clamp Vector Length, Rotate Vector Around Z, Equal (Vector) |
+| Math \| Random | Random Float, Random Float in Range, Random Integer in Range, Random Bool, Random Unit Vector |
+| Math \| Boolean | NOT, AND, OR, XOR, NAND, Equal (Boolean) |
+
+Divisions by zero give 0 (no errors in Play); angles are radians unless the node says Degrees. FInterp
+To / VInterp To take the frame's Delta Time (On Update's) for smooth follows.
+
 ---
 
 ## 11. Animation
@@ -956,6 +1064,12 @@ lists the file's clips by name and length). With an Animation Graph, Details sho
 in while it plays. Animations
 play in the editor too.
 
+**Materials on a Skeletal Mesh** (Unreal's Material Slots and Override Materials): the mesh is drawn
+per material of its file, each with its slot's material (see Import Materials and Textures in
+section 3). Details > Skeletal Mesh > **Materials** has a row per slot: pick or drop a material on a
+row to change that slot on this object only; the **<** button goes back to the mesh's. The single
+**Material** field above covers every slot at once (clear it to see the slots).
+
 **Notifies** (Unreal's AnimNotify): in the animation file's Details, add a time and a sound; it plays
 at the object when the clip passes that time in Play.
 
@@ -967,10 +1081,35 @@ at the object when the clip passes that time in Play.
   samples it mixes the three around the value; outside them, the nearest edge.
 - **Transitions**: from a state (or any) to another when a parameter is greater / less / true /
   false, or the clip finished, with a crossfade time.
+- **Clips come from one file**: the graph's **Animation** (empty = the mesh's). Every state's and
+  sample's clip number is a clip in that FBX, so put the idle, walk, run... takes in one FBX (one
+  export with several actions from Blender / Maya). Separate files per animation work on a Skeletal
+  Mesh without a graph, not yet inside one graph.
 - Pick the graph in the Skeletal Mesh's **Anim Graph**. A Character feeds **Speed**,
   **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the
   Set Anim Parameter node.
+
+**Motion Matching** (built-in locomotion, the technique behind Unreal's Motion Matching and its Game
+Animation Sample): tick **Character > Animation > Motion Matching** and the character's Skeletal Mesh
+animates itself, with no Anim Graph to build. Leave it off to use your own Animation Graph.
+
+- **The clips**: with **Motion Database** empty, it takes every animation FBX next to the character's
+  mesh whose name says locomotion (Idle, Walk, Run, Jog, Sprint, Strafe, Turn, Start, Stop, Pivot).
+  For control, make **New Data Asset > Motion Database**, list the clips (file, take, looping), and
+  pick it in the Character. Animations must be yours to use (your own, or packs licensed for any
+  engine); Epic's sample content is for Unreal only.
+- **How it picks**: every frame of those clips is described by where the feet are and how they and
+  the hips move, and where the character goes over the next second and which way it faces. Every
+  0.1 s (Search Interval) the frame nearest to the current pose plus the path your input asks for is
+  found, and it crossfades there (Blend Time). The capsule still moves the character; the animation
+  follows it. Clips made in place get their movement from the planted foot; root-motion clips use
+  their root (Unreal rigs' `root`) or travelling hips.
+- **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more
+  closely, or stay smoother), Same Clip Window, and the foot / hips bones if their names are unusual
+  (found by name otherwise: foot_l / LeftFoot / CC_Base_L_Foot, pelvis / Hips). Set the Character's
+  Walk Speed near your walk clip's speed (about 1.5 m/s for a walk, 3.5 for a jog) for the best
+  matches. Details > Skeletal Mesh shows what plays: "Motion Matching: Anim_Walk at 0.78 s".
 
 **Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them
 with the rigged FBX. The Mesh Editor lists them under **Morph Targets**: click one to preview it
@@ -1232,7 +1371,8 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 ## 17. Packaging and shipping
 
 1. **Edit > Project Settings**: project name, **Game Default Level**, icon, Steam App ID.
-2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release`.
+2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release` (it also
+   refreshes `lsd_editor.exe` in the project folder).
 3. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
 4. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
@@ -1287,7 +1427,7 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
 | Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()` (nodes Set Camera View, Is Third Person, Get Camera Location) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
-| Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision) |
+| Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view, `r.GPUCulling 0` to compare) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |
 | Animation | Foot IK (feet planted on steps and slopes in Play; foot bone names, max step, ankle height) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |

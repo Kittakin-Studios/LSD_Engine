@@ -26,6 +26,16 @@ struct MeshSocket {
     LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turn from the bone") Vec3 rotation;
 };
 
+// A mesh's material slot (Unreal's Material Slots, Element 0..N): the material its triangles that use
+// the file's material `name` are drawn with, unless the object overrides it.
+LSD_STRUCT()
+struct MaterialSlot {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The material's name in the mesh file") char name[64] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drawn with this (Material, Material Instance or Material Graph)") char material[33] = "";
+};
+constexpr u32 kMaxMaterialSlots = 48;
+
 LSD_STRUCT(Category = "Asset")
 struct AssetMeta {
     LSD_GENERATED()
@@ -57,6 +67,8 @@ struct AssetMeta {
     // Animation files (FBX with takes): notifies, edited in Details, played in Play.
     LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Events at times in this clip (footsteps, sounds, a script call), like Unreal's Anim Notifies") List<AnimNotify, 16> notifies;
     LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Named points on bones to attach props to (Unreal's Sockets)") List<MeshSocket, 16> sockets;
+    LSD_PROPERTY(Edit, Category = "Materials", Tooltip = "The material for each of the file's materials (Unreal's Material Slots); Import Materials fills them")
+    List<MaterialSlot, 48> material_slots;  // kMaxMaterialSlots (the reflection generator reads the number)
 
     // Textures. Colour vs data (sRGB vs linear) is decided by the material slot that uses them.
     LSD_PROPERTY(Edit, Category = "Texture", Min = 1, Max = 8192, Tooltip = "Larger images are halved until they fit (Unreal's Maximum Texture Size)")

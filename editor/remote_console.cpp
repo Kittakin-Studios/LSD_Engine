@@ -73,7 +73,7 @@ sockaddr_in localhost(u16 port) {
 void send_all(Socket s, const std::string& text) {
     usize sent = 0;
     while (sent < text.size()) {
-        const int n = ::send(s, text.data() + sent, static_cast<int>(text.size() - sent), 0);
+        const int n = static_cast<int>(::send(s, text.data() + sent, static_cast<int>(text.size() - sent), 0));  // ssize_t on POSIX
         if (n <= 0) {
             if (n < 0 && would_block()) continue;  // shortcut: spins while the socket is full, fine for console replies
             return;
@@ -86,7 +86,7 @@ void send_all(Socket s, const std::string& text) {
 bool receive(Socket s, std::string& buffer) {
     char chunk[1024];
     for (;;) {
-        const int n = ::recv(s, chunk, sizeof chunk, 0);
+        const int n = static_cast<int>(::recv(s, chunk, sizeof chunk, 0));
         if (n > 0) {
             buffer.append(chunk, static_cast<usize>(n));
             continue;

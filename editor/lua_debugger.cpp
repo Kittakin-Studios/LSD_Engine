@@ -126,12 +126,12 @@ void draw_window(EditorState& s, bool* open) {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled(g_stop ? "Stopped: the game waits" : s.playing ? "Running" : "Set breakpoints, then Play");
-    // File picker: the Lua scripts in Content.
+    // File picker: the Lua and JavaScript scripts in Content.
     ImGui::SetNextItemWidth(420);
     if (ImGui::BeginCombo("File", g_file[0] ? g_file : "(pick a script)")) {
         for (usize i = 0; s.registry && i < s.registry->count(); ++i) {
             const asset::AssetRecord& r = s.registry->get(i);
-            if (r.type != asset::AssetType::Script || std::filesystem::path(r.path).extension() == ".js") continue;  // Lua only: JS has no debugger
+            if (r.type != asset::AssetType::Script) continue;
             char path[300];
             s.registry->source_path(r, path, sizeof path);
             if (ImGui::Selectable(path, std::strcmp(path, g_file) == 0)) std::snprintf(g_file, sizeof g_file, "%s", path);

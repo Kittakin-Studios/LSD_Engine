@@ -35,6 +35,14 @@ struct NetSettings {
     bool voice_team = true;
     bool voice_squad = false;
     bool voice_proximity = false;
+    char server_name[48] = "LSD_Engine game";  // what the LAN browser lists
+};
+
+// A game found on the local network (find_lan_games).
+struct LanGame {
+    char address[64] = "";  // "192.168.1.20:7777", ready for join()
+    char name[48] = "";
+    u32 players = 0, max_players = 0;
 };
 
 // Player 0 is the server's own (a listen server); clients get 1, 2, 3...
@@ -115,6 +123,15 @@ public:
     bool voice_channel_on(ChatChannel channel) const;
     // Where a player's avatar is (proximity voice gets quieter with distance); false if unknown.
     bool player_position(u32 player, Vec3& out) const;
+
+    // Lag compensation (server): where `e` was when `player` saw it, the server's recent history
+    // played back by that player's half round trip and interpolation delay (a fair hit check for a
+    // shot that player fired). False if there is no history (not replicated, or not the server).
+    bool seen_position(world::World& world, world::Entity e, u32 player, Vec3& out) const;
+
+    // Games hosting on the local network (they answer on their port + 1), waiting up to `seconds`.
+    // Returns how many were written. Works without a session.
+    static u32 find_lan_games(u16 port, f32 seconds, LanGame* out, u32 capacity);
 
     struct Impl;
 

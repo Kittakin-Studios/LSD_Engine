@@ -145,6 +145,10 @@
 //   lsd.client_event(player, name, ...)  server: runs it on that player's machine (Run on Owning Client)
 //   lsd.chat(channel, text) -> ok        "all", "team", "squad", "proximity" (those the project turns on)
 //   lsd.set_team(player, team [, squad]) server: groups for team / squad chat; lsd.team(player) -> team, squad
+//   lsd.net_seen_position(e, player) -> x, y, z   server: where e was when that player saw it (lag
+//                                        compensation: check a client's shot against this); nil if unknown
+//   lsd.net_find_games([seconds]) -> { {address, name, players, max_players}, ... }   games on the LAN
+//                                        (blocks up to `seconds`, default 0.5: call it from a menu, not every frame)
 // Events: on_player_joined(self, id), on_player_left(self, id), on_chat(self, from, channel, text),
 // on_connected(self, id), on_disconnected(self). Arguments travel as JSON (numbers, text, tables).
 //
@@ -255,6 +259,9 @@ struct ScriptHost {
     bool (*net_chat)(void* user, const char* channel, const char* text) = nullptr;
     void (*net_set_group)(void* user, u32 player, u32 team, u32 squad) = nullptr;
     void (*net_group)(void* user, u32 player, u32& team, u32& squad) = nullptr;
+    bool (*net_seen_position)(void* user, u32 entity, u32 player, Vec3& out) = nullptr;  // lag compensation (server)
+    // LAN games: writes "address|name|players|max" lines into `out` (newline-separated); returns how many.
+    u32 (*net_find_games)(void* user, f32 seconds, char* out, usize capacity) = nullptr;
 };
 
 class ScriptSystem {
@@ -304,6 +311,13 @@ public:
     void clear_breakpoints();
     bool has_breakpoint(const char* source, i32 line) const;
     void set_line_trace(LineTrace trace, void* user);
+    // A line of a JavaScript script runs (its line markers call this): the same breakpoints, steps and
+    // trace as Lua lines. `depth` gives its call depth (asked only while stepping or stopping), `fill`
+    // writes the stop. True when it stopped (the handler ran). Cheap when nothing is being debugged.
+    static bool foreign_line(const char* source, i32 line, i32 (*depth)(void* user), void (*fill)(void* user, DebugStop& stop), void* user);
+    static bool line_hooks_on();  // breakpoints, a step or a trace are set: foreign_line has work to do
+    // Whether scripts loaded from now on get line markers (a debugger is attached).
+    bool debuggable() const { return debugger_ != nullptr; }
 
     // C / C++ behaviours (Native Script components) from a game module; they start, update and get
     // events with the Lua scripts. Before the module's DLL is unloaded or swapped: stop_natives(),

@@ -5,8 +5,10 @@
 #include "skinned_cache.h"
 #include "sound_player.h"
 
+#include "lsd/animation/motion_matching.h"
 #include "lsd/world/world.h"
 
+#include <memory>
 #include <vector>
 
 namespace lsd::editor {
@@ -32,6 +34,10 @@ public:
     // An Animation Graph parameter on `e`'s skeletal mesh and on those of its children (a Character
     // with its mesh attached under it).
     void set_param(const world::World& world, world::Entity e, const char* name, f32 value);
+    // Motion Matching: where the input takes `character` (Play sets it every frame; else it stands still).
+    void set_motion_input(world::Entity character, const anim::MotionInput& input);
+    // What motion matching plays on `e` ("Anim_Walk at 0.43 s"), or false if it does not run there.
+    bool motion_readout(world::Entity e, char* out, usize capacity) const;
 
     // IK for the next update (scripts call it every frame they want it): a bone reaches a world
     // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
@@ -56,7 +62,25 @@ private:
         rhi::BufferHandle morphed;  // bind pose + morph targets, rebuilt when the weights change
         u64 morph_key = 0;
         bool used = false;
+        anim::MotionState motion;
+        const anim::MotionData* motion_data = nullptr;  // what `motion` indexes (a rebuild restarts it)
     };
+    // Motion Databases built for a skeleton, rebuilt when a clip file or the database changes.
+    struct Motion {
+        char mesh[33];
+        char database[33];  // "" = the clips found next to the mesh
+        u64 key = 0;
+        anim::MotionDatabase settings;
+        anim::MotionData data{default_allocator()};
+        bool ok = false;
+    };
+    std::vector<std::unique_ptr<Motion>> motions_;
+    const Motion* motion_for(SkinnedCache& cache, const world::SkeletalMesh& mesh, const SkinnedEntry& model, const world::Character& character);
+    struct MotionInputs {
+        world::Entity character;
+        anim::MotionInput input;
+    };
+    std::vector<MotionInputs> motion_inputs_;
     rhi::Device& device_;
     void update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model);
     State states_[256];

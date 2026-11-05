@@ -5,12 +5,13 @@ The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
 examples), [Examples/Examples.md](docs/Examples/Examples.md) (first-timer tutorial: input actions, health / stamina HUD,
 interact; its scripts were run for real), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
-Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
+`docs/` is also the developer's Obsidian vault (settings in the gitignored `docs/.obsidian/`): keep links as
+relative Markdown links, not `[[wikilinks]]`. Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
 the `screenshot` console command and `ui.Click`, in the default layout); retake one when its panel changes.
 
 ## What this is
 
-**LSD_Engine** is a proprietary 3D game engine by **Kittakin Studios** (owner: Charlize Pauli). It
+**LSD_Engine** is a proprietary 3D game engine by **Kittakin Studios** (owner: Richard Pauli, aka Charlize Pauli). It
 takes the *public ideas* behind Bitsquid/Stingray (data-oriented, data-driven, Lua gameplay) and gives
 them an **editor-first workflow like Unreal Engine**: import a file, find it in the Content Browser,
 open it in its own editor, wire it up by clicking. Code is for new behaviour, never for hooking up content.
@@ -19,7 +20,7 @@ open it in its own editor, wire it up by clicking. Code is for new behaviour, ne
 - License: **proprietary, all rights reserved** (`LICENSE`). Never add GPL code; LGPL only as a
   separately linked library. Third-party code is fetched by `third_party/CMakeLists.txt`, pinned, and
   listed with its licence in `third_party/README.md` (MIT / BSD / zlib / FreeType licence only).
-- Plan doc (architecture, spec, editor look, roadmap): <https://claude.ai/artifact/Q73b6jeNowQ4rQJGqRYwxW>
+- Plan doc (architecture, spec, editor look, roadmap): [docs/](docs/) — `ROADMAP.md`, `BACKLOG.md`, `ARCHITECTURE.md`, `MANUAL.md`
 
 ## Hard rule: clean room
 
@@ -38,10 +39,15 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 
 ## Build, run, test
 
-- Windows, MSVC, VS Code + CMake Tools, preset **`windows-msvc`** (Ninja Multi-Config). Linux: `linux-clang`.
+- Windows, MSVC, VS Code + CMake Tools, preset **`windows-msvc`** (Ninja Multi-Config). Linux: `linux-clang`
+  (verified in WSL Ubuntu: sync the sources to `~/lsd` with rsync, `cmake --preset linux-clang`, build, `ctest`;
+  keep it at 0 warnings too, Clang flags things MSVC does not).
 - `cmake --preset windows-msvc` then `cmake --build --preset windows-msvc` (Debug);
   Release: `cmake --build --preset windows-msvc --config Release` (packaging uses it).
 - Tests: `ctest --preset windows-msvc` (15 suites, framework-free, in `tests/`). Keep them passing.
+- Release builds copy themselves to `lsd_editor.exe` in the repo root (gitignored; Charlize double-clicks it).
+  If configure picks MinGW tools (`ar.exe` / `ld.exe` from WinLibs on PATH), delete `build\windows-msvc\CMakeCache.txt`
+  and `CMakeFiles\`, then configure after `vcvars64.bat` (VS 18 Community).
 - Editor: `build\windows-msvc\editor\Debug\lsd_editor.exe`. The same exe is the game (`-game`, or a
   folder with `game.json` from File > Package Project).
 - Both Debug and Release build with **0 warnings**; keep it that way (`/W4`, `-Wall -Wextra -Wpedantic
@@ -61,7 +67,7 @@ Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
 `\n` / `\0` escapes); the scratchpad has `build.bat` (configure + build + ctest), `build_editor.bat`,
 `build_target.bat <targets>`, `build_release.bat`, `configure.bat`. Close Charlize's running editor
-before linking `lsd_editor.exe` (the exe is locked while it runs).
+before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy too).
 
 ## Key decisions
 
@@ -134,7 +140,7 @@ every editor button / menu item / checkbox a tooltip (`with_tip(ImGui::Button(..
 | 4 | Gameplay: prefabs, Lua + visual scripting, input, Jolt physics, character | Exit test works |
 | 5 | Content editors: materials + material graphs, animation + anim graphs, audio, particles | Exit test works |
 | 6 | Vertical slice | Done: exit test works on this PC (package runs from another folder); every planned item in, some partial (BACKLOG [~]) |
-| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | Exit test works. Done: C / C++ scripts and components (`LSD_COMPONENT`), C / C++ and JavaScript nodes, `.js` scripts, every lsd.* command from C / C++ (`lsd_lua_call` / `api()`), hot reload keeping properties, VS Code debugging; open: JavaScript breakpoints (QuickJS has no debugger) |
+| 7 | Gameplay languages: C / C++ game module, JavaScript scripts | Exit test works. Done: C / C++ scripts and components (`LSD_COMPONENT`), C / C++ and JavaScript nodes, `.js` scripts, every lsd.* command from C / C++ (`lsd_lua_call` / `api()`), hot reload keeping properties, VS Code debugging, JavaScript breakpoints (line markers, `engine/script/src/js_instrument.cpp`) |
 
 Milestone 6 has: packaging + game mode, save games, sky / height fog / post-process volume, navmesh +
 Nav Agents, behaviour trees + perception, game UI on RmlUi (HUD, menus, keyboard / gamepad navigation,
@@ -168,5 +174,12 @@ hover tooltips everywhere (`editor/tips.h`), player camera from a Camera on the 
 Look / Orbit Bone / Ride Bone, Follow Bone), Unreal rigs (UE4 / UE5 detection, retarget on import, Skeletal Mesh Facing),
 live editing in Play (`PlaySession::apply_live_edits`: Character, bodies, gravity, input assets) and self-saving data assets,
 crash reports for abort / std::terminate with a symbolised stack in the log, Mouse 4 / 5 back and forward.
+LSD Assistant (`editor/assistant.*` UI + curl worker, `editor/assistant_core.*` requests / replies, tested in editor_tests):
+Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), studio roles, project context, writes into Content/ / Source/.
+Motion Matching (`engine/animation/motion_matching.*`): Character > Motion Matching; databases built in `AnimationPlayer::motion_for`.
+The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).
+Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become
+`M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
+(.meta `material_slots`); Skeletal Meshes draw per section with per-object `material_overrides`.
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
 LFS locking, UI resize handles and data bindings, per-mesh LOD screen sizes.

@@ -887,6 +887,41 @@ struct Api {
         lua_pushnumber(L, squad);
         return 2;
     }
+    static int net_seen_position(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        Vec3 p;
+        if (!host.net_seen_position || !host.net_seen_position(host.user, live_entity(L, 1).value, static_cast<u32>(luaL_checknumber(L, 2)), p)) return 0;
+        lua_pushnumber(L, p.x);
+        lua_pushnumber(L, p.y);
+        lua_pushnumber(L, p.z);
+        return 3;
+    }
+    static int net_find_games(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        static char text[8192];
+        text[0] = '\0';
+        const u32 n = host.net_find_games ? host.net_find_games(host.user, static_cast<f32>(luaL_optnumber(L, 1, 0.5)), text, sizeof text) : 0;
+        lua_createtable(L, static_cast<int>(n), 0);
+        int k = 0;
+        for (const char* line = text; *line && k < static_cast<int>(n);) {
+            const char* end = std::strchr(line, '\n');
+            const std::string row(line, end ? static_cast<usize>(end - line) : std::strlen(line));
+            line = end ? end + 1 : line + row.size();
+            const usize a = row.find('|'), b = row.find('|', a + 1), c = row.find('|', b + 1);
+            if (a == std::string::npos || b == std::string::npos || c == std::string::npos) continue;
+            lua_createtable(L, 0, 4);
+            lua_pushstring(L, row.substr(0, a).c_str());
+            lua_setfield(L, -2, "address");
+            lua_pushstring(L, row.substr(a + 1, b - a - 1).c_str());
+            lua_setfield(L, -2, "name");
+            lua_pushnumber(L, std::atof(row.substr(b + 1, c - b - 1).c_str()));
+            lua_setfield(L, -2, "players");
+            lua_pushnumber(L, std::atof(row.substr(c + 1).c_str()));
+            lua_setfield(L, -2, "max_players");
+            lua_rawseti(L, -2, ++k);
+        }
+        return 1;
+    }
     static int call_on(lua_State* L) { return dispatch(L, true); }
     // lsd.native_call(name, ...) -> result: a function the game module registered (C / C++ nodes).
     static int native_call(lua_State* L) {
@@ -1501,7 +1536,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
-        {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
+        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
@@ -1743,6 +1779,33 @@ void ScriptSystem::hook(lua_State* L, lua_Debug* ar) {
     self->update_hook();
 }
 
+bool ScriptSystem::line_hooks_on() { return g_debugged != nullptr; }
+
+bool ScriptSystem::foreign_line(const char* source, i32 line, i32 (*depth)(void*), void (*fill)(void*, DebugStop&), void* user) {
+    ScriptSystem* self = g_debugged;
+    if (!self || self->in_debugger_) return false;
+    if (self->trace_) self->trace_(self->trace_user_, source, line);
+    if (!self->debugger_) return false;
+    // shortcut: step depths are per language (a JS step out into its Lua caller stops at the next marker); share a depth if mixed stepping matters
+    bool stop = self->stepping_ == DebugAction::StepInto;
+    if (self->stepping_ == DebugAction::StepOver) stop = depth(user) <= self->step_depth_;
+    else if (self->stepping_ == DebugAction::StepOut) stop = depth(user) < self->step_depth_;
+    for (u32 i = 0; i < self->breakpoint_count_ && !stop; ++i) {
+        stop = self->breakpoints_[i].line == line && same_source(self->breakpoints_[i].source, source);
+    }
+    if (!stop) return false;
+    static DebugStop info;  // large; one stop at a time
+    info = DebugStop{};
+    fill(user, info);
+    self->in_debugger_ = true;
+    const DebugAction action = self->debugger_(self->debugger_user_, info);
+    self->in_debugger_ = false;
+    self->stepping_ = action;
+    self->step_depth_ = depth(user);
+    self->update_hook();
+    return true;
+}
+
 void ScriptSystem::update_hook() {
     if (!lua_) return;
     const bool on = trace_ || (debugger_ && (breakpoint_count_ || stepping_ != DebugAction::Continue));
@@ -1795,7 +1858,7 @@ bool ScriptSystem::load(Instance& instance) {
     if (js::is_js(instance.path)) {
         if (!js_) js_ = js::create(lua_);
         lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.env);
-        instance.failed = !js::load(js_, static_cast<u32>(&instance - instances_), instance.path);
+        instance.failed = !js::load(js_, static_cast<u32>(&instance - instances_), instance.path, debuggable());
         lua_pop(lua_, 1);
         return !instance.failed;
     }

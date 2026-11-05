@@ -48,6 +48,65 @@
       "box_uv": false,
       "max_draw_distance": 0
     }},
+    {"id": 1, "name": "Anim_Shoot", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.2678504,
+        "y": 3.33132887,
+        "z": -2.38418579e-07
+      },
+      "rotation": {
+        "x": 0,
+        "y": -0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SkeletalMesh": {
+      "mesh": "5f34337a0c5a4ccd7947c43232c46db0",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "material_overrides": [],
+      "animation": "8641a784933630509f5610eb313c07dc",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "7034f5f74848b26dc3ec1e150d9b3baa",
+      "morphs": []
+    },
+     "AIController": {
+      "behavior_tree": "",
+      "sight_range": 15,
+      "sight_angle": 120,
+      "hearing_range": 12
+    },
+     "RigidBody": {
+      "shape": 0,
+      "lock_2d": false,
+      "mass": 10,
+      "friction": 0.5,
+      "bounciness": 0,
+      "physical_material": "",
+      "collision_preset": 0,
+      "kinematic": false
+    },
+     "FootIK": {
+      "left_foot": "foot_l",
+      "right_foot": "foot_r",
+      "max_step": 0.418000013,
+      "foot_height": 0
+    }},
     {"id": 2, "name": "Sphere", "parent": -1,
      "Transform": {
       "position": {
@@ -89,14 +148,14 @@
         "z": 6.05000019
       },
       "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 41.7999992
+        "x": -2.03965425,
+        "y": 20.3316517,
+        "z": 131.203751
       },
       "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
+        "x": 0.999998808,
+        "y": 0.999998569,
+        "z": 0.999999046
       }
     },
      "DirectionalLight": {
@@ -106,11 +165,11 @@
         "b": 1,
         "a": 1
       },
-      "intensity": 83.9000015,
+      "intensity": 11.5,
       "use_temperature": false,
       "temperature": 6500,
       "cast_shadows": true,
-      "shadow_distance": 110.906998
+      "shadow_distance": 375.401001
     },
      "SkyLight": {
       "sky_color": {
@@ -148,19 +207,19 @@
         "b": 0.250980407,
         "a": 1
       },
-      "brightness": 1.39499998,
+      "brightness": 3.35700011,
       "sun_disc": true,
-      "sun_size": 4.19799995,
+      "sun_size": 1.81700003,
       "sun_color": {
-        "r": 0.228291199,
-        "g": 0.390730739,
-        "b": 0.953667939,
+        "r": 0.358015448,
+        "g": 0.416988432,
+        "b": 0.128799528,
         "a": 1
       }
     },
      "HeightFog": {
       "density": 0,
-      "height_falloff": 0.0469999984,
+      "height_falloff": 0,
       "color": {
         "r": 0.168676659,
         "g": 0.392161816,
@@ -168,10 +227,10 @@
         "a": 1
       },
       "start_distance": 0,
-      "max_opacity": 1
+      "max_opacity": 0
     },
      "PostProcessVolume": {
-      "unbound": true,
+      "unbound": false,
       "priority": 13,
       "exposure_compensation": -0.324999988,
       "filmic_tonemapper": true,
@@ -190,7 +249,7 @@
       "temporal_aa": true,
       "ao_intensity": 2,
       "ao_radius": 0.74000001,
-      "ssr_intensity": 0.460000008,
+      "ssr_intensity": 0.437000006,
       "ssr_max_distance": 89.8560028,
       "dof_focal_distance": 0,
       "dof_focal_region": 0,
@@ -351,6 +410,42 @@
           "component": "PostProcessVolume",
           "property": "contrast",
           "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "unbound",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "brightness",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "sun_size",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "sun_color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "DirectionalLight",
+          "property": "shadow_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "DirectionalLight",
+          "property": "intensity",
+          "kind": 0
         }
       ]
     }},
@@ -390,18 +485,18 @@
     {"id": 5, "name": "Kill Volume", "parent": -1,
      "Transform": {
       "position": {
-        "x": -8.8419857,
-        "y": -0.119999997,
+        "x": -7.3419857,
+        "y": -4.61999989,
         "z": 0
       },
       "rotation": {
         "x": 0,
-        "y": 0,
+        "y": -0,
         "z": 0
       },
       "scale": {
         "x": 2.1500001,
-        "y": 18.8999996,
+        "y": 4.7249999,
         "z": 3
       }
     },
@@ -451,30 +546,6 @@
       "sound": "048ece49907e29a7eab4c21b710c7ef9",
       "auto_play": true
     }},
-    {"id": 8, "name": "AI Controller", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 3.22336674,
-        "y": -6.48621416,
-        "z": 0
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "AIController": {
-      "behavior_tree": "6ddfd059159b1ea7080c3a1389847909",
-      "sight_range": 15,
-      "sight_angle": 120,
-      "hearing_range": 12
-    }},
     {"id": 4194313, "name": "Male_Base_SDiv1", "parent": -1,
      "Transform": {
       "position": {
@@ -518,6 +589,7 @@
         "b": 0.702702701,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "b400a445885d50b9205a057d8e2f4319",
       "clip": 0,
       "play_rate": 1,
@@ -532,43 +604,16 @@
       "max_step": 0.5,
       "foot_height": 0.0799999982
     }},
-    {"id": 10, "name": "Decal", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 5.9033823,
-        "y": -5.99983978,
-        "z": 2.38418579e-07
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 4,
-        "y": 4,
-        "z": 3
-      }
-    },
-     "Decal": {
-      "texture": "",
-      "tint": {
-        "r": 0.377398491,
-        "g": 0.903474927,
-        "b": 0.0244182274,
-        "a": 1
-      }
-    }},
     {"id": 11, "name": "Cube2", "parent": -1,
      "Transform": {
       "position": {
-        "x": 2.26562786,
-        "y": 5.73643112,
-        "z": 0.100000001
+        "x": -7.23437214,
+        "y": 5.23643112,
+        "z": 3.5999999
       },
       "rotation": {
         "x": 0,
-        "y": 0,
+        "y": -0,
         "z": 0
       },
       "scale": {
@@ -604,13 +649,13 @@
     {"id": 20971532, "name": "FBX_Char01_Update_Rig", "parent": -1,
      "Transform": {
       "position": {
-        "x": 0,
-        "y": 0,
+        "x": -2.5,
+        "y": 2,
         "z": 0
       },
       "rotation": {
         "x": 0,
-        "y": 0,
+        "y": -0,
         "z": 0
       },
       "scale": {
@@ -622,19 +667,20 @@
      "SkeletalMesh": {
       "mesh": "68c55f138f7dc46fa023ad12c9da1467",
       "facing": 0,
-      "material": "c39afd0b21562b05adbbda77c5bf64f9",
+      "material": "",
       "color": {
         "r": 0.70588237,
         "g": 0.70588237,
         "b": 0.721568644,
         "a": 1
       },
-      "animation": "68c55f138f7dc46fa023ad12c9da1467",
+      "material_overrides": [],
+      "animation": "e98b11221934626eba676646d756c6bb",
       "clip": 0,
       "play_rate": 1,
       "looping": true,
       "playing": true,
-      "anim_graph": "",
+      "anim_graph": "7034f5f74848b26dc3ec1e150d9b3baa",
       "morphs": []
     },
      "PlayerStart": {
@@ -648,6 +694,8 @@
       "look_action": "d41c977222dd0c34d6f074b93b0b4915",
       "jump_action": "885c85e1badeb1c4ec360b3c798dd587",
       "side_scroller": false,
+      "motion_matching": true,
+      "motion_database": "",
       "walk_speed": 5,
       "jump_speed": 5,
       "max_slope": 45,
@@ -663,10 +711,20 @@
         "y": 0,
         "z": 0
       },
-      "crouch_action": "",
+      "crouch_action": "abda2407c96cfa0cbd69558134430d17",
       "crouch_height": 1.10000002,
       "crouch_speed": 2.5,
       "swim_speed": 3
+    },
+     "NativeScript": {
+      "script": "",
+      "properties": []
+    },
+     "FootIK": {
+      "left_foot": "foot_l",
+      "right_foot": "foot_r",
+      "max_step": 0.5,
+      "foot_height": 0.140000001
     }},
     {"id": 13, "name": "Water Volume", "parent": -1,
      "Transform": {
@@ -753,12 +811,12 @@
       "box_uv": false,
       "max_draw_distance": 0
     }},
-    {"id": 15, "name": "Decal2", "parent": -1,
+    {"id": 16, "name": "Anim_Stab", "parent": -1,
      "Transform": {
       "position": {
-        "x": 6.75284672,
-        "y": 7.43602753,
-        "z": -0.550000012
+        "x": -2.39987135,
+        "y": 4.59659243,
+        "z": 0
       },
       "rotation": {
         "x": 0,
@@ -766,19 +824,214 @@
         "z": 0
       },
       "scale": {
-        "x": 4,
-        "y": 4,
-        "z": 3
+        "x": 1,
+        "y": 1,
+        "z": 1
       }
     },
-     "Decal": {
-      "texture": "",
-      "tint": {
-        "r": 1,
-        "g": 1,
-        "b": 1,
+     "SkeletalMesh": {
+      "mesh": "884a3dd764d2b4ea03ec158e3b9fde71",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
         "a": 1
+      },
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
+    }},
+    {"id": 17, "name": "Anim_Aim_Still", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.5662086,
+        "y": 5.85616493,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
       }
+    },
+     "SkeletalMesh": {
+      "mesh": "b29978b1904cb91d975fb0f4d92b21d2",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
+    }},
+    {"id": 8388626, "name": "Anim_Reload", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.50101781,
+        "y": 7.26253033,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SkeletalMesh": {
+      "mesh": "733ebeac00df17ecf2dbbb157f563ecc",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
+    }},
+    {"id": 19, "name": "Anim_Sheath", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.65127635,
+        "y": 8.42396736,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SkeletalMesh": {
+      "mesh": "89b03424a5dd8ae4b3818d81e0d55c92",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
+    }},
+    {"id": 4194324, "name": "Anim_Sheath2", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.48625565,
+        "y": 9.84448147,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SkeletalMesh": {
+      "mesh": "89b03424a5dd8ae4b3818d81e0d55c92",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
+    }},
+    {"id": 21, "name": "Anim_Walk", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.59013081,
+        "y": 10.9590454,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": -0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+     "SkeletalMesh": {
+      "mesh": "9a9aafcebbe283553f88459f618e11aa",
+      "facing": 0,
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "anim_graph": "",
+      "morphs": []
     }}
   ]
 }

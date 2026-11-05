@@ -110,6 +110,7 @@ struct EditorState {
     ThumbnailCache* thumbnails = nullptr;
     class TextureCache* textures = nullptr;  // set by main.cpp (texture thumbnails)
     class SkinnedCache* skinned = nullptr;   // set by main.cpp (rigged meshes: bounds, drop)
+    class MaterialCache* materials = nullptr;  // set by main.cpp (the Mesh Editor's preview shows the material slots)
     class AnimationPlayer* animations = nullptr;  // set by main.cpp (Details: the graph's current state)
     class ParticleEditor* particle_editor = nullptr;  // set by main.cpp
     rhi::Device* device = nullptr;
@@ -174,6 +175,7 @@ struct EditorState {
     GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
     bool user_settings_changed = false;         // main.cpp applies and saves them
     bool show_debugger = false;        // Tools > Lua Debugger
+    bool show_assistant = false;       // Tools > LSD Assistant
     bool new_script_popup = false;     // Tools > New C / C++ Script asks for a name and language
     static constexpr u32 kMaxKept = 64;
     world::Entity kept[kMaxKept];             // Keep Simulation Changes: copied back into the level when Play stops

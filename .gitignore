@@ -4,6 +4,7 @@ out/
 cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
+/lsd_editor.exe
 
 # IDEs
 .vs/
@@ -24,6 +25,9 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Obsidian vault settings (docs/ opened as a vault; per-user, its layout file changes on every launch)
+docs/.obsidian/
 
 # Claude Code plugin data (local sessions, never shared)
 .claude-flow/
