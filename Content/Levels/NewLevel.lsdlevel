@@ -76,13 +76,36 @@
         "b": 0.721568644,
         "a": 1
       },
-      "animation": "",
+      "material_overrides": [],
+      "animation": "8641a784933630509f5610eb313c07dc",
       "clip": 0,
       "play_rate": 1,
       "looping": true,
       "playing": true,
-      "anim_graph": "",
+      "anim_graph": "7034f5f74848b26dc3ec1e150d9b3baa",
       "morphs": []
+    },
+     "AIController": {
+      "behavior_tree": "",
+      "sight_range": 15,
+      "sight_angle": 120,
+      "hearing_range": 12
+    },
+     "RigidBody": {
+      "shape": 0,
+      "lock_2d": false,
+      "mass": 10,
+      "friction": 0.5,
+      "bounciness": 0,
+      "physical_material": "",
+      "collision_preset": 0,
+      "kinematic": false
+    },
+     "FootIK": {
+      "left_foot": "foot_l",
+      "right_foot": "foot_r",
+      "max_step": 0.418000013,
+      "foot_height": 0
     }},
     {"id": 2, "name": "Sphere", "parent": -1,
      "Transform": {
@@ -142,11 +165,11 @@
         "b": 1,
         "a": 1
       },
-      "intensity": 83.9000015,
+      "intensity": 11.5,
       "use_temperature": false,
       "temperature": 6500,
       "cast_shadows": true,
-      "shadow_distance": 110.906998
+      "shadow_distance": 375.401001
     },
      "SkyLight": {
       "sky_color": {
@@ -184,19 +207,19 @@
         "b": 0.250980407,
         "a": 1
       },
-      "brightness": 1.39499998,
+      "brightness": 3.35700011,
       "sun_disc": true,
-      "sun_size": 4.19799995,
+      "sun_size": 1.81700003,
       "sun_color": {
-        "r": 0.228291199,
-        "g": 0.390730739,
-        "b": 0.953667939,
+        "r": 0.358015448,
+        "g": 0.416988432,
+        "b": 0.128799528,
         "a": 1
       }
     },
      "HeightFog": {
       "density": 0,
-      "height_falloff": 0.0469999984,
+      "height_falloff": 0,
       "color": {
         "r": 0.168676659,
         "g": 0.392161816,
@@ -204,10 +227,10 @@
         "a": 1
       },
       "start_distance": 0,
-      "max_opacity": 1
+      "max_opacity": 0
     },
      "PostProcessVolume": {
-      "unbound": true,
+      "unbound": false,
       "priority": 13,
       "exposure_compensation": -0.324999988,
       "filmic_tonemapper": true,
@@ -226,7 +249,7 @@
       "temporal_aa": true,
       "ao_intensity": 2,
       "ao_radius": 0.74000001,
-      "ssr_intensity": 0.460000008,
+      "ssr_intensity": 0.437000006,
       "ssr_max_distance": 89.8560028,
       "dof_focal_distance": 0,
       "dof_focal_region": 0,
@@ -387,6 +410,42 @@
           "component": "PostProcessVolume",
           "property": "contrast",
           "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "unbound",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "brightness",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "sun_size",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "sun_color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "DirectionalLight",
+          "property": "shadow_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "DirectionalLight",
+          "property": "intensity",
+          "kind": 0
         }
       ]
     }},
@@ -530,6 +589,7 @@
         "b": 0.702702701,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "b400a445885d50b9205a057d8e2f4319",
       "clip": 0,
       "play_rate": 1,
@@ -589,7 +649,7 @@
     {"id": 20971532, "name": "FBX_Char01_Update_Rig", "parent": -1,
      "Transform": {
       "position": {
-        "x": -2,
+        "x": -2.5,
         "y": 2,
         "z": 0
       },
@@ -614,6 +674,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "e98b11221934626eba676646d756c6bb",
       "clip": 0,
       "play_rate": 1,
@@ -633,6 +694,8 @@
       "look_action": "d41c977222dd0c34d6f074b93b0b4915",
       "jump_action": "885c85e1badeb1c4ec360b3c798dd587",
       "side_scroller": false,
+      "motion_matching": true,
+      "motion_database": "",
       "walk_speed": 5,
       "jump_speed": 5,
       "max_slope": 45,
@@ -653,11 +716,15 @@
       "crouch_speed": 2.5,
       "swim_speed": 3
     },
+     "NativeScript": {
+      "script": "",
+      "properties": []
+    },
      "FootIK": {
       "left_foot": "foot_l",
       "right_foot": "foot_r",
       "max_step": 0.5,
-      "foot_height": 0.0799999982
+      "foot_height": 0.140000001
     }},
     {"id": 13, "name": "Water Volume", "parent": -1,
      "Transform": {
@@ -772,6 +839,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "",
       "clip": 0,
       "play_rate": 1,
@@ -808,6 +876,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "",
       "clip": 0,
       "play_rate": 1,
@@ -844,6 +913,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "",
       "clip": 0,
       "play_rate": 1,
@@ -880,6 +950,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "",
       "clip": 0,
       "play_rate": 1,
@@ -916,6 +987,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "",
       "clip": 0,
       "play_rate": 1,
@@ -952,6 +1024,7 @@
         "b": 0.721568644,
         "a": 1
       },
+      "material_overrides": [],
       "animation": "",
       "clip": 0,
       "play_rate": 1,
