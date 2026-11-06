@@ -1293,7 +1293,7 @@ void draw_multiplayer_panel(EditorState& s) {
                 ImGui::PopID();
             }
         }
-        ImGui::TextDisabled("Guide: docs/Examples/Multiplayer.md");
+        ImGui::TextDisabled("Guide: docs/Multiplayer.md");
         ImGui::EndTable();
     }
     ImGui::End();

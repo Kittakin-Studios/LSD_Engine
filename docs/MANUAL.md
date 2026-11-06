@@ -603,7 +603,7 @@ game is single player and nothing networked runs. On:
 
 #### Playtesting over the internet
 
-Step by step with pictures: [Examples/Multiplayer.md](Examples/Multiplayer.md). The host clicks
+Step by step with pictures: [Multiplayer.md](Multiplayer.md). The host clicks
 **Show join codes** (the game's menu, or the Multiplayer workspace's panel). There are three ways in,
 best first:
 
