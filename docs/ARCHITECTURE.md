@@ -144,6 +144,20 @@ Per-frame data (lights, skinning matrices, material parameters, particle and UI 
 into ring buffers that cycle with the swapchain. The editor's ImGui panels are drawn by the same
 device.
 
+**Culling**: frustum culling per mesh (`in_view`), then CPU occlusion culling
+(`engine/render/occlusion.*`, `r.OcclusionCulling`): the 16 nearest big opaque static meshes (up to
+4096 triangles each, from `MeshCache::triangles`) are rasterised into a 256 x 128 depth buffer, each
+triangle at its farthest corner's distance and only on pixels whose centre it covers; a mesh is
+skipped when every pixel its box touches holds something nearer. That keeps it conservative: it can
+miss a hidden mesh but never drop a visible one. Instanced Static Meshes with 32+ copies are culled on
+the GPU (`r.GPUCulling`).
+
+**Post pass additions**: the composite pass's third input takes an ordinary texture, the Color
+Grading LUT (a 256 x 16 strip, applied last in display colours); motion blur is its own pass after
+depth of field, smearing each pixel along its screen movement found through the TAA reprojection and
+depth (the camera's motion only); contact shadows march a short ray toward the sun inside the AO pass
+(its unused reprojection rows carry the ray) and multiply into the occlusion it blurs and applies.
+
 ### The lit shader
 
 One HLSL shader (with a GLSL mirror kept in step) shades every mesh: physically based (GGX, Smith,
@@ -407,6 +421,16 @@ and when the set of weights changes it mixes the offsets into a copy of the bind
 (`apply_morphs`) and uploads it as that object's own vertex buffer, which the skinning shader then
 uses instead of the shared one.
 
+**Montages and root motion**: `lsd.play_montage` hands the animation player a montage (an animation
+file's first clip, a start bone, rate, blend). After a pose is sampled (clip, Anim Graph or Motion
+Matching) and before IK, `Pose::layer` samples the montage clip and mixes it in with ozz's per-joint
+blending weights: 1 - w under the start bone for the pose underneath, w for the clip, so the legs keep
+walking while the upper body reloads. When it plays out (or `stop_montage` fades it), the object is
+queued and Play sends it `on_montage_ended`. With root motion, `Pose::strip_root` takes the root
+joint's sideways travel out of the pose each frame; the difference from last frame, turned into world
+space, is what `PlaySession` moves the Character by instead of the input. Sockets and Attach To Socket
+use joint frames with their scale removed (`without_scale`), so centimetre rigs keep metre offsets.
+
 ## Audio
 
 miniaudio behind `audio::AudioSystem`: voices in Sound Class groups, each class routed through its
@@ -508,6 +532,16 @@ line on one kept connection (`console` as is, `lua` with line breaks sent as 0x1
 `scene.List`, `list_assets` = `asset.List`, `read_log` = `log.Tail`) and its answer is what the line
 logged, plus text the list commands hand to `remote::print`. Console lines take up to 16 KB.
 
+**LSD Assistant** (`editor/assistant.*`, the protocol in `editor/assistant_core.*`, tested without the
+network): a chat with the user's own model over `curl` on a worker thread. Requests ask for a stream
+(server-sent events); `parse_stream` rebuilds the text, thinking blocks with their signatures and tool
+calls for Anthropic and OpenAI-compatible APIs. Tools are the MCP bridge's set run in-process:
+`remote::run_captured` executes a console line and returns what it logged; `read_file` and
+`write_file` stay inside Content/ and Source/, writing code files only. Calls wait for Allow / Deny
+(or run when allowed), their results go back as the next turn, up to 12 rounds a message. Lessons
+(`editor/assistant_lessons.*`) are teaching text whose code blocks are the files; Apply writes them,
+makes the input assets and sockets and attaches the component to the selection.
+
 ## Packaging and game mode
 
 `package_project` validates the assets, copies the Release executable (renamed to the project),
@@ -515,6 +549,13 @@ logged, plus text the list commands hand to `remote::print`. Console lines take 
 `game.json`. An executable that finds `game.json` beside it switches to that folder and runs as the
 game: no editor panels, the Game Default Level straight into Play, Esc quits, no autosave or lock
 files. Assets compile into the package's own DerivedData on first run.
+
+**Cooking** (Project Settings > Packaging > Cook Used Assets Only): `cook_set` (`editor/references.cpp`)
+starts from the project settings as text and follows GUIDs, and in text assets (levels, data, graphs,
+scripts, UI) quoted names and paths, through the registry; only those assets go into the package, each
+with its .meta and its DerivedData, plus Content/Fonts and `cook_report.txt` listing the rest.
+**Shipping** (Build Configuration) is written into `game.json`; a Shipping game ignores `-remote`,
+`-exec` and `-smoketest`.
 
 ## Files written at runtime
 

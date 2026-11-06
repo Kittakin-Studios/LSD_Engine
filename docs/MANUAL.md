@@ -865,7 +865,7 @@ sends each tool call to the editor as a console line over 127.0.0.1, the same ch
 Console. Only programs on this PC can connect; untick the plugin when you are not using it. It is
 editor-only: packaged games never listen.
 
-### LSD Assistant (an AI game studio in the editor)
+### LSD Assistant (an AI coder in the editor)
 
 **Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to code
 something, or have it write a script and apply it. It writes **code only** (Lua, JavaScript, C / C++,

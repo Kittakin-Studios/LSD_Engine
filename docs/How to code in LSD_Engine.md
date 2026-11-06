@@ -314,7 +314,9 @@ Still stuck: take a screenshot of the Output Log and the debugger.
 ## 10. Code with Claude Code
 
 Claude Code can write the scripts for you and test them in the running editor, through the
-**Claude MCP** plugin.
+**Claude MCP** plugin. (Inside the editor, **Tools > LSD Assistant** does the same with your own model:
+it writes code, presses Play and reads the log itself, and its **Lessons** tab teaches worked examples
+such as a gun on a hand socket; see [MANUAL.md](MANUAL.md#lsd-assistant-an-ai-coder-in-the-editor).)
 
 **Turn it on (once):**
 

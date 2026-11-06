@@ -26,7 +26,9 @@ The full documentation is in [`docs/`](docs/).
 | 7 | Gameplay languages: C / C++ game code, JavaScript scripts | Done |
 
 Since then: multiplayer (one checkbox), text and voice chat, vehicles / transports / movers, 2D
-(Paper2D), sub-level streaming, Unreal-style post-processing, mesh and ribbon particles. Every feature
+(Paper2D), sub-level streaming, Unreal-style post-processing (Color Grading LUT, motion blur, contact shadows), mesh and ribbon
+particles, montages and root motion, CPU occlusion culling, cooked Shipping packages, and LSD Assistant (an in-editor AI that
+writes and tests code, with lessons). Every feature
 by milestone is in [docs/BACKLOG.md](docs/BACKLOG.md).
 
 ## Documentation

@@ -301,6 +301,14 @@ end
 
 ---
 
+## 7b. A gun in the hand (LSD Assistant lesson)
+
+Tools > LSD Assistant > **Lessons** > **Gun on a hand socket**: select a rigged character and click
+**Apply to Selected Character**. It writes `Content/Weapon/Weapon.lua` and the crosshair HUD, makes
+`IA_Aim` (RMB), `IA_Fire` (LMB) and `IA_Reload` (R), adds a `weapon_r` socket on the hand and gives
+the character the Weapon component: a Cube gun in the hand, 10/10 ammo, an IK aim pose, shoot and
+reload montages, a crosshair dot set in Details. The lesson text walks through every line.
+
 ## 8. Ship it
 
 ![File > Package Project (also in the Build menu) writes Build/<Project Name>/](images/menu_file.jpg)

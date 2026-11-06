@@ -175,8 +175,13 @@ Look / Orbit Bone / Ride Bone, Follow Bone), Unreal rigs (UE4 / UE5 detection, r
 live editing in Play (`PlaySession::apply_live_edits`: Character, bodies, gravity, input assets) and self-saving data assets,
 crash reports for abort / std::terminate with a symbolised stack in the log, Mouse 4 / 5 back and forward.
 LSD Assistant (`editor/assistant.*` UI + curl worker, `editor/assistant_core.*` requests / replies, tested in editor_tests):
-Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), studio roles, project context, writes into Content/ / Source/.
+Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), streamed replies with Stop, code-only roles (Cube / Sphere placeholders,
+never art), tools (console, lua, objects, assets, log, read / write code files; Off / Ask / Allowed), Lessons (`editor/assistant_lessons.*`:
+Gun on a hand socket), project context, `assistant.Ask` / `assistant.Lesson`.
 Motion Matching (`engine/animation/motion_matching.*`): Character > Motion Matching; databases built in `AnimationPlayer::motion_for`.
+Montages and root motion (`lsd.play_montage`, Play / Stop Montage nodes, `Pose::layer` / `strip_root`, `on_montage_ended`), `lsd.camera_forward`.
+Post: Color Grading LUT, camera motion blur, contact shadows (Directional Light). CPU occlusion culling (`engine/render/occlusion.*`,
+`r.OcclusionCulling`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.
 The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).
 Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become
 `M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
