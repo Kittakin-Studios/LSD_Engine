@@ -282,7 +282,7 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
     {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
-    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
+    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Reflection Capture", nullptr, "ReflectionCapture"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
     // Movement prefabs, cubes as placeholders: swap the mesh in Details.
     {"Sub Level", nullptr, "SubLevel"}, {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
 };
@@ -4960,6 +4960,7 @@ void draw_menu_bar(EditorState& s) {
     }
     if (ImGui::BeginMenu("Build")) {
         if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
+        if (with_tip(ImGui::MenuItem("Build Reflection Captures"), "Captures what each Reflection Capture sees again (after moving things)")) s.capture_reflections = true;
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
         if (ImGui::MenuItem("Build Navigation", "P")) s.show_navigation = true;  // the navmesh rebuilds while it is shown
         ImGui::SetItemTooltip("Builds and shows the navmesh (it keeps rebuilding while shown)");

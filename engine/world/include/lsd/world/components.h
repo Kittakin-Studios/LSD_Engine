@@ -646,6 +646,15 @@ struct DirectionalLight {
     f32 contact_shadow_length = 0.0f;
 };
 
+// Unreal's Sphere Reflection Capture: what is around this point, captured from here, is what shiny
+// surfaces inside Radius reflect (instead of the sky). Captured when the level opens and on Build >
+// Build Reflection Captures (move things, then build again); up to 8 in a level.
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "Shiny surfaces inside its radius reflect what is around it (Sphere Reflection Capture); Build > Build Reflection Captures after changes")
+struct ReflectionCapture {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Max = 500, Tooltip = "Surfaces this close reflect this capture (it fades out over the last quarter)") f32 radius = 10.0f;
+};
+
 // A bulb (Unreal's Point Light): shines in every direction.
 LSD_STRUCT(Component, Category = "Lights", Tooltip = "A bulb: light in every direction from a point")
 struct PointLight {

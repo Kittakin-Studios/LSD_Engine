@@ -73,6 +73,7 @@ cbuffer Lights : register(b1) {
     float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px; float4 hdr_out;
     float4 probe_origin; float4 probe_cell; uint4 probe_dims; float4 probes[1536];
     float4 decal_info; float4 decals[80];
+    float4 reflection_info; float4 reflections[8];
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -146,6 +147,7 @@ Texture2D orm_tex : register(t2);
 // Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
 // not face along the box's +Z and towards its top and bottom.
 Texture2D decal_tex : register(t5);
+Texture2D reflection_tex : register(t6);  // reflection captures (lat-long tiles, mipmapped)
 SamplerState decal_samp : register(s2);
 float3 apply_decals(float3 c, float3 wpos, float3 n) {
     const uint count = (uint)decal_info.x;
@@ -219,6 +221,25 @@ static const float PI = 3.14159265;
 float3 sky_radiance(float3 d) {
     const float h = 1.0 - abs(d.z);
     return lerp(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
+}
+// Reflection captures: the capture this point is inside (fading out over its last quarter) replaces
+// the sky along the reflection; its lat-long tile in the atlas, blurrier mips for rougher surfaces.
+float3 capture_reflection(float3 sky_part, float3 r, float roughness, float3 wpos) {
+    float best = 0.0;
+    uint tile = 0;
+    for (uint k = 0; k < (uint)reflection_info.x && k < 8; ++k) {
+        const float w = saturate((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3));
+        if (w > best) { best = w; tile = k; }
+    }
+    if (best <= 0.0) return sky_part;
+    const float lod = roughness * 5.0;
+    const float2 margin = 0.5 * exp2(lod) / float2(256.0, 128.0);
+    float2 uv = float2(atan2(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
+    uv = clamp(uv, margin, 1.0 - margin);
+    const float2 atlas = (float2(tile % 2, tile / 2) + uv) / float2(2.0, 4.0);
+    float3 c = min(reflection_tex.SampleLevel(samp, atlas, lod).rgb, 0.999);
+    c = c * c / (1.0 - c * c) / max(exposure, 1e-6);  // stored like the scene target: exposed, range-compressed
+    return lerp(sky_part, c, best);
 }
 // The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
 float2 env_brdf(float ndv, float roughness) {
@@ -351,7 +372,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 r = reflect(-v, n);
     const float3 lum = float3(0.2126, 0.7152, 0.0722);
     const float open_sky = saturate(dot(sky, lum) / max(dot(lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4));
-    const float3 reflected = lerp(sky_radiance(r) * open_sky, sky, roughness * roughness);
+    const float3 reflected = capture_reflection(lerp(sky_radiance(r) * open_sky, sky, roughness * roughness), r, roughness, i.wpos);
     const float2 ab = env_brdf(ndv, roughness);
     const float3 env_spec = f0 * ab.x + ab.y;
     const float spec_ao = saturate(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
@@ -1254,7 +1275,7 @@ public:
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
         list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
         list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
-        list_->SetGraphicsRootDescriptorTable(9, decal_srv_.ptr ? decal_srv_ : textures_[white_].srv_gpu);
+        list_->SetGraphicsRootDescriptorTable(9, scene_gpu_);  // the decal atlas and the reflection captures
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1..3: a blended variant
@@ -1485,10 +1506,19 @@ public:
         set_render_target({}, nullptr);  // back to the window
     }
 
-    void set_decal_atlas(TextureHandle atlas) override {
+    // t5 / t6 share one table: two neighbouring descriptors, rewritten when either texture changes.
+    // Rewritten only when the texture changes: a frame still on the GPU may be reading them.
+    void set_scene_texture(u32 which, TextureHandle atlas) {
         const Texture* t = lookup_texture(atlas);
-        decal_srv_ = t ? t->srv_gpu : textures_[white_].srv_gpu;
+        ID3D12Resource* resource = (t ? t : &textures_[white_])->resource.Get();
+        if (scene_resources_[which] == resource) return;
+        scene_resources_[which] = resource;
+        D3D12_CPU_DESCRIPTOR_HANDLE at = scene_cpu_;
+        at.ptr += static_cast<SIZE_T>(which) * srv_size_;
+        device_->CreateShaderResourceView(resource, nullptr, at);
     }
+    void set_decal_atlas(TextureHandle atlas) override { set_scene_texture(0, atlas); }
+    void set_reflection_atlas(TextureHandle atlas) override { set_scene_texture(1, atlas); }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
         const ShadowMap* s = lookup_shadow(sun);
@@ -1945,6 +1975,17 @@ public:
         const void* white_mip[1] = {&white};
         const void* flat_mip[1] = {&flat};
         white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
+        {  // the decal / reflection table's two neighbouring descriptors, white until set
+            u32 slot = 0;
+            while (slot + 1 < kDebugUiDescriptors && (srv_used_[slot] || srv_used_[slot + 1])) ++slot;
+            srv_used_[slot] = srv_used_[slot + 1] = true;
+            scene_cpu_ = srv_heap_->GetCPUDescriptorHandleForHeapStart();
+            scene_gpu_ = srv_heap_->GetGPUDescriptorHandleForHeapStart();
+            scene_cpu_.ptr += static_cast<SIZE_T>(slot) * srv_size_;
+            scene_gpu_.ptr += static_cast<UINT64>(slot) * srv_size_;
+            set_decal_atlas({});
+            set_reflection_atlas({});
+        }
         flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
         return debug_ui_;
     }
@@ -2177,9 +2218,9 @@ private:
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
         D3D12_ROOT_PARAMETER params[10]{};
-        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas (64 of 64 DWORDs)
+        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas, t6: the reflection captures (one table: 64 of 64 DWORDs)
         decal_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        decal_range.NumDescriptors = 1;
+        decal_range.NumDescriptors = 2;
         decal_range.BaseShaderRegister = 5;
         params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[9].DescriptorTable.NumDescriptorRanges = 1;
@@ -2707,7 +2748,9 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     ComPtr<ID3D12PipelineState> blend_pipelines_[3][3];  // [static, skinned, instanced][translucent, additive, overdraw]
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
-    D3D12_GPU_DESCRIPTOR_HANDLE decal_srv_{};
+    D3D12_CPU_DESCRIPTOR_HANDLE scene_cpu_{};  // two neighbouring descriptors: t5 decal atlas, t6 reflection captures
+    D3D12_GPU_DESCRIPTOR_HANDLE scene_gpu_{};
+    ID3D12Resource* scene_resources_[2] = {};
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
     ComPtr<ID3D12PipelineState> cutout_shadow_pipeline_, skinned_cutout_shadow_pipeline_;  // Masked casters

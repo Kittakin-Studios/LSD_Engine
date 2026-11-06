@@ -53,6 +53,7 @@
 #include "lsd/render/grid.h"
 #include "lsd/render/mesh.h"
 #include "lsd/render/occlusion.h"
+#include "lsd/render/reflection.h"
 #include "lsd/rhi/rhi.h"
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
@@ -1239,6 +1240,8 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
+    console::add_command("BuildReflections", [](void* user, const char*) { static_cast<EditorState*>(user)->capture_reflections = true; }, &s,
+                         "BuildReflections: capture every Reflection Capture again (Build > Build Reflection Captures)");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
                          "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL: -rhi=opengl)");
     console::add_command("assistant.Ask", [](void* user, const char* args) {
@@ -1569,6 +1572,7 @@ void new_level(EditorState& s) {
 }
 
 bool open_level(EditorState& s, const char* path) {
+    s.capture_reflections = true;  // the new level's captures
     if (!lsd::world::load_level_file(*s.world, path)) {
         std::snprintf(s.status, sizeof s.status, "Could not open %s", path);
         lsd::world::World& w = *s.world;
@@ -1957,6 +1961,9 @@ int main(int argc, char** argv) {
     bool running = true;
     bool minimized = false;
     lsd::rhi::TextureHandle shot_target, shot_scene;  // HighResShot, read back after the frame
+    lsd::rhi::TextureHandle reflection_faces[lsd::render::kMaxReflections * 6], reflection_atlas;  // reflection captures
+    lsd::f32 reflection_probes[lsd::render::kMaxReflections][4] = {};
+    lsd::u32 reflection_capture_count = 0;  // captures rendered this frame, read back after it
     lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
@@ -2481,6 +2488,37 @@ int main(int argc, char** argv) {
         lsd::editor::render_ui_editor(*device, clear_color);
         lsd::editor::render_mesh_editor(*device, clear_color);
         lsd::editor::render_prefab_editor(*device, clear_color);
+        // Reflection captures: six faces from each capture's place, rendered now, read back after the frame.
+        if (state.capture_reflections && reflection_capture_count == 0) {
+            state.capture_reflections = false;
+            const lsd::reflect::TypeInfo& rtype = lsd::reflect::type_of<lsd::world::ReflectionCapture>();
+            const lsd::Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            const lsd::f32 face[4] = {0.0f, 0.0f, static_cast<lsd::f32>(lsd::render::kReflectionFace), static_cast<lsd::f32>(lsd::render::kReflectionFace)};
+            const lsd::f32 black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            for (lsd::u32 i = 0; i < world.count(rtype) && reflection_capture_count < lsd::render::kMaxReflections; ++i) {
+                const lsd::world::Entity e = world.owner(rtype, i);
+                if ((!state.playing || state.ejected) && world.hidden_in_hierarchy(e)) continue;
+                const lsd::Mat4 m = world.world_matrix(e);
+                const lsd::Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+                lsd::Mat4 views[6];
+                lsd::render::reflection_views(at, views);
+                const lsd::u32 k = reflection_capture_count++;
+                reflection_probes[k][0] = at.x;
+                reflection_probes[k][1] = at.y;
+                reflection_probes[k][2] = at.z;
+                reflection_probes[k][3] = static_cast<const lsd::world::ReflectionCapture*>(world.at(rtype, i))->radius;
+                for (int f = 0; f < 6; ++f) {
+                    reflection_faces[k * 6 + static_cast<lsd::u32>(f)] = device->create_render_target(lsd::render::kReflectionFace, lsd::render::kReflectionFace);
+                    lsd::editor::LightView face_view{at, dirs[f], lsd::radians(90.0f), 1.0f};
+                    draw_world(*device, views[f], face_view, face, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, reflection_faces[k * 6 + static_cast<lsd::u32>(f)], black, true);
+                }
+            }
+            device->set_render_target({}, nullptr);
+            if (reflection_capture_count == 0) {  // none in the level: nothing to reflect but the sky
+                lsd::editor::set_reflection_probes(reflection_probes, 0);
+                device->set_reflection_atlas({});
+            }
+        }
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
@@ -2630,6 +2668,35 @@ int main(int argc, char** argv) {
         }
         device->end_frame();
         ++frame;
+        if (reflection_capture_count) {  // the captures' faces: read back, unwrapped into the atlas, uploaded
+            static std::vector<lsd::u8> atlas_pixels, face_pixels[6];
+            atlas_pixels.assign(static_cast<size_t>(lsd::render::kReflectionAtlas) * lsd::render::kReflectionAtlas * 4, 0);
+            lsd::Mat4 views[6];
+            lsd::render::reflection_views({0.0f, 0.0f, 0.0f}, views);
+            for (lsd::u32 k = 0; k < reflection_capture_count; ++k) {
+                const lsd::u8* faces[6];
+                bool read = true;
+                for (int f = 0; f < 6; ++f) {
+                    face_pixels[f].resize(static_cast<size_t>(lsd::render::kReflectionFace) * lsd::render::kReflectionFace * 4);
+                    read = read && device->read_render_target(reflection_faces[k * 6 + static_cast<lsd::u32>(f)], face_pixels[f].data());
+                    faces[f] = face_pixels[f].data();
+                }
+                if (read) lsd::render::unwrap_reflection(faces, views, k, atlas_pixels.data());
+            }
+            for (lsd::u32 i = 0; i < reflection_capture_count * 6; ++i) device->destroy_texture(reflection_faces[i]);
+            std::vector<std::vector<lsd::u8>> levels;
+            lsd::render::reflection_mips(atlas_pixels.data(), levels);
+            const void* mips[lsd::render::kReflectionMips] = {atlas_pixels.data()};
+            for (size_t l = 0; l < levels.size(); ++l) mips[l + 1] = levels[l].data();
+            const lsd::rhi::TextureHandle atlas = device->create_texture(lsd::render::kReflectionAtlas, lsd::render::kReflectionAtlas, lsd::render::kReflectionMips,
+                                                                         lsd::rhi::TextureFormat::RGBA8, mips);
+            device->set_reflection_atlas(atlas);
+            if (reflection_atlas.valid()) device->destroy_texture(reflection_atlas);  // shortcut: freed at once; defer a frame if a backend complains
+            reflection_atlas = atlas;
+            lsd::editor::set_reflection_probes(reflection_probes, reflection_capture_count);
+            LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
+            reflection_capture_count = 0;
+        }
         if (shot_target.valid()) {  // HighResShot: read back, save, free
             const lsd::u32 w = static_cast<lsd::u32>(shot_size[0]), h = static_cast<lsd::u32>(shot_size[1]);
             std::vector<lsd::u8> rgba(static_cast<size_t>(w) * h * 4);

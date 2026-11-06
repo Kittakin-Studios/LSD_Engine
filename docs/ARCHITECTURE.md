@@ -152,6 +152,13 @@ skipped when every pixel its box touches holds something nearer. That keeps it c
 miss a hidden mesh but never drop a visible one. Instanced Static Meshes with 32+ copies are culled on
 the GPU (`r.GPUCulling`).
 
+**Reflection captures** (no cubemaps in the RHI): each Reflection Capture renders six 128 x 128 faces
+with `draw_world` into render targets, read back after the frame and unwrapped by
+`render::unwrap_reflection` into a 256 x 128 latitude-longitude tile of one 512 x 512 atlas with a
+decoded-average mip chain. The atlas sits beside the decal atlas in one D3D12 descriptor table (t5,
+t6; the root signature is full) and the captures' positions and radii in the light constants; the lit
+shader samples the tile of the capture a pixel is most inside, at a mip by roughness.
+
 **Post pass additions**: the composite pass's third input takes an ordinary texture, the Color
 Grading LUT (a 256 x 16 strip, applied last in display colours); motion blur is its own pass after
 depth of field, smearing each pixel along its screen movement found through the TAA reprojection and

@@ -439,6 +439,15 @@ Atmosphere:
   sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night.
   The sun's light takes the same colour, and a **Sky Light** with **Capture Sky** (default) lights
   the level with the sky's colours. Untick Atmosphere to pick the colours yourself.
+- **Reflection Capture** (Unreal's Sphere Reflection Capture; Place tab): metal and other shiny
+  surfaces within its **Radius** reflect what is around it (the room, the props, the characters)
+  instead of only the sky, sharp on smooth surfaces and blurrier on rough ones. It captures when the
+  level opens; after moving things, **Build > Build Reflection Captures** (console `BuildReflections`).
+  Up to 8 in a level; where several overlap, the one a surface is most inside wins. Put one in the
+  middle of each room.
+
+  ![A mirror sphere without and with a Reflection Capture](images/reflection_capture.jpg)
+  *A mirror sphere: the sky gradient only (left), and with a Reflection Capture (right): the floor, the characters and the real sky.*
 - **Height Fog**: exponential fog, thickest at the object's height and thinning upwards; density,
   falloff, colour, start distance, max opacity.
 - **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in

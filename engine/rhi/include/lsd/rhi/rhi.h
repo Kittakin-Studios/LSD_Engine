@@ -169,6 +169,8 @@ struct GpuLight {
     f32 shadow_offset;   // normal offset per metre of distance (texel size grows with distance)
     f32 pad;
 };
+constexpr u32 kMaxReflectionProbes = 8;  // reflection captures in the atlas (render::kMaxReflections)
+
 struct LightSetup {
     f32 exposure = 1.0f;
     u32 count = 0;
@@ -213,9 +215,13 @@ struct LightSetup {
     // tint (rgb, a = opacity).
     f32 decal_info[4] = {};
     f32 decals[kMaxDecals * 5][4] = {};
+    // Reflection captures (set_reflection_atlas): reflection_info.x = how many; each capture's
+    // position (xyz) and radius (w), in atlas tile order. A pixel inside one reflects its tile.
+    f32 reflection_info[4] = {};
+    f32 reflections[kMaxReflectionProbes][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
@@ -354,6 +360,8 @@ public:
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     // The decal atlas the LightSetup's decal rectangles point into (an sRGB texture); for draw_mesh.
     virtual void set_decal_atlas(TextureHandle atlas) = 0;
+    // The reflection captures' atlas (render/reflection.h: lat-long tiles, mipmapped); invalid = none.
+    virtual void set_reflection_atlas(TextureHandle atlas) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Material Graph code (lsd/script/material_graph.h: `Surface material_main(MaterialIn mi)`) built
     // into the lit-mesh pipelines, static and skinned. Invalid if it does not compile (the shader

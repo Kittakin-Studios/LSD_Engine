@@ -116,6 +116,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px; vec4 hdr_out;
     vec4 probe_origin; vec4 probe_cell; uvec4 probe_dims; vec4 probes[1536];
     vec4 decal_info; vec4 decals[80];
+    vec4 reflection_info; vec4 reflections[8];
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -189,6 +190,7 @@ layout(binding = 2) uniform sampler2D orm_tex;
 // Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
 // not face along the box's +Z and towards its top and bottom.
 layout(binding = 5) uniform sampler2D decal_tex;
+layout(binding = 6) uniform sampler2D reflection_tex;  // reflection captures (lat-long tiles, mipmapped)
 vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
     uint count = uint(decal_info.x);
     for (uint d = 0u; d < count; ++d) {
@@ -215,6 +217,24 @@ const float PI = 3.14159265;
 vec3 sky_radiance(vec3 d) {
     float h = 1.0 - abs(d.z);
     return mix(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
+}
+// Reflection captures (as the HLSL): the capture this point is inside replaces the sky reflection.
+vec3 capture_reflection(vec3 sky_part, vec3 r, float roughness, vec3 wpos) {
+    float best = 0.0;
+    uint tile = 0u;
+    for (uint k = 0u; k < uint(reflection_info.x) && k < 8u; ++k) {
+        float w = clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
+        if (w > best) { best = w; tile = k; }
+    }
+    if (best <= 0.0) return sky_part;
+    float lod = roughness * 5.0;
+    vec2 margin = 0.5 * exp2(lod) / vec2(256.0, 128.0);
+    vec2 uv = vec2(atan(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
+    uv = clamp(uv, margin, 1.0 - margin);
+    vec2 atlas = (vec2(float(tile % 2u), float(tile / 2u)) + uv) / vec2(2.0, 4.0);
+    vec3 c = min(textureLod(reflection_tex, atlas, lod).rgb, vec3(0.999));
+    c = c * c / (1.0 - c * c) / max(exposure, 1e-6);
+    return mix(sky_part, c, best);
 }
 // The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
 vec2 env_brdf(float ndv, float roughness) {
@@ -340,7 +360,7 @@ void main() {
     vec3 r = reflect(-v, n);
     vec3 lum = vec3(0.2126, 0.7152, 0.0722);
     float open_sky = clamp(dot(sky, lum) / max(dot(mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4), 0.0, 1.0);
-    vec3 reflected = mix(sky_radiance(r) * open_sky, sky, roughness * roughness);
+    vec3 reflected = capture_reflection(mix(sky_radiance(r) * open_sky, sky, roughness * roughness), r, roughness, v_wpos);
     vec2 ab = env_brdf(ndv, roughness);
     vec3 env_spec = f0 * ab.x + ab.y;
     float spec_ao = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
@@ -1317,6 +1337,7 @@ public:
         gl_.glBindTextureUnit(3, shadow_texture_);
         gl_.glBindTextureUnit(4, local_shadow_texture_);
         gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);
+        gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1 translucent, 2 additive, 3 overdraw (no depth test)
         if (blend) {
@@ -1450,6 +1471,11 @@ public:
     void set_decal_atlas(TextureHandle atlas) override {
         const Texture* t = lookup_texture(atlas);
         decal_texture_ = t ? t->id : 0;
+    }
+
+    void set_reflection_atlas(TextureHandle atlas) override {
+        const Texture* t = lookup_texture(atlas);
+        reflection_texture_ = t ? t->id : 0;
     }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
@@ -2126,6 +2152,7 @@ private:
     GLuint mesh_program_ = 0;  // == mesh_.id
     MeshProgram mesh_, skinned_program_, instanced_program_;
     GLuint decal_texture_ = 0;
+    GLuint reflection_texture_ = 0;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint instanced_shadow_program_ = 0;

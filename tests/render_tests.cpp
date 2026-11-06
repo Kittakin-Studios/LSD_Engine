@@ -2,6 +2,9 @@
 #include "lsd/foundation/math.h"
 #include "lsd/render/mesh.h"
 #include "lsd/render/occlusion.h"
+#include "lsd/render/reflection.h"
+
+#include <vector>
 #include "lsd/rhi/rhi.h"
 
 #include <cmath>
@@ -121,7 +124,39 @@ static void test_occlusion() {
     CHECK(buffer.box_visible(view_proj, {8, -0.2f, -0.6f}, {8.4f, 0.2f, -0.4f}));
 }
 
+// Reflection captures: each face a flat colour (its index); a tile texel looks back along its direction.
+static void test_reflection() {
+    using namespace lsd;
+    Mat4 views[6];
+    render::reflection_views({0, 0, 0}, views);
+    std::vector<u8> faces[6];
+    const u8* face_ptrs[6];
+    for (int f = 0; f < 6; ++f) {
+        faces[f].assign(render::kReflectionFace * render::kReflectionFace * 4, static_cast<u8>(40 * f + 10));
+        face_ptrs[f] = faces[f].data();
+    }
+    std::vector<u8> atlas(render::kReflectionAtlas * render::kReflectionAtlas * 4, 0);
+    render::unwrap_reflection(face_ptrs, views, 3, atlas.data());  // tile 3: column 1, row 1
+    auto at = [&](f32 u, f32 v) {  // tile 3's texel at (u, v)
+        const u32 x = render::kReflectionTileW + static_cast<u32>(u * render::kReflectionTileW), y = render::kReflectionTileH + static_cast<u32>(v * render::kReflectionTileH);
+        return atlas[(static_cast<usize>(y) * render::kReflectionAtlas + x) * 4];
+    };
+    CHECK(at(0.5f, 0.5f) == 10);    // +X (longitude 0, the horizon)
+    CHECK(at(0.0f, 0.5f) == 50);    // -X (longitude -pi)
+    CHECK(at(0.75f, 0.5f) == 90);   // +Y
+    CHECK(at(0.25f, 0.5f) == 130);  // -Y
+    CHECK(at(0.5f, 0.01f) == 170);  // +Z, straight up
+    CHECK(at(0.5f, 0.99f) == 210);  // -Z
+    CHECK(atlas[0] == 0);           // other tiles untouched
+    std::vector<std::vector<u8>> levels;
+    std::vector<u8> flat(render::kReflectionAtlas * render::kReflectionAtlas * 4, 128);
+    render::reflection_mips(flat.data(), levels);
+    CHECK(levels.size() == render::kReflectionMips - 1 && levels.back().size() == 16u * 16u * 4u);
+    CHECK(levels[0][0] >= 127 && levels[0][0] <= 129 && levels.back()[5] >= 127 && levels.back()[5] <= 129);  // a flat colour stays flat
+}
+
 int main() {
+    test_reflection();
     test_math();
     test_meshes();
     test_culling();
