@@ -35,10 +35,12 @@
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_morph(e, name, weight)        a morph target (blend shape) weight on e's skeletal mesh (or its child's)
-//   lsd.play_montage(e, animation [, rate = 1 [, from_bone = "" [, blend = 0.2]]]) -> seconds   an animation file
+//   lsd.play_montage(e, animation [, rate = 1 [, from_bone = "" [, blend = 0.2 [, root_motion = false]]]]) -> seconds   an animation file
 //                                         (by asset name) played once over what e plays, from from_bone down
 //                                         ("spine_01": the upper body only; "": all of it), blended in and out
-//                                         (Unreal's Play Montage); 0 if none. When it ends: on_montage_ended(self)
+//                                         (Unreal's Play Montage); 0 if none. When it ends: on_montage_ended(self).
+//                                         root_motion: the clip's root movement moves the player's Character
+//                                         (dodges, attacks that travel) instead of the input
 //   lsd.stop_montage(e [, blend = 0.2]), lsd.montage_playing(e) -> bool
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes.
@@ -255,7 +257,7 @@ struct ScriptHost {
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
     void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
-    f32 (*play_montage)(void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend) = nullptr;
+    f32 (*play_montage)(void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion) = nullptr;
     void (*stop_montage)(void* user, world::Entity e, f32 blend) = nullptr;
     bool (*montage_playing)(void* user, world::Entity e) = nullptr;
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;

@@ -696,6 +696,17 @@ bool Pose::layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 wei
     return blend.Run() && rebuild(model, -1);
 }
 
+Vec3 Pose::strip_root(const SkinnedModel& model) {
+    if (!impl_ || impl_->locals.empty() || !model.impl || !model.impl->skeleton) return {};
+    ozz::math::SoaFloat3& t = impl_->locals[0].translation;  // joint 0 is the root (no parent): its local place is its model place
+    const ozz::math::SoaFloat3& rest = model.impl->skeleton->joint_rest_poses()[0].translation;
+    const Vec3 moved{ozz::math::GetX(t.x) - ozz::math::GetX(rest.x), ozz::math::GetX(t.y) - ozz::math::GetX(rest.y), 0.0f};
+    t.x = ozz::math::SetX(t.x, rest.x);
+    t.y = ozz::math::SetX(t.y, rest.y);
+    rebuild(model, -1);
+    return moved;
+}
+
 bool Pose::rebuild(const SkinnedModel& model, i32 from) {
     ozz::animation::LocalToModelJob to_model;
     to_model.skeleton = model.impl->skeleton.get();

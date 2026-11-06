@@ -225,7 +225,8 @@ void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32
 }
 
 // After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
-f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend) {
+f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend,
+                                  bool root_motion) {
     world::Entity mesh_entity = world.alive(e) && world.get<world::SkeletalMesh>(e) ? e : world::Entity{};
     for (u32 slot = 0; slot < world.slot_count() && !mesh_entity.valid(); ++slot) {  // a Character's mesh under it
         const world::Entity c = world.entity_at_slot(slot);
@@ -248,6 +249,7 @@ f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache
     std::snprintf(m.from_bone, sizeof m.from_bone, "%s", from_bone ? from_bone : "");
     m.rate = rate > 0.0f ? rate : 1.0f;
     m.blend = blend > 0.0f ? blend : 0.0f;
+    m.root_motion = root_motion;
     montages_.push_back(m);
     return set->clips[0].duration / m.rate;
 }
@@ -267,6 +269,16 @@ void AnimationPlayer::stop_montage(world::Entity e, f32 blend) {
 bool AnimationPlayer::montage_playing(world::Entity e) const {
     for (const Montage& m : montages_) {
         if (m.owner == e && m.fade_speed == 0.0f) return true;
+    }
+    return false;
+}
+
+bool AnimationPlayer::take_root_motion(world::Entity e, Vec3& moved) {
+    for (Montage& m : montages_) {
+        if (m.owner != e || !m.root_motion) continue;
+        moved = m.moved;
+        m.moved = {};
+        return true;
     }
     return false;
 }
@@ -298,6 +310,12 @@ void AnimationPlayer::apply_montage(const world::World& world, State& state, con
             w = std::fmin(w, std::fmin(in < 1.0f ? in : 1.0f, out < 1.0f ? out : 1.0f));
         }
         state.pose.layer(*entry.model, clip, m.time / clip->duration, w, m.from_bone[0] ? entry.model->find_joint(m.from_bone) : -1);
+        if (m.root_motion) {  // the root's travel since last frame moves the object; the mesh stays on it
+            const Vec3 offset = state.pose.strip_root(*entry.model);
+            if (m.started) m.moved = m.moved + transform_vector(skeletal_matrix(world, state.entity, *mesh, &entry), offset - m.last);
+            m.last = offset;
+            m.started = true;
+        }
     }
 }
 

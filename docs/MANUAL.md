@@ -1124,6 +1124,10 @@ whatever the object plays (a clip, an Anim Graph or Motion Matching), from that 
 reloads with the upper body while the legs keep walking; leave the bone empty for the whole body. It
 blends in and out (Blend, seconds), one at a time per object; `on_montage_ended(self)` runs when it
 ends; **Stop Montage** blends it out early. IK (lsd.ik_reach) still applies on top.
+**Root motion** (Unreal's Root Motion from Montages Only): the sixth argument (`true`, or the node's
+**Root Motion** pin) lets a whole-body montage move the player's Character by the clip's own root
+travel (dodges, lunges, attacks that step) instead of the input; the mesh stays on its capsule. The
+root is the skeleton's first joint (`root` on Unreal rigs, `Hips` on Mixamo); in-place clips do not move.
 
 **Motion Matching** (built-in locomotion, the technique behind Unreal's Motion Matching and its Game
 Animation Sample): tick **Character > Animation > Motion Matching** and the character's Skeletal Mesh
@@ -1513,7 +1517,7 @@ Audio and animation
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
 | `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | |
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
-| `lsd.play_montage(e, animation [, rate, from_bone, blend])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
+| `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 

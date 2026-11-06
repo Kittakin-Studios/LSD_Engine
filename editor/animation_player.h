@@ -42,11 +42,15 @@ public:
     // Montages (Unreal's Play Montage on a slot): an animation file's first clip played once over
     // what `e` (or its skeletal mesh child) plays, from `from_bone` down (empty: the whole body), blended
     // in and out over `blend` seconds. Returns how long it plays (0: no such animation).
-    f32 play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend);
+    // `root_motion`: the clip's root movement moves the object (take_root_motion) instead of sliding the mesh.
+    f32 play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend,
+                     bool root_motion = false);
     void stop_montage(world::Entity e, f32 blend);  // blends out from where it is
     bool montage_playing(world::Entity e) const;
     // Objects whose montage ended (played out or stopped) since the last call: Play sends them on_montage_ended.
     void take_finished_montages(std::vector<world::Entity>& out);
+    // How far a root-motion montage moved `e` since the last call (world space, metres); false when none plays.
+    bool take_root_motion(world::Entity e, Vec3& moved);
 
     // IK for the next update (scripts call it every frame they want it): a bone reaches a world
     // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
@@ -91,6 +95,10 @@ private:
         char from_bone[48];
         f32 time = 0.0f, rate = 1.0f, blend = 0.2f;
         f32 fade = 1.0f, fade_speed = 0.0f;  // stop_montage: fades to 0 at fade_speed per second
+        bool root_motion = false;
+        bool started = false;  // root motion: `last` holds the previous frame's root offset
+        Vec3 last;
+        Vec3 moved;            // world-space movement not yet taken by Play
     };
     std::vector<Montage> montages_;
     std::vector<world::Entity> finished_montages_;

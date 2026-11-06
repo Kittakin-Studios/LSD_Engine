@@ -740,9 +740,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_audio_param = [](void* user, const char* name, f32 value) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_param(name, value);
     };
-    host.play_montage = [](void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend) {
+    host.play_montage = [](void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion) {
         auto& self = *static_cast<PlaySession*>(user);
-        return self.animations_ && self.skinned_ ? self.animations_->play_montage(*self.world_, *self.skinned_, e, animation, rate, from_bone, blend) : 0.0f;
+        return self.animations_ && self.skinned_ ? self.animations_->play_montage(*self.world_, *self.skinned_, e, animation, rate, from_bone, blend, root_motion) : 0.0f;
     };
     host.stop_montage = [](void* user, world::Entity e, f32 blend) {
         if (auto* a = static_cast<PlaySession*>(user)->animations_) a->stop_montage(e, blend);
@@ -1424,6 +1424,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 n = length(swim);
         if (n > 1.0f) swim = swim * (1.0f / n);
         physics_->move_character(swim * settings_.swim_speed, false, 0.0f, dt, true);
+    } else if (Vec3 rooted; animations_ && dt > 0.0f && animations_->take_root_motion(character_, rooted)) {  // a root-motion montage moves it
+        physics_->move_character(Vec3{rooted.x / dt, rooted.y / dt, 0.0f}, false, 0.0f, dt);
     } else if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; !car || car->vehicle == ~0u) {
         physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
     }  // in a Physics vehicle the driver sits inside its body: not moved, so it cannot push the car

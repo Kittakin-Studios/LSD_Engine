@@ -1185,7 +1185,7 @@ struct Api {
     static int play_montage(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const f32 seconds = host.play_montage ? host.play_montage(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_optnumber(L, 3, 1.0)),
-                                                                  luaL_optstring(L, 4, ""), static_cast<f32>(luaL_optnumber(L, 5, 0.2))) : 0.0f;
+                                                                  luaL_optstring(L, 4, ""), static_cast<f32>(luaL_optnumber(L, 5, 0.2)), lua_toboolean(L, 6) != 0) : 0.0f;
         lua_pushnumber(L, seconds);
         return 1;
     }

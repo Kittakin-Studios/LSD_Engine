@@ -139,6 +139,9 @@ public:
     // A clip over the sampled pose (Unreal's Layered Blend per Bone, as montages use): from
     // `from_joint` down its children (-1: every joint), mixed in by `weight` 0..1. Call after sample.
     bool layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 weight, i32 from_joint);
+    // Root motion: the root joint's sideways (x, y) move away from its rest place is taken out of the
+    // pose (the mesh stays over its capsule) and returned, in model space; the game moves the object.
+    Vec3 strip_root(const SkinnedModel& model);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

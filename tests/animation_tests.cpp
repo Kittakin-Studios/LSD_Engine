@@ -380,6 +380,13 @@ int main() {
             const Mat4 root_now = part.joint_model(0);
             CHECK(last == 0 || length(Vec3{root_now.at(0, 3) - root_rest.at(0, 3), root_now.at(1, 3) - root_rest.at(1, 3), root_now.at(2, 3) - root_rest.at(2, 3)}) < 1e-5f);
             CHECK(!part.layer(model, &clips[0], 0.5f, 0.0f, -1));  // weight 0 does nothing
+            // Root motion: what strip_root returns is the root's sideways move from rest, and the root is back at rest sideways.
+            const Mat4 root_before = full.joint_model(0);
+            const Vec3 moved = full.strip_root(model);
+            const Mat4 root_after = full.joint_model(0);
+            CHECK(std::fabs(moved.x - (root_before.at(0, 3) - root_rest.at(0, 3))) < 1e-4f && std::fabs(moved.y - (root_before.at(1, 3) - root_rest.at(1, 3))) < 1e-4f);
+            CHECK(std::fabs(root_after.at(0, 3) - root_rest.at(0, 3)) < 1e-4f && std::fabs(root_after.at(1, 3) - root_rest.at(1, 3)) < 1e-4f);
+            CHECK(std::fabs(root_after.at(2, 3) - root_before.at(2, 3)) < 1e-5f);  // height is the animation's
             ++tested_animation;
         }
     }
