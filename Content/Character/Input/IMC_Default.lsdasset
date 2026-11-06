@@ -79,6 +79,27 @@
         "axis": 0,
         "scale": 1,
         "dead_zone": 0
+      },
+      {
+        "action": "724f7cc5ed0535ec60d53809c90aec74",
+        "key": "Right Mouse Button",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "dd17f425fd18177717cbdda80cd0e863",
+        "key": "Left Mouse Button",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
+      },
+      {
+        "action": "7da670464e190794bd74fe50c3f9fd6f",
+        "key": "R",
+        "axis": 0,
+        "scale": 1,
+        "dead_zone": 0
       }
     ]
   }

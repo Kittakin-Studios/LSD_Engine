@@ -1,0 +1,11 @@
+{
+  "type": "InputAction",
+  "data": {
+    "value_type": 0,
+    "description": "Reload the weapon",
+    "trigger": 1,
+    "trigger_time": 0.5,
+    "chord_action": "",
+    "smoothing": 0
+  }
+}
