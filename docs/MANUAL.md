@@ -456,6 +456,11 @@ Atmosphere:
   **Motion Blur** (Amount 0 = off, Max as % of the screen's width): turning or moving the camera
   smears the picture along the movement, found the way TAA finds last frame's pixels. Only the
   camera's own movement for now: an object moving by itself in front of a still camera stays sharp.
+- **Contact shadows** (Unreal's Contact Shadow Length): **Directional Light > Contact Shadow Length**
+  (metres, 0 = off) sends a short ray toward the sun through the depth buffer from every surface that
+  faces it, for the small shadows the shadow map misses (feet on the floor, props on a table). It runs
+  with the post pass (a volume's look or the default one). For now it darkens the shaded colour, so it
+  also deepens a little what the shadow map already shades.
   **Exposure** (Unreal's Auto Exposure / eye adaptation, on by default): the image is metered every
   frame and eased toward mid grey, so dark interiors brighten and sunlit views darken over a moment;
   Min / Max EV limit how far it moves from World Settings exposure, Speed Up / Down how fast,

@@ -241,6 +241,9 @@ struct PostDraw {
     // themselves need motion vectors (also wanted by TAA).
     f32 motion_blur = 0.0f;
     f32 motion_blur_max = 0.05f;
+    // Contact shadows: xyz toward the sun in view space (normalised), w = ray length in metres (0 = off).
+    // Marched through the scene's depth with the AO pass and multiplied into its result.
+    f32 contact_shadow[4] = {};
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).

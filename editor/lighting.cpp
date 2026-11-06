@@ -193,6 +193,18 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.motion_blur = best->motion_blur_amount;
     out.motion_blur_max = best->motion_blur_max * 0.01f;
     if (chosen) *chosen = best;
+    const reflect::TypeInfo& sun_type = reflect::type_of<world::DirectionalLight>();
+    for (u32 i = 0; i < w.count(sun_type); ++i) {
+        const auto* sun = static_cast<const world::DirectionalLight*>(w.at(sun_type, i));
+        const world::Entity e = w.owner(sun_type, i);
+        if (sun->contact_shadow_length <= 0.0f || (skip_hidden && w.hidden_in_hierarchy(e))) continue;
+        const Vec3 toward = forward_of(w.world_matrix(e)) * -1.0f;
+        out.contact_shadow[0] = toward.x;
+        out.contact_shadow[1] = toward.y;
+        out.contact_shadow[2] = toward.z;
+        out.contact_shadow[3] = sun->contact_shadow_length;
+        break;
+    }
     out.fxaa = best->anti_aliasing;
     out.taa = best->temporal_aa;
     out.ao_intensity = best->ao_intensity;

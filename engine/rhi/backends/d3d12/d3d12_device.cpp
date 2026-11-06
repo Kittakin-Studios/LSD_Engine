@@ -535,7 +535,24 @@ float4 ps_ao(VsOut i) : SV_Target {
         const float f = max(radius * radius - vv, 0.0);
         sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
     }
-    const float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    // Contact shadows (reproject[0]: toward the sun in view space, w = length): a short ray through the
+    // depth; a point behind what the camera sees there, but not far behind (thickness), is in shadow.
+    if (reproject[0].w > 0.0 && dot(n, reproject[0].xyz) > 0.05) {  // faces the sun (else the sun does not light it anyway)
+        [loop] for (int s = 0; s < 12; ++s) {
+            const float3 q = p + reproject[0].xyz * (reproject[0].w * (s + noise) / 12.0);
+            if (q.z > -0.05) break;
+            const float2 uv = to_uv(float2(q.x * proj.x / -q.z, q.y * proj.y / -q.z));
+            if (any(uv < 0.0) || any(uv > 1.0)) break;
+            const float behind = -q.z - view_distance(depth_at(uv));
+            if (behind > 0.008 * -q.z + 0.02 && behind < 0.25) {
+                // shortcut: darkens the shaded colour (ambient too, and where the shadow map already shades);
+                // the lit shader should take it off the sun's light only: needs a depth pre-pass.
+                ao *= 0.6;
+                break;
+            }
+        }
+    }
     return float4(ao, ao, ao, 1.0);
 }
 // The occlusion blurred over 4 x 4 pixels at a similar depth (hides its noise), times the scene.
@@ -1673,7 +1690,7 @@ public:
             out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
         };
         const bool depth_effects = p.proj[0] != 0.0f;
-        const bool ao = depth_effects && p.ao_intensity > 0.0f;
+        const bool ao = depth_effects && (p.ao_intensity > 0.0f || p.contact_shadow[3] > 0.0f);
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
         const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
         const bool taa = depth_effects && p.taa;
@@ -1706,7 +1723,10 @@ public:
             src = c.ssr;
         }
         if (ao) {
-            post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, k);
+            f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
+            std::memcpy(ka, k, sizeof ka);
+            std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
+            post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, ka);
             post_pass(post_ao_apply_.Get(), c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }

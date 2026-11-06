@@ -36,6 +36,7 @@ void set_shadow_quality(u32 quality);
 // The post-process pass the camera gets from the level's Post Process Volume (bloom, tonemap,
 // grading, FXAA); the default volume's values where none applies. Always true for now.
 // `chosen`: the volume that applies (nullptr when none does: the defaults), for its Color Grading LUT.
+// out.contact_shadow comes back in world space (toward the first sun with a Contact Shadow Length).
 bool world_post(const world::World& world, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen = nullptr);
 // The level's Sky, if it has one (sun disc from the first Directional Light).
 bool world_sky(const world::World& world, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out);

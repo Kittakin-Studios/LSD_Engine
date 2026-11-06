@@ -641,6 +641,9 @@ struct DirectionalLight {
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "1900 candle, 3200 tungsten, 5500 noon sun, 6500 overcast") f32 temperature = 6500.0f;
     LSD_PROPERTY(Edit, Tooltip = "The first sun with this on casts shadows (4 cascades)") bool cast_shadows = true;
     LSD_PROPERTY(Edit, Units = "m", Min = 5, Max = 1000, Tooltip = "Shadows end this far from the camera; shorter is sharper") f32 shadow_distance = 60.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 2,
+                 Tooltip = "Contact Shadow Length (Unreal's): a short screen-space shadow ray this long toward the sun, for the small contact shadows the shadow map misses (feet on the floor, props on a table); 0 = off. Needs a Post Process Volume's look (the default one counts)")
+    f32 contact_shadow_length = 0.0f;
 };
 
 // A bulb (Unreal's Point Light): shines in every direction.

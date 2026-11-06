@@ -697,6 +697,21 @@ void main() {
         sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    // Contact shadows (u_post[8]: toward the sun in view space, w = length), as the HLSL.
+    vec4 ray = u_post[8];
+    if (ray.w > 0.0 && dot(n, ray.xyz) > 0.05) {  // faces the sun (else the sun does not light it anyway)
+        for (int s = 0; s < 12; ++s) {
+            vec3 q = p + ray.xyz * (ray.w * (float(s) + noise) / 12.0);
+            if (q.z > -0.05) break;
+            vec2 uv = to_uv(vec2(q.x * u_post[4].x / -q.z, q.y * u_post[4].y / -q.z));
+            if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+            float behind = -q.z - view_distance(depth_at(uv));
+            if (behind > 0.008 * -q.z + 0.02 && behind < 0.25) {
+                ao *= 0.6;  // shortcut: as the HLSL (the shaded colour, not the sun's light alone)
+                break;
+            }
+        }
+    }
     o_color = vec4(ao, ao, ao, 1.0);
 #elif defined(AO_APPLY)
     // The occlusion blurred over 4 x 4 pixels at a similar depth (hides its noise), times the scene.
@@ -1613,7 +1628,7 @@ public:
             out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
         };
         const bool depth_effects = p.proj[0] != 0.0f;
-        const bool ao = depth_effects && p.ao_intensity > 0.0f;
+        const bool ao = depth_effects && (p.ao_intensity > 0.0f || p.contact_shadow[3] > 0.0f);
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
         const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
         const bool taa = depth_effects && p.taa;
@@ -1643,7 +1658,10 @@ public:
             src = c.ssr;
         }
         if (ao) {
-            post_pass(5, c.ao, nullptr, {}, {}, p.scene, k);
+            f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
+            std::memcpy(ka, k, sizeof ka);
+            std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
+            post_pass(5, c.ao, nullptr, {}, {}, p.scene, ka);
             post_pass(6, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }

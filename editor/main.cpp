@@ -2418,6 +2418,12 @@ int main(int argc, char** argv) {
                 post.color_lut = texture_cache->get(volume->color_grading_lut, false);
                 post.lut_intensity = volume->lut_intensity;
             }
+            if (post.contact_shadow[3] > 0.0f) {  // toward the sun: world space -> view space
+                const lsd::Vec3 toward = lsd::normalize(lsd::transform_vector(view, {post.contact_shadow[0], post.contact_shadow[1], post.contact_shadow[2]}));
+                post.contact_shadow[0] = toward.x;
+                post.contact_shadow[1] = toward.y;
+                post.contact_shadow[2] = toward.z;
+            }
             post.delta_seconds = dt;  // eye adaptation eases over time
             if (use_post && lens.view == lsd::editor::ViewType::Perspective) {  // depth effects (AO, DOF, TAA) need the projection
                 post.proj[0] = proj.at(0, 0);
