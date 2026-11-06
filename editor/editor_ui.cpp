@@ -19,6 +19,7 @@
 #include "references.h"
 #include "remote_console.h"
 #include "game_module.h"
+#include "keymap.h"
 #include "editor_modes.h"
 #include "paper2d.h"
 #include "workspaces.h"
@@ -2450,8 +2451,8 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
         }
         if (ImGui::BeginPopupContextItem("row_menu")) {
             if (!s.is_selected(e)) select(s, e);
-            if (ImGui::MenuItem("Focus", "F")) focus_selected(s);
-            if (s.playing && ImGui::MenuItem("Keep Simulation Changes", "K")) keep_simulation_changes(s);
+            if (ImGui::MenuItem("Focus", command_text(Command::Focus))) focus_selected(s);
+            if (s.playing && ImGui::MenuItem("Keep Simulation Changes", command_text(Command::KeepSimulation))) keep_simulation_changes(s);
             if (s.playing) ImGui::SetItemTooltip("When Play stops, the selected objects keep what they have now (where physics left them...)");
             asset::Guid used;  // the object's mesh (or script, sound) asset
             i32 part = -1;  // a part of a mesh file finds the file
@@ -2459,13 +2460,13 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             if (const auto* m = s.world->get<world::SkeletalMesh>(e); m && !used.valid()) asset::parse_guid(m->mesh, used);
             if (const auto* m = s.world->get<world::Script>(e); m && !used.valid()) asset::parse_guid(m->script, used);
             if (const auto* m = s.world->get<world::SoundEmitter>(e); m && !used.valid()) asset::parse_guid(m->sound, used);
-            if (with_tip(ImGui::MenuItem("Find in Content Browser", "Ctrl+B", false, used.valid()), "Shows the asset this object uses in the Content Browser")) find_in_content_browser(s, used);
-            if (with_tip(ImGui::MenuItem("Duplicate", "Ctrl+D"), "Copies the selection in place")) duplicate_selected(s);
+            if (with_tip(ImGui::MenuItem("Find in Content Browser", command_text(Command::FindInContentBrowser), false, used.valid()), "Shows the asset this object uses in the Content Browser")) find_in_content_browser(s, used);
+            if (with_tip(ImGui::MenuItem("Duplicate", command_text(Command::Duplicate)), "Copies the selection in place")) duplicate_selected(s);
             if (with_tip(ImGui::MenuItem("Detach", nullptr, false, s.world->parent(e).valid()), "Unparents it: it stays where it is but no longer moves with its parent")) {
                 s.world->set_parent(e, {});
                 edited(s, "Detach");
             }
-            if (with_tip(ImGui::MenuItem("Delete", "Delete"), "Removes the selection from the level (undoable)")) delete_selected(s);
+            if (with_tip(ImGui::MenuItem("Delete", command_text(Command::Delete)), "Removes the selection from the level (undoable)")) delete_selected(s);
             if (with_tip(ImGui::BeginMenu("Move to Folder", !s.playing), "Puts the selection in an Outliner folder (folders only organise; they do not move objects)")) {
                 std::set<std::string> folders;
                 for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
@@ -4864,7 +4865,7 @@ void draw_menu_bar(EditorState& s) {
     note_recent_level(s);
     if (!ImGui::BeginMainMenuBar()) return;
     if (with_tip(ImGui::BeginMenu("File"), "Levels: new, open, save; validating and packaging")) {
-        if (with_tip(ImGui::MenuItem("New Level", "Ctrl+N", false, !s.playing), "Starts an empty level")) request_new(s);
+        if (with_tip(ImGui::MenuItem("New Level", command_text(Command::NewLevel), false, !s.playing), "Starts an empty level")) request_new(s);
         if (with_tip(ImGui::BeginMenu("Open Level", !s.playing), "Opens one of the project's levels")) {
             bool any = false;
             for (usize i = 0; i < s.registry->count(); ++i) {
@@ -4893,8 +4894,8 @@ void draw_menu_bar(EditorState& s) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (with_tip(ImGui::MenuItem("Save Level", "Ctrl+S", false, !s.playing), "Writes the level to disk")) request_save(s, false);
-        if (with_tip(ImGui::MenuItem("Save Level As...", "Ctrl+Shift+S", false, !s.playing), "Writes the level under a new name")) request_save(s, true);
+        if (with_tip(ImGui::MenuItem("Save Level", command_text(Command::Save), false, !s.playing), "Writes the level to disk")) request_save(s, false);
+        if (with_tip(ImGui::MenuItem("Save Level As...", command_text(Command::SaveAs), false, !s.playing), "Writes the level under a new name")) request_save(s, true);
         ImGui::Separator();
         if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems (missing files, broken references) and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);
@@ -4909,24 +4910,24 @@ void draw_menu_bar(EditorState& s) {
         ImGui::EndMenu();
     }
     if (with_tip(ImGui::BeginMenu("Edit"), "Undo, copy and paste, grouping; Editor Preferences and Project Settings")) {
-        if (with_tip(ImGui::MenuItem("Undo", "Ctrl+Z", false, s.history->can_undo() && !s.playing), "Takes back the last change")) s.history->undo(*s.world);
-        if (with_tip(ImGui::MenuItem("Redo", "Ctrl+Y", false, s.history->can_redo() && !s.playing), "Does again what Undo took back")) s.history->redo(*s.world);
+        if (with_tip(ImGui::MenuItem("Undo", command_text(Command::Undo), false, s.history->can_undo() && !s.playing), "Takes back the last change")) s.history->undo(*s.world);
+        if (with_tip(ImGui::MenuItem("Redo", command_text(Command::Redo), false, s.history->can_redo() && !s.playing), "Does again what Undo took back")) s.history->redo(*s.world);
         ImGui::Separator();
         const bool has = s.world->alive(s.selected) && !s.playing;
-        if (with_tip(ImGui::MenuItem("Duplicate", "Ctrl+D", false, has), "Copies the selection in place")) duplicate_selected(s);
-        if (with_tip(ImGui::MenuItem("Group", "Ctrl+G", false, has), "Puts the selection under a new parent object so they move together")) group_selection(s);
-        if (with_tip(ImGui::MenuItem("Ungroup", "Shift+G", false, has), "Takes the selection out of its group")) ungroup_selection(s);
-        if (with_tip(ImGui::MenuItem("Select All", "Ctrl+A", false, !s.playing), "Selects every object in the level")) {
+        if (with_tip(ImGui::MenuItem("Duplicate", command_text(Command::Duplicate), false, has), "Copies the selection in place")) duplicate_selected(s);
+        if (with_tip(ImGui::MenuItem("Group", command_text(Command::Group), false, has), "Puts the selection under a new parent object so they move together")) group_selection(s);
+        if (with_tip(ImGui::MenuItem("Ungroup", command_text(Command::Ungroup), false, has), "Takes the selection out of its group")) ungroup_selection(s);
+        if (with_tip(ImGui::MenuItem("Select All", command_text(Command::SelectAll), false, !s.playing), "Selects every object in the level")) {
             for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
         }
-        if (with_tip(ImGui::MenuItem("Cut", "Ctrl+X", false, has), "Copies the selection and removes it")) {
+        if (with_tip(ImGui::MenuItem("Cut", command_text(Command::Cut), false, has), "Copies the selection and removes it")) {
             copy_selection(s);
             delete_selected(s);
         }
-        if (with_tip(ImGui::MenuItem("Copy", "Ctrl+C", false, has), "Copies the selection (paste it in this or another level)")) copy_selection(s);
-        if (with_tip(ImGui::MenuItem("Paste", "Ctrl+V", false, !s.playing), "Puts copied objects into the level")) paste(s);
-        if (with_tip(ImGui::MenuItem("Delete", "Delete", false, has), "Removes the selection")) delete_selected(s);
-        if (with_tip(ImGui::MenuItem("Drop to Floor", "End", false, has), "Moves the selection down until it rests on what is below")) drop_to_floor(s);
+        if (with_tip(ImGui::MenuItem("Copy", command_text(Command::Copy), false, has), "Copies the selection (paste it in this or another level)")) copy_selection(s);
+        if (with_tip(ImGui::MenuItem("Paste", command_text(Command::Paste), false, !s.playing), "Puts copied objects into the level")) paste(s);
+        if (with_tip(ImGui::MenuItem("Delete", command_text(Command::Delete), false, has), "Removes the selection")) delete_selected(s);
+        if (with_tip(ImGui::MenuItem("Drop to Floor", command_text(Command::DropToFloor), false, has), "Moves the selection down until it rests on what is below")) drop_to_floor(s);
         ImGui::Separator();
         with_tip(ImGui::MenuItem("Editor Preferences", nullptr, &s.show_preferences), "Your own editor settings: camera speed, snapping, autosave, theme, plugins");
         with_tip(ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings), "The game's settings, shared with the team: maps, multiplayer, languages, platform");
@@ -4938,7 +4939,7 @@ void draw_menu_bar(EditorState& s) {
         if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
         ImGui::Separator();
-        if (ImGui::MenuItem("Compile Game Code", "Ctrl+Alt+F11", false, !game_module::compiling())) game_module::compile();
+        if (ImGui::MenuItem("Compile Game Code", command_text(Command::CompileGameCode), false, !game_module::compiling())) game_module::compile();
         ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
         if (with_tip(ImGui::MenuItem("New C / C++ Script..."), "Makes a C or C++ script or component in Source/ and opens it in VS Code")) s.new_script_popup = true;
         if (with_tip(ImGui::MenuItem("Set Up Debugging (VS Code)"), "Writes VS Code launch settings so F5 debugs the game code")) {
@@ -4962,7 +4963,7 @@ void draw_menu_bar(EditorState& s) {
         if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
         if (with_tip(ImGui::MenuItem("Build Reflection Captures"), "Captures what each Reflection Capture sees again (after moving things)")) s.capture_reflections = true;
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
-        if (ImGui::MenuItem("Build Navigation", "P")) s.show_navigation = true;  // the navmesh rebuilds while it is shown
+        if (ImGui::MenuItem("Build Navigation", command_text(Command::ToggleNavigation))) s.show_navigation = true;  // the navmesh rebuilds while it is shown
         ImGui::SetItemTooltip("Builds and shows the navmesh (it keeps rebuilding while shown)");
         if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);
@@ -5016,11 +5017,11 @@ void draw_menu_bar(EditorState& s) {
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() * 0.5f - 40.0f);
     if (!s.playing) {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_y));
-        if (ImGui::MenuItem("Play", "Alt+P")) s.play_requested = true;
-        if (ImGui::MenuItem("Simulate", "Alt+S")) s.play_requested = s.simulate_requested = true;
+        if (ImGui::MenuItem("Play", command_text(Command::Play))) s.play_requested = true;
+        if (ImGui::MenuItem("Simulate", command_text(Command::Simulate))) s.play_requested = s.simulate_requested = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the level with the editor camera: physics, scripts and AI, nobody possessed (F8 possesses)");
         if (!s.play_window_open) {
-            if (ImGui::MenuItem("New Window", "Alt+N")) s.play_window_requested = true;
+            if (ImGui::MenuItem("New Window", command_text(Command::PlayWindow))) s.play_window_requested = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays the level as it is now in a window of its own, as the packaged game would (Unreal's New Editor Window); the editor stays free");
         } else if (with_tip(ImGui::MenuItem("Close Window"), "Closes the game window that Play opened")) {
             s.close_play_window = true;
@@ -5028,11 +5029,11 @@ void draw_menu_bar(EditorState& s) {
         ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_x));
-        if (with_tip(ImGui::MenuItem("Stop", "Esc"), "Stops playing (Esc)")) s.stop_requested = true;
+        if (with_tip(ImGui::MenuItem("Stop", command_text(Command::StopPlay)), "Stops playing (Esc)")) s.stop_requested = true;
         ImGui::PopStyleColor();
-        if (ImGui::MenuItem(s.paused ? "Resume" : "Pause", "Pause")) s.paused = !s.paused;
-        if (s.paused && with_tip(ImGui::MenuItem("Step", "]"), "Advances the paused game one frame")) s.step_requested = true;
-        if (ImGui::MenuItem(s.ejected ? "Possess" : "Eject", "F8")) {
+        if (ImGui::MenuItem(s.paused ? "Resume" : "Pause", command_text(Command::Pause))) s.paused = !s.paused;
+        if (s.paused && with_tip(ImGui::MenuItem("Step", command_text(Command::StepFrame)), "Advances the paused game one frame")) s.step_requested = true;
+        if (ImGui::MenuItem(s.ejected ? "Possess" : "Eject", command_text(Command::Eject))) {
             s.ejected = !s.ejected;
             s.mouse_captured = !s.ejected;
         }
@@ -5342,25 +5343,29 @@ void draw_preferences_window(EditorState& s) {
             }
             if (draw_details(reflect::type_of<EditorTheme>(), &t, &style)) apply_theme(t);
         }
+        if (ImGui::CollapsingHeader("Keyboard Shortcuts")) draw_keymap(s.settings);
         if (ImGui::CollapsingHeader("Plugins", ImGuiTreeNodeFlags_DefaultOpen)) draw_plugins(s);
     }
     ImGui::End();
 }
 
 void handle_shortcuts(EditorState& s) {
+    if (keymap_capturing()) return;  // Preferences is reading a new key
     ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F11, false)) game_module::compile();  // also while playing
+    using C = Command;
+    if (command_pressed(C::CompileGameCode)) game_module::compile();  // also while playing
     if (s.playing) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) s.stop_requested = true;
-        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F1)) s.mouse_captured = false;
-        if (ImGui::IsKeyPressed(ImGuiKey_Pause)) s.paused = !s.paused;
-        if (s.paused && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) s.step_requested = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_F8)) {
+        if (command_pressed(C::StopPlay)) s.stop_requested = true;
+        if (command_pressed(C::ReleaseMouse)) s.mouse_captured = false;
+        if (command_pressed(C::Pause)) s.paused = !s.paused;
+        if (s.paused && command_pressed(C::StepFrame, true)) s.step_requested = true;
+        if (command_pressed(C::Eject)) {
             s.ejected = !s.ejected;
             s.mouse_captured = !s.ejected;
         }
         if (!s.ejected) return;
-        if (!io.WantTextInput && s.world->alive(s.selected) && ImGui::IsKeyPressed(ImGuiKey_F)) focus_selected(s);
+        if (!io.WantTextInput && s.world->alive(s.selected) && command_pressed(C::Focus)) focus_selected(s);
+        if (!io.WantTextInput && s.world->alive(s.selected) && command_pressed(C::KeepSimulation)) keep_simulation_changes(s);
         return;
     }
     // Asset editor windows have their own Ctrl+S and Delete: level shortcuts stay out of them.
@@ -5368,45 +5373,36 @@ void handle_shortcuts(EditorState& s) {
         (std::strstr(focused->RootWindow->Name, "###VisualScript") || std::strstr(focused->RootWindow->Name, "###DataTable"))) {
         return;
     }
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P)) s.play_requested = true;
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N) && !s.playing && !s.play_window_open) s.play_window_requested = true;
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) s.play_requested = s.simulate_requested = true;
-    if (!io.KeyAlt && !io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_P, false)) s.show_navigation = !s.show_navigation;
-    if (io.KeyAlt && !io.WantTextInput) {  // Unreal's viewport keys
-        if (ImGui::IsKeyPressed(ImGuiKey_G)) set_view(s, ViewType::Perspective);
-        if (ImGui::IsKeyPressed(ImGuiKey_J)) set_view(s, ViewType::Top);
-        if (ImGui::IsKeyPressed(ImGuiKey_H)) set_view(s, ViewType::Front);
-        if (ImGui::IsKeyPressed(ImGuiKey_K)) set_view(s, ViewType::Right);
-        if (ImGui::IsKeyPressed(ImGuiKey_4)) s.view_mode = ViewMode::Lit;
-        if (ImGui::IsKeyPressed(ImGuiKey_3)) s.view_mode = ViewMode::Unlit;
-        if (ImGui::IsKeyPressed(ImGuiKey_2)) s.view_mode = ViewMode::Wireframe;
-        if (ImGui::IsKeyPressed(ImGuiKey_6)) s.view_mode = ViewMode::LightingOnly;
-        if (ImGui::IsKeyPressed(ImGuiKey_0)) s.view_mode = ViewMode::Overdraw;
-        if (ImGui::IsKeyPressed(ImGuiKey_C)) s.view_mode = s.view_mode == ViewMode::Collision ? ViewMode::Lit : ViewMode::Collision;
-        if (ImGui::IsKeyPressed(ImGuiKey_V, false)) s.pivot_edit = !s.pivot_edit;  // Alt+V: move the gizmo's pivot
-        return;
-    }
+    if (command_pressed(C::Play)) s.play_requested = true;
+    if (command_pressed(C::PlayWindow) && !s.play_window_open) s.play_window_requested = true;
+    if (command_pressed(C::Simulate)) s.play_requested = s.simulate_requested = true;
     if (io.WantTextInput) return;
-    const bool ctrl = io.KeyCtrl;
-    const bool flying = ImGui::IsMouseDown(ImGuiMouseButton_Right);  // WASD/QE move the camera then
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        if (io.KeyShift) s.history->redo(*s.world);
-        else s.history->undo(*s.world);
-    }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) s.history->redo(*s.world);
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) request_save(s, io.KeyShift);
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N)) request_new(s);
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_GraveAccent)) s.gizmo_local = !s.gizmo_local;
+    if (command_pressed(C::ViewPerspective)) set_view(s, ViewType::Perspective);  // Unreal's viewport keys
+    if (command_pressed(C::ViewTop)) set_view(s, ViewType::Top);
+    if (command_pressed(C::ViewFront)) set_view(s, ViewType::Front);
+    if (command_pressed(C::ViewRight)) set_view(s, ViewType::Right);
+    if (command_pressed(C::Lit)) s.view_mode = ViewMode::Lit;
+    if (command_pressed(C::Unlit)) s.view_mode = ViewMode::Unlit;
+    if (command_pressed(C::Wireframe)) s.view_mode = ViewMode::Wireframe;
+    if (command_pressed(C::LightingOnly)) s.view_mode = ViewMode::LightingOnly;
+    if (command_pressed(C::Overdraw)) s.view_mode = ViewMode::Overdraw;
+    if (command_pressed(C::Collision)) s.view_mode = s.view_mode == ViewMode::Collision ? ViewMode::Lit : ViewMode::Collision;
+    if (command_pressed(C::PivotEdit)) s.pivot_edit = !s.pivot_edit;
+    if (command_pressed(C::Undo, true)) s.history->undo(*s.world);
+    if (command_pressed(C::Redo, true) || command_pressed(C::RedoAlt, true)) s.history->redo(*s.world);
+    if (command_pressed(C::Save)) request_save(s, false);
+    if (command_pressed(C::SaveAs)) request_save(s, true);
+    if (command_pressed(C::NewLevel)) request_new(s);
+    if (command_pressed(C::LocalGizmo)) s.gizmo_local = !s.gizmo_local;
     const bool has = s.world->alive(s.selected);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_C)) copy_selection(s);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_X)) {
+    if (has && command_pressed(C::Copy)) copy_selection(s);
+    if (has && command_pressed(C::Cut)) {
         copy_selection(s);
         delete_selected(s);
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) paste(s);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_D)) duplicate_selected(s);
-    if (!ctrl && s.playing && s.ejected && has && ImGui::IsKeyPressed(ImGuiKey_K)) keep_simulation_changes(s);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_B)) {  // Find in Content Browser: the selected object's asset
+    if (command_pressed(C::Paste)) paste(s);
+    if (has && command_pressed(C::Duplicate)) duplicate_selected(s);
+    if (has && command_pressed(C::FindInContentBrowser)) {  // the selected object's asset
         asset::Guid used;
         i32 part = -1;
         if (const auto* m = s.world->get<world::StaticMesh>(s.selected)) asset::parse_mesh_key(m->mesh, used, part);
@@ -5414,17 +5410,16 @@ void handle_shortcuts(EditorState& s) {
         if (const auto* m = s.world->get<world::Script>(s.selected); m && !used.valid()) asset::parse_guid(m->script, used);
         if (used.valid()) find_in_content_browser(s, used);
     }
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_G)) group_selection(s);
-    if (!ctrl && io.KeyShift && has && ImGui::IsKeyPressed(ImGuiKey_G)) {
-        ungroup_selection(s);
-        return;  // not also the G (game view) key below
-    }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
+    if (has && command_pressed(C::Group)) group_selection(s);
+    if (has && command_pressed(C::Ungroup)) ungroup_selection(s);
+    if (command_pressed(C::SelectAll)) {
         for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
     }
-    for (int n = 0; n < 10; ++n) {  // camera bookmarks
-        if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_0 + n)) || flying) continue;
-        if (ctrl) {
+    const bool flying = ImGui::IsMouseDown(ImGuiMouseButton_Right);  // WASD/QE move the camera then
+    if (flying) return;
+    for (int n = 0; n < 10; ++n) {  // camera bookmarks: Ctrl+0-9 sets, 0-9 jumps
+        if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_0 + n)) || io.KeyAlt || io.KeyShift) continue;
+        if (io.KeyCtrl) {
             s.bookmarks[n] = s.camera;
             s.bookmark_set[n] = true;
             std::snprintf(s.status, sizeof s.status, "Camera bookmark %d set", n);
@@ -5432,15 +5427,15 @@ void handle_shortcuts(EditorState& s) {
             s.camera = s.bookmarks[n];
         }
     }
-    if (ctrl || flying) return;
-    if (ImGui::IsKeyPressed(ImGuiKey_W)) s.gizmo = GizmoMode::Translate;
-    if (ImGui::IsKeyPressed(ImGuiKey_E)) s.gizmo = GizmoMode::Rotate;
-    if (ImGui::IsKeyPressed(ImGuiKey_R)) s.gizmo = GizmoMode::Scale;
-    if (ImGui::IsKeyPressed(ImGuiKey_G)) s.game_view = !s.game_view;
-    if (has && ImGui::IsKeyPressed(ImGuiKey_F)) focus_selected(s);
-    if (has && ImGui::IsKeyPressed(ImGuiKey_End)) drop_to_floor(s);
-    if (has && ImGui::IsKeyPressed(ImGuiKey_Delete)) delete_selected(s);
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) select(s, {});
+    if (command_pressed(C::ToggleNavigation)) s.show_navigation = !s.show_navigation;
+    if (command_pressed(C::Translate)) s.gizmo = GizmoMode::Translate;
+    if (command_pressed(C::Rotate)) s.gizmo = GizmoMode::Rotate;
+    if (command_pressed(C::Scale)) s.gizmo = GizmoMode::Scale;
+    if (command_pressed(C::GameView)) s.game_view = !s.game_view;
+    if (has && command_pressed(C::Focus)) focus_selected(s);
+    if (has && command_pressed(C::DropToFloor)) drop_to_floor(s);
+    if (has && command_pressed(C::Delete)) delete_selected(s);
+    if (command_pressed(C::Deselect)) select(s, {});
 }
 
 } // namespace

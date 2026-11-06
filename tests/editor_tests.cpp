@@ -7,7 +7,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include "keymap.h"
 #include "rml_edit.h"
+#include "editor_settings.h"
 #include "sound_cue.h"
 #include "transactions.h"
 
@@ -329,7 +331,32 @@ static void test_assistant() {
     CHECK(writable_path("Content/UI/HUD.rml") && writable_path("Source/CMakeLists.txt") && !writable_path("Content/Mesh/Gun.fbx") && !writable_path("Content/Weapon/IA_Aim.lsdasset"));
 }
 
+// Shortcuts: text round trip, defaults, only changed chords saved and loaded back.
+static void test_keymap() {
+    using editor::Command;
+    char text[32];
+    editor::chord_text(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, text, sizeof text);
+    CHECK(std::strcmp(text, "Ctrl+Shift+S") == 0);
+    CHECK(editor::parse_chord("Ctrl+Shift+S") == (ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S));
+    CHECK(editor::parse_chord("Alt+F11") == (ImGuiMod_Alt | ImGuiKey_F11) && editor::parse_chord("Delete") == ImGuiKey_Delete);
+    CHECK(editor::parse_chord("") == 0 && editor::parse_chord("Ctrl+Nope") == 0);
+    CHECK(std::strcmp(editor::command_text(Command::Save), "Ctrl+S") == 0);
+
+    editor::EditorSettings set;
+    editor::set_command_chord(Command::Save, ImGuiMod_Alt | ImGuiKey_W);
+    editor::set_command_chord(Command::Delete, 0);
+    editor::save_keymap(set);
+    CHECK(set.shortcuts.count == 2);
+    editor::load_keymap(editor::EditorSettings{});  // defaults again
+    CHECK(editor::command_chord(Command::Save) == (ImGuiMod_Ctrl | ImGuiKey_S));
+    editor::load_keymap(set);
+    CHECK(editor::command_chord(Command::Save) == (ImGuiMod_Alt | ImGuiKey_W) && editor::command_chord(Command::Delete) == 0);
+    CHECK(std::strcmp(editor::command_text(Command::Delete), "") == 0);
+    editor::load_keymap(editor::EditorSettings{});
+}
+
 int main() {
+    test_keymap();
     test_assistant();
     test_undo_redo();
     test_references();

@@ -1625,6 +1625,14 @@ behaviour tree tasks `name(self, dt)`.
 | Alt+G / J / H / K, Alt+4 / 3 / 2, G, P | views, view modes, game view, navmesh |
 | Alt+P, Alt+S, Esc, Pause, ], F8, Shift+F1 | play, simulate, stop, pause, step, eject, free mouse |
 
+These are the defaults. **Edit > Editor Preferences > Keyboard Shortcuts** (Unreal's Keyboard
+Shortcuts) changes them: click a command's keys, then press the new ones (hold Ctrl / Shift / Alt
+with them; Esc cancels). **x** leaves a command without keys, **Reset** / **Reset All** bring the
+defaults back, the search box finds a command or a key, and a red **also ...** shows another command
+on the same keys. The menus show the keys you chose. Your changes are saved in
+`Saved/editor_settings.json` (per user, not in Git). Camera bookmarks (Ctrl+0-9 / 0-9) and flying
+stay fixed.
+
 ### Command line
 
 | Flag | Meaning |

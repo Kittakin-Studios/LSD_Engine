@@ -1,5 +1,6 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
+#include "keymap.h"
 #include "assistant.h"
 #include "assistant_lessons.h"
 #include "editor_modes.h"
@@ -1726,6 +1727,7 @@ int main(int argc, char** argv) {
     lsd::editor::load_theme(state.theme);
     lsd::editor::apply_theme(state.theme);
     lsd::reflect::load_file(state.settings, kSettingsPath);
+    lsd::editor::load_keymap(state.settings);
     lsd::reflect::load_file(state.project, "Config/project.json");
     state.game_mode = game_mode;
     if (game_mode) SDL_SetWindowTitle(window, state.project.project_name);

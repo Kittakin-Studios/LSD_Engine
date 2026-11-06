@@ -34,6 +34,14 @@ struct CustomWorkspace {
     LSD_PROPERTY(Edit, Tooltip = "The built-in workspace it was made from (decides where asset editors open)") char base[32] = "";  // the built-in workspace it was made from (its editor area)
 };
 
+// A keyboard shortcut the user changed (Editor Preferences > Keyboard Shortcuts); keys "" = none.
+LSD_STRUCT()
+struct ShortcutOverride {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The editor command (keymap.h)") char command[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Its keys, e.g. Ctrl+Shift+S") char keys[32] = "";
+};
+
 LSD_STRUCT()
 struct EditorSettings {
     LSD_GENERATED()
@@ -69,6 +77,7 @@ struct EditorSettings {
     // Workspace tabs under the menu bar (Blender's Layout / Modeling / Shading...).
     LSD_PROPERTY(Save) char workspace[32] = "Layout";
     LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;
+    LSD_PROPERTY(Save) List<ShortcutOverride, 64> shortcuts;  // Editor Preferences > Keyboard Shortcuts
 };
 
 // A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and
