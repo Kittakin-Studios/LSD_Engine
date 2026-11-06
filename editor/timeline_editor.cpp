@@ -1,4 +1,5 @@
 #include "timeline_editor.h"
+#include "keymap.h"
 #include "tips.h"
 #include "workspaces.h"
 
@@ -315,7 +316,7 @@ void draw_timeline_editor(EditorState& s) {
             const char* hint = type == world::TrackType::Event ? "function to call (Custom Event name)" : type == world::TrackType::Sound ? "sound name" : "Camera object name";
             changed |= ImGui::InputTextWithHint("Text", hint, k.text, sizeof k.text);
         }
-        if (with_tip(ImGui::Button("Delete Key"), "Removes the selected key") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Delete))) {
+        if (with_tip(ImGui::Button("Delete Key"), "Removes the selected key") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && command_pressed(Command::Delete))) {
             tl.keys.remove(static_cast<u32>(g_tl.key));
             g_tl.key = -1;
             changed = true;

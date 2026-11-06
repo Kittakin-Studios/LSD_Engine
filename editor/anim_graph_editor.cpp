@@ -1,4 +1,5 @@
 #include "anim_graph_editor.h"
+#include "keymap.h"
 #include "animation_player.h"
 #include "tips.h"
 #include "workspaces.h"
@@ -243,7 +244,7 @@ void draw_canvas(EditorState& s) {
         }
         ImGui::EndPopup();
     }
-    if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete)) delete_selection();
+    if (ImGui::IsWindowFocused() && command_pressed(Command::Delete)) delete_selection();
     if (!g.states.count) dl->AddText(ImVec2(corner.x + 200, corner.y + 60), IM_COL32(200, 200, 200, 200), "Right-click to add a state");
     ImGui::EndChild();
 }

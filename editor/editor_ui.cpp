@@ -5369,9 +5369,10 @@ void handle_shortcuts(EditorState& s) {
         return;
     }
     // Asset editor windows have their own Ctrl+S and Delete: level shortcuts stay out of them.
-    if (const ImGuiWindow* focused = GImGui->NavWindow; focused && focused->RootWindow &&
-        (std::strstr(focused->RootWindow->Name, "###VisualScript") || std::strstr(focused->RootWindow->Name, "###DataTable"))) {
-        return;
+    if (const ImGuiWindow* focused = GImGui->NavWindow; focused && focused->RootWindow) {
+        for (const char* id : {"###VisualScript", "###DataTable", "###UiEditor", "###Timeline", "###StateMachine", "###MeshEditor", "###ParticleEditor", "###PrefabEditor"}) {
+            if (std::strstr(focused->RootWindow->Name, id)) return;
+        }
     }
     if (command_pressed(C::Play)) s.play_requested = true;
     if (command_pressed(C::PlayWindow) && !s.play_window_open) s.play_window_requested = true;

@@ -1,4 +1,5 @@
 #include "table_editor.h"
+#include "keymap.h"
 #include "tips.h"
 #include "workspaces.h"
 
@@ -217,7 +218,7 @@ void draw_table_editor(EditorState& s) {
         --t.columns;
         t.dirty = true;
     }
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) save(s);
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && command_pressed(Command::Save)) save(s);
     ImGui::End();
 }
 

@@ -1,6 +1,8 @@
 #pragma once
 // Editor keyboard shortcuts (Unreal's Editor Preferences > Keyboard Shortcuts): every level-editor
 // command has a default key chord; the user's changes are saved in Saved/editor_settings.json.
+// Save / Undo / Redo / Copy / Cut / Paste / Duplicate / Delete also work in the asset editor windows
+// (graphs, tables, UI, timelines, state machines), like Unreal's generic commands.
 #include <imgui.h>
 
 namespace lsd::editor {
@@ -15,6 +17,7 @@ enum class Command {
     Translate, Rotate, Scale, LocalGizmo, PivotEdit, Focus, DropToFloor, GameView, ToggleNavigation,
     ViewPerspective, ViewTop, ViewFront, ViewRight,
     Lit, Unlit, Wireframe, LightingOnly, Overdraw, Collision,
+    Continue, StepOver, StepInto, StepOut, ToggleBreakpoint,
     Count
 };
 

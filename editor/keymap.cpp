@@ -13,6 +13,7 @@ namespace {
 
 constexpr ImGuiKeyChord kCtrl = ImGuiMod_Ctrl, kShift = ImGuiMod_Shift, kAlt = ImGuiMod_Alt;
 constexpr char kPlayCategory[] = "While Playing";
+constexpr char kDebugCategory[] = "Debugging (stopped at a breakpoint)";
 
 const CommandInfo kCommands[] = {
     {"Play", "Play", "Play", kAlt | ImGuiKey_P},
@@ -28,7 +29,7 @@ const CommandInfo kCommands[] = {
     {"Undo", "Undo", "Edit", kCtrl | ImGuiKey_Z},
     {"Redo", "Redo", "Edit", kCtrl | ImGuiKey_Y},
     {"RedoAlt", "Redo (second key)", "Edit", kCtrl | kShift | ImGuiKey_Z},
-    {"Save", "Save Level", "Edit", kCtrl | ImGuiKey_S},
+    {"Save", "Save (level or asset editor)", "Edit", kCtrl | ImGuiKey_S},
     {"SaveAs", "Save Level As", "Edit", kCtrl | kShift | ImGuiKey_S},
     {"NewLevel", "New Level", "Edit", kCtrl | ImGuiKey_N},
     {"Copy", "Copy", "Edit", kCtrl | ImGuiKey_C},
@@ -60,6 +61,11 @@ const CommandInfo kCommands[] = {
     {"LightingOnly", "Lighting Only", "View Modes", kAlt | ImGuiKey_6},
     {"Overdraw", "Shader Complexity / Overdraw", "View Modes", kAlt | ImGuiKey_0},
     {"Collision", "Collision", "View Modes", kAlt | ImGuiKey_C},
+    {"Continue", "Continue", kDebugCategory, ImGuiKey_F5},
+    {"StepOver", "Step Over", kDebugCategory, ImGuiKey_F10},
+    {"StepInto", "Step Into", kDebugCategory, ImGuiKey_F11},
+    {"StepOut", "Step Out", kDebugCategory, kShift | ImGuiKey_F11},
+    {"ToggleBreakpoint", "Toggle Breakpoint (graph node, debugger line)", "Edit", ImGuiKey_F9},
 };
 static_assert(sizeof kCommands / sizeof kCommands[0] == static_cast<size_t>(Command::Count), "a CommandInfo per Command");
 
@@ -76,7 +82,10 @@ void ensure_loaded() {
     g_loaded = true;
 }
 
-bool is_play(int i) { return std::strcmp(kCommands[i].category, kPlayCategory) == 0; }
+// Commands in different contexts may share keys: the level, Play, a stopped debugger.
+int context(int i) {
+    return std::strcmp(kCommands[i].category, kPlayCategory) == 0 ? 1 : std::strcmp(kCommands[i].category, kDebugCategory) == 0 ? 2 : 0;
+}
 
 } // namespace
 
@@ -209,7 +218,7 @@ void draw_keymap(EditorSettings& settings) {
             ImGui::SetItemTooltip("Back to %s", c.chord ? ImGui::GetKeyChordName(c.chord) : "none");
         }
         for (int k = 0; k < kCount; ++k) {  // the same keys on another command that works at the same time
-            if (k == i || !g_chords[i] || g_chords[k] != g_chords[i] || is_play(k) != is_play(i)) continue;
+            if (k == i || !g_chords[i] || g_chords[k] != g_chords[i] || context(k) != context(i)) continue;
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "also %s", kCommands[k].label);
             break;

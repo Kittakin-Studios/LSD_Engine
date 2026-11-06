@@ -1,4 +1,5 @@
 #include "lua_debugger.h"
+#include "keymap.h"
 #include "tips.h"
 #include "workspaces.h"
 
@@ -115,14 +116,19 @@ void draw_window(EditorState& s, bool* open) {
     if (!begin_editor("Lua Debugger", open)) return;  // a panel tab, or the workspace's editor area
     // Toolbar: the controls work while stopped (F5 / F10 / F11 / Shift+F11 like Visual Studio).
     ImGui::BeginDisabled(!g_stop);
-    const bool shift = ImGui::GetIO().KeyShift;
-    if (with_tip(ImGui::Button("Continue (F5)"), "Runs on until the next breakpoint") || (g_stop && ImGui::IsKeyPressed(ImGuiKey_F5))) resume(script::DebugAction::Continue);
+    // A button labelled with its current keys (Editor Preferences > Keyboard Shortcuts).
+    const auto control = [](const char* name, Command c, const char* tip) {
+        char label[64];
+        std::snprintf(label, sizeof label, "%s (%s)###%s", name, command_text(c), name);
+        return with_tip(ImGui::Button(label), tip) || (g_stop && command_pressed(c));
+    };
+    if (control("Continue", Command::Continue, "Runs on until the next breakpoint")) resume(script::DebugAction::Continue);
     ImGui::SameLine();
-    if (with_tip(ImGui::Button("Step Over (F10)"), "Runs this line and stops at the next") || (g_stop && ImGui::IsKeyPressed(ImGuiKey_F10))) resume(script::DebugAction::StepOver);
+    if (control("Step Over", Command::StepOver, "Runs this line and stops at the next")) resume(script::DebugAction::StepOver);
     ImGui::SameLine();
-    if (with_tip(ImGui::Button("Step Into (F11)"), "Goes into the function this line calls") || (g_stop && !shift && ImGui::IsKeyPressed(ImGuiKey_F11))) resume(script::DebugAction::StepInto);
+    if (control("Step Into", Command::StepInto, "Goes into the function this line calls")) resume(script::DebugAction::StepInto);
     ImGui::SameLine();
-    if (with_tip(ImGui::Button("Step Out (Shift+F11)"), "Runs to the end of this function") || (g_stop && shift && ImGui::IsKeyPressed(ImGuiKey_F11))) resume(script::DebugAction::StepOut);
+    if (control("Step Out", Command::StepOut, "Runs to the end of this function")) resume(script::DebugAction::StepOut);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled(g_stop ? "Stopped: the game waits" : s.playing ? "Running" : "Set breakpoints, then Play");
@@ -152,7 +158,7 @@ void draw_window(EditorState& s, bool* open) {
         std::snprintf(gutter, sizeof gutter, "%s%4d", bp ? "o" : " ", line);
         if (ImGui::Selectable(gutter, false, 0, ImVec2(48, 0))) toggle(g_file, line);
         ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered() && ImGui::IsKeyPressed(ImGuiKey_F9)) toggle(g_file, line);
+        if (ImGui::IsItemHovered() && command_pressed(Command::ToggleBreakpoint)) toggle(g_file, line);
         ImGui::SameLine();
         if (here) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.25f, 1.0f), "> %s", g_lines[i].c_str());
         else ImGui::TextUnformatted(g_lines[i].c_str());

@@ -1633,6 +1633,14 @@ on the same keys. The menus show the keys you chose. Your changes are saved in
 `Saved/editor_settings.json` (per user, not in Git). Camera bookmarks (Ctrl+0-9 / 0-9) and flying
 stay fixed.
 
+Save, Undo, Redo, Copy, Cut, Paste, Duplicate and Delete are shared with the asset editor windows
+(Visual Script / material / sound cue / behaviour tree graphs, Data Tables, the UI window, Timelines,
+the State Machine), like Unreal's generic commands: rebind one and it changes everywhere. While an
+asset editor has focus, the level's shortcuts stay out of it (Delete there never deletes the selected
+level object). **Debugging** holds the Lua Debugger's Continue / Step Over / Step Into / Step Out
+(F5 / F10 / F11 / Shift+F11; its buttons show the keys you chose), and **Toggle Breakpoint** (F9) works
+on a graph node and a debugger line.
+
 ### Command line
 
 | Flag | Meaning |

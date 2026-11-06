@@ -1,4 +1,5 @@
 #include "ui_editor.h"
+#include "keymap.h"
 #include "tips.h"
 #include "workspaces.h"
 
@@ -366,7 +367,7 @@ void draw_ui_editor(EditorState& s) {
         if (w.dirty) save(s);
         w.open = false;
     }
-    if (with_tip(ImGui::Button("Save"), "Writes the document; open copies in Play reload") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) save(s);
+    if (with_tip(ImGui::Button("Save"), "Writes the document; open copies in Play reload") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && command_pressed(Command::Save))) save(s);
     ImGui::SameLine();
     if (w.message[0]) ImGui::TextUnformatted(w.message);
     else ImGui::TextDisabled("HTML / CSS (RmlUi). onclick=\"name\" calls the Lua function name(self, element_id). Fonts: family sans, or a .ttf in Content/Fonts");
@@ -391,7 +392,7 @@ void draw_ui_editor(EditorState& s) {
                          ImVec2(1, flipped ? 0.0f : 1.0f));
             draw_canvas(w, image_min, width);
         }
-        if (!w.selected.empty() && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        if (!w.selected.empty() && ImGui::IsWindowFocused() && command_pressed(Command::Delete)) {
             rml_remove(w.text, w.selected.c_str());
             w.selected.clear();
             edited(w);

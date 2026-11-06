@@ -1064,7 +1064,7 @@ void register_console(EditorState& s) {
             std::snprintf(copy, sizeof copy, "%s", keys);
             for (char* word = std::strtok(copy, " "); word; word = std::strtok(nullptr, " ")) {
                 const SDL_Keycode k = std::strcmp(word, "down") == 0 ? SDLK_DOWN : std::strcmp(word, "up") == 0 ? SDLK_UP : std::strcmp(word, "enter") == 0 ? SDLK_RETURN
-                                    : std::strcmp(word, "f5") == 0 ? SDLK_F5 : std::strcmp(word, "f10") == 0 ? SDLK_F10 : SDLK_UNKNOWN;
+                                    : SDL_GetKeyFromName(word);  // any SDL key name: f5, delete, a...
                 int window_count = 0;
                 SDL_Window** windows = SDL_GetWindows(&window_count);
                 const SDL_WindowID window = windows && window_count > 0 ? SDL_GetWindowID(windows[0]) : 0;  // ImGui ignores keys for no window
@@ -1081,7 +1081,7 @@ void register_console(EditorState& s) {
             }
             return 0;
         }, nullptr);
-    }, &s, "ui.Keys <down|up|enter ...>: keys for the game UI, 0.8 s later (tests)");
+    }, &s, "ui.Keys <down|up|enter|SDL key name ...>: keys for the UI, 0.8 s later (tests)");
     console::add_command("ui.Drag", [](void*, const char* args) {  // tests: a real LMB drag through SDL's queue
         struct Drag {
             float x0, y0, x1, y1;
