@@ -876,7 +876,8 @@ PC only (`Saved/editor_settings.json`, never in the project or Git).
 When a reply contains a file (a code block headed like ```` ```lua Content/Script/Door.lua ````),
 the block has **Copy**, **Create** (or **Overwrite**, which asks twice) and, for scripts, **Attach to
 Selected** (a Script component running it, undoable). It may only write inside `Content/` and
-`Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Requests go from this PC straight to the
+`Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Replies appear as they are written
+(streamed); a file block gets its buttons once the reply is done. Requests go from this PC straight to the
 endpoint (through the system's `curl`); a failed one puts your message back in the box.
 
 ### C and C++ scripts

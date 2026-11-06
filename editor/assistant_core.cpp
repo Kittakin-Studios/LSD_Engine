@@ -200,7 +200,7 @@ std::vector<std::string> request_headers(const Settings& st) {
 }
 
 std::string request_body(const Settings& st, const std::string& system, const std::vector<Turn>& turns) {
-    std::string b = "{\"model\":" + json_escape(st.model);
+    std::string b = "{\"model\":" + json_escape(st.model) + ",\"stream\":true";
     if (st.provider == kAnthropic) {
         // The system prompt (role, engine guide, API) is the same every time: cached.
         b += ",\"max_tokens\":16000,\"system\":[{\"type\":\"text\",\"text\":" + json_escape(system) + ",\"cache_control\":{\"type\":\"ephemeral\"}}]";
@@ -263,6 +263,76 @@ Reply parse_reply(const Settings& st, int http_status, const std::string& body) 
         r.raw = r.text;
     }
     r.ok = true;
+    return r;
+}
+
+Reply parse_stream(const Settings& st, int http_status, const std::string& body) {
+    struct Block {
+        std::string type, text, signature, raw;  // raw: the start event's block, for types sent back as they came
+    };
+    std::vector<Block> blocks;
+    std::string stop_reason, explanation, error, openai_text;
+    bool any = false, done = false;
+    for (usize at = 0, end; (end = body.find('\n', at)) != std::string::npos; at = end + 1) {  // whole lines only
+        std::string line = body.substr(at, end - at);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!starts(line, "data:")) continue;
+        line.erase(0, line[5] == ' ' ? 6 : 5);
+        any = true;
+        if (line == "[DONE]") {
+            done = true;
+            continue;
+        }
+        Parser p{line};
+        const Json e = p.value(0);
+        if (!p.ok || e.type != Json::Object) continue;
+        if (const Json* err = e.get("error")) error = err->type == Json::String ? err->text : err->str("message");
+        if (st.provider != kAnthropic) {
+            const Json* choices = e.get("choices");
+            if (!choices || choices->type != Json::Array || choices->values.empty()) continue;
+            if (const Json* delta = choices->values[0].get("delta")) openai_text += delta->str("content");
+            done = done || !choices->values[0].str("finish_reason").empty();
+            continue;
+        }
+        const std::string type = e.str("type");
+        const Json* delta = e.get("delta");
+        const Json* index = e.get("index");
+        Block* block = index && index->number >= 0 && static_cast<usize>(index->number) < blocks.size() ? &blocks[static_cast<usize>(index->number)] : nullptr;
+        if (type == "content_block_start") {
+            if (const Json* cb = e.get("content_block")) {
+                blocks.push_back({cb->str("type"), cb->str("type") == "thinking" ? cb->str("thinking") : cb->str("text"), cb->str("signature"),
+                                  line.substr(cb->begin, cb->end - cb->begin)});
+            }
+        } else if (type == "content_block_delta" && block && delta) {
+            block->text += delta->str("text") + delta->str("thinking");
+            block->signature += delta->str("signature");
+        } else if (type == "message_delta" && delta) {
+            stop_reason = delta->str("stop_reason");
+            const Json* details = delta->get("stop_details") ? delta->get("stop_details") : e.get("stop_details");
+            if (details) explanation = details->str("explanation");
+        } else if (type == "message_stop") {
+            done = true;
+        }
+    }
+    if (!any) return parse_reply(st, http_status, body);
+    Reply r;
+    if (st.provider != kAnthropic) {
+        r.text = r.raw = openai_text;
+    } else {
+        r.raw = "[";
+        for (const Block& b : blocks) {
+            if (b.type == "text") r.text += (r.text.empty() ? "" : "\n\n") + b.text;
+            if (r.raw.size() > 1) r.raw += ",";
+            r.raw += b.type == "text"       ? "{\"type\":\"text\",\"text\":" + json_escape(b.text) + "}"
+                     : b.type == "thinking" ? "{\"type\":\"thinking\",\"thinking\":" + json_escape(b.text) + ",\"signature\":" + json_escape(b.signature) + "}"
+                                            : b.raw;  // redacted thinking and others arrive whole
+        }
+        r.raw += "]";
+        if (stop_reason == "refusal") error = "The model declined this request" + (explanation.empty() ? std::string(".") : ": " + explanation);
+        if (stop_reason == "max_tokens") r.text += "\n\n(The reply was cut off at its length limit: ask it to continue.)";
+    }
+    r.error = !error.empty() ? error : done ? std::string() : "The connection closed before the reply finished.";
+    r.ok = r.error.empty();
     return r;
 }
 

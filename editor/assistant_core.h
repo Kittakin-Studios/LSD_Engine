@@ -37,6 +37,10 @@ struct Reply {
     std::string error;  // why not ok
 };
 Reply parse_reply(const Settings& settings, int http_status, const std::string& body);
+// A streamed reply (server-sent events; requests ask for `"stream":true`) read from what has arrived so
+// far: `text` grows as events come, `ok` once the stream's end was seen. A body that is not a stream
+// (an error reply) goes through parse_reply.
+Reply parse_stream(const Settings& settings, int http_status, const std::string& body);
 
 // A reply's fenced code blocks; `path` is set when the opening line names a file
 // ("```lua Content/Script/Door.lua").

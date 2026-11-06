@@ -224,6 +224,28 @@ static void test_assistant() {
     CHECK(!error.ok && error.error == "invalid x-api-key");
     CHECK(!parse_reply(claude, 0, "").ok);
 
+    // Streamed (server-sent events): text grows as deltas come, thinking kept with its signature.
+    CHECK(body.find("\"stream\":true") != std::string::npos);
+    const std::string stream =
+        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"content\":[]}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo \\u00e9\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_del";  // cut mid-line: not read yet
+    const Reply part = parse_stream(claude, 0, stream);
+    CHECK(!part.ok && part.text == "Hello \xc3\xa9");
+    const std::string whole = stream.substr(0, stream.rfind("data:")) +
+                              "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+    const Reply streamed = parse_stream(claude, 200, whole);
+    CHECK(streamed.ok && streamed.text == "Hello \xc3\xa9");
+    CHECK(streamed.raw == "[{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"sig\"},{\"type\":\"text\",\"text\":\"Hello \xc3\xa9\"}]");
+    const std::string refused = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+    CHECK(!parse_stream(claude, 200, refused).ok);
+    CHECK(!parse_stream(claude, 529, "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n").ok);
+    CHECK(parse_stream(claude, 401, R"({"type":"error","error":{"message":"invalid x-api-key"}})").error == "invalid x-api-key");  // not a stream
+
     Settings local;
     local.provider = kOpenAICompatible;
     local.endpoint = "http://localhost:11434/v1/";
@@ -233,6 +255,9 @@ static void test_assistant() {
     CHECK(request_body(local, "sys", {{true, "hi", ""}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
     const Reply o = parse_reply(local, 200, R"({"choices":[{"message":{"role":"assistant","content":"hello"}}]})");
     CHECK(o.ok && o.text == "hello");
+    const Reply os = parse_stream(local, 200, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"
+                                              "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+    CHECK(os.ok && os.text == "hello" && os.raw == "hello");
 
     CHECK(writable_path("Content/Script/Door.lua") && writable_path("Source/Door.cpp"));
     CHECK(!writable_path("../evil.lua") && !writable_path("Content/../x") && !writable_path("C:/Windows/x") && !writable_path("/etc/x") && !writable_path("Config/project.json"));

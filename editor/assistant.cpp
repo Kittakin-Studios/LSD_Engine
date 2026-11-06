@@ -17,9 +17,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <thread>
 
 namespace lsd::editor::assistant {
@@ -118,50 +118,59 @@ std::string project_context(EditorState& s) {
     return c + "</editor>\n\n";
 }
 
-// A request running on its own thread (the editor keeps drawing): curl does the HTTPS.
+// A request running on its own thread (the editor keeps drawing): curl does the HTTPS and the reply
+// streams in (`partial`: its text so far, for the chat).
 struct Job {
     std::atomic<bool> done{false};
     Reply reply;
+    std::mutex mutex;
+    std::string partial;
     std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 };
 
-// Runs curl with the headers and body in files (the key never appears on a command line) and the
-// reply to a file; returns the HTTP status (0: curl could not run or reach the server).
-int run_curl(const std::string& url, const std::vector<std::string>& headers, const std::string& body, std::string& reply) {
+// Runs curl with the headers and body in files (the key never appears on a command line), reading the
+// reply as it arrives; `on_data` gets everything so far whenever curl pauses. Returns the HTTP status
+// (0: curl could not run or reach the server).
+int run_curl(const std::string& url, const std::vector<std::string>& headers, const std::string& body, std::string& reply,
+             const std::function<void(const std::string&)>& on_data) {
     std::error_code error;
     const fs::path dir = "Saved/Assistant";
     fs::create_directories(dir, error);
     const std::string id = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    const fs::path head = dir / ("headers_" + id + ".txt"), request = dir / ("request_" + id + ".json"), response = dir / ("response_" + id + ".json");
+    const fs::path head = dir / ("headers_" + id + ".txt"), request = dir / ("request_" + id + ".json");
     {
         std::ofstream h(head, std::ios::binary);
         for (const std::string& line : headers) h << line << "\n";
         std::ofstream r(request, std::ios::binary);
         r << body;
     }
-    const std::string head_arg = "@" + head.string(), body_arg = "@" + request.string(), out_arg = response.string();
-    const char* args[] = {"curl", "-s", "-S", "--max-time", "600", "-X", "POST", url.c_str(), "-H", head_arg.c_str(), "--data-binary", body_arg.c_str(),
-                          "-o", out_arg.c_str(), "-w", "%{http_code}", nullptr};
+    const std::string head_arg = "@" + head.string(), body_arg = "@" + request.string();
+    // -N: no buffering, events arrive as sent; the status comes last, on its own line.
+    const char* args[] = {"curl", "-s", "-S", "-N", "--max-time", "600", "-X", "POST", url.c_str(), "-H", head_arg.c_str(), "--data-binary", body_arg.c_str(),
+                          "-w", "\n%{http_code}", nullptr};
     SDL_Process* process = SDL_CreateProcess(args, true);
-    std::string status;
     if (process) {
-        size_t size = 0;
-        int exit_code = 0;
-        if (void* out = SDL_ReadProcess(process, &size, &exit_code)) {
-            status.assign(static_cast<const char*>(out), size);
-            SDL_free(out);
+        SDL_IOStream* out = SDL_GetProcessOutput(process);
+        char chunk[4096];
+        while (out) {
+            const size_t got = SDL_ReadIO(out, chunk, sizeof chunk);
+            if (got) {
+                reply.append(chunk, got);
+                continue;  // take all that is there before parsing
+            }
+            if (SDL_GetIOStatus(out) != SDL_IO_STATUS_NOT_READY) break;  // EOF: curl is done
+            on_data(reply);
+            SDL_Delay(20);
         }
+        SDL_WaitProcess(process, true, nullptr);
         SDL_DestroyProcess(process);
     }
     fs::remove(head, error);  // the key goes at once
     fs::remove(request, error);
-    std::ifstream in(response, std::ios::binary);
-    std::stringstream text;
-    text << in.rdbuf();
-    reply = text.str();
-    in.close();
-    fs::remove(response, error);
-    return std::atoi(status.c_str());
+    const usize last = reply.rfind('\n');
+    const int status = std::atoi(reply.c_str() + (last == std::string::npos ? 0 : last + 1));
+    reply.resize(last == std::string::npos ? 0 : last);
+    return status;
 }
 
 struct Chat {
@@ -209,10 +218,14 @@ void send(EditorState& s) {
     const std::vector<std::string> headers = request_headers(st);
     std::thread([job, st, url, body, headers] {
         std::string reply;
-        const int status = run_curl(url, headers, body, reply);
-        job->reply = parse_reply(st, status, reply);
+        const int status = run_curl(url, headers, body, reply, [&](const std::string& so_far) {
+            std::string text = parse_stream(st, 0, so_far).text;
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->partial = std::move(text);
+        });
+        job->reply = parse_stream(st, status, reply);
         job->done = true;
-    }).detach();  // shortcut: one request at a time, not cancellable; stream the reply (SSE) when long answers feel slow
+    }).detach();  // shortcut: one request at a time, not cancellable; add a Stop button (SDL_KillProcess) when long replies go astray
 }
 
 // The reply's text, its code blocks as read-only boxes with their buttons.
@@ -390,8 +403,18 @@ void draw_window(EditorState& s, bool* open) {
         ImGui::Separator();
     }
     if (g_chat.job) {
+        std::string partial;
+        {
+            std::lock_guard<std::mutex> lock(g_chat.job->mutex);
+            partial = g_chat.job->partial;
+        }
+        if (!partial.empty()) {  // the reply so far; its code blocks get their buttons once it is done
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "LSD Assistant (%s)", kRoles[role].name);
+            ImGui::TextWrapped("%s", partial.c_str());
+        }
         const f64 seconds = std::chrono::duration<f64>(std::chrono::steady_clock::now() - g_chat.job->started).count();
-        ImGui::TextDisabled("LSD Assistant is thinking... %.0f s", seconds);
+        ImGui::TextDisabled(partial.empty() ? "LSD Assistant is thinking... %.0f s" : "Writing... %.0f s", seconds);
         ImGui::SetScrollHereY(1.0f);
     }
     if (!g_chat.last_error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1.0f), "%s", g_chat.last_error.c_str());
