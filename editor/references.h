@@ -23,6 +23,14 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> uses_;
 };
 
+// The assets a packaged game needs (Unreal's cook), as GUIDs: what `root_text` (the project
+// settings) names by GUID, asset path or asset name in a quoted string, then everything those use,
+// followed through GUIDs and, in text assets (levels, data, graphs, scripts, UI), through quoted
+// names and paths too (lsd.play_sound("Door"), open_level("Level2"), a stylesheet's href). A UI
+// document brings its own .js. shortcut: a name built at run time ("Level" .. n) is not found; such
+// assets need a GUID reference somewhere, or cooking left off.
+std::vector<std::string> cook_set(const asset::AssetRegistry& registry, const std::string& root_text);
+
 // Every GUID-like run of 32 hex digits in `text` (each once).
 std::vector<std::string> find_guids(const std::string& text);
 // Rewrites `from` to `to` in every text asset and .meta; returns how many files changed.

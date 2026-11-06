@@ -1429,6 +1429,13 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 4. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
 
+**Cooking** (Unreal's cook): tick **Project Settings > Packaging > Cook Used Assets Only** and the
+package gets only the assets the game uses: found from the Project Settings (Game Default Level, Game
+Mode, input, sound mixes...) through references, and through names and paths in scripts, graphs and UI
+(`lsd.play_sound("Door")`, `lsd.open_level("Level2")`, a stylesheet's href), each with its compiled
+data so nothing compiles on the first run. `cook_report.txt` in the package lists what was left out:
+check it, since an asset only named in a string built at run time (`"Level" .. n`) is not found.
+
 `lsd_editor.exe -game` runs the current project the same way without packaging.
 
 ---

@@ -1,16 +1,20 @@
 #include "packaging.h"
+#include "references.h"
 
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
+#include "lsd/reflect/reflect.h"
 
 #include <SDL3/SDL_filesystem.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -104,6 +108,52 @@ u32 validate_assets(const ProjectSettings& project, const asset::AssetRegistry& 
     return problems;
 }
 
+// Cooking: only the assets the game uses (cook_set), each with its .meta and its compiled data
+// (DerivedData/<guid>.*), Content/Fonts whole (UI fonts are found by folder), and cook_report.txt.
+static bool cook(const ProjectSettings& project, const asset::AssetRegistry& registry, const fs::path& out, std::error_code& error) {
+    static char settings[65536];  // the project settings as text: the roots
+    const usize n = reflect::save_text(reflect::type_of<ProjectSettings>(), &project, settings, sizeof settings);
+    const std::vector<std::string> used = cook_set(registry, std::string(settings, n < sizeof settings ? n : sizeof settings - 1));
+    std::vector<bool> keep(registry.count(), false);
+    u64 kept_bytes = 0, all_bytes = 0;
+    for (usize i = 0; i < registry.count(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        char guid[33];
+        asset::to_string(r.guid, guid);
+        char source[300];
+        registry.source_path(r, source, sizeof source);
+        std::error_code ignored;
+        const u64 size = fs::file_size(source, ignored);
+        all_bytes += ignored ? 0 : size;
+        if (std::find(used.begin(), used.end(), std::string(guid)) == used.end()) continue;
+        keep[i] = true;
+        kept_bytes += ignored ? 0 : size;
+        const fs::path to = out / "Content" / r.path;
+        fs::create_directories(to.parent_path(), error);
+        fs::copy_file(source, to, fs::copy_options::overwrite_existing, error);
+        if (!error && fs::exists(std::string(source) + ".meta", ignored)) fs::copy_file(std::string(source) + ".meta", to.string() + ".meta", fs::copy_options::overwrite_existing, error);
+        if (error) return false;
+        for (const fs::directory_entry& d : fs::directory_iterator("DerivedData", ignored)) {  // compiled already: the game does not redo it
+            if (d.path().filename().string().rfind(guid, 0) != 0) continue;
+            fs::create_directories(out / "DerivedData", ignored);
+            fs::copy_file(d.path(), out / "DerivedData" / d.path().filename(), fs::copy_options::overwrite_existing, ignored);
+        }
+    }
+    std::error_code ignored;
+    if (fs::exists("Content/Fonts", ignored)) fs::copy("Content/Fonts", out / "Content" / "Fonts", fs::copy_options::recursive | fs::copy_options::overwrite_existing, error);
+    if (FILE* report = std::fopen((out / "cook_report.txt").generic_string().c_str(), "wb")) {
+        std::fprintf(report, "Cooked %zu of %zu assets (%.1f of %.1f MB). Left out (nothing names them):\n", used.size(), registry.count(),
+                     static_cast<double>(kept_bytes) / 1048576.0, static_cast<double>(all_bytes) / 1048576.0);
+        for (usize i = 0; i < registry.count(); ++i) {
+            if (!keep[i]) std::fprintf(report, "  %s\n", registry.get(i).path);
+        }
+        std::fclose(report);
+    }
+    LSD_LOG_INFO("editor", "Cooked %zu of %zu assets (%.1f of %.1f MB); the rest is listed in cook_report.txt", used.size(), registry.count(),
+                 static_cast<double>(kept_bytes) / 1048576.0, static_cast<double>(all_bytes) / 1048576.0);
+    return !error;
+}
+
 bool package_project(const ProjectSettings& project, const asset::AssetRegistry& registry, char* message, usize capacity) {
     std::error_code error;
     const u32 problems = validate_assets(project, registry);
@@ -135,7 +185,14 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     fs::create_directories(out, error);
     const auto copy_options = fs::copy_options::recursive | fs::copy_options::overwrite_existing;
     fs::copy_file(exe, out / (name + ".exe"), fs::copy_options::overwrite_existing, error);
-    if (!error) fs::copy("Content", out / "Content", copy_options, error);
+    if (project.cook_used_only) {
+        if (!cook(project, registry, out, error)) {
+            std::snprintf(message, capacity, "Cooking into %s failed: %s", out.generic_string().c_str(), error.message().c_str());
+            return false;
+        }
+    } else if (!error) {
+        fs::copy("Content", out / "Content", copy_options, error);
+    }
     if (!error) fs::copy("Config", out / "Config", copy_options, error);
     if (!error && fs::exists("Binaries", error)) fs::copy("Binaries", out / "Binaries", copy_options, error);  // the C / C++ game code
     if (error) {

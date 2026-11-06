@@ -181,6 +181,39 @@ static void test_references() {  // Reference Viewer: who uses what, and Replace
     index.build(registry);
     CHECK(index.used_by(b).empty() && index.used_by(c).size() == 1);
     std::filesystem::remove_all(dir, error);
+
+    // Cooking: the project names the level by path, the level uses a script by GUID, the script names a
+    // sound and a UI document; the document brings its stylesheet and its .js; an unused script stays out.
+    const std::filesystem::path cook = std::filesystem::path(LSD_TEST_TEMP_DIR) / "CookContent";
+    std::filesystem::remove_all(cook, error);
+    std::filesystem::create_directories(cook / "Levels", error);
+    std::filesystem::create_directories(cook / "UI", error);
+    std::ofstream(cook / "Levels" / "Main.lsdlevel") << "{}";
+    std::ofstream(cook / "Door.lua") << "function on_start(self) lsd.play_sound(\"Creak\"); lsd.ui_open('Menu') end";
+    std::ofstream(cook / "Unused.lua") << "-- nobody asks for me";
+    std::ofstream(cook / "Creak.wav") << "RIFF";
+    std::ofstream(cook / "UI" / "Menu.rml") << "<rml><head><link type=\"text/rcss\" href=\"Menu.rcss\"/></head></rml>";
+    std::ofstream(cook / "UI" / "Menu.rcss") << "body {}";
+    std::ofstream(cook / "UI" / "Menu.js") << "function onOpen() {}";
+    asset::AssetRegistry assets(default_allocator(), cook.generic_string().c_str());
+    assets.scan();
+    char door[33] = "";
+    for (usize i = 0; i < assets.count(); ++i) {
+        if (std::strcmp(assets.get(i).name, "Door") == 0) asset::to_string(assets.get(i).guid, door);
+    }
+    std::ofstream(cook / "Levels" / "Main.lsdlevel") << "{\"Script\": {\"script\": \"" << door << "\"}}";
+    const std::vector<std::string> cooked = editor::cook_set(assets, "{\"game_default_level\": \"Content/Levels/Main.lsdlevel\"}");
+    auto has = [&](const char* name) {
+        for (usize i = 0; i < assets.count(); ++i) {
+            char g[33];
+            asset::to_string(assets.get(i).guid, g);
+            if (std::strcmp(assets.get(i).path, name) == 0) return std::find(cooked.begin(), cooked.end(), std::string(g)) != cooked.end();
+        }
+        return false;
+    };
+    CHECK(has("Levels/Main.lsdlevel") && has("Door.lua") && has("Creak.wav") && has("UI/Menu.rml") && has("UI/Menu.rcss") && has("UI/Menu.js"));
+    CHECK(!has("Unused.lua") && cooked.size() == 6);
+    std::filesystem::remove_all(cook, error);
 }
 
 // LSD Assistant without the network: what each provider is sent, its replies read back (thinking
