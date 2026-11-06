@@ -901,6 +901,56 @@ struct Api {
         lua_pushnumber(L, p.z);
         return 3;
     }
+    static int net_session(lua_State* L, int what, const char* arg) {
+        const ScriptHost& host = system(L).host_;
+        char why[160] = "multiplayer is not available here";
+        const bool ok = host.net_session && host.net_session(host.user, what, arg, why, sizeof why);
+        lua_pushboolean(L, ok);
+        if (ok) return 1;
+        lua_pushstring(L, why);
+        return 2;
+    }
+    static int net_host(lua_State* L) { return net_session(L, 0, luaL_optstring(L, 1, "")); }
+    static int net_join(lua_State* L) { return net_session(L, 1, luaL_checkstring(L, 1)); }
+    static int net_leave(lua_State* L) { return net_session(L, 2, luaL_optstring(L, 1, "")); }
+    static int net_join_code(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        char text[2048] = "";
+        if (host.net_join_codes) host.net_join_codes(host.user, text, sizeof text);
+        lua_createtable(L, 0, 4);
+        lua_createtable(L, 4, 0);  // lan
+        int lan = 0;
+        for (const char* line = text; *line;) {
+            const char* end = std::strchr(line, '\n');
+            const std::string row(line, end ? static_cast<usize>(end - line) : std::strlen(line));
+            line = end ? end + 1 : line + row.size();
+            const usize a = row.find('|'), b = row.find('|', a + 1), c = row.find('|', b + 1);
+            if (a == std::string::npos || b == std::string::npos) continue;
+            if (row.compare(0, a, "upnp") == 0 && c != std::string::npos) {
+                lua_pushstring(L, row.substr(a + 1, b - a - 1).c_str());
+                lua_setfield(L, -3, "upnp");
+                lua_pushstring(L, row.substr(b + 1, c - b - 1).c_str());
+                lua_setfield(L, -3, "message");
+                if (c + 1 < row.size()) {
+                    lua_pushstring(L, row.substr(c + 1).c_str());
+                    lua_setfield(L, -3, "internet");
+                }
+            } else if (row.compare(0, a, "lan") == 0) {
+                const std::string address = row.substr(a + 1, b - a - 1);
+                lua_createtable(L, 0, 3);
+                lua_pushstring(L, address.c_str());
+                lua_setfield(L, -2, "address");
+                lua_pushstring(L, row.substr(b + 1).c_str());
+                lua_setfield(L, -2, "code");
+                unsigned x = 0, y = 0;
+                lua_pushboolean(L, std::sscanf(address.c_str(), "%u.%u", &x, &y) == 2 && x == 100 && (y & 0xC0u) == 64u);  // Tailscale's range
+                lua_setfield(L, -2, "tailscale");
+                lua_rawseti(L, -2, ++lan);
+            }
+        }
+        lua_setfield(L, -2, "lan");
+        return 1;
+    }
     static int net_find_games(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         static char text[8192];
@@ -1559,7 +1609,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
-        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

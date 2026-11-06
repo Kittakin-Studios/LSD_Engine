@@ -157,6 +157,13 @@
 //                                        compensation: check a client's shot against this); nil if unknown
 //   lsd.net_find_games([seconds]) -> { {address, name, players, max_players}, ... }   games on the LAN
 //                                        (blocks up to `seconds`, default 0.5: call it from a menu, not every frame)
+//   lsd.net_host([level]) -> ok, why     host from here (a menu): Play restarts on `level` (default: this one) as the server
+//   lsd.net_join(code) -> ok, why        a join code ("K7QF2-MXA9P") or an address ("1.2.3.4[:port]"): restarts as a client,
+//                                        then follows the server to its level (on_connected / on_disconnected tell how it went)
+//   lsd.net_leave([level]) -> ok         back to single player
+//   lsd.net_join_code() -> { upnp = "off" | "working" | "open" | "failed", message, internet = code | nil,
+//                            lan = { {address, code, tailscale = bool}, ... } }   server: codes to give playtesters;
+//                                        the first call asks the router to open the port (UPnP, a couple of seconds)
 // Events: on_player_joined(self, id), on_player_left(self, id), on_chat(self, from, channel, text),
 // on_connected(self, id), on_disconnected(self). Arguments travel as JSON (numbers, text, tables).
 //
@@ -274,6 +281,11 @@ struct ScriptHost {
     bool (*net_seen_position)(void* user, u32 entity, u32 player, Vec3& out) = nullptr;  // lag compensation (server)
     // LAN games: writes "address|name|players|max" lines into `out` (newline-separated); returns how many.
     u32 (*net_find_games)(void* user, f32 seconds, char* out, usize capacity) = nullptr;
+    // Host (0, `arg` a level or ""), join (1, `arg` a join code or address), leave (2, `arg` a level or ""):
+    // Play restarts there in that mode. False with `why` when it cannot.
+    bool (*net_session)(void* user, int what, const char* arg, char* why, usize capacity) = nullptr;
+    // Join codes, as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
+    void (*net_join_codes)(void* user, char* out, usize capacity) = nullptr;
 };
 
 class ScriptSystem {

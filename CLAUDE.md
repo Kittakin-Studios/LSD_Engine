@@ -80,7 +80,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy 
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
 | Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
 | UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); a document's own `.js` runs on QuickJS-ng (`engine/ui/src/ui_script.*`) |
-| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, Opus, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
+| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, miniupnpc, Opus, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
 
 ## Editor look
 
@@ -160,7 +160,8 @@ Foliage, Landscape, Animation Sequence, PCG, VFX, 2D in `editor/editor_modes.*`)
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
 Vehicles / Transports / Movers (Place tab, cube placeholders; nodes in the Vehicles and Movers menus).
 Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
-script events, text and voice chat (Opus); Play opens a game window per extra player.
+script events, text and voice chat (Opus); Play opens a game window per extra player; playtests by join code
+(`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`.
 2D (Paper2D, `editor/paper2d.*`, the Level tab's 2D mode): Sprite (sheets + flipbooks), Tile Map
 (palette painting), Lock 2D physics, side-scroller Character, orthographic Camera.
 Graphics: sky reflections without cubemaps, auto exposure, a default look without a volume, sky

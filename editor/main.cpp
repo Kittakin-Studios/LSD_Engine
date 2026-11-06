@@ -1621,6 +1621,7 @@ int main(int argc, char** argv) {
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* connect_arg = nullptr; // -connect=<host[:port]>: multiplayer, join that server
+    const char* net_level_arg = nullptr; // -netlevel=<name>: the level's name for multiplayer (Play's extra windows play a copy)
     bool dedicated_arg = false;        // -dedicated: host without a player of its own
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
@@ -1643,6 +1644,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
         else if (std::strncmp(argv[i], "-connect=", 9) == 0) connect_arg = argv[i] + 9;
+        else if (std::strncmp(argv[i], "-netlevel=", 10) == 0) net_level_arg = argv[i] + 10;
         else if (std::strcmp(argv[i], "-server") == 0) {}  // multiplayer host (a listen server): already the default without -connect
         else if (std::strcmp(argv[i], "-dedicated") == 0) dedicated_arg = true;
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
@@ -2246,11 +2248,14 @@ int main(int argc, char** argv) {
         if (char travel_to[300]; state.playing && play.take_level_request(travel_to, sizeof travel_to)) {
             play.stop();
             state.kept_count = 0;  // Keep Simulation Changes names objects of the old level
-            if (lsd::world::load_level_file(world, travel_to)) {
+            // "*": the level Play started on again (lsd.net_host / net_join / net_leave restart in their mode)
+            const bool again = std::strcmp(travel_to, "*") == 0;
+            if (again ? lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size()) : lsd::world::load_level_file(world, travel_to)) {
                 play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch, true);
                 animations->reset();
                 effects->reset();
-                LSD_LOG_INFO("editor", "Opened %s (open_level)", travel_to);
+                if (again) LSD_LOG_INFO("editor", "Restarted the level (multiplayer host / join / leave)");
+                else LSD_LOG_INFO("editor", "Opened %s (open_level)", travel_to);
             } else {
                 LSD_LOG_ERROR("editor", "open_level: could not read %s", travel_to);
                 state.stop_requested = true;
@@ -2289,6 +2294,7 @@ int main(int argc, char** argv) {
             lsd::editor::NetPlay net_play;
             const lsd::editor::ProjectSettings& pr = state.project;
             net_play.enabled = pr.multiplayer;
+            net_play.allowed = pr.multiplayer;
             net_play.host = connect_arg == nullptr;
             net_play.dedicated = dedicated_arg;
             if (connect_arg) std::snprintf(net_play.address, sizeof net_play.address, "%s", connect_arg);
@@ -2311,17 +2317,27 @@ int main(int argc, char** argv) {
             std::snprintf(net_play.push_to_talk_key, sizeof net_play.push_to_talk_key, "%s", pr.push_to_talk_key);
             std::snprintf(net_play.talk_to_all_key, sizeof net_play.talk_to_all_key, "%s", pr.talk_to_all_key);
             play.set_network(net_play);
+            {  // the level's asset name: players joining later follow the server to it
+                std::string name = net_level_arg ? net_level_arg : state.level_path;
+                name = name.substr(name.find_last_of("/\\") == std::string::npos ? 0 : name.find_last_of("/\\") + 1);
+                if (!net_level_arg && name.find('.') != std::string::npos) name.resize(name.rfind('.'));
+                play.set_level_name(name.c_str());
+            }
             if (pr.multiplayer && !game_mode && pr.play_players > 1) {
                 const std::string level = "Saved/MultiplayerPlay" + std::string(lsd::world::kLevelExtension);
                 if (FILE* f = std::fopen(level.c_str(), "wb")) {
                     std::fwrite(play_snapshot.data(), 1, play_snapshot.size(), f);
                     std::fclose(f);
                 }
-                char connect[96], level_flag[300];
+                char connect[96], level_flag[300], level_name_flag[96];
+                std::string level_name = state.level_path;  // the windows play a copy of this level: the same one by name
+                level_name = level_name.substr(level_name.find_last_of("/\\") == std::string::npos ? 0 : level_name.find_last_of("/\\") + 1);
+                if (level_name.find('.') != std::string::npos) level_name.resize(level_name.rfind('.'));
+                std::snprintf(level_name_flag, sizeof level_name_flag, "-netlevel=%s", level_name.c_str());
                 std::snprintf(connect, sizeof connect, "-connect=127.0.0.1:%u", pr.port);
                 std::snprintf(level_flag, sizeof level_flag, "-level=%s", level.c_str());
                 for (lsd::u32 k = 1; k < pr.play_players; ++k) {
-                    const char* args[] = {argv[0], "-game", level_flag, connect, no_sound ? "-nosound" : nullptr, nullptr};
+                    const char* args[] = {argv[0], "-game", level_flag, connect, level_name_flag, no_sound ? "-nosound" : nullptr, nullptr};
                     if (SDL_Process* p = SDL_CreateProcess(args, false)) g_play_clients.push_back(p);
                     else LSD_LOG_ERROR("net", "Could not open player %u's window: %s", k + 1, SDL_GetError());
                 }
@@ -2365,6 +2381,7 @@ int main(int argc, char** argv) {
                 kept.push_back(std::move(item));
             }
             state.kept_count = 0;
+            play.close_port();
             lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size());  // Play changes revert, like Unreal's PIE
             lsd::u32 applied = 0;
             for (const Kept& item : kept) {  // levels reload objects at their saved ids: the same handle is the same object

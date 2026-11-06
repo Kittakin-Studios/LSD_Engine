@@ -1,0 +1,46 @@
+<rml>
+<head>
+<title>Multiplayer</title>
+<style>
+body { font-family: sans; width: 100%; height: 100%; }
+div { display: block; }
+#panel { position: absolute; left: 60px; top: 60px; width: 560px; padding: 20px 24px;
+         background-color: rgba(13, 4, 4, 235); border: 2px #F3C312; border-radius: 10px; color: #FFE51A; font-size: 20px; }
+#title { font-size: 34px; font-weight: bold; color: #FFFFFF; margin-bottom: 6px; }
+#status { color: #FFFFFF; margin-bottom: 14px; }
+.heading { font-size: 22px; font-weight: bold; color: #EEA70E; margin-top: 16px; margin-bottom: 4px; }
+.line { color: #FFFFFF; margin-top: 2px; }
+.hint { color: #9BE11F; font-size: 16px; margin-top: 2px; }
+button { display: inline-block; margin-top: 8px; margin-right: 8px; padding: 8px 16px; font-size: 20px;
+         background-color: #025291; color: white; border-radius: 6px; nav: auto; tab-index: auto; focus: auto; }
+button:hover, button:focus { background-color: #EEA70E; }
+input.text { display: inline-block; width: 300px; padding: 8px; font-size: 22px; background-color: #242855; color: #FFFFFF;
+             border: 1px #596CC1; border-radius: 4px; margin-right: 8px; nav: auto; tab-index: auto; focus: auto; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div id="title">Multiplayer</div>
+  <div id="status">Single player</div>
+
+  <div class="heading">Host</div>
+  <button id="host" onclick="mp_host">Host a game</button>
+  <button id="invite" onclick="mp_invite">Show join codes</button>
+  <div class="line" id="internet"></div>
+  <div class="line" id="lan1"></div>
+  <div class="line" id="lan2"></div>
+  <div class="line" id="lan3"></div>
+  <div class="hint" id="upnp"></div>
+
+  <div class="heading">Join</div>
+  <input type="text" id="code" value=""/><button id="join" onclick="mp_join">Join</button>
+  <button id="find" onclick="mp_find">Find LAN games</button>
+  <div class="line" id="found"></div>
+
+  <div class="heading"> </div>
+  <button id="leave" onclick="mp_leave">Leave (single player)</button>
+  <button id="close" onclick="mp_close">Close</button>
+  <div class="hint" id="keyhint">M opens and closes this menu</div>
+</div>
+</body>
+</rml>

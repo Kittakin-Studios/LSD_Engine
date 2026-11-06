@@ -345,6 +345,40 @@ else()
   target_compile_options(enet PRIVATE -w)
 endif()
 
+# miniupnpc (BSD-3-Clause): asks the router to open the game's port (UPnP) and reads the public
+# address, so playtesters can host without port forwarding (engine/net). Built from its C sources.
+FetchContent_Declare(miniupnpc
+  GIT_REPOSITORY https://github.com/miniupnp/miniupnp.git
+  GIT_TAG miniupnpc_2_2_8
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(miniupnpc)
+set(MINIUPNPC_DIR ${miniupnpc_SOURCE_DIR}/miniupnpc)
+set(LSD_SAVED_PROJECT_VERSION "${PROJECT_VERSION}")  # the template reads PROJECT_VERSION
+set(PROJECT_VERSION 2.2.8)
+configure_file(${MINIUPNPC_DIR}/miniupnpcstrings.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc/miniupnpcstrings.h)
+set(PROJECT_VERSION "${LSD_SAVED_PROJECT_VERSION}")
+add_library(miniupnpc STATIC
+  ${MINIUPNPC_DIR}/src/igd_desc_parse.c ${MINIUPNPC_DIR}/src/miniupnpc.c ${MINIUPNPC_DIR}/src/minixml.c ${MINIUPNPC_DIR}/src/minisoap.c
+  ${MINIUPNPC_DIR}/src/minissdpc.c ${MINIUPNPC_DIR}/src/miniwget.c ${MINIUPNPC_DIR}/src/upnpcommands.c ${MINIUPNPC_DIR}/src/upnpdev.c
+  ${MINIUPNPC_DIR}/src/upnpreplyparse.c ${MINIUPNPC_DIR}/src/upnperrors.c ${MINIUPNPC_DIR}/src/connecthostport.c
+  ${MINIUPNPC_DIR}/src/portlistingparse.c ${MINIUPNPC_DIR}/src/receivedata.c ${MINIUPNPC_DIR}/src/addr_is_reserved.c)
+target_include_directories(miniupnpc SYSTEM PUBLIC ${MINIUPNPC_DIR}/include)
+target_include_directories(miniupnpc PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc)
+target_compile_definitions(miniupnpc PUBLIC MINIUPNP_STATICLIB)
+if(WIN32)
+  target_compile_definitions(miniupnpc PRIVATE _CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS _WIN32_WINNT=0x0601)
+  target_link_libraries(miniupnpc PUBLIC ws2_32 iphlpapi)
+else()
+  target_compile_definitions(miniupnpc PRIVATE MINIUPNPC_SET_SOCKET_TIMEOUT MINIUPNPC_GET_SRC_ADDR _BSD_SOURCE _DEFAULT_SOURCE)
+endif()
+if(MSVC)
+  target_compile_options(miniupnpc PRIVATE /w)
+else()
+  target_compile_options(miniupnpc PRIVATE -w)
+endif()
+
 # Opus (BSD-3-Clause): the voice chat codec (engine/net/voice). Its own CMake, library only.
 set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)

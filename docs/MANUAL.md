@@ -587,6 +587,39 @@ game is single player and nothing networked runs. On:
   (they reconnect on their own); on a client it is refused (only the server changes the level).
 - **LAN browser**: `lsd.net_find_games(seconds)` lists games hosting on the local network
   (`{address, name, players, max_players}`) for a join menu; the server answers on its port + 1.
+- **Host / Join from a menu** (Unreal's Create / Find / Join Session): `lsd.net_host([level])`,
+  `lsd.net_join(code)` and `lsd.net_leave([level])` switch a running game between server, client and
+  single player (Play restarts on the level in that mode). A player who joins follows the server to
+  its level. `lsd.net_join_code()` gives the host's **join codes**: 10 letters and digits such as
+  `60N00-0A7K1` holding the address and port (any case, dashes optional, typos are caught). Join also
+  takes a plain address (`1.2.3.4` or `1.2.3.4:7777`).
+- **The ready-made menu**: `Content/Multiplayer/Multiplayer.lua` with `WBP_Multiplayer`. Put the script
+  on any object in the level the game starts on (Project Settings > Multiplayer on). It has Host,
+  Show join codes, a code box with Join, Find LAN games and Leave; **M** opens and closes it
+  (`toggle_key` in Details), and `open_at_start` shows it when the game starts.
+
+#### Playtesting over the internet
+
+The host opens the menu and clicks **Show join codes**. There are three ways in, best first:
+
+1. **Internet code** (no setup). The first Show join codes asks the router to forward the game's
+   UDP port to this PC (UPnP, a couple of seconds) and reads the public address. When it works, the
+   menu shows `Internet: <code>`: send it to the testers, they paste it into Join. The forward is
+   removed when Play stops. It fails when UPnP is off in the router, or when the internet provider
+   shares one address between customers (CGNAT, common on mobile and some fibre): the menu then says
+   why. Kittakin's own connection is behind CGNAT (100.x.x.x), so use 2 there.
+2. **Virtual LAN** (works behind any router; best for a closed test). Everyone installs
+   [Tailscale](https://tailscale.com) (free for small groups) and joins the host's tailnet: the host
+   invites testers by email from the Tailscale admin page, or shares the PC with them. The host's
+   menu then shows a `Tailscale: <code>` line (its 100.x address): testers join with that. ZeroTier
+   works the same way (create a network, testers join its ID, the host approves them; its address is
+   one of the `LAN / virtual LAN` lines). Find LAN games does not cross Tailscale; use the code.
+3. **Port forwarding by hand**: forward UDP 7777 (Project Settings > Multiplayer > Port) to the host
+   PC in the router, then give testers your public address (any "what is my IP" page) as
+   `1.2.3.4:7777`. Not possible behind CGNAT.
+
+Everyone needs the same build (File > Package Project, then send the Build folder). If the
+host's firewall asks, allow the game on private and public networks.
 
 ### 2D games (Paper2D)
 

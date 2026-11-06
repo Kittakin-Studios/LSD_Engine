@@ -442,7 +442,11 @@ bool PlaySession::rebind(const char* action, const char* from, const char* to) {
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel) {
     stop();
     const u64 start_ns = SDL_GetTicksNS();  // how long Play takes to start (logged at the end)
-    if (!travel) scripts_.clear_persistent();  // a new Play: a fresh game instance
+    if (!travel) {
+        scripts_.clear_persistent();  // a new Play: a fresh game instance
+        std::snprintf(current_level_, sizeof current_level_, "*");
+    }
+    if (!net_play_.enabled || !net_play_.host) upnp_.stop();  // left or joined: the forward goes
     level_request_[0] = '\0';
     registry_ = &registry;
     world_ = &world;
@@ -785,6 +789,54 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         e.value = entity;
         return self.world_ && self.net_.seen_position(*self.world_, e, player, out);
     };
+    host.net_session = [](void* user, int what, const char* arg, char* why, usize capacity) {
+        auto& self = *static_cast<PlaySession*>(user);
+        NetPlay& play = self.net_play_;
+        if (!play.allowed) {
+            std::snprintf(why, capacity, "turn on Project Settings > Multiplayer");
+            return false;
+        }
+        char path[300];
+        std::snprintf(path, sizeof path, "%s", self.current_level_);
+        if (what != 1 && arg[0]) {
+            const asset::AssetRecord* r = self.find_asset(asset::AssetType::Level, arg);
+            if (!r) {
+                std::snprintf(why, capacity, "no level named '%s'", arg);
+                return false;
+            }
+            self.registry_->source_path(*r, path, sizeof path);
+        }
+        if (what == 1) {
+            char address[64];
+            if (!net::parse_join_code(arg, play.settings.port, address, sizeof address)) {
+                std::snprintf(why, capacity, "'%s' is not a join code (10 letters and digits) or an address", arg);
+                return false;
+            }
+            std::snprintf(play.address, sizeof play.address, "%s", address);
+            LSD_LOG_INFO("net", "Joining %s", address);
+        }
+        play.enabled = what != 2;
+        play.host = what == 0;
+        play.dedicated = false;
+        std::snprintf(self.level_request_, sizeof self.level_request_, "%s", path);
+        return true;
+    };
+    host.net_join_codes = [](void* user, char* out, usize capacity) {
+        auto& self = *static_cast<PlaySession*>(user);
+        const u16 port = self.net_play_.settings.port;
+        if (self.net_.mode() == net::Mode::Server && self.upnp_.state() == net::PortMapper::State::Off) self.upnp_.start(port);
+        static const char* const states[] = {"off", "working", "open", "failed"};
+        char internet[16] = "";
+        if (self.upnp_.state() == net::PortMapper::State::Open) net::make_join_code(self.upnp_.external_address(), port, internet, sizeof internet);
+        int used = std::snprintf(out, capacity, "upnp|%s|%s|%s\n", states[static_cast<int>(self.upnp_.state())], self.upnp_.message(), internet);
+        char locals[8][16];
+        const u32 n = net::local_addresses(locals, 8);
+        for (u32 k = 0; k < n && used > 0 && static_cast<usize>(used) < capacity; ++k) {
+            char code[16];
+            net::make_join_code(locals[k], port, code, sizeof code);
+            used += std::snprintf(out + used, capacity - static_cast<usize>(used), "lan|%s|%s\n", locals[k], code);
+        }
+    };
     host.net_find_games = [](void* user, f32 seconds, char* out, usize capacity) {
         const auto& self = *static_cast<PlaySession*>(user);
         net::LanGame games[32];
@@ -1088,6 +1140,14 @@ world::Entity PlaySession::create_spawn(world::World& world, const char* name, V
 bool PlaySession::take_level_request(char* path, usize capacity) {
     if (!level_request_[0]) return false;
     std::snprintf(path, capacity, "%s", level_request_);
+    if (std::strcmp(level_request_, "*") != 0) {  // the level's name is its file's
+        std::snprintf(current_level_, sizeof current_level_, "%s", level_request_);
+        const char* slash = std::strrchr(level_request_, '/');
+        const char* back = std::strrchr(level_request_, '\\');
+        const char* file = slash && back ? (slash > back ? slash : back) + 1 : slash ? slash + 1 : back ? back + 1 : level_request_;
+        std::snprintf(level_name_, sizeof level_name_, "%s", file);
+        if (char* dot = std::strrchr(level_name_, '.')) *dot = '\0';
+    }
     level_request_[0] = '\0';
     return true;
 }
@@ -1701,6 +1761,18 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
                 net_.send_event(static_cast<i32>(ev.from), "__seated", args);
             } else if (std::strcmp(ev.name, "__unseat") == 0 && net_.mode() == net::Mode::Server) {
                 server_free_seats(world, ev.from);
+            } else if (std::strcmp(ev.name, "__level") == 0 && net_.mode() == net::Mode::Client) {  // joined: the server's level, if it is another
+                const char* open = std::strchr(ev.json, '"');
+                const char* close = open ? std::strrchr(ev.json, '"') : nullptr;
+                const std::string level = open && close > open ? std::string(open + 1, static_cast<usize>(close - open - 1)) : std::string();
+                if (!level.empty() && level != level_name_) {
+                    if (const asset::AssetRecord* r = find_asset(asset::AssetType::Level, level.c_str())) {
+                        LSD_LOG_INFO("net", "The server is on %s: going there", level.c_str());
+                        registry_->source_path(*r, level_request_, sizeof level_request_);
+                    } else {
+                        LSD_LOG_ERROR("play", "The server is on level '%s', which this machine does not have", level.c_str());
+                    }
+                }
             } else if (std::strcmp(ev.name, "__travel") == 0 && net_.mode() == net::Mode::Client) {  // the server opened a level: follow
                 const char* open = std::strchr(ev.json, '"');
                 const char* close = open ? std::strrchr(ev.json, '"') : nullptr;
@@ -1731,6 +1803,7 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
                 char name[32];
                 std::snprintf(name, sizeof name, "Player %u", ev.from);
                 net_.set_owner(world, make_avatar(world, name, feet_, false), ev.from);
+                if (level_name_[0]) net_.send_event(static_cast<i32>(ev.from), "__level", ("[" + json_string(level_name_) + "]").c_str());
             }
             scripts_.net_call("on_player_joined", ev.from, "[]");
             break;

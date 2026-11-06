@@ -1,8 +1,10 @@
 // Multiplayer tests: a server and a client in one process over loopback, each with its own world.
+#include "lsd/net/join_code.h"
 #include "lsd/net/net.h"
 #include "lsd/net/voice.h"
 #include "lsd/world/components.h"
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -32,7 +34,31 @@ static Entity find(World& w, const char* name) {
     return {};
 }
 
+// Join codes: round trip, typos caught, addresses typed as they are, private ranges.
+static void test_join_codes() {
+    char code[16], address[32];
+    CHECK(net::make_join_code("203.0.113.45", 7777, code, sizeof code) && std::strlen(code) == 11 && code[5] == '-');
+    CHECK(net::parse_join_code(code, 7777, address, sizeof address) && std::strcmp(address, "203.0.113.45:7777") == 0);
+    char lower[16];
+    for (int i = 0; i < 12; ++i) lower[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(code[i])));
+    CHECK(net::parse_join_code(lower, 1, address, sizeof address) && std::strcmp(address, "203.0.113.45:7777") == 0);  // any case
+    char typo[16];
+    std::snprintf(typo, sizeof typo, "%s", code);
+    typo[3] = typo[3] == '7' ? '8' : '7';
+    CHECK(!net::parse_join_code(typo, 7777, address, sizeof address));  // the check bits catch it
+    CHECK(!net::parse_join_code("ABC", 7777, address, sizeof address) && !net::parse_join_code("", 7777, address, sizeof address));
+    CHECK(net::parse_join_code("100.101.7.9", 7777, address, sizeof address) && std::strcmp(address, "100.101.7.9:7777") == 0);
+    CHECK(net::parse_join_code("10.0.0.2:9000", 7777, address, sizeof address) && std::strcmp(address, "10.0.0.2:9000") == 0);
+    CHECK(!net::parse_join_code("10.0.0.2:99999", 7777, address, sizeof address));
+    CHECK(net::is_private_address("192.168.1.4") && net::is_private_address("100.64.0.1") && net::is_private_address("172.20.1.1"));
+    CHECK(!net::is_private_address("203.0.113.45") && !net::is_private_address("100.128.0.1") && !net::is_private_address("172.32.0.1"));
+    char locals[8][16];
+    const u32 n = net::local_addresses(locals, 8);
+    for (u32 i = 0; i < n; ++i) CHECK(std::strncmp(locals[i], "127.", 4) != 0);
+}
+
 int main() {
+    test_join_codes();
     HeapAllocator heap("net");
     {
         World server_world(heap), client_world(heap);

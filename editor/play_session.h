@@ -16,6 +16,7 @@
 #include "lsd/asset/localization.h"
 #include "lsd/input/input.h"
 #include "lsd/audio/voice_io.h"
+#include "lsd/net/join_code.h"
 #include "lsd/net/net.h"
 #include "lsd/net/voice.h"
 
@@ -40,6 +41,7 @@ class AnimationPlayer;
 // Multiplayer for one Play (Project Settings > Multiplayer): host or join, and how.
 struct NetPlay {
     bool enabled = false;
+    bool allowed = false;    // Project Settings > Multiplayer: lsd.net_host / net_join may switch modes
     bool host = true;        // false: join `address`
     bool dedicated = false;  // a server without a player of its own (no avatar)
     char address[64] = "127.0.0.1";
@@ -125,7 +127,11 @@ public:
     void set_base_mix(const char* guid) { base_mix_ = guid; }  // Project Settings > Audio > Base Sound Mix (read at each start)
     bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
     // A level lsd.open_level asked for (its file path), once; the caller stops, loads it and starts with travel = true.
+    // "*" asks for the level Play started on again (a host / join / leave restart on it).
     bool take_level_request(char* path, usize capacity);
+    // The level's asset name (a joining player follows the server's); set before start.
+    void set_level_name(const char* name) { std::snprintf(level_name_, sizeof level_name_, "%s", name); }
+    void close_port() { upnp_.stop(); }  // Play ended: the router forward (lsd.net_join_code) goes
     // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
     void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
@@ -257,6 +263,9 @@ private:
     char key_held_[32] = "";
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
     char level_request_[300] = "";
+    char current_level_[300] = "*";  // the level playing now ("*": the one Play started on)
+    char level_name_[64] = "";
+    net::PortMapper upnp_;
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker
     bool crouched_ = false;    // the capsule is at crouch_height

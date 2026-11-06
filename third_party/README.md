@@ -25,5 +25,6 @@ FreeType Licence. Full license texts are shipped in `THIRD-PARTY-NOTICES.md`.
 | RmlUi | 6.0 | MIT | game UI: HTML / CSS documents |
 | QuickJS-ng | v0.16.2 | MIT | JavaScript for UI documents' scripts |
 | ENet | v1.3.18 | MIT | multiplayer: reliable UDP (engine/net) |
+| miniupnpc | 2.2.8 | BSD-3-Clause | multiplayer: opens the host's router port (UPnP) and reads its public address (engine/net) |
 | Opus | v1.5.2 | BSD-3-Clause | voice chat codec (engine/net) |
 | Tracy | v0.11.1 | BSD-3-Clause | CPU profiler client, only with -DLSD_TRACY=ON |

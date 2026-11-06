@@ -329,7 +329,7 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Server-side move checks: Max Speed per owned object; faster owner states are refused and the owner corrected (avatar teleported back)
 - [x] Lag compensation for hits: the server keeps about 2 s of positions per object; `seen_position` / `lsd.net_seen_position(e, player)` rewinds by that player's half round trip plus the interpolation delay
 - [x] Level travel together: `lsd.open_level` on the server tells clients (`__travel`), everyone restarts Play on the level and reconnects; refused on clients
-- [~] Server browser / sessions: LAN discovery (`find_lan_games`, `lsd.net_find_games`; servers answer on port + 1, broadcast and loopback); needs internet sessions (a master server or a platform's matchmaking), joining from a game menu without restarting Play
+- [~] Server browser / sessions: LAN discovery (`find_lan_games`, `lsd.net_find_games`; servers answer on port + 1, broadcast and loopback); join codes (address and port in 10 letters, `net/join_code.*`, tested), UPnP port forwarding with the public address (miniupnpc; reports CGNAT), `lsd.net_host` / `net_join` / `net_leave` / `net_join_code` switch a running game, joiners follow the server to its level, a ready-made Host / Join menu (`Content/Multiplayer`), the playtest guide (internet code, Tailscale / ZeroTier, port forwarding) in MANUAL; needs a relay / master server or Steam sessions for hosts behind CGNAT without a virtual LAN
 
 ## 2D (Paper2D)
 
