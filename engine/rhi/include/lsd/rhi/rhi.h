@@ -221,6 +221,13 @@ static_assert(sizeof(GpuLight) == 64 &&
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
 // LightSetup.output on, adds bloom, tonemaps and grades, smooths edges (FXAA), and writes the
 // result into `viewport` of the window.
+// A Masked material in the shadow passes (draw_shadow_caster): leaves and fences cast their cut-out shape.
+struct ShadowCutout {
+    TextureHandle texture;  // the base colour texture (its alpha)
+    f32 cutoff = 0.5f;
+    f32 alpha = 1.0f;       // the tint's alpha
+};
+
 struct PostDraw {
     TextureHandle scene;
     f32 viewport[4] = {};          // window pixels
@@ -337,8 +344,9 @@ public:
     // draw_mesh calls (the lights say which tiles they use); begin_frame unbinds them.
     virtual TextureHandle create_shadow_map(u32 size) = 0;
     virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
+    // `cutout`: a Masked material's shadow, its base colour texture's alpha (times `alpha`) below `cutoff` casts none.
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
-                                    const f32* joint_rows = nullptr, u32 joint_count = 0) = 0;  // joints: a skinned caster
+                                    const f32* joint_rows = nullptr, u32 joint_count = 0, const struct ShadowCutout* cutout = nullptr) = 0;  // joints: a skinned caster
     // Many copies of one caster in one call: `rows` holds each copy's world matrix as 3 rows (12 floats);
     // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it.
     virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) = 0;

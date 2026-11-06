@@ -397,8 +397,36 @@ cbuffer MaterialParams : register(b3) { float4 lsd_params[16]; };
 
 // Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 mvp; };
+cbuffer Draw : register(b0) { float4x4 mvp; float4 cut; };  // cut (Masked casters): x the alpha cutoff, y the tint's alpha
+#ifdef CUTOUT
+Texture2D base_tex : register(t0);
+SamplerState samp : register(s0);
+struct ShadowOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 #ifdef SKINNED
+cbuffer Joints : register(b2) { float4 joint_rows[768]; };
+ShadowOut vs_main(float3 pos : POSITION, float2 uv : TEXCOORD0, uint4 joints : BLENDINDICES, float4 weights : BLENDWEIGHT) {
+    float4 r0 = 0, r1 = 0, r2 = 0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        r0 += joint_rows[joints[k] * 3] * weights[k];
+        r1 += joint_rows[joints[k] * 3 + 1] * weights[k];
+        r2 += joint_rows[joints[k] * 3 + 2] * weights[k];
+    }
+    const float4 p = float4(pos, 1);
+    ShadowOut o;
+    o.pos = mul(mvp, float4(dot(r0, p), dot(r1, p), dot(r2, p), 1));
+    o.uv = uv;
+    return o;
+}
+#else
+ShadowOut vs_main(float3 pos : POSITION, float2 uv : TEXCOORD0) {
+    ShadowOut o;
+    o.pos = mul(mvp, float4(pos, 1));
+    o.uv = uv;
+    return o;
+}
+#endif
+void ps_cutout(ShadowOut i) { if (base_tex.Sample(samp, i.uv).a * cut.y < cut.x) discard; }
+#elif defined(SKINNED)
 cbuffer Joints : register(b2) { float4 joint_rows[768]; };
 float4 vs_main(float3 pos : POSITION, uint4 joints : BLENDINDICES, float4 weights : BLENDWEIGHT) : SV_Position {
     float4 r0 = 0, r1 = 0, r2 = 0;
@@ -459,6 +487,8 @@ const D3D12_INPUT_ELEMENT_DESC kSkinnedLayout[] = {
 };
 const D3D_SHADER_MACRO kSkinnedDefines[] = {{"SKINNED", "1"}, {nullptr, nullptr}};
 const D3D_SHADER_MACRO kInstancedDefines[] = {{"INSTANCED", "1"}, {nullptr, nullptr}};
+const D3D_SHADER_MACRO kCutoutDefines[] = {{"CUTOUT", "1"}, {nullptr, nullptr}};
+const D3D_SHADER_MACRO kSkinnedCutoutDefines[] = {{"CUTOUT", "1"}, {"SKINNED", "1"}, {nullptr, nullptr}};
 
 constexpr char kUiHlsl[] = R"(
 cbuffer Draw : register(b0) { float2 translation; float2 to_clip; };  // to_clip = 2 / viewport size
@@ -1397,19 +1427,28 @@ public:
     }
 
     void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,
-                            u32 joint_count) override {
+                            u32 joint_count, const ShadowCutout* cutout) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || shadow_pass_ < 0) return;
         const bool skinned = joint_rows && joint_count;
+        const Texture* cut_tex = cutout ? lookup_texture(cutout->texture) : nullptr;
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 16, light_mvp, 0);
+        if (cut_tex) {  // Masked: the texture's alpha decides which pixels cast
+            const f32 cut[4] = {cutout->cutoff, cutout->alpha, 0.0f, 0.0f};
+            list_->SetGraphicsRoot32BitConstants(0, 4, cut, 16);
+            ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+            list_->SetDescriptorHeaps(1, heaps);
+            list_->SetGraphicsRootDescriptorTable(1, cut_tex->srv_gpu);
+        }
         if (skinned) {
             const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(joint_rows, joint_count);
             if (!joints) return;
             list_->SetGraphicsRootConstantBufferView(7, joints);
         }
-        list_->SetPipelineState(skinned ? skinned_shadow_pipeline_.Get() : shadow_pipeline_.Get());
+        list_->SetPipelineState(cut_tex ? (skinned ? skinned_cutout_shadow_pipeline_.Get() : cutout_shadow_pipeline_.Get())
+                                        : skinned ? skinned_shadow_pipeline_.Get() : shadow_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex)};
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
@@ -2260,6 +2299,8 @@ private:
                create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
                create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
                create_shadow_pipeline({mesh_layout, 3}, kInstancedDefines, instanced_shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 3}, kCutoutDefines, cutout_shadow_pipeline_, true) &&
+               create_shadow_pipeline({skinned_layout, 5}, kSkinnedCutoutDefines, skinned_cutout_shadow_pipeline_, true) &&
                create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_) && create_sky_pipeline() &&
                create_ui_pipeline() && create_post_pipelines();
     }
@@ -2438,12 +2479,14 @@ private:
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState");
     }
 
-    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout, const D3D_SHADER_MACRO* defines, ComPtr<ID3D12PipelineState>& out) {
-        ComPtr<ID3DBlob> vs;
+    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout, const D3D_SHADER_MACRO* defines, ComPtr<ID3D12PipelineState>& out, bool cutout = false) {
+        ComPtr<ID3DBlob> vs, ps;
         if (!compile(kShadowHlsl, sizeof kShadowHlsl - 1, "vs_main", "vs_5_0", vs, defines)) return false;
+        if (cutout && !compile(kShadowHlsl, sizeof kShadowHlsl - 1, "ps_cutout", "ps_5_0", ps, defines)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
         pso.pRootSignature = root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        if (cutout) pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
         pso.InputLayout = layout;
         pso.SampleMask = UINT_MAX;
         pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -2667,6 +2710,7 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     D3D12_GPU_DESCRIPTOR_HANDLE decal_srv_{};
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
+    ComPtr<ID3D12PipelineState> cutout_shadow_pipeline_, skinned_cutout_shadow_pipeline_;  // Masked casters
     ComPtr<ID3D12PipelineState> skinned_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_wire_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_shadow_pipeline_;

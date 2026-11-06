@@ -127,6 +127,22 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 // Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
 // Skinned meshes for drawing and shadows: their model and current pose (set up by main()).
 lsd::editor::SkinnedCache* g_skinned = nullptr;
+lsd::editor::MaterialCache* g_materials = nullptr;  // the shadow passes ask it for Masked materials
+
+// A Masked material's cut-out for the shadow passes (its base colour texture and cutoff); false when it
+// casts a solid shadow (opaque, a material graph, translucent).
+bool shadow_cutout(const char* material, const lsd::LinearColor& tint, lsd::rhi::ShadowCutout& out) {
+    if (!g_materials || !material || !material[0]) return false;
+    lsd::rhi::MeshDraw look{};
+    look.color[0] = look.color[1] = look.color[2] = 1.0f;
+    look.color[3] = tint.a;
+    g_materials->apply(material, look);
+    if (look.alpha_cutoff <= 0.0f || look.blend != 0 || !look.base_color_texture.valid()) return false;
+    out.texture = look.base_color_texture;
+    out.cutoff = look.alpha_cutoff;
+    out.alpha = look.color[3];
+    return true;
+}
 lsd::editor::DecalAtlas* g_decals = nullptr;  // decal textures for draw_world
 lsd::editor::AnimationPlayer* g_animations = nullptr;
 lsd::editor::BakedLighting g_level_lighting;  // the open level's Build Lighting result
@@ -168,7 +184,18 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
             if (lsd::length(centre - *light) > range + lsd::length(extent) * 2.0f) continue;  // generous: the pose may reach out
         }
         const lsd::Mat4 mvp = vp * m;
-        device.draw_shadow_caster(g_animations->vertices(e, model->vertices), model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
+        const lsd::rhi::BufferHandle vertices = g_animations->vertices(e, model->vertices);
+        // Sections with a Masked material cast their cut-out: then each section is its own draw.
+        lsd::rhi::ShadowCutout cut[lsd::asset::kMaxMaterialSlots];
+        bool masked[lsd::asset::kMaxMaterialSlots] = {}, any = false;
+        for (lsd::u32 k = 0; k < model->section_count; ++k) any |= masked[k] = shadow_cutout(lsd::editor::section_material(*component, *model, k), component->color, cut[k]);
+        if (!any) {
+            device.draw_shadow_caster(vertices, model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
+            continue;
+        }
+        for (lsd::u32 k = 0; k < model->section_count; ++k) {
+            device.draw_shadow_caster(vertices, model->sections[k].indices, model->sections[k].index_count, mvp.m, pose->joint_rows(), pose->joint_count(), masked[k] ? &cut[k] : nullptr);
+        }
     }
 }
 
@@ -230,6 +257,8 @@ struct Caster {
     lsd::rhi::BufferHandle vertices, indices;
     lsd::u32 count;
     lsd::Mat4 world;
+    bool masked = false;  // a Masked material: drawn on its own with `cutout`
+    lsd::rhi::ShadowCutout cutout;
 };
 
 void draw_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, std::vector<Caster>& casters) {
@@ -238,8 +267,14 @@ void draw_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, std::vector<Cas
     });
     static std::vector<lsd::f32> rows;
     for (size_t i = 0; i < casters.size();) {
+        if (casters[i].masked) {  // cut-out shadows are not instanced
+            const lsd::Mat4 mvp = vp * casters[i].world;
+            device.draw_shadow_caster(casters[i].vertices, casters[i].indices, casters[i].count, mvp.m, nullptr, 0, &casters[i].cutout);
+            ++i;
+            continue;
+        }
         size_t end = i + 1;
-        while (end < casters.size() && casters[end].vertices.value == casters[i].vertices.value && casters[end].indices.value == casters[i].indices.value) ++end;
+        while (end < casters.size() && !casters[end].masked && casters[end].vertices.value == casters[i].vertices.value && casters[end].indices.value == casters[i].indices.value) ++end;
         const Caster& c = casters[i];
         if (end - i == 1) {
             const lsd::Mat4 mvp = vp * c.world;
@@ -361,7 +396,9 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             const lsd::Mat4 mvp = vp * m;
             if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
             if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-            casters.push_back({mesh->gpu.vertices, indices, count, m});
+            Caster caster{mesh->gpu.vertices, indices, count, m};
+            caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
+            casters.push_back(caster);
         }
         draw_casters(device, vp, casters);
         draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
@@ -401,7 +438,9 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 lsd::rhi::BufferHandle indices;
                 lsd::u32 count = 0;
                 if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-                casters.push_back({mesh->gpu.vertices, indices, count, m});
+                Caster caster{mesh->gpu.vertices, indices, count, m};
+                caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
+                casters.push_back(caster);
             }
             draw_casters(device, vp, casters);
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
@@ -1765,6 +1804,7 @@ int main(int argc, char** argv) {
     auto* animations = new lsd::editor::AnimationPlayer(*device);  // deleted before the device (morphed vertex buffers)
     auto* effects = new lsd::editor::ParticlePlayer(*device, allocator, registry, *texture_cache);  // deleted before the textures
     g_skinned = skinned_cache;
+    g_materials = &materials;
     auto* decal_atlas = new lsd::editor::DecalAtlas(*device, allocator, registry);  // deleted before the device
     g_decals = decal_atlas;
     g_animations = animations;

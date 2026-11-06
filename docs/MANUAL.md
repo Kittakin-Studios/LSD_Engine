@@ -634,9 +634,13 @@ neighbours. Direct light and shadows stay real-time. Rebuild after moving walls 
 **New Material** creates a physically based material: base colour (+ texture), metallic, roughness,
 normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive. Drop it on an
 object or pick it in the object's Static Mesh > Material. Edits show immediately. **Blend Mode**:
-Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip: leaves, fences);
+Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip: leaves, fences; their
+shadows have the same holes, on static and skeletal meshes, for every light);
 **Translucent** (glass, water; Opacity sets how see-through; drawn after opaque objects, far to near);
 **Additive** (adds light: fire, glows).
+
+![A Masked material's shadow](images/shadow_masked.jpg)
+*The same panel with an Opaque material (left: a solid shadow) and a Masked one (right: the checker's holes in the shadow too).*
 
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 

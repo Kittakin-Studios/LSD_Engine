@@ -398,7 +398,9 @@ layout(std140, binding = 3) uniform MaterialParams { vec4 lsd_params[16]; };
 
 constexpr char kShadowVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
+layout(location = 2) in vec2 a_uv;
 uniform mat4 u_mvp;
+out vec2 v_uv;
 #ifdef INSTANCED
 layout(std140, binding = 2) uniform Instances { vec4 instance_rows[768]; };  // 3 rows per copy: its world matrix
 #endif
@@ -410,10 +412,18 @@ void main() {
     position = vec3(dot(instance_rows[gl_InstanceID * 3], p), dot(instance_rows[gl_InstanceID * 3 + 1], p), dot(instance_rows[gl_InstanceID * 3 + 2], p));
 #endif
     gl_Position = u_mvp * vec4(position, 1.0);
+    v_uv = a_uv;
 }
 )";
 constexpr char kShadowFragmentShader[] = R"(#version 460 core
 void main() {}
+)";
+// Masked casters: the base colour texture's alpha (times the tint's) under the cutoff casts no shadow.
+constexpr char kCutoutShadowFragmentShader[] = R"(#version 460 core
+layout(binding = 0) uniform sampler2D base_tex;
+uniform vec2 u_cut;
+in vec2 v_uv;
+void main() { if (texture(base_tex, v_uv).a * u_cut.y < u_cut.x) discard; }
 )";
 
 // GPU-driven culling (MeshDraw::gpu_cull): pass 0 clears the visible count, pass 1 tests every
@@ -1390,14 +1400,22 @@ public:
     }
 
     void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,
-                            u32 joint_count) override {
+                            u32 joint_count, const ShadowCutout* cutout) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || !in_shadow_pass_) return;
         const bool skinned = joint_rows && joint_count;
         if (skinned) upload_joints(joint_rows, joint_count);
-        gl_.glUseProgram(skinned ? skinned_shadow_program_ : shadow_program_);
-        gl_.glUniformMatrix4fv(skinned ? skinned_shadow_mvp_ : shadow_mvp_, 1, GL_FALSE, light_mvp);
+        const Texture* cut_tex = cutout ? lookup_texture(cutout->texture) : nullptr;
+        const int variant = (skinned ? 1 : 0) + (cut_tex ? 2 : 0);  // plain, skinned, cut-out, skinned cut-out
+        const GLuint programs[4] = {shadow_program_, skinned_shadow_program_, cutout_shadow_program_[0], cutout_shadow_program_[1]};
+        const GLint mvps[4] = {shadow_mvp_, skinned_shadow_mvp_, cutout_shadow_mvp_[0], cutout_shadow_mvp_[1]};
+        gl_.glUseProgram(programs[variant]);
+        gl_.glUniformMatrix4fv(mvps[variant], 1, GL_FALSE, light_mvp);
+        if (cut_tex) {
+            gl_.glUniform2f(cutout_shadow_cut_[skinned ? 1 : 0], cutout->cutoff, cutout->alpha);
+            gl_.glBindTextureUnit(0, cut_tex->id);
+        }
         const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(vao, ib->id);
@@ -1994,6 +2012,12 @@ private:
         }
         skinned_shadow_program_ = link(with_skinning(kShadowVertexShader, true).c_str(), kShadowFragmentShader);
         skinned_shadow_mvp_ = gl_.glGetUniformLocation(skinned_shadow_program_, "u_mvp");
+        for (int k = 0; k < 2; ++k) {  // Masked casters: static, skinned
+            cutout_shadow_program_[k] = link(with_skinning(kShadowVertexShader, k == 1).c_str(), kCutoutShadowFragmentShader);
+            if (!cutout_shadow_program_[k]) return false;
+            cutout_shadow_mvp_[k] = gl_.glGetUniformLocation(cutout_shadow_program_[k], "u_mvp");
+            cutout_shadow_cut_[k] = gl_.glGetUniformLocation(cutout_shadow_program_[k], "u_cut");
+        }
         if (!skinned_program_.id || !instanced_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
@@ -2136,6 +2160,8 @@ private:
     u32 particle_offset_ = 0;
     GLuint skinned_shadow_program_ = 0;
     GLint skinned_shadow_mvp_ = -1;
+    GLuint cutout_shadow_program_[2] = {};  // Masked casters: static, skinned
+    GLint cutout_shadow_mvp_[2] = {-1, -1}, cutout_shadow_cut_[2] = {-1, -1};
     GLuint line_program_ = 0;
     GLuint line_vao_ = 0;
     GLint line_mvp_ = -1;
