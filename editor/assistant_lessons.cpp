@@ -25,12 +25,14 @@ Apply to Selected Character (above) does all the steps below on the selected cha
 
 STEP 1: A socket on the hand (Unreal: Skeleton > Add Socket on hand_r)
 A socket is a named point on a bone, with an offset, so things can hold on to the hand. Apply adds the socket weapon_r on the bone hand_r to the character's mesh (other rigs: RightHand, mixamorig:RightHand). To move or turn the gun in the hand, double-click the mesh > Sockets > weapon_r, and change Position / Rotation: the gun follows while you type.
+IMAGE: docs/images/lesson_gun_socket.jpg
 
 STEP 2: The input (Unreal: Input Actions + the Mapping Context)
 Three Input Actions: IA_Aim (a Button, trigger Down, on Right Mouse Button), IA_Fire (trigger Pressed, on Left Mouse Button) and IA_Reload (trigger Pressed, on R). Apply makes them in Content/Weapon/ and adds the keys to the character's Mapping Context. In code, lsd.input("IA_Aim") is 1 while RMB is held, and lsd.pressed("IA_Fire") is true once per click.
 
 STEP 3: The crosshair and ammo HUD (Unreal: a Widget Blueprint)
 A UI document: a dot in the middle of the screen and the ammo count at the bottom right. The script changes the dot's style from its properties, so its size and colour are set in Details.
+IMAGE: docs/images/lesson_gun_play_hip.jpg
 
 ```rml Content/Weapon/WBP_Crosshair.rml
 <rml>
@@ -186,6 +188,16 @@ function on_update(self, dt)
   update_hud(self, aiming)
 end
 ```
+
+The component in Details: Script = Weapon, and every value in its properties table, set per character.
+IMAGE: docs/images/lesson_gun_details.jpg
+
+In Play: hold RMB to aim (the camera comes in over the shoulder, the arm comes up, the dot turns red)...
+IMAGE: docs/images/lesson_gun_play_aim.jpg
+...click LMB to shoot (one round less: 9/10, a tracer from the gun to what the dot was on)...
+IMAGE: docs/images/lesson_gun_play_fire.jpg
+...and press R to reload (Reloading... until Reload Time has passed, the reload montage on the upper body).
+IMAGE: docs/images/lesson_gun_play_reload.jpg
 
 STEP 5: Use it on another character
 Select any rigged character and press Apply again: the files are kept, the socket goes on that character's mesh, and it gets the same component. Or by hand: Details > Add Component > Script > Weapon, and a weapon_r socket in its Mesh Editor.

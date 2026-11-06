@@ -87,7 +87,14 @@ std::vector<std::pair<std::string, std::string>> script_property_defaults(const 
     const size_t end = at == std::string::npos ? at : text.find('}', at);
     if (end == std::string::npos) return out;
     size_t i = at + 1;
-    auto skip = [&] { while (i < end && (std::isspace(static_cast<unsigned char>(text[i])) || text[i] == ',' || text[i] == ';')) ++i; };
+    auto skip = [&] {  // spaces, separators and comments (Lua `--`, JavaScript `//`) to the end of their line
+        for (;;) {
+            while (i < end && (std::isspace(static_cast<unsigned char>(text[i])) || text[i] == ',' || text[i] == ';')) ++i;
+            if (i + 1 >= end || !((text[i] == '-' && text[i + 1] == '-') || (text[i] == '/' && text[i + 1] == '/'))) return;
+            const size_t eol = text.find('\n', i);
+            i = eol == std::string::npos || eol > end ? end : eol;
+        }
+    };
     for (skip(); i < end; skip()) {
         size_t name_end = i;
         while (name_end < end && (std::isalnum(static_cast<unsigned char>(text[name_end])) || text[name_end] == '_')) ++name_end;

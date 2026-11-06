@@ -2,6 +2,9 @@
 #include "assistant_core.h"
 #include "assistant_lessons.h"
 #include "remote_console.h"
+
+#include "lsd/asset/material_import.h"
+#include "lsd/rhi/rhi.h"
 #include "tips.h"
 
 #include "lsd/reflect/reflect.h"
@@ -23,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 namespace lsd::editor::assistant {
 
@@ -385,6 +389,36 @@ void draw_reply(EditorState& s, const std::string& text, int turn) {
     if (at < text.size()) ImGui::TextWrapped("%s", text.substr(at).c_str());
 }
 
+// A picture file shown at the panel's width (at most its own size); loaded once and kept.
+void draw_picture(EditorState& s, const std::string& path) {
+    struct Picture {
+        rhi::TextureHandle texture;
+        u32 width = 0, height = 0;
+    };
+    static std::unordered_map<std::string, Picture> pictures;  // shortcut: kept for the editor's life, a handful of lesson images
+    auto found = pictures.find(path);
+    if (found == pictures.end()) {
+        Picture p;
+        asset::Image image;
+        if (s.device && asset::load_image(path.c_str(), image) && image.pixels) {
+            const void* mips[1] = {image.pixels};
+            p.texture = s.device->create_texture(image.width, image.height, 1, rhi::TextureFormat::RGBA8_sRGB, mips);
+            p.width = image.width;
+            p.height = image.height;
+        }
+        found = pictures.emplace(path, p).first;
+    }
+    const Picture& p = found->second;
+    const u64 id = p.texture.valid() ? s.device->debug_ui_texture(p.texture) : 0;
+    if (!id) {
+        ImGui::TextDisabled("(picture %s not found)", path.c_str());
+        return;
+    }
+    const f32 width = std::min(ImGui::GetContentRegionAvail().x, static_cast<f32>(p.width));
+    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(id)), ImVec2(width, width * static_cast<f32>(p.height) / static_cast<f32>(p.width)));
+    ImGui::Spacing();
+}
+
 // Lessons: pick one, Apply it to the selected character, read how it is coded (its files have the usual buttons).
 void draw_lessons(EditorState& s) {
     static u32 shown = 0;
@@ -412,7 +446,19 @@ void draw_lessons(EditorState& s) {
     }
     if (!report.empty()) ImGui::TextWrapped("%s", report.c_str());
     ImGui::BeginChild("##lesson", ImVec2(0, 0), ImGuiChildFlags_Borders);
-    draw_reply(s, lesson.text, 1000 + static_cast<int>(shown));
+    // "IMAGE: <path>" lines are pictures of the step (docs/images, beside the editor); the text between them draws as a reply.
+    const std::string text = lesson.text;
+    usize at = 0;
+    int part = 0;
+    while (at < text.size()) {
+        const usize image = text.find("IMAGE: ", at);
+        const usize upto = image == std::string::npos ? text.size() : image;
+        if (upto > at) draw_reply(s, text.substr(at, upto - at), 1000 + static_cast<int>(shown) * 32 + part++);
+        if (image == std::string::npos) break;
+        const usize eol = text.find('\n', image);
+        draw_picture(s, text.substr(image + 7, (eol == std::string::npos ? text.size() : eol) - image - 7));
+        at = eol == std::string::npos ? text.size() : eol + 1;
+    }
     ImGui::EndChild();
 }
 

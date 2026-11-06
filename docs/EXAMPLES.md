@@ -303,11 +303,55 @@ end
 
 ## 7b. A gun in the hand (LSD Assistant lesson)
 
-Tools > LSD Assistant > **Lessons** > **Gun on a hand socket**: select a rigged character and click
-**Apply to Selected Character**. It writes `Content/Weapon/Weapon.lua` and the crosshair HUD, makes
-`IA_Aim` (RMB), `IA_Fire` (LMB) and `IA_Reload` (R), adds a `weapon_r` socket on the hand and gives
-the character the Weapon component: a Cube gun in the hand, 10/10 ammo, an IK aim pose, shoot and
-reload montages, a crosshair dot set in Details. The lesson text walks through every line.
+A Cube gun in a character's right hand: 10/10 ammo, RMB aims, LMB shoots, R reloads, and a crosshair
+dot set in Details. One Script component, Weapon, that works on any rigged character. The lesson
+text in the editor walks through every line of its code, with these pictures.
+
+1. Select the character (the soldier, `FBX_Char01_Update_Rig`) in the Outliner.
+2. **Tools > LSD Assistant**, the **Lessons** tab, **Gun on a hand socket**, then **Apply to
+   Selected Character**. It writes `Content/Weapon/Weapon.lua` and `WBP_Crosshair.rml`, makes
+   `IA_Aim` (Right Mouse Button), `IA_Fire` (Left Mouse Button) and `IA_Reload` (R) and adds them to
+   the character's Mapping Context, adds the socket and the component. Files already there are kept.
+
+   ![The Lessons tab with Apply to Selected Character](images/lesson_gun_apply.jpg)
+   *The Lessons tab: the lesson, its Apply button and the steps it explains.*
+
+3. **The socket** (Unreal: Skeleton > Add Socket): `weapon_r` on the bone `hand_r`, the point the gun
+   holds on to. Double-click the mesh > **Sockets** > `weapon_r` to move or turn the gun in the hand.
+
+   ![The weapon_r socket on the soldier's right hand in the Mesh Editor](images/lesson_gun_socket.jpg)
+   *The Mesh Editor: the skeleton, and the `weapon_r` socket in the right palm.*
+
+4. **The component** (Unreal: an Actor Component): the character's Details now has a Script running
+   Weapon, with every value of its `properties` table per character: socket, ammo, max ammo, range,
+   damage, reload time, aim distance and shoulder, the aim pose's bones and reach, the crosshair's size
+   and colours, the shoot and reload montages.
+
+   ![Details: Script = Weapon and its properties](images/lesson_gun_details.jpg)
+   *Details: Script = Weapon, then its properties (collapse the other components to find it).*
+
+5. **Play**. The crosshair dot is in the middle of the screen and the ammo at the bottom right.
+
+   ![Play: the crosshair dot and 10/10](images/lesson_gun_play_hip.jpg)
+   *From the hip: the white dot, 10/10.*
+
+6. **Hold RMB** to aim: the camera's spring arm comes in over the right shoulder, IK raises the arm
+   along the view so the gun points at the dot, and the dot turns red.
+
+   ![Aiming: over the shoulder, the dot red](images/lesson_gun_play_aim.jpg)
+   *Aiming.*
+
+7. **Click LMB** to shoot: one round less, a tracer from the gun to where the dot was, and
+   `on_damage(self, amount, shooter)` on what it hit (give a target a script with that function).
+
+   ![After a shot: 9/10](images/lesson_gun_play_fire.jpg)
+   *After one shot: 9/10.*
+
+8. **Press R** to reload: the reload montage plays on the upper body, the HUD says Reloading... until
+   Reload Time has passed, and the magazine is full again.
+
+   ![Reloading](images/lesson_gun_play_reload.jpg)
+   *Reloading.*
 
 ## 8. Ship it
 

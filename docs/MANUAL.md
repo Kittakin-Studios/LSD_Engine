@@ -918,6 +918,10 @@ Existing files are kept, so your edits survive a second Apply. The console does 
   aim distance and shoulder, and the crosshair's size, colours and visibility. Apply also makes
   `WBP_Crosshair.rml`, `IA_Aim`, `IA_Fire`, `IA_Reload` and maps RMB / LMB / R in the character's
   Mapping Context. To hold the gun differently, edit the `weapon_r` socket in the Mesh Editor.
+  Step by step with pictures: [EXAMPLES.md](EXAMPLES.md#7b-a-gun-in-the-hand-lsd-assistant-lesson).
+
+  ![The Lessons tab](images/lesson_gun_apply.jpg)
+  *The Lessons tab: pick a lesson, Apply to Selected Character, read how each part is coded.*
 
 ### C and C++ scripts
 
