@@ -231,6 +231,10 @@ struct PostDraw {
     f32 saturation = 1.0f;
     f32 contrast = 1.0f;
     f32 vignette = 0.0f;
+    // Color Grading LUT (256 x 16, Unreal's layout), applied last in display colours; invalid = none.
+    // A data texture (not sRGB): its values are the display colours themselves.
+    TextureHandle color_lut;
+    f32 lut_intensity = 0.0f;
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).

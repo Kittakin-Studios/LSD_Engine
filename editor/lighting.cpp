@@ -164,7 +164,7 @@ rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool 
     return s;
 }
 
-bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out) {
+bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen) {
     const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
     const world::PostProcessVolume* best = nullptr;
     for (u32 i = 0; i < w.count(post_type); ++i) {
@@ -190,6 +190,7 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.saturation = best->saturation;
     out.contrast = best->contrast;
     out.vignette = best->vignette;
+    if (chosen) *chosen = best;
     out.fxaa = best->anti_aliasing;
     out.taa = best->temporal_aa;
     out.ao_intensity = best->ao_intensity;

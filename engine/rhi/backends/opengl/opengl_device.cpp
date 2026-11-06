@@ -615,6 +615,13 @@ void main() {
     vec2 v = v_uv - 0.5;
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
     vec3 s = to_srgb(c);
+    if (grade.w > 0.0) {  // Color Grading LUT: 16 tiles of 16 x 16 (red across, green down), blue picks the tile
+        float b = clamp(s.b, 0.0, 1.0) * 15.0, b0 = floor(b);
+        vec2 inner = (clamp(s.rg, 0.0, 1.0) * 15.0 + 0.5) / vec2(256.0, 16.0);
+        vec3 lo = textureLod(t2, inner + vec2(b0 / 16.0, 0.0), 0.0).rgb;
+        vec3 hi = textureLod(t2, inner + vec2(min(b0 + 1.0, 15.0) / 16.0, 0.0), 0.0).rgb;
+        s = mix(s, mix(lo, hi, b - b0), grade.w);
+    }
     o_color = vec4(s, dot(s, vec3(0.299, 0.587, 0.114)));
 #elif defined(SSR)
     // Screen-space reflections: the view ray mirrored about the surface, marched through the depth
@@ -1556,7 +1563,8 @@ public:
         gl_.glUniform4fv(post_uniforms_[program], 12, constants);
         gl_.glBindTextureUnit(0, a ? a->color : textures_[white_].id);
         gl_.glBindTextureUnit(1, b ? b->color : textures_[white_].id);
-        gl_.glBindTextureUnit(2, d ? d->depth : textures_[white_].id);
+        const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
+        gl_.glBindTextureUnit(2, d ? d->depth : plain ? plain->id : textures_[white_].id);
         gl_.glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
@@ -1672,8 +1680,9 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
+        g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, {}, g);
+        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);

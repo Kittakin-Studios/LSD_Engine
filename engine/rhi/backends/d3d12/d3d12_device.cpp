@@ -687,6 +687,13 @@ float4 ps_outline(VsOut i) : SV_Target {
     }
     return float4(tint_tm.rgb, saturate(around * 4.0) * (1.0 - saturate(here * 4.0)) * tint_tm.a);
 }
+float3 lut(float3 s) {  // a 256 x 16 strip: 16 tiles of 16 x 16 (red across, green down), blue picks the tile
+    const float b = saturate(s.b) * 15.0, b0 = floor(b);
+    const float2 inner = (saturate(s.rg) * 15.0 + 0.5) / float2(256.0, 16.0);
+    const float3 lo = t2.SampleLevel(clamp_linear, inner + float2(b0 / 16.0, 0.0), 0).rgb;
+    const float3 hi = t2.SampleLevel(clamp_linear, inner + float2(min(b0 + 1.0, 15.0) / 16.0, 0.0), 0).rgb;
+    return lerp(lo, hi, b - b0);
+}
 float4 ps_composite(VsOut i) : SV_Target {
     float3 c = tap(t0, i.uv);
     if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
@@ -697,7 +704,8 @@ float4 ps_composite(VsOut i) : SV_Target {
     c = max((c - 0.18) * grade.y + 0.18, 0.0);
     const float2 v = i.uv - 0.5;
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
-    const float3 s = to_srgb(c);
+    float3 s = to_srgb(c);
+    if (grade.w > 0.0) s = lerp(s, lut(s), grade.w);
     return float4(s, dot(s, float3(0.299, 0.587, 0.114)));  // luma in alpha for FXAA
 }
 float4 ps_fxaa(VsOut i) : SV_Target {  // FXAA: blur only across edges, along their direction
@@ -1576,7 +1584,8 @@ public:
         list_->SetGraphicsRoot32BitConstants(0, 48, constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (a ? a->srv_gpu : textures_[white_].srv_gpu));
         list_->SetGraphicsRootDescriptorTable(2, (b ? b->srv_gpu : textures_[white_].srv_gpu));
-        list_->SetGraphicsRootDescriptorTable(3, (d ? d->depth_srv_gpu : textures_[white_].srv_gpu));
+        const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
+        list_->SetGraphicsRootDescriptorTable(3, (d ? d->depth_srv_gpu : plain ? plain->srv_gpu : textures_[white_].srv_gpu));
         list_->SetPipelineState(pso);
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);
@@ -1736,8 +1745,9 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
+        g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, {}, g);
+        post_pass(post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);

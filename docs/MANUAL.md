@@ -449,6 +449,10 @@ Atmosphere:
   **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
   buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
   transition, max blur in pixels; focal distance 0 = off).
+  **Color Grading LUT** (Unreal's): a 256 x 16 texture strip (16 tiles of 16 x 16; red across, green
+  down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
+  paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip
+  out and import it as a texture.
   **Exposure** (Unreal's Auto Exposure / eye adaptation, on by default): the image is metered every
   frame and eased toward mid grey, so dark interiors brighten and sunlit views darken over a moment;
   Min / Max EV limit how far it moves from World Settings exposure, Speed Up / Down how fast,
