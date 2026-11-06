@@ -453,6 +453,9 @@ Atmosphere:
   down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
   paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip
   out and import it as a texture.
+  **Motion Blur** (Amount 0 = off, Max as % of the screen's width): turning or moving the camera
+  smears the picture along the movement, found the way TAA finds last frame's pixels. Only the
+  camera's own movement for now: an object moving by itself in front of a still camera stays sharp.
   **Exposure** (Unreal's Auto Exposure / eye adaptation, on by default): the image is metered every
   frame and eased toward mid grey, so dark interiors brighten and sunlit views darken over a moment;
   Min / Max EV limit how far it moves from World Settings exposure, Speed Up / Down how fast,

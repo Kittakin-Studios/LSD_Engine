@@ -571,6 +571,19 @@ float4 ps_taa(VsOut i) : SV_Target {
     const float3 history = clamp(t1.SampleLevel(clamp_linear, prev_uv, 0).rgb, lo, hi);
     return float4(outside ? cur : lerp(history, cur, taa.x), 1.0);
 }
+// Motion blur (taa.z amount, taa.w longest smear in uv): where this pixel was last frame, as TAA finds
+// it, gives its movement on screen; 8 taps along it, centred on the pixel.
+float4 ps_motion(VsOut i) : SV_Target {
+    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
+    const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
+    float2 move = prev.w > 0.0 ? (i.uv - to_uv(prev.xy / prev.w)) * taa.z : float2(0.0, 0.0);
+    const float span = length(move);
+    if (span > taa.w) move *= taa.w / span;
+    if (span * (1.0 / texel.x) < 0.5) return float4(encode(tap(t0, i.uv)), 1.0);
+    float3 sum = 0.0;
+    [unroll] for (int k = 0; k < 8; ++k) sum += tap(t0, i.uv + move * (k / 7.0 - 0.5));
+    return float4(encode(sum / 8.0), 1.0);
+}
 // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
 // (a sharp object in front does not smear into the background behind it).
 float4 ps_dof(VsOut i) : SV_Target {
@@ -1522,7 +1535,7 @@ public:
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        TextureHandle ao, lit, dof, motion, taa[2];  // occlusion, scene with it, depth of field, motion blur, TAA output / history
         TextureHandle ssr;                   // the scene with reflections
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
@@ -1541,6 +1554,7 @@ public:
         destroy_texture(c.ao);
         destroy_texture(c.lit);
         destroy_texture(c.dof);
+        destroy_texture(c.motion);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
@@ -1557,6 +1571,7 @@ public:
         c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
+        c.motion = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1660,6 +1675,7 @@ public:
         const bool depth_effects = p.proj[0] != 0.0f;
         const bool ao = depth_effects && p.ao_intensity > 0.0f;
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
         const bool taa = depth_effects && p.taa;
         const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
         if (!taa) c.history_valid = false;
@@ -1675,12 +1691,14 @@ public:
         k[27] = p.dof_transition;
         k[28] = 0.1f;  // TAA: how much of this frame goes in
         k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        k[30] = p.motion_blur;
+        k[31] = p.motion_blur_max;
         for (int r = 0; r < 4; ++r) {
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
         size(p.scene, k);
         // The scene's depth is read by the passes below: a shader resource until they are done.
-        const bool read_depth = ao || dof || taa || ssr;
+        const bool read_depth = ao || dof || taa || ssr || motion;
         if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
@@ -1702,6 +1720,10 @@ public:
         if (dof) {
             post_pass(post_dof_.Get(), c.dof, nullptr, src, {}, p.scene, k);
             src = c.dof;
+        }
+        if (motion) {
+            post_pass(post_motion_.Get(), c.motion, nullptr, src, {}, p.scene, k);
+            src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
             f32 e[48] = {};
@@ -2230,7 +2252,7 @@ private:
             ComPtr<ID3D12PipelineState>* out;
         };
         const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
-                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_},
+                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}, {"ps_motion", &post_motion_},
                                  {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}, {"ps_outline", &post_outline_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
@@ -2642,7 +2664,7 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
-    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
+    ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

@@ -190,6 +190,8 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.saturation = best->saturation;
     out.contrast = best->contrast;
     out.vignette = best->vignette;
+    out.motion_blur = best->motion_blur_amount;
+    out.motion_blur_max = best->motion_blur_max * 0.01f;
     if (chosen) *chosen = best;
     out.fxaa = best->anti_aliasing;
     out.taa = best->temporal_aa;

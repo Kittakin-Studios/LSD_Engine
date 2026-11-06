@@ -730,6 +730,8 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Widget = "Asset:Texture",
                  Tooltip = "Color Grading LUT (Unreal's): a 256 x 16 strip of 16 tiles, red across, green down, blue tile by tile. Make one by grading a screenshot with the neutral strip pasted in (Photoshop, GIMP...) and cropping the strip out; empty = none")
     char color_grading_lut[33] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Motion Blur Amount (Unreal's): the camera's own movement blurs the picture along it; 0 = off") f32 motion_blur_amount = 0.0f;
+    LSD_PROPERTY(Edit, Units = "%", Min = 0, Max = 20, Tooltip = "Motion Blur Max: the longest smear, as a percentage of the screen's width") f32 motion_blur_max = 5.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much of the LUT's look: 0 none, 1 all") f32 lut_intensity = 1.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Glow around bright parts (emissive, the sun's highlights); 0 = off") f32 bloom_intensity = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How bright (after exposure) a pixel must be to glow; 1 = white") f32 bloom_threshold = 1.0f;

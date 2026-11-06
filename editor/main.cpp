@@ -2426,13 +2426,15 @@ int main(int argc, char** argv) {
                 post.proj[3] = proj.at(2, 3);
             }
             const bool taa = post.taa && post.proj[0] != 0.0f && v < 4;
-            if (taa) {
-                // Last frame's clip space from this one's (without the jitter), then a sub-pixel jitter (Halton 2, 3).
+            const bool motion_blur = post.motion_blur > 0.0f && post.proj[0] != 0.0f && v < 4;
+            if (taa || motion_blur) {  // last frame's clip space from this one's (without the jitter): TAA and motion blur read it
                 post.taa_reset = !taa_history[v].valid;
                 const lsd::Mat4 reproject = taa_history[v].view_proj * lsd::inverse(view_proj);
                 std::memcpy(post.reproject, reproject.m, sizeof post.reproject);
                 taa_history[v].view_proj = view_proj;
                 taa_history[v].valid = true;
+            }
+            if (taa) {  // a sub-pixel jitter (Halton 2, 3)
                 const lsd::u32 n = ++taa_history[v].frame % 8 + 1;
                 auto halton = [](lsd::u32 i, lsd::u32 base) {
                     lsd::f32 f = 1.0f, r = 0.0f;
@@ -2445,7 +2447,7 @@ int main(int argc, char** argv) {
                 proj.at(0, 2) += (halton(n, 2) - 0.5f) * 2.0f / pixels[2];
                 proj.at(1, 2) += (halton(n, 3) - 0.5f) * 2.0f / pixels[3];
                 view_proj = proj * view;
-            } else if (v < 4) {
+            } else if (v < 4 && !motion_blur) {
                 taa_history[v].valid = false;
             }
             if (v == 0 && state.high_res_shot) {  // HighResShot: this view again, bigger, into targets read after the frame

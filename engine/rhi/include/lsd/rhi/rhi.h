@@ -235,6 +235,12 @@ struct PostDraw {
     // A data texture (not sRGB): its values are the display colours themselves.
     TextureHandle color_lut;
     f32 lut_intensity = 0.0f;
+    // Motion blur from the camera's movement (needs `reproject` and a perspective view): each pixel is
+    // smeared along where it moved on screen since the last frame, times `motion_blur` (0 = off), at most
+    // `motion_blur_max` of the screen's width. shortcut: the camera's motion only; objects moving by
+    // themselves need motion vectors (also wanted by TAA).
+    f32 motion_blur = 0.0f;
+    f32 motion_blur_max = 0.05f;
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
