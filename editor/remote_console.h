@@ -6,6 +6,8 @@
 // shortcut: this PC only (localhost), one client at a time, no password; add both before consoles or LAN devkits.
 #include "lsd/foundation/types.h"
 
+#include <string>
+
 namespace lsd::editor::remote {
 
 constexpr u16 kDefaultPort = 7780;
@@ -19,6 +21,8 @@ bool listening();
 bool client_connected();
 // Text for the client running the current line (answers of list commands); the Output Log otherwise.
 void print(const char* text);
+// Runs one console line and returns what it logged (the remote client and LSD Assistant's tools use it).
+std::string run_captured(const char* line);
 
 // Editor side.
 void draw_window(bool* open);

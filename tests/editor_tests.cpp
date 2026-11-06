@@ -259,6 +259,33 @@ static void test_assistant() {
                                               "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
     CHECK(os.ok && os.text == "hello" && os.raw == "hello");
 
+    // Tools: offered when on, calls read back from both providers' streams, results sent the way each expects.
+    CHECK(request_body(claude, "s", turns, true).find("\"tools\":[{\"name\":\"console\"") != std::string::npos);
+    CHECK(request_body(claude, "s", turns).find("\"tools\"") == std::string::npos);
+    CHECK(request_body(local, "s", {{true, "hi", ""}}, true).find("{\"type\":\"function\",\"function\":{\"name\":\"console\"") != std::string::npos);
+    const Reply use = parse_stream(claude, 200,
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Starting Play.\"}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"console\",\"input\":{}}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\" \\\"play\\\"}\"}}\n\n"
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n");
+    CHECK(use.ok && use.text == "Starting Play." && use.calls.size() == 1 && use.calls[0].id == "tu_1" && use.calls[0].name == "console");
+    CHECK(tool_arg(use.calls[0].input, "command") == "play" && tool_arg("{\"lines\":20}", "lines") == "20" && tool_arg("{}", "x").empty());
+    CHECK(use.raw.find("{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"console\",\"input\":{\"command\": \"play\"}}") != std::string::npos);
+    std::vector<Turn> acted{{true, "play it", ""}, {false, use.text, use.raw, use.calls, {}}, {true, "", "", {}, {{"tu_1", "Play started", false}}}};
+    const std::string back = request_body(claude, "s", acted, true);
+    CHECK(back.find("{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu_1\",\"content\":\"Play started\"}]}") != std::string::npos);
+    const Reply ocall = parse_stream(local, 200,
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"\"}}]}}]}\n\n"
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"lines\\\":5}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n");
+    CHECK(ocall.ok && ocall.calls.size() == 1 && ocall.calls[0].id == "call_9" && ocall.calls[0].name == "read_log" && tool_arg(ocall.calls[0].input, "lines") == "5");
+    std::vector<Turn> oacted{{true, "log?", ""}, {false, "", "", ocall.calls, {}}, {true, "", "", {}, {{"call_9", "[game] ok", false}}}};
+    const std::string oback = request_body(local, "s", oacted, true);
+    CHECK(oback.find("\"tool_calls\":[{\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"{\\\"lines\\\":5}\"}}]") != std::string::npos);
+    CHECK(oback.find("{\"role\":\"tool\",\"tool_call_id\":\"call_9\",\"content\":\"[game] ok\"}") != std::string::npos);
+    CHECK(readable_path("Content/Levels/A.lsdlevel") && !readable_path("Config/project.json") && !readable_path("Content/../Saved/editor_settings.json"));
+
     CHECK(writable_path("Content/Script/Door.lua") && writable_path("Source/Door.cpp"));
     CHECK(!writable_path("../evil.lua") && !writable_path("Content/../x") && !writable_path("C:/Windows/x") && !writable_path("/etc/x") && !writable_path("Config/project.json"));
     CHECK(writable_path("Content/UI/HUD.rml") && writable_path("Source/CMakeLists.txt") && !writable_path("Content/Mesh/Gun.fbx") && !writable_path("Content/Weapon/IA_Aim.lsdasset"));

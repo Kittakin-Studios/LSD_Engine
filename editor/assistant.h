@@ -11,5 +11,7 @@ namespace lsd::editor::assistant {
 
 void draw_window(EditorState& s, bool* open);
 void draw_settings(EditorState& s);  // Editor Preferences > Plugins > LSD Assistant
+// Sends `text` as if typed in the chat (console assistant.Ask: tests, the MCP bridge); opens the window.
+void ask(EditorState& s, const char* text);
 
 } // namespace lsd::editor::assistant

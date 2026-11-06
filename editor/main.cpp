@@ -1,5 +1,6 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
+#include "assistant.h"
 #include "assistant_lessons.h"
 #include "editor_modes.h"
 #include "paper2d.h"
@@ -1153,6 +1154,9 @@ void register_console(EditorState& s) {
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
                          "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL: -rhi=opengl)");
+    console::add_command("assistant.Ask", [](void* user, const char* args) {
+        lsd::editor::assistant::ask(*static_cast<EditorState*>(user), args);
+    }, &s, "assistant.Ask <message>: send a message to LSD Assistant, as if typed in its chat");
     console::add_command("assistant.Lesson", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         std::string report;

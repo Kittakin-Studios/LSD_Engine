@@ -152,15 +152,23 @@ void poll() {
         std::string line = g_in.substr(0, end);
         g_in.erase(0, end + 1);
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        std::string reply;
-        g_capture = &reply;
-        g_previous_sink = log::sink(&g_previous_user);
-        log::set_sink(capture_sink, nullptr);
-        console::execute(line.c_str());  // it logs unknown commands itself
-        log::set_sink(g_previous_sink, g_previous_user);
-        g_capture = nullptr;
-        send_all(g_client, reply + ".\n");
+        send_all(g_client, run_captured(line.c_str()) + ".\n");
     }
+}
+
+std::string run_captured(const char* line) {
+    if (g_capture) {  // already capturing (a line run from inside another): it adds to that reply
+        console::execute(line);
+        return {};
+    }
+    std::string reply;
+    g_capture = &reply;
+    g_previous_sink = log::sink(&g_previous_user);
+    log::set_sink(capture_sink, nullptr);
+    console::execute(line);  // it logs unknown commands itself
+    log::set_sink(g_previous_sink, g_previous_user);
+    g_capture = nullptr;
+    return reply;
 }
 
 void stop_listening() {

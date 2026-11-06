@@ -882,6 +882,15 @@ Selected** (a Script component running it, undoable). It may only write inside `
 (streamed); a file block gets its buttons once the reply is done. Requests go from this PC straight to the
 endpoint (through the system's `curl`); a failed one puts your message back in the box.
 
+**Tools** (Unreal: an agent with editor access, like the Claude MCP plugin below): it can act in the editor
+by itself with the same tools as the MCP bridge: console commands (play, stop, save, open...), Lua in the
+running game, the object and asset lists, the Output Log, reading files and writing code files (Content/
+and Source/ only). It reads, writes, presses Play, reads the log for errors and fixes them. **Editor
+Preferences > Plugins > LSD Assistant > Tools**: **Off**, **Ask before each tool call** (the default: the
+calls show in the chat with **Allow**, **Allow All** for this chat, **Deny**) or **Allowed**. Each call and
+its folded result show in the chat; it stops after 12 tool rounds per message. `debug.*` commands are
+refused. Console: `assistant.Ask <message>` sends a message as if typed.
+
 **Lessons** (the second tab) teach how a feature is coded, step by step with the Unreal equivalent,
 and set it up in one click: select a rigged character, pick a lesson, **Apply to Selected Character**.
 Existing files are kept, so your edits survive a second Apply. The console does the same:

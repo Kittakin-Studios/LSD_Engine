@@ -65,6 +65,7 @@ struct EditorSettings {
     LSD_PROPERTY(Save) char assistant_key[256] = "";
     LSD_PROPERTY(Save) u32 assistant_effort = 1;  // Claude: 0 low, 1 medium, 2 high
     LSD_PROPERTY(Save) u32 assistant_role = 0;    // which studio role answers (assistant.cpp's list)
+    LSD_PROPERTY(Save) u32 assistant_tools = 1;   // 0 off, 1 ask before each tool call, 2 allowed
     // Workspace tabs under the menu bar (Blender's Layout / Modeling / Shading...).
     LSD_PROPERTY(Save) char workspace[32] = "Layout";
     LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;

@@ -1,6 +1,7 @@
 #include "assistant.h"
 #include "assistant_core.h"
 #include "assistant_lessons.h"
+#include "remote_console.h"
 #include "tips.h"
 
 #include "lsd/reflect/reflect.h"
@@ -46,7 +47,7 @@ constexpr Role kRoles[] = {
 constexpr int kRoleCount = static_cast<int>(sizeof kRoles / sizeof kRoles[0]);
 
 // The engine guide and the Lua API (script.h's own comment block), read once.
-std::string engine_guide(const Role& role) {
+std::string engine_guide(const Role& role, bool tools) {
     static std::string api;
     if (api.empty()) {
         std::ifstream header("engine/script/include/lsd/script/script.h");
@@ -82,7 +83,11 @@ std::string engine_guide(const Role& role) {
            "for example ```lua Content/Script/Door.lua - the editor shows Create File and Attach to Selected buttons under it. Paths must be "
            "inside Content/ or Source/. Never invent engine API: if a call is not in the reference below, say so and suggest another way. "
            "Each message starts with an <editor> block describing the open project (level, selected object, assets); use it, do not repeat it.\n\n"
-           "Lua API reference (the engine's own documentation):\n" +
+           + std::string(tools ? "Tools: you can act in the editor yourself (console, lua, list_objects, list_assets, read_log, read_file, write_file). Read "
+                    "before you change, write whole files with write_file, then check your work: console play, read_log for errors, lua to inspect "
+                    "the running game, console stop. Keep tool calls few and purposeful; the developer may be asked to allow each one.\n\n"
+                  : "") +
+           std::string("Lua API reference (the engine's own documentation):\n") +
            api;
 }
 
@@ -191,7 +196,11 @@ struct Chat {
     bool include_context = true;
     int armed_overwrite = -1;  // a code block whose Create File was clicked once on an existing file
     std::string last_error;
+    std::vector<ToolCall> pending;  // tool calls waiting for Allow / Deny (Ask mode)
+    int rounds = 0;                 // tool rounds since the developer's last message
+    bool allow_all = false;         // "Allow all" in this chat
 };
+constexpr int kMaxToolRounds = 12;  // then it stops and says so: a model looping on tools costs money
 Chat g_chat;
 
 Settings settings_of(const EditorState& s) {
@@ -207,24 +216,14 @@ Settings settings_of(const EditorState& s) {
     return st;
 }
 
-void send(EditorState& s) {
-    if (!g_chat.input[0] || (g_chat.job && !g_chat.job->done)) return;
+// Sends the conversation as it is (after the developer's message, or after tool results).
+void request(EditorState& s) {
     const Settings st = settings_of(s);
-    if (st.key.empty() && st.provider == kAnthropic) {
-        g_chat.last_error = "Add your Anthropic API key in Editor Preferences > Plugins > LSD Assistant (or set ANTHROPIC_API_KEY).";
-        return;
-    }
-    Turn t;
-    t.user = true;
-    t.text = (g_chat.include_context ? project_context(s) : std::string()) + g_chat.input;
-    g_chat.turns.push_back(t);
-    g_chat.roles.push_back(-1);
-    g_chat.input[0] = '\0';
-    g_chat.last_error.clear();
     const int role = static_cast<int>(s.settings.assistant_role) < kRoleCount ? static_cast<int>(s.settings.assistant_role) : 0;
+    const bool tools = s.settings.assistant_tools != 0;
     auto job = std::make_shared<Job>();
     g_chat.job = job;
-    const std::string url = request_url(st), body = request_body(st, engine_guide(kRoles[role]), g_chat.turns);
+    const std::string url = request_url(st), body = request_body(st, engine_guide(kRoles[role], tools), g_chat.turns, tools);
     const std::vector<std::string> headers = request_headers(st);
     std::thread([job, st, url, body, headers] {
         std::string reply;
@@ -243,6 +242,88 @@ void send(EditorState& s) {
         }
         job->done = true;
     }).detach();  // shortcut: one request at a time
+}
+
+void send(EditorState& s) {
+    if (!g_chat.input[0] || g_chat.job || !g_chat.pending.empty()) return;
+    const Settings st = settings_of(s);
+    if (st.key.empty() && st.provider == kAnthropic) {
+        g_chat.last_error = "Add your Anthropic API key in Editor Preferences > Plugins > LSD Assistant (or set ANTHROPIC_API_KEY).";
+        return;
+    }
+    Turn t;
+    t.user = true;
+    t.text = (g_chat.include_context ? project_context(s) : std::string()) + g_chat.input;
+    g_chat.turns.push_back(t);
+    g_chat.roles.push_back(-1);
+    g_chat.input[0] = '\0';
+    g_chat.last_error.clear();
+    g_chat.rounds = 0;
+    request(s);
+}
+
+// One tool call, run on the main thread: the same tools as the Claude MCP bridge, over the console.
+ToolResult run_tool(EditorState& s, const ToolCall& call) {
+    ToolResult r{call.id, "", false};
+    std::string line;
+    if (call.name == "console") {
+        line = tool_arg(call.input, "command");
+        if (line.rfind("debug.", 0) == 0) {  // debug.Crash / debug.Break would take the editor down
+            r = {call.id, "Not allowed: debug.* commands stop the editor.", true};
+            return r;
+        }
+    } else if (call.name == "lua") {
+        std::string code = tool_arg(call.input, "code");
+        for (char& c : code) c = c == '\n' ? '\x1f' : c == '\r' ? ' ' : c;  // the lua command turns \x1f back into line breaks
+        line = "lua " + code;
+    } else if (call.name == "list_objects") {
+        line = "scene.List";
+    } else if (call.name == "list_assets") {
+        line = "asset.List " + tool_arg(call.input, "filter");
+    } else if (call.name == "read_log") {
+        const std::string n = tool_arg(call.input, "lines");
+        line = "log.Tail " + (n.empty() ? std::string("50") : n);
+    } else if (call.name == "read_file" || call.name == "write_file") {
+        const std::string path = tool_arg(call.input, "path");
+        if (call.name == "read_file") {
+            std::ifstream in(path, std::ios::binary);
+            if (!readable_path(path) || !in) return {call.id, "Cannot read " + path + " (only files in Content/ or Source/).", true};
+            r.content.resize(65536);
+            in.read(r.content.data(), static_cast<std::streamsize>(r.content.size()));
+            r.content.resize(static_cast<usize>(in.gcount()));
+            return r;
+        }
+        if (!writable_path(path)) return {call.id, "Not written: only code files in Content/ or Source/ (" + path + ").", true};
+        std::error_code error;
+        fs::create_directories(fs::path(path).parent_path(), error);
+        std::ofstream out(path, std::ios::binary);
+        out << tool_arg(call.input, "content");
+        out.close();
+        if (s.registry) s.registry->scan();
+        return out ? ToolResult{call.id, "Wrote " + path, false} : ToolResult{call.id, "Could not write " + path, true};
+    } else {
+        return {call.id, "No tool named " + call.name, true};
+    }
+    r.content = remote::run_captured(line.c_str());
+    if (r.content.empty()) r.content = "(done; nothing was logged)";
+    if (r.content.size() > 16000) r.content = r.content.substr(r.content.size() - 16000);  // the end matters most (logs)
+    return r;
+}
+
+// Runs (or refuses) the waiting calls, adds their results and asks the model to go on.
+void answer_tools(EditorState& s, bool allowed) {
+    Turn results;
+    for (const ToolCall& c : g_chat.pending) {
+        results.results.push_back(allowed ? run_tool(s, c) : ToolResult{c.id, "The developer did not allow this tool call.", true});
+    }
+    g_chat.pending.clear();
+    g_chat.turns.push_back(results);
+    g_chat.roles.push_back(-1);
+    if (++g_chat.rounds > kMaxToolRounds) {
+        g_chat.last_error = "Stopped after " + std::to_string(kMaxToolRounds) + " tool rounds: send a message to let it go on.";
+        return;
+    }
+    request(s);
 }
 
 // The reply's text, its code blocks as read-only boxes with their buttons.
@@ -367,7 +448,17 @@ void draw_settings(EditorState& s) {
         ImGui::SetNextItemWidth(260);
         if (ImGui::Combo("Effort", &effort, "Low (quick answers)\0Medium\0High (hard problems, slower)\0")) set.assistant_effort = static_cast<u32>(effort);
     }
+    int tools = static_cast<int>(set.assistant_tools < 3 ? set.assistant_tools : 1);
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::Combo("Tools", &tools, "Off (it only writes answers)\0Ask before each tool call\0Allowed (it acts by itself)\0")) set.assistant_tools = static_cast<u32>(tools);
+    ImGui::SetItemTooltip("Tools let it act in the editor: console commands (play, stop, save...), Lua in the running game, the object and asset lists, the log, reading files and writing code files");
     ImGui::TextDisabled("Requests go from this PC to the endpoint above (curl); each message includes the project summary unless turned off in the chat.");
+}
+
+void ask(EditorState& s, const char* text) {
+    s.show_assistant = true;
+    std::snprintf(g_chat.input, sizeof g_chat.input, "%s", text);
+    send(s);
 }
 
 void draw_window(EditorState& s, bool* open) {
@@ -418,6 +509,8 @@ void draw_window(EditorState& s, bool* open) {
         g_chat.turns.clear();
         g_chat.roles.clear();
         g_chat.last_error.clear();
+        g_chat.pending.clear();
+        g_chat.allow_all = false;
     }
     ImGui::SameLine();
     if (with_tip(ImGui::SmallButton("Settings"), "Provider, model and API key")) s.show_preferences = true;
@@ -430,8 +523,10 @@ void draw_window(EditorState& s, bool* open) {
             t.user = false;
             t.text = r.text;
             t.raw = r.raw;
+            t.calls = g_chat.job->stop ? std::vector<ToolCall>{} : r.calls;  // a stopped reply runs nothing
             g_chat.turns.push_back(t);
             g_chat.roles.push_back(role);
+            g_chat.pending = t.calls;
         } else {
             g_chat.last_error = r.error;
             if (!g_chat.turns.empty() && g_chat.turns.back().user) {  // the question goes back into the box to try again
@@ -443,6 +538,7 @@ void draw_window(EditorState& s, bool* open) {
             }
         }
         g_chat.job.reset();
+        if (!g_chat.pending.empty() && (set.assistant_tools == 2 || g_chat.allow_all)) answer_tools(s, true);
     }
 
     // The conversation.
@@ -457,13 +553,27 @@ void draw_window(EditorState& s, bool* open) {
     for (usize i = 0; i < g_chat.turns.size(); ++i) {
         const Turn& t = g_chat.turns[i];
         ImGui::Spacing();
-        if (t.user) {
+        if (t.user && !t.results.empty()) {  // what the tools gave back, folded
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::TreeNode("##results", "Tool results (%u)", static_cast<unsigned>(t.results.size()))) {
+                for (const ToolResult& r : t.results) {
+                    if (r.error) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", r.content.c_str());
+                    else ImGui::TextWrapped("%s", r.content.size() > 2000 ? (r.content.substr(0, 2000) + " ...").c_str() : r.content.c_str());
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        } else if (t.user) {
             ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "You");
             const usize body = t.text.find("</editor>\n\n");
             ImGui::TextWrapped("%s", body == std::string::npos ? t.text.c_str() : t.text.c_str() + body + 11);
         } else {
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "LSD Assistant (%s)", kRoles[g_chat.roles[i] >= 0 ? g_chat.roles[i] : 0].name);
             draw_reply(s, t.text, static_cast<int>(i));
+            for (const ToolCall& c : t.calls) {
+                const std::string args = c.input.size() > 160 ? c.input.substr(0, 160) + "..." : c.input;
+                ImGui::TextDisabled("> %s %s", c.name.c_str(), args.c_str());
+            }
         }
         ImGui::Separator();
     }
@@ -482,6 +592,19 @@ void draw_window(EditorState& s, bool* open) {
         ImGui::TextDisabled(partial.empty() ? "LSD Assistant is thinking... %.0f s" : "Writing... %.0f s", seconds);
         ImGui::SetScrollHereY(1.0f);
     }
+    if (!g_chat.pending.empty() && !g_chat.job) {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "LSD Assistant wants to run %u tool call%s (listed above).", static_cast<unsigned>(g_chat.pending.size()),
+                           g_chat.pending.size() == 1 ? "" : "s");
+        if (with_tip(ImGui::Button("Allow"), "Runs them and lets it go on")) answer_tools(s, true);
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("Allow All"), "Runs these and every later tool call in this chat without asking")) {
+            g_chat.allow_all = true;
+            answer_tools(s, true);
+        }
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("Deny"), "Tells it you did not allow them; it answers without")) answer_tools(s, false);
+        ImGui::SetScrollHereY(1.0f);
+    }
     if (!g_chat.last_error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1.0f), "%s", g_chat.last_error.c_str());
     ImGui::EndChild();
 
@@ -490,7 +613,7 @@ void draw_window(EditorState& s, bool* open) {
     const bool ctrl_enter = ImGui::IsItemFocused() && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter);
     if (g_chat.job) {
         if (with_tip(ImGui::Button("Stop"), "Ends the reply now; what it wrote so far stays")) g_chat.job->stop = true;
-    } else if (with_tip(ImGui::Button("Send (Ctrl+Enter)"), "Sends the message to your model") || ctrl_enter) {
+    } else if (g_chat.pending.empty() && (with_tip(ImGui::Button("Send (Ctrl+Enter)"), "Sends the message to your model") || ctrl_enter)) {
         send(s);
     }
     ImGui::SameLine();
