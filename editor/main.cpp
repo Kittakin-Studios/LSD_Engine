@@ -1,5 +1,6 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
+#include "assistant_lessons.h"
 #include "editor_modes.h"
 #include "paper2d.h"
 #include "graph_editor.h"
@@ -81,6 +82,7 @@ constexpr lsd::f32 kOutlineColor[4] = {1.0f, 0.55f, 0.08f, 1.0f};
 
 // input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
 lsd::u64 g_held_until[SDL_SCANCODE_COUNT] = {};
+lsd::u64 g_mouse_held_until[3] = {};  // input.Hold on Left / Middle / Right Mouse Button
 
 namespace {
 
@@ -951,13 +953,19 @@ void register_console(EditorState& s) {
         std::snprintf(name, sizeof name, "%s", args);
         if (char* last = std::strrchr(name, ' '); last && std::sscanf(last + 1, "%f", &seconds) == 1) *last = '\0';
         if (!name[0]) return;
+        const char* const mouse[3] = {"Left Mouse Button", "Middle Mouse Button", "Right Mouse Button"};
+        for (int b = 0; b < 3; ++b) {
+            if (std::strcmp(name, mouse[b]) != 0) continue;
+            g_mouse_held_until[b] = SDL_GetTicks() + static_cast<lsd::u64>(seconds * 1000.0f);
+            return;
+        }
         const SDL_Scancode k = SDL_GetScancodeFromName(name);
         if (k == SDL_SCANCODE_UNKNOWN) {
             LSD_LOG_WARN("input", "input.Hold: no key named %s (W, Space, E...)", name);
             return;
         }
         g_held_until[k] = SDL_GetTicks() + static_cast<lsd::u64>(seconds * 1000.0f);
-    }, nullptr, "input.Hold <key> <seconds>: hold a key for the game (tests), e.g. input.Hold W 2");
+    }, nullptr, "input.Hold <key> <seconds>: hold a key or mouse button for the game (tests), e.g. input.Hold W 2, input.Hold Right Mouse Button 1");
     console::add_command("ui.Keys", [](void*, const char* args) {  // tests: "down down enter", 0.8 s later
         static char keys[128];
         std::snprintf(keys, sizeof keys, "%s", args);
@@ -1145,6 +1153,12 @@ void register_console(EditorState& s) {
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
                          "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL: -rhi=opengl)");
+    console::add_command("assistant.Lesson", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        std::string report;
+        lsd::editor::assistant::apply_lesson(st, static_cast<lsd::u32>(std::atoi(args)), report);
+        lsd::editor::remote::print(report.c_str());
+    }, &s, "assistant.Lesson <n>: apply LSD Assistant lesson n (0: gun on a hand socket) to the selected character");
     console::add_command("asset.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
@@ -2279,6 +2293,7 @@ int main(int argc, char** argv) {
             static bool keys[SDL_SCANCODE_COUNT];
             bool scripted_keys = false;  // input.Hold (tests, the MCP bridge) drives the game even without the mouse
             for (int k = 0; k < SDL_SCANCODE_COUNT && !scripted_keys; ++k) scripted_keys = g_held_until[k] > SDL_GetTicks();
+            for (int b = 0; b < 3 && !scripted_keys; ++b) scripted_keys = g_mouse_held_until[b] > SDL_GetTicks();
             if ((state.mouse_captured && !state.ejected) || scripted_keys) {
                 int count = 0;
                 const bool* real = SDL_GetKeyboardState(&count);
@@ -2290,6 +2305,7 @@ int main(int argc, char** argv) {
                 devices.mouse_dy = mouse_dy;
                 const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
                 devices.mouse_buttons = ((buttons & SDL_BUTTON_LMASK) ? 1u : 0u) | ((buttons & SDL_BUTTON_MMASK) ? 2u : 0u) | ((buttons & SDL_BUTTON_RMASK) ? 4u : 0u);
+                for (int b = 0; b < 3; ++b) devices.mouse_buttons |= g_mouse_held_until[b] > ticks ? 1u << b : 0u;
                 if (gamepad) {
                     const SDL_GamepadAxis axes[6] = {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY,
                                                      SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER};

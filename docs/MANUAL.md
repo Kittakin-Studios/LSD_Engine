@@ -855,10 +855,12 @@ editor-only: packaged games never listen.
 
 ### LSD Assistant (an AI game studio in the editor)
 
-**Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to do
-something, plan a feature, or have it write a script and apply it. It answers as one of a studio's
-roles, picked at the top of the window: **Engine Expert**, **Gameplay Programmer**, **Technical
-Artist**, **Level Designer**, **Game Designer**, **Producer**, **QA Tester**. Every message carries
+**Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to code
+something, or have it write a script and apply it. It writes **code only** (Lua, JavaScript, C / C++,
+UI documents): no meshes, textures, materials or other art. When code needs something visible (a gun,
+a pickup, a target) it uses a Cube or Sphere placed and sized from code, for you to swap for real art
+later; its Create button only writes code files. It answers as one of four roles, picked at the top of
+the Chat tab: **Gameplay Programmer**, **Engine Expert**, **UI Programmer**, **Code Reviewer**. Every message carries
 the open level, the selected object (its components and values) and the asset list, so answers fit
 your project (untick **Project context** to leave it out). It knows the engine's Lua API from the
 engine's own documentation and maps Unreal features you name onto LSD_Engine's.
@@ -879,6 +881,21 @@ Selected** (a Script component running it, undoable). It may only write inside `
 `Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Replies appear as they are written
 (streamed); a file block gets its buttons once the reply is done. Requests go from this PC straight to the
 endpoint (through the system's `curl`); a failed one puts your message back in the box.
+
+**Lessons** (the second tab) teach how a feature is coded, step by step with the Unreal equivalent,
+and set it up in one click: select a rigged character, pick a lesson, **Apply to Selected Character**.
+Existing files are kept, so your edits survive a second Apply. The console does the same:
+`assistant.Lesson <n>`.
+
+- **Gun on a hand socket (soldier)**: a Cube gun in the right hand through a `weapon_r` socket on
+  `hand_r` (RightHand / mixamorig:RightHand on other rigs), 10/10 ammo, **RMB** aims (the spring arm
+  eases in over the right shoulder, the dot turns red), **LMB** shoots (a ray from the camera through
+  the crosshair, a tracer from the gun, `on_damage(self, amount, shooter)` on what it hits), **R**
+  reloads (Reload Time, "Reloading..." on the HUD). It is one component, a Script running
+  `Content/Weapon/Weapon.lua`; its Details show socket, ammo, max ammo, range, damage, reload time,
+  aim distance and shoulder, and the crosshair's size, colours and visibility. Apply also makes
+  `WBP_Crosshair.rml`, `IA_Aim`, `IA_Fire`, `IA_Reload` and maps RMB / LMB / R in the character's
+  Mapping Context. To hold the gun differently, edit the `weapon_r` socket in the Mesh Editor.
 
 ### C and C++ scripts
 
@@ -1426,7 +1443,7 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 | Animation | Skeletal Mesh (**Morphs**: morph target weights) |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
-| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()` (nodes Set Camera View, Is Third Person, Get Camera Location) |
+| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()`, `lsd.camera_forward()` (where the view looks: shoot along it for a crosshair) (nodes Set Camera View, Is Third Person, Get Camera Location) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
 | Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view, `r.GPUCulling 0` to compare) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |

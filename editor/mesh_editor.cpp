@@ -225,7 +225,7 @@ void draw_mesh_editor(EditorState& s) {
                 const i32 j = model.find_joint(sock.bone);
                 ImVec2 p;
                 if (j < 0) continue;
-                const Mat4 m = g_mw.pose.joint_model(static_cast<u32>(j)) * trs(sock.position, sock.rotation, Vec3{1, 1, 1});
+                const Mat4 m = without_scale(g_mw.pose.joint_model(static_cast<u32>(j))) * trs(sock.position, sock.rotation, Vec3{1, 1, 1});
                 if (!project(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, p)) continue;
                 dl->AddRectFilled(ImVec2(p.x - 4, p.y - 4), ImVec2(p.x + 4, p.y + 4), IM_COL32(238, 167, 14, 255));
                 dl->AddText(ImVec2(p.x + 6, p.y - 7), IM_COL32(238, 167, 14, 255), sock.name);

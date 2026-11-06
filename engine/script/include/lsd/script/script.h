@@ -97,6 +97,7 @@
 // lsd.set_camera_view("first" | "third" | "camera"): the player's view (a Camera on the Character); "camera" = its own View.
 // lsd.camera_view() -> "first" | "third".
 // lsd.camera_location() -> x, y, z: where the player's view is this frame (Unreal's Get Camera Location).
+// lsd.camera_forward() -> x, y, z: the way it looks, a unit vector (shoot along it from camera_location: crosshairs).
 //
 // Debug drawing over the viewport (r, g, b 0..1, default red; seconds, default 0 = this frame):
 //   lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])
@@ -235,6 +236,7 @@ struct ScriptHost {
     void (*set_camera_view)(void* user, u32 view) = nullptr;
     u32 (*camera_view)(void* user) = nullptr;
     Vec3 (*camera_location)(void* user) = nullptr;
+    Vec3 (*camera_forward)(void* user) = nullptr;
     void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
     void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
     bool (*timeline)(void* user, int what, const char* name, bool loop) = nullptr;           // 0 play, 1 stop

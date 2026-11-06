@@ -49,7 +49,8 @@ struct CodeBlock {
 };
 std::vector<CodeBlock> code_blocks(const std::string& text);
 
-// A path the assistant may write: relative, inside Content/ or Source/, no "..", no drive or root.
+// A path the assistant may write: relative, inside Content/ or Source/, no "..", no drive or root, and a
+// code file (.lua .js .lsdgraph .rml .rcss .cpp .c .h .hpp, CMakeLists.txt): it writes code, not assets.
 bool writable_path(const std::string& path);
 
 std::string json_escape(const std::string& text);  // with the quotes

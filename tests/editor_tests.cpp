@@ -261,6 +261,7 @@ static void test_assistant() {
 
     CHECK(writable_path("Content/Script/Door.lua") && writable_path("Source/Door.cpp"));
     CHECK(!writable_path("../evil.lua") && !writable_path("Content/../x") && !writable_path("C:/Windows/x") && !writable_path("/etc/x") && !writable_path("Config/project.json"));
+    CHECK(writable_path("Content/UI/HUD.rml") && writable_path("Source/CMakeLists.txt") && !writable_path("Content/Mesh/Gun.fbx") && !writable_path("Content/Weapon/IA_Aim.lsdasset"));
 }
 
 int main() {

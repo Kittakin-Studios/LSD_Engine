@@ -582,6 +582,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     bone_ride_valid_ = false;
     host.set_camera_view = [](void* user, u32 view) { static_cast<PlaySession*>(user)->camera_view_override_ = view; };
     host.camera_location = [](void* user) { return static_cast<PlaySession*>(user)->eye(); };
+    host.camera_forward = [](void* user) { return static_cast<PlaySession*>(user)->view_forward(); };
     host.camera_view = [](void* user) -> u32 {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.camera_view_override_ < 2) return self.camera_view_override_;

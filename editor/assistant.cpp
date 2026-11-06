@@ -1,5 +1,6 @@
 #include "assistant.h"
 #include "assistant_core.h"
+#include "assistant_lessons.h"
 #include "tips.h"
 
 #include "lsd/reflect/reflect.h"
@@ -34,16 +35,13 @@ struct Role {
     const char* focus;
 };
 constexpr Role kRoles[] = {
-    {"Engine Expert", "how LSD_Engine works: its editors, assets and import, rendering, physics, animation, audio, networking, packaging; "
-                      "you map the developer's Unreal habits onto LSD_Engine's tools and say where each thing is."},
     {"Gameplay Programmer", "gameplay code: you write complete, working Lua, JavaScript or C++ scripts against the lsd API below, explain how "
                             "to attach them, and debug errors from the Output Log."},
-    {"Technical Artist", "materials and material graphs, textures, lighting, post-processing, animation setup (rigs, Anim Graphs, Motion "
-                         "Matching), particles, and performance budgets."},
-    {"Level Designer", "level layout, blockout with basic shapes, pacing, lighting moods, navigation, encounters, and placing content in the editor."},
-    {"Game Designer", "mechanics, systems, progression, balance, player experience; you write short, concrete design notes and suggest how to prototype them."},
-    {"Producer", "planning: you break goals into milestones and small tasks in order, flag risks and scope, and keep plans realistic for a small team."},
-    {"QA Tester", "testing: you write test plans and edge cases, help reproduce bugs step by step, and turn findings into clear bug reports."},
+    {"Engine Expert", "how LSD_Engine is coded: the lsd API, events, components read and written from scripts, C / C++ game code and "
+                      "JavaScript; you map the developer's Unreal habits (Blueprints, C++ Actor Components) onto LSD_Engine code."},
+    {"UI Programmer", "game UI in code: .rml documents and .rcss styles (HTML / CSS on RmlUi), their own .js, and the lsd.ui_* calls that "
+                      "drive HUDs, crosshairs and menus."},
+    {"Code Reviewer", "reading the developer's scripts: you find bugs, explain errors from the Output Log step by step, and make code shorter and clearer."},
 };
 constexpr int kRoleCount = static_cast<int>(sizeof kRoles / sizeof kRoles[0]);
 
@@ -72,6 +70,13 @@ std::string engine_guide(const Role& role) {
            "table shows in the object's Details. Visual scripts (.lsdgraph) compile to Lua. C / C++ gameplay lives in Source/ and builds into "
            "Game.dll (Tools > Compile Game Code). Data assets (.lsdasset) hold Materials, Input Actions, Anim Graphs, Motion Databases and more. "
            "When the developer names an Unreal feature, map it to LSD_Engine's.\n\n"
+           "You only write code: Lua, JavaScript and C / C++ gameplay scripts, and UI documents (.rml / .rcss and their .js). You never make "
+           "or edit meshes, models, textures, materials, animations, sounds, levels or other content assets, and you do not ask the developer "
+           "to model or import art for your code. When code needs something visible (a gun, a pickup, a target, a door), use a built-in shape "
+           "as a placeholder: lsd.spawn(\"Cube\") or lsd.spawn(\"Sphere\"), then size and place it from code (lsd.set(e, \"Transform\", "
+           "{scale = {x = 0.3, y = 0.05, z = 0.1}}), lsd.set_position, lsd.set_rotation, lsd.add(e, \"AttachToSocket\", {target = ..., socket = ...})); "
+           "the developer swaps in real art later. If asked to make art, say you only write code and offer the placeholder version. "
+           "Prefer one script with `properties` for its settings, so it works as a component on any object.\n\n"
            "How to answer: be concise and concrete. When the developer must click something, give the steps (which panel, which menu, which "
            "button). When you write a file, put the whole file in one fenced code block whose first line gives the language and the path, "
            "for example ```lua Content/Script/Door.lua - the editor shows Create File and Attach to Selected buttons under it. Paths must be "
@@ -287,6 +292,37 @@ void draw_reply(EditorState& s, const std::string& text, int turn) {
     if (at < text.size()) ImGui::TextWrapped("%s", text.substr(at).c_str());
 }
 
+// Lessons: pick one, Apply it to the selected character, read how it is coded (its files have the usual buttons).
+void draw_lessons(EditorState& s) {
+    static u32 shown = 0;
+    static std::string report;
+    u32 count = 0;
+    const Lesson* list = lessons(count);
+    for (u32 i = 0; i < count; ++i) {
+        if (ImGui::Selectable(list[i].title, i == shown)) shown = i;
+        ImGui::SetItemTooltip("%s", list[i].summary);
+    }
+    ImGui::Separator();
+    const Lesson& lesson = list[shown < count ? shown : 0];
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", lesson.title);
+    ImGui::TextWrapped("%s", lesson.summary);
+    const bool ready = !s.playing && s.world && s.world->alive(s.selected) && s.world->get<world::SkeletalMesh>(s.selected);
+    ImGui::BeginDisabled(!ready);
+    if (with_tip(ImGui::Button("Apply to Selected Character"), "Writes the lesson's files (kept if they exist), its input and socket, and gives the selected character its component")) {
+        apply_lesson(s, shown, report);
+        std::snprintf(s.status, sizeof s.status, "%s", report.c_str());
+    }
+    ImGui::EndDisabled();
+    if (!ready) {
+        ImGui::SameLine();
+        ImGui::TextDisabled(s.playing ? "Stop Play first" : "Select a rigged character (a Skeletal Mesh)");
+    }
+    if (!report.empty()) ImGui::TextWrapped("%s", report.c_str());
+    ImGui::BeginChild("##lesson", ImVec2(0, 0), ImGuiChildFlags_Borders);
+    draw_reply(s, lesson.text, 1000 + static_cast<int>(shown));
+    ImGui::EndChild();
+}
+
 } // namespace
 
 void draw_settings(EditorState& s) {
@@ -332,6 +368,23 @@ void draw_window(EditorState& s, bool* open) {
     EditorSettings& set = s.settings;
     if (!set.assistant_enabled) {
         ImGui::TextDisabled("LSD Assistant is off (Editor Preferences > Plugins).");
+        ImGui::End();
+        return;
+    }
+    static bool show_lessons = false;
+    if (ImGui::BeginTabBar("##assistant")) {
+        if (with_tip(ImGui::BeginTabItem("Chat"), "Ask your model; it writes code")) {
+            show_lessons = false;
+            ImGui::EndTabItem();
+        }
+        if (with_tip(ImGui::BeginTabItem("Lessons"), "Worked examples: how a feature is coded, applied to the selected character in one click")) {
+            show_lessons = true;
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    if (show_lessons) {
+        draw_lessons(s);
         ImGui::End();
         return;
     }

@@ -41,6 +41,9 @@ const char* section_material(const world::SkeletalMesh& mesh, const SkinnedEntry
 // Where a skeletal mesh is drawn: its object's matrix, turned by facing_yaw. Use it (not
 // world_matrix) for drawing, picking, sockets and IK.
 Mat4 skeletal_matrix(const world::World& world, world::Entity e, const world::SkeletalMesh& mesh, const SkinnedEntry* model);
+// A joint's frame without its scale: rigs in centimetres scale every joint by 0.01, and socket offsets
+// (metres) and objects attached to a bone must not shrink with it.
+Mat4 without_scale(Mat4 m);
 
 // One animation file's clips on one model's skeleton, plus its notifies (from its .meta).
 struct ClipSet {

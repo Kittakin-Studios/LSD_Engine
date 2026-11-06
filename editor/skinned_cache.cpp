@@ -3,6 +3,7 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -141,6 +142,16 @@ f32 facing_yaw(const world::SkeletalMesh& mesh, const SkinnedEntry* model) {
         case 4: return 90.0f;    // -Y
         default: return model && model->unreal_rig ? 90.0f : 0.0f;
     }
+}
+
+Mat4 without_scale(Mat4 m) {
+    for (int c = 0; c < 3; ++c) {
+        const f32 length = std::sqrt(m.at(0, c) * m.at(0, c) + m.at(1, c) * m.at(1, c) + m.at(2, c) * m.at(2, c));
+        if (length > 1e-8f) {
+            for (int r = 0; r < 3; ++r) m.at(r, c) /= length;
+        }
+    }
+    return m;
 }
 
 Mat4 skeletal_matrix(const world::World& world, world::Entity e, const world::SkeletalMesh& mesh, const SkinnedEntry* model) {

@@ -363,7 +363,14 @@ std::vector<CodeBlock> code_blocks(const std::string& text) {
 
 bool writable_path(const std::string& path) {
     if (path.empty() || path.find("..") != std::string::npos || path.find(':') != std::string::npos || path[0] == '/' || path[0] == '\\') return false;
-    return starts(path, "Content/") || starts(path, "Source/");
+    if (!starts(path, "Content/") && !starts(path, "Source/")) return false;
+    // Code only: scripts, UI documents, game code (meshes, textures, levels, data assets are not its job).
+    const usize dot = path.rfind('.');
+    const std::string ext = dot == std::string::npos ? std::string() : path.substr(dot);
+    for (const char* code : {".lua", ".js", ".lsdgraph", ".rml", ".rcss", ".cpp", ".c", ".h", ".hpp"}) {
+        if (ext == code) return true;
+    }
+    return path.size() >= 14 && path.compare(path.size() - 14, 14, "CMakeLists.txt") == 0;
 }
 
 } // namespace lsd::editor::assistant
