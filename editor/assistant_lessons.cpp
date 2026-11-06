@@ -55,6 +55,7 @@ STEP 4: The Weapon component (Unreal: a Weapon Actor Component on the Character)
 - properties = { ... } are the component's settings: each shows in Details under the Script, per character (Unreal's Instance Editable variables). Ammo starts at 10 of 10.
 - on_start spawns the Cube, sizes it with the Transform's scale, turns its collision off, and gives it an Attach To Socket component pointing at this character's weapon_r. The engine then moves it with the hand every frame, after the animation.
 - Aim (RMB held): the camera's spring arm eases in to Aim Distance and slides over the right shoulder (Unreal: Spring Arm Target Arm Length and Socket Offset); the crosshair turns red.
+- The aim pose, in code: every frame while aiming, lsd.ik_reach puts the hand bone on a point Aim Reach metres from the shoulder along the camera's view, bending the elbow (Unreal: a Two Bone IK node in the Anim Blueprint). The arm comes up and the gun points where the crosshair is, on top of whatever animation plays; its weight follows the aim, so it eases in and out.
 - Shoot (LMB): a ray from the camera through the crosshair (lsd.camera_location + lsd.camera_forward, like Unreal's Line Trace by Channel from the camera), one round less, a tracer line from the gun to the hit. What it hits gets on_damage(self, amount, shooter) on its own script, if it has one (Unreal: Apply Damage / Event AnyDamage).
 - Reload (R): Unreal would play a montage and wait for it; here lsd.after(Reload Time, ...) is the timer (Set Timer by Event). Until it fires the HUD says Reloading... and shots are refused, then the magazine is full again. An Anim Graph can play a reload clip on the Reloading parameter.
 - The script only drives the player's character, so the same component on an AI character does nothing until you give it its own logic.
@@ -73,6 +74,9 @@ properties = {
   reload_time = 1.5,                -- seconds R takes to refill the magazine
   aim_distance = 1.6,               -- camera arm length while aiming, metres
   aim_shoulder = 0.5,               -- how far right the camera slides while aiming, metres
+  hand_bone = "hand_r",             -- the aim pose: this bone reaches out...
+  shoulder_bone = "upperarm_r",     -- ...from this one, along the view
+  aim_reach = 0.55,                 -- how far from the shoulder the hand goes, metres
   crosshair_size = 6,               -- the dot's size in pixels
   crosshair_color = "#FFFFFF",      -- the dot's colour (#RRGGBB)
   crosshair_aim_color = "#FF4040",  -- its colour while aiming
@@ -167,6 +171,14 @@ function on_update(self, dt)
     lsd.set_anim_param(self.entity, "Aiming", aim)  -- an Anim Graph can blend to an aim pose on this
   end
   self.aim = aim
+  if aim > 0 then  -- the aim pose: the hand out along the view, weighted by the aim (IK is asked for every frame)
+    local sx, sy, sz = lsd.socket(self.entity, self.shoulder_bone)
+    if sx then
+      local fx, fy, fz = lsd.camera_forward()
+      local r = self.aim_reach
+      lsd.ik_reach(self.entity, self.hand_bone, sx + fx * r, sy + fy * r, sz + fz * r, aim)
+    end
+  end
   if lsd.pressed("IA_Fire") then shoot(self) end
   if lsd.pressed("IA_Reload") then reload(self) end
   update_hud(self, aiming)
@@ -228,9 +240,16 @@ bool apply_gun(EditorState& s, const Lesson& lesson, std::string& report) {
     }
     // The bone the socket rides on: the first hand bone this rig has.
     const SkinnedEntry* model = s.skinned ? s.skinned->get(mesh->mesh) : nullptr;
+    // Each rig family's right hand and upper arm (Unreal, Mixamo, others).
+    const char* const kArms[][2] = {{"hand_r", "upperarm_r"}, {"RightHand", "RightArm"}, {"mixamorig:RightHand", "mixamorig:RightArm"},
+                                    {"Hand_R", "UpperArm_R"}, {"hand.R", "upper_arm.R"}, {"R_Hand", "R_UpperArm"}};
     const char* bone = nullptr;
-    for (const char* name : {"hand_r", "RightHand", "mixamorig:RightHand", "Hand_R", "hand.R", "R_Hand"}) {
-        if (!bone && model && model->model && model->model->find_joint(name) >= 0) bone = name;
+    const char* shoulder = nullptr;
+    for (const auto& arm : kArms) {
+        if (!bone && model && model->model && model->model->find_joint(arm[0]) >= 0) {
+            bone = arm[0];
+            shoulder = arm[1];
+        }
     }
     if (!bone) {
         report = "No right-hand bone found on this skeleton (hand_r, RightHand...): add a socket named weapon_r on its hand in the Mesh Editor, then Apply.";
@@ -305,6 +324,17 @@ bool apply_gun(EditorState& s, const Lesson& lesson, std::string& report) {
     }
     auto* script = existing ? world.get<world::Script>(e) : world.add<world::Script>(e);
     asset::to_string(weapon->guid, script->script);
+    if (bone && std::strcmp(bone, "hand_r") != 0) {  // another rig: its bones instead of the script's defaults
+        for (const auto& [key, value] : {std::pair{"hand_bone", bone}, std::pair{"shoulder_bone", shoulder}}) {
+            world::ScriptProperty* found = nullptr;
+            for (world::ScriptProperty& p : script->properties) found = std::strcmp(p.name, key) == 0 ? &p : found;
+            world::ScriptProperty added;
+            if (!found && script->properties.push_back(added)) found = &script->properties[script->properties.count - 1];
+            if (!found) continue;
+            std::snprintf(found->name, sizeof found->name, "%s", key);
+            std::snprintf(found->value, sizeof found->value, "%s", value);
+        }
+    }
     std::snprintf(s.pending_edit, sizeof s.pending_edit, "Apply Lesson");
     report += std::string(world.name(e)) + " has the Weapon component. Play: hold RMB to aim, click LMB to shoot, R to reload.";
     return true;

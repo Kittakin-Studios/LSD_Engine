@@ -878,7 +878,7 @@ PC only (`Saved/editor_settings.json`, never in the project or Git).
 When a reply contains a file (a code block headed like ```` ```lua Content/Script/Door.lua ````),
 the block has **Copy**, **Create** (or **Overwrite**, which asks twice) and, for scripts, **Attach to
 Selected** (a Script component running it, undoable). It may only write inside `Content/` and
-`Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Replies appear as they are written
+`Source/`. **Ctrl+Enter** sends; **Stop** ends a reply early (what it wrote stays); **New Chat** starts over. Replies appear as they are written
 (streamed); a file block gets its buttons once the reply is done. Requests go from this PC straight to the
 endpoint (through the system's `curl`); a failed one puts your message back in the box.
 
@@ -889,7 +889,8 @@ Existing files are kept, so your edits survive a second Apply. The console does 
 
 - **Gun on a hand socket (soldier)**: a Cube gun in the right hand through a `weapon_r` socket on
   `hand_r` (RightHand / mixamorig:RightHand on other rigs), 10/10 ammo, **RMB** aims (the spring arm
-  eases in over the right shoulder, the dot turns red), **LMB** shoots (a ray from the camera through
+  eases in over the right shoulder, the dot turns red, and IK raises the hand along the view so the gun points at
+  the crosshair: Hand Bone, Shoulder Bone, Aim Reach), **LMB** shoots (a ray from the camera through
   the crosshair, a tracer from the gun, `on_damage(self, amount, shooter)` on what it hits), **R**
   reloads (Reload Time, "Reloading..." on the HUD). It is one component, a Script running
   `Content/Weapon/Weapon.lua`; its Details show socket, ammo, max ammo, range, damage, reload time,

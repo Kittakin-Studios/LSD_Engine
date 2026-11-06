@@ -127,6 +127,7 @@ std::string project_context(EditorState& s) {
 // streams in (`partial`: its text so far, for the chat).
 struct Job {
     std::atomic<bool> done{false};
+    std::atomic<bool> stop{false};  // the Stop button: curl is ended, what arrived is kept
     Reply reply;
     std::mutex mutex;
     std::string partial;
@@ -137,7 +138,7 @@ struct Job {
 // reply as it arrives; `on_data` gets everything so far whenever curl pauses. Returns the HTTP status
 // (0: curl could not run or reach the server).
 int run_curl(const std::string& url, const std::vector<std::string>& headers, const std::string& body, std::string& reply,
-             const std::function<void(const std::string&)>& on_data) {
+             const std::function<void(const std::string&)>& on_data, const std::atomic<bool>& stop) {
     std::error_code error;
     const fs::path dir = "Saved/Assistant";
     fs::create_directories(dir, error);
@@ -158,6 +159,10 @@ int run_curl(const std::string& url, const std::vector<std::string>& headers, co
         SDL_IOStream* out = SDL_GetProcessOutput(process);
         char chunk[4096];
         while (out) {
+            if (stop) {
+                SDL_KillProcess(process, true);
+                break;
+            }
             const size_t got = SDL_ReadIO(out, chunk, sizeof chunk);
             if (got) {
                 reply.append(chunk, got);
@@ -227,10 +232,17 @@ void send(EditorState& s) {
             std::string text = parse_stream(st, 0, so_far).text;
             std::lock_guard<std::mutex> lock(job->mutex);
             job->partial = std::move(text);
-        });
+        }, job->stop);
         job->reply = parse_stream(st, status, reply);
+        if (job->stop) {  // what arrived becomes the answer, sent back later as plain text (no half thinking blocks)
+            const std::string text = job->reply.text;
+            job->reply = Reply{};
+            job->reply.ok = !text.empty();
+            job->reply.text = text + "\n\n(Stopped.)";
+            job->reply.error = "Stopped.";
+        }
         job->done = true;
-    }).detach();  // shortcut: one request at a time, not cancellable; add a Stop button (SDL_KillProcess) when long replies go astray
+    }).detach();  // shortcut: one request at a time
 }
 
 // The reply's text, its code blocks as read-only boxes with their buttons.
@@ -476,9 +488,11 @@ void draw_window(EditorState& s, bool* open) {
     // The message box: Ctrl+Enter sends.
     ImGui::InputTextMultiline("##input", g_chat.input, sizeof g_chat.input, ImVec2(-1, ImGui::GetTextLineHeight() * 5));
     const bool ctrl_enter = ImGui::IsItemFocused() && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter);
-    ImGui::BeginDisabled(g_chat.job != nullptr);
-    if (with_tip(ImGui::Button("Send (Ctrl+Enter)"), "Sends the message to your model") || ctrl_enter) send(s);
-    ImGui::EndDisabled();
+    if (g_chat.job) {
+        if (with_tip(ImGui::Button("Stop"), "Ends the reply now; what it wrote so far stays")) g_chat.job->stop = true;
+    } else if (with_tip(ImGui::Button("Send (Ctrl+Enter)"), "Sends the message to your model") || ctrl_enter) {
+        send(s);
+    }
     ImGui::SameLine();
     with_tip(ImGui::Checkbox("Project context", &g_chat.include_context), "Includes the level, the selected object's components and the asset list with the message");
     ImGui::End();
