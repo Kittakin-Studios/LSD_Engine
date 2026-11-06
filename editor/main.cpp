@@ -74,6 +74,8 @@
 #include <filesystem>
 #include <new>
 #include <cctype>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 bool g_gpu_culling = true;  // r.GPUCulling
@@ -1614,6 +1616,15 @@ int main(int argc, char** argv) {
         std::error_code cwd_error;
         fs::current_path(base, cwd_error);
         game_mode = true;
+        // Shipping (Project Settings > Packaging): what players get takes no remote console, no -exec
+        // lines and no smoke tests, so nobody drives the game from outside.
+        std::ifstream marker(lsd::editor::kGameMarker);
+        const std::string text((std::istreambuf_iterator<char>(marker)), std::istreambuf_iterator<char>());
+        if (text.find("\"shipping\": true") != std::string::npos) {
+            remote_arg = 0;
+            exec_count = 0;
+            smoke_arg = 0.0f;
+        }
     }
     // The log on disk and crash reports (Saved/Logs, Saved/Crashes), like Unreal's Saved folder.
     std::error_code log_error;

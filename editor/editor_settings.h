@@ -120,6 +120,9 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Packaging",
                  Tooltip = "Cook (Unreal's): the package gets only the assets the game uses, found from these settings (Game Default Level, Game Mode...) through references and through names in scripts and UI, with their compiled data so nothing compiles on first run. What was left out is listed in cook_report.txt. Off: all of Content/")
     bool cook_used_only = false;
+    LSD_PROPERTY(Edit, Category = "Packaging", Widget = "Choice:Development,Shipping",
+                 Tooltip = "Development: the package takes -remote (the editor's Remote Console), -exec and test commands, for testing on other PCs. Shipping: what players get; those are ignored (logs and crash reports stay)")
+    u32 build_configuration = 0;
     LSD_PROPERTY(Edit, Category = "Localization", Widget = "Asset:Table", Tooltip = "String table: a Data Table with Key, then one column per language (en, fr...)") char string_table[33] = "";
     LSD_PROPERTY(Edit, Category = "Localization", Tooltip = "The language the game starts in (a column of the string table)") char default_language[16] = "en";
     LSD_PROPERTY(Edit, Category = "Audio", Widget = "Asset:SoundMix", Tooltip = "Pushed when the game starts and never popped (Unreal's Base Sound Mix): the project's overall balance")

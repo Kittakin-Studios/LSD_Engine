@@ -217,7 +217,7 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
         }
     }
     if (FILE* marker = std::fopen((out / kGameMarker).generic_string().c_str(), "wb")) {
-        std::fprintf(marker, "{\n  \"packaged\": true\n}\n");
+        std::fprintf(marker, "{\n  \"packaged\": true,\n  \"shipping\": %s\n}\n", project.build_configuration == 1 ? "true" : "false");
         std::fclose(marker);
     }
     const bool stale = release && fs::exists(here / "lsd_editor.exe", error) && fs::last_write_time(exe, error) < fs::last_write_time(here / "lsd_editor.exe", error);
