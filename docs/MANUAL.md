@@ -153,6 +153,8 @@ still move the camera). Every stroke is one undo step.
 | *Animation: timelines and animation graphs.* | *Scripting: the Lua Debugger and visual scripts beside a small viewport.* |
 | ![UI workspace](images/ws_ui.jpg) | ![Effects workspace](images/ws_effects.jpg) |
 | *UI: UI documents and their designer.* | *Effects: particle systems and sound cues.* |
+| ![Multiplayer workspace](images/mp_workspace.jpg) | |
+| *Multiplayer: settings, Play as Host / Join, the session, join codes.* | |
 
 **Panel tabs** (the top row, like Unreal's tabs across the top of the editor): the first tab is
 **Level** (the viewport, Outliner, Details, Content Browser). An editor you open from Layout (double-click
@@ -173,6 +175,7 @@ unchanged.
 | **Scripting** | Small viewport, big editor area with the **Lua Debugger** | Visual scripts |
 | **UI** | Viewport, editor along the bottom | UI documents (UMG) |
 | **Effects** | Viewport with an editor beside it | Particle systems (Niagara), Sound Cues |
+| **Multiplayer** | Viewport, the **Multiplayer** panel under it: project settings, Play as Host, Play and Join (a code or address), Find LAN Games, the session (players, ping, traffic), join codes with Copy | none |
 
 Each workspace remembers how you resize and rearrange it (in `Saved/Layouts/Workspaces/`).
 Right-click a tab > **Reset to Default** to rebuild it. **+** saves the current arrangement as a new
@@ -600,7 +603,9 @@ game is single player and nothing networked runs. On:
 
 #### Playtesting over the internet
 
-The host opens the menu and clicks **Show join codes**. There are three ways in, best first:
+Step by step with pictures: [Examples/Multiplayer.md](Examples/Multiplayer.md). The host clicks
+**Show join codes** (the game's menu, or the Multiplayer workspace's panel). There are three ways in,
+best first:
 
 1. **Internet code** (no setup). The first Show join codes asks the router to forward the game's
    UDP port to this PC (UPnP, a couple of seconds) and reads the public address. When it works, the

@@ -2277,6 +2277,27 @@ int main(int argc, char** argv) {
             else LSD_LOG_ERROR("editor", "Could not open the play window: %s", SDL_GetError());
         }
         if (std::exchange(state.close_play_window, false)) close_play_window();
+        if (state.show_multiplayer) {  // the Multiplayer panel's view of the session (about 4 times a second)
+            static lsd::u64 next_refresh = 0;
+            if (SDL_GetTicks() >= next_refresh || state.net_codes_wanted) {
+                next_refresh = SDL_GetTicks() + 250;
+                auto& v = state.net;
+                const lsd::net::NetSession& net = play.network();
+                const lsd::net::NetStats st = net.stats();
+                v.mode = !state.playing ? 0 : net.mode() == lsd::net::Mode::Server ? 1 : net.mode() == lsd::net::Mode::Client ? 2 : 0;
+                v.player = net.active() ? net.player_id() : 0;
+                v.connected = net.active() && net.connected();
+                v.players = st.players;
+                v.replicated = st.replicated;
+                v.ping_ms = st.ping_ms;
+                v.in_kbs = st.bytes_in_per_second / 1024.0f;
+                v.out_kbs = st.bytes_out_per_second / 1024.0f;
+                if (v.mode == 1 && state.net_codes_wanted) play.join_codes(v.codes, sizeof v.codes, true);
+                else if (v.mode == 1 && v.codes[0]) play.join_codes(v.codes, sizeof v.codes, false);  // UPnP finishing
+                else if (v.mode != 1) v.codes[0] = '\0';
+                state.net_codes_wanted = false;
+            }
+        }
         if (g_play_window && g_play_window_deadline && SDL_GetTicks() > g_play_window_deadline) close_play_window(true);  // did not close when asked
         if (g_play_window && SDL_WaitProcess(g_play_window, false, nullptr)) {  // its window was closed (Esc in the game)
             SDL_DestroyProcess(g_play_window);
@@ -2295,9 +2316,13 @@ int main(int argc, char** argv) {
             const lsd::editor::ProjectSettings& pr = state.project;
             net_play.enabled = pr.multiplayer;
             net_play.allowed = pr.multiplayer;
-            net_play.host = connect_arg == nullptr;
+            net_play.host = connect_arg == nullptr && !state.net_join[0];
             net_play.dedicated = dedicated_arg;
             if (connect_arg) std::snprintf(net_play.address, sizeof net_play.address, "%s", connect_arg);
+            if (state.net_join[0]) {  // the Multiplayer panel's Join: this Play is a client
+                std::snprintf(net_play.address, sizeof net_play.address, "%s", state.net_join);
+                state.net_join[0] = '\0';
+            }
             net_play.settings.port = static_cast<lsd::u16>(pr.port);
             net_play.settings.max_players = pr.max_players;
             net_play.settings.tick_rate = pr.tick_rate;
@@ -2323,7 +2348,7 @@ int main(int argc, char** argv) {
                 if (!net_level_arg && name.find('.') != std::string::npos) name.resize(name.rfind('.'));
                 play.set_level_name(name.c_str());
             }
-            if (pr.multiplayer && !game_mode && pr.play_players > 1) {
+            if (pr.multiplayer && !game_mode && pr.play_players > 1 && net_play.host) {  // a joining Play opens no windows of its own
                 const std::string level = "Saved/MultiplayerPlay" + std::string(lsd::world::kLevelExtension);
                 if (FILE* f = std::fopen(level.c_str(), "wb")) {
                     std::fwrite(play_snapshot.data(), 1, play_snapshot.size(), f);

@@ -12,6 +12,8 @@
 #include "ui_editor.h"
 #include "packaging.h"
 
+#include "lsd/net/join_code.h"
+#include "lsd/net/net.h"
 #include "lsd/script/material_graph.h"
 
 #include "mesh_cache.h"
@@ -988,6 +990,7 @@ struct WorkspaceDef {
     const char* hint;  // shown in the empty editor area
     bool lua_debugger;
     ImGuiID (*build)(ImGuiID root);
+    bool multiplayer = false;  // shows the Multiplayer panel
 };
 
 ImGuiID dock_panels(ImGuiID right, f32 outliner_share, ImGuiID content) {
@@ -1043,6 +1046,18 @@ ImGuiID build_scripting_workspace(ImGuiID root) {  // Blender's Scripting: a big
     return area;
 }
 
+constexpr char kMultiplayerWindow[] = "Multiplayer###MultiplayerPanel";
+
+ImGuiID build_multiplayer_workspace(ImGuiID root) {  // the viewport, the Multiplayer panel under it beside the Content Browser
+    ImGuiID right = 0, left = 0, bottom = 0, viewport = 0, content = 0, panel = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.20f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.40f, &bottom, &viewport);
+    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.30f, &content, &panel);
+    dock_panels(right, 0.40f, content);
+    ImGui::DockBuilderDockWindow(kMultiplayerWindow, panel);
+    return 0;
+}
+
 constexpr WorkspaceDef kWorkspaces[] = {
     {"Layout", "The level: viewport, Outliner, Details, Content Browser", nullptr, false, build_layout_workspace},
     {"Modeling", "Meshes and prefabs: their editors beside the viewport", "Double-click a mesh or a prefab in the Content Browser to edit it here.", false, build_side_editor_workspace},
@@ -1051,6 +1066,7 @@ constexpr WorkspaceDef kWorkspaces[] = {
     {"Scripting", "Visual scripts, the Lua Debugger and a small viewport", "Double-click a visual script to edit it here (Lua opens in your code editor).", true, build_scripting_workspace},
     {"UI", "Game UI documents (HTML / CSS) along the bottom", "Double-click a UI document (.rml) to edit it here.", false, build_bottom_editor_workspace},
     {"Effects", "Particle systems (Niagara) and sound cues beside the viewport", "Double-click a particle system or a sound cue to edit it here.", false, build_side_editor_workspace},
+    {"Multiplayer", "Host, join and playtest multiplayer: settings, join codes, LAN games, players and traffic", nullptr, false, build_multiplayer_workspace, true},
 };
 
 const WorkspaceDef* find_workspace_def(const EditorSettings& set, const char* name) {
@@ -1081,6 +1097,7 @@ void switch_workspace(EditorState& s, const char* name, ImGuiID dockspace, ImVec
     std::snprintf(s.settings.workspace, sizeof s.settings.workspace, "%s", name);
     const WorkspaceDef* def = find_workspace_def(s.settings, name);
     s.show_debugger = def && def->lua_debugger;
+    s.show_multiplayer = def && def->multiplayer;
     const std::string file = workspace_file(name);
     if (std::filesystem::exists(file, ec)) apply_layout_file(file.c_str(), s.status, sizeof s.status);
     else if (def) build_workspace(*def, dockspace, size);
@@ -1154,6 +1171,132 @@ void draw_workspace_tabs(EditorState& s) {
     }
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+// The Multiplayer workspace's panel (Unreal: the multiplayer options of Play, Session Frontend's
+// players and traffic): the project's multiplayer settings, Play as host or join a code, the host's
+// join codes and the session while playing.
+void draw_multiplayer_panel(EditorState& s) {
+    if (!s.show_multiplayer) return;
+    if (!ImGui::Begin(kMultiplayerWindow, &s.show_multiplayer)) {
+        ImGui::End();
+        return;
+    }
+    ProjectSettings& pr = s.project;
+    const EditorState::NetView& v = s.net;
+    if (ImGui::BeginTable("##mp", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable)) {
+        ImGui::TableNextColumn();  // ---- settings
+        ImGui::SeparatorText("Project (Config/project.json)");
+        with_tip(ImGui::Checkbox("Multiplayer", &pr.multiplayer), "Off: a single-player game, nothing networked runs");
+        ImGui::BeginDisabled(!pr.multiplayer || s.playing);
+        int players = static_cast<int>(pr.play_players), port = static_cast<int>(pr.port), max_players = static_cast<int>(pr.max_players);
+        ImGui::SetNextItemWidth(120.0f);
+        if (with_tip(ImGui::SliderInt("Players in Play", &players, 1, 8), "Play hosts here and opens a game window for each other player")) pr.play_players = static_cast<u32>(players);
+        ImGui::SetNextItemWidth(120.0f);
+        if (with_tip(ImGui::InputInt("Port", &port, 0), "The UDP port the server listens on (testers' routers forward this one)")) pr.port = static_cast<u32>(std::clamp(port, 1024, 65535));
+        ImGui::SetNextItemWidth(120.0f);
+        if (with_tip(ImGui::SliderInt("Max Players", &max_players, 2, 64), "How many players one server takes, the host included")) pr.max_players = static_cast<u32>(max_players);
+        ImGui::EndDisabled();
+        if (with_tip(ImGui::Button("Save"), "Writes the Project Settings (everyone on the team gets them)"))
+            std::snprintf(s.status, sizeof s.status, reflect::save_file(pr, "Config/project.json") ? "Saved %s" : "Could not save %s", "Config/project.json");
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("All Settings..."), "Project Settings > Multiplayer, Chat and Voice")) s.show_project_settings = true;
+
+        ImGui::TableNextColumn();  // ---- play / join
+        ImGui::SeparatorText(s.playing ? "Session" : "Play");
+        if (!pr.multiplayer) {
+            ImGui::TextWrapped("Tick Multiplayer to host and join.");
+        } else if (!s.playing) {
+            if (with_tip(ImGui::Button("Play as Host"), "Play hosts the game here (Alt+P); the other Players in Play join it")) s.play_requested = true;
+            static char code[64] = "";
+            static char why[96] = "";
+            ImGui::SetNextItemWidth(160.0f);
+            const bool enter = ImGui::InputTextWithHint("##code", "join code or address", code, sizeof code, ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (with_tip(ImGui::Button("Play and Join"), "Play as a client of that game (a tester's or another PC's)") || enter) {
+                char address[64];
+                if (net::parse_join_code(code, static_cast<u16>(pr.port), address, sizeof address)) {
+                    std::snprintf(s.net_join, sizeof s.net_join, "%s", address);
+                    s.play_requested = true;
+                    why[0] = '\0';
+                } else {
+                    std::snprintf(why, sizeof why, "Not a join code (10 letters and digits) or an address");
+                }
+            }
+            if (why[0]) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", why);
+            static net::LanGame games[16];
+            static u32 game_count = 0;
+            static bool searched = false;
+            if (with_tip(ImGui::Button("Find LAN Games"), "Games hosting on this network (half a second)")) {
+                game_count = net::NetSession::find_lan_games(static_cast<u16>(pr.port), 0.5f, games, 16);
+                searched = true;
+            }
+            for (u32 k = 0; k < game_count; ++k) {
+                ImGui::PushID(static_cast<int>(k));
+                ImGui::Text("%s  %s  %u/%u", games[k].name, games[k].address, games[k].players, games[k].max_players);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Join")) {
+                    std::snprintf(s.net_join, sizeof s.net_join, "%s", games[k].address);
+                    s.play_requested = true;
+                }
+                ImGui::PopID();
+            }
+            if (searched && !game_count) ImGui::TextDisabled("No games on this network");
+        } else {
+            static const char* const modes[] = {"Single player", "Server (host)", "Client"};
+            ImGui::Text("%s, player %u%s", modes[v.mode], v.player, v.mode == 2 && !v.connected ? " (connecting)" : "");
+            if (v.mode != 0) {
+                ImGui::Text("Players %u   Replicated %u", v.players, v.replicated);
+                ImGui::Text("Ping %.0f ms   In %.1f KB/s   Out %.1f KB/s", v.ping_ms, v.in_kbs, v.out_kbs);
+            }
+        }
+
+        ImGui::TableNextColumn();  // ---- join codes
+        ImGui::SeparatorText("Join Codes");
+        if (!s.playing || v.mode != 1) {
+            ImGui::TextWrapped("Play as Host, then give testers a code. They paste it into Join (this panel, or the game's Multiplayer menu: Content/Multiplayer).");
+        } else {
+            if (with_tip(ImGui::Button(v.codes[0] ? "Refresh" : "Show Join Codes"), "Lists this PC's codes; the first time it asks the router to forward the port (UPnP)")) s.net_codes_wanted = true;
+            for (const char* line = v.codes; *line;) {  // "upnp|state|message|code" then "lan|address|code"
+                const char* end = std::strchr(line, '\n');
+                const std::string row(line, end ? static_cast<usize>(end - line) : std::strlen(line));
+                line = end ? end + 1 : line + row.size();
+                const usize a = row.find('|'), b = row.find('|', a + 1), c = row.find('|', b + 1);
+                if (a == std::string::npos || b == std::string::npos) continue;
+                const std::string kind = row.substr(0, a);
+                std::string label, code;
+                if (kind == "upnp" && c != std::string::npos) {
+                    const std::string st = row.substr(a + 1, b - a - 1);
+                    code = row.substr(c + 1);
+                    label = "Internet";
+                    if (code.empty()) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.3f, 1.0f));
+                        ImGui::TextWrapped("Internet: %s", st == "working" ? "asking the router..." : st == "failed" ? row.substr(b + 1, c - b - 1).c_str() : "-");
+                        ImGui::PopStyleColor();
+                        continue;
+                    }
+                } else if (kind == "lan") {
+                    const std::string address = row.substr(a + 1, b - a - 1);
+                    code = row.substr(b + 1);
+                    unsigned x = 0, y = 0;
+                    const bool tailscale = std::sscanf(address.c_str(), "%u.%u", &x, &y) == 2 && x == 100 && (y & 0xC0u) == 64u;
+                    label = (tailscale ? "Tailscale " : "LAN ") + address;
+                } else {
+                    continue;
+                }
+                ImGui::PushID(label.c_str());
+                ImGui::Text("%s:", label.c_str());
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "%s", code.c_str());
+                ImGui::SameLine();
+                if (with_tip(ImGui::SmallButton("Copy"), "Copies the code to send to testers")) ImGui::SetClipboardText(code.c_str());
+                ImGui::PopID();
+            }
+        }
+        ImGui::TextDisabled("Guide: docs/Examples/Multiplayer.md");
+        ImGui::EndTable();
+    }
+    ImGui::End();
 }
 
 // A workspace's editor area while no asset editor is open in it (Blender shows an empty editor too).
@@ -5555,6 +5698,7 @@ void draw_editor(EditorState& s) {
     draw_world_settings_window(s);
     draw_message_log(s);
     draw_project_settings(s);
+    draw_multiplayer_panel(s);
     draw_level_dialogs(s);
     draw_graph_editor(s);
     draw_table_editor(s);

@@ -4,7 +4,7 @@ Read this first. It is the short, current summary of how LSD_Engine is built and
 The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to use the engine),
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
 examples), [Examples/Examples.md](docs/Examples/Examples.md) (first-timer tutorial: input actions, health / stamina HUD,
-interact; its scripts were run for real), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
+interact; its scripts were run for real), [Examples/Multiplayer.md](docs/Examples/Multiplayer.md) (playtests: join codes, Tailscale), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
 `docs/` is also the developer's Obsidian vault (settings in the gitignored `docs/.obsidian/`): keep links as
 relative Markdown links, not `[[wikilinks]]`. Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
 the `screenshot` console command and `ui.Click`, in the default layout); retake one when its panel changes.
@@ -161,7 +161,8 @@ Blender-style workspace tabs (Layout = the original arrangement; `editor/workspa
 Vehicles / Transports / Movers (Place tab, cube placeholders; nodes in the Vehicles and Movers menus).
 Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
 script events, text and voice chat (Opus); Play opens a game window per extra player; playtests by join code
-(`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`.
+(`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`, the Multiplayer workspace tab (its panel:
+settings, Play as Host / Join, session, join codes).
 2D (Paper2D, `editor/paper2d.*`, the Level tab's 2D mode): Sprite (sheets + flipbooks), Tile Map
 (palette painting), Lock 2D physics, side-scroller Character, orthographic Camera.
 Graphics: sky reflections without cubemaps, auto exposure, a default look without a volume, sky

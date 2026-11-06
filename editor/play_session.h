@@ -132,6 +132,9 @@ public:
     // The level's asset name (a joining player follows the server's); set before start.
     void set_level_name(const char* name) { std::snprintf(level_name_, sizeof level_name_, "%s", name); }
     void close_port() { upnp_.stop(); }  // Play ended: the router forward (lsd.net_join_code) goes
+    // Join codes as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
+    // `map_port`: a server asks the router to forward its port (once; a couple of seconds).
+    void join_codes(char* out, usize capacity, bool map_port);
     // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
     void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for

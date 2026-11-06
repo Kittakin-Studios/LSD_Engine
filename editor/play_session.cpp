@@ -821,22 +821,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         std::snprintf(self.level_request_, sizeof self.level_request_, "%s", path);
         return true;
     };
-    host.net_join_codes = [](void* user, char* out, usize capacity) {
-        auto& self = *static_cast<PlaySession*>(user);
-        const u16 port = self.net_play_.settings.port;
-        if (self.net_.mode() == net::Mode::Server && self.upnp_.state() == net::PortMapper::State::Off) self.upnp_.start(port);
-        static const char* const states[] = {"off", "working", "open", "failed"};
-        char internet[16] = "";
-        if (self.upnp_.state() == net::PortMapper::State::Open) net::make_join_code(self.upnp_.external_address(), port, internet, sizeof internet);
-        int used = std::snprintf(out, capacity, "upnp|%s|%s|%s\n", states[static_cast<int>(self.upnp_.state())], self.upnp_.message(), internet);
-        char locals[8][16];
-        const u32 n = net::local_addresses(locals, 8);
-        for (u32 k = 0; k < n && used > 0 && static_cast<usize>(used) < capacity; ++k) {
-            char code[16];
-            net::make_join_code(locals[k], port, code, sizeof code);
-            used += std::snprintf(out + used, capacity - static_cast<usize>(used), "lan|%s|%s\n", locals[k], code);
-        }
-    };
+    host.net_join_codes = [](void* user, char* out, usize capacity) { static_cast<PlaySession*>(user)->join_codes(out, capacity, true); };
     host.net_find_games = [](void* user, f32 seconds, char* out, usize capacity) {
         const auto& self = *static_cast<PlaySession*>(user);
         net::LanGame games[32];
@@ -1135,6 +1120,22 @@ world::Entity PlaySession::create_spawn(world::World& world, const char* name, V
         std::snprintf(world.add<world::StaticMesh>(e)->mesh, sizeof(world::StaticMesh::mesh), "%s", key);
     }
     return e;
+}
+
+void PlaySession::join_codes(char* out, usize capacity, bool map_port) {
+    const u16 port = net_play_.settings.port;
+    if (map_port && net_.mode() == net::Mode::Server && upnp_.state() == net::PortMapper::State::Off) upnp_.start(port);
+    static const char* const states[] = {"off", "working", "open", "failed"};
+    char internet[16] = "";
+    if (upnp_.state() == net::PortMapper::State::Open) net::make_join_code(upnp_.external_address(), port, internet, sizeof internet);
+    int used = std::snprintf(out, capacity, "upnp|%s|%s|%s\n", states[static_cast<int>(upnp_.state())], upnp_.message(), internet);
+    char locals[8][16];
+    const u32 n = net::local_addresses(locals, 8);  // shortcut: asks the OS each call; cache it if the panel's refresh shows up in stat dump
+    for (u32 k = 0; k < n && used > 0 && static_cast<usize>(used) < capacity; ++k) {
+        char code[16];
+        net::make_join_code(locals[k], port, code, sizeof code);
+        used += std::snprintf(out + used, capacity - static_cast<usize>(used), "lan|%s|%s\n", locals[k], code);
+    }
 }
 
 bool PlaySession::take_level_request(char* path, usize capacity) {

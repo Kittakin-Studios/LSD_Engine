@@ -155,7 +155,7 @@ void PortMapper::run() {
 #endif
     auto fail = [this](const char* why) {
         std::snprintf(message_, sizeof message_, "%s", why);
-        LSD_LOG_WARN("net", "UPnP: %s", why);
+        LSD_LOG_INFO("net", "UPnP: %s", why);  // an answer, not a fault: the join code panel / menu says what to do
         state_.store(State::Failed, std::memory_order_release);
     };
     int error = 0;

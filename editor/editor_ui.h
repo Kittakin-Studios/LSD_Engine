@@ -181,6 +181,18 @@ struct EditorState {
     GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
     bool user_settings_changed = false;         // main.cpp applies and saves them
     bool show_debugger = false;        // Tools > Lua Debugger
+    // The Multiplayer workspace's panel. main.cpp fills `net` each frame while playing; the panel asks
+    // for join codes (`net_codes_wanted`: the router forward starts) and for Play as a client (`net_join`).
+    bool show_multiplayer = false;
+    struct NetView {
+        int mode = 0;  // 0 standalone, 1 server, 2 client
+        u32 player = 0, players = 0, replicated = 0;
+        bool connected = false;
+        f32 ping_ms = 0, in_kbs = 0, out_kbs = 0;
+        char codes[1024] = "";  // PlaySession::join_codes lines
+    } net;
+    bool net_codes_wanted = false;
+    char net_join[64] = "";  // the next Play joins this address ("" = host)
     bool show_assistant = false;       // Tools > LSD Assistant
     bool new_script_popup = false;     // Tools > New C / C++ Script asks for a name and language
     static constexpr u32 kMaxKept = 64;
