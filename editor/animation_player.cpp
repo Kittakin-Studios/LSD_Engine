@@ -192,6 +192,8 @@ const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
 }
 
 void AnimationPlayer::reset() {
+    montages_.clear();
+    finished_montages_.clear();
     for (State& s : states_) {
         s.time = 0.0f;
         s.graph = anim::GraphState{};
@@ -223,7 +225,84 @@ void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32
 }
 
 // After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
+f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend) {
+    world::Entity mesh_entity = world.alive(e) && world.get<world::SkeletalMesh>(e) ? e : world::Entity{};
+    for (u32 slot = 0; slot < world.slot_count() && !mesh_entity.valid(); ++slot) {  // a Character's mesh under it
+        const world::Entity c = world.entity_at_slot(slot);
+        if (c.valid() && world.parent(c) == e && world.get<world::SkeletalMesh>(c)) mesh_entity = c;
+    }
+    const auto* mesh = mesh_entity.valid() ? world.get<world::SkeletalMesh>(mesh_entity) : nullptr;
+    if (!mesh) return 0.0f;
+    char guid[33] = "";
+    for (usize i = 0; i < cache.registry().count() && !guid[0]; ++i) {
+        const asset::AssetRecord& r = cache.registry().get(i);
+        if (std::strcmp(r.name, animation) == 0) asset::to_string(r.guid, guid);
+    }
+    const ClipSet* set = guid[0] ? cache.clips(mesh->mesh, guid) : nullptr;
+    if (!set || set->count == 0 || set->clips[0].duration <= 0.0f) return 0.0f;
+    stop_montage(e, 0.0f);  // one at a time per object (Unreal's default slot)
+    Montage m;
+    m.owner = e;
+    m.mesh = mesh_entity;
+    std::snprintf(m.animation, sizeof m.animation, "%s", guid);
+    std::snprintf(m.from_bone, sizeof m.from_bone, "%s", from_bone ? from_bone : "");
+    m.rate = rate > 0.0f ? rate : 1.0f;
+    m.blend = blend > 0.0f ? blend : 0.0f;
+    montages_.push_back(m);
+    return set->clips[0].duration / m.rate;
+}
+
+void AnimationPlayer::stop_montage(world::Entity e, f32 blend) {
+    for (usize i = montages_.size(); i-- > 0;) {
+        if (montages_[i].owner != e) continue;
+        if (blend > 0.0f) {
+            montages_[i].fade_speed = 1.0f / blend;
+        } else {
+            finished_montages_.push_back(e);
+            montages_.erase(montages_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+}
+
+bool AnimationPlayer::montage_playing(world::Entity e) const {
+    for (const Montage& m : montages_) {
+        if (m.owner == e && m.fade_speed == 0.0f) return true;
+    }
+    return false;
+}
+
+void AnimationPlayer::take_finished_montages(std::vector<world::Entity>& out) {
+    out.insert(out.end(), finished_montages_.begin(), finished_montages_.end());
+    finished_montages_.clear();
+}
+
+void AnimationPlayer::apply_montage(const world::World& world, State& state, const SkinnedEntry& entry) {
+    for (usize i = 0; i < montages_.size(); ++i) {
+        Montage& m = montages_[i];
+        const auto* mesh = m.mesh == state.entity ? world.get<world::SkeletalMesh>(state.entity) : nullptr;
+        if (!mesh || !cache_ || !entry.model) continue;
+        const ClipSet* set = cache_->clips(mesh->mesh, m.animation);
+        const anim::Clip* clip = set && set->count ? &set->clips[0] : nullptr;
+        if (!clip || clip->duration <= 0.0f) continue;
+        m.time += dt_ * m.rate;
+        if (m.fade_speed > 0.0f) m.fade -= dt_ * m.fade_speed;
+        if (m.time >= clip->duration || m.fade <= 0.0f) {  // played out (or faded): back to what plays under it
+            finished_montages_.push_back(m.owner);
+            montages_.erase(montages_.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+            continue;
+        }
+        f32 w = m.fade;
+        if (m.blend > 0.0f) {
+            const f32 in = m.time / m.blend, out = (clip->duration - m.time) / m.blend;
+            w = std::fmin(w, std::fmin(in < 1.0f ? in : 1.0f, out < 1.0f ? out : 1.0f));
+        }
+        state.pose.layer(*entry.model, clip, m.time / clip->duration, w, m.from_bone[0] ? entry.model->find_joint(m.from_bone) : -1);
+    }
+}
+
 void AnimationPlayer::apply_ik(world::World& world, State& state, const SkinnedEntry& entry) {
+    apply_montage(world, state, entry);  // montages over the sampled pose first, IK on top of both
     const anim::SkinnedModel& model = *entry.model;
     const auto* mesh = world.get<world::SkeletalMesh>(state.entity);
     const Mat4 to_world = mesh ? skeletal_matrix(world, state.entity, *mesh, &entry) : world.world_matrix(state.entity);
@@ -312,6 +391,8 @@ void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache&
 }
 
 void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds) {
+    cache_ = &cache;
+    dt_ = dt;
     for (State& s : states_) {  // objects deleted or without the component any more
         if (!s.used || (world.alive(s.entity) && world.get<world::SkeletalMesh>(s.entity))) continue;
         s.used = false;

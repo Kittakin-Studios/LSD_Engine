@@ -583,6 +583,10 @@ struct Pose::Impl {
     // Blending: one sampled pose per input.
     ozz::animation::SamplingJob::Context contexts[kMaxBlendInputs];
     std::vector<ozz::math::SoaTransform> layers[kMaxBlendInputs];
+    // layer(): the clip laid over, the pose under it and each one's per-joint weights.
+    ozz::animation::SamplingJob::Context over_context;
+    std::vector<ozz::math::SoaTransform> over, base;
+    std::vector<ozz::math::SimdFloat4> over_weights, base_weights;
 };
 
 Pose::~Pose() {
@@ -646,6 +650,50 @@ void Pose::sample_blend(const SkinnedModel& model, const BlendInput* inputs, u32
         if (!blend.Run()) return;
     }
     rebuild(model, -1);
+}
+
+bool Pose::layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 weight, i32 from_joint) {
+    if (!impl_ || !model.impl || !model.impl->skeleton || !clip || !clip->impl || weight <= 0.0f) return false;
+    const auto& skeleton = *model.impl->skeleton;
+    const ozz::animation::Animation* animation = clip->impl->animation.get();
+    const usize soa = impl_->locals.size();
+    if (!animation || animation->num_tracks() != skeleton.num_joints() || soa != static_cast<usize>(skeleton.num_soa_joints())) return false;
+    impl_->over.resize(soa);
+    impl_->over_context.Resize(animation->num_tracks());
+    ozz::animation::SamplingJob sampling;
+    sampling.animation = animation;
+    sampling.context = &impl_->over_context;
+    sampling.ratio = ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio;
+    sampling.output = ozz::make_span(impl_->over);
+    if (!sampling.Run()) return false;
+    // The joints it covers: from_joint and everything under it (parents come before their children).
+    const auto parents = skeleton.joint_parents();
+    std::vector<f32> mask(soa * 4, 0.0f);
+    for (usize j = 0; j < static_cast<usize>(skeleton.num_joints()); ++j) {
+        const i32 parent = parents[j];
+        mask[j] = from_joint < 0 || static_cast<i32>(j) == from_joint || (parent >= 0 && mask[static_cast<usize>(parent)] > 0.0f) ? 1.0f : 0.0f;
+    }
+    const f32 w = weight > 1.0f ? 1.0f : weight;
+    impl_->base = impl_->locals;
+    impl_->over_weights.resize(soa);
+    impl_->base_weights.resize(soa);
+    for (usize s = 0; s < soa; ++s) {
+        const f32* m = &mask[s * 4];
+        impl_->over_weights[s] = ozz::math::simd_float4::Load(w * m[0], w * m[1], w * m[2], w * m[3]);
+        impl_->base_weights[s] = ozz::math::simd_float4::Load(1.0f - w * m[0], 1.0f - w * m[1], 1.0f - w * m[2], 1.0f - w * m[3]);
+    }
+    ozz::animation::BlendingJob::Layer layers[2];
+    layers[0].weight = layers[1].weight = 1.0f;
+    layers[0].transform = ozz::make_span(impl_->base);
+    layers[0].joint_weights = ozz::make_span(impl_->base_weights);
+    layers[1].transform = ozz::make_span(impl_->over);
+    layers[1].joint_weights = ozz::make_span(impl_->over_weights);
+    ozz::animation::BlendingJob blend;
+    blend.threshold = 0.01f;
+    blend.layers = ozz::span<const ozz::animation::BlendingJob::Layer>(layers, 2);
+    blend.rest_pose = skeleton.joint_rest_poses();
+    blend.output = ozz::make_span(impl_->locals);
+    return blend.Run() && rebuild(model, -1);
 }
 
 bool Pose::rebuild(const SkinnedModel& model, i32 from) {

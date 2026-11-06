@@ -1182,6 +1182,23 @@ struct Api {
         if (host.set_audio_param) host.set_audio_param(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
         return 0;
     }
+    static int play_montage(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const f32 seconds = host.play_montage ? host.play_montage(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_optnumber(L, 3, 1.0)),
+                                                                  luaL_optstring(L, 4, ""), static_cast<f32>(luaL_optnumber(L, 5, 0.2))) : 0.0f;
+        lua_pushnumber(L, seconds);
+        return 1;
+    }
+    static int stop_montage(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.stop_montage) host.stop_montage(host.user, entity(L, 1), static_cast<f32>(luaL_optnumber(L, 2, 0.2)));
+        return 0;
+    }
+    static int montage_playing(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.montage_playing && host.montage_playing(host.user, entity(L, 1)));
+        return 1;
+    }
     static int set_anim_param(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.set_anim_param) host.set_anim_param(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_checknumber(L, 3)));
@@ -1544,7 +1561,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
         {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
-        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

@@ -39,6 +39,15 @@ public:
     // What motion matching plays on `e` ("Anim_Walk at 0.43 s"), or false if it does not run there.
     bool motion_readout(world::Entity e, char* out, usize capacity) const;
 
+    // Montages (Unreal's Play Montage on a slot): an animation file's first clip played once over
+    // what `e` (or its skeletal mesh child) plays, from `from_bone` down (empty: the whole body), blended
+    // in and out over `blend` seconds. Returns how long it plays (0: no such animation).
+    f32 play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend);
+    void stop_montage(world::Entity e, f32 blend);  // blends out from where it is
+    bool montage_playing(world::Entity e) const;
+    // Objects whose montage ended (played out or stopped) since the last call: Play sends them on_montage_ended.
+    void take_finished_montages(std::vector<world::Entity>& out);
+
     // IK for the next update (scripts call it every frame they want it): a bone reaches a world
     // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
     void add_ik(world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward = {1, 0, 0});
@@ -75,6 +84,19 @@ private:
         bool ok = false;
     };
     std::vector<std::unique_ptr<Motion>> motions_;
+    struct Montage {
+        world::Entity owner;  // who asked (gets on_montage_ended)
+        world::Entity mesh;   // the object with the Skeletal Mesh
+        char animation[33];   // the animation file's GUID
+        char from_bone[48];
+        f32 time = 0.0f, rate = 1.0f, blend = 0.2f;
+        f32 fade = 1.0f, fade_speed = 0.0f;  // stop_montage: fades to 0 at fade_speed per second
+    };
+    std::vector<Montage> montages_;
+    std::vector<world::Entity> finished_montages_;
+    SkinnedCache* cache_ = nullptr;  // during update (montages read their clips)
+    f32 dt_ = 0.0f;
+    void apply_montage(const world::World& world, State& state, const SkinnedEntry& entry);
     const Motion* motion_for(SkinnedCache& cache, const world::SkeletalMesh& mesh, const SkinnedEntry& model, const world::Character& character);
     struct MotionInputs {
         world::Entity character;

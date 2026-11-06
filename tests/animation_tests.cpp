@@ -364,6 +364,22 @@ int main() {
             const f32 moving = worst_error(path.c_str(), model, &clips[0], t);
             std::printf("    clip '%s' %.2f s, error at %.2f s: %.5f\n", clips[0].name, static_cast<double>(clips[0].duration), t, static_cast<double>(moving));
             CHECK(moving < size * 0.01f);
+            // Montage layering: the clip laid fully over the rest pose is the clip; from the last joint only, the root stays at rest.
+            anim::Pose full, layered, part;
+            full.sample(model, &clips[0], clips[0].duration * 0.5f, false);
+            layered.sample(model, nullptr, 0.0f, false);
+            part.sample(model, nullptr, 0.0f, false);
+            const Mat4 root_rest = part.joint_model(0);
+            CHECK(layered.layer(model, &clips[0], 0.5f, 1.0f, -1));
+            for (u32 j = 0; j < model.joint_count(); ++j) {
+                const Mat4 a = full.joint_model(j), b = layered.joint_model(j);
+                CHECK(length(Vec3{a.at(0, 3) - b.at(0, 3), a.at(1, 3) - b.at(1, 3), a.at(2, 3) - b.at(2, 3)}) < size * 1e-3f);
+            }
+            const i32 last = static_cast<i32>(model.joint_count()) - 1;
+            CHECK(part.layer(model, &clips[0], 0.5f, 1.0f, last));
+            const Mat4 root_now = part.joint_model(0);
+            CHECK(last == 0 || length(Vec3{root_now.at(0, 3) - root_rest.at(0, 3), root_now.at(1, 3) - root_rest.at(1, 3), root_now.at(2, 3) - root_rest.at(2, 3)}) < 1e-5f);
+            CHECK(!part.layer(model, &clips[0], 0.5f, 0.0f, -1));  // weight 0 does nothing
             ++tested_animation;
         }
     }

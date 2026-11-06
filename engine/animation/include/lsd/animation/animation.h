@@ -136,6 +136,9 @@ public:
     // (in its own space) turns toward `target`. weight 0..1 blends with the animation.
     bool two_bone_ik(const SkinnedModel& model, u32 end_joint, Vec3 target, f32 weight);
     bool aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forward, f32 weight);
+    // A clip over the sampled pose (Unreal's Layered Blend per Bone, as montages use): from
+    // `from_joint` down its children (-1: every joint), mixed in by `weight` 0..1. Call after sample.
+    bool layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 weight, i32 from_joint);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

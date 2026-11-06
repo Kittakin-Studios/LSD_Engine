@@ -901,7 +901,7 @@ Existing files are kept, so your edits survive a second Apply. The console does 
   eases in over the right shoulder, the dot turns red, and IK raises the hand along the view so the gun points at
   the crosshair: Hand Bone, Shoulder Bone, Aim Reach), **LMB** shoots (a ray from the camera through
   the crosshair, a tracer from the gun, `on_damage(self, amount, shooter)` on what it hits), **R**
-  reloads (Reload Time, "Reloading..." on the HUD). It is one component, a Script running
+  reloads (Reload Time, "Reloading..." on the HUD, Reload Montage on the upper body; each shot plays Shoot Montage). It is one component, a Script running
   `Content/Weapon/Weapon.lua`; its Details show socket, ammo, max ammo, range, damage, reload time,
   aim distance and shoulder, and the crosshair's size, colours and visibility. Apply also makes
   `WBP_Crosshair.rml`, `IA_Aim`, `IA_Fire`, `IA_Reload` and maps RMB / LMB / R in the character's
@@ -1117,6 +1117,13 @@ at the object when the clip passes that time in Play.
   **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the
   Set Anim Parameter node.
+
+**Montages** (Unreal's Play Montage with a slot and Layered Blend per Bone): `lsd.play_montage(e,
+"Anim_Reload", 1, "spine_01")` (or the **Play Montage** node) plays an animation file once on top of
+whatever the object plays (a clip, an Anim Graph or Motion Matching), from that bone down: `spine_01`
+reloads with the upper body while the legs keep walking; leave the bone empty for the whole body. It
+blends in and out (Blend, seconds), one at a time per object; `on_montage_ended(self)` runs when it
+ends; **Stop Montage** blends it out early. IK (lsd.ik_reach) still applies on top.
 
 **Motion Matching** (built-in locomotion, the technique behind Unreal's Motion Matching and its Game
 Animation Sample): tick **Character > Animation > Motion Matching** and the character's Skeletal Mesh
@@ -1506,6 +1513,8 @@ Audio and animation
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
 | `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | |
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
+| `lsd.play_montage(e, animation [, rate, from_bone, blend])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
+| `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 
 AI

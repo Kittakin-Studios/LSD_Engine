@@ -57,7 +57,8 @@ STEP 4: The Weapon component (Unreal: a Weapon Actor Component on the Character)
 - Aim (RMB held): the camera's spring arm eases in to Aim Distance and slides over the right shoulder (Unreal: Spring Arm Target Arm Length and Socket Offset); the crosshair turns red.
 - The aim pose, in code: every frame while aiming, lsd.ik_reach puts the hand bone on a point Aim Reach metres from the shoulder along the camera's view, bending the elbow (Unreal: a Two Bone IK node in the Anim Blueprint). The arm comes up and the gun points where the crosshair is, on top of whatever animation plays; its weight follows the aim, so it eases in and out.
 - Shoot (LMB): a ray from the camera through the crosshair (lsd.camera_location + lsd.camera_forward, like Unreal's Line Trace by Channel from the camera), one round less, a tracer line from the gun to the hit. What it hits gets on_damage(self, amount, shooter) on its own script, if it has one (Unreal: Apply Damage / Event AnyDamage).
-- Reload (R): Unreal would play a montage and wait for it; here lsd.after(Reload Time, ...) is the timer (Set Timer by Event). Until it fires the HUD says Reloading... and shots are refused, then the magazine is full again. An Anim Graph can play a reload clip on the Reloading parameter.
+- Montages (Unreal's Play Montage with a slot and Layered Blend per Bone): lsd.play_montage(self.entity, "Anim_Reload", 1, "spine_01") plays that animation once on the upper body (spine_01 and every bone under it) while the legs keep their own animation, blended in and out; on_montage_ended(self) runs when it ends. Each shot plays Shoot Montage the same way, the reload plays Reload Montage.
+- Reload (R): lsd.after(Reload Time, ...) is the timer (Set Timer by Event). Until it fires the HUD says Reloading... and shots are refused, then the magazine is full again.
 - The script only drives the player's character, so the same component on an AI character does nothing until you give it its own logic.
 
 ```lua Content/Weapon/Weapon.lua
@@ -77,10 +78,11 @@ properties = {
   hand_bone = "hand_r",             -- the aim pose: this bone reaches out...
   shoulder_bone = "upperarm_r",     -- ...from this one, along the view
   aim_reach = 0.55,                 -- how far from the shoulder the hand goes, metres
-  crosshair_size = 6,               -- the dot's size in pixels
+  crosshair_size = 6,               -- the dot's size in pixels (0 hides it)
   crosshair_color = "#FFFFFF",      -- the dot's colour (#RRGGBB)
   crosshair_aim_color = "#FF4040",  -- its colour while aiming
-  show_crosshair = true,
+  shoot_montage = "Anim_Aim_Shoot", -- played on the upper body per shot (an animation file's name; "" = none)
+  reload_montage = "Anim_Reload",   -- played on the upper body while reloading
 }
 
 -- The HUD: the ammo count and the crosshair dot, changed only when a value changed.
@@ -94,7 +96,7 @@ local function update_hud(self, aiming)
   local size = math.floor(self.crosshair_size)
   local half = math.floor(size / 2)
   local style = string.format("width: %dpx; height: %dpx; margin-left: %dpx; margin-top: %dpx; border-radius: %dpx; background-color: %s; display: %s;",
-    size, size, -half, -half, half, aiming and self.crosshair_aim_color or self.crosshair_color, self.show_crosshair and "block" or "none")
+    size, size, -half, -half, half, aiming and self.crosshair_aim_color or self.crosshair_color, size > 0 and "block" or "none")
   if style ~= self.shown_style then
     lsd.ui_set(self.hud, "dot", "style", style)
     self.shown_style = style
@@ -105,11 +107,10 @@ end
 local function reload(self)
   if self.reloading or self.ammo >= self.max_ammo then return end
   self.reloading = true
-  lsd.set_anim_param(self.entity, "Reloading", 1)  -- an Anim Graph can play a reload clip on this
+  if self.reload_montage ~= "" then lsd.play_montage(self.entity, self.reload_montage, 1, "spine_01") end  -- the upper body reloads, the legs keep walking
   lsd.after(self.reload_time, function()
     self.ammo = self.max_ammo
     self.reloading = false
-    lsd.set_anim_param(self.entity, "Reloading", 0)
   end)
 end
 
@@ -137,6 +138,7 @@ local function shoot(self)
     lsd.call(hit, "on_damage", self.damage, self.entity)
   end
   lsd.camera_shake(0.15, 0.1)
+  if self.shoot_montage ~= "" then lsd.play_montage(self.entity, self.shoot_montage, 1, "spine_01", 0.05) end  -- the recoil, upper body only
 end
 
 function on_start(self)
