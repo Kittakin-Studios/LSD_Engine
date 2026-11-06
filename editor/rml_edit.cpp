@@ -1,5 +1,6 @@
 #include "rml_edit.h"
 
+#include <cctype>
 #include <cstring>
 #include <utility>
 #include <vector>
@@ -179,6 +180,42 @@ bool rml_remove(std::string& rml, const char* id) {
     while (start > 0 && (rml[start - 1] == ' ' || rml[start - 1] == '\t')) --start;  // its indentation too
     rml.erase(start, stop - start);
     return true;
+}
+
+std::vector<RmlNode> rml_outline(const std::string& rml) {
+    std::vector<RmlNode> out;
+    size_t at = rml.find("<body");
+    if (at == std::string::npos) return out;
+    at = rml.find('>', at);
+    int depth = 0;
+    while (at != std::string::npos && (at = rml.find('<', at + 1)) != std::string::npos) {
+        if (rml.compare(at, 4, "<!--") == 0) {  // a comment: skipped whole
+            at = rml.find("-->", at);
+            continue;
+        }
+        const size_t close = rml.find('>', at);
+        if (close == std::string::npos) break;
+        if (rml[at + 1] == '/') {  // an end tag
+            if (rml.compare(at, 7, "</body>") == 0) break;
+            --depth;
+            at = close;
+            continue;
+        }
+        size_t name_end = at + 1;
+        while (name_end < close && !std::isspace(static_cast<unsigned char>(rml[name_end])) && rml[name_end] != '/' && rml[name_end] != '>') ++name_end;
+        RmlNode node;
+        node.tag = rml.substr(at + 1, name_end - at - 1);
+        node.depth = depth;
+        const size_t id = rml.find("id=\"", at);
+        if (id != std::string::npos && id < close && std::isspace(static_cast<unsigned char>(rml[id - 1]))) {
+            const size_t end = rml.find('"', id + 4);
+            if (end != std::string::npos && end < close) node.id = rml.substr(id + 4, end - id - 4);
+        }
+        out.push_back(node);
+        if (rml[close - 1] != '/') ++depth;  // <img .../> has no end tag
+        at = close;
+    }
+    return out;
 }
 
 std::string rml_unique_id(const std::string& rml, const char* base) {

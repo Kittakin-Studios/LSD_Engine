@@ -4,6 +4,7 @@
 // shortcut: a text scan, not a parser; it expects id="..." in double quotes, and the inner text
 // helpers only handle elements whose content is plain text. A DOM writer can replace it.
 #include <string>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -22,6 +23,13 @@ bool rml_set_text(std::string& rml, const char* id, const char* text);
 bool rml_append_to_body(std::string& rml, const std::string& markup);
 // Removes the element and everything inside it.
 bool rml_remove(std::string& rml, const char* id);
+// The elements inside <body> in document order with their nesting (UMG's Hierarchy): tag name, id
+// ("" when it has none) and depth (0 = a direct child of body). Comments are skipped.
+struct RmlNode {
+    std::string tag, id;
+    int depth = 0;
+};
+std::vector<RmlNode> rml_outline(const std::string& rml);
 // `base` with the lowest number not yet used as an id ("button1", "button2"...).
 std::string rml_unique_id(const std::string& rml, const char* base);
 

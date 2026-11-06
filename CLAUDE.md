@@ -188,4 +188,4 @@ Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material
 `M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
 (.meta `material_slots`); Skeletal Meshes draw per section with per-object `material_overrides`.
 Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
-LFS locking, UI resize handles and data bindings, per-mesh LOD screen sizes.
+LFS locking, UI data bindings, per-mesh LOD screen sizes.

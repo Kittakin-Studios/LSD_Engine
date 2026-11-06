@@ -114,6 +114,11 @@ static void test_sound_cue() {
 static void test_rml_edit() {  // the UI designer's writes into the document text
     using namespace lsd::editor;
     std::string rml = "<rml><body>\n<div id=\"panel\" style=\"left: 40px; color: red;\">\n  <div id=\"title\">Title</div>\n  <button id=\"play\">Play</button>\n</div>\n<img id=\"pic\" src=\"a.png\"/>\n</body></rml>";
+    {  // the Hierarchy: nesting from the tags, self-closing ones have no children, comments are skipped
+        const std::vector<RmlNode> tree = rml_outline("<rml><head><title>x</title></head><body><!-- <div id=\"no\"> -->" + rml.substr(rml.find("<body>") + 6));
+        CHECK(tree.size() == 4 && tree[0].id == "panel" && tree[0].depth == 0 && tree[1].id == "title" && tree[1].depth == 1);
+        CHECK(tree[2].tag == "button" && tree[2].depth == 1 && tree[3].id == "pic" && tree[3].tag == "img" && tree[3].depth == 0);
+    }
     CHECK(rml_style(rml, "panel", "left") == "40px" && rml_style(rml, "panel", "top").empty());
     CHECK(rml_set_style(rml, "panel", "left", "120px") && rml_style(rml, "panel", "left") == "120px");
     CHECK(rml_set_style(rml, "panel", "top", "8px") && rml_style(rml, "panel", "top") == "8px" && rml_style(rml, "panel", "color") == "red");

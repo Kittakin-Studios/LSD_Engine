@@ -1334,6 +1334,10 @@ The preview is also the **designer canvas** (UMG's Designer tab):
 - **Click** an element in the preview to select it (it needs an `id`; clicking text inside a panel
   picks the nearest element with one). **Drag** it to move it (Ctrl: 10 px steps); an element in
   the normal flow becomes `position: relative`. **Delete** removes it.
+- The selection has three gold **resize handles** (UMG's): the right edge sets `width`, the bottom
+  edge `height`, the corner both (Ctrl: 10 px steps).
+- The **Hierarchy** tab (UMG's Hierarchy panel) lists every element nested as in the text; click one
+  to select it. Elements without an `id` are greyed out (give one an id to select it).
 - The **Details** tab shows the selection's text, **On Click** (the Lua function it calls) and common
   style properties. Empty fields come from the style sheet.
 - Everything you do there is written into the code as the element's inline `style` and attributes,
