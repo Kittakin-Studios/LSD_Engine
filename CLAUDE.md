@@ -179,7 +179,7 @@ Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), st
 never art), tools (console, lua, objects, assets, log, read / write code files; Off / Ask / Allowed), Lessons (`editor/assistant_lessons.*`:
 Gun on a hand socket), project context, `assistant.Ask` / `assistant.Lesson`.
 Motion Matching (`engine/animation/motion_matching.*`): Character > Motion Matching; databases built in `AnimationPlayer::motion_for`.
-Montages and root motion (`lsd.play_montage`, Play / Stop Montage nodes, `Pose::layer` / `strip_root`, `on_montage_ended`), `lsd.camera_forward`.
+State Machine window for AnimGraphs (`editor/anim_graph_editor.*`, double-click the asset). Montages and root motion (`lsd.play_montage`, Play / Stop Montage nodes, `Pose::layer` / `strip_root`, `on_montage_ended`), `lsd.camera_forward`.
 Post: Color Grading LUT, camera motion blur, contact shadows (Directional Light). CPU occlusion culling (`engine/render/occlusion.*`,
 `r.OcclusionCulling`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.
 The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).

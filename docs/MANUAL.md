@@ -1129,6 +1129,17 @@ at the object when the clip passes that time in Play.
   sample's clip number is a clip in that FBX, so put the idle, walk, run... takes in one FBX (one
   export with several actions from Blender / Maya). Separate files per animation work on a Skeletal
   Mesh without a graph, not yet inside one graph.
+- **The State Machine window** (Unreal's Anim Blueprint state machine): double-click an AnimGraph in the
+  Content Browser. States are boxes (name, what they play), transitions arrows with a dot (two between
+  the same states lean apart), **Entry** points at the start state and **Any State** holds transitions
+  taken from whatever plays. Click a box or a dot to edit it on the right (renaming a state renames it
+  in its transitions); drag boxes to arrange them, middle-drag to pan; right-click the canvas for **Add
+  State**, a state for **Add Transition To**, **Add Transition From Any State**, **Set as Entry**,
+  **Delete State** (or the Delete key). **Save** writes it; meshes using it pick it up at once. In Play the
+  state the first object using the graph is in is outlined green.
+
+  ![The State Machine window](images/ed_state_machine.jpg)
+  *The State Machine window: Entry, the Idle and Walk states and their transitions; Walk selected, its fields on the right.*
 - Pick the graph in the Skeletal Mesh's **Anim Graph**. A Character feeds **Speed**,
   **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the

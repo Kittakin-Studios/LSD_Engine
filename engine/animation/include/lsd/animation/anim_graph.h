@@ -29,6 +29,9 @@ struct AnimState {
     LSD_PROPERTY(Edit, Tooltip = "1D blend space: clips placed along the Blend parameter (e.g. walk at 1.5, run at 5); blended by where the parameter is") List<BlendSample, 8> samples;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the state's clip (1 = as made, 2 = twice as fast)") f32 play_rate = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends (off: holds the last frame)") bool looping = true;
+    // Where its box sits on the State Machine canvas (the editor saves it; both 0: laid out by itself).
+    LSD_PROPERTY(Save) f32 node_x = 0.0f;
+    LSD_PROPERTY(Save) f32 node_y = 0.0f;
 };
 
 LSD_STRUCT()
@@ -79,5 +82,10 @@ struct GraphState {
 u32 step_graph(const AnimGraph& graph, const Clip* clips, u32 clip_count, GraphState& state, f32 dt, BlendInput* out);
 
 const char* state_name(const AnimGraph& graph, const GraphState& state);  // "" before it starts
+
+// Editing (the State Machine window): a state renamed takes its transitions and the entry state
+// along; a state removed takes the transitions to or from it (transitions from any state stay).
+void rename_state(AnimGraph& graph, const char* from, const char* to);
+void remove_state(AnimGraph& graph, u32 index);
 
 } // namespace lsd::anim

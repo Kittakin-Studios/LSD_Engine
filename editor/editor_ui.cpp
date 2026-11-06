@@ -7,6 +7,7 @@
 #include "skinned_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
+#include "anim_graph_editor.h"
 #include "particle_editor.h"
 #include "ui_editor.h"
 #include "packaging.h"
@@ -3654,6 +3655,8 @@ bool open_record(EditorState& s, const asset::AssetRecord& r) {
         s.particle_editor->open(s, r);
     } else if (asset_matches(r, "Timeline")) {
         open_timeline_editor(s, r);
+    } else if (asset_matches(r, "AnimGraph")) {
+        open_anim_graph_editor(s, r);
     } else if (r.type == asset::AssetType::Mesh) {
         open_mesh_editor(s, r);
     } else if (r.type == asset::AssetType::Prefab) {
@@ -5598,6 +5601,7 @@ void draw_editor(EditorState& s) {
     }
     draw_reference_viewer(s);
     draw_timeline_editor(s);
+    draw_anim_graph_editor(s);
     draw_mesh_editor(s);
     draw_prefab_editor(s);
     debugger::draw_window(s, &s.show_debugger);
@@ -5689,6 +5693,7 @@ void make_default_level(world::World& w) {
 }
 
 bool open_asset(EditorState& s, const asset::AssetRecord& record) { return open_record(s, record); }
+DetailsStyle editor_details_style(EditorState& s) { return {{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}, nullptr, details_widget, &s}; }
 
 bool surface_ray(EditorState& s, Vec3 origin, Vec3 dir, f32& t) {
     Entity hit;

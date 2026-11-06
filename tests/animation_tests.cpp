@@ -68,6 +68,32 @@ static f32 worst_error(const char* path, const anim::SkinnedModel& model, const 
 }
 
 // The graph's state machine and blend space, without any real animation data.
+static void graph_editing_tests() {  // the State Machine window's edits keep transitions in step
+    anim::AnimGraph g;
+    for (const char* name : {"Idle", "Walk", "Jump"}) {
+        anim::AnimState st;
+        std::snprintf(st.name, sizeof st.name, "%s", name);
+        g.states.push_back(st);
+    }
+    auto link = [&](const char* from, const char* to) {
+        anim::AnimTransition t;
+        std::snprintf(t.from, sizeof t.from, "%s", from);
+        std::snprintf(t.to, sizeof t.to, "%s", to);
+        g.transitions.push_back(t);
+    };
+    link("Idle", "Walk");
+    link("Walk", "Idle");
+    link("", "Jump");  // from any state
+    std::snprintf(g.entry_state, sizeof g.entry_state, "Idle");
+    std::snprintf(g.states[0].name, sizeof g.states[0].name, "Stand");  // renamed in its Details, then:
+    anim::rename_state(g, "Idle", g.states[0].name);
+    CHECK(std::strcmp(g.transitions[0].from, "Stand") == 0 && std::strcmp(g.transitions[1].to, "Stand") == 0 && std::strcmp(g.entry_state, "Stand") == 0);
+    anim::remove_state(g, 1);  // Walk: both transitions with it go, the any-state one stays
+    CHECK(g.states.count == 2 && g.transitions.count == 1 && std::strcmp(g.transitions[0].to, "Jump") == 0);
+    anim::remove_state(g, 0);  // the entry state
+    CHECK(g.entry_state[0] == '\0' && g.states.count == 1);
+}
+
 static void graph_tests() {
     anim::Clip clips[3];
     clips[0].duration = 2.0f;  // idle
@@ -315,6 +341,7 @@ static void motion_matching_tests(const std::string& data) {
 int main() {
     rig_tests();
     graph_tests();
+    graph_editing_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
     motion_matching_tests(data);
     morph_tests(data);

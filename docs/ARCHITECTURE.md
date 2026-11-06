@@ -421,6 +421,11 @@ and when the set of weights changes it mixes the offsets into a copy of the bind
 (`apply_morphs`) and uploads it as that object's own vertex buffer, which the skinning shader then
 uses instead of the shared one.
 
+**The State Machine window** (`editor/anim_graph_editor.*`) edits an AnimGraph asset on a canvas: box
+positions are saved per state (`node_x`, `node_y`, not shown in Details), the side panel is
+`draw_properties` with the editor's Details style, and `anim::rename_state` / `remove_state` keep the
+transitions and the entry state in step with edits.
+
 **Montages and root motion**: `lsd.play_montage` hands the animation player a montage (an animation
 file's first clip, a start bone, rate, blend). After a pose is sampled (clip, Anim Graph or Motion
 Matching) and before IK, `Pose::layer` samples the montage clip and mixes it in with ozz's per-joint

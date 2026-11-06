@@ -219,6 +219,28 @@ u32 step_graph(const AnimGraph& g, const Clip* clips, u32 clip_count, GraphState
     return n;
 }
 
+void rename_state(AnimGraph& g, const char* from, const char* to) {
+    if (!from[0] || std::strcmp(from, to) == 0) return;
+    char old[32];
+    std::snprintf(old, sizeof old, "%s", from);  // `from` may be the state's own name, being changed
+    for (AnimTransition& t : g.transitions) {
+        if (std::strcmp(t.from, old) == 0) std::snprintf(t.from, sizeof t.from, "%s", to);
+        if (std::strcmp(t.to, old) == 0) std::snprintf(t.to, sizeof t.to, "%s", to);
+    }
+    if (std::strcmp(g.entry_state, old) == 0) std::snprintf(g.entry_state, sizeof g.entry_state, "%s", to);
+}
+
+void remove_state(AnimGraph& g, u32 index) {
+    if (index >= g.states.count) return;
+    char name[32];
+    std::snprintf(name, sizeof name, "%s", g.states[index].name);
+    g.states.remove(index);
+    for (u32 i = g.transitions.count; i-- > 0;) {
+        if (std::strcmp(g.transitions[i].from, name) == 0 || std::strcmp(g.transitions[i].to, name) == 0) g.transitions.remove(i);
+    }
+    if (std::strcmp(g.entry_state, name) == 0) g.entry_state[0] = '\0';
+}
+
 const char* state_name(const AnimGraph& g, const GraphState& gs) {
     return gs.current >= 0 && gs.current < static_cast<i32>(g.states.count) ? g.states[static_cast<u32>(gs.current)].name : "";
 }
