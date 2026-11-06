@@ -50,6 +50,9 @@ struct MeshVertex {
     f32 position[3];
     f32 normal[3];
     f32 uv[2];
+    // The lightmap's UV, already in the level's lightmap atlas (Build Lighting writes a copy of each
+    // lightmapped object's mesh with it); (0, 0) everywhere = no lightmap.
+    f32 lightmap_uv[2] = {};
 };
 // Skinned meshes: up to 4 joints per vertex, weights as bytes summing to 255.
 struct SkinnedVertex {
@@ -219,9 +222,12 @@ struct LightSetup {
     // position (xyz) and radius (w), in atlas tile order. A pixel inside one reflects its tile.
     f32 reflection_info[4] = {};
     f32 reflections[kMaxReflectionProbes][4] = {};
+    // Lightmaps (set_lightmap_atlas): x = how bright a stored 1 is (texels hold c / (1 + c), c in units
+    // of x), y = 1 when the atlas is there. Its RGB replaces the ambient light, A is the sun's baked visibility.
+    f32 lightmap_info[4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
@@ -362,6 +368,8 @@ public:
     virtual void set_decal_atlas(TextureHandle atlas) = 0;
     // The reflection captures' atlas (render/reflection.h: lat-long tiles, mipmapped); invalid = none.
     virtual void set_reflection_atlas(TextureHandle atlas) = 0;
+    // The level's lightmap atlas (Build Lighting; RGBA8, see LightSetup::lightmap_info); invalid = none.
+    virtual void set_lightmap_atlas(TextureHandle atlas) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Material Graph code (lsd/script/material_graph.h: `Surface material_main(MaterialIn mi)`) built
     // into the lit-mesh pipelines, static and skinned. Invalid if it does not compile (the shader

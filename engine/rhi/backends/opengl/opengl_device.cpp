@@ -70,12 +70,14 @@ constexpr char kMeshVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
+layout(location = 5) in vec2 a_lightmap_uv;  // not in the skinned layout: reads 0 there
 uniform mat4 u_mvp;
 uniform vec4 u_normal[3];
 uniform vec4 u_world[3];
 out vec3 v_normal;
 out vec3 v_wpos;
 out vec2 v_uv;
+out vec2 v_lightmap_uv;
 #ifdef INSTANCED
 layout(std140, binding = 2) uniform Instances { vec4 instance_rows[768]; };  // 3 rows per instance: its world matrix
 #endif
@@ -91,6 +93,7 @@ void main() {
     v_normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;
     v_wpos = world_pos;
     v_uv = a_uv;
+    v_lightmap_uv = vec2(0.0);  // instances are not lightmapped
     return;
 #endif
     skin(position, normal);
@@ -99,6 +102,7 @@ void main() {
     vec4 p = vec4(position, 1.0);
     v_wpos = vec3(dot(u_world[0], p), dot(u_world[1], p), dot(u_world[2], p));
     v_uv = a_uv;
+    v_lightmap_uv = a_lightmap_uv;
 }
 )";
 
@@ -117,6 +121,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 probe_origin; vec4 probe_cell; uvec4 probe_dims; vec4 probes[1536];
     vec4 decal_info; vec4 decals[80];
     vec4 reflection_info; vec4 reflections[8];
+    vec4 lightmap_info;
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -191,6 +196,7 @@ layout(binding = 2) uniform sampler2D orm_tex;
 // not face along the box's +Z and towards its top and bottom.
 layout(binding = 5) uniform sampler2D decal_tex;
 layout(binding = 6) uniform sampler2D reflection_tex;  // reflection captures (lat-long tiles, mipmapped)
+layout(binding = 7) uniform sampler2D lightmap_tex;    // the level's lightmaps (Build Lighting)
 vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
     uint count = uint(decal_info.x);
     for (uint d = 0u; d < count; ++d) {
@@ -210,6 +216,7 @@ vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
 in vec3 v_normal;
 in vec3 v_wpos;
 in vec2 v_uv;
+in vec2 v_lightmap_uv;
 out vec4 o_color;
 //@MATERIAL
 const float PI = 3.14159265;
@@ -327,6 +334,14 @@ void main() {
     float a2 = roughness * roughness * roughness * roughness;
     float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     vec3 lit = vec3(0.0);
+    // Lightmap (as the HLSL): RGB the ambient light, A the sun's baked visibility.
+    bool lightmapped = lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0;
+    vec4 baked = vec4(0.0, 0.0, 0.0, 1.0);
+    if (lightmapped) {
+        baked = textureLod(lightmap_tex, v_lightmap_uv, 0.0);
+        vec3 c = min(baked.rgb, vec3(0.999));
+        baked.rgb = c / (1.0 - c) * lightmap_info.x;
+    }
     for (uint li = 0u; li < light_count; ++li) {
         Light L = lights[li];
         vec3 l;
@@ -344,7 +359,7 @@ void main() {
         }
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;
-        if (float(li) == shadow_info.y) atten *= sun_shadow(v_wpos, n, u_mat[1].yzw);
+        if (float(li) == shadow_info.y) atten *= lightmapped ? min(sun_shadow(v_wpos, n, u_mat[1].yzw), baked.a) : sun_shadow(v_wpos, n, u_mat[1].yzw);
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, v_wpos, n);
         vec3 h = normalize(v + l);
         float ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
@@ -356,7 +371,7 @@ void main() {
         lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
     }
     // Ambient (see the HLSL): diffuse from the sky / probes, specular from the sky along the reflection.
-    vec3 sky = ambient_light(v_wpos, n);
+    vec3 sky = lightmapped ? baked.rgb : ambient_light(v_wpos, n);
     vec3 r = reflect(-v, n);
     vec3 lum = vec3(0.2126, 0.7152, 0.0722);
     float open_sky = clamp(dot(sky, lum) / max(dot(mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4), 0.0, 1.0);
@@ -1338,6 +1353,7 @@ public:
         gl_.glBindTextureUnit(4, local_shadow_texture_);
         gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);
         gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);
+        gl_.glBindTextureUnit(7, lightmap_texture_ ? lightmap_texture_ : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1 translucent, 2 additive, 3 overdraw (no depth test)
         if (blend) {
@@ -1476,6 +1492,11 @@ public:
     void set_reflection_atlas(TextureHandle atlas) override {
         const Texture* t = lookup_texture(atlas);
         reflection_texture_ = t ? t->id : 0;
+    }
+
+    void set_lightmap_atlas(TextureHandle atlas) override {
+        const Texture* t = lookup_texture(atlas);
+        lightmap_texture_ = t ? t->id : 0;
     }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
@@ -2069,6 +2090,7 @@ private:
         attribute(mesh_vao_, 0, 3, offsetof(MeshVertex, position));
         attribute(mesh_vao_, 1, 3, offsetof(MeshVertex, normal));
         attribute(mesh_vao_, 2, 2, offsetof(MeshVertex, uv));
+        attribute(mesh_vao_, 5, 2, offsetof(MeshVertex, lightmap_uv));
         gl_.glCreateVertexArrays(1, &skinned_vao_);
         attribute(skinned_vao_, 0, 3, offsetof(SkinnedVertex, position));
         attribute(skinned_vao_, 1, 3, offsetof(SkinnedVertex, normal));
@@ -2153,6 +2175,7 @@ private:
     MeshProgram mesh_, skinned_program_, instanced_program_;
     GLuint decal_texture_ = 0;
     GLuint reflection_texture_ = 0;
+    GLuint lightmap_texture_ = 0;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint instanced_shadow_program_ = 0;

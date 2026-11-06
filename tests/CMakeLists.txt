@@ -39,7 +39,7 @@ add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/as
   ${PROJECT_SOURCE_DIR}/editor/references.cpp ${PROJECT_SOURCE_DIR}/editor/keymap.cpp)
 target_compile_definitions(lsd_editor_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(lsd_editor_tests PRIVATE ${PROJECT_SOURCE_DIR}/editor)
-target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script lsd_asset lsd_render lsd_rhi imgui)
+target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script lsd_asset lsd_render lsd_rhi imgui xatlas)
 lsd_configure_target(lsd_editor_tests)
 add_test(NAME editor COMMAND lsd_editor_tests)
 

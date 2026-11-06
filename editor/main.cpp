@@ -61,6 +61,7 @@
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 
+#include <unordered_map>
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
@@ -162,11 +163,59 @@ struct LightingBuild {
 };
 LightingBuild* g_lighting_build = nullptr;
 
+bool g_lightmaps_changed = true;  // the GPU's lightmap atlas and lightmapped meshes need (re)making
+lsd::rhi::TextureHandle g_lightmap_atlas;
+std::unordered_map<std::string, std::vector<lsd::i32>> g_lightmap_names;  // object name -> its lightmap objects
+
 // The level's baked lighting from its _BuiltData file (none: the Sky Light's flat ambient).
 void load_level_lighting(const char* level_path) {
     const bool found = level_path && level_path[0] && lsd::editor::load_baked_lighting(lsd::editor::baked_lighting_path(level_path).c_str(), g_level_lighting);
     if (!found) g_level_lighting = {};
     lsd::editor::set_baked_lighting(found ? &g_level_lighting : nullptr);
+    g_lightmaps_changed = true;
+}
+
+// The lightmap atlas on the GPU and each lightmapped object's mesh as "Lightmap:<n>" in the cache.
+void upload_lightmaps(lsd::rhi::Device& device, lsd::editor::MeshCache& meshes) {
+    g_lightmaps_changed = false;
+    device.set_lightmap_atlas({});
+    if (g_lightmap_atlas.valid()) device.destroy_texture(g_lightmap_atlas);
+    g_lightmap_atlas = {};
+    g_lightmap_names.clear();
+    const lsd::editor::BakedLighting& l = g_level_lighting;
+    if (!l.has_lightmap()) return;
+    const void* mips[1] = {l.lightmap.data()};
+    g_lightmap_atlas = device.create_texture(l.lightmap_size, l.lightmap_size, 1, lsd::rhi::TextureFormat::RGBA8, mips);
+    device.set_lightmap_atlas(g_lightmap_atlas);
+    for (lsd::usize k = 0; k < l.objects.size(); ++k) {
+        const lsd::editor::LightmapObject& o = l.objects[k];
+        lsd::render::MeshData data;
+        data.vertices = const_cast<lsd::rhi::MeshVertex*>(o.vertices.data());  // set_generated only reads
+        data.indices = const_cast<lsd::u32*>(o.indices.data());
+        data.vertex_count = static_cast<lsd::u32>(o.vertices.size());
+        data.index_count = static_cast<lsd::u32>(o.indices.size());
+        char key[32];
+        std::snprintf(key, sizeof key, "Lightmap:%u", static_cast<unsigned>(k));
+        meshes.set_generated(key, data);
+        g_lightmap_names[o.name].push_back(static_cast<lsd::i32>(k));
+    }
+}
+
+// The baked copy of this object's mesh to draw (Build Lighting), or null: same name and mesh, where it was baked.
+const lsd::editor::CachedMesh* lightmapped_mesh(lsd::editor::MeshCache& meshes, const char* name, const char* mesh, const lsd::Mat4& m) {
+    if (g_lightmap_names.empty()) return nullptr;
+    const auto it = g_lightmap_names.find(name);
+    if (it == g_lightmap_names.end()) return nullptr;
+    const lsd::Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    for (const lsd::i32 k : it->second) {
+        const lsd::editor::LightmapObject& o = g_level_lighting.objects[static_cast<lsd::usize>(k)];
+        const lsd::Vec3 d = at - lsd::Vec3{o.position[0], o.position[1], o.position[2]};
+        if (std::strcmp(o.mesh, mesh) != 0 || lsd::dot(d, d) > 1e-4f) continue;
+        char key[32];
+        std::snprintf(key, sizeof key, "Lightmap:%d", k);
+        return meshes.get(key);
+    }
+    return nullptr;
 }
 
 // Skinned shadow casters (within `range` of `light` when range > 0).
@@ -612,7 +661,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Mat4 m = i < g_frame_meshes.world.size() && g_frame_meshes.mesh[i] ? g_frame_meshes.world[i] : world.world_matrix(e);
         const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
                                     lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
-        const lsd::editor::CachedMesh* mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
+        const lsd::editor::CachedMesh* mesh = lightmapped_mesh(meshes, world.name(e), component->mesh, m);
+        if (!mesh) mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
         if (!mesh) continue;
         const lsd::Mat4 mvp = view_proj * m;
         if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
@@ -2149,6 +2199,7 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (g_lightmaps_changed) upload_lightmaps(*device, meshes);
         if (g_lighting_build) {
             LightingBuild& build = *g_lighting_build;
             const lsd::u32 total = build.total.load() ? build.total.load() : 1u;
@@ -2158,9 +2209,10 @@ int main(int argc, char** argv) {
                 build.thread.join();
                 g_level_lighting = std::move(build.result);
                 lsd::editor::set_baked_lighting(&g_level_lighting);
+                g_lightmaps_changed = true;
                 const bool saved = lsd::editor::save_baked_lighting(build.path, g_level_lighting);
-                std::snprintf(state.status, sizeof state.status, saved ? "Lighting built: %u probes in %.1f s (%s)" : "Lighting built (%u probes, %.1f s) but %s could not be written",
-                              g_level_lighting.probe_count(), static_cast<double>(SDL_GetTicks() - build.started) / 1000.0, build.path);
+                std::snprintf(state.status, sizeof state.status, saved ? "Lighting built: %u probes, %u lightmapped objects in %.1f s (%s)" : "Lighting built (%u probes, %u lightmapped objects, %.1f s) but %s could not be written",
+                              g_level_lighting.probe_count(), static_cast<unsigned>(g_level_lighting.objects.size()), static_cast<double>(SDL_GetTicks() - build.started) / 1000.0, build.path);
                 LSD_LOG_INFO("lighting", "%s", state.status);
                 delete g_lighting_build;
                 g_lighting_build = nullptr;

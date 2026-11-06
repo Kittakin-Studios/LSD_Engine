@@ -112,16 +112,7 @@ bool MeshCache::load(CachedMesh& entry) {
         if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
         entry.compiled_time = time;
     }
-    if (boxed) {  // project each vertex onto the plane its normal faces most, in metres
-        for (u32 i = 0; i < data.vertex_count; ++i) {
-            rhi::MeshVertex& v = data.vertices[i];
-            const f32 x = v.position[0] * box.x, y = v.position[1] * box.y, z = v.position[2] * box.z;
-            const f32 ax = std::fabs(v.normal[0]), ay = std::fabs(v.normal[1]), az = std::fabs(v.normal[2]);
-            const bool side_x = ax >= ay && ax >= az, side_y = !side_x && ay >= az;
-            v.uv[0] = side_x ? (v.normal[0] > 0.0f ? y : -y) : side_y ? (v.normal[1] > 0.0f ? -x : x) : x;
-            v.uv[1] = side_x || side_y ? -z : (v.normal[2] > 0.0f ? -y : y);  // walls upright
-        }
-    }
+    if (boxed) render::box_project_uv(data, box.x, box.y, box.z);
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
     destroy_lods(device_, entry);
     entry.gpu = render::upload_mesh(device_, data);
@@ -156,7 +147,7 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
 const CachedMesh* MeshCache::get(const char* key) {
     const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
     if (slot >= 0) return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
-    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0) return nullptr;  // not generated yet
+    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);

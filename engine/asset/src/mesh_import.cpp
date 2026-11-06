@@ -19,7 +19,7 @@ namespace lsd::asset {
 namespace {
 
 constexpr char kMagic[4] = {'L', 'S', 'D', 'M'};
-constexpr u32 kVersion = 1;
+constexpr u32 kVersion = 2;  // 2: MeshVertex gained lightmap_uv
 
 struct CompiledHeader {
     char magic[4];

@@ -667,7 +667,28 @@ fixes that:
 Each probe records the sky it can see and the light bounced once off the surfaces around it (from
 the sun, local lights and sky; colours from the object's Color and its Material's base colour).
 Static and moving objects use it for their ambient light: rooms get darker, colours bleed onto
-neighbours. Direct light and shadows stay real-time. Rebuild after moving walls or lights.
+neighbours. Rebuild after moving walls or lights.
+
+**Lightmaps** (Unreal's lightmaps from Lightmass): static meshes also get a lightmap texture,
+detailed per surface where the probes are coarse:
+
+![Lighting Only view after Build Lighting](images/lightmap_lighting_only.jpg)
+*Lighting Only view (Alt+6) after Build Lighting: the sky light, the blue floor's bounce, and the
+dark contact under the statue's feet come from the lightmap.*
+
+- **World Settings > Lightmap Resolution** (Off, 256 ... 4096, default 1024): the size of the
+  level's lightmap atlas. Every lightmapped object shares it, at one texel density (the bake log
+  says how many texels per metre it got): raise it for sharper baked light, lower it to bake faster.
+- Each texel stores the light from the sky and one bounce reaching that spot (it replaces the
+  probes there: corners, contact under objects, colour from neighbours) and how much of the **sun**
+  reaches it: the sun's shadows are baked too, so they stay beyond the real-time Shadow Distance.
+- **Static Mesh > Static Lighting** (on by default, Unreal's Mobility: Static): untick it for
+  objects that move; objects with a Rigid Body, Mover, Vehicle or Transport never get a lightmap.
+  Moving objects, skeletal meshes and Instanced Static Meshes use the probes.
+- The lightmap UVs are made for you (xatlas charts every object); no second UV channel is needed
+  in the FBX.
+- An object moved, renamed or given another mesh after the bake goes back to the probes until the
+  next Build Lighting. Real-time shadows inside the Shadow Distance stay as they were.
 
 ---
 

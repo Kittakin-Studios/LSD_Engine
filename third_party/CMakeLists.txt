@@ -379,6 +379,22 @@ else()
   target_compile_options(miniupnpc PRIVATE -w)
 endif()
 
+# xatlas (MIT): lightmap UVs for Build Lighting (charts every lightmapped object and packs them into
+# one atlas). One .cpp, built here; pinned to a commit (the repository has no release tags).
+FetchContent_Declare(xatlas
+  GIT_REPOSITORY https://github.com/jpcy/xatlas.git
+  GIT_TAG f700c7790aaa030e794b52ba7791a05c085faf0c
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(xatlas)
+add_library(xatlas STATIC ${xatlas_SOURCE_DIR}/source/xatlas/xatlas.cpp)
+target_include_directories(xatlas SYSTEM PUBLIC ${xatlas_SOURCE_DIR}/source/xatlas)
+if(MSVC)
+  target_compile_options(xatlas PRIVATE /w)
+else()
+  target_compile_options(xatlas PRIVATE -w)
+endif()
+
 # Opus (BSD-3-Clause): the voice chat codec (engine/net/voice). Its own CMake, library only.
 set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)

@@ -80,7 +80,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy 
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
 | Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
 | UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); a document's own `.js` runs on QuickJS-ng (`engine/ui/src/ui_script.*`) |
-| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, miniupnpc, Opus, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
+| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, miniupnpc, xatlas, Opus, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
 
 ## Editor look
 
@@ -189,5 +189,8 @@ The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a confi
 Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become
 `M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
 (.meta `material_slots`); Skeletal Meshes draw per section with per-object `material_overrides`.
-Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
+Lightmaps: Build Lighting charts every static mesh into one atlas (xatlas, World Settings > Lightmap Resolution) and bakes the sky,
+one bounce and the sun's visibility per texel; each lightmapped object is drawn from a copy of its mesh (MeshVertex::lightmap_uv,
+"Lightmap:<n>" in the mesh cache), the lit shader reads t7 / unit 7 (LightSetup::lightmap_info).
+Later (see BACKLOG, partial items): remote console to other machines, Perforce /
 LFS locking, UI data bindings, per-mesh LOD screen sizes.

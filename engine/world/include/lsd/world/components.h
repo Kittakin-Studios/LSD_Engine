@@ -30,6 +30,8 @@ struct StaticMesh {
     bool box_uv = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Not drawn (nor shadowed) farther than this from the camera; 0 = always (Unreal's Max Draw Distance)")
     f32 max_draw_distance = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Build Lighting bakes a lightmap for it (Unreal's Mobility: Static): baked shadows and bounced light. Off for things that move; physics bodies and movers never get one")
+    bool static_lighting = true;
 };
 
 // Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),
@@ -844,6 +846,8 @@ struct WorldSettings {
     LSD_PROPERTY(Edit, Widget = "Asset:GameMode", Tooltip = "Rules for Play: player prefab and game script") char game_mode[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "This level's own script (Unreal's Level Blueprint): a visual script or Lua file for one-off events; it runs while the level plays") char level_script[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "How the navmesh is built for AI (agent size, steps, slopes)") NavSettings navigation;
+    LSD_PROPERTY(Edit, Widget = "Choice:Off,256,512,1024,2048,4096", Tooltip = "Build Lighting's lightmap atlas for the level's static meshes (sharp baked shadows and bounced light); Off: light probes only")
+    u32 lightmap_resolution = 3;
 };
 
 } // namespace lsd::world

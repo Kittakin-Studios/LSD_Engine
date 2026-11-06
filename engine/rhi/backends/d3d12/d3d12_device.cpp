@@ -74,6 +74,7 @@ cbuffer Lights : register(b1) {
     float4 probe_origin; float4 probe_cell; uint4 probe_dims; float4 probes[1536];
     float4 decal_info; float4 decals[80];
     float4 reflection_info; float4 reflections[8];
+    float4 lightmap_info;
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -148,6 +149,7 @@ Texture2D orm_tex : register(t2);
 // not face along the box's +Z and towards its top and bottom.
 Texture2D decal_tex : register(t5);
 Texture2D reflection_tex : register(t6);  // reflection captures (lat-long tiles, mipmapped)
+Texture2D lightmap_tex : register(t7);    // the level's lightmaps (Build Lighting)
 SamplerState decal_samp : register(s2);
 float3 apply_decals(float3 c, float3 wpos, float3 n) {
     const uint count = (uint)decal_info.x;
@@ -168,6 +170,9 @@ float3 apply_decals(float3 c, float3 wpos, float3 n) {
 SamplerState samp : register(s0);
 struct VsIn {
     float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0;
+#ifndef SKINNED
+    float2 lightmap_uv : TEXCOORD1;
+#endif
 #ifdef SKINNED
     uint4 joints : BLENDINDICES; float4 weights : BLENDWEIGHT;
 #endif
@@ -175,7 +180,7 @@ struct VsIn {
     uint instance : SV_InstanceID;
 #endif
 };
-struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float3 wpos : TEXCOORD1; float2 uv : TEXCOORD0; };
+struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float3 wpos : TEXCOORD1; float2 uv : TEXCOORD0; float2 lightmap_uv : TEXCOORD2; };
 #ifdef SKINNED
 cbuffer Joints : register(b2) { float4 joint_rows[768]; };  // 3 rows per joint
 #endif
@@ -195,6 +200,7 @@ VsOut vs_main(VsIn i) {
     o.normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;
     o.wpos = world_pos;
     o.uv = i.uv;
+    o.lightmap_uv = 0;  // instances are not lightmapped
     return o;
 #endif
 #ifdef SKINNED
@@ -212,6 +218,11 @@ VsOut vs_main(VsIn i) {
     const float4 p = float4(position, 1);
     o.wpos = float3(dot(w0, p), dot(w1, p), dot(w2, p));
     o.uv = i.uv;
+#ifdef SKINNED
+    o.lightmap_uv = 0;
+#else
+    o.lightmap_uv = i.lightmap_uv;
+#endif
     return o;
 }
 //@MATERIAL
@@ -337,6 +348,15 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float a2 = roughness * roughness * roughness * roughness;
     const float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     float3 lit = 0;
+    // Lightmap (Build Lighting): its RGB is this texel's ambient light (sky and bounces), A how much
+    // of the sun reached it (baked shadows, sharp beyond the shadow distance too).
+    const bool lightmapped = lightmap_info.y > 0.5 && i.lightmap_uv.x > 0.0;
+    float4 baked = float4(0, 0, 0, 1);
+    if (lightmapped) {
+        baked = lightmap_tex.SampleLevel(samp, i.lightmap_uv, 0);
+        const float3 c = min(baked.rgb, 0.999);
+        baked.rgb = c / (1.0 - c) * lightmap_info.x;
+    }
     for (uint li = 0; li < light_count; ++li) {
         const Light L = lights[li];
         float3 l;
@@ -354,7 +374,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         }
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;
-        if ((float)li == shadow_info.y) atten *= sun_shadow(i.wpos, n, mat1.yzw);
+        if ((float)li == shadow_info.y) atten *= lightmapped ? min(sun_shadow(i.wpos, n, mat1.yzw), baked.a) : sun_shadow(i.wpos, n, mat1.yzw);
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
         const float3 h = normalize(v + l);
         const float ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
@@ -368,7 +388,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     // Ambient: diffuse from the sky / baked probes; specular from the sky along the reflection,
     // blurred toward the diffuse light as roughness grows, darkened where the probes are darker than
     // the sky (indoors), by AO (specular occlusion) and below the geometric horizon.
-    const float3 sky = ambient_light(i.wpos, n);
+    const float3 sky = lightmapped ? baked.rgb : ambient_light(i.wpos, n);
     const float3 r = reflect(-v, n);
     const float3 lum = float3(0.2126, 0.7152, 0.0722);
     const float open_sky = saturate(dot(sky, lum) / max(dot(lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4));
@@ -498,6 +518,7 @@ const D3D12_INPUT_ELEMENT_DESC kMeshLayout[] = {
     {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},  // the lightmap UV
 };
 const D3D12_INPUT_ELEMENT_DESC kSkinnedLayout[] = {
     {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -1349,10 +1370,10 @@ public:
         std::string source = kMeshHlsl;
         source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
         MaterialShader& m = material_shaders_[slot];
-        bool ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) &&
+        bool ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) &&
                   create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.skinned, false, kSkinnedDefines);
         for (u32 b = 0; b < 2 && ok; ++b) {  // translucent and additive variants
-            ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[0][b], false, nullptr, b + 1) &&
+            ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[0][b], false, nullptr, b + 1) &&
                  create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[1][b], false, kSkinnedDefines, b + 1);
         }
         if (!ok) {
@@ -1519,6 +1540,7 @@ public:
     }
     void set_decal_atlas(TextureHandle atlas) override { set_scene_texture(0, atlas); }
     void set_reflection_atlas(TextureHandle atlas) override { set_scene_texture(1, atlas); }
+    void set_lightmap_atlas(TextureHandle atlas) override { set_scene_texture(2, atlas); }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
         const ShadowMap* s = lookup_shadow(sun);
@@ -1977,14 +1999,15 @@ public:
         white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
         {  // the decal / reflection table's two neighbouring descriptors, white until set
             u32 slot = 0;
-            while (slot + 1 < kDebugUiDescriptors && (srv_used_[slot] || srv_used_[slot + 1])) ++slot;
-            srv_used_[slot] = srv_used_[slot + 1] = true;
+            while (slot + 2 < kDebugUiDescriptors && (srv_used_[slot] || srv_used_[slot + 1] || srv_used_[slot + 2])) ++slot;
+            srv_used_[slot] = srv_used_[slot + 1] = srv_used_[slot + 2] = true;
             scene_cpu_ = srv_heap_->GetCPUDescriptorHandleForHeapStart();
             scene_gpu_ = srv_heap_->GetGPUDescriptorHandleForHeapStart();
             scene_cpu_.ptr += static_cast<SIZE_T>(slot) * srv_size_;
             scene_gpu_.ptr += static_cast<UINT64>(slot) * srv_size_;
             set_decal_atlas({});
             set_reflection_atlas({});
+            set_lightmap_atlas({});
         }
         flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
         return debug_ui_;
@@ -2218,9 +2241,9 @@ private:
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
         D3D12_ROOT_PARAMETER params[10]{};
-        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas, t6: the reflection captures (one table: 64 of 64 DWORDs)
+        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas, t6: the reflection captures, t7: the lightmaps (one table: 64 of 64 DWORDs)
         decal_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        decal_range.NumDescriptors = 2;
+        decal_range.NumDescriptors = 3;
         decal_range.BaseShaderRegister = 5;
         params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[9].DescriptorTable.NumDescriptorRanges = 1;
@@ -2319,7 +2342,7 @@ private:
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
         // Blended variants: [static, skinned, instanced] x [translucent, additive, overdraw].
-        const D3D12_INPUT_LAYOUT_DESC blend_layouts[3] = {{mesh_layout, 3}, {skinned_layout, 5}, {mesh_layout, 3}};
+        const D3D12_INPUT_LAYOUT_DESC blend_layouts[3] = {{mesh_layout, 4}, {skinned_layout, 5}, {mesh_layout, 4}};
         const D3D_SHADER_MACRO* blend_defines[3] = {nullptr, skinned_defines, kInstancedDefines};
         for (u32 kind = 0; kind < 3; ++kind) {
             for (u32 b = 0; b < 3; ++b) {
@@ -2330,17 +2353,17 @@ private:
             }
         }
         return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_pipeline_, false, kInstancedDefines) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_wire_pipeline_, true, kInstancedDefines) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_pipeline_, false, kInstancedDefines) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_wire_pipeline_, true, kInstancedDefines) &&
                create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_pipeline_, false, skinned_defines) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
-               create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 4}, nullptr, shadow_pipeline_) &&
                create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
-               create_shadow_pipeline({mesh_layout, 3}, kInstancedDefines, instanced_shadow_pipeline_) &&
-               create_shadow_pipeline({mesh_layout, 3}, kCutoutDefines, cutout_shadow_pipeline_, true) &&
+               create_shadow_pipeline({mesh_layout, 4}, kInstancedDefines, instanced_shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 4}, kCutoutDefines, cutout_shadow_pipeline_, true) &&
                create_shadow_pipeline({skinned_layout, 5}, kSkinnedCutoutDefines, skinned_cutout_shadow_pipeline_, true) &&
                create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_) && create_sky_pipeline() &&
                create_ui_pipeline() && create_post_pipelines();
@@ -2748,9 +2771,9 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     ComPtr<ID3D12PipelineState> blend_pipelines_[3][3];  // [static, skinned, instanced][translucent, additive, overdraw]
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
-    D3D12_CPU_DESCRIPTOR_HANDLE scene_cpu_{};  // two neighbouring descriptors: t5 decal atlas, t6 reflection captures
+    D3D12_CPU_DESCRIPTOR_HANDLE scene_cpu_{};  // three neighbouring descriptors: t5 decal atlas, t6 reflection captures, t7 lightmaps
     D3D12_GPU_DESCRIPTOR_HANDLE scene_gpu_{};
-    ID3D12Resource* scene_resources_[2] = {};
+    ID3D12Resource* scene_resources_[3] = {};
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
     ComPtr<ID3D12PipelineState> cutout_shadow_pipeline_, skinned_cutout_shadow_pipeline_;  // Masked casters

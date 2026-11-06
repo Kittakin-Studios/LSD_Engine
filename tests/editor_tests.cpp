@@ -1,6 +1,7 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
 #include "light_bake.h"
+#include "lsd/render/mesh.h"
 #include "references.h"
 
 #include "lsd/asset/asset_registry.h"
@@ -15,6 +16,7 @@
 
 #include "lsd/world/components.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -162,6 +164,68 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     rhi::LightSetup setup;
     editor::apply_baked_lighting(baked, setup);
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
+}
+
+static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor under a 4 m roof, the sun straight down
+    using namespace lsd;
+    editor::BakeScene scene;
+    const Vec3 a{-10, -10, 0}, b{10, -10, 0}, c{10, 10, 0}, d{-10, 10, 0};
+    const Vec3 ra{-2, -2, 2}, rb{2, -2, 2}, rc{2, 2, 2}, rd{-2, 2, 2};
+    scene.positions = {a, b, c, a, c, d, ra, rb, rc, ra, rc, rd};
+    scene.albedo = {Vec3{0.5f, 0.5f, 0.5f}, Vec3{0.5f, 0.5f, 0.5f}, Vec3{}, Vec3{}};
+    for (int i = 0; i < 3; ++i) scene.lights.sky[i] = scene.lights.ground[i] = 1.0f;
+    scene.lights.count = 1;
+    scene.lights.lights[0] = rhi::GpuLight{};
+    scene.lights.lights[0].type = 0.0f;
+    scene.lights.lights[0].direction[2] = -1.0f;
+    for (int i = 0; i < 3; ++i) scene.lights.lights[0].color[i] = 3.0f;
+    scene.lo = {-1, -1, 1};
+    scene.hi = {1, 1, 1.5f};
+    scene.spacing = 1.0f;
+    scene.lightmap_size = 256;
+    editor::BakeScene::LightmapSource floor;
+    std::snprintf(floor.object.name, sizeof floor.object.name, "Floor");
+    std::snprintf(floor.object.mesh, sizeof floor.object.mesh, "Plane");
+    render::MeshData plane = render::make_plane(default_allocator());
+    floor.object.vertices.assign(plane.vertices, plane.vertices + plane.vertex_count);
+    floor.object.indices.assign(plane.indices, plane.indices + plane.index_count);
+    render::free_mesh(default_allocator(), plane);
+    floor.world = scaling(Vec3{20, 20, 1});
+    scene.lightmap_sources.push_back(floor);
+    editor::BakedLighting baked;
+    std::atomic<u32> done{0}, total{0};
+    editor::bake_lighting(scene, baked, &done, &total);
+    CHECK(baked.has_lightmap() && baked.objects.size() == 1 && baked.lightmap.size() == 256u * 256u * 4u && done.load() == total.load());
+    bool uvs_in_atlas = !baked.objects.empty();
+    for (const rhi::MeshVertex& v : baked.objects.empty() ? std::vector<rhi::MeshVertex>{} : baked.objects[0].vertices) {
+        uvs_in_atlas = uvs_in_atlas && v.lightmap_uv[0] > 0.0f && v.lightmap_uv[0] < 1.0f && v.lightmap_uv[1] > 0.0f && v.lightmap_uv[1] < 1.0f;
+    }
+    CHECK(uvs_in_atlas);
+    u32 covered = 0, shadowed = 0;
+    u32 lit_sum = 0, dark_sum = 0;
+    for (usize i = 0; i < baked.lightmap.size(); i += 4) {
+        if (!baked.lightmap[i]) continue;  // outside the charts
+        ++covered;
+        if (baked.lightmap[i + 3] < 128) {
+            ++shadowed;
+            dark_sum += baked.lightmap[i];
+        } else {
+            lit_sum += baked.lightmap[i];
+        }
+    }
+    const f32 share = covered ? static_cast<f32>(shadowed) / static_cast<f32>(covered) : 0.0f;
+    CHECK(covered > 1000 && share > 0.02f && share < 0.08f);  // 16 of 400 square metres under the roof
+    CHECK(shadowed && covered > shadowed && dark_sum / shadowed < lit_sum / (covered - shadowed));  // and less sky there
+    CHECK(editor::find_lightmap_object(baked, "Floor", "Plane", {0, 0, 0}) == 0 && editor::find_lightmap_object(baked, "Floor", "Plane", {1, 0, 0}) == -1 &&
+          editor::find_lightmap_object(baked, "Floor", "Cube", {0, 0, 0}) == -1);
+    rhi::LightSetup setup;
+    editor::apply_baked_lighting(baked, setup);
+    CHECK(setup.lightmap_info[1] == 1.0f && setup.lightmap_info[0] == baked.lightmap_scale);
+    const std::string path = (std::filesystem::path(LSD_TEST_TEMP_DIR) / "Lightmap_BuiltData.lsdlight").generic_string();
+    CHECK(editor::save_baked_lighting(path.c_str(), baked));
+    editor::BakedLighting loaded;
+    CHECK(editor::load_baked_lighting(path.c_str(), loaded) && loaded.has_lightmap() && loaded.lightmap == baked.lightmap && loaded.objects.size() == 1 &&
+          loaded.objects[0].indices == baked.objects[0].indices && std::strcmp(loaded.objects[0].name, "Floor") == 0);
 }
 
 static void test_references() {  // Reference Viewer: who uses what, and Replace References
@@ -361,6 +425,7 @@ int main() {
     test_undo_redo();
     test_references();
     test_light_bake();
+    test_lightmaps();
     test_rml_edit();
     test_sound_cue();
     if (g_failures == 0) std::printf("All editor tests passed.\n");

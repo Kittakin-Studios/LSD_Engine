@@ -217,6 +217,7 @@ public:
     void set_shadow_map(TextureHandle, TextureHandle) override {}
     void set_decal_atlas(TextureHandle) override {}
     void set_reflection_atlas(TextureHandle) override {}
+    void set_lightmap_atlas(TextureHandle) override {}
     void draw_mesh(const MeshDraw&) override {}
     void draw_lines(BufferHandle, u32, const f32*) override {}
     void draw_sky(const SkyDraw&) override {}
