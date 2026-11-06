@@ -52,6 +52,7 @@
 #include "lsd/foundation/system_info.h"
 #include "lsd/render/grid.h"
 #include "lsd/render/mesh.h"
+#include "lsd/render/occlusion.h"
 #include "lsd/rhi/rhi.h"
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
@@ -76,6 +77,7 @@
 #include <string>
 
 bool g_gpu_culling = true;  // r.GPUCulling
+bool g_occlusion_culling = true;  // r.OcclusionCulling
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
 std::vector<lsd::rhi::MeshDraw> g_outline;
@@ -522,6 +524,44 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
     stats.stat_culled = 0;
+    stats.stat_occluded = 0;
+    // Occlusion culling: the nearest big opaque meshes in view go into a small CPU depth buffer (their
+    // real triangles, up to 4096 each), then every static mesh's box is tested against it below.
+    static lsd::render::OcclusionBuffer occlusion;  // 128 KB: kept, not on the stack
+    occlusion.clear();
+    if (g_occlusion_culling && !stats.view_mode_unlit_or_wire()) {
+        struct Candidate {
+            lsd::f32 size;
+            lsd::u32 index;
+        };
+        static std::vector<Candidate> candidates;
+        candidates.clear();
+        for (lsd::u32 i = 0; i < world.count(type); ++i) {
+            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
+            const lsd::world::Entity e = world.owner(type, i);
+            if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+            const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
+            if (!mesh) continue;
+            const lsd::Mat4 m = world.world_matrix(e);
+            if (!in_view(view_proj * m, mesh->bounds_min, mesh->bounds_max)) continue;
+            const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
+            const lsd::f32 radius = lsd::length(lsd::transform_vector(m, (mesh->bounds_max - mesh->bounds_min) * 0.5f));
+            const lsd::f32 size = radius / std::max(lsd::length(centre - eye), 0.1f);  // how big it looks
+            if (size > 0.1f) candidates.push_back({size, i});
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.size > b.size; });
+        for (lsd::usize k = 0; k < candidates.size() && k < 16; ++k) {
+            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, candidates[k].index));
+            lsd::rhi::MeshDraw look{};
+            to_rgba(component->color, look.color);
+            materials.apply(component->material, look);
+            if (look.blend != 0 || look.alpha_cutoff > 0.0f || look.color[3] < 0.999f) continue;  // see-through: hides nothing
+            const lsd::editor::MeshCache::Triangles* tris = meshes.triangles(component->mesh);
+            if (!tris || tris->indices.empty() || tris->indices.size() > 3 * 4096) continue;  // heavy meshes are not worth it on the CPU
+            const lsd::world::Entity e = world.owner(type, candidates[k].index);
+            occlusion.add_occluder(view_proj * world.world_matrix(e), tris->points.data(), tris->indices.data(), static_cast<lsd::u32>(tris->indices.size()));
+        }
+    }
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::world::Entity e = world.owner(type, i);
@@ -534,6 +574,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Mat4 mvp = view_proj * m;
         if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
             ++stats.stat_culled;
+            continue;
+        }
+        if (!occlusion.box_visible(mvp, mesh->bounds_min, mesh->bounds_max)) {  // behind the occluders
+            ++stats.stat_culled;
+            ++stats.stat_occluded;
             continue;
         }
         lsd::rhi::MeshDraw draw{};
@@ -767,6 +812,7 @@ void register_console(EditorState& s) {
     console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
+    console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Static meshes hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
@@ -786,8 +832,8 @@ void register_console(EditorState& s) {
         else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
         else if (std::strcmp(args, "dump") == 0) {  // the numbers as text (remote console, the MCP bridge, tests)
             char line[200];
-            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u", st.stat_game_ms,
-                          st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled);
+            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u (occluded %u)", st.stat_game_ms,
+                          st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled, st.stat_occluded);
             lsd::editor::remote::print(line);
             LSD_LOG_INFO("stat", "%s", line);
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],

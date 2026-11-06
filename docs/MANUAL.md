@@ -1453,6 +1453,10 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).
 - **Window > Memory** / **memreport** (console): memory per allocator, the process's RAM and the video memory budget.
+- **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static meshes hidden
+  behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
+  shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`
+  shows how many it skipped (culled ... (occluded n)). Masked and translucent meshes do not hide anything.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
 - **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU

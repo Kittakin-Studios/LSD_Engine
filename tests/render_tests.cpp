@@ -1,6 +1,7 @@
 // Math and mesh-generation tests (no GPU needed).
 #include "lsd/foundation/math.h"
 #include "lsd/render/mesh.h"
+#include "lsd/render/occlusion.h"
 #include "lsd/rhi/rhi.h"
 
 #include <cmath>
@@ -95,10 +96,36 @@ static void test_culling() {
     CHECK(at(0.2f, 0, 0));    // right at the camera, partly in front of the near plane
 }
 
+// Occlusion: a wall 10 m ahead (4 x 4 m) hides a small box behind it; boxes beside it, in front of it,
+// bigger than it, at the camera, or with nothing added stay visible.
+static void test_occlusion() {
+    using namespace lsd;
+    static render::OcclusionBuffer buffer;  // 128 KB: not on the stack
+    const Mat4 view_proj = perspective(1.0f, 2.0f, 0.1f, 200.0f) * look_at({0, 0, 0}, {1, 0, 0}, {0, 0, 1});
+    const Vec3 wall[4] = {{10, -2, -2}, {10, 2, -2}, {10, 2, 2}, {10, -2, 2}};
+    const u32 quad[6] = {0, 1, 2, 0, 2, 3};
+    buffer.clear();
+    CHECK(buffer.box_visible(view_proj, {19, -0.5f, -0.5f}, {20, 0.5f, 0.5f}));  // nothing added yet
+    buffer.add_occluder(view_proj, wall, quad, 6);
+    CHECK(buffer.occluder_triangles() == 2);
+    CHECK(!buffer.box_visible(view_proj, {19, -0.5f, -0.5f}, {20, 0.5f, 0.5f}));  // behind it
+    CHECK(buffer.box_visible(view_proj, {19, 6.0f, -0.5f}, {20, 7.0f, 0.5f}));    // beside it
+    CHECK(buffer.box_visible(view_proj, {5, -0.5f, -0.5f}, {6, 0.5f, 0.5f}));     // in front of it
+    CHECK(buffer.box_visible(view_proj, {19, -6.0f, -6.0f}, {20, 6.0f, 6.0f}));   // bigger than it, sticking out
+    CHECK(buffer.box_visible(view_proj, {-1, -0.5f, -0.5f}, {1, 0.5f, 0.5f}));    // around the camera
+    CHECK(buffer.box_visible(view_proj, {9.5f, -0.5f, -0.5f}, {10.5f, 0.5f, 0.5f}));  // through the wall: partly in front
+    // A slanted occluder is written at its farthest point: a box just behind its near edge stays visible.
+    const Vec3 slope[4] = {{6, -2, -2}, {6, 2, -2}, {14, 2, 2}, {14, -2, 2}};
+    buffer.clear();
+    buffer.add_occluder(view_proj, slope, quad, 6);
+    CHECK(buffer.box_visible(view_proj, {8, -0.2f, -0.6f}, {8.4f, 0.2f, -0.4f}));
+}
+
 int main() {
     test_math();
     test_meshes();
     test_culling();
+    test_occlusion();
     if (g_failures == 0) std::printf("All render tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }
