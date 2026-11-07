@@ -1063,6 +1063,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (!ui) return;
         if (type == 0) ui->set_data(name, number);
         else if (type == 2) ui->set_data(name, number != 0.0);
+        else if (type == 3) ui->set_data_json(name, text);
         else ui->set_data(name, text);
     };
     host.ui_value = [](void* user, i32 doc, const char* id, char* out, usize capacity) {

@@ -1734,6 +1734,22 @@ button:focus, button:hover { background-color: #EEA70E; }
   lsd.ui_data("health", self.health)   -- the bar, the label and the warning follow
   ```
 
+  **Lists** (UMG's List View fed by an array): pass a table, and `data-for` repeats an element per
+  item; `{{item.field}}` reads a row's field, the second name is its index (from 0), and
+  `{{game.<name>.size}}` counts it. For `data-for` the `data-model` must be on an element inside the
+  body, not on `<body>` itself (RmlUi reads the repeated markup while the document loads):
+
+  ```html
+  <body><div data-model="game">
+  <div>Items: {{game.inventory.size}}</div>
+  <div data-for="item, i : game.inventory">{{i + 1}}. {{item.name}} x{{item.count}}</div>
+  </div></body>
+  ```
+
+  ```lua
+  lsd.ui_data("inventory", {{name = "Sword", count = 1}, {name = "Potion", count = 3}})
+  ```
+
   ![A health bar by data binding](images/ui_data_binding.jpg)
   *The bar's width, the label and the warning above, after `lsd.ui_data("health", 18)`.*
 
@@ -1772,7 +1788,9 @@ button:focus, button:hover { background-color: #EEA70E; }
 ![HUD widgets](images/hud_widgets.jpg)
 *A health bar and a damage number over the player, and a prompt.*
 - Fonts: `font-family: sans` is always there; add your own `.ttf` / `.otf` to `Content/Fonts` and use
-  their family name. Every element starts inline: give blocks `display: block`.
+  their family name. Fonts in `Content/Fonts/Fallback` (Unreal's composite font fallbacks) fill in the
+  glyphs the others lack: drop Noto Sans JP / SC / KR / Arabic there and Japanese, Chinese, Korean or Arabic
+  text shows in every font-family. Every element starts inline: give blocks `display: block`.
 
 ---
 
@@ -1792,6 +1810,18 @@ local save = lsd.load_game("Slot1")   -- nil if there is none
 ```
 
 Files go to `Saved/SaveGames/<slot>.json`. Visual scripts: Save Value / Load Value.
+
+**Versions** (Unreal's custom save versions): pass your save format's number when it changes, and
+upgrade older saves when they load; saves written without one are version 1.
+
+```lua
+lsd.save_game("Slot1", {level = 3, gold = 250}, 2)      -- version 2: "coins" became "gold"
+local save, version = lsd.load_game("Slot1")
+if save and version < 2 then save.gold, save.coins = save.coins, nil end
+```
+
+**In the background** (Unreal's Async Save Game to Slot): `lsd.save_game_async(slot, value [, version])`
+writes the file off the frame (no hitch for big saves); loading, checking or deleting that slot waits for it.
 
 Whole objects (the components you name, Transform when you name none) by object name, so a load
 into a freshly opened level puts them back:
@@ -1835,7 +1865,9 @@ in Project Settings. Texts built at run time (`lsd.text("LEVEL_" .. n)`) are not
 **Arguments and plurals** (Unreal's Format Text): write `{0}`, `{1}`... in the text and pass the
 values after the key: `lsd.text("SCORE", score)` (or the **Format Text** node). For words that
 change with a number, `{0}|plural(one=apple,other=apples)` picks by the language's rule (French
-counts 0 as one); add `zero=` for a special empty case:
+counts 0 as one); add `zero=` for a special empty case. Languages with more forms use CLDR's names:
+`two`, `few` and `many` too (Russian and Ukrainian 2-4 few, 5-20 many; Polish 22-24 few; Czech 2-4 few;
+Arabic zero, one, two, few, many; Japanese, Chinese and Korean only `other`). A form the text lacks uses `other`:
 
 ```text
 Key,en,fr
@@ -2014,13 +2046,13 @@ UI, saving, settings, languages
 | `lsd.ui_open(name)` | document handle |
 | `lsd.ui_close(doc)`, `lsd.ui_set_text(doc, id, text)`, `lsd.ui_set(doc, id, attr, value)` | |
 | `lsd.ui_value(doc, id)` | a text field's text |
-| `lsd.ui_data(name, value)` | a data binding: `{{game.name}}` in documents with `data-model="game"` |
+| `lsd.ui_data(name, value)` | a data binding: `{{game.name}}` in documents with `data-model="game"`; a table is a list for `data-for` |
 | `lsd.ui_show_cursor(on)` | menus: free the mouse |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
 | `lsd.ui_style(doc, id, property, value)`, `lsd.ui_rml(doc, id, markup)` | one style property; an element's contents as markup |
 | `lsd.health_bar(e, fraction [, height, color])`, `lsd.remove_health_bar(e)` | a health bar over e |
 | `lsd.damage_number(e, amount [, color])`, `lsd.prompt(text [, e])` | a rising damage number; a prompt (nil hides) |
-| `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
+| `lsd.save_game(slot, v [, version])`, `lsd.save_game_async(slot, v [, version])`, `lsd.load_game(slot)` -> value, version, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
 | `lsd.save_objects(slot, objects, [components], [extra])`, `lsd.load_objects(slot)` | whole objects' components by name |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |
 | `lsd.text(key)`, `lsd.set_language(code)`, `lsd.languages()` | localisation |

@@ -4,6 +4,7 @@
 
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
+#include "lsd/reflect/json.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL_events.h>
@@ -11,8 +12,10 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -239,6 +242,12 @@ bool init(rhi::Device& device, const char* fonts_folder) {
             ++loaded;
         }
     }
+    // Fonts/Fallback (Unreal's composite font fallbacks): their glyphs fill in what the others lack, so
+    // Japanese, Chinese, Korean, Arabic or Thai text shows in any font-family (drop Noto Sans JP etc. there).
+    for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(fonts_folder) / "Fallback", error)) {
+        const std::string ext = entry.path().extension().string();
+        if ((ext == ".ttf" || ext == ".otf" || ext == ".TTF" || ext == ".OTF") && Rml::LoadFontFace(entry.path().generic_string(), true)) ++loaded;
+    }
     if (!loaded) LSD_LOG_WARN("ui", "No fonts: put a .ttf in %s", fonts_folder);
     return true;
 }
@@ -267,11 +276,20 @@ void shutdown() {
 
 // ---- Contexts ----
 
-// The "game" data model's one variable: a struct whose fields are made the first time a document
-// (or set_data) names them, so scripts need not declare them before a document loads.
-struct DataStore {
-    std::unordered_map<std::string, Rml::Variant> values;  // node-based: slots stay where they are
+// A value of the "game" data model: a scalar (number, text, boolean), a list (data-for) or a record ({{item.name}}).
+struct DataNode {
+    enum Kind : u8 { Scalar, List, Record } kind = Scalar;
+    Rml::Variant value = Rml::Variant(0.0);
+    std::vector<DataNode> items;
+    std::map<std::string, DataNode> fields;
+    Rml::Variant size;  // a list's {{...size}}
 };
+// The model's one variable: a record whose fields are made the first time a document (or set_data)
+// names them, so scripts need not declare them before a document loads.
+struct DataStore {
+    std::unordered_map<std::string, DataNode> values;  // node-based: slots stay where they are
+};
+Rml::DataVariable node_variable(DataNode& node);
 class DataValueDefinition final : public Rml::VariableDefinition {
 public:
     DataValueDefinition() : VariableDefinition(Rml::DataVariableType::Scalar) {}
@@ -284,21 +302,84 @@ public:
         return true;
     }
 };
+class DataListDefinition final : public Rml::VariableDefinition {
+public:
+    DataListDefinition() : VariableDefinition(Rml::DataVariableType::Array) {}
+    int Size(void* ptr) override { return static_cast<int>(static_cast<DataNode*>(ptr)->items.size()); }
+    Rml::DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override;
+};
+class DataRecordDefinition final : public Rml::VariableDefinition {
+public:
+    DataRecordDefinition() : VariableDefinition(Rml::DataVariableType::Struct) {}
+    Rml::DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override {
+        if (address.name.empty()) return {};
+        auto& fields = static_cast<DataNode*>(ptr)->fields;
+        return node_variable(fields[address.name]);  // a field it lacks: 0
+    }
+};
 class DataStoreDefinition final : public Rml::VariableDefinition {
 public:
     DataStoreDefinition() : VariableDefinition(Rml::DataVariableType::Struct) {}
     Rml::DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override {
         if (address.name.empty()) return {};
         auto& values = static_cast<DataStore*>(ptr)->values;
-        auto it = values.find(address.name);
-        if (it == values.end()) it = values.emplace(address.name, Rml::Variant(0.0)).first;  // not set yet: 0 (bars, counts and data-if read it)
-        return Rml::DataVariable(&value_, &it->second);
+        return node_variable(values[address.name]);  // not set yet: 0 (bars, counts and data-if read it)
     }
-
-private:
-    DataValueDefinition value_;
 };
+DataValueDefinition g_value_definition;
+DataListDefinition g_list_definition;
+DataRecordDefinition g_record_definition;
 DataStoreDefinition g_data_definition;
+
+Rml::DataVariable node_variable(DataNode& node) {
+    if (node.kind == DataNode::List || (node.kind == DataNode::Record && node.fields.empty())) return Rml::DataVariable(&g_list_definition, &node);  // {} is an empty list too
+    if (node.kind == DataNode::Record) return Rml::DataVariable(&g_record_definition, &node);
+    return Rml::DataVariable(&g_value_definition, &node.value);
+}
+
+Rml::DataVariable DataListDefinition::Child(void* ptr, const Rml::DataAddressEntry& address) {
+    DataNode& list = *static_cast<DataNode*>(ptr);
+    if (address.name == "size") {
+        list.size = Rml::Variant(static_cast<int>(list.items.size()));
+        return Rml::DataVariable(&g_value_definition, &list.size);
+    }
+    if (address.index < 0 || static_cast<usize>(address.index) >= list.items.size()) return {};
+    return node_variable(list.items[static_cast<usize>(address.index)]);
+}
+
+// JSON (what lsd.ui_data writes for a table) into a node.
+void parse_node(reflect::JsonReader& r, DataNode& out, int depth) {
+    out = DataNode{};
+    if (depth > 16) return r.fail("lists nested too deep");
+    if (r.peek('"')) {
+        static char text[4096];
+        r.read_string(text, sizeof text);
+        out.value = Rml::Variant(Rml::String(text));
+    } else if (r.accept('[')) {
+        out.kind = DataNode::List;
+        if (r.accept(']')) return;
+        do {
+            out.items.emplace_back();
+            parse_node(r, out.items.back(), depth + 1);
+        } while (r.ok && r.accept(','));
+        r.expect(']');
+    } else if (r.accept('{')) {
+        out.kind = DataNode::Record;
+        if (r.accept('}')) return;
+        do {
+            char key[128];
+            r.read_string(key, sizeof key);
+            r.expect(':');
+            parse_node(r, out.fields[key], depth + 1);
+        } while (r.ok && r.accept(','));
+        r.expect('}');
+    } else {
+        char token[64];
+        r.read_token(token, sizeof token);
+        if (std::strcmp(token, "true") == 0 || std::strcmp(token, "false") == 0) out.value = Rml::Variant(token[0] == 't');
+        else out.value = Rml::Variant(std::atof(token));  // null: 0
+    }
+}
 
 struct UiContext::Impl {
     Rml::Context* context = nullptr;
@@ -376,17 +457,26 @@ UiContext::UiContext(const char* name) : impl_(new Impl()) {
 }
 
 void UiContext::set_data(const char* name, f64 number) {
-    impl_->data.values[name] = Rml::Variant(number);
+    impl_->data.values[name] = DataNode{DataNode::Scalar, Rml::Variant(number), {}, {}, {}};
     if (impl_->data_model) impl_->data_model.DirtyVariable("game");
 }
 
 void UiContext::set_data(const char* name, const char* text) {
-    impl_->data.values[name] = Rml::Variant(Rml::String(text));
+    impl_->data.values[name] = DataNode{DataNode::Scalar, Rml::Variant(Rml::String(text)), {}, {}, {}};
     if (impl_->data_model) impl_->data_model.DirtyVariable("game");
 }
 
 void UiContext::set_data(const char* name, bool value) {
-    impl_->data.values[name] = Rml::Variant(value);
+    impl_->data.values[name] = DataNode{DataNode::Scalar, Rml::Variant(value), {}, {}, {}};
+    if (impl_->data_model) impl_->data_model.DirtyVariable("game");
+}
+
+void UiContext::set_data_json(const char* name, const char* json) {
+    reflect::JsonReader reader{json, json + std::strlen(json)};
+    DataNode node;
+    parse_node(reader, node, 0);
+    if (!reader.ok) return;  // logged; the old value stays
+    impl_->data.values[name] = std::move(node);
     if (impl_->data_model) impl_->data_model.DirtyVariable("game");
 }
 

@@ -11,8 +11,10 @@
 //   SCORE,"Score: {0}"            {0}..{9}: the arguments in order
 //   APPLES,"{0} {0}|plural(one=apple,other=apples)"     a word picked by the number's plural form
 //
-// Plural forms: zero (when given, for 0), one, other; which numbers are "one" follows the language
-// (English 1; French 0 and 1). shortcut: no few / many forms (Slavic, Arabic); add CLDR rules per language then.
+// Plural forms (CLDR's, for whole numbers): zero (when given, for 0), one, two, few, many, other; which numbers
+// take which follows the language: English 1 one; French 0 and 1 one; Russian / Ukrainian 1, 21 one, 2-4, 22-24
+// few, 5-20 many; Polish 1 one, 2-4, 22-24 few, others many; Czech / Slovak 2-4 few; Arabic zero, one, two,
+// few (3-10), many (11-99); Hebrew two; Japanese, Chinese, Korean only other. A missing form uses other.
 #include "lsd/asset/data_table.h"
 
 namespace lsd::asset {

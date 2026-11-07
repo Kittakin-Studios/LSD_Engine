@@ -1179,6 +1179,16 @@ assert(s.score == 1250.5 and s.name == "Ana \"Q\"\nline" and s.alive == true)
 assert(#s.items == 3 and s.items[1] == "sword" and s.items[3] == 3 and s.pos.y == -2)
 assert(not pcall(lsd.save_game, "Slot2", {f = print}))
 assert(lsd.delete_save("Slot1") and not lsd.has_save("Slot1"))
+-- Versions (the game's save format): given or 1; old saves upgrade by it. Background saves land before a load.
+assert(lsd.save_game("Slot3", {coins = 5}, 3))
+local d, v = lsd.load_game("Slot3")
+assert(d.coins == 5 and v == 3, tostring(v))
+assert(lsd.save_game("Slot3", {coins = 6}))
+assert(select(2, lsd.load_game("Slot3")) == 1)
+for i = 1, 20 do assert(lsd.save_game_async("Slot3", {coins = i, big = string.rep("x", 20000)}, 2)) end
+d, v = lsd.load_game("Slot3")
+assert(d.coins == 20 and v == 2, tostring(d.coins))
+assert(lsd.delete_save("Slot3"))
 )"));
         // Whole objects: Transform and a chosen component back on the objects by name; extra rides along.
         const world::Entity crate = w.create("Crate");

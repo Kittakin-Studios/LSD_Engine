@@ -358,6 +358,20 @@ static void test_localization() {
     CHECK(std::strcmp(out, "0 pomme") == 0);
     asset::format_text("{0}|plural(zero=No mail,one=One mail,other={1} has mail)", none, 1, "en", out, sizeof out);
     CHECK(std::strcmp(out, "No mail") == 0);
+    // few / many (CLDR): Russian, Polish, Arabic, Japanese.
+    auto plural = [&](const char* n, const char* language, const char* pattern) {
+        const char* args[] = {n};
+        asset::format_text(pattern, args, 1, language, out, sizeof out);
+        return std::string(out);
+    };
+    const char* ru = "{0}|plural(one=one,few=few,many=many,other=other)";
+    CHECK(plural("1", "ru", ru) == "one" && plural("21", "ru", ru) == "one" && plural("3", "ru", ru) == "few" && plural("24", "ru", ru) == "few");
+    CHECK(plural("5", "ru", ru) == "many" && plural("11", "ru", ru) == "many" && plural("12", "ru", ru) == "many" && plural("1.5", "ru", ru) == "other");
+    CHECK(plural("22", "pl", ru) == "few" && plural("25", "pl", ru) == "many" && plural("21", "pl", ru) == "many" && plural("1", "pl", ru) == "one");
+    const char* ar = "{0}|plural(zero=z,one=o,two=t,few=f,many=m,other=x)";
+    CHECK(plural("0", "ar", ar) == "z" && plural("2", "ar", ar) == "t" && plural("7", "ar", ar) == "f" && plural("11", "ar", ar) == "m" && plural("100", "ar", ar) == "x");
+    CHECK(plural("1", "ja", ru) == "other" && plural("3", "ru", "{0}|plural(one=a,other=b)") == "b");  // no form: other; a missing form: other
+    CHECK(plural("1", "en-GB", ru) == "one" && plural("3", "cs", ru) == "few");
     asset::format_text("Hi {1}, {0} new; {5} {x}", three, 2, "en", out, sizeof out);
     CHECK(std::strcmp(out, "Hi Ada, 3 new;  {x}") == 0);  // missing argument: empty; not an argument: as written
     asset::format_text("{1} wins", three, 2, "en", out, 6);

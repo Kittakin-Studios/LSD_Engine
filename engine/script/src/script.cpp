@@ -21,6 +21,9 @@ extern "C" {
 #include <cstring>
 #include <cctype>
 #include <filesystem>
+#include <future>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -1257,6 +1260,11 @@ struct Api {
         const char* name = luaL_checkstring(L, 1);
         if (lua_isboolean(L, 2)) host.ui_data(host.user, name, 2, lua_toboolean(L, 2) ? 1.0 : 0.0, "");
         else if (lua_type(L, 2) == LUA_TNUMBER) host.ui_data(host.user, name, 0, lua_tonumber(L, 2), "");
+        else if (lua_istable(L, 2)) {  // a list (data-for) or record: handed over as JSON
+            std::string json;
+            if (!write_json(L, 2, json, 0)) return luaL_error(L, "ui_data: a list holds numbers, strings, booleans and tables only");
+            host.ui_data(host.user, name, 3, 0.0, json.c_str());
+        }
         else host.ui_data(host.user, name, 1, 0.0, luaL_tolstring_compat(L, 2));
         return 0;
     }
@@ -1540,24 +1548,70 @@ struct Api {
         if (host.set_class_volume) host.set_class_volume(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
         return 0;
     }
-    static int save_game(lua_State* L) {
-        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
-        luaL_checkany(L, 2);
-        std::string json = "{\"lsd_save\": " + std::to_string(kSaveVersion) + ", \"data\": ";
-        if (!write_json(L, 2, json, 0)) return luaL_error(L, "save_game: only numbers, strings, booleans and tables can be saved");
-        json += "}\n";
+    // Background saves (Unreal's AsyncSaveGameToSlot): one pending write per file; anything touching that file waits for it.
+    static std::mutex& pending_mutex() {
+        static std::mutex m;
+        return m;
+    }
+    static std::map<std::string, std::shared_future<bool>>& pending_saves() {
+        static std::map<std::string, std::shared_future<bool>> pending;
+        return pending;
+    }
+    static void wait_for_save(const std::string& path) {
+        std::shared_future<bool> f;
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex());
+            auto it = pending_saves().find(path);
+            if (it == pending_saves().end()) return;
+            f = it->second;
+            pending_saves().erase(it);
+        }
+        f.wait();
+    }
+    static bool write_save(const std::string& dir, const std::string& path, const std::string& json) {
         std::error_code error;
-        std::filesystem::create_directories(system(L).save_dir_, error);
+        std::filesystem::create_directories(dir, error);
         const std::string temp = path + ".tmp";  // written whole, then swapped in: a crash never leaves half a save
         FILE* file = std::fopen(temp.c_str(), "wb");
         const bool ok = file && std::fwrite(json.data(), 1, json.size(), file) == json.size();
         if (file) std::fclose(file);
         if (ok) std::filesystem::rename(temp, path, error);
-        lua_pushboolean(L, ok && !error);
+        if (!ok || error) LSD_LOG_WARN("script", "save_game: could not write %s", path.c_str());
+        return ok && !error;
+    }
+    // The save file's text: the engine's format version, the game's own (`version`), then the value.
+    static bool save_json(lua_State* L, std::string& json) {
+        luaL_checkany(L, 2);
+        const lua_Integer version = luaL_optinteger(L, 3, 1);
+        json = "{\"lsd_save\": " + std::to_string(kSaveVersion) + ", \"version\": " + std::to_string(static_cast<long long>(version)) + ", \"data\": ";
+        if (!write_json(L, 2, json, 0)) return false;
+        json += "}\n";
+        return true;
+    }
+    static int save_game(lua_State* L) {
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        std::string json;
+        if (!save_json(L, json)) return luaL_error(L, "save_game: only numbers, strings, booleans and tables can be saved");
+        wait_for_save(path);
+        lua_pushboolean(L, write_save(system(L).save_dir_, path, json));
+        return 1;
+    }
+    static int save_game_async(lua_State* L) {
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        std::string json;
+        if (!save_json(L, json)) return luaL_error(L, "save_game_async: only numbers, strings, booleans and tables can be saved");
+        wait_for_save(path);  // an older write of this slot lands first
+        std::shared_future<bool> f = std::async(std::launch::async, write_save, system(L).save_dir_, path, std::move(json)).share();
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex());
+            pending_saves()[path] = f;
+        }
+        lua_pushboolean(L, 1);
         return 1;
     }
     static int load_game(lua_State* L) {
         const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        wait_for_save(path);
         FILE* file = std::fopen(path.c_str(), "rb");
         if (!file) return 0;
         std::string text;
@@ -1572,16 +1626,22 @@ struct Api {
             LSD_LOG_WARN("script", "load_game: %s is damaged", path.c_str());
             return 0;
         }
-        return 1;
+        const char* version = std::strstr(text.c_str(), "\"version\":");
+        lua_pushinteger(L, version && version < data ? std::atoll(version + 10) : 1);  // saves from before versions: 1
+        return 2;
     }
     static int has_save(lua_State* L) {
         std::error_code error;
-        lua_pushboolean(L, std::filesystem::exists(save_path(system(L).save_dir_, luaL_checkstring(L, 1)), error));
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        wait_for_save(path);
+        lua_pushboolean(L, std::filesystem::exists(path, error));
         return 1;
     }
     static int delete_save(lua_State* L) {
         std::error_code error;
-        lua_pushboolean(L, std::filesystem::remove(save_path(system(L).save_dir_, luaL_checkstring(L, 1)), error));
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        wait_for_save(path);
+        lua_pushboolean(L, std::filesystem::remove(path, error));
         return 1;
     }
     static int curve(lua_State* L) {
@@ -1855,7 +1915,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
         {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location}, {"camera_forward", Api::camera_forward},
-        {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
+        {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"save_game_async", Api::save_game_async}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"apply_damage", Api::apply_damage}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},

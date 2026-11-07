@@ -70,6 +70,9 @@ public:
     void set_data(const char* name, f64 number);
     void set_data(const char* name, const char* text);
     void set_data(const char* name, bool value);
+    // A list or record as JSON (arrays, objects, numbers, strings, booleans): data-for="item : game.<name>" repeats
+    // an element per item, {{item.field}} reads a record's field, {{game.<name>.size}} counts a list.
+    void set_data_json(const char* name, const char* json);
 
     // An action as if an element's on<event> fired it (a document script's ui.send): to the handler.
     void send_action(DocumentId document, const char* action, const char* element_id);

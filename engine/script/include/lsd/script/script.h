@@ -67,7 +67,8 @@
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
 //   lsd.ui_value(doc, id) -> text         a text field's value
 //   lsd.ui_data(name, value)              a data binding (number, text or boolean): documents with
-//                                         data-model="game" show it as {{game.name}} and in data-* attributes
+//                                         data-model="game" show it as {{game.name}} and in data-* attributes;
+//                                         a table is a list (data-for="item : game.name", {{item.field}}, {{game.name.size}})
 //   lsd.ui_show_cursor(on)                a menu: the mouse moves a cursor instead of the player
 //   lsd.ui_follow(doc, id, e [, height])  keeps that element over the object (name tags, health bars);
 //                                         hidden when it is behind the camera; lsd.ui_unfollow(doc, id)
@@ -92,9 +93,13 @@
 //   lsd.key_pressed() -> name | nil       a key / button that went down this frame ("press a key" menus)
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
 // on every script that defines it.
-//   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
-//                                         string keys) to Saved/SaveGames/<slot>.json, versioned
-//   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
+//   lsd.save_game(slot, value [, version]) -> ok   Unreal's SaveGame: numbers, strings, booleans and tables (lists or
+//                                         string keys) to Saved/SaveGames/<slot>.json; version: your game's save
+//                                         format (a whole number, default 1)
+//   lsd.save_game_async(slot, value [, version]) -> ok   the same, the file written in the background (a load or
+//                                         another save of that slot waits for it); ok = the value could be saved
+//   lsd.load_game(slot) -> value, version what was saved and its version (1 for saves without one), or nil:
+//                                         upgrade old saves by version; lsd.has_save(slot), lsd.delete_save(slot)
 //   lsd.save_objects(slot, {e1, e2}, [{"Transform", "Character"}], [extra]) -> ok   whole objects by name
 //   lsd.load_objects(slot) -> extra, found   puts their components back (Transform through set_position)
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
@@ -257,7 +262,7 @@ struct ScriptHost {
     bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text
     bool (*ui_value)(void* user, i32 doc, const char* id, char* out, usize capacity) = nullptr;
     // Data bindings: type 0 number, 1 text, 2 boolean (number != 0).
-    void (*ui_data)(void* user, const char* name, int type, f64 number, const char* text) = nullptr;
+    void (*ui_data)(void* user, const char* name, int type, f64 number, const char* text) = nullptr;  // type 0 number, 1 text, 2 bool, 3 JSON
     void (*ui_show_cursor)(void* user, bool on) = nullptr;
     void (*ui_follow)(void* user, i32 doc, const char* id, world::Entity e, f32 height) = nullptr;  // e invalid: stop
     // The player's settings: a reflected struct, and a call after Lua changed it.
