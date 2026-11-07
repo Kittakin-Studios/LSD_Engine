@@ -329,6 +329,7 @@ bool AnimationPlayer::curve_value(const world::World& world, const SkinnedCache&
             const ClipSet* set = in.clip ? cache.set_of(in.clip) : nullptr;
             f32 v = 0.0f;  // a clip without the curve counts as 0 (as Unreal's)
             if (set && asset::curve_value(set->meta, static_cast<u32>(in.clip - set->clips), name, in.ratio * in.clip->duration, v)) any = true;
+            else if (in.clip && in.clip->curve_value(name, in.ratio, v)) any = true;  // a curve the file itself carries (FBX user property)
             sum += v * in.weight;
             total += in.weight;
         }

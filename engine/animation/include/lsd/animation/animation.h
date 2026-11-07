@@ -116,6 +116,9 @@ struct Clip {
     f32 duration = 0.0f;  // seconds
     // A morph target's weight animated by this clip at `ratio` (0..1); false if the clip leaves it alone.
     bool morph_weight(const char* morph, f32 ratio, f32& weight) const;
+    // An animation curve the file carries (an FBX user-defined number property animated in the take, by its
+    // name: Unreal's imported curves) at `ratio` (0..1); false if the clip has none of that name.
+    bool curve_value(const char* curve, f32 ratio, f32& value) const;
     struct Impl;
     Impl* impl = nullptr;  // the ozz animation and morph weight curves
 };

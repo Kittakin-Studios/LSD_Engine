@@ -43,6 +43,7 @@ struct Clip::Impl {
         std::vector<f32> weights;  // 30 a second, 0..1
     };
     std::vector<MorphCurve> morphs;
+    std::vector<MorphCurve> curves;  // animated user properties (Unreal's imported curves), sampled the same way
 };
 
 namespace {
@@ -878,19 +879,35 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
 
 Clip::~Clip() { delete impl; }
 
+namespace {
+// A curve sampled 30 times a second (the last sample at the very end of the clip) at `ratio` of `duration`.
+f32 sample_curve(const std::vector<f32>& weights, f32 ratio, f32 duration) {
+    const f32 time = (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio) * duration;
+    const usize last = weights.size() - 1;
+    usize i = static_cast<usize>(time * 30.0f);
+    i = i < last ? i : last;
+    const f32 t0 = static_cast<f32>(i) / 30.0f;
+    const f32 t1 = i + 1 == last ? duration : static_cast<f32>(i + 1) / 30.0f;
+    const f32 t = i < last && t1 > t0 ? (time - t0) / (t1 - t0) : 0.0f;
+    return i < last ? weights[i] * (1.0f - t) + weights[i + 1] * t : weights[last];
+}
+} // namespace
+
+bool Clip::curve_value(const char* curve, f32 ratio, f32& value) const {
+    if (!impl) return false;
+    for (const Impl::MorphCurve& c : impl->curves) {
+        if (c.name != curve || c.weights.empty()) continue;
+        value = sample_curve(c.weights, ratio, duration);
+        return true;
+    }
+    return false;
+}
+
 bool Clip::morph_weight(const char* morph, f32 ratio, f32& weight) const {
     if (!impl) return false;
     for (const Impl::MorphCurve& c : impl->morphs) {
         if (c.name != morph || c.weights.empty()) continue;
-        // Samples are 1/30 s apart, except the last, which sits at the very end of the clip.
-        const f32 time = (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio) * duration;
-        const usize last = c.weights.size() - 1;
-        usize i = static_cast<usize>(time * 30.0f);
-        i = i < last ? i : last;
-        const f32 t0 = static_cast<f32>(i) / 30.0f;
-        const f32 t1 = i + 1 == last ? duration : static_cast<f32>(i + 1) / 30.0f;
-        const f32 t = i < last && t1 > t0 ? (time - t0) / (t1 - t0) : 0.0f;
-        weight = i < last ? c.weights[i] * (1.0f - t) + c.weights[i + 1] * t : c.weights[last];
+        weight = sample_curve(c.weights, ratio, duration);
         return true;
     }
     return false;
@@ -1047,6 +1064,24 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
                 moves = moves || curve.weights[f] != curve.weights[0];
             }
             if (moves || curve.weights[0] != 0.0f) clip.impl->morphs.push_back(std::move(curve));
+        }
+        // Curves (Unreal's imported curves): user-defined number properties that change during the take, on any node
+        // (a locator or the root as often as a bone), by name; the first node's wins when names repeat.
+        for (const ufbx_node* node : scene->nodes) {
+            for (const ufbx_prop& prop : node->props.props) {
+                if (!(prop.flags & UFBX_PROP_FLAG_USER_DEFINED) || (prop.type != UFBX_PROP_NUMBER && prop.type != UFBX_PROP_INTEGER && prop.type != UFBX_PROP_BOOLEAN)) continue;
+                bool known = false;
+                for (const Clip::Impl::MorphCurve& c : clip.impl->curves) known = known || c.name == prop.name.data;
+                if (known) continue;
+                Clip::Impl::MorphCurve curve{prop.name.data, std::vector<f32>(frames)};
+                bool moves = false;
+                for (u32 f = 0; f < frames; ++f) {
+                    const f64 t = f + 1 == frames ? length : static_cast<f64>(f) / 30.0;
+                    curve.weights[f] = static_cast<f32>(ufbx_evaluate_prop_len(stack->anim, &node->element, prop.name.data, prop.name.length, begin + t).value_real);
+                    moves = moves || curve.weights[f] != curve.weights[0];
+                }
+                if (moves) clip.impl->curves.push_back(std::move(curve));
+            }
         }
         ++written;
     }

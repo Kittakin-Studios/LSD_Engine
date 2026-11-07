@@ -1444,7 +1444,10 @@ top bone of other rigs (Mixamo's Hips). Montages started with Root Motion work t
 `lsd.anim_curve(self, "Footstep")` (visual scripts: **Get Curve Value**). In the Mesh Editor's Animations,
 scrub to a time, type the curve's name and value, **Key Curve Here**, then **Save**. Values run straight
 between keys and hold past the ends; a blend mixes the clips' values like the pose (a clip without the
-curve counts as 0). The keys are the file's **Curve Keys** in its Details too.
+curve counts as 0). The keys are the file's **Curve Keys** in its Details too. Curves made in the DCC
+come in by themselves: a user-defined number property animated in an FBX take (a Maya / Blender custom
+attribute on any node, a locator or the root as often as a bone) is a curve of the same name (Unreal's
+imported curves); keys in the Mesh Editor with that name win.
 
 **Animation Graph** (New Data Asset > Animation Graph; Unreal's Anim Blueprint state machine):
 

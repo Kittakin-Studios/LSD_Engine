@@ -255,6 +255,35 @@ static void morph_tests(const std::string& data) {
     }
     CHECK(found > 0);
 
+    // Curves from the file: an FBX user-defined number property animated in the take, matching ufbx's own value.
+    {
+        anim::SkinnedModel host(default_allocator());
+        char err[256] = "";
+        CHECK(anim::import_skinned((data + "/blender_293_half_skinned_7400_binary.fbx").c_str(), 1.0f, host, err, sizeof err));
+        const std::string props = data + "/maya_user_props_7700_ascii.fbx";
+        anim::Clip takes[2];
+        const u32 n = anim::import_clips(props.c_str(), host, takes, 2);
+        ufbx_scene* scene = ufbx_load_file(props.c_str(), nullptr, nullptr);
+        CHECK(n == 1 && scene != nullptr);
+        bool compared = false;
+        if (n == 1 && scene) {
+            const ufbx_node* cube = ufbx_find_node(scene, "pCube1");
+            const ufbx_anim_stack* stack = scene->anim_stacks.count ? scene->anim_stacks.data[0] : nullptr;
+            for (const char* prop : {"User_Int_Unbounded", "User_Int_Upper", "User_Number", "User_Float"}) {
+                f32 ours = 0.0f;
+                if (!cube || !stack || !takes[0].curve_value(prop, 0.5f, ours)) continue;
+                const f64 at = stack->time_begin + (stack->time_end - stack->time_begin) * 0.5;
+                const f32 theirs = static_cast<f32>(ufbx_evaluate_prop(stack->anim, &cube->element, prop, at).value_real);
+                CHECK(std::fabs(ours - theirs) < 0.05f * (1.0f + std::fabs(theirs)));
+                compared = true;
+            }
+            f32 none = 0.0f;
+            CHECK(!takes[0].curve_value("No_Such_Curve", 0.5f, none));
+        }
+        CHECK(compared);  // at least one animated user property was read
+        if (scene) ufbx_free_scene(scene);
+    }
+
     // Animated shape-key weights: a take's curve matches ufbx's own evaluation half-way through.
     anim::SkinnedModel rig(default_allocator());
     char error[256] = "";
