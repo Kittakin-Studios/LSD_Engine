@@ -1834,6 +1834,10 @@ in the project folder, the splash too).
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).
 - **Window > Memory** / **memreport** (console): memory per allocator, the process's RAM and the video memory budget.
+- **Texture streaming** (Unreal's, on by default; `r.TextureStreaming 0` turns it off): a texture is
+  read and decoded on a worker thread the first time something needs it, and a few finished ones go
+  onto the GPU each frame. Levels open without waiting for their images: a material draws in its
+  plain colour for a moment, then its textures appear. Changed texture files reload the same way.
 - **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static meshes hidden
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`

@@ -30,32 +30,115 @@ bool path_of(const asset::AssetRegistry& registry, const char* guid_text, char* 
 
 } // namespace
 
+TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& registry) : device_(device), registry_(registry) {
+    worker_ = std::thread([this] {  // decodes queued files, one at a time
+        for (;;) {
+            Job job;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                wake_.wait(lock, [this] { return quit_ || !jobs_.empty(); });
+                if (quit_) return;
+                job = jobs_.front();
+                jobs_.erase(jobs_.begin());
+            }
+            auto* data = new asset::TextureData(default_allocator());
+            if (!asset::load_texture(job.path, job.srgb, job.max_size, *data)) {
+                delete data;
+                data = nullptr;
+            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            finished_.push_back({job.entry, data});
+        }
+    });
+}
+
 TextureCache::~TextureCache() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        quit_ = true;
+    }
+    wake_.notify_all();
+    if (worker_.joinable()) worker_.join();
+    for (const Finished& f : finished_) delete f.data;
     for (u32 i = 0; i < count_; ++i) {
         if (entries_[i].texture.valid()) device_.destroy_texture(entries_[i].texture);
     }
 }
 
-bool TextureCache::load(Entry& e) {
-    if (e.texture.valid()) device_.destroy_texture(e.texture);
-    e.texture = {};
-    char path[300];
-    e.failed = true;
-    if (!path_of(registry_, e.guid, path, sizeof path)) return false;
+bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) {
+    if (!path_of(registry_, e.guid, path, capacity)) return false;
     e.modified = file_time(path);
     asset::Guid guid;
     asset::parse_guid(e.guid, guid);
     asset::AssetMeta meta;
     if (const asset::AssetRecord* r = registry_.find(guid)) registry_.load_meta(*r, meta);
-    asset::TextureData data(default_allocator());
-    u32 max_size = meta.max_size;
+    max_size = meta.max_size;
     if (size_cap_ && (!max_size || max_size > size_cap_)) max_size = size_cap_;  // little video memory: smaller mips
-    if (!asset::load_texture(path, e.srgb, max_size, data)) return false;
+    return true;
+}
+
+void TextureCache::upload(Entry& e, const asset::TextureData& data) {
     const void* mips[asset::kMaxTextureMips];
     for (u32 m = 0; m < data.mip_count; ++m) mips[m] = data.mip(m);
-    e.texture = device_.create_texture(data.width, data.height, data.mip_count, e.srgb ? rhi::TextureFormat::RGBA8_sRGB : rhi::TextureFormat::RGBA8, mips);
-    e.failed = !e.texture.valid();
-    return !e.failed;
+    const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, data.mip_count, e.srgb ? rhi::TextureFormat::RGBA8_sRGB : rhi::TextureFormat::RGBA8, mips);
+    if (!texture.valid()) return;  // keeps the old one, if any
+    if (e.texture.valid()) device_.destroy_texture(e.texture);
+    e.texture = texture;
+    e.failed = false;
+}
+
+bool TextureCache::load(Entry& e) {
+    char path[300];
+    u32 max_size = 0;
+    if (!prepare(e, path, sizeof path, max_size)) {
+        e.failed = true;
+        return false;
+    }
+    asset::TextureData data(default_allocator());
+    if (!asset::load_texture(path, e.srgb, max_size, data)) {
+        e.failed = !e.texture.valid();
+        return false;
+    }
+    upload(e, data);
+    return e.texture.valid();
+}
+
+void TextureCache::queue(u32 index) {
+    Entry& e = entries_[index];
+    Job job{index, "", e.srgb, 0};
+    if (!prepare(e, job.path, sizeof job.path, job.max_size)) {
+        e.failed = true;
+        return;
+    }
+    e.pending = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        jobs_.push_back(job);
+    }
+    wake_.notify_one();
+}
+
+void TextureCache::update(u32 budget) {
+    std::vector<Finished> ready;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const usize n = finished_.size() < budget ? finished_.size() : budget;
+        ready.assign(finished_.begin(), finished_.begin() + static_cast<std::ptrdiff_t>(n));
+        finished_.erase(finished_.begin(), finished_.begin() + static_cast<std::ptrdiff_t>(n));
+    }
+    for (const Finished& f : ready) {
+        Entry& e = entries_[f.entry];
+        e.pending = false;
+        if (f.data) upload(e, *f.data);
+        else e.failed = !e.texture.valid();
+        delete f.data;
+    }
+}
+
+u32 TextureCache::streaming() const {
+    u32 n = 0;
+    for (u32 i = 0; i < count_; ++i) n += entries_[i].pending ? 1u : 0u;
+    return n;
 }
 
 rhi::TextureHandle TextureCache::get(const char* guid, bool srgb) {
@@ -68,7 +151,8 @@ rhi::TextureHandle TextureCache::get(const char* guid, bool srgb) {
     e = Entry{};
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);
     e.srgb = srgb;
-    load(e);
+    if (stream) queue(count_ - 1);  // drawn without it for a few frames
+    else load(e);
     return e.texture;
 }
 
@@ -76,8 +160,10 @@ void TextureCache::check_files() {
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];
         char path[300];
-        if (path_of(registry_, e.guid, path, sizeof path) && file_time(path) != e.modified) {
-            if (load(e)) LSD_LOG_INFO("editor", "Reloaded texture %s", path);
+        if (!e.pending && path_of(registry_, e.guid, path, sizeof path) && file_time(path) != e.modified) {
+            LSD_LOG_INFO("editor", "Reloading texture %s", path);
+            if (stream) queue(i);  // the old one stays until the new one is up
+            else load(e);
         }
     }
 }

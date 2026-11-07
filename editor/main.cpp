@@ -87,6 +87,7 @@
 
 bool g_gpu_culling = true;  // r.GPUCulling
 bool g_occlusion_culling = true;  // r.OcclusionCulling
+bool g_texture_streaming = true;  // r.TextureStreaming
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
 std::vector<lsd::rhi::MeshDraw> g_outline;
@@ -961,6 +962,7 @@ void register_console(EditorState& s) {
     console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
+    console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
     console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Static meshes hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
@@ -2204,7 +2206,7 @@ int main(int argc, char** argv) {
             if (!game_mode) lsd::editor::live_link_sync(state.settings.live_link_folder, kContentDir, state.status, sizeof state.status);  // copied files show up in this scan
             if (registry.scan_async()) register_script_nodes(registry);
             meshes.hot_reload();
-            texture_cache->check_files();
+            texture_cache->check_files();  // (update() below puts finished ones on the GPU every frame)
             skinned_cache->check_files();
             effects->check_files();
             materials.check_files();
@@ -2230,6 +2232,8 @@ int main(int argc, char** argv) {
         was_showing = state.show_navigation;
 
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
+        texture_cache->stream = g_texture_streaming;
+        texture_cache->update();  // streamed textures the worker finished go on the GPU
         lsd::editor::update_landscapes(world, meshes);  // landscape meshes follow their heights (rebuilt on change)
         if (state.world != &world) lsd::editor::update_landscapes(*state.world, meshes);  // Play's copy
         lsd::editor::update_editable_meshes(world, meshes);
