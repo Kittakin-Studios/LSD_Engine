@@ -428,6 +428,69 @@ function lsd.prompt(text, e)
     lsd.ui_style(doc, "screen_prompt", "display", "block")
   end
 end
+-- UI actions handled once, engine-wide (before scripts' functions of that name): lsd.on_ui(action, function(element_id) end).
+lsd._ui_actions = {}
+function lsd.on_ui(action, fn) lsd._ui_actions[action] = fn end
+-- A ready-made options menu (Unreal's Game User Settings in a menu): lsd.settings_menu() opens / closes it.
+local settings_doc = nil
+local SETTINGS_RML = [[<rml><head><style>
+body { width: 100%; height: 100%; font-family: sans; color: #FFFFFF; background-color: rgba(0, 0, 0, 120); }
+div { display: block; }
+#panel { position: absolute; left: 50%; top: 50%; width: 560px; margin-left: -280px; margin-top: -250px; padding: 18px 24px;
+         background-color: rgba(13, 4, 4, 235); border: 2px #F3C312; border-radius: 10px; }
+#title { font-size: 34px; font-weight: bold; color: #FFE51A; margin-bottom: 12px; }
+.row { margin: 8px 0; font-size: 20px; }
+.label { display: inline-block; width: 220px; }
+input.range { display: inline-block; width: 240px; height: 18px; nav: auto; tab-index: auto; focus: auto; }
+input.range slidertrack { background-color: #3C3838; height: 6px; margin-top: 6px; }
+input.range sliderbar { width: 16px; height: 18px; background-color: #F3C312; border-radius: 3px; }
+.button { display: inline-block; padding: 4px 14px; margin-right: 6px; background-color: #025291; border-radius: 5px; nav: auto; tab-index: auto; focus: auto; }
+.button:hover, .button:focus { background-color: #EEA70E; }
+.button.on { background-color: #F3C312; color: #141414; }
+#close { margin-top: 14px; padding: 6px 30px; background-color: #F3C312; color: #141414; font-weight: bold; }
+</style></head><body><div id="panel">
+<div id="title">Settings</div>
+<div class="row"><span class="label">Quality</span><button class="button" id="q0" onclick="__lsd_quality">Low</button><button class="button" id="q1" onclick="__lsd_quality">Medium</button><button class="button" id="q2" onclick="__lsd_quality">High</button><button class="button" id="q3" onclick="__lsd_quality">Epic</button></div>
+<div class="row"><span class="label">Fullscreen</span><button class="button" id="fullscreen" onclick="__lsd_toggle">Off</button></div>
+<div class="row"><span class="label">Master volume</span><input type="range" class="range" id="master_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Music</span><input type="range" class="range" id="music_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Effects</span><input type="range" class="range" id="effects_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Mouse sensitivity</span><input type="range" class="range" id="mouse_sensitivity" min="0" max="50" step="1" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Invert look</span><button class="button" id="invert_look" onclick="__lsd_toggle">Off</button></div>
+<button class="button" id="close" onclick="__lsd_settings_close">Close</button>
+</div></body></rml>]]
+local function settings_show()
+  local s = lsd.get_settings()
+  if not s or not settings_doc then return end
+  for q = 0, 3 do lsd.ui_set(settings_doc, "q" .. q, "class", s.quality == q and "button on" or "button") end
+  for _, id in ipairs({"fullscreen", "invert_look"}) do
+    lsd.ui_set_text(settings_doc, id, s[id] and "On" or "Off")
+    lsd.ui_set(settings_doc, id, "class", s[id] and "button on" or "button")
+  end
+  for _, id in ipairs({"master_volume", "music_volume", "effects_volume"}) do lsd.ui_set(settings_doc, id, "value", tostring(s[id])) end
+  lsd.ui_set(settings_doc, "mouse_sensitivity", "value", tostring(math.floor(s.mouse_sensitivity * 10 + 0.5)))  -- in tenths, whole steps
+end
+function lsd.settings_menu(open)
+  if open == nil then open = settings_doc == nil end
+  if open and not settings_doc then
+    settings_doc = lsd._ui_open_text(SETTINGS_RML)
+    settings_show()
+    lsd.ui_show_cursor(true)
+  elseif not open and settings_doc then
+    lsd.ui_close(settings_doc)
+    settings_doc = nil
+    lsd.ui_show_cursor(false)
+  end
+  return settings_doc ~= nil
+end
+lsd.on_ui("__lsd_quality", function(id) lsd.set_settings({quality = tonumber(string.sub(id, 2))}) settings_show() end)
+lsd.on_ui("__lsd_toggle", function(id) local s = lsd.get_settings() lsd.set_settings({[id] = not s[id]}) settings_show() end)
+lsd.on_ui("__lsd_slider", function(id)
+  local v = tonumber(lsd.ui_value(settings_doc, id))
+  if v and id == "mouse_sensitivity" then v = math.max(v, 1) / 10 end  -- tenths from 0 (shortcut: a range with min above 0 hangs RmlUi here; find out why before using one)
+  if v then lsd.set_settings({[id] = v}) end
+end)
+lsd.on_ui("__lsd_settings_close", function() lsd.settings_menu(false) end)
 local function hud_tick(now)
   if #hud.order == 0 then return end
   local gone = {}
@@ -2363,6 +2426,23 @@ int ScriptSystem::call_task(world::Entity target, const char* function, f32 dt) 
 
 u32 ScriptSystem::broadcast(const char* function, const char* text) {
     u32 called = 0;
+    if (lua_) {  // an engine-wide handler (lsd.on_ui) first: called once, whatever scripts there are
+        lua_getglobal(lua_, "lsd");
+        lua_getfield(lua_, -1, "_ui_actions");
+        if (lua_istable(lua_, -1)) {
+            lua_getfield(lua_, -1, function);
+            if (lua_isfunction(lua_, -1)) {
+                lua_pushstring(lua_, text);
+                char what[160];
+                std::snprintf(what, sizeof what, "lsd.on_ui (%s)", function);
+                protected_call(lua_, 1, what);
+                ++called;
+            } else {
+                lua_pop(lua_, 1);
+            }
+        }
+        lua_pop(lua_, 2);
+    }
     for (u32 i = 0; i < count_; ++i) {
         Instance& instance = instances_[i];
         if (instance.failed || !world_->alive(instance.entity)) continue;

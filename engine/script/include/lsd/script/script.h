@@ -81,6 +81,9 @@
 //   lsd.damage_number(e, amount [, "#RRGGBB"])   a number that rises from e and fades in a second
 //   lsd.prompt(text [, e])                "Press E to open": at the bottom of the screen, or over e;
 //                                         lsd.prompt(nil [, e]) hides it
+//   lsd.settings_menu([open]) -> open     a ready-made options menu (quality, fullscreen, volumes, mouse);
+//                                         no argument: opens or closes it
+//   lsd.on_ui(action, function(element_id) end)   a UI action handled once, engine-wide (before scripts')
 //   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
 //                          mouse_sensitivity, invert_look}   the player's settings (options menus)
 //   lsd.set_settings({quality = 1, ...})  changes those given, applies and saves them

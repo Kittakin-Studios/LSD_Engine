@@ -1814,6 +1814,12 @@ button:focus, button:hover { background-color: #EEA70E; }
 
 ![HUD widgets](images/hud_widgets.jpg)
 *A health bar and a damage number over the player, and a prompt.*
+- **A ready-made settings menu**: `lsd.settings_menu()` opens (or closes) an options menu over the game:
+  Quality (Low to Epic), Fullscreen, Master / Music / Effects volume, Mouse sensitivity and Invert look,
+  saved with the player's settings as they change, with the mouse cursor shown while it is open. Bind it
+  to Esc or a Pause button; for your own look, copy its idea into a `.rml` with `lsd.get_settings` /
+  `lsd.set_settings`. UI actions that should run once whatever scripts exist go to `lsd.on_ui(action,
+  function(element_id) end)` (the menu's buttons use it).
 - **Safe zone** (Unreal's Display Safe Zone): **Project Settings > User Interface > UI Safe Zone** (%)
   lays the game UI out that far in from every edge of the view, so a TV that crops the picture keeps
   the HUD whole (5 % is usual for TVs, 0 for monitors). World-anchored elements still sit over their objects.
@@ -2059,6 +2065,8 @@ Audio and animation
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
+| `lsd.settings_menu([open])` | the built-in options menu (quality, fullscreen, volumes, mouse); no argument toggles it |
+| `lsd.on_ui(action, fn)` | a UI action (onclick / onchange name) handled once, engine-wide, before scripts' functions |
 | `lsd.rebuild_navmesh()` | builds the navmesh again now (after moving walls or doors); agents keep walking |
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |

@@ -1443,6 +1443,10 @@ id = lsd.every(0.1, function() many = many + 1; if many == 3 then lsd.cancel(id)
         scripts.update(0.5f);
         CHECK(scripts.run("lsd.apply_damage(lsd.find('Mover'), 25, lsd.find('Target')) assert(hurt == 25 and by == 'Target', tostring(by))"));
         CHECK(scripts.run("lsd.apply_damage(lsd.find('Mover'), 5) assert(hurt == 5 and by == nil)"));  // no instigator
+        // Engine-wide UI actions (lsd.on_ui): called once, whatever scripts exist; the built-in menu's handlers are there.
+        CHECK(scripts.run("ui_hits = 0; lsd.on_ui('test_ui_action', function(id) ui_hits = ui_hits + 1; ui_id = id end)"));
+        CHECK(scripts.broadcast("test_ui_action", "play_button") >= 1);
+        CHECK(scripts.run("assert(ui_hits == 1 and ui_id == 'play_button', ui_hits) assert(lsd._ui_actions.__lsd_quality and type(lsd.settings_menu) == 'function')"));
 
         // Spawning: the new object's script starts (its on_overlap_begin is defined, on_start is not: fine).
         write(kMover, "function on_start(self) _G.started = self.name end\n");
