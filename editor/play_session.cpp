@@ -144,7 +144,7 @@ i32 PlaySession::agent_of(world::Entity e) {
         LSD_LOG_WARN("play", "%s: Nav Agent is not on the navmesh", world_->name(e));
         return -1;
     }
-    agents_[agent_count_++] = {e, id};
+    agents_[agent_count_++] = {e, id, false, {}};
     return id;
 }
 
@@ -248,7 +248,9 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
     host.move_to = [](void* user, Vec3 target, f32) {
         Brain& b = *static_cast<Brain*>(user);
         const i32 agent = b.session->agent_of(b.entity);
-        return agent >= 0 && b.session->nav_.move_agent(agent, target);
+        const bool sent = agent >= 0 && b.session->nav_.move_agent(agent, target);
+        b.session->remember_target(b.entity, target, sent);
+        return sent;
     };
     host.moving = [](void* user) {
         Brain& b = *static_cast<Brain*>(user);
@@ -257,6 +259,7 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
     host.stop = [](void* user) {
         Brain& b = *static_cast<Brain*>(user);
         b.session->nav_.stop_agent(b.session->agent_of(b.entity));
+        b.session->remember_target(b.entity, {}, false);
     };
     host.position = [](void* user) {
         Brain& b = *static_cast<Brain*>(user);
@@ -372,7 +375,61 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
 }
 
 // Moves the agents and writes them back to their objects (feet on the navmesh, facing their way).
+// Builds the navmesh from the level as it is now (nothing happens when its inputs did not change). The crowd
+// starts over: each agent comes back where it stands and is sent on to where it was going.
+bool PlaySession::rebuild_navmesh() {
+    if (!world_ || !meshes_) return false;
+    bool reused = false;
+    const u64 start = SDL_GetTicksNS();
+    Agent kept[ai::kMaxAgents];
+    const u32 count = agent_count_;
+    for (u32 i = 0; i < count; ++i) kept[i] = agents_[i];
+    if (!build_level_navmesh(*world_, *meshes_, nav_, &nav_hash_, &reused, &nav_always_moving_)) {
+        nav_.clear();
+        agent_count_ = 0;
+        return false;
+    }
+    if (reused) return true;
+    agent_count_ = 0;
+    for (u32 i = 0; i < count; ++i) {
+        const i32 id = world_->alive(kept[i].entity) ? agent_of(kept[i].entity) : -1;
+        if (id < 0 || !kept[i].has_target) continue;
+        nav_.move_agent(id, kept[i].target);
+        agents_[agent_count_ - 1].has_target = true;
+        agents_[agent_count_ - 1].target = kept[i].target;
+    }
+    LSD_LOG_INFO("play", "Navmesh rebuilt (%.0f ms)", static_cast<f64>(SDL_GetTicksNS() - start) * 1e-6);
+    return true;
+}
+
 void PlaySession::update_agents(world::World& world, f32 dt) {
+    // Runtime Rebuild: about once a second, the inputs are compared; a change is rebuilt once it has settled (the same as a
+    // second ago), so a door that opened is rebuilt once and something that never stops moving costs nothing.
+    if (world.settings().navigation.runtime_rebuild && meshes_ && play_clock_ - nav_checked_ >= 1.0) {
+        nav_checked_ = play_clock_;
+        // Solid meshes moving at three checks in a row (a platform a script keeps moving) are left out for good.
+        const reflect::TypeInfo& mesh_type = reflect::type_of<world::StaticMesh>();
+        for (u32 i = 0; i < world.count(mesh_type); ++i) {
+            const world::Entity e = world.owner(mesh_type, i);
+            if (!static_cast<const world::StaticMesh*>(world.at(mesh_type, i))->collision) continue;
+            const Mat4 m = world.world_matrix(e);
+            NavWatch* w = nullptr;
+            for (NavWatch& n : nav_watch_) w = n.entity == e ? &n : w;
+            if (!w) {
+                nav_watch_.push_back({e, m, 0});
+                continue;
+            }
+            w->moving = std::memcmp(w->last.m, m.m, sizeof m.m) != 0 ? w->moving + 1 : 0;
+            w->last = m;
+            if (w->moving == 3 && std::find(nav_always_moving_.begin(), nav_always_moving_.end(), e) == nav_always_moving_.end()) {
+                nav_always_moving_.push_back(e);
+                LSD_LOG_INFO("play", "%s keeps moving: left out of the navmesh (Runtime Rebuild waits for things that stop)", world.name(e));
+            }
+        }
+        const u64 now = navmesh_inputs_hash(world, *meshes_, &nav_always_moving_);
+        if (now != nav_hash_ && now == nav_seen_hash_) rebuild_navmesh();
+        nav_seen_hash_ = now;
+    }
     if (!nav_.valid()) return;
     nav_.update(dt);
     for (u32 i = 0; i < agent_count_;) {
@@ -403,6 +460,10 @@ void PlaySession::stop() {
     moving_.clear();
     driving_ = riding_ = {};
     play_clock_ = 0.0;
+    nav_checked_ = 0.0;
+    nav_seen_hash_ = 0;
+    nav_watch_.clear();
+    nav_always_moving_.clear();
     interact_was_down_ = false;
     chat_.clear();
     if (ui_) ui_->close_all();
@@ -1018,11 +1079,14 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.move_to = [](void* user, world::Entity e, Vec3 target) {
         auto& self = *static_cast<PlaySession*>(user);
         const i32 agent = self.agent_of(e);
-        return agent >= 0 && self.nav_.move_agent(agent, target);
+        const bool sent = agent >= 0 && self.nav_.move_agent(agent, target);
+        self.remember_target(e, target, sent);
+        return sent;
     };
     host.stop_move = [](void* user, world::Entity e) {
         auto& self = *static_cast<PlaySession*>(user);
         self.nav_.stop_agent(self.agent_of(e));
+        self.remember_target(e, {}, false);
     };
     host.is_moving = [](void* user, world::Entity e) {
         auto& self = *static_cast<PlaySession*>(user);
@@ -1140,6 +1204,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.bb_clear = [](void* user, world::Entity e, const char* key) {
         if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) b->board.clear(key);
     };
+    host.rebuild_navmesh = [](void* user) { return static_cast<PlaySession*>(user)->rebuild_navmesh(); };
     host.damaged = [](void* user, world::Entity target, f32 amount, world::Entity instigator) {  // the damage sense
         auto& self = *static_cast<PlaySession*>(user);
         Brain* b = self.brain_of(target);

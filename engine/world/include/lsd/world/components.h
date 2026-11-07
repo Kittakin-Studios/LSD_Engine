@@ -1060,6 +1060,8 @@ struct NavSettings {
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Tallest step walkers climb") f32 max_step_height = 0.45f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground walkers go up") f32 max_slope = 45.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 1, Tooltip = "Smaller: follows the geometry closer, builds slower") f32 cell_size = 0.15f;
+    LSD_PROPERTY(Edit, Tooltip = "Runtime Rebuild (Unreal's Runtime Generation: Dynamic): in Play, about once a second, the navmesh is built again when something solid moved (a door, a bridge, a crate pushed by a script); agents keep walking. Costs a rebuild's time each time it happens")
+    bool runtime_rebuild = false;
 };
 
 // Per-level settings (Unreal's World Settings), saved in the level file.

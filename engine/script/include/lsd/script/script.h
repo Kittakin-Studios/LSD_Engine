@@ -62,6 +62,7 @@
 //   lsd.bb_set(e, key, number | x, y, z), lsd.bb_get(e, key) -> number | x, y, z | nil, lsd.bb_clear(e, key)
 //                                         an AI Controller's blackboard (what its behaviour tree reads)
 //   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
+//   lsd.rebuild_navmesh() -> ok           builds the navmesh again now (after moving walls or doors); agents keep walking
 //   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
 //   lsd.ui_open(name) -> doc              a UI document (.rml) by asset name over the game; nil if none
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
@@ -257,6 +258,7 @@ struct ScriptHost {
     void (*bb_clear)(void* user, world::Entity e, const char* key) = nullptr;
     void (*report_noise)(void* user, Vec3 at, f32 loudness) = nullptr;
     void (*damaged)(void* user, world::Entity target, f32 amount, world::Entity instigator) = nullptr;  // AI damage sense
+    bool (*rebuild_navmesh)(void* user) = nullptr;
     i32 (*ui_open)(void* user, const char* name) = nullptr;  // -1 if none
     void (*ui_close)(void* user, i32 doc) = nullptr;
     bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text

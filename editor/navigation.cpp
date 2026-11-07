@@ -2,6 +2,7 @@
 
 #include "lsd/world/components.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace lsd::editor {
@@ -34,7 +35,22 @@ void add_box(std::vector<f32>& v, std::vector<u32>& idx, const Mat4& m, Vec3 lo,
 
 } // namespace
 
-bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMesh& out, u64* input_hash, bool* reused) {
+namespace {
+bool gather_and_build(const world::World& world, MeshCache& meshes, ai::NavMesh* out, u64* input_hash, bool* reused, const std::vector<world::Entity>* skip);
+}
+
+bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMesh& out, u64* input_hash, bool* reused, const std::vector<world::Entity>* skip) {
+    return gather_and_build(world, meshes, &out, input_hash, reused, skip);
+}
+
+u64 navmesh_inputs_hash(const world::World& world, MeshCache& meshes, const std::vector<world::Entity>* skip) {
+    u64 hash = 0;
+    return gather_and_build(world, meshes, nullptr, &hash, nullptr, skip) ? hash : 0;
+}
+
+namespace {
+// out null: only the inputs' hash into *input_hash.
+bool gather_and_build(const world::World& world, MeshCache& meshes, ai::NavMesh* out_mesh, u64* input_hash, bool* reused, const std::vector<world::Entity>* skip) {
     if (reused) *reused = false;
     // shortcut: collision boxes (what physics uses), not the meshes' triangles; switch both together.
     std::vector<f32> verts;
@@ -42,7 +58,9 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         const world::Entity e = world.entity_at_slot(slot);
-        if (!e.valid() || world.get<world::RigidBody>(e) || world.get<world::SplineFollower>(e)) continue;  // moving things are not floors
+        if (!e.valid() || world.get<world::RigidBody>(e) || world.get<world::SplineFollower>(e) || world.get<world::Mover>(e) || world.get<world::Transport>(e) ||
+            world.get<world::Vehicle>(e) || (skip && std::find(skip->begin(), skip->end(), e) != skip->end()))
+            continue;  // moving things are not floors
         const Mat4 m = world.world_matrix(e);
         if (const auto* mesh = world.get<world::StaticMesh>(e); mesh && mesh->collision) {
             if (const CachedMesh* cached = meshes.get(mesh->mesh)) add_box(verts, idx, m, cached->bounds_min, cached->bounds_max, lo, hi);
@@ -66,7 +84,7 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
         hi.z += 3.0f;
     }
     if (idx.empty() || lo.x > hi.x) {
-        out.clear();
+        if (out_mesh) out_mesh->clear();
         return false;
     }
     const world::NavSettings& s = world.settings().navigation;
@@ -114,6 +132,11 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
     mix(&lo, sizeof lo), mix(&hi, sizeof hi), mix(&settings, sizeof settings);
     mix(cutouts.data(), cutouts.size() * sizeof(ai::NavCutout));
     for (const ai::NavLink& l : links) mix(&l.start, sizeof l.start), mix(&l.end, sizeof l.end), mix(&l.radius, sizeof l.radius), mix(&l.both_ways, sizeof l.both_ways);
+    if (!out_mesh) {
+        *input_hash = hash;
+        return true;
+    }
+    ai::NavMesh& out = *out_mesh;
     if (input_hash && *input_hash == hash && out.valid()) {
         if (reused) *reused = true;
         return true;
@@ -123,5 +146,6 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
     if (input_hash) *input_hash = built ? hash : 0;
     return built;
 }
+} // namespace
 
 } // namespace lsd::editor

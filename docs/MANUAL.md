@@ -1640,6 +1640,12 @@ the editor).
    gap to jump, a ledge to drop off, a ladder. It runs from the object to its **End** (in the object's
    space); untick **Both Ways** for a one-way drop. Agents cross it in a straight line. Show Navigation
    draws it as a line between the two ends.
+   **World Settings > Navigation > Runtime Rebuild** (Unreal's Runtime Generation: Dynamic): in Play the
+   navmesh is built again about a second after something solid stops moving (a door that opened, a
+   bridge that fell, a crate pushed aside); agents keep walking to where they were going. Things that
+   never stop moving (a platform a script swings) are left out after three seconds (the Output Log says
+   which). Scripts can ask for it at once: `lsd.rebuild_navmesh()`. Each rebuild takes as long as the
+   one when Play starts (`Navmesh built (... ms)` in the log), so keep the navmesh bounds tight.
 2. Give an enemy a **Nav Agent** (speed, radius, height): it can walk with `lsd.move_to` or the AI
    Move To node, steering round other agents.
 3. Give it an **AI Controller** with a **Behavior Tree** (New Behavior Tree; Unreal's Behavior Tree
@@ -2048,6 +2054,7 @@ Audio and animation
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
+| `lsd.rebuild_navmesh()` | builds the navmesh again now (after moving walls or doors); agents keep walking |
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |

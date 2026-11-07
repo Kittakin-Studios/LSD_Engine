@@ -318,7 +318,24 @@ private:
     struct Agent {
         world::Entity entity;
         i32 id;
+        bool has_target = false;  // where it was sent (kept through navmesh rebuilds)
+        Vec3 target;
     };
+    bool rebuild_navmesh();      // the navmesh again from the level as it is now; false if nothing walkable
+    void remember_target(world::Entity e, Vec3 target, bool sent) {
+        for (u32 i = 0; i < agent_count_; ++i) {
+            if (agents_[i].entity == e) agents_[i].has_target = sent, agents_[i].target = target;
+        }
+    }
+    f64 nav_checked_ = 0.0;      // Runtime Rebuild: when the inputs were last compared
+    u64 nav_seen_hash_ = 0;      // ... and what they were then (a change is rebuilt once it has settled)
+    struct NavWatch {
+        world::Entity entity;
+        Mat4 last;
+        u32 moving = 0;  // checks in a row it had moved
+    };
+    std::vector<NavWatch> nav_watch_;               // solid meshes, to tell doors (move, then stop) from things that never stop
+    std::vector<world::Entity> nav_always_moving_;  // left out of the navmesh for the rest of Play
     Agent agents_[ai::kMaxAgents];
     u32 agent_count_ = 0;
     i32 agent_of(world::Entity e);  // adds it on first use; -1 if it cannot walk here

@@ -1349,6 +1349,11 @@ struct Api {
         if (s.host_.damaged) s.host_.damaged(s.host_.user, target, amount, instigator);
         return 0;
     }
+    static int rebuild_navmesh(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.rebuild_navmesh && host.rebuild_navmesh(host.user));
+        return 1;
+    }
     static int move_to(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const Vec3 target{static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_checknumber(L, 3)), static_cast<f32>(luaL_checknumber(L, 4))};
@@ -1923,7 +1928,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"save_game_async", Api::save_game_async}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
-        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"apply_damage", Api::apply_damage}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
+        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"apply_damage", Api::apply_damage}, {"rebuild_navmesh", Api::rebuild_navmesh}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow}, {"ui_style", Api::ui_style}, {"ui_rml", Api::ui_rml}, {"_ui_open_text", Api::ui_open_text},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
