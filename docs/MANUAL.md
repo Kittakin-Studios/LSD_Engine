@@ -1715,6 +1715,14 @@ MENU_QUIT,Quit,Quitter
 UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in Lua use
 `lsd.text("MENU_PLAY")`. `lsd.set_language("fr")` switches and reloads open UI documents.
 
+**Tools > Gather Text** (Unreal's Localization Dashboard > Gather Text; console `loc.Gather`) fills
+the table for you. It finds every `lsd.text("KEY")` in Lua and JavaScript scripts, every Localized
+Text / Format Text node's key, and every text shown in a UI document (`<button>Start Game</button>`
+adds the key `Start Game`, which translates because the whole text is a key). Keys the table lacks
+are added at the end; UI texts get their first-language cell filled with the text itself. Then
+translate the other columns. Without a table it makes `Content/Localization/ST_Game.csv` and sets it
+in Project Settings. Texts built at run time (`lsd.text("LEVEL_" .. n)`) are not found: add those by hand.
+
 **Arguments and plurals** (Unreal's Format Text): write `{0}`, `{1}`... in the text and pass the
 values after the key: `lsd.text("SCORE", score)` (or the **Format Text** node). For words that
 change with a number, `{0}|plural(one=apple,other=apples)` picks by the language's rule (French

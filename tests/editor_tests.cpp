@@ -15,6 +15,7 @@
 #include "sound_cue.h"
 #include "transactions.h"
 #include "behavior.h"
+#include "loc_gather.h"
 #include "scalability.h"
 #include "template_levels.h"
 #include "paper2d_core.h"
@@ -507,6 +508,24 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// Gather Text: keys from scripts and UI texts, merged into the string table without duplicates.
+static void test_gather_text() {
+    std::vector<editor::GatheredText> found;
+    editor::gather_script_text("local t = lsd.text(\"MENU_PLAY\") .. lsd.text( 'SCORE', 3) .. lsd.text(name)", found);
+    CHECK(found.size() == 2 && found[0].key == "MENU_PLAY" && found[1].key == "SCORE");
+    editor::gather_rml_text("<rml><head><title>Menu</title><style>body { color: red; }</style></head><body>"
+                            "<button id=\"go\">Start  Game</button><div>{{game.score}}</div><div> 42 </div><p>Quit &amp; Save</p></body></rml>",
+                            found);
+    CHECK(found.size() == 4 && found[2].key == "Start Game" && found[2].text == "Start Game" && found[3].key == "Quit & Save");
+    std::string csv;
+    CHECK(editor::merge_string_table("Key,en,fr\nMENU_PLAY,Play,Jouer\n", found, csv) == 3);
+    CHECK(csv.find("MENU_PLAY,Play,Jouer") != std::string::npos && csv.find("Start Game,Start Game,") != std::string::npos);
+    std::string again;
+    CHECK(editor::merge_string_table(csv, found, again) == 0);
+    std::string fresh;
+    CHECK(editor::merge_string_table("", found, fresh) == 4 && fresh.rfind("Key,en\n", 0) == 0);
+}
+
 // Run Behavior: another tree's branch is copied in where the node is, glowing as that node.
 static void test_run_behavior() {
     HeapAllocator heap("bt");
@@ -607,6 +626,7 @@ int main() {
     test_templates();
     test_scalability();
     test_run_behavior();
+    test_gather_text();
     test_keymap();
     test_landscape_paint();
     test_assistant();

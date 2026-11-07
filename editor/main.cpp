@@ -11,6 +11,7 @@
 #include "mesh_cache.h"
 #include "lighting.h"
 #include "scalability.h"
+#include "loc_gather.h"
 #include "material_cache.h"
 #include "animation_player.h"
 #include "particle_editor.h"
@@ -1400,6 +1401,13 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("Modes: Select, Modeling, Foliage, Landscape, Animation, PCG, VFX, 2D");
     }, &s, "mode <name>: the Level tab's mode (Select, Modeling, Foliage, Landscape, Animation, PCG, VFX)");
+    console::add_command("loc.Gather", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        bool changed = false;
+        lsd::editor::gather_project_text(st.project, *st.registry, st.status, sizeof st.status, changed);
+        if (changed) lsd::reflect::save_file(st.project, "Config/project.json");  // the new string table
+        lsd::editor::remote::print(st.status);
+    }, &s, "Gather Text: adds the keys the project shows to its string table");
     console::add_command("template.New", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         for (int t = 0; t < static_cast<int>(lsd::editor::Template::Count); ++t) {
