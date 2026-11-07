@@ -224,6 +224,10 @@ const lsd::editor::CachedMesh* lightmapped_mesh(lsd::editor::MeshCache& meshes, 
 }
 
 // Skinned shadow casters (within `range` of `light` when range > 0).
+bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false);  // below
+lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
+lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
+
 void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
@@ -240,6 +244,11 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
             if (lsd::length(centre - *light) > range + lsd::length(extent) * 2.0f) continue;  // generous: the pose may reach out
         }
         const lsd::Mat4 mvp = vp * m;
+        const lsd::Vec3 half = (model->model->bounds_max - model->model->bounds_min) * 0.5f;  // generous: the pose may reach out of the bind bounds
+        if (!in_view(mvp, model->model->bounds_min - half, model->model->bounds_max + half, true)) {  // beside this view: its shadow falls elsewhere
+            ++g_casters_culled;
+            continue;
+        }
         const lsd::rhi::BufferHandle vertices = g_animations->vertices(e, model->vertices);
         // Sections with a Masked material cast their cut-out: then each section is its own draw.
         lsd::rhi::ShadowCutout cut[lsd::asset::kMaxMaterialSlots];
@@ -284,7 +293,16 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
         const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
         if (!mesh) continue;
         instance_rows(world, e, *ism, rows, &matrices);
-        device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), ism->instances.count);
+        lsd::u32 kept = 0;  // only the copies whose bounds reach this view (a forest's far side casts into another cascade)
+        for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
+            if (!in_view(vp * matrices[k], mesh->bounds_min, mesh->bounds_max, true)) {
+                ++g_casters_culled;
+                continue;
+            }
+            if (kept != k) std::memcpy(&rows[static_cast<lsd::usize>(kept) * 12], &rows[static_cast<lsd::usize>(k) * 12], 12 * sizeof(lsd::f32));
+            ++kept;
+        }
+        if (kept) device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), kept);
     }
 }
 
@@ -445,7 +463,7 @@ bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::Stat
 
 // Frustum culling: false when the box (local bounds under `mvp`) is wholly outside one clip plane.
 // `sides_only`: just the four side planes (shadow casters in front of a pancaked cascade still cast).
-bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false) {
+bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only) {
     int outside[6] = {};
     for (int c = 0; c < 8; ++c) {
         const lsd::Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
@@ -982,9 +1000,9 @@ void register_console(EditorState& s) {
         if (std::strcmp(args, "fps") == 0 || std::strcmp(args, "unit") == 0) st.show_stats = !st.show_stats;
         else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
         else if (std::strcmp(args, "dump") == 0) {  // the numbers as text (remote console, the MCP bridge, tests)
-            char line[200];
-            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u (occluded %u)", st.stat_game_ms,
-                          st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled, st.stat_occluded);
+            char line[256];
+            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u (occluded %u), shadow casters culled %u",
+                          st.stat_game_ms, st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled, st.stat_occluded, g_casters_culled_frame);
             lsd::editor::remote::print(line);
             LSD_LOG_INFO("stat", "%s", line);
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
@@ -2134,6 +2152,8 @@ int main(int argc, char** argv) {
     lsd::u64 last_tick = SDL_GetTicksNS();
     lsd::u32 mcp_tried_port = 0;  // Claude MCP plugin: the port last tried, so a busy one is not retried every frame
     for (long frame = 0; running && frame != max_frames;) {
+        g_casters_culled_frame = g_casters_culled;
+        g_casters_culled = 0;
         SDL_Event event;
         if (!game_mode && remote_arg == 0) {  // -remote keeps its own listener
             const lsd::u32 port = state.settings.mcp_port;

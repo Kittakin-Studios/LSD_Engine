@@ -1968,7 +1968,8 @@ in the project folder, the splash too).
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
 - **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU
-  time per stage (shadows, scene, post, UI; timestamp queries on D3D12 and OpenGL), draws and the
+  time per stage (shadows, scene, post, UI; timestamp queries on D3D12 and OpenGL), draws, objects
+  culled, shadow casters skipped (skinned meshes and instanced copies outside a shadow view) and the
   editor UI's time per panel (Unreal's `stat gpu` + `stat unit` in one line).
 - **Tracy** (Unreal Insights): configure with `-DLSD_TRACY=ON`, build, run, and connect the Tracy
   profiler v0.11.1 to see every frame's timeline.
