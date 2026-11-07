@@ -213,6 +213,9 @@ saves the panel arrangement under a name (Unreal's Save Layout As), loads one ba
 ![3D Modeling mode](images/mode_modeling.jpg)
 *3D Modeling mode: place blockout shapes (Cube, Sphere, Plane) with Box UV and collision.*
 
+![Editing a mesh in 3D Modeling mode](images/mode_modeling_edit.jpg)
+*An Editable Mesh: the top face bevelled, then extruded; the picked face is outlined in yellow.*
+
 ![PCG mode](images/mode_pcg.jpg)
 *PCG mode: add a PCG Volume; it scatters a mesh on the surfaces inside its box.*
 
@@ -223,7 +226,7 @@ The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel
 
 | Mode | What it does (Unreal) |
 | --- | --- |
-| **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m (Modeling Mode basics; no extrude / bevel yet) |
+| **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m. **Convert to Editable Mesh** on a Cube makes it editable face by face (Unreal's PolyEdit): click a face in the viewport (it turns yellow), then **Extrude** (out along its normal, with walls), **Inset** (a smaller face inside it), **Bevel** (inset, then extrude: a chamfered step), **Push / Pull** (moves the face, its neighbours stretch), **Flip**, **Delete Face**; every step undoes with Ctrl+Z. **Save as Mesh Asset** writes it as `Content/Meshes/SM_<name>.obj`, a mesh you can place again or open in Blender |
 | **Foliage** | A list of **Foliage Types** (Unreal's Foliage Types, up to 8, kept in your editor settings): **+ Type**, Remove, a tick to paint each; the selected one's mesh, tint, density (copies per m2), scale range, random turn, **Align to Normal** (tilted to the slope: grass, rocks; off: upright trees) and
 **Collision** (each copy blocks in Play with a box around it: trees, rocks; off for grass). **LMB drag** paints every ticked type at once, each spaced by its own density; **Shift+LMB** erases the ticked types. Copies go to *Foliage* objects (Instanced Static Meshes, one per mesh, 1024 each) |
 | **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks, then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All; **Paint** layers (below); **Holes** (Unreal's Visibility tool: LMB cuts the terrain for caves and tunnels, Shift fills; no drawing or collision there); **Heightmap**: Import sets the selected landscape's heights from a greyscale image (black 0, white Max Height), Export writes them as a 65 x 65 PNG. It collides in Play; without layers its material is on its Static Mesh |

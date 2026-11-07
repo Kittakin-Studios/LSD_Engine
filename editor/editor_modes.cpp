@@ -1,6 +1,7 @@
 #include "editor_modes.h"
 #include "paper2d_core.h"
 #include "landscape_core.h"
+#include "mesh_edit.h"
 #include "landscape_paint.h"
 #include "tips.h"
 
@@ -154,6 +155,72 @@ void asset_list(EditorState& s, const char* data_type, const char* empty, bool p
 // ---- 3D Modeling ----
 
 bool g_box_uv = true;  // new shapes get box-projected UVs (textures do not stretch)
+i32 g_edit_face = -1;   // the Editable Mesh face picked in the viewport
+Entity g_edit_owner;
+f32 g_extrude = 0.5f, g_inset = 0.25f, g_push = 0.1f;
+
+world::EditableMesh* editable(EditorState& s) {
+    return s.world->alive(s.selected) ? s.world->get<world::EditableMesh>(s.selected) : nullptr;
+}
+
+// The selected Editable Mesh's face tools.
+void draw_mesh_edit(EditorState& s, world::EditableMesh& m) {
+    if (g_edit_owner != s.selected) {
+        g_edit_owner = s.selected;
+        g_edit_face = -1;
+    }
+    ImGui::SeparatorText("Edit Mesh");
+    ImGui::Text("%u faces, %u points", m.faces.count, m.points.count);
+    if (g_edit_face < 0 || static_cast<u32>(g_edit_face) >= m.faces.count) {
+        hint("Click a face of the mesh in the viewport to edit it.");
+        return;
+    }
+    ImGui::Text("Face %d selected", g_edit_face + 1);
+    const u32 face = static_cast<u32>(g_edit_face);
+    auto apply = [&](bool ok, const char* what) {
+        if (ok) mark_edited(s, what);
+        else std::snprintf(s.status, sizeof s.status, "%s: the mesh is full (1024 points / faces) or the face is not usable", what);
+    };
+    ImGui::SetNextItemWidth(110);
+    with_tip(ImGui::DragFloat("##extrude", &g_extrude, 0.01f, -100.0f, 100.0f, "%.2f m"), "How far Extrude and Bevel move the face out (negative: in)");
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Extrude"), "Pulls the face out along its normal, with walls joining it to the rest (Unreal's PolyEdit Extrude)")) apply(extrude(m, face, g_extrude), "Extrude");
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Bevel"), "Insets the face, then extrudes the smaller one: a chamfered step")) apply(bevel(m, face, g_inset, g_extrude), "Bevel");
+    ImGui::SetNextItemWidth(110);
+    with_tip(ImGui::DragFloat("##inset", &g_inset, 0.01f, 0.01f, 0.95f, "%.2f"), "How far Inset and Bevel shrink the face toward its centre (0..1)");
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Inset"), "A smaller copy of the face inside it, ringed by new faces (windows, panels)")) apply(inset(m, face, g_inset), "Inset");
+    ImGui::SetNextItemWidth(110);
+    with_tip(ImGui::DragFloat("##push", &g_push, 0.01f, -100.0f, 100.0f, "%.2f m"), "How far Push / Pull moves the face");
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Push / Pull"), "Moves the face along its normal; the faces around it stretch")) apply(push_pull(m, face, g_push), "Push / Pull");
+    if (with_tip(ImGui::Button("Flip"), "Turns the face inside out (when it faces the wrong way)")) apply(flip_face(m, face), "Flip Face");
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Delete Face"), "Removes the face (an opening)")) {
+        apply(delete_face(m, face), "Delete Face");
+        g_edit_face = -1;
+    }
+    ImGui::SeparatorText("Mesh");
+    with_tip(ImGui::DragFloat("UV Scale", &m.uv_scale, 0.01f, 0.01f, 100.0f, "%.2f"), "Texture tiles per metre");
+    if (with_tip(ImGui::Button("Save as Mesh Asset"), "Writes it as an OBJ in Content/Meshes (a mesh asset you can place many times or open in Blender)")) {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::path(s.registry ? s.registry->content_dir() : "Content") / "Meshes";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        std::string base = s.world->name(s.selected);
+        for (char& c : base) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') c = '_';
+        }
+        const fs::path file = dir / ("SM_" + base + ".obj");
+        const std::string text = to_obj(m, base.c_str());
+        FILE* f = std::fopen(file.string().c_str(), "wb");
+        const bool ok = f && std::fwrite(text.data(), 1, text.size(), f) == text.size();
+        if (f) std::fclose(f);
+        if (ok && s.registry) s.registry->scan();
+        std::snprintf(s.status, sizeof s.status, ok ? "Saved %s" : "Could not write %s", file.generic_string().c_str());
+    }
+}
 
 void draw_modeling(EditorState& s) {
     ImGui::SeparatorText("Shapes");
@@ -175,6 +242,12 @@ void draw_modeling(EditorState& s) {
         hint("Select a mesh to size it here.");
         return;
     }
+    if (world::EditableMesh* m = editable(s)) {
+        ImGui::Text("%s", s.world->name(s.selected));
+        draw_mesh_edit(s, *m);
+        if (with_tip(ImGui::Checkbox("Collision", &mesh->collision), "The player and physics bump into it")) mark_edited(s, "Collision");
+        return;
+    }
     ImGui::Text("%s", s.world->name(s.selected));
     // The basic shapes are 1 m, so their scale is their size in metres.
     if (ImGui::DragFloat3("Size (m)", &t->scale.x, 0.05f, 0.01f, 1000.0f, "%.2f")) mark_edited(s, "Resize");
@@ -185,7 +258,15 @@ void draw_modeling(EditorState& s) {
     if (with_tip(ImGui::Checkbox("Box UV", &mesh->box_uv), "Projects the texture from the box's sides: one tile per metre at any size, no stretching")) mark_edited(s, "Box UV");
     if (with_tip(ImGui::Checkbox("Collision", &mesh->collision), "The player and physics bump into it")) mark_edited(s, "Collision");
     hint("W / E / R: move, turn, scale with the gizmo.");
-    hint("Extrude, bevel and booleans are not in yet.");
+    if (std::strcmp(mesh->mesh, "Cube") == 0 && with_tip(ImGui::Button("Convert to Editable Mesh"), "Makes the box editable face by face: extrude, inset, bevel (Unreal's PolyEdit)")) {
+        world::EditableMesh* m = s.world->add<world::EditableMesh>(s.selected);
+        make_box(*m);
+        mesh = s.world->get<world::StaticMesh>(s.selected);
+        mesh->mesh[0] = '\0';  // update_editable_meshes gives it its key
+        mesh->collision_shape = 1;  // its own triangles
+        g_edit_face = -1;
+        mark_edited(s, "Convert to Editable Mesh");
+    }
 }
 
 // ---- Foliage ----
@@ -840,8 +921,41 @@ void draw_mode_panel(EditorState& s) {
     if (!open) s.mode = EditorMode::Select;
 }
 
+// Modeling: the selected Editable Mesh's faces are picked with a click, the picked one outlined.
+bool face_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
+    world::EditableMesh* m = editable(s);
+    if (!m) return false;
+    const Mat4 world_m = s.world->world_matrix(s.selected), inv = affine_inverse(world_m);
+    const ImGuiIO& io = ImGui::GetIO();
+    if (g_edit_owner == s.selected && g_edit_face >= 0 && static_cast<u32>(g_edit_face) < m->faces.count) {
+        const world::EditFace& f = m->faces[static_cast<u32>(g_edit_face)];
+        ImVec2 outline[4];
+        u32 n = 0;
+        for (u32 i = 0; i < face_size(f); ++i) {
+            if (project(view_proj, transform_point(world_m, face_point(*m, f, i)), pos, size, outline[n])) ++n;
+        }
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+        if (n == face_size(f)) {
+            dl->AddConvexPolyFilled(outline, static_cast<int>(n), IM_COL32(243, 195, 18, 70));
+            dl->AddPolyline(outline, static_cast<int>(n), IM_COL32(243, 195, 18, 255), ImDrawFlags_Closed, 2.0f);
+        }
+        dl->PopClipRect();
+    }
+    if (!hovered || io.KeyAlt || !ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return false;
+    Vec3 o, d;
+    viewport_ray(s.camera, pos, size, io.MousePos, o, d);
+    f32 t = 0.0f;
+    const i32 face = pick_face(*m, transform_point(inv, o), transform_vector(inv, d), t);
+    if (face < 0) return false;  // missed the mesh: a normal click (select something else)
+    g_edit_owner = s.selected;
+    g_edit_face = face;
+    return true;
+}
+
 bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
     if (s.mode == EditorMode::Paper2D) return tile_brush(s, view_proj, pos, size, hovered);
+    if (s.mode == EditorMode::Modeling) return face_brush(s, view_proj, pos, size, hovered);
     static bool stroke = false;
     static f32 flatten_z = 0.0f, since_stamp = 0.0f;
     const ImGuiIO& io = ImGui::GetIO();
@@ -1016,6 +1130,38 @@ void update_landscape_texture(const world::Landscape& l, const char* key, MeshCa
     t.texture = fresh;
     t.hash = hash;
     t.built_ms = now;
+}
+
+std::unordered_map<std::string, u64> g_edit_mesh_hash;  // mesh key -> points and faces it was built from
+
+void update_editable_meshes(world::World& w, MeshCache& meshes) {
+    const reflect::TypeInfo& type = reflect::type_of<world::EditableMesh>();
+    if (!w.count(type)) return;
+    std::vector<Entity> owners;
+    for (u32 i = 0; i < w.count(type); ++i) owners.push_back(w.owner(type, i));
+    std::unordered_set<std::string> keys;  // a duplicated mesh gets a key of its own
+    for (const Entity e : owners) {
+        world::StaticMesh* mesh = w.get<world::StaticMesh>(e);
+        if (!mesh) {
+            mesh = w.add<world::StaticMesh>(e);
+            mesh->collision_shape = 1;
+            mesh->mesh[0] = '\0';
+        }
+        if (std::strncmp(mesh->mesh, "EditMesh:", 9) != 0 || keys.count(mesh->mesh)) {
+            static std::mt19937 ids{std::random_device{}()};
+            std::snprintf(mesh->mesh, sizeof mesh->mesh, "EditMesh:%08x", static_cast<unsigned>(ids()));
+        }
+        keys.insert(mesh->mesh);
+        const auto* m = w.get<world::EditableMesh>(e);
+        const u64 hash = fnv(&m->uv_scale, sizeof m->uv_scale, fnv(m->faces.items, sizeof(world::EditFace) * m->faces.count, fnv(m->points.items, sizeof(world::EditPoint) * m->points.count)));
+        const auto it = g_edit_mesh_hash.find(mesh->mesh);
+        if (it != g_edit_mesh_hash.end() && it->second == hash && meshes.get(mesh->mesh)) continue;
+        render::MeshData data;
+        build_edit_mesh(*m, data);
+        meshes.set_generated(mesh->mesh, data);
+        render::free_mesh(default_allocator(), data);
+        g_edit_mesh_hash[mesh->mesh] = hash;
+    }
 }
 
 void update_landscapes(world::World& w, MeshCache& meshes) {

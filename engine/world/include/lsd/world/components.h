@@ -458,6 +458,32 @@ struct InstancedStaticMesh {
     LSD_PROPERTY(Edit, Tooltip = "The copies (foliage paints them); drawn together in one go") List<MeshInstance, 1024> instances;
 };
 
+// An Editable Mesh's point and face (3 or 4 point indices, counter-clockwise seen from outside; d = 0xFFFFFFFF: a triangle).
+LSD_STRUCT()
+struct EditPoint {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) Vec3 p;
+};
+LSD_STRUCT()
+struct EditFace {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) u32 a = 0;
+    LSD_PROPERTY(Save) u32 b = 0;
+    LSD_PROPERTY(Save) u32 c = 0;
+    LSD_PROPERTY(Save) u32 d = 0xFFFFFFFFu;
+};
+
+// A mesh made in the 3D Modeling mode (Unreal's Modeling Mode, PolyEdit): its points and faces live in
+// the level, edited with Extrude, Inset, Bevel, Push / Pull, Delete and Flip, drawn and collided through
+// the Static Mesh beside it (mesh "EditMesh:<id>", built from these by the editor and the game).
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "A mesh shaped in the 3D Modeling mode: click a face there, then extrude, inset or bevel it")
+struct EditableMesh {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) List<EditPoint, 1024> points;
+    LSD_PROPERTY(Save) List<EditFace, 1024> faces;
+    LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Texture tiles per metre (its UVs are projected from each face's side)") f32 uv_scale = 1.0f;
+};
+
 // A Landscape's paint layer (Unreal's Landscape Layer Info): a texture tiled over the terrain, tinted.
 LSD_STRUCT()
 struct LandscapeLayer {

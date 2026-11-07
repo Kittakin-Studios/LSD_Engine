@@ -2219,6 +2219,8 @@ int main(int argc, char** argv) {
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
         lsd::editor::update_landscapes(world, meshes);  // landscape meshes follow their heights (rebuilt on change)
         if (state.world != &world) lsd::editor::update_landscapes(*state.world, meshes);  // Play's copy
+        lsd::editor::update_editable_meshes(world, meshes);
+        if (state.world != &world) lsd::editor::update_editable_meshes(*state.world, meshes);
         FrameTimer timer;
         if (state.load_layout[0]) lsd::editor::apply_layout_file(state.load_layout, state.status, sizeof state.status);
         state.load_layout[0] = '\0';

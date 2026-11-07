@@ -16,6 +16,7 @@
 #include "transactions.h"
 #include "behavior.h"
 #include "landscape_core.h"
+#include "mesh_edit.h"
 #include "loc_gather.h"
 #include "scalability.h"
 #include "template_levels.h"
@@ -509,6 +510,36 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// Modeling: a box extruded, inset, bevelled and picked stays a closed, outward-facing mesh.
+static void test_mesh_edit() {
+    world::EditableMesh m;
+    editor::make_box(m);
+    CHECK(m.points.count == 8 && m.faces.count == 6);
+    const Vec3 top = editor::face_normal(m, 0);
+    CHECK(std::fabs(top.z - 1.0f) < 1e-5f);  // face 0 is the top, facing up
+    for (u32 f = 0; f < m.faces.count; ++f) CHECK(dot(editor::face_normal(m, f), editor::face_centre(m, f) - Vec3{0, 0, 0.5f}) > 0.0f);  // all outward
+    CHECK(editor::extrude(m, 0, 1.0f));
+    CHECK(m.points.count == 12 && m.faces.count == 10 && std::fabs(editor::face_centre(m, 0).z - 2.0f) < 1e-5f);
+    for (u32 f = 0; f < m.faces.count; ++f) CHECK(dot(editor::face_normal(m, f), editor::face_centre(m, f) - Vec3{0, 0, 1.0f}) > 0.0f);  // the walls face out too
+    CHECK(editor::inset(m, 0, 0.5f));
+    CHECK(m.faces.count == 14 && std::fabs(editor::face_normal(m, 0).z - 1.0f) < 1e-5f);
+    const u32 faces = m.faces.count, points = m.points.count;
+    CHECK(editor::bevel(m, 0, 0.2f, 0.3f));
+    CHECK(m.faces.count == faces + 8 && m.points.count == points + 8);
+    f32 t = 0.0f;
+    CHECK(editor::pick_face(m, {0, 0, 10}, {0, 0, -1}, t) == 0 && std::fabs(t - (10.0f - 2.3f)) < 1e-4f);  // straight down onto the bevelled top
+    CHECK(editor::pick_face(m, {5, 5, 10}, {0, 0, -1}, t) == -1);
+    CHECK(editor::push_pull(m, 0, 0.2f) && std::fabs(editor::face_centre(m, 0).z - 2.5f) < 1e-4f);
+    CHECK(editor::flip_face(m, 0) && editor::face_normal(m, 0).z < -0.99f);
+    CHECK(editor::delete_face(m, 0) && m.faces.count == faces + 7);
+    render::MeshData data;
+    editor::build_edit_mesh(m, data);
+    CHECK(data.vertex_count == data.index_count && data.index_count == m.faces.count * 6);  // all quads: 2 triangles each
+    render::free_mesh(default_allocator(), data);
+    const std::string obj = editor::to_obj(m, "Box");
+    CHECK(obj.find("\nv ") != std::string::npos && obj.find("\nf ") != std::string::npos);
+}
+
 // Landscape: a heightmap image in and out again, and holes that remove the squares around them.
 static void test_landscape_core() {
     constexpr u32 kGrid = world::Landscape::kResolution;
@@ -656,6 +687,7 @@ int main() {
     test_run_behavior();
     test_gather_text();
     test_landscape_core();
+    test_mesh_edit();
     test_keymap();
     test_landscape_paint();
     test_assistant();

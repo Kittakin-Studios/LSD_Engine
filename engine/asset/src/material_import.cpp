@@ -150,7 +150,7 @@ ImportedMaterials::~ImportedMaterials() {
 bool list_mesh_materials(const char* path, ImportedMaterials& out, char* error, usize error_capacity) {
     out.materials.clear();
     if (error_capacity) error[0] = '\0';
-    if (ends_with(path, ".fbx")) return list_fbx(path, out, error, error_capacity);
+    if (ends_with(path, ".fbx") || ends_with(path, ".obj")) return list_fbx(path, out, error, error_capacity);  // ufbx: OBJ and its .mtl
     if (ends_with(path, ".gltf") || ends_with(path, ".glb")) return list_gltf(path, out, error, error_capacity);
     std::snprintf(error, error_capacity, "Not a mesh file: %s", path);
     return false;

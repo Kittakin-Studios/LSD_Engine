@@ -18,6 +18,8 @@ void draw_mode_panel(EditorState& s);  // the active mode's tools (nothing in Se
 bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered);
 // Each frame, in the editor and the game: landscape meshes follow their heights.
 void update_landscapes(world::World& world, MeshCache& meshes);
+// Editable Meshes (3D Modeling mode): their Static Mesh's generated mesh follows their points and faces.
+void update_editable_meshes(world::World& world, MeshCache& meshes);
 // A painted landscape's blended layers (its mesh key, "Landscape:..."); invalid when it has no layers.
 rhi::TextureHandle landscape_texture(const char* mesh_key);
 // Each frame in the editor: PCG volumes rebuild their copies when a rule or the box changed.

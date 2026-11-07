@@ -96,6 +96,8 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
     opts.target_axes = ufbx_axes_right_handed_z_up;
     opts.target_unit_meters = 1.0f;
     opts.generate_missing_normals = true;
+    opts.obj_axes = ufbx_axes_right_handed_y_up;  // OBJ has no axis info: Y-up in metres, as Blender and Maya write it
+    opts.obj_unit_meters = 1.0f;
     ufbx_error ufbx_err{};
     ufbx_scene* scene = ufbx_load_file(path, &opts, &ufbx_err);
     if (!scene) {
@@ -269,7 +271,7 @@ namespace {
 bool load_source(const char* path, f32 scale, i32 part, Allocator& allocator, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error,
                  usize error_capacity) {
     error[0] = '\0';
-    if (has_extension(path, ".fbx")) return load_fbx(path, scale, part, allocator, soup, parts, error, error_capacity);
+    if (has_extension(path, ".fbx") || has_extension(path, ".obj")) return load_fbx(path, scale, part, allocator, soup, parts, error, error_capacity);  // ufbx reads OBJ too
     if (has_extension(path, ".gltf") || has_extension(path, ".glb")) return load_gltf(path, scale, part, soup, parts, error, error_capacity);
     std::snprintf(error, error_capacity, "Unsupported file type: %s", path);
     return false;
