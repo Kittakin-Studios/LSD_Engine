@@ -540,7 +540,33 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         if (const anim::AnimGraph* graph = mesh->anim_graph[0] ? cache.graph(mesh->anim_graph) : nullptr) {
             const ClipSet* set = cache.clips(mesh->mesh, graph->animation[0] ? graph->animation : mesh->animation);
             anim::BlendInput* inputs = state->inputs;
-            const u32 n = anim::step_graph(*graph, set ? set->clips : nullptr, set ? set->count : 0, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
+            // The clip table: the graph's file's clips, then one entry per state / sample naming a file of its own.
+            const anim::Clip* table[64] = {};
+            u32 table_count = set ? (set->count < 64 ? set->count : 64) : 0;
+            for (u32 k = 0; k < table_count; ++k) table[k] = &set->clips[k];
+            const anim::AnimGraph* run = graph;
+            static anim::AnimGraph remapped;  // a copy pointing at the table (only for graphs that name other files)
+            bool own_files = false;
+            for (const anim::AnimState& st : graph->states) {
+                own_files |= st.animation[0] != 0;
+                for (const anim::BlendSample& sample : st.samples) own_files |= sample.animation[0] != 0;
+            }
+            if (own_files) {
+                remapped = *graph;
+                auto place = [&](const char* file, u32& clip) {
+                    if (!file[0]) return;
+                    const ClipSet* other = cache.clips(mesh->mesh, file);
+                    const anim::Clip* c = other && clip < other->count ? &other->clips[clip] : nullptr;
+                    if (table_count < 64) table[table_count] = c;
+                    clip = table_count < 64 ? table_count++ : 63;
+                };
+                for (anim::AnimState& st : remapped.states) {
+                    place(st.animation, st.clip);
+                    for (anim::BlendSample& sample : st.samples) place(sample.animation, sample.clip);
+                }
+                run = &remapped;
+            }
+            const u32 n = anim::step_graph(*run, table, table_count, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
             apply_ik(world, *state, *model);
@@ -550,7 +576,8 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             for (u32 k = 1; k < n; ++k) {
                 if (inputs[k].weight > inputs[best].weight) best = k;
             }
-            const u32 clip = n && set && inputs[best].clip ? static_cast<u32>(inputs[best].clip - set->clips) : ~0u;
+            const bool in_set = n && set && inputs[best].clip >= set->clips && inputs[best].clip < set->clips + set->count;  // notifies: the graph's own file
+            const u32 clip = in_set ? static_cast<u32>(inputs[best].clip - set->clips) : ~0u;
             const f32 ratio = n ? inputs[best].ratio : 0.0f;
             if (sounds && clip != ~0u && clip == state->notify_clip && ratio != state->notify_ratio) {
                 const f32 duration = set->clips[clip].duration;

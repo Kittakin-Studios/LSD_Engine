@@ -121,6 +121,16 @@ static void graph_tests() {
 
     anim::GraphState gs;
     anim::BlendInput in[anim::kMaxBlendInputs];
+    {  // a clip table (clips from several files): entries are pointers, a missing one plays nothing
+        const anim::Clip* table[2] = {&clips[2], nullptr};
+        anim::AnimGraph one;
+        one.states.push_back(anim::AnimState{});
+        anim::GraphState os;
+        CHECK(anim::step_graph(one, table, 2, os, 0.1f, in) == 1 && in[0].clip == &clips[2]);
+        one.states[0].clip = 1;
+        anim::GraphState os2;
+        CHECK(anim::step_graph(one, table, 2, os2, 0.1f, in) == 1 && in[0].clip == nullptr);
+    }
     u32 n = anim::step_graph(g, clips, 3, gs, 0.5f, in);
     CHECK(n == 1 && in[0].clip == &clips[0] && std::strcmp(anim::state_name(g, gs), "Idle") == 0);
     CHECK(std::fabs(gs.phase - 0.25f) < 1e-4f);  // 0.5 s of a 2 s clip

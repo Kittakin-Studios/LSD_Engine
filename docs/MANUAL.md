@@ -1379,10 +1379,11 @@ at the object when the clip passes that time in Play.
   samples it mixes the three around the value; outside them, the nearest edge.
 - **Transitions**: from a state (or any) to another when a parameter is greater / less / true /
   false, or the clip finished, with a crossfade time.
-- **Clips come from one file**: the graph's **Animation** (empty = the mesh's). Every state's and
-  sample's clip number is a clip in that FBX, so put the idle, walk, run... takes in one FBX (one
-  export with several actions from Blender / Maya). Separate files per animation work on a Skeletal
-  Mesh without a graph, not yet inside one graph.
+- **Where clips come from**: the graph's **Animation** (empty = the mesh's) is the default file, and a
+  state's or sample's **Clip** number picks a take in it. A state or sample can also name its own
+  **Animation** file, for one take per file as Mixamo and Unreal export them (`Anim_Idle.fbx`,
+  `Anim_Walk.fbx`...); its Clip then counts in that file (usually 0). Animation notifies (sounds) fire
+  for clips from the graph's own file.
 - **The State Machine window** (Unreal's Anim Blueprint state machine): double-click an AnimGraph in the
   Content Browser. States are boxes (name, what they play), transitions arrows with a dot (two between
   the same states lean apart), **Entry** points at the start state and **Any State** holds transitions

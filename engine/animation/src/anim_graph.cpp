@@ -34,7 +34,7 @@ i32 find_state(const AnimGraph& g, const char* name) {
     return -1;
 }
 
-const Clip* clip_at(const Clip* clips, u32 count, u32 index) { return index < count ? &clips[index] : nullptr; }
+const Clip* clip_at(const Clip* const* clips, u32 count, u32 index) { return index < count ? clips[index] : nullptr; }
 
 // 2D blend space weights at (x, y), up to 3 samples: barycentric in the smallest triangle of samples
 // around the point; outside them all, the nearest point on a segment between two samples (or the
@@ -83,7 +83,7 @@ u32 weights_2d(const List<BlendSample, 8>& s, f32 x, f32 y, u32 which[3], f32 we
 
 // A state's clips and weights at its parameter value (a 1D blend space: the two samples around
 // the value, linearly), and its length in seconds for advancing the phase.
-u32 state_inputs(const AnimState& s, const Clip* clips, u32 count, const GraphState& gs, f32 phase, f32 weight, BlendInput* out, f32* length) {
+u32 state_inputs(const AnimState& s, const Clip* const* clips, u32 count, const GraphState& gs, f32 phase, f32 weight, BlendInput* out, f32* length) {
     if (!s.blend_parameter[0] || s.samples.count == 0) {
         const Clip* c = clip_at(clips, count, s.clip);
         out[0] = {c, phase, weight};
@@ -173,6 +173,13 @@ f32 advance(f32 phase, f32 dt, f32 rate, f32 length, bool looping, bool* finishe
 } // namespace
 
 u32 step_graph(const AnimGraph& g, const Clip* clips, u32 clip_count, GraphState& gs, f32 dt, BlendInput* out) {
+    const Clip* table[64];
+    const u32 n = clip_count < 64 ? clip_count : 64;
+    for (u32 i = 0; i < n; ++i) table[i] = &clips[i];
+    return step_graph(g, table, n, gs, dt, out);
+}
+
+u32 step_graph(const AnimGraph& g, const Clip* const* clips, u32 clip_count, GraphState& gs, f32 dt, BlendInput* out) {
     if (g.states.count == 0) return 0;
     if (gs.current < 0 || gs.current >= static_cast<i32>(g.states.count)) {
         const i32 entry = g.entry_state[0] ? find_state(g, g.entry_state) : 0;
