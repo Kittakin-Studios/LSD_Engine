@@ -10,6 +10,7 @@
 #include "table_editor.h"
 #include "mesh_cache.h"
 #include "lighting.h"
+#include "scalability.h"
 #include "material_cache.h"
 #include "animation_player.h"
 #include "particle_editor.h"
@@ -315,6 +316,7 @@ struct Caster {
 
 // The clock sprites animate by: game time while playing (so Flipbook events land on the frame you see), else the editor's.
 lsd::f32 g_sprite_seconds = 0.0f;
+lsd::f32 g_view_distance_scale = 1.0f;  // Engine Scalability > View Distance
 const lsd::asset::AssetRegistry* g_registry = nullptr;  // Flipbook assets for the sprites
 
 // Lit Sprites and Tile Maps in a shadow pass: their cut-out shapes (Paper2D's Cast Shadow).
@@ -417,7 +419,8 @@ lsd::f32 volume_cull_distance(lsd::Vec3 centre, lsd::f32 size) {
 bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::StaticMesh& component, const lsd::Mat4& m, lsd::Vec3 eye, lsd::i32 force_lod,
                      lsd::rhi::BufferHandle& indices, lsd::u32& count) {
     const lsd::Vec3 centre = lsd::transform_point(m, (mesh.bounds_min + mesh.bounds_max) * 0.5f);
-    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f);
+    // Shorter (or longer) view distance: everything is treated as further away (or nearer).
+    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
     if (component.max_draw_distance > 0.0f && distance > component.max_draw_distance) return false;
     const lsd::Vec3 half = (mesh.bounds_max - mesh.bounds_min) * 0.5f;
     const lsd::f32 scale = std::fmax(lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}),
@@ -2045,7 +2048,11 @@ int main(int argc, char** argv) {
         LSD_LOG_INFO("editor", "Graphics quality: %s (recommended for this PC)", lsd::rhi::to_string(static_cast<lsd::rhi::QualityPreset>(user_settings.quality)));
     }
     auto apply_user_settings = [&] {
-        lsd::editor::set_shadow_quality(user_settings.quality);
+        const lsd::editor::Scalability scalability = lsd::editor::resolve_scalability(user_settings);
+        lsd::editor::set_shadow_quality(scalability.shadows);
+        lsd::editor::set_post_quality(scalability.post);
+        g_view_distance_scale = lsd::editor::view_distance_scale(scalability.view_distance);
+        lsd::particles::set_spawn_scale(lsd::editor::effects_scale(scalability.effects));
         sounds.set_class_volume("Master", user_settings.master_volume);
         sounds.set_class_volume("Music", user_settings.music_volume, false);  // projects without these classes: nothing to set
         sounds.set_class_volume("SFX", user_settings.effects_volume, false);

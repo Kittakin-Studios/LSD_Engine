@@ -92,6 +92,8 @@ struct ParticleSystem {
 // shortcut: over-life keys are straight lines, no curve tangents; mesh and ribbon renderers next.
 
 // A particle's size and colour at `t` (0..1 through its life): the over-life keys, else start -> end.
+// Effects quality (Unreal's sg.EffectsQuality): every emitter's rate and burst times this (1 = as made).
+void set_spawn_scale(f32 scale);
 f32 size_at(const ParticleEmitter& e, f32 t);
 LinearColor color_at(const ParticleEmitter& e, f32 t);
 

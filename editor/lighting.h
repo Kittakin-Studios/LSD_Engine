@@ -35,6 +35,8 @@ void set_reflection_probes(const f32 (*probes)[4], u32 count);
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
 // casts them further.
 void set_shadow_quality(u32 quality);
+// Post Processing quality (0 Low .. 3 Epic): world_post trims its result to it (limit_post).
+void set_post_quality(u32 quality);
 // The post-process pass the camera gets from the level's Post Process Volume (bloom, tonemap,
 // grading, FXAA); the default volume's values where none applies. Always true for now.
 // `chosen`: the volume that applies (nullptr when none does: the defaults), for its Color Grading LUT.

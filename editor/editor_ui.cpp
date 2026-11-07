@@ -5185,6 +5185,32 @@ void draw_menu_bar(EditorState& s) {
                 s.user_settings_changed = true;
             }
         }
+        ImGui::Separator();
+        struct Group {
+            const char* name;
+            u32* value;
+            const char* tip;
+        } groups[] = {{"Shadows", &s.user_settings->shadow_quality, "Low none, Medium the sun's only and nearer, High as set, Epic further"},
+                      {"Post Processing", &s.user_settings->post_quality, "Low: bloom, tonemap, grading, FXAA. Medium: + ambient occlusion. High / Epic: everything the volume sets"},
+                      {"View Distance", &s.user_settings->view_distance_quality, "Draw and cull distances (and LOD switches) times 0.5, 0.75, 1 or 1.5"},
+                      {"Effects", &s.user_settings->effects_quality, "Particles spawned times 0.25, 0.5 or 1"}};
+        for (const Group& g : groups) {
+            char label[64];
+            std::snprintf(label, sizeof label, "%s: %s###%s", g.name, *g.value ? kQuality[*g.value - 1 < 3 ? *g.value - 1 : 3] : "Overall", g.name);
+            if (with_tip(ImGui::BeginMenu(label), g.tip)) {
+                if (ImGui::MenuItem("Overall", nullptr, *g.value == 0)) {
+                    *g.value = 0;
+                    s.user_settings_changed = true;
+                }
+                for (u32 q = 0; q < 4; ++q) {
+                    if (ImGui::MenuItem(kQuality[q], nullptr, *g.value == q + 1)) {
+                        *g.value = q + 1;
+                        s.user_settings_changed = true;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+        }
         ImGui::EndMenu();
     }
     if (with_tip(ImGui::BeginMenu("Window"), "Panels to show: Undo History, World Settings, Message Log, Memory, Layout")) {

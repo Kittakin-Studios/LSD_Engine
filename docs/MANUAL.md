@@ -184,7 +184,7 @@ Select. `presets_folder` changes where the presets come from.
 | ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
 | ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console. |
 | ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Validate Assets, Package Project. |
-| ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic). |
+| ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic), and per group: Shadows, Post Processing, View Distance, Effects. |
 | ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
 
 | Panel | Where | Unreal equivalent |
@@ -894,6 +894,17 @@ plays the level as it is now, unsaved edits included, in a window of its own, th
 game runs (Unreal's New Editor Window PIE); the editor stays free to edit, and the button becomes
 **Close Window**. The menu bar's **Settings >
 Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings.
+Under it each group (Unreal's Scalability groups) can follow that or take its own level:
+
+| Group | Low | Medium | High | Epic |
+| --- | --- | --- | --- | --- |
+| Shadows | none | the sun's only, nearer | as set | further |
+| Post Processing | bloom, tonemap, grading, FXAA | + ambient occlusion | everything the volume sets (reflections, depth of field, motion blur, contact shadows, TAA) | the same |
+| View Distance | draw / cull distances and LOD switches x 0.5 | x 0.75 | x 1 | x 1.5 |
+| Effects | particles x 0.25 | x 0.5 | x 1 | x 1 |
+
+A game's options menu sets them from Lua too: `lsd.set_settings({quality = 1, post_quality = 4})`
+(groups: 0 = Overall, 1 Low .. 4 Epic).
 
 The player is the first object with a **Character** component; without one, a default walker
 appears at the Player Start (or the camera). A Character walks, jumps, climbs steps and slopes, and

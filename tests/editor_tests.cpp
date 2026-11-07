@@ -14,6 +14,7 @@
 #include "editor_settings.h"
 #include "sound_cue.h"
 #include "transactions.h"
+#include "scalability.h"
 #include "template_levels.h"
 #include "paper2d_core.h"
 #include "lsd/world/level.h"
@@ -505,6 +506,28 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// Engine Scalability: groups follow the overall quality unless set, and Low trims the post pass.
+static void test_scalability() {
+    editor::GameUserSettings s;
+    s.quality = 1;
+    s.shadow_quality = 4;  // Epic on its own
+    const editor::Scalability q = editor::resolve_scalability(s);
+    CHECK(q.shadows == 3 && q.post == 1 && q.view_distance == 1 && q.effects == 1);
+    CHECK(editor::view_distance_scale(0) < editor::view_distance_scale(3) && editor::effects_scale(3) == 1.0f);
+    rhi::PostDraw post;
+    post.taa = true;
+    post.fxaa = false;
+    post.ao_intensity = post.ssr_intensity = 1.0f;
+    post.dof_focal_distance = 5.0f;
+    rhi::PostDraw high = post;
+    editor::limit_post(2, high);
+    CHECK(high.taa && high.ssr_intensity == 1.0f);  // High: as the volume sets it
+    editor::limit_post(1, post);
+    CHECK(!post.taa && post.fxaa && post.ssr_intensity == 0.0f && post.dof_focal_distance == 0.0f && post.ao_intensity == 1.0f);
+    editor::limit_post(0, post);
+    CHECK(post.ao_intensity == 0.0f);
+}
+
 // 2D: a Tile Map's collision from its tile shapes, and Flipbook timing.
 static void test_paper2d() {
     world::TileMap map;
@@ -545,6 +568,7 @@ static void test_paper2d() {
 int main() {
     test_paper2d();
     test_templates();
+    test_scalability();
     test_keymap();
     test_landscape_paint();
     test_assistant();

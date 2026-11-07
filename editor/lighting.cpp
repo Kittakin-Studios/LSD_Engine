@@ -1,4 +1,5 @@
 #include "lighting.h"
+#include "scalability.h"
 
 #include "light_bake.h"
 
@@ -150,6 +151,8 @@ u32 g_atlas_size = 4096;
 } // namespace
 
 void set_shadow_quality(u32 quality) { g_quality = quality < 3 ? quality : 3; }
+u32 g_post_quality = 3;
+void set_post_quality(u32 quality) { g_post_quality = quality; }
 const BakedLighting* g_baked = nullptr;
 u32 shadow_atlas_size() { return g_atlas_size; }
 void set_baked_lighting(const BakedLighting* lighting) { g_baked = lighting; }
@@ -237,6 +240,7 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.exposure_max_ev = best->exposure_max_ev;
     out.exposure_speed_up = best->exposure_speed_up;
     out.exposure_speed_down = best->exposure_speed_down;
+    limit_post(g_post_quality, out);  // Engine Scalability > Post Processing
     return true;
 }
 

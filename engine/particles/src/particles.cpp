@@ -6,6 +6,11 @@
 
 namespace lsd::particles {
 
+namespace {
+f32 g_spawn_scale = 1.0f;
+}
+void set_spawn_scale(f32 scale) { g_spawn_scale = scale > 0.0f ? scale : 0.0f; }
+
 ParticleInstance::~ParticleInstance() {
     for (Emitter& e : emitters_) {
         if (e.particles) allocator_.deallocate(e.particles);
@@ -130,10 +135,11 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
         // Spawn: the burst at each start, then the rate.
         if (!emitting || s.done) continue;
         if (!s.burst_done) {
-            for (u32 b = 0; b < e.burst; ++b) spawn(e, s, world);
+            const u32 burst = e.burst ? static_cast<u32>(std::lround(static_cast<f32>(e.burst) * g_spawn_scale)) : 0u;
+            for (u32 b = 0; b < (e.burst && !burst ? 1u : burst); ++b) spawn(e, s, world);  // a burst keeps at least one
             s.burst_done = true;
         }
-        s.spawn_carry += e.spawn_rate * dt;
+        s.spawn_carry += e.spawn_rate * g_spawn_scale * dt;
         while (s.spawn_carry >= 1.0f) {
             spawn(e, s, world);
             s.spawn_carry -= 1.0f;

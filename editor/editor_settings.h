@@ -115,8 +115,17 @@ LSD_STRUCT()
 struct GameUserSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Category = "Graphics", Tooltip = "The game fills the screen (off: a window)") bool fullscreen = false;
-    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "Shadows: Low none, Medium sun only and nearer, High as set, Epic further")
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "Overall quality (Unreal's Engine Scalability): every group below that is on Overall follows it")
     u32 quality = 2;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Shadows: Low none, Medium the sun's only and nearer, High as set, Epic further")
+    u32 shadow_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic",
+                 Tooltip = "Post Processing: Low bloom, tonemap, grading and FXAA only; Medium adds ambient occlusion; High and Epic everything the volume sets (reflections, depth of field, motion blur, contact shadows, TAA)")
+    u32 post_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "View Distance: draw and cull distances (and where LODs switch) times 0.5, 0.75, 1 or 1.5")
+    u32 view_distance_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Effects: particles spawned times 0.25 (Low), 0.5 (Medium) or 1")
+    u32 effects_quality = 0;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "Loudness of everything the game plays (0 = silent)") f32 master_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named Music") f32 music_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named SFX") f32 effects_volume = 1.0f;
