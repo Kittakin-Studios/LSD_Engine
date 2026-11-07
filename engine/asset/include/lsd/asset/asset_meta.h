@@ -15,6 +15,15 @@ struct AnimNotify {
     LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Played at the object (a footstep on the frame the foot lands)") char sound[33] = "";
 };
 
+// The part of a take that is kept (Unreal's Animation Sequence crop / import frame range): seconds of the take as the file has it.
+LSD_STRUCT()
+struct ClipRange {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Which animation in the file (0 = the first)") u32 clip = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Where the kept part starts in the file's take") f32 start = 0.0f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Where it ends (0 = the take's end)") f32 end = 0.0f;
+};
+
 // A named point on a bone of a skinned mesh (Unreal's Skeletal Mesh Socket): weapons in hands, hats
 // on heads. Edited in the Mesh Editor; Attach To Socket puts an object there.
 LSD_STRUCT()
@@ -66,6 +75,8 @@ struct AssetMeta {
 
     // Animation files (FBX with takes): notifies, edited in Details, played in Play.
     LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Events at times in this clip (footsteps, sounds, a script call), like Unreal's Anim Notifies") List<AnimNotify, 16> notifies;
+    LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Trims takes to a part of them (Unreal's Crop): start and end seconds per clip")
+    List<ClipRange, 16> clip_ranges;
     LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Named points on bones to attach props to (Unreal's Sockets)") List<MeshSocket, 16> sockets;
     LSD_PROPERTY(Edit, Category = "Materials", Tooltip = "The material for each of the file's materials (Unreal's Material Slots); Import Materials fills them")
     List<MaterialSlot, 48> material_slots;  // kMaxMaterialSlots (the reflection generator reads the number)

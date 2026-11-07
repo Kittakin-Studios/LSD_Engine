@@ -18,7 +18,11 @@
 #include <ozz/base/maths/quaternion.h>
 #include <ozz/base/maths/simd_quaternion.h>
 #include <ozz/base/maths/soa_transform.h>
+#include <cgltf.h>
 #include <ufbx.h>
+
+#include <algorithm>
+#include <cctype>
 
 #include <cmath>
 #include <cstdio>
@@ -156,7 +160,418 @@ i32 SkinnedModel::find_joint(const char* name) const {
     return -1;
 }
 
+namespace {
+
+// The rest pose per joint, unpacked from ozz's SoA layout.
+std::vector<ozz::math::Transform> rest_poses(const ozz::animation::Skeleton& skeleton) {
+    const u32 joints = static_cast<u32>(skeleton.num_joints());
+    std::vector<ozz::math::Transform> rest(joints);
+    std::vector<ozz::math::SoaTransform> soa(skeleton.joint_rest_poses().begin(), skeleton.joint_rest_poses().end());
+    for (u32 j = 0; j < joints; ++j) {
+        const ozz::math::SoaTransform& s = soa[j / 4];
+        const int lane = static_cast<int>(j % 4);
+        float tx[4], ty[4], tz[4], rx[4], ry[4], rz[4], rw[4], sx[4], sy[4], sz[4];
+        ozz::math::StorePtrU(s.translation.x, tx);
+        ozz::math::StorePtrU(s.translation.y, ty);
+        ozz::math::StorePtrU(s.translation.z, tz);
+        ozz::math::StorePtrU(s.rotation.x, rx);
+        ozz::math::StorePtrU(s.rotation.y, ry);
+        ozz::math::StorePtrU(s.rotation.z, rz);
+        ozz::math::StorePtrU(s.rotation.w, rw);
+        ozz::math::StorePtrU(s.scale.x, sx);
+        ozz::math::StorePtrU(s.scale.y, sy);
+        ozz::math::StorePtrU(s.scale.z, sz);
+        rest[j].translation = ozz::math::Float3(tx[lane], ty[lane], tz[lane]);
+        rest[j].rotation = ozz::math::Quaternion(rx[lane], ry[lane], rz[lane], rw[lane]);
+        rest[j].scale = ozz::math::Float3(sx[lane], sy[lane], sz[lane]);
+    }
+    return rest;
+}
+
+// Triangles grouped by section (counting sort, file order kept inside each), so each section is one range.
+void group_sections(SkinnedModel& out, const std::vector<u32>& triangle_section) {
+    std::vector<u32> grouped(out.indices.size());
+    u32 at = 0;
+    for (u32 s = 0; s < out.sections.size(); ++s) {
+        out.sections[s].first_index = at;
+        for (usize t = 0; t < triangle_section.size(); ++t) {
+            if (triangle_section[t] != s) continue;
+            for (int c = 0; c < 3; ++c) grouped[at++] = out.indices[t * 3 + static_cast<usize>(c)];
+        }
+        out.sections[s].index_count = at - out.sections[s].first_index;
+    }
+    if (!grouped.empty()) std::memcpy(out.indices.data(), grouped.data(), grouped.size() * sizeof(u32));
+}
+
+// Up to 4 influences renormalised to bytes summing to exactly 255; none = the first joint (the root).
+void pack_weights(rhi::SkinnedVertex& v, const u32* joints, const f32* weights_in) {
+    f32 weights[4] = {weights_in[0], weights_in[1], weights_in[2], weights_in[3]};
+    f32 total = weights[0] + weights[1] + weights[2] + weights[3];
+    if (total <= 0.0f) {
+        weights[0] = 1.0f;
+        total = 1.0f;
+    }
+    u32 sum = 0;
+    for (int w = 0; w < 4; ++w) {
+        v.joints[w] = static_cast<u8>(joints[w]);
+        v.weights[w] = static_cast<u8>(weights[w] / total * 255.0f + 0.5f);
+        sum += v.weights[w];
+    }
+    v.weights[0] = static_cast<u8>(v.weights[0] + 255 - static_cast<i32>(sum));
+}
+
+// Moves `begin` / `length` inside the take when clip `clip` has a trim; shorter than a frame is ignored.
+void apply_trim(const ClipTrim* trims, u32 count, u32 clip, f64& begin, f64& length) {
+    for (u32 i = 0; i < count; ++i) {
+        if (trims[i].clip != clip) continue;
+        const f64 s = std::fmin(std::fmax(static_cast<f64>(trims[i].start), 0.0), length);
+        const f64 e = trims[i].end > 0.0f ? std::fmin(static_cast<f64>(trims[i].end), length) : length;
+        if (e - s < 1.0 / 30.0) return;
+        begin += s;
+        length = e - s;
+        return;
+    }
+}
+
+bool is_gltf(const char* path) {
+    auto ends = [&](const char* ext) {
+        const usize n = std::strlen(path), e = std::strlen(ext);
+        if (n < e) return false;
+        for (usize i = 0; i < e; ++i) {
+            if (std::tolower(static_cast<unsigned char>(path[n - e + i])) != ext[i]) return false;
+        }
+        return true;
+    };
+    return ends(".gltf") || ends(".glb");
+}
+
+cgltf_data* load_gltf(const char* path, char* error, usize capacity) {
+    cgltf_options options{};
+    cgltf_data* data = nullptr;
+    if (cgltf_parse_file(&options, path, &data) != cgltf_result_success || cgltf_load_buffers(&options, data, path) != cgltf_result_success) {
+        if (error) std::snprintf(error, capacity, "glTF: could not read %s", path);
+        cgltf_free(data);
+        return nullptr;
+    }
+    return data;
+}
+
+// A node's joint name: its own, or node_<index> when it has none or shares it (joints are matched by name).
+std::string gltf_joint_name(const cgltf_data* data, const cgltf_node* node) {
+    const cgltf_size index = cgltf_node_index(data, node);
+    if (node->name && node->name[0] && std::strcmp(node->name, "Root") != 0) {
+        bool shared = false;
+        for (cgltf_size i = 0; i < data->nodes_count && !shared; ++i) shared = i != index && data->nodes[i].name && std::strcmp(data->nodes[i].name, node->name) == 0;
+        if (!shared) return node->name;
+    }
+    return "node_" + std::to_string(index);
+}
+
+ozz::math::Transform gltf_local(const cgltf_node* n) {
+    ozz::math::Transform t = ozz::math::Transform::identity();
+    if (n->has_matrix) {
+        ozz::math::Float4x4 m;
+        for (int c = 0; c < 4; ++c) m.cols[c] = ozz::math::simd_float4::LoadPtrU(n->matrix + c * 4);
+        if (!ozz::math::ToAffine(m, &t)) t = ozz::math::Transform::identity();
+        return t;
+    }
+    if (n->has_translation) t.translation = ozz::math::Float3(n->translation[0], n->translation[1], n->translation[2]);
+    if (n->has_rotation) t.rotation = ozz::math::Quaternion(n->rotation[0], n->rotation[1], n->rotation[2], n->rotation[3]);
+    if (n->has_scale) t.scale = ozz::math::Float3(n->scale[0], n->scale[1], n->scale[2]);
+    return t;
+}
+
+void add_gltf_joint(const cgltf_data* data, const cgltf_node* node, const std::vector<bool>& needed, ozz::animation::offline::RawSkeleton::Joint& out) {
+    out.name = gltf_joint_name(data, node).c_str();
+    out.transform = gltf_local(node);
+    for (cgltf_size i = 0; i < node->children_count; ++i) {
+        const cgltf_node* child = node->children[i];
+        if (!needed[cgltf_node_index(data, child)]) continue;
+        ozz::animation::offline::RawSkeleton::Joint joint;
+        add_gltf_joint(data, child, needed, joint);
+        out.children.push_back(std::move(joint));
+    }
+}
+
+// glTF is Y-up: C turns a file point (x, y, z) into the engine's (x, -z, y), as for static meshes.
+Mat4 gltf_up() {
+    Mat4 c;
+    c.at(1, 1) = 0, c.at(1, 2) = -1, c.at(2, 1) = 1, c.at(2, 2) = 0;
+    return c;
+}
+
+// The first skin's meshes, with a "Root" joint carrying the Y-up turn and the import scale (FBX's scene root does
+// the same). Vertices and bind matrices are in engine axes, unscaled, like the FBX path.
+// shortcut: one skin, no morph targets from glTF yet; add them when a rigged glTF with several skins or shape keys turns up.
+bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity, u32 normals, f32 smoothing_angle) {
+    cgltf_data* data = load_gltf(path, error, error_capacity);
+    if (!data) return false;
+    const cgltf_skin* skin = data->skins_count ? &data->skins[0] : nullptr;
+    if (!skin || !skin->joints_count) {
+        std::snprintf(error, error_capacity, "No skinned mesh (no skeleton) in %s", path);
+        cgltf_free(data);
+        return false;
+    }
+    std::vector<bool> needed(data->nodes_count, false);
+    for (cgltf_size i = 0; i < skin->joints_count; ++i) {
+        for (const cgltf_node* n = skin->joints[i]; n; n = n->parent) needed[cgltf_node_index(data, n)] = true;
+    }
+    ozz::animation::offline::RawSkeleton raw;
+    raw.roots.resize(1);
+    ozz::animation::offline::RawSkeleton::Joint& root = raw.roots[0];
+    root.name = "Root";
+    root.transform = ozz::math::Transform::identity();
+    root.transform.rotation = ozz::math::Quaternion(0.70710678f, 0.0f, 0.0f, 0.70710678f);  // +90 degrees about X: Y up becomes Z up
+    root.transform.scale = ozz::math::Float3(scale, scale, scale);
+    for (cgltf_size i = 0; i < data->nodes_count; ++i) {
+        if (!needed[i] || data->nodes[i].parent) continue;
+        ozz::animation::offline::RawSkeleton::Joint joint;
+        add_gltf_joint(data, &data->nodes[i], needed, joint);
+        root.children.push_back(std::move(joint));
+    }
+    delete out.impl;
+    out.impl = new SkinnedModel::Impl();
+    out.impl->skeleton = ozz::animation::offline::SkeletonBuilder()(raw);
+    if (!out.impl->skeleton) {
+        std::snprintf(error, error_capacity, "Skeleton could not be built (more than %d joints?)", ozz::animation::Skeleton::kMaxJoints);
+        cgltf_free(data);
+        return false;
+    }
+    const u32 joints = out.joint_count();
+    std::vector<i32> joint_of(data->nodes_count, -1);  // node -> ozz joint (ozz orders joints its own way)
+    for (cgltf_size i = 0; i < data->nodes_count; ++i) {
+        if (needed[i]) joint_of[i] = out.find_joint(gltf_joint_name(data, &data->nodes[i]).c_str());
+    }
+    const Mat4 up = gltf_up(), down = affine_inverse(up);
+    // Inverse binds: the skin's for its joints, the rest pose for the others; the Root's is the turn itself.
+    out.inverse_bind.clear();
+    out.inverse_bind.resize(joints);
+    for (u32 j = 0; j < joints; ++j) out.inverse_bind[j] = Mat4{};
+    out.inverse_bind[static_cast<u32>(out.find_joint("Root"))] = down;
+    for (cgltf_size i = 0; i < data->nodes_count; ++i) {
+        if (joint_of[i] < 0) continue;
+        Mat4 world;
+        cgltf_node_transform_world(&data->nodes[i], world.m);
+        out.inverse_bind[static_cast<u32>(joint_of[i])] = affine_inverse(world) * down;
+    }
+    if (skin->inverse_bind_matrices) {
+        for (cgltf_size k = 0; k < skin->joints_count; ++k) {
+            const i32 j = joint_of[cgltf_node_index(data, skin->joints[k])];
+            Mat4 ibm;
+            if (j >= 0 && cgltf_accessor_read_float(skin->inverse_bind_matrices, k, ibm.m, 16)) out.inverse_bind[static_cast<u32>(j)] = ibm * down;
+        }
+    }
+    out.vertices.clear();
+    out.indices.clear();
+    out.sections.clear();
+    out.morphs.clear();
+    out.morph_deltas.clear();
+    out.bounds_min = {1e30f, 1e30f, 1e30f};
+    out.bounds_max = {-1e30f, -1e30f, -1e30f};
+    std::vector<u32> triangle_section;
+    auto section_of = [&](const char* material) {
+        for (u32 s = 0; s < out.sections.size(); ++s) {
+            if (std::strcmp(out.sections[s].material, material) == 0) return s;
+        }
+        MeshSection section;
+        std::snprintf(section.material, sizeof section.material, "%s", material);
+        out.sections.push_back(section);
+        return static_cast<u32>(out.sections.size() - 1);
+    };
+    for (cgltf_size n = 0; n < data->nodes_count; ++n) {
+        const cgltf_node& node = data->nodes[n];
+        if (!node.mesh) continue;
+        if (node.skin != skin) {
+            LSD_LOG_WARN("anim", "%s: mesh '%s' is not on the first skin and is left out", path, node.mesh->name ? node.mesh->name : "");
+            continue;
+        }
+        for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p) {
+            const cgltf_primitive& prim = node.mesh->primitives[p];
+            if (prim.type != cgltf_primitive_type_triangles) continue;
+            const cgltf_accessor *pos = nullptr, *nrm = nullptr, *uv = nullptr, *jnt = nullptr, *wgt = nullptr;
+            for (cgltf_size a = 0; a < prim.attributes_count; ++a) {
+                const cgltf_attribute& attr = prim.attributes[a];
+                if (attr.type == cgltf_attribute_type_position) pos = attr.data;
+                else if (attr.type == cgltf_attribute_type_normal) nrm = attr.data;
+                else if (attr.type == cgltf_attribute_type_texcoord && attr.index == 0) uv = attr.data;
+                else if (attr.type == cgltf_attribute_type_joints && attr.index == 0) jnt = attr.data;
+                else if (attr.type == cgltf_attribute_type_weights && attr.index == 0) wgt = attr.data;
+            }
+            if (!pos) continue;
+            const u32 section = section_of(prim.material && prim.material->name ? prim.material->name : "");
+            const cgltf_size count = prim.indices ? prim.indices->count : pos->count;
+            for (cgltf_size t = 0; t + 3 <= count; t += 3) triangle_section.push_back(section);
+            for (cgltf_size i = 0; i < count - count % 3; ++i) {
+                const cgltf_size v = prim.indices ? cgltf_accessor_read_index(prim.indices, i) : i;
+                cgltf_float lp[3] = {0, 0, 0}, ln[3] = {0, 1, 0}, tc[2] = {0, 0}, w[4] = {0, 0, 0, 0};
+                cgltf_uint ji[4] = {0, 0, 0, 0};
+                cgltf_accessor_read_float(pos, v, lp, 3);
+                if (nrm) cgltf_accessor_read_float(nrm, v, ln, 3);
+                if (uv) cgltf_accessor_read_float(uv, v, tc, 2);  // glTF UVs already start at the top, like textures
+                if (jnt && wgt) {
+                    cgltf_accessor_read_uint(jnt, v, ji, 4);
+                    cgltf_accessor_read_float(wgt, v, w, 4);
+                }
+                u32 joint_ids[4] = {};
+                for (int k = 0; k < 4; ++k) {
+                    const i32 j = ji[k] < skin->joints_count ? joint_of[cgltf_node_index(data, skin->joints[ji[k]])] : -1;
+                    if (j < 0) w[k] = 0.0f;
+                    else joint_ids[k] = static_cast<u32>(j);
+                }
+                rhi::SkinnedVertex out_v{};
+                const Vec3 p3 = transform_point(up, {lp[0], lp[1], lp[2]});
+                Vec3 n3 = transform_vector(up, {ln[0], ln[1], ln[2]});
+                const f32 len = length(n3);
+                n3 = len > 0.0f ? n3 * (1.0f / len) : Vec3{0, 0, 1};
+                out_v.position[0] = p3.x, out_v.position[1] = p3.y, out_v.position[2] = p3.z;
+                out_v.normal[0] = n3.x, out_v.normal[1] = n3.y, out_v.normal[2] = n3.z;
+                out_v.uv[0] = tc[0], out_v.uv[1] = tc[1];
+                pack_weights(out_v, joint_ids, w);
+                out.indices.push_back(static_cast<u32>(out.vertices.size()));  // shortcut: no welding for skinned meshes yet
+                out.vertices.push_back(out_v);
+                out.bounds_min = vmin(out.bounds_min, p3 * scale);  // bind pose (glTF binds where the mesh rests)
+                out.bounds_max = vmax(out.bounds_max, p3 * scale);
+            }
+        }
+    }
+    if (out.bounds_min.x > out.bounds_max.x) out.bounds_min = out.bounds_max = {};
+    group_sections(out, triangle_section);
+    asset::compute_normals(out.vertices.data(), out.vertices.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position),
+                           offsetof(rhi::SkinnedVertex, normal), normals, smoothing_angle, out.vertices.allocator());
+    if (out.vertices.size() > 0 && joints > 255) LSD_LOG_WARN("anim", "%s: %u joints; vertices can only use the first 256", path, joints);
+    cgltf_free(data);
+    return !out.vertices.empty();
+}
+
+// One glTF animation channel's keys, read once.
+struct GltfTrack {
+    const cgltf_animation_channel* channel = nullptr;
+    std::vector<f32> times, values;  // values: comps per key (x3 for cubic spline: in-tangent, value, out-tangent)
+    u32 comps = 3;
+    // The value at `t` (linear; step holds; cubic spline uses its key values linearly).
+    void sample(f32 t, f32* out) const {
+        const usize keys = times.size();
+        const usize stride = channel->sampler->interpolation == cgltf_interpolation_type_cubic_spline ? 3 : 1;
+        const usize offset = stride == 3 ? 1 : 0;
+        auto value = [&](usize k) { return &values[(k * stride + offset) * comps]; };
+        if (keys == 0) return;
+        usize k = static_cast<usize>(std::upper_bound(times.begin(), times.end(), t) - times.begin());
+        if (k == 0 || k >= keys) {
+            const f32* v = value(k == 0 ? 0 : keys - 1);
+            for (u32 c = 0; c < comps; ++c) out[c] = v[c];
+            return;
+        }
+        const f32* a = value(k - 1);
+        const f32* b = value(k);
+        f32 f = channel->sampler->interpolation == cgltf_interpolation_type_step ? 0.0f : (t - times[k - 1]) / (times[k] - times[k - 1]);
+        f32 sign = 1.0f;
+        if (comps == 4 && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0.0f) sign = -1.0f;  // the short way round
+        f32 len = 0.0f;
+        for (u32 c = 0; c < comps; ++c) {
+            out[c] = a[c] * (1.0f - f) + b[c] * sign * f;
+            len += out[c] * out[c];
+        }
+        if (comps == 4 && len > 0.0f) {  // shortcut: normalised lerp, not slerp; fine at 30 fps keys
+            const f32 inv = 1.0f / std::sqrt(len);
+            for (u32 c = 0; c < 4; ++c) out[c] *= inv;
+        }
+    }
+};
+
+// Each glTF animation becomes a clip, bones matched by name (so a glTF of takes drives a model from another file).
+// shortcut: no retargeting between rigs and no morph weights from glTF yet; the FBX path does both.
+u32 import_clips_gltf(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims, u32 trim_count) {
+    char error[256];
+    cgltf_data* data = load_gltf(path, error, sizeof error);
+    if (!data || !model.impl) {
+        if (!data) LSD_LOG_WARN("anim", "%s", error);
+        cgltf_free(data);
+        return 0;
+    }
+    const auto& skeleton = *model.impl->skeleton;
+    const u32 joints = static_cast<u32>(skeleton.num_joints());
+    const std::vector<ozz::math::Transform> rest = rest_poses(skeleton);
+    std::vector<i32> joint_of(data->nodes_count, -1);
+    std::vector<const cgltf_node*> nodes(joints, nullptr);
+    for (cgltf_size i = 0; i < data->nodes_count; ++i) {
+        const i32 j = model.find_joint(gltf_joint_name(data, &data->nodes[i]).c_str());  // never "Root": the model keeps its own
+        if (j < 0 || nodes[static_cast<u32>(j)]) continue;
+        joint_of[i] = j;
+        nodes[static_cast<u32>(j)] = &data->nodes[i];
+    }
+    u32 written = 0;
+    for (cgltf_size a = 0; a < data->animations_count && written < capacity; ++a) {
+        const cgltf_animation& anim = data->animations[a];
+        std::vector<std::vector<GltfTrack>> tracks(joints);
+        f32 begin = 1e30f, end = -1e30f;
+        for (cgltf_size c = 0; c < anim.channels_count; ++c) {
+            const cgltf_animation_channel& ch = anim.channels[c];
+            if (!ch.target_node || !ch.sampler || ch.target_path == cgltf_animation_path_type_weights || ch.target_path == cgltf_animation_path_type_invalid) continue;
+            const i32 j = joint_of[cgltf_node_index(data, ch.target_node)];
+            if (j < 0) continue;
+            GltfTrack track;
+            track.channel = &ch;
+            track.comps = ch.target_path == cgltf_animation_path_type_rotation ? 4 : 3;
+            track.times.resize(ch.sampler->input->count);
+            for (cgltf_size k = 0; k < track.times.size(); ++k) cgltf_accessor_read_float(ch.sampler->input, k, &track.times[k], 1);
+            track.values.resize(ch.sampler->output->count * track.comps);
+            for (cgltf_size k = 0; k < ch.sampler->output->count; ++k) cgltf_accessor_read_float(ch.sampler->output, k, &track.values[k * track.comps], track.comps);
+            if (track.times.empty() || track.values.size() < track.times.size() * track.comps) continue;
+            begin = std::fmin(begin, track.times.front());
+            end = std::fmax(end, track.times.back());
+            tracks[static_cast<u32>(j)].push_back(std::move(track));
+        }
+        if (!(end > begin)) continue;
+        f64 begin64 = begin, length64 = end - begin;
+        apply_trim(trims, trim_count, written, begin64, length64);
+        begin = static_cast<f32>(begin64);
+        const f32 length = static_cast<f32>(length64);
+        ozz::animation::offline::RawAnimation raw;
+        raw.duration = length;
+        raw.tracks.resize(joints);
+        const u32 frames = static_cast<u32>(std::ceil(length * 30.0f)) + 1;
+        for (u32 j = 0; j < joints; ++j) {
+            auto& track = raw.tracks[j];
+            const ozz::math::Transform base = nodes[j] ? gltf_local(nodes[j]) : rest[j];
+            ozz::math::Quaternion previous = base.rotation;
+            for (u32 f = 0; f < frames; ++f) {
+                const f32 t = f + 1 == frames ? length : static_cast<f32>(f) / 30.0f;
+                ozz::math::Transform local = base;
+                for (const GltfTrack& g : tracks[j]) {
+                    f32 v[4];
+                    g.sample(begin + t, v);
+                    if (g.channel->target_path == cgltf_animation_path_type_translation) local.translation = ozz::math::Float3(v[0], v[1], v[2]);
+                    else if (g.channel->target_path == cgltf_animation_path_type_rotation) local.rotation = ozz::math::Quaternion(v[0], v[1], v[2], v[3]);
+                    else local.scale = ozz::math::Float3(v[0], v[1], v[2]);
+                }
+                const f32 d = local.rotation.x * previous.x + local.rotation.y * previous.y + local.rotation.z * previous.z + local.rotation.w * previous.w;
+                if (d < 0.0f) local.rotation = ozz::math::Quaternion(-local.rotation.x, -local.rotation.y, -local.rotation.z, -local.rotation.w);
+                previous = local.rotation;
+                track.translations.push_back({t, local.translation});
+                track.rotations.push_back({t, local.rotation});
+                track.scales.push_back({t, local.scale});
+            }
+        }
+        Clip& clip = out[written];
+        delete clip.impl;
+        clip.impl = new Clip::Impl();
+        clip.impl->animation = ozz::animation::offline::AnimationBuilder()(raw);
+        if (!clip.impl->animation) {
+            LSD_LOG_WARN("anim", "%s: animation '%s' could not be built", path, anim.name ? anim.name : "");
+            continue;
+        }
+        std::snprintf(clip.name, sizeof clip.name, "%s", anim.name && anim.name[0] ? anim.name : "Take");
+        clip.duration = raw.duration;
+        ++written;
+    }
+    cgltf_free(data);
+    return written;
+}
+
+} // namespace
+
 bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity, u32 normals, f32 smoothing_angle) {
+    if (is_gltf(path)) return import_skinned_gltf(path, scale, out, error, error_capacity, normals, smoothing_angle);
     ufbx_scene* scene = load_scene(path, error, error_capacity);
     if (!scene) return false;
     // Joints: every bone a skin uses, and their parents up to the scene root (which carries the
@@ -357,20 +772,7 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
         }
     }
     if (out.bounds_min.x > out.bounds_max.x) out.bounds_min = out.bounds_max = {};
-    // Triangles grouped by section (counting sort, file order kept inside each), so each section is one range.
-    {
-        std::vector<u32> grouped(out.indices.size());
-        u32 at = 0;
-        for (u32 s = 0; s < out.sections.size(); ++s) {
-            out.sections[s].first_index = at;
-            for (usize t = 0; t < triangle_section.size(); ++t) {
-                if (triangle_section[t] != s) continue;
-                for (int c = 0; c < 3; ++c) grouped[at++] = out.indices[t * 3 + static_cast<usize>(c)];
-            }
-            out.sections[s].index_count = at - out.sections[s].first_index;
-        }
-        std::memcpy(out.indices.data(), grouped.data(), grouped.size() * sizeof(u32));
-    }
+    group_sections(out, triangle_section);
     asset::compute_normals(out.vertices.data(), out.vertices.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position),
                            offsetof(rhi::SkinnedVertex, normal), normals, smoothing_angle, out.vertices.allocator());
     if (out.vertices.size() > 0 && joints > 255) LSD_LOG_WARN("anim", "%s: %u joints; vertices can only use the first 256", path, joints);
@@ -411,7 +813,8 @@ bool blended_morph_weight(const BlendInput* inputs, u32 count, const char* morph
     return any;
 }
 
-u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity) {
+u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims, u32 trim_count) {
+    if (is_gltf(path)) return import_clips_gltf(path, model, out, capacity, trims, trim_count);
     char error[256];
     ufbx_scene* scene = load_scene(path, error, sizeof error);
     if (!scene || !model.impl) {
@@ -420,29 +823,7 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
     }
     const auto& skeleton = *model.impl->skeleton;
     const u32 joints = static_cast<u32>(skeleton.num_joints());
-    // Rest pose per joint (from the model) for joints this file does not have.
-    std::vector<ozz::math::Transform> rest(joints);
-    {
-        std::vector<ozz::math::SoaTransform> soa(skeleton.joint_rest_poses().begin(), skeleton.joint_rest_poses().end());
-        for (u32 j = 0; j < joints; ++j) {
-            const ozz::math::SoaTransform& s = soa[j / 4];
-            const int lane = static_cast<int>(j % 4);
-            float tx[4], ty[4], tz[4], rx[4], ry[4], rz[4], rw[4], sx[4], sy[4], sz[4];
-            ozz::math::StorePtrU(s.translation.x, tx);
-            ozz::math::StorePtrU(s.translation.y, ty);
-            ozz::math::StorePtrU(s.translation.z, tz);
-            ozz::math::StorePtrU(s.rotation.x, rx);
-            ozz::math::StorePtrU(s.rotation.y, ry);
-            ozz::math::StorePtrU(s.rotation.z, rz);
-            ozz::math::StorePtrU(s.rotation.w, rw);
-            ozz::math::StorePtrU(s.scale.x, sx);
-            ozz::math::StorePtrU(s.scale.y, sy);
-            ozz::math::StorePtrU(s.scale.z, sz);
-            rest[j].translation = ozz::math::Float3(tx[lane], ty[lane], tz[lane]);
-            rest[j].rotation = ozz::math::Quaternion(rx[lane], ry[lane], rz[lane], rw[lane]);
-            rest[j].scale = ozz::math::Float3(sx[lane], sy[lane], sz[lane]);
-        }
-    }
+    const std::vector<ozz::math::Transform> rest = rest_poses(skeleton);  // for joints this file does not have
     // Which bone of the file drives each joint: the same name, or across UE4 / UE5 rigs its counterpart.
     std::vector<const char*> file_names;
     for (usize i = 0; i < scene->nodes.count; ++i) file_names.push_back(scene->nodes.data[i]->name.data);
@@ -500,8 +881,9 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
     u32 written = 0;
     for (usize s = 0; s < scene->anim_stacks.count && written < capacity; ++s) {
         const ufbx_anim_stack* stack = scene->anim_stacks.data[s];
-        const f64 begin = stack->time_begin, length = stack->time_end - stack->time_begin;
+        f64 begin = stack->time_begin, length = stack->time_end - stack->time_begin;
         if (length <= 0.0) continue;
+        apply_trim(trims, trim_count, written, begin, length);
         ozz::animation::offline::RawAnimation raw;
         raw.duration = static_cast<f32>(length);
         raw.tracks.resize(joints);

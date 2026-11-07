@@ -1391,11 +1391,20 @@ Blueprint turns the mesh -90). **Auto** turns recognised Unreal rigs to face the
 (+X: where a Character walks and its camera looks); pick +X / +Y / -X / -Y for other files whose
 front points elsewhere. Sockets, IK and picking follow the turn.
 
-Drop a rigged FBX into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
-same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip** (Details
+Drop a rigged FBX, glTF or GLB into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
+same file, or another one with the same bone names: the Mixamo workflow; FBX and glTF mix) and the **Clip** (Details
 lists the file's clips by name and length). With an Animation Graph, Details shows the state it is
 in while it plays. Animations
-play in the editor too.
+play in the editor too. A rigged glTF uses its first skin; its animations become clips (glTF morph
+targets and retargeting between Unreal rigs are FBX-only for now).
+
+**Preview and trim a take** (Unreal's Animation Sequence preview and Crop): double-click the rigged
+mesh; the Mesh Editor's **Animations** list plays any take of the file in the preview (Pause, and the
+slider scrubs frame by frame). **Trim...** keeps only part of the take: drag **Start** / **End** (seconds
+of the take as the file has it; End 0 = to its end) or scrub and click **Start Here** / **End Here**,
+then **Save**. The take is cut wherever it plays (Skeletal Mesh, Animation Graphs, montages); **No Trim**
+brings the whole take back. Notify times count from the new start. The trims are the file's
+**Clip Ranges** in its .meta, also in its Details.
 
 **Materials on a Skeletal Mesh** (Unreal's Material Slots and Override Materials): the mesh is drawn
 per material of its file, each with its slot's material (see Import Materials and Textures in

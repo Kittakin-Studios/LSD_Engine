@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -421,8 +422,85 @@ static void motion_matching_tests(const std::string& data) {
     CHECK(distance(rest, rest_mirrored) < 1e-3f && distance(walk, twice) < 1e-3f && foot_error < 0.05f);
 }
 
+// A rigged glTF written here: hip (1 m up) -> arm (1 m above it), a triangle on the arm, a take moving the hip 1 m
+// along the file's X. Y-up in the file, Z-up in the engine; the bind matrices come from the skin.
+static void gltf_skin_tests() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "lsd_gltf_skin_test";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::vector<u8> bin;
+    auto put = [&](const void* p, usize n) { bin.insert(bin.end(), static_cast<const u8*>(p), static_cast<const u8*>(p) + n); };
+    const f32 positions[9] = {0, 2, 0, 1, 2, 0, 0, 2, 1};
+    const u8 joints[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    const f32 weights[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    f32 ibm[32] = {};
+    for (int m = 0; m < 2; ++m) {
+        for (int i = 0; i < 4; ++i) ibm[m * 16 + i * 5] = 1.0f;
+        ibm[m * 16 + 13] = -static_cast<f32>(m + 1);  // inverse of the joint's rest: 1 m and 2 m up
+    }
+    const f32 times[2] = {0, 1};
+    const f32 moves[6] = {0, 1, 0, 1, 1, 0};
+    put(positions, sizeof positions);  // 0
+    put(joints, sizeof joints);        // 36
+    put(weights, sizeof weights);      // 48
+    put(ibm, sizeof ibm);              // 96
+    put(times, sizeof times);          // 224
+    put(moves, sizeof moves);          // 232, 256 in all
+    if (FILE* f = std::fopen((dir / "rig.bin").string().c_str(), "wb")) {
+        std::fwrite(bin.data(), 1, bin.size(), f);
+        std::fclose(f);
+    }
+    const char* json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,2]}],
+"nodes":[{"name":"hip","translation":[0,1,0],"children":[1]},{"name":"arm","translation":[0,1,0]},{"name":"body","mesh":0,"skin":0}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2}}]}],
+"skins":[{"joints":[0,1],"inverseBindMatrices":3}],
+"animations":[{"name":"Slide","samplers":[{"input":4,"output":5}],"channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]}],
+"buffers":[{"uri":"rig.bin","byteLength":256}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12},{"buffer":0,"byteOffset":48,"byteLength":48},
+{"buffer":0,"byteOffset":96,"byteLength":128},{"buffer":0,"byteOffset":224,"byteLength":8},{"buffer":0,"byteOffset":232,"byteLength":24}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,2,0],"max":[1,2,1]},{"bufferView":1,"componentType":5121,"count":3,"type":"VEC4"},
+{"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":3,"componentType":5126,"count":2,"type":"MAT4"},
+{"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},{"bufferView":5,"componentType":5126,"count":2,"type":"VEC3"}]})";
+    const std::string path = (dir / "rig.gltf").string();
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(json, 1, std::strlen(json), f);
+        std::fclose(f);
+    }
+    auto near = [](Vec3 a, Vec3 b) { return std::fabs(a.x - b.x) < 1e-3f && std::fabs(a.y - b.y) < 1e-3f && std::fabs(a.z - b.z) < 1e-3f; };
+    anim::SkinnedModel model(default_allocator());
+    char error[256] = "";
+    CHECK(anim::import_skinned(path.c_str(), 1.0f, model, error, sizeof error));
+    CHECK(model.joint_count() == 3 && model.find_joint("Root") >= 0 && model.find_joint("hip") >= 0 && model.find_joint("arm") >= 0);
+    CHECK(model.vertices.size() == 3 && model.indices.size() == 3 && model.sections.size() == 1);
+    if (model.vertices.size() != 3) return;
+    CHECK(near({model.vertices[0].position[0], model.vertices[0].position[1], model.vertices[0].position[2]}, {0, 0, 2}));  // Y-up 2 m -> Z-up
+    CHECK(near({model.vertices[2].position[0], model.vertices[2].position[1], model.vertices[2].position[2]}, {0, -1, 2}));  // file +Z -> engine -Y
+    CHECK(model.vertices[0].joints[0] == static_cast<u8>(model.find_joint("arm")) && model.vertices[0].weights[0] == 255);
+    anim::Pose pose;
+    pose.sample(model, nullptr, 0.0f, false);
+    CHECK(near(skin(pose, model.vertices[0]), {0, 0, 2}));  // the rest pose leaves it where it is
+    anim::Clip clips[2];
+    CHECK(anim::import_clips(path.c_str(), model, clips, 2) == 1);
+    CHECK(std::strcmp(clips[0].name, "Slide") == 0 && std::fabs(clips[0].duration - 1.0f) < 1e-4f);
+    pose.sample(model, &clips[0], 1.0f, false);
+    CHECK(near(skin(pose, model.vertices[0]), {1, 0, 2}));  // the hip slid 1 m, the arm and its triangle with it
+    pose.sample(model, &clips[0], 0.5f, false);
+    CHECK(near(skin(pose, model.vertices[1]), {1.5f, 0, 2}));
+    const anim::ClipTrim trim{0, 0.5f, 0.0f};  // keep the second half: it starts where the hip is half-way
+    CHECK(anim::import_clips(path.c_str(), model, clips, 2, &trim, 1) == 1 && std::fabs(clips[0].duration - 0.5f) < 1e-4f);
+    pose.sample(model, &clips[0], 0.0f, false);
+    CHECK(near(skin(pose, model.vertices[0]), {0.5f, 0, 2}));
+    anim::SkinnedModel twice(default_allocator());
+    CHECK(anim::import_skinned(path.c_str(), 2.0f, twice, error, sizeof error));
+    pose.sample(twice, nullptr, 0.0f, false);
+    if (twice.vertices.size() == 3) CHECK(near(skin(pose, twice.vertices[0]), {0, 0, 4}) && twice.bounds_max.z > 3.99f);  // the import scale
+    fs::remove_all(dir, ec);
+}
+
 int main() {
     rig_tests();
+    gltf_skin_tests();
     graph_tests();
     graph_editing_tests();
     const std::string data = LSD_UFBX_DATA_DIR;

@@ -100,7 +100,12 @@ struct Clip {
 // Every animation (take / stack) in an FBX, sampled at 30 frames a second onto `model`'s skeleton
 // by joint name (joints the file does not animate keep their rest pose). Returns how many were
 // written to `out`.
-u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity);
+// Trim (Unreal's Crop): clip `clip` keeps only `start`..`end` seconds of its take (end 0 = to the take's end).
+struct ClipTrim {
+    u32 clip = 0;
+    f32 start = 0.0f, end = 0.0f;
+};
+u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims = nullptr, u32 trim_count = 0);
 
 // One clip's contribution to a blended pose.
 struct BlendInput {

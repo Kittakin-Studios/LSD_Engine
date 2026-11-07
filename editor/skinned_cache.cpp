@@ -178,9 +178,11 @@ void SkinnedCache::load(ClipSet& set, const SkinnedEntry& model) {
     char path[300];
     registry_.source_path(*r, path, sizeof path);
     set.modified = file_time(path);
-    set.count = anim::import_clips(path, *model.model, set.clips, 16);
     set.meta = asset::AssetMeta{};
     registry_.load_meta(*r, set.meta);
+    anim::ClipTrim trims[16];
+    for (u32 i = 0; i < set.meta.clip_ranges.count; ++i) trims[i] = {set.meta.clip_ranges[i].clip, set.meta.clip_ranges[i].start, set.meta.clip_ranges[i].end};
+    set.count = anim::import_clips(path, *model.model, set.clips, 16, trims, set.meta.clip_ranges.count);
 }
 
 const ClipSet* SkinnedCache::clips(const char* mesh_guid, const char* anim_guid) {
@@ -222,8 +224,18 @@ void SkinnedCache::check_files() {
         if (!r || !model) continue;
         char path[300];
         registry_.source_path(*r, path, sizeof path);
-        if (file_time(path) != set.modified) load(set, *model);
-        else registry_.load_meta(*r, set.meta);  // notifies edited in Details
+        if (file_time(path) != set.modified) {
+            load(set, *model);
+            continue;
+        }
+        const asset::AssetMeta before = set.meta;
+        registry_.load_meta(*r, set.meta);  // notifies edited in Details
+        bool trimmed = before.clip_ranges.count != set.meta.clip_ranges.count;
+        for (u32 k = 0; k < set.meta.clip_ranges.count && !trimmed; ++k) {
+            const asset::ClipRange &a = before.clip_ranges[k], &b = set.meta.clip_ranges[k];
+            trimmed = a.clip != b.clip || a.start != b.start || a.end != b.end;
+        }
+        if (trimmed) load(set, *model);  // its takes are cut again
     }
     for (u32 i = 0; i < graph_count_; ++i) {  // graphs edited in Details save to disk: picked up here
         const asset::AssetRecord* r = record_of(registry_, graphs_[i]->guid);
