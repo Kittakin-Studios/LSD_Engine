@@ -26,6 +26,10 @@ public:
     usize allocated_bytes() const override { return allocated_.load(std::memory_order_relaxed); }
     const char* name() const override { return name_; }
     usize peak_bytes() const { return peak_.load(std::memory_order_relaxed); }
+    // The size asked for when `ptr` (from any HeapAllocator) was allocated: realloc hooks of libraries need it.
+    static usize block_size(const void* ptr);
+    // Grows or shrinks a block, keeping its contents (realloc for library hooks); ptr may be null.
+    void* reallocate(void* ptr, usize size, usize alignment = alignof(std::max_align_t));
     usize live_allocations() const { return live_allocations_.load(std::memory_order_relaxed); }
 private:
     const char* name_;
@@ -66,5 +70,11 @@ struct AllocatorStats {
     bool arena;
 };
 u32 allocator_stats(AllocatorStats* out, u32 capacity);
+
+// Memory a system keeps where no Allocator sees it (Lua's heap, its garbage collector counts it), reported by
+// name next to the allocators (bytes = fn(user) when asked; the peak is the highest seen).
+using MemorySource = usize (*)(void* user);
+void add_memory_source(const char* name, MemorySource fn, void* user);
+void remove_memory_source(void* user);  // every source of `user`
 
 } // namespace lsd

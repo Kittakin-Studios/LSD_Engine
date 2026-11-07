@@ -1876,6 +1876,7 @@ void ScriptSystem::stop() {
         persistent_ = new char[json.size() + 1];
         std::memcpy(persistent_, json.c_str(), json.size() + 1);
     }
+    remove_memory_source(this);
     if (lua_) lua_close(lua_);
     lua_ = nullptr;
     js::destroy(js_);  // after Lua, which held JS functions (timers)
@@ -1903,6 +1904,10 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     path_user_ = path_user;
     // shortcut: Lua's own allocator (no memory cap per script); give it an Allocator with a budget before shipping mods.
     lua_ = luaL_newstate();
+    add_memory_source("Scripts (Lua)", [](void* user) -> usize {  // LuaJIT keeps its own heap: its collector counts it
+        lua_State* L = static_cast<ScriptSystem*>(user)->lua_;
+        return L ? static_cast<usize>(lua_gc(L, LUA_GCCOUNT, 0)) * 1024 + static_cast<usize>(lua_gc(L, LUA_GCCOUNTB, 0)) : 0;
+    }, this);
     curves_ = new CachedCurve[kMaxCurves];
     luaL_openlibs(lua_);
 

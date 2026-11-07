@@ -19,9 +19,16 @@ struct BlockHeader {
 
 // The live allocators, for allocator_stats. A function-local static: allocators made during static
 // initialisation (default_allocator) register safely.
+struct Source {
+    const char* name;
+    MemorySource fn;
+    void* user;
+    usize peak;
+};
 struct Registry {
     std::mutex mutex;
     std::vector<Allocator*> list;
+    std::vector<Source> sources;
 };
 Registry& registry() {
     static Registry r;
@@ -62,7 +69,44 @@ u32 allocator_stats(AllocatorStats* out, u32 capacity) {
             s.arena = arena != nullptr;
         }
     }
+    for (Source& src : registry().sources) {
+        if (n == capacity) break;
+        AllocatorStats& s = out[n++];
+        s.name = src.name;
+        s.bytes = src.fn(src.user);
+        src.peak = s.bytes > src.peak ? s.bytes : src.peak;
+        s.peak = src.peak;
+        s.allocations = 0;
+        s.arena = false;
+    }
     return n;
+}
+
+void add_memory_source(const char* name, MemorySource fn, void* user) {
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    registry().sources.push_back({name, fn, user, 0});
+}
+
+void remove_memory_source(void* user) {
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    auto& list = registry().sources;
+    for (usize i = list.size(); i-- > 0;) {
+        if (list[i].user == user) list.erase(list.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+}
+
+usize HeapAllocator::block_size(const void* ptr) {
+    return ptr ? reinterpret_cast<const BlockHeader*>(reinterpret_cast<usize>(ptr) - sizeof(BlockHeader))->size : 0;
+}
+
+void* HeapAllocator::reallocate(void* ptr, usize size, usize alignment) {
+    void* fresh = size ? allocate(size, alignment) : nullptr;
+    if (ptr && fresh) {
+        const usize old = block_size(ptr);
+        std::memcpy(fresh, ptr, old < size ? old : size);
+    }
+    if (ptr && (fresh || !size)) deallocate(ptr);
+    return fresh;
 }
 
 HeapAllocator::HeapAllocator(const char* name) : name_(name) { add(this); }

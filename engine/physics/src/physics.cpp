@@ -1,5 +1,6 @@
 #include "lsd/physics/physics.h"
 
+#include "lsd/foundation/allocator.h"
 #include "lsd/foundation/log.h"
 
 #include <Jolt/Jolt.h>
@@ -91,11 +92,21 @@ void trace(const char* format, ...) {
     LSD_LOG_INFO("physics", "%s", buffer);
 }
 
+// Jolt's memory, counted on its own heap (Window > Memory, memreport: "Physics (Jolt)").
+HeapAllocator& jolt_heap() {
+    static HeapAllocator& heap = *new HeapAllocator("Physics (Jolt)");  // never freed: Jolt keeps blocks until exit
+    return heap;
+}
+
 // Jolt's global setup (allocator hooks, type registry), once per process.
 void init_jolt() {
     static std::once_flag once;
     std::call_once(once, [] {
-        JPH::RegisterDefaultAllocator();
+        JPH::Allocate = [](size_t size) { return jolt_heap().allocate(size, 16); };
+        JPH::Reallocate = [](void* block, size_t, size_t size) { return jolt_heap().reallocate(block, size, 16); };
+        JPH::Free = [](void* block) { jolt_heap().deallocate(block); };
+        JPH::AlignedAllocate = [](size_t size, size_t alignment) { return jolt_heap().allocate(size, alignment < 16 ? 16 : alignment); };
+        JPH::AlignedFree = [](void* block) { jolt_heap().deallocate(block); };
         JPH::Trace = trace;
         JPH::Factory::sInstance = new JPH::Factory();
         JPH::RegisterTypes();

@@ -1938,7 +1938,7 @@ in the project folder, the splash too).
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).
-- **Window > Memory** / **memreport** (console): memory per allocator, the process's RAM and the video memory budget.
+- **Window > Memory** / **memreport** (console): memory per system (Unreal's stat memory): the engine's own heap, **Physics (Jolt)**, **Audio (miniaudio**: decoded sounds and streams), **Scripts (Lua)** and any arenas, with peaks; the process's RAM and the video memory budget.
 - **Texture streaming** (Unreal's, on by default; `r.TextureStreaming 0` turns it off): a texture is
   read and decoded on a worker thread the first time something needs it, and a few finished ones go
   onto the GPU each frame. Levels open without waiting for their images: a material draws in its

@@ -159,8 +159,37 @@ static void test_inverse() {  // TAA reprojects with it
     CHECK(worst < 1e-4f);
 }
 
+// Memory per system: named sources next to the allocators; reallocate keeps contents and the count.
+static lsd::usize g_source_bytes = 1234;
+static void test_memory_sources() {
+    using namespace lsd;
+    add_memory_source("Test Source", [](void*) { return g_source_bytes; }, &g_source_bytes);
+    AllocatorStats stats[128];
+    auto find = [&](const char* name) -> const AllocatorStats* {
+        const u32 n = allocator_stats(stats, 128);
+        for (u32 i = 0; i < n; ++i) {
+            if (std::strcmp(stats[i].name, name) == 0) return &stats[i];
+        }
+        return nullptr;
+    };
+    const AllocatorStats* s = find("Test Source");
+    CHECK(s && s->bytes == 1234 && s->peak == 1234);
+    g_source_bytes = 10;
+    s = find("Test Source");
+    CHECK(s && s->bytes == 10 && s->peak == 1234);  // the peak stays
+    remove_memory_source(&g_source_bytes);
+    CHECK(!find("Test Source"));
+    HeapAllocator heap("Test Realloc");
+    char* p = static_cast<char*>(heap.allocate(8, 16));
+    std::memcpy(p, "abcdefg", 8);
+    p = static_cast<char*>(heap.reallocate(p, 64, 16));
+    CHECK(p && std::strcmp(p, "abcdefg") == 0 && HeapAllocator::block_size(p) == 64 && heap.allocated_bytes() == 64 && heap.live_allocations() == 1);
+    CHECK(heap.reallocate(p, 0, 16) == nullptr && heap.allocated_bytes() == 0 && heap.live_allocations() == 0);
+}
+
 int main() {
     test_console();
+    test_memory_sources();
     test_inverse();
     test_hash_id();
     test_handle();

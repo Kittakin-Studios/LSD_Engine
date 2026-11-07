@@ -1,5 +1,6 @@
 #include "lsd/audio/audio.h"
 
+#include "lsd/foundation/allocator.h"
 #include "lsd/foundation/log.h"
 
 #include <miniaudio.h>
@@ -234,9 +235,18 @@ AudioSystem::~AudioSystem() {
     delete impl_;
 }
 
+// miniaudio's memory (decoders, the resource manager, streams), counted on its own heap ("Audio (miniaudio)").
+static HeapAllocator& audio_heap() {
+    static HeapAllocator& heap = *new HeapAllocator("Audio (miniaudio)");  // never freed: alive as long as any voice
+    return heap;
+}
+
 bool AudioSystem::init(bool use_device) {
     shutdown();
     ma_engine_config config = ma_engine_config_init();
+    config.allocationCallbacks.onMalloc = [](size_t size, void*) { return audio_heap().allocate(size, 16); };
+    config.allocationCallbacks.onRealloc = [](void* p, size_t size, void*) { return audio_heap().reallocate(p, size, 16); };
+    config.allocationCallbacks.onFree = [](void* p, void*) { audio_heap().deallocate(p); };
     config.channels = 2;
     config.sampleRate = 48000;
     config.noDevice = use_device ? MA_FALSE : MA_TRUE;
