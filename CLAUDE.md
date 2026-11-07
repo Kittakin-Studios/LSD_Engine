@@ -55,7 +55,7 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 
 **Automated runs must be silent**: always pass `-nosound` (test audio once reached her speakers).
 Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
-(quit after n frames), `-screenshot=<n>` (OpenGL: Saved/screenshot.bmp; does not quit by itself),
+(quit after n frames), `-screenshot=<n>` (OpenGL or Vulkan: Saved/screenshot.bmp; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
@@ -74,7 +74,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy 
 | Area | Decision |
 | --- | --- |
 | Language | C++20 engine and editor. Gameplay: LuaJIT, visual scripts (compiled to Lua) and C / C++ scripts (a `Game.dll` from `Source/` over the C API `lsd_game.h` + `lsd/game.hpp`, Native Script component, reloaded on rebuild) and JavaScript scripts (`.js` on the Script component, QuickJS-ng, sharing the Lua `lsd` API). UI: HTML / CSS (RmlUi) + each document's `.js` |
-| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (UI only until the Vulkan SDK is installed). Built-in shaders are HLSL + a GLSL mirror kept in step |
+| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (first step: lit meshes and lines, no textures / shadows / skinning / post yet; needs the Vulkan SDK for its DXC). Built-in shaders are HLSL + a GLSL mirror kept in step |
 | Architecture | Data-oriented: entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets, hot reload everywhere |
 | Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |

@@ -43,25 +43,30 @@ if(LSD_RHI_VULKAN)
                DOC "DXC with SPIR-V code generation (Vulkan SDK)")
   set(spirv_dir "${CMAKE_CURRENT_BINARY_DIR}/spirv")
   if(LSD_DXC_SPIRV)
-    set(hlsl "${CMAKE_CURRENT_SOURCE_DIR}/backends/vulkan/triangle.hlsl")
-    foreach(stage IN ITEMS vs ps)
-      set(spv "${spirv_dir}/triangle_${stage}.spv")
-      set(header "${spirv_dir}/triangle_${stage}.spv.h")
-      if(stage STREQUAL "vs")
-        set(array kTriangleVsSpirv)
-      else()
-        set(array kTrianglePsSpirv)
-      endif()
-      add_custom_command(
-        OUTPUT "${header}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
-        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${stage}_6_0 -E ${stage}_main -Fo "${spv}" "${hlsl}"
-        COMMAND "${CMAKE_COMMAND}" -DINPUT=${spv} -DOUTPUT=${header} -DNAME=${array} -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
-        DEPENDS "${hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
-        COMMENT "Compiling triangle.hlsl (${stage}) to SPIR-V"
-        VERBATIM
-      )
-      target_sources(lsd_rhi PRIVATE "${header}")
+    # Each shader's vertex and pixel stages, embedded as k<Name>VsSpirv / k<Name>PsSpirv.
+    foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines")
+      list(GET pair 0 file)
+      list(GET pair 1 name)
+      set(hlsl "${CMAKE_CURRENT_SOURCE_DIR}/backends/vulkan/${file}.hlsl")
+      foreach(stage IN ITEMS vs ps)
+        set(spv "${spirv_dir}/${file}_${stage}.spv")
+        set(header "${spirv_dir}/${file}_${stage}.spv.h")
+        if(stage STREQUAL "vs")
+          set(array k${name}VsSpirv)
+        else()
+          set(array k${name}PsSpirv)
+        endif()
+        add_custom_command(
+          OUTPUT "${header}"
+          COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
+          COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${stage}_6_0 -E ${stage}_main -Fo "${spv}" "${hlsl}"
+          COMMAND "${CMAKE_COMMAND}" -DINPUT=${spv} -DOUTPUT=${header} -DNAME=${array} -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+          DEPENDS "${hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+          COMMENT "Compiling ${file}.hlsl (${stage}) to SPIR-V"
+          VERBATIM
+        )
+        target_sources(lsd_rhi PRIVATE "${header}")
+      endforeach()
     endforeach()
     target_include_directories(lsd_rhi PRIVATE "${spirv_dir}")
     target_compile_definitions(lsd_rhi PRIVATE LSD_VULKAN_HAVE_SPIRV=1)

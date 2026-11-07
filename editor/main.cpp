@@ -1300,7 +1300,7 @@ void register_console(EditorState& s) {
     console::add_command("BuildReflections", [](void* user, const char*) { static_cast<EditorState*>(user)->capture_reflections = true; }, &s,
                          "BuildReflections: capture every Reflection Capture again (Build > Build Reflection Captures)");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
-                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL: -rhi=opengl)");
+                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL or Vulkan)");
     console::add_command("assistant.Ask", [](void* user, const char* args) {
         lsd::editor::assistant::ask(*static_cast<EditorState*>(user), args);
     }, &s, "assistant.Ask <message>: send a message to LSD Assistant, as if typed in its chat");
@@ -2767,7 +2767,7 @@ int main(int argc, char** argv) {
         state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
         LSD_PROFILE_FRAME();
         if ((frame == screenshot_frame || std::exchange(g_screenshot, false)) && !device->capture_frame("Saved/screenshot.bmp")) {
-            LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl for now.");
+            LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl or -rhi=vulkan for now.");
         }
         device->end_frame();
         ++frame;
