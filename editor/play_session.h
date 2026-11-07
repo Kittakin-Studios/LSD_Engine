@@ -273,6 +273,7 @@ private:
     char workspace_[32] = "";
     net::PortMapper upnp_;
     world::Character settings_;
+    u32 idle_frame_ = 0, idle_count_ = 1;  // a side-scroller sprite's own Frame / Frame Count (its idle animation)
     world::Entity character_;  // invalid for the default walker
     bool crouched_ = false;    // the capsule is at crouch_height
     bool swimming_ = false;    // the chest is in a Water Volume

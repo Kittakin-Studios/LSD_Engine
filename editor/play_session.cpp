@@ -524,6 +524,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         character_ = world.owner(character_type, 0);
         settings_ = *world.get<world::Character>(character_);
         live_character_ = settings_;  // live edits compare with this
+        if (const auto* sprite = world.get<world::Sprite>(character_)) {
+            idle_frame_ = sprite->frame;
+            idle_count_ = sprite->frame_count;
+        }
         decompose_trs(world.world_matrix(character_), feet_, rotation, scale);
         yaw_ = radians(rotation.z);
         pitch_ = 0.0f;
@@ -1471,8 +1475,21 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
     const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};
     Vec3 velocity = settings_.side_scroller ? Vec3{move.x, 0, 0} : ahead * move.y + right * move.x;  // 2D: along X only
-    if (settings_.side_scroller && move.x != 0.0f) {  // the player's sprite faces the way it walks
-        if (auto* sprite = world.get<world::Sprite>(character_)) sprite->flip_x = move.x < 0.0f;
+    if (settings_.side_scroller) {  // the player's sprite faces the way it walks and plays idle / walk / jump
+        if (auto* sprite = world.get<world::Sprite>(character_)) {
+            if (move.x != 0.0f) sprite->flip_x = move.x < 0.0f;
+            const bool air = !physics_->character_on_ground() && !swimming_;
+            u32 first = idle_frame_, cells = idle_count_;
+            if (air && sprite->jump_count) {
+                first = sprite->jump_frame;
+                cells = sprite->jump_count;
+            } else if (move.x != 0.0f && sprite->walk_count) {
+                first = sprite->walk_frame;
+                cells = sprite->walk_count;
+            }
+            sprite->frame = first;
+            sprite->frame_count = cells;
+        }
     }
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);

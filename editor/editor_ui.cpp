@@ -1,4 +1,5 @@
 #include "editor_ui.h"
+#include "templates.h"
 #include "tips.h"
 #include "graph_editor.h"
 #include "lighting.h"
@@ -2070,6 +2071,49 @@ void set_panes(EditorState& s, u32 panes) {
     }
     s.panes = panes;
 }
+
+} // namespace
+
+void set_viewport_kinds(EditorState& s, u32 kinds) {
+    kinds &= kViewport2D | kViewport2_5D | kViewport3D;
+    if (!kinds) kinds = kViewport3D;
+    const Vec3 pivot = s.camera.position + camera_forward(s.camera) * s.camera.pivot_distance;
+    EditorCamera cams[4];
+    u32 n = 0;
+    if (kinds & kViewport2D) {  // side-on, no perspective
+        EditorCamera& c = cams[n++];
+        c.view = ViewType::Front;
+        c.position = {pivot.x, pivot.y - 30.0f, pivot.z};
+        c.ortho_height = 14.0f;
+    }
+    if (kinds & kViewport2_5D) {  // side-on with a long lens: depth reads as layers
+        EditorCamera& c = cams[n++];
+        c.position = {pivot.x, pivot.y - 24.0f, pivot.z + 3.0f};
+        c.yaw = 1.5707963f;
+        c.pitch = -0.12f;
+        c.fov_y = 0.6f;
+        c.pivot_distance = 24.0f;
+    }
+    if (kinds & kViewport3D) {
+        EditorCamera& c = cams[n++];
+        c.position = pivot + Vec3{-9.0f, -9.0f, 6.0f};
+        c.yaw = 0.7853982f;
+        c.pitch = -0.4f;
+        c.pivot_distance = 13.0f;
+    }
+    if (n == 3) {  // the fourth pane looks down
+        cams[3].view = ViewType::Top;
+        cams[3].position = pivot;
+        cams[3].ortho_height = 24.0f;
+    }
+    for (u32 i = 0; i < 4; ++i) s.views[i] = cams[i < n || n == 3 ? i : 0];
+    s.camera = s.views[0];
+    s.active_view = 0;
+    s.panes = n == 1 ? 1u : n == 2 ? 2u : 4u;
+    s.settings.viewport_kinds = kinds;
+}
+
+namespace {
 
 void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     if (size.x < 8 || size.y < 8) return;
@@ -5021,6 +5065,10 @@ void draw_menu_bar(EditorState& s) {
     if (!ImGui::BeginMainMenuBar()) return;
     if (with_tip(ImGui::BeginMenu("File"), "Levels: new, open, save; validating and packaging")) {
         if (with_tip(ImGui::MenuItem("New Level", command_text(Command::NewLevel), false, !s.playing), "Starts an empty level")) request_new(s);
+        if (with_tip(ImGui::MenuItem("New from Template...", nullptr, false, !s.playing),
+                     "First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D or Empty: a ready level to start from (Unreal's New Project templates)")) {
+            s.show_template_picker = true;
+        }
         if (with_tip(ImGui::BeginMenu("Open Level", !s.playing), "Opens one of the project's levels")) {
             bool any = false;
             for (usize i = 0; i < s.registry->count(); ++i) {
@@ -5144,6 +5192,21 @@ void draw_menu_bar(EditorState& s) {
         with_tip(ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings), "This level's settings: gravity, Kill Z, Game Mode, Level Script, navigation");
         with_tip(ImGui::MenuItem("Message Log", nullptr, &s.show_message_log), "Warnings and errors from imports, validation and packaging");
         with_tip(ImGui::MenuItem("Memory", nullptr, &s.show_memory), "Memory used: RAM, video memory and each allocator");
+        if (with_tip(ImGui::BeginMenu("Viewports"), "2D, 2.5D and 3D views of the level, side by side (a 2D game previewed in 3D)")) {
+            const u32 kinds = s.settings.viewport_kinds ? s.settings.viewport_kinds : kViewport3D;
+            const struct {
+                const char* name;
+                u32 bit;
+                const char* tip;
+            } items[] = {{"2D Viewport", kViewport2D, "Orthographic, looking along +Y: how a side-on 2D game is seen"},
+                         {"2.5D Viewport", kViewport2_5D, "Perspective from the side with a long lens: 3D layers played on a 2D plane"},
+                         {"3D Viewport", kViewport3D, "The free perspective view: walk around a 2D or 2.5D level to check its depth"}};
+            for (const auto& item : items) {
+                bool on = (kinds & item.bit) != 0;
+                if (with_tip(ImGui::MenuItem(item.name, nullptr, &on), item.tip)) set_viewport_kinds(s, on ? kinds | item.bit : kinds & ~item.bit);
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (with_tip(ImGui::BeginMenu("Layout"), "Save and load panel arrangements")) {  // Unreal's Window > Load Layout / Save Layout
             static char name[64] = "My Layout";
@@ -5753,6 +5816,7 @@ void draw_editor(EditorState& s) {
         ImGui::EndPopup();
     }
     draw_reference_viewer(s);
+    draw_template_picker(s);
     draw_timeline_editor(s);
     draw_anim_graph_editor(s);
     draw_mesh_editor(s);

@@ -168,6 +168,7 @@ struct EditorState {
     bool ejected = false;         // Play: F8 frees the editor camera (select and inspect) while the game runs
     Vec3 player_feet;             // Play: where the player is, for the ejected view
     bool show_world_settings = false;
+    bool show_template_picker = false;  // the New Project template picker (first launch, File > New from Template)
     bool show_message_log = false;
     bool show_remote_console = false;  // Tools > Remote Console
     bool show_memory = false;          // Window > Memory (memreport)
@@ -229,6 +230,11 @@ DetailsStyle editor_details_style(EditorState& state);  // "Mesh", "Material", a
 
 // 1 viewport, 2 side by side (perspective + top) or 4 (perspective, top, front, right).
 void set_layout(EditorState& state, u32 panes);
+// Window > Viewports: which views the level shows side by side, framed around the camera's pivot.
+// 2D: orthographic, looking along +Y (a side-on 2D game). 2.5D: perspective from the side with a
+// narrow lens. 3D: the free perspective view. Remembered in the editor settings.
+constexpr u32 kViewport2D = 1, kViewport2_5D = 2, kViewport3D = 4;
+void set_viewport_kinds(EditorState& state, u32 kinds);
 
 Vec3 camera_forward(const EditorCamera& camera);
 Mat4 camera_view(const EditorCamera& camera);

@@ -353,6 +353,11 @@ struct Sprite {
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours, like most 2D games") bool lit = false;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Pixels with less alpha are cut out") f32 alpha_cutoff = 0.5f;
     LSD_PROPERTY(Edit, Tooltip = "Blocks in Play: a box the sprite's size, 1 m deep (a RigidBody uses the same box)") bool collision = false;
+    // On a side-scroller Character (Paper2D Character's flipbooks): Frame / Frame Count are the idle animation.
+    LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell of the walk animation") u32 walk_frame = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the walk animation; 0 = keep the idle one while walking") u32 walk_count = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell shown in the air (jumping, falling)") u32 jump_frame = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the in-air animation; 0 = keep the idle or walk one") u32 jump_count = 0;
 };
 
 // A grid of tiles from a tileset image (Unreal's Paper2D Tile Map), painted in the 2D level mode:

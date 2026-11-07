@@ -61,7 +61,7 @@ Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
 `-connect=<host[:port]>` (multiplayer, when Project Settings > Multiplayer is on).
 `input.Hold <key> <seconds>` takes names with spaces ("Left Shift", "Right Mouse Button") and drives the game even when the window has no focus.
-Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `assistant.Ask <message>` / `assistant.Lesson <n>` (LSD Assistant), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
+Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `template.New <name>` (a template level), `assistant.Ask <message>` / `assistant.Lesson <n>` (LSD Assistant), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
@@ -159,6 +159,9 @@ Unreal-style panel tabs under the menu bar (Level + each open asset editor; the 
 Foliage, Landscape, Animation Sequence, PCG, VFX, 2D in `editor/editor_modes.*`), and under them, on the Level tab,
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
 Vehicles / Transports / Movers (Place tab, cube placeholders; nodes in the Vehicles and Movers menus).
+Project templates (`editor/templates.*`, levels in `editor/template_levels.*`): the New Project picker on first launch (no saved level) and
+File > New from Template: Empty, First Person, Third Person, Platformer, Side Scrolling, 2D (generated art, scripts and HUD in
+Content/Templates/2D), 2.5D; `template.New <name>`. Window > Viewports: 2D / 2.5D / 3D side by side (`set_viewport_kinds`).
 Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
 script events, text and voice chat (Opus); Play opens a game window per extra player; playtests by join code
 (`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`, the Multiplayer workspace tab (its panel:

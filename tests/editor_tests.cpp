@@ -14,6 +14,8 @@
 #include "editor_settings.h"
 #include "sound_cue.h"
 #include "transactions.h"
+#include "template_levels.h"
+#include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
 
@@ -444,7 +446,58 @@ static void test_landscape_paint() {
     CHECK(editor::paint_weight(0x12345678u, 7, 1.0f, false) == 0x12345678u);
 }
 
+// Project templates: each builds a playable level (one player, the right camera), and survives a save / load.
+static void test_templates() {
+    HeapAllocator heap("templates");
+    {
+        world::World w(heap);
+        editor::TemplateArt art;
+        std::snprintf(art.tiles, sizeof art.tiles, "%s", "0123456789abcdef0123456789abcdef");
+        for (int t = 0; t < static_cast<int>(editor::Template::Count); ++t) {
+            const auto kind = static_cast<editor::Template>(t);
+            editor::build_template_world(w, kind, art);
+            const u32 characters = w.count(reflect::type_of<world::Character>());
+            CHECK(editor::template_name(kind)[0] && editor::template_description(kind)[0]);
+            CHECK(characters == (kind == editor::Template::Empty ? 0u : 1u));
+            CHECK(w.count(reflect::type_of<world::DirectionalLight>()) == (kind == editor::Template::TwoD ? 0u : 1u));
+            if (characters) {
+                const world::Entity player = w.owner(reflect::type_of<world::Character>(), 0);
+                const auto* c = w.get<world::Character>(player);
+                const bool side = kind == editor::Template::SideScrolling || kind == editor::Template::TwoD || kind == editor::Template::TwoPointFiveD;
+                CHECK(c->side_scroller == side);
+                CHECK(!side || w.count(reflect::type_of<world::Camera>()) == 1);  // the follow camera
+                CHECK(kind != editor::Template::ThirdPerson || c->camera_distance > 0.0f);
+            }
+            if (kind == editor::Template::TwoD) {
+                const auto* map = static_cast<const world::TileMap*>(w.at(reflect::type_of<world::TileMap>(), 0));
+                CHECK(map && map->tiles.count == map->width * map->height && std::strcmp(map->tileset, art.tiles) == 0);
+                CHECK(map && map->tiles[0] == 2 && map->tiles[map->width] == 1);  // dirt under grass at the start
+                CHECK(map && map->tiles[map->width + 19] == 0);                  // a pit
+                const auto* hero = w.get<world::Sprite>(w.owner(reflect::type_of<world::Character>(), 0));
+                CHECK(hero && hero->walk_count == 4 && hero->jump_count == 1 && hero->columns == 4 && hero->rows == 2);
+            }
+            const std::string path = std::string(LSD_TEST_TEMP_DIR) + "/template_test.lsdlevel";
+            CHECK(world::save_level_file(w, path.c_str()));
+            world::World loaded(heap);
+            CHECK(world::load_level_file(loaded, path.c_str()));
+            CHECK(loaded.count(reflect::type_of<world::Character>()) == characters);
+            std::filesystem::remove(path);
+        }
+    }
+    // The 2D art: drawn cells on a see-through background.
+    std::vector<u8> hero(static_cast<usize>(editor::kHeroWidth) * editor::kHeroHeight * 4);
+    editor::template_hero(hero.data());
+    CHECK(hero[3] == 0);  // the top-left corner is transparent
+    u32 solid = 0;
+    for (usize i = 3; i < hero.size(); i += 4) solid += hero[i] == 255 ? 1u : 0u;
+    CHECK(solid > 1000);  // eight figures
+    std::vector<u8> tiles(static_cast<usize>(editor::kTilesetSize) * editor::kTilesetSize * 4);
+    editor::template_tileset(tiles.data());
+    CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
+}
+
 int main() {
+    test_templates();
     test_keymap();
     test_landscape_paint();
     test_assistant();

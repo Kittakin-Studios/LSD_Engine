@@ -338,7 +338,10 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Tile maps: tileset grid, painted in the 2D level mode with a palette (LMB / Shift erase, undo), one mesh, row runs as collision boxes [Paper2D Tile Map]
 - [x] 2D physics (RigidBody Lock 2D: Jolt allowed DOFs X, Z, rotation Y) and a side-scroller Character (moves along X, sprite faces its way)
 - [x] Orthographic Camera component (Ortho Height) for Play; 2D View in the editor
-- [~] Still to do: sprites in shadow passes, flipbook assets with per-frame durations and events, tile map layers and per-tile collision shapes, sprite sorting for translucent sprites, a 2D template level
+- [x] Project templates [New Project templates]: the New Project picker the first time the editor opens with no saved level, and File > New from Template (`editor/templates.*`, levels built in `editor/template_levels.*`, tested in editor_tests): Empty, First Person, Third Person, Platformer, Side Scrolling, 2D (Paper2D: generated tileset, player sprite sheet, coin flipbook, backdrop, Coin.lua / Player2D.lua and a HUD in Content/Templates/2D), 2.5D; saved to Content/Levels and set as the project's startup / game level when unset; `template.New <name>`
+- [x] Window > Viewports: 2D (orthographic side-on), 2.5D (side-on long-lens perspective) and 3D side by side, remembered; the 2D template opens in the 2D viewport and 2D mode
+- [x] Side-scroller sprite animations [Paper2D Character flipbooks]: Sprite > Character Animation (walk / jump cells) besides Frame / Frame Count (idle), switched by the side-scroller Character in Play
+- [~] Still to do: sprites in shadow passes, flipbook assets with per-frame durations and events, tile map layers and per-tile collision shapes, sprite sorting for translucent sprites
 
 ## Later
 

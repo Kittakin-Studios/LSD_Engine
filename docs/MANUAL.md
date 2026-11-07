@@ -79,6 +79,41 @@ editor reopens the last level you had open. The project lives next to the execut
 | `Saved/` | Logs, autosaves, crash reports, the player's settings and save games | Saved |
 | `DerivedData/` | Compiled assets (made automatically, safe to delete) | DerivedDataCache |
 
+### Project templates
+
+![The template picker](images/template_picker.jpg)
+*The first time the editor opens (no level saved yet) it asks which template to start from.*
+
+The first time the editor opens, with no saved level to go back to, it shows **New Project**
+(Unreal's New Project templates). Pick one and **Create** (or double-click it): the editor builds
+the level, saves it as `Content/Levels/<name>.lsdlevel` (the name you typed, else the template's)
+and opens it. Next time the editor opens that level straight away; the picker does not come back.
+**File > New from Template...** opens it again whenever you want another starter level. Every
+template plays at once (Play): the player uses the built-in WASD / mouse / Space controls until
+you give it an Input Mapping Context.
+
+| Template | What you get | Viewports |
+| --- | --- | --- |
+| **Empty** | A sun and a sky, nothing else: start from scratch | 3D |
+| **First Person** | A walled blockout arena (ramp, stairs, ledge, columns, crates to push), the view from the player's eyes | 3D |
+| **Third Person** | The same arena, the player's body in view on a spring arm over the shoulder | 3D |
+| **Platformer** | Floating platforms, a lift, a spinning bar and a slider (Movers), a goal at the top; falling below Kill Z respawns you | 3D |
+| **Side Scrolling** | A 3D level run along X (pits, platforms, a lift, a goal) with a side-on follow camera | 2.5D + 3D |
+| **2D** | Paper2D: a painted Tile Map level, an animated player Sprite (idle, walk, jump), coins to collect with a HUD counter, crates (2D physics), a backdrop, an orthographic follow camera; the Level tab opens in 2D mode | 2D |
+| **2.5D** | 3D models in depth layers (mountains, trees, rocks) around a 2D play plane, seen through a side-on perspective camera | 2.5D |
+
+The **2D** template also writes its starter files into `Content/Templates/2D/` (kept if you change
+them): `T_Tiles` (the tileset: grass, dirt, bricks, planks and colour tiles to paint with), `T_Hero`
+(the player's sprite sheet), `T_Coin` (a spinning flipbook), `T_Backdrop`, `Coin.lua` (collects a coin
+the player touches), `Player2D.lua` (counts them) and `UI_HUD2D` (the counter). The console runs a
+template too: `template.New 2D`.
+
+![The 2D template](images/template_2d.jpg)
+*The 2D template in the editor: the 2D viewport, the Level tab's 2D mode with the tile palette.*
+
+![The 2D template playing](images/template_2d_play.jpg)
+*Playing it: the player walks with A / D, jumps with Space, and the coin counter goes up.*
+
 ---
 
 ## 2. The editor
@@ -213,7 +248,14 @@ Unreal's controls: hold the **right mouse button** and use **W A S D Q E** to fl
 look; **middle mouse** pans; **Alt + left mouse** orbits; **F** frames the selection; the mouse wheel
 during a fly changes speed. **Alt+G / J / H / K**: perspective / top / front / right view. The layout
 button on the viewport toolbar cycles **1x1 → 1x2** (perspective beside top) **→ 2x2** (perspective, top,
-front, right); each pane keeps its own camera. Console: `layout 1|2|4`. **Show** on the toolbar turns on
+front, right); each pane keeps its own camera. Console: `layout 1|2|4`.
+**Window > Viewports** picks the views by kind, side by side: **2D Viewport** (orthographic, looking
+along +Y: how a side-on 2D game is seen), **2.5D Viewport** (perspective from the side with a long
+lens: 3D layers on a 2D plane) and **3D Viewport** (the free perspective view), so a 2D or 2.5D level
+can be previewed in 3D next to its game view. The choice is remembered.
+
+![2.5D and 3D viewports](images/viewports_2_5d_3d.jpg)
+*Window > Viewports with 2.5D and 3D on (the Side Scrolling template).* **Show** on the toolbar turns on
 the grid, axis gizmo, navigation (P), **Bounds** (yellow mesh boxes) and **Collision** (cyan: what blocks in Play).
 **Alt+4 / 3 / 2**: Lit / Unlit / Wireframe; the view mode button also has **Normals**, **Lighting Only**
 (Alt+6: every surface grey), **Collision** (Alt+C: what blocks in Play) and **Overdraw** (Alt+0: bright where
@@ -669,7 +711,10 @@ the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z pl
   stroke is one undo). Painted tiles block in Play (rows of tiles become boxes).
 - **2D physics**: RigidBody > **Lock 2D** keeps a body in its X-Z plane, turning only around Y.
 - **Side-scroller player**: Character > **Side Scroller**: Move's left / right walks along X,
-  Jump jumps, and the player's Sprite faces the way it walks.
+  Jump jumps, and the player's Sprite faces the way it walks. Its animations (Unreal's Paper2D
+  Character flipbooks) are on the Sprite: **Frame / Frame Count** is idle, **Character Animation >
+  Walk Frame / Walk Count** plays while walking and **Jump Frame / Jump Count** in the air (a Count of
+  0 keeps the idle one). The 2D template's player has them set up.
 - **2D camera**: a Camera with **Orthographic** (and Ortho Height, metres of world on screen) and
   Auto Activate; make it a child of the player, about 10 m back on -Y turned to look along +Y
   (rotation Z 90), so it follows.

@@ -3,6 +3,7 @@
 #include "keymap.h"
 #include "assistant.h"
 #include "assistant_lessons.h"
+#include "templates.h"
 #include "editor_modes.h"
 #include "paper2d.h"
 #include "graph_editor.h"
@@ -1350,6 +1351,20 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("Modes: Select, Modeling, Foliage, Landscape, Animation, PCG, VFX, 2D");
     }, &s, "mode <name>: the Level tab's mode (Select, Modeling, Foliage, Landscape, Animation, PCG, VFX)");
+    console::add_command("template.New", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (int t = 0; t < static_cast<int>(lsd::editor::Template::Count); ++t) {
+            const auto kind = static_cast<lsd::editor::Template>(t);
+            const char* name = lsd::editor::template_name(kind);
+            bool same = std::strlen(name) == std::strlen(args);
+            for (lsd::usize i = 0; same && name[i]; ++i) same = std::tolower(static_cast<unsigned char>(name[i])) == std::tolower(static_cast<unsigned char>(args[i]));
+            if (same) {
+                st.show_template_picker = false;
+                return lsd::editor::build_template(st, kind, nullptr);
+            }
+        }
+        lsd::editor::remote::print("Templates: Empty, First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D");
+    }, &s, "template.New <name>: a new level from a template (Empty, First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D)");
     console::add_command("workspace", [](void* user, const char* args) {
         std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
     }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
@@ -1892,7 +1907,12 @@ int main(int argc, char** argv) {
                                                          : state.project.editor_startup_level;
     // Game code first: its own components must be known before a level that uses them is read.
     lsd::editor::game_module::load();  // the project's C / C++ scripts and components (Binaries/Game.dll), if any
-    if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
+    if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) {
+        new_level(state);
+        // Nothing saved to come back to (first launch): pick a template. A saved project opens as it was.
+        state.show_template_picker = !game_mode && !level_arg;
+    }
+    if (state.settings.viewport_kinds) lsd::editor::set_viewport_kinds(state, state.settings.viewport_kinds);  // the views the project was left with
 
     // Crash recovery: a lock file left behind means the last session did not exit cleanly.
     if (!game_mode && fs::exists(kLockPath)) {

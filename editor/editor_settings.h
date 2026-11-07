@@ -94,6 +94,7 @@ struct EditorSettings {
     LSD_PROPERTY(Save) char workspace[32] = "Layout";
     LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;
     LSD_PROPERTY(Save) List<ShortcutOverride, 64> shortcuts;  // Editor Preferences > Keyboard Shortcuts
+    LSD_PROPERTY(Save) u32 viewport_kinds = 0;  // Window > Viewports (2D 1, 2.5D 2, 3D 4); 0 = the usual single 3D view
     LSD_PROPERTY(Save) List<FoliageType, 8> foliage_types;    // Foliage mode's list (none: one Sphere type)
 };
 
