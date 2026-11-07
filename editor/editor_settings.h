@@ -109,6 +109,23 @@ struct KeyBinding {
     LSD_PROPERTY(Edit, Tooltip = "The key the player chose instead") char to[32] = "";
 };
 
+// Device Profile (Unreal's Device Profiles): a project rule for some PCs, applied over the recommended quality the
+// first time the game runs there (and by Settings > Auto-detect). New Data Asset > DeviceProfile; profiles are
+// tried by name, the first that matches wins.
+LSD_STRUCT(Category = "Project", Tooltip = "Graphics quality for some PCs (a GPU, an amount of video memory, a platform)")
+struct DeviceProfile {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Category = "Match", Tooltip = "The graphics card's name contains this (\"Steam Deck\", \"RTX 40\", \"Intel\"); empty = any card") char gpu_contains[64] = "";
+    LSD_PROPERTY(Edit, Category = "Match", Units = "MB", Tooltip = "At least this much video memory (0 = any)") u32 min_video_memory_mb = 0;
+    LSD_PROPERTY(Edit, Category = "Match", Units = "MB", Tooltip = "At most this much video memory (0 = any)") u32 max_video_memory_mb = 0;
+    LSD_PROPERTY(Edit, Category = "Match", Widget = "Choice:Any,Windows,Linux", Tooltip = "Only on this platform") u32 platform = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "The overall quality it starts with") u32 quality = 2;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Shadows (Overall: follows the quality)") u32 shadow_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Post Processing") u32 post_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "View Distance") u32 view_distance_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Effects") u32 effects_quality = 0;
+};
+
 // The player's own settings (Unreal's Game User Settings), saved to Saved/GameUserSettings.json and
 // applied at once when changed: the game's options menu edits them from Lua (lsd.get_settings /
 // lsd.set_settings). The first run picks the quality the graphics card suits.

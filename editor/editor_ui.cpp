@@ -5262,6 +5262,8 @@ void draw_menu_bar(EditorState& s) {
     if (s.user_settings && with_tip(ImGui::BeginMenu("Settings"), "Graphics quality (Low to Epic)")) {  // Unreal's toolbar Settings > Engine Scalability
         static const char* kQuality[] = {"Low", "Medium", "High", "Epic"};
         ImGui::TextDisabled("Engine Scalability");
+        if (with_tip(ImGui::MenuItem("Auto-detect"), "Picks the quality for this PC again: the recommendation for its graphics card, then the project's Device Profiles"))
+            s.auto_detect_quality = true;
         for (u32 q = 0; q < 4; ++q) {
             if (ImGui::MenuItem(kQuality[q], nullptr, s.user_settings->quality == q)) {
                 s.user_settings->quality = q;

@@ -700,6 +700,25 @@ static void test_run_behavior() {
     std::filesystem::remove(sub_path);
 }
 
+// Device Profiles: GPU name (any case), video memory range and platform; applying sets the quality and groups.
+static void test_device_profiles() {
+    editor::DeviceProfile deck;
+    std::snprintf(deck.gpu_contains, sizeof deck.gpu_contains, "%s", "van gogh");
+    deck.platform = 2;
+    deck.quality = 1;
+    deck.shadow_quality = 1;
+    CHECK(editor::profile_matches(deck, "AMD Custom GPU 0405 (Van Gogh)", 1024ull << 20, 2));
+    CHECK(!editor::profile_matches(deck, "AMD Custom GPU 0405 (Van Gogh)", 1024ull << 20, 1));  // not on Windows
+    CHECK(!editor::profile_matches(deck, "NVIDIA GeForce RTX 4090", 24ull << 30, 2));
+    editor::DeviceProfile small;
+    small.max_video_memory_mb = 4096;
+    small.quality = 0;
+    CHECK(editor::profile_matches(small, "Any GPU", 3ull << 30, 1) && !editor::profile_matches(small, "Any GPU", 8ull << 30, 1));
+    editor::GameUserSettings s;
+    editor::apply_profile(deck, s);
+    CHECK(s.quality == 1 && s.shadow_quality == 1 && s.post_quality == 0);
+}
+
 // Engine Scalability: groups follow the overall quality unless set, and Low trims the post pass.
 static void test_scalability() {
     editor::GameUserSettings s;
@@ -763,6 +782,7 @@ int main() {
     test_paper2d();
     test_templates();
     test_scalability();
+    test_device_profiles();
     test_run_behavior();
     test_gather_text();
     test_landscape_core();

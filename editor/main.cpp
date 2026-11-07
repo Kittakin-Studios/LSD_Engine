@@ -1896,6 +1896,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::BlackboardData>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::editor::DeviceProfile>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::editor::FoliageType>());  // Foliage Type assets, shared by the team
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::PhysicalMaterial>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
@@ -2091,10 +2092,39 @@ int main(int argc, char** argv) {
     play.set_ui(game_ui);
     // The player's settings: loaded (the first time: the quality this graphics card suits) and applied.
     lsd::editor::GameUserSettings user_settings;
-    if (!lsd::reflect::load_file(user_settings, kUserSettingsPath)) {
+    // The quality for this PC: the graphics card's recommendation, then the first of the project's Device Profiles
+    // (by name) that matches it (Unreal's Device Profiles).
+    auto detect_quality = [&] {
         user_settings.quality = static_cast<lsd::u32>(lsd::rhi::recommend_preset(device->adapter(), info.total_ram_bytes));
-        LSD_LOG_INFO("editor", "Graphics quality: %s (recommended for this PC)", lsd::rhi::to_string(static_cast<lsd::rhi::QualityPreset>(user_settings.quality)));
-    }
+        user_settings.shadow_quality = user_settings.post_quality = user_settings.view_distance_quality = user_settings.effects_quality = 0;
+        const char* why = "recommended for this PC";
+        std::vector<const lsd::asset::AssetRecord*> profiles;
+        for (lsd::usize i = 0; i < registry.count(); ++i) {
+            const lsd::asset::AssetRecord& r = registry.get(i);
+            if (r.type == lsd::asset::AssetType::Data && std::strcmp(r.data_type, "DeviceProfile") == 0) profiles.push_back(&r);
+        }
+        std::sort(profiles.begin(), profiles.end(), [](const lsd::asset::AssetRecord* a, const lsd::asset::AssetRecord* b) { return std::strcmp(a->name, b->name) < 0; });
+#ifdef _WIN32
+        const lsd::u32 platform = 1;
+#else
+        const lsd::u32 platform = 2;
+#endif
+        const lsd::rhi::AdapterInfo& gpu = device->adapter();
+        const lsd::u64 vram = gpu.dedicated_vram_bytes ? gpu.dedicated_vram_bytes : gpu.shared_memory_bytes;
+        static char matched[96];
+        for (const lsd::asset::AssetRecord* r : profiles) {
+            char path[300];
+            registry.source_path(*r, path, sizeof path);
+            lsd::editor::DeviceProfile profile;
+            if (!lsd::asset::load_data_asset(path, profile) || !lsd::editor::profile_matches(profile, gpu.name, vram, platform)) continue;
+            lsd::editor::apply_profile(profile, user_settings);
+            std::snprintf(matched, sizeof matched, "Device Profile %s", r->name);
+            why = matched;
+            break;
+        }
+        LSD_LOG_INFO("editor", "Graphics quality: %s (%s)", lsd::rhi::to_string(static_cast<lsd::rhi::QualityPreset>(user_settings.quality)), why);
+    };
+    if (!lsd::reflect::load_file(user_settings, kUserSettingsPath)) detect_quality();
     auto apply_user_settings = [&] {
         const lsd::editor::Scalability scalability = lsd::editor::resolve_scalability(user_settings);
         lsd::editor::set_shadow_quality(scalability.shadows);
@@ -2628,6 +2658,11 @@ int main(int argc, char** argv) {
         }
         state.stop_requested = false;
         if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
+        if (state.auto_detect_quality) {  // Settings > Auto-detect
+            state.auto_detect_quality = false;
+            detect_quality();
+            state.user_settings_changed = true;
+        }
         if (play.take_settings_changed() || state.user_settings_changed) {  // an options menu, or Settings > Engine Scalability
             state.user_settings_changed = false;
             apply_user_settings();

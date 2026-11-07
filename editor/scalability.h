@@ -21,5 +21,9 @@ f32 effects_scale(u32 quality);
 // Trims the post pass to the level: Low keeps bloom, tonemap, grading and FXAA only (no AO, SSR,
 // depth of field, motion blur, contact shadows, TAA); Medium adds AO back; High and Epic as set.
 void limit_post(u32 quality, rhi::PostDraw& post);
+// Device Profiles: does it fit this PC (GPU name, video memory, platform: 1 Windows, 2 Linux)? Applying one sets the
+// quality and every group it names.
+bool profile_matches(const DeviceProfile& profile, const char* gpu_name, u64 video_memory_bytes, u32 platform);
+void apply_profile(const DeviceProfile& profile, GameUserSettings& settings);
 
 } // namespace lsd::editor

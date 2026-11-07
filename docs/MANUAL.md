@@ -963,7 +963,12 @@ while you keep the editor camera and selection (F8 possesses the player). **New 
 plays the level as it is now, unsaved edits included, in a window of its own, the way the packaged
 game runs (Unreal's New Editor Window PIE); the editor stays free to edit, and the button becomes
 **Close Window**. The menu bar's **Settings >
-Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings.
+Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings. The
+first run picks one for the PC (from its graphics card and memory); **Auto-detect** picks again.
+**Device Profiles** (Unreal's) let the project decide for some PCs: New Data Asset > **DeviceProfile**,
+then a GPU name to look for ("Van Gogh" for the Steam Deck, "Intel", "RTX 40"), a video memory range,
+a platform, and the quality and group levels to use there. Profiles are tried by name and the first
+that matches wins, over the recommendation.
 Under it each group (Unreal's Scalability groups) can follow that or take its own level:
 
 | Group | Low | Medium | High | Epic |

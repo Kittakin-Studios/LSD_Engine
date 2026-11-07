@@ -181,6 +181,7 @@ struct EditorState {
     bool play_window_open = false;       // set by main.cpp while that window runs
     GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
     bool user_settings_changed = false;         // main.cpp applies and saves them
+    bool auto_detect_quality = false;           // Settings > Auto-detect: main.cpp picks the quality for this PC again
     bool show_debugger = false;        // Tools > Lua Debugger
     // The Multiplayer workspace's panel. main.cpp fills `net` each frame while playing; the panel asks
     // for join codes (`net_codes_wanted`: the router forward starts) and for Play as a client (`net_join`).
