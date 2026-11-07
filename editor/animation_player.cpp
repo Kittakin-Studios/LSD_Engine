@@ -226,10 +226,11 @@ void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32
 
 // After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
 f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend,
-                                  bool root_motion) {
+                                  bool root_motion, const char* slot) {
+    if (!slot || !slot[0]) slot = "Default";
     world::Entity mesh_entity = world.alive(e) && world.get<world::SkeletalMesh>(e) ? e : world::Entity{};
-    for (u32 slot = 0; slot < world.slot_count() && !mesh_entity.valid(); ++slot) {  // a Character's mesh under it
-        const world::Entity c = world.entity_at_slot(slot);
+    for (u32 k = 0; k < world.slot_count() && !mesh_entity.valid(); ++k) {  // a Character's mesh under it
+        const world::Entity c = world.entity_at_slot(k);
         if (c.valid() && world.parent(c) == e && world.get<world::SkeletalMesh>(c)) mesh_entity = c;
     }
     const auto* mesh = mesh_entity.valid() ? world.get<world::SkeletalMesh>(mesh_entity) : nullptr;
@@ -241,8 +242,9 @@ f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache
     }
     const ClipSet* set = guid[0] ? cache.clips(mesh->mesh, guid) : nullptr;
     if (!set || set->count == 0 || set->clips[0].duration <= 0.0f) return 0.0f;
-    stop_montage(e, 0.0f);  // one at a time per object (Unreal's default slot)
+    stop_montage(e, 0.0f, slot);  // one at a time per slot
     Montage m;
+    std::snprintf(m.slot, sizeof m.slot, "%s", slot);
     m.owner = e;
     m.mesh = mesh_entity;
     std::snprintf(m.animation, sizeof m.animation, "%s", guid);
@@ -254,9 +256,9 @@ f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache
     return set->clips[0].duration / m.rate;
 }
 
-void AnimationPlayer::stop_montage(world::Entity e, f32 blend) {
+void AnimationPlayer::stop_montage(world::Entity e, f32 blend, const char* slot) {
     for (usize i = montages_.size(); i-- > 0;) {
-        if (montages_[i].owner != e) continue;
+        if (montages_[i].owner != e || (slot && slot[0] && std::strcmp(montages_[i].slot, slot) != 0)) continue;
         if (blend > 0.0f) {
             montages_[i].fade_speed = 1.0f / blend;
         } else {
@@ -266,9 +268,9 @@ void AnimationPlayer::stop_montage(world::Entity e, f32 blend) {
     }
 }
 
-bool AnimationPlayer::montage_playing(world::Entity e) const {
+bool AnimationPlayer::montage_playing(world::Entity e, const char* slot) const {
     for (const Montage& m : montages_) {
-        if (m.owner == e && m.fade_speed == 0.0f) return true;
+        if (m.owner == e && m.fade_speed == 0.0f && (!slot || !slot[0] || std::strcmp(m.slot, slot) == 0)) return true;
     }
     return false;
 }

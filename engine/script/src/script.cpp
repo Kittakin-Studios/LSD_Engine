@@ -1388,18 +1388,19 @@ struct Api {
     static int play_montage(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const f32 seconds = host.play_montage ? host.play_montage(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_optnumber(L, 3, 1.0)),
-                                                                  luaL_optstring(L, 4, ""), static_cast<f32>(luaL_optnumber(L, 5, 0.2)), lua_toboolean(L, 6) != 0) : 0.0f;
+                                                                  luaL_optstring(L, 4, ""), static_cast<f32>(luaL_optnumber(L, 5, 0.2)), lua_toboolean(L, 6) != 0,
+                                                                  luaL_optstring(L, 7, "Default")) : 0.0f;
         lua_pushnumber(L, seconds);
         return 1;
     }
     static int stop_montage(lua_State* L) {
         const ScriptHost& host = system(L).host_;
-        if (host.stop_montage) host.stop_montage(host.user, entity(L, 1), static_cast<f32>(luaL_optnumber(L, 2, 0.2)));
+        if (host.stop_montage) host.stop_montage(host.user, entity(L, 1), static_cast<f32>(luaL_optnumber(L, 2, 0.2)), luaL_optstring(L, 3, ""));
         return 0;
     }
     static int montage_playing(lua_State* L) {
         const ScriptHost& host = system(L).host_;
-        lua_pushboolean(L, host.montage_playing && host.montage_playing(host.user, entity(L, 1)));
+        lua_pushboolean(L, host.montage_playing && host.montage_playing(host.user, entity(L, 1), luaL_optstring(L, 2, "")));
         return 1;
     }
     static int set_anim_param(lua_State* L) {

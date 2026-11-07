@@ -47,9 +47,9 @@ public:
     // in and out over `blend` seconds. Returns how long it plays (0: no such animation).
     // `root_motion`: the clip's root movement moves the object (take_root_motion) instead of sliding the mesh.
     f32 play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend,
-                     bool root_motion = false);
-    void stop_montage(world::Entity e, f32 blend);  // blends out from where it is
-    bool montage_playing(world::Entity e) const;
+                     bool root_motion = false, const char* slot = "Default");
+    void stop_montage(world::Entity e, f32 blend, const char* slot = "");  // blends out from where it is; slot "": every slot
+    bool montage_playing(world::Entity e, const char* slot = "") const;     // slot "": any
     // Objects whose montage ended (played out or stopped) since the last call: Play sends them on_montage_ended.
     void take_finished_montages(std::vector<world::Entity>& out);
     // How far a root-motion montage moved `e` since the last call (world space, metres); false when none plays.
@@ -96,6 +96,7 @@ private:
         world::Entity mesh;   // the object with the Skeletal Mesh
         char animation[33];   // the animation file's GUID
         char from_bone[48];
+        char slot[32];  // Unreal's montage slot: a new montage replaces only the one in its slot
         f32 time = 0.0f, rate = 1.0f, blend = 0.2f;
         f32 fade = 1.0f, fade_speed = 0.0f;  // stop_montage: fades to 0 at fade_speed per second
         bool root_motion = false;

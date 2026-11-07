@@ -1433,8 +1433,12 @@ at the object when the clip passes that time in Play.
 "Anim_Reload", 1, "spine_01")` (or the **Play Montage** node) plays an animation file once on top of
 whatever the object plays (a clip, an Anim Graph or Motion Matching), from that bone down: `spine_01`
 reloads with the upper body while the legs keep walking; leave the bone empty for the whole body. It
-blends in and out (Blend, seconds), one at a time per object; `on_montage_ended(self)` runs when it
-ends; **Stop Montage** blends it out early. IK (lsd.ik_reach) still applies on top.
+blends in and out (Blend, seconds); `on_montage_ended(self)` runs when it ends; **Stop Montage**
+blends it out early. **Slots** (Unreal's montage slots): the seventh argument (or the node's **Slot**
+pin, `Default` when empty) names a slot. A new montage replaces only the one in its slot, and
+montages in different slots play together, for example `lsd.play_montage(e, "Anim_Stab", 1,
+"spine_01", 0.2, false, "UpperBody")` while a `Face` slot blinks. `lsd.stop_montage(e, blend, slot)`
+and `lsd.montage_playing(e, slot)` take a slot too; without one they cover every slot. IK (lsd.ik_reach) still applies on top.
 **Root motion** (Unreal's Root Motion from Montages Only): the sixth argument (`true`, or the node's
 **Root Motion** pin) lets a whole-body montage move the player's Character by the clip's own root
 travel (dodges, lunges, attacks that step) instead of the input; the mesh stays on its capsule. The
@@ -1940,7 +1944,7 @@ Audio and animation
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
 | `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | |
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
-| `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
+| `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |

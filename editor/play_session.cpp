@@ -801,16 +801,16 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_audio_param = [](void* user, const char* name, f32 value) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_param(name, value);
     };
-    host.play_montage = [](void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion) {
+    host.play_montage = [](void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion, const char* slot) {
         auto& self = *static_cast<PlaySession*>(user);
-        return self.animations_ && self.skinned_ ? self.animations_->play_montage(*self.world_, *self.skinned_, e, animation, rate, from_bone, blend, root_motion) : 0.0f;
+        return self.animations_ && self.skinned_ ? self.animations_->play_montage(*self.world_, *self.skinned_, e, animation, rate, from_bone, blend, root_motion, slot) : 0.0f;
     };
-    host.stop_montage = [](void* user, world::Entity e, f32 blend) {
-        if (auto* a = static_cast<PlaySession*>(user)->animations_) a->stop_montage(e, blend);
+    host.stop_montage = [](void* user, world::Entity e, f32 blend, const char* slot) {
+        if (auto* a = static_cast<PlaySession*>(user)->animations_) a->stop_montage(e, blend, slot);
     };
-    host.montage_playing = [](void* user, world::Entity e) {
+    host.montage_playing = [](void* user, world::Entity e, const char* slot) {
         const auto* a = static_cast<PlaySession*>(user)->animations_;
-        return a && a->montage_playing(e);
+        return a && a->montage_playing(e, slot);
     };
     host.set_anim_param = [](void* user, world::Entity e, const char* name, f32 value) {
         auto& self = *static_cast<PlaySession*>(user);

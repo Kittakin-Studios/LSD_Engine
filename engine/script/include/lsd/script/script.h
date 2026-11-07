@@ -46,7 +46,10 @@
 //                                         (Unreal's Play Montage); 0 if none. When it ends: on_montage_ended(self).
 //                                         root_motion: the clip's root movement moves the player's Character
 //                                         (dodges, attacks that travel) instead of the input
-//   lsd.stop_montage(e [, blend = 0.2]), lsd.montage_playing(e) -> bool
+//   lsd.play_montage(..., root_motion, slot = "Default")   montage slots (Unreal's): a montage replaces the one
+//                                         in its slot only; montages in other slots (an "UpperBody" attack,
+//                                         a "Face" blink) play over it at the same time, in the order started
+//   lsd.stop_montage(e [, blend = 0.2 [, slot]]), lsd.montage_playing(e [, slot]) -> bool   (no slot: every slot)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes.
 //                                         A Curve Vector gives x, y, z; a Curve Color r, g, b, a
@@ -282,9 +285,9 @@ struct ScriptHost {
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
     void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
-    f32 (*play_montage)(void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion) = nullptr;
-    void (*stop_montage)(void* user, world::Entity e, f32 blend) = nullptr;
-    bool (*montage_playing)(void* user, world::Entity e) = nullptr;
+    f32 (*play_montage)(void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion, const char* slot) = nullptr;
+    void (*stop_montage)(void* user, world::Entity e, f32 blend, const char* slot) = nullptr;  // slot "": all
+    bool (*montage_playing)(void* user, world::Entity e, const char* slot) = nullptr;          // slot "": any
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
     // Vehicles and movers: 0 enter vehicle, 1 exit, 2 driven vehicle, 3 ride, 4 get off, 5 / 6 / 7 start / stop / restart a mover.
     u32 (*ride)(void* user, int what, world::Entity e) = nullptr;
