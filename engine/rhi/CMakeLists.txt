@@ -30,7 +30,7 @@ if(LSD_RHI_D3D12 OR LSD_RHI_VULKAN)
   # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup, Vulkan builds Material
   # Graph shaders from it (through the Vulkan SDK's DXC when installed).
   set(text_dir "${CMAKE_CURRENT_BINARY_DIR}/shader_text")
-  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl")
+  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl" "cull;kCullHlsl")
     list(GET pair 0 file)
     list(GET pair 1 name)
     add_custom_command(
@@ -136,6 +136,22 @@ if(LSD_RHI_VULKAN)
         )
         target_sources(lsd_rhi PRIVATE "${header}")
       endforeach()
+    endforeach()
+    # The shared GPU culling passes (shaders/cull.hlsl): kCull<Pass>Spirv, entry points renamed main.
+    set(cull_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cull.hlsl")
+    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs")
+      list(GET pair 0 entry)
+      list(GET pair 1 name)
+      add_custom_command(
+        OUTPUT "${spirv_dir}/${entry}.spv.h"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
+        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T cs_6_0 -E ${entry} -fspv-entrypoint-name=main -Fo "${spirv_dir}/${entry}.spv" "${cull_hlsl}"
+        COMMAND "${CMAKE_COMMAND}" -DINPUT=${spirv_dir}/${entry}.spv -DOUTPUT=${spirv_dir}/${entry}.spv.h -DNAME=k${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        DEPENDS "${cull_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        COMMENT "Compiling cull.hlsl (${entry}) to SPIR-V"
+        VERBATIM
+      )
+      target_sources(lsd_rhi PRIVATE "${spirv_dir}/${entry}.spv.h")
     endforeach()
     # The shared post-process passes (shaders/post.hlsl): vs_full and one pixel shader per pass,
     # embedded as kPost<Pass>Spirv (entry points renamed vs_main / ps_main); t registers at bindings 0-2, s registers from 16 (s2 = 18).

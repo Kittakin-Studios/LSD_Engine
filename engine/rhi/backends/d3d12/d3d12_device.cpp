@@ -63,6 +63,7 @@ float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 #include "mesh_hlsl.h"  // kMeshHlsl: engine/rhi/shaders/mesh.hlsl
 
 #include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl: engine/rhi/shaders/material_prelude.hlsl
+#include "cull_hlsl.h"  // kCullHlsl: engine/rhi/shaders/cull.hlsl
 
 // Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(
@@ -1924,39 +1925,6 @@ private:
     // per batch of 256 (the instanced shader's constant buffer holds 256). Optional: if it fails to
     // build, gpu_cull draws simply draw every instance.
     bool create_culling() {
-        static const char kCull[] = R"(
-cbuffer Cull : register(b0) { float4 planes[6]; float4 box_min; float4 box_max; uint4 info; };  // info: count, index count, batches
-ByteAddressBuffer rows_in : register(t0);
-RWByteAddressBuffer rows_out : register(u0);
-RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 5 uints per batch
-[numthreads(1, 1, 1)] void cull_reset() { args.Store(0, 0); }
-[numthreads(64, 1, 1)] void cull_main(uint3 id : SV_DispatchThreadID) {
-    uint i = id.x;
-    if (i >= info.x) return;
-    float4 r0 = asfloat(rows_in.Load4(i * 48)), r1 = asfloat(rows_in.Load4(i * 48 + 16)), r2 = asfloat(rows_in.Load4(i * 48 + 32));
-    float3 c = (box_min.xyz + box_max.xyz) * 0.5, e = (box_max.xyz - box_min.xyz) * 0.5;
-    float3 wc = float3(dot(r0.xyz, c) + r0.w, dot(r1.xyz, c) + r1.w, dot(r2.xyz, c) + r2.w);
-    float3 we = float3(dot(abs(r0.xyz), e), dot(abs(r1.xyz), e), dot(abs(r2.xyz), e));
-    [unroll] for (int p = 0; p < 6; ++p) {
-        if (dot(planes[p].xyz, wc) + planes[p].w < -dot(abs(planes[p].xyz), we)) return;
-    }
-    uint slot;
-    args.InterlockedAdd(0, 1, slot);
-    rows_out.Store4(slot * 48, asuint(r0));
-    rows_out.Store4(slot * 48 + 16, asuint(r1));
-    rows_out.Store4(slot * 48 + 32, asuint(r2));
-}
-[numthreads(64, 1, 1)] void cull_args(uint3 id : SV_DispatchThreadID) {
-    uint b = id.x;
-    if (b >= info.z) return;
-    int n = clamp(int(args.Load(0)) - int(b * 256), 0, 256);
-    args.Store(16 + b * 20, info.y);
-    args.Store(20 + b * 20, uint(n));
-    args.Store(24 + b * 20, 0);
-    args.Store(28 + b * 20, 0);
-    args.Store(32 + b * 20, 0);
-}
-)";
         D3D12_ROOT_PARAMETER params[4]{};
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
@@ -1973,7 +1941,7 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
         const char* entries[3] = {"cull_reset", "cull_main", "cull_args"};
         for (u32 k = 0; k < 3; ++k) {
             ComPtr<ID3DBlob> cs;
-            if (!compile(kCull, sizeof kCull - 1, entries[k], "cs_5_0", cs)) return false;
+            if (!compile(kCullHlsl, sizeof kCullHlsl - 1, entries[k], "cs_5_0", cs)) return false;
             D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature = cull_root_.Get();
             pso.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};

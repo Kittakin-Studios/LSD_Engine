@@ -7,7 +7,8 @@
 // game UI and particles stream their vertices through a per-frame buffer. Render targets (colour +
 // depth) take thumbnails, previews and the scene for the post pass. Lit meshes, the sky and the post
 // pass run D3D12's own shaders (engine/rhi/shaders/mesh.hlsl and post.hlsl) compiled to SPIR-V;
-// Material Graph shaders compile at runtime through the Vulkan SDK's DXC when it is installed.
+// Material Graph shaders compile at runtime through the Vulkan SDK's DXC when it is installed; GPU
+// culling of instanced draws runs shaders/cull.hlsl as compute with indirect draws.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -69,6 +70,9 @@
 #include "post_meter.spv.h"
 #include "post_expose.spv.h"
 #include "post_outline.spv.h"
+#include "cull_reset.spv.h"
+#include "cull_main.spv.h"
+#include "cull_args.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -88,6 +92,8 @@ constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 f
 constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
 constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / Instances block: 3 float4 rows each
 constexpr VkDeviceSize kParamsBytes = 256;            // its MaterialParams block (16 float4)
+constexpr u32 kCullPushBytes = 144;                   // cull.hlsl's constants
+constexpr u32 kCullSetsPerFrame = 256;                // gpu_cull draws a frame
 constexpr u32 kMaxTextures = 4096;
 constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
 constexpr VkDeviceSize kRowsWindow = 64u << 10;    // what one draw may read from it (the descriptor's range)
@@ -158,6 +164,7 @@ private:
     struct Texture;  // defined below; passes take it by reference
     struct Frame;
     struct MaterialShader;
+    struct Buffer;
 
 public:
     ~VulkanDevice() override {
@@ -179,6 +186,13 @@ public:
             vkDestroyPipeline(device_, pipeline_, nullptr);
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
             for (MaterialShader& m : material_shaders_) release_material(m);
+            for (VkPipeline pipeline : cull_pipelines_) vkDestroyPipeline(device_, pipeline, nullptr);
+            vkDestroyPipelineLayout(device_, cull_layout_, nullptr);
+            if (cull_set_layout_) vkDestroyDescriptorSetLayout(device_, cull_set_layout_, nullptr);
+            for (Buffer* b : {&cull_out_, &cull_args_}) {
+                if (b->buffer) vkDestroyBuffer(device_, b->buffer, nullptr);
+                if (b->memory) vkFreeMemory(device_, b->memory, nullptr);
+            }
             for (auto& kind : mesh_pipelines_) {
                 for (VkPipeline pipeline : kind) vkDestroyPipeline(device_, pipeline, nullptr);
             }
@@ -809,6 +823,9 @@ public:
         const Buffer* ib = lookup(draw.indices);
         if (!pipeline || !vb || !ib || draw.index_count == 0) return;
         Frame& f = frames_[frame_];
+        // GPU culling first (compute), the draws below read what it keeps.
+        const u32 cull_batches = (draw.instance_count + kMaxJoints - 1) / kMaxJoints;
+        const bool culled = draw.gpu_cull && instanced && run_culling(f, draw, cull_batches);
         if (!lights_in_ring_) {  // this view's Lights block, once per set_lights
             if (!ring_write(f, &lights_, sizeof lights_, lights_at_)) return;
             lights_in_ring_ = true;
@@ -853,6 +870,14 @@ public:
             vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
             return;
         }
+        if (culled) {  // each batch's visible rows from the cull output, its count from the GPU
+            for (u32 b = 0; b < cull_batches; ++b) {
+                offsets[1] = b * static_cast<u32>(kRowsBytes);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.culled_set, 3, offsets);
+                vkCmdDrawIndexedIndirect(cmd, cull_args_.buffer, 16 + static_cast<VkDeviceSize>(b) * 20, 1, 20);
+            }
+            return;
+        }
         // Joints (at most kMaxJoints) or the copies in batches of kMaxJoints, as D3D12.
         const u32 total = skinned ? std::min(draw.joint_count, kMaxJoints) : draw.instance_count;
         const f32* rows = skinned ? draw.joint_rows : draw.instance_rows;
@@ -863,6 +888,157 @@ public:
             vkCmdDrawIndexed(cmd, draw.index_count, skinned ? 1 : count, 0, 0, 0);
             first += count;
         }
+    }
+
+    bool supports_gpu_culling() const override { return cull_pipelines_[2] != VK_NULL_HANDLE; }
+
+    // The compute passes for a gpu_cull draw, between a pause and a resume of the pass (compute cannot
+    // run inside one); false (nothing recorded) if it cannot run: the draw draws every copy.
+    bool run_culling(Frame& f, const MeshDraw& draw, u32 batches) {
+        if (!cull_pipelines_[2] || draw.instance_count > kMaxCulledInstances) return false;
+        struct {
+            f32 planes[6][4];
+            f32 box_min[4], box_max[4];
+            u32 info[4];
+        } cull{};
+        static_assert(sizeof cull == kCullPushBytes, "cull.hlsl's constants");
+        frustum_planes(draw.mvp, cull.planes);
+        std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
+        std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
+        cull.info[0] = draw.instance_count;
+        cull.info[1] = draw.index_count;
+        cull.info[2] = batches;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(draw.instance_count) * 48;
+        const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+        const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
+        if (!f.ring_mapped || at + bytes + kRowsWindow > kRingBytes) return false;  // the rows go in whole (not a window): leave the ring's usual room
+        std::memcpy(f.ring_mapped + at, draw.instance_rows, bytes);
+        f.ring_used = at + bytes;
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &cull_set_layout_;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) return false;
+        const VkDescriptorBufferInfo buffers[3] = {{f.ring, at, bytes}, {cull_out_.buffer, 0, VK_WHOLE_SIZE}, {cull_args_.buffer, 0, VK_WHOLE_SIZE}};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.descriptorCount = 3;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = buffers;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        const VkCommandBuffer cmd = f.cmd;
+        Texture* resume = target_;
+        const f32 viewport[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
+        end_pass();
+        // The last culled draw's reads (arguments, rows) before these writes; then each pass's writes before the next.
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_layout_, 0, 1, &set, 0, nullptr);
+        vkCmdPushConstants(cmd, cull_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes, &cull);
+        const u32 groups[3] = {1, (draw.instance_count + 63) / 64, (batches + 63) / 64};
+        for (u32 k = 0; k < 3; ++k) {
+            if (k) memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                  VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pipelines_[k]);
+            vkCmdDispatch(cmd, groups[k], 1, 1);
+        }
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT);
+        if (resume) begin_target_pass(*resume, nullptr);
+        else begin_main_pass(nullptr);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        return true;
+    }
+
+    static void memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+        VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        barrier.srcStageMask = src_stage;
+        barrier.srcAccessMask = src_access;
+        barrier.dstStageMask = dst_stage;
+        barrier.dstAccessMask = dst_access;
+        VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }
+
+    // GPU culling's resources: the passes (cull.hlsl), its output rows and indirect arguments (device
+    // memory) and each frame's set 2 reading the rows from that output. Optional: without them gpu_cull
+    // draws draw every copy.
+    bool create_culling() {
+#if LSD_VULKAN_HAVE_SPIRV
+        const VkDescriptorSetLayoutBinding bindings[3] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 3;
+        layout.pBindings = bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &cull_set_layout_), "vkCreateDescriptorSetLayout (cull)")) return false;
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes};
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = 1;
+        pipeline_layout.pSetLayouts = &cull_set_layout_;
+        pipeline_layout.pushConstantRangeCount = 1;
+        pipeline_layout.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &cull_layout_), "vkCreatePipelineLayout (cull)")) return false;
+        const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+        if (!make_device_buffer(static_cast<VkDeviceSize>(kMaxCulledInstances) * 48, usage, cull_out_) ||
+            !make_device_buffer(16 + static_cast<VkDeviceSize>(kMaxCulledInstances / kMaxJoints) * 20, usage, cull_args_)) return false;
+        for (Frame& f : frames_) {
+            VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            info.descriptorPool = buffers_pool_;
+            info.descriptorSetCount = 1;
+            info.pSetLayouts = &buffers_set_layout_;
+            if (!check(vkAllocateDescriptorSets(device_, &info, &f.culled_set), "vkAllocateDescriptorSets (culled)")) return false;
+            const VkDescriptorBufferInfo ranges[3] = {{f.ring, 0, sizeof(LightSetup)}, {cull_out_.buffer, 0, kRowsBytes}, {f.ring, 0, kParamsBytes}};
+            VkWriteDescriptorSet writes[3] = {};
+            for (u32 i = 0; i < 3; ++i) {
+                writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                writes[i].dstSet = f.culled_set;
+                writes[i].dstBinding = i;
+                writes[i].descriptorCount = 1;
+                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                writes[i].pBufferInfo = &ranges[i];
+            }
+            vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        }
+        const u32* code[3] = {kCullResetSpirv, kCullMainSpirv, kCullArgsSpirv};
+        const usize sizes[3] = {sizeof kCullResetSpirv, sizeof kCullMainSpirv, sizeof kCullArgsSpirv};
+        for (u32 k = 0; k < 3; ++k) {
+            VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            module_info.codeSize = sizes[k];
+            module_info.pCode = code[k];
+            VkShaderModule module = VK_NULL_HANDLE;
+            if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (cull)")) return false;
+            VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+            create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            create.stage.module = module;
+            create.stage.pName = "main";
+            create.layout = cull_layout_;
+            const bool ok = check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &cull_pipelines_[k]), "vkCreateComputePipelines (cull)");
+            vkDestroyShaderModule(device_, module, nullptr);
+            if (!ok) return false;
+        }
+#endif
+        return true;
+    }
+
+    bool make_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& out) {
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = size;
+        info.usage = usage;
+        if (!check(vkCreateBuffer(device_, &info, nullptr, &out.buffer), "vkCreateBuffer (cull)")) return false;
+        VkMemoryRequirements need;
+        vkGetBufferMemoryRequirements(device_, out.buffer, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        out.size = size;
+        return alloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &alloc, nullptr, &out.memory), "vkAllocateMemory (cull)") &&
+               check(vkBindBufferMemory(device_, out.buffer, out.memory, 0), "vkBindBufferMemory (cull)");
     }
 
     // A texture's view for the lit shader (not a shadow map), else the fallback's (white, flat normal).
@@ -1852,6 +2028,7 @@ private:
         VkDescriptorPool post_pool = VK_NULL_HANDLE;  // the post passes' sets, reset each frame
         VkDescriptorPool draw_pool = VK_NULL_HANDLE;  // the lit meshes' material / view sets, reset each frame
         VkDescriptorSet buffers_set = VK_NULL_HANDLE; // mesh.hlsl's set 2 over this frame's ring
+        VkDescriptorSet culled_set = VK_NULL_HANDLE;  // the same, its rows from the cull output (gpu_cull draws)
         MaterialMemo memo[kMaterialMemo];
         u32 memo_count = 0;
     };
@@ -2450,14 +2627,15 @@ private:
             info.pBindings = l.bindings;
             if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
         }
-        const VkDescriptorPoolSize draw_sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2}};
+        const VkDescriptorPoolSize draw_sizes[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
+                                                    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3}};
         VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         draw_pool.maxSets = kDrawSetsPerFrame;
-        draw_pool.poolSizeCount = 2;
+        draw_pool.poolSizeCount = 3;
         draw_pool.pPoolSizes = draw_sizes;
-        const VkDescriptorPoolSize buffer_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kFramesInFlight * 3};
+        const VkDescriptorPoolSize buffer_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kFramesInFlight * 6};
         VkDescriptorPoolCreateInfo buffer_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        buffer_pool.maxSets = kFramesInFlight;
+        buffer_pool.maxSets = kFramesInFlight * 2;  // set 2 over the ring, and its culled twin (rows from the cull output)
         buffer_pool.poolSizeCount = 1;
         buffer_pool.pPoolSizes = &buffer_size;
         if (!check(vkCreateDescriptorPool(device_, &buffer_pool, nullptr, &buffers_pool_), "vkCreateDescriptorPool (mesh buffers)")) return false;
@@ -2509,6 +2687,7 @@ private:
             return true;
         }
         if (!create_texture_support() || !create_rings() || !create_post_pipelines() || !create_mesh_layouts()) return false;
+        if (!create_culling()) LSD_LOG_WARN("vulkan", "GPU culling is off: its compute passes could not be made (gpu_cull draws draw every copy).");
         const auto& skinned_attributes = kSkinnedAttributes;
         const auto& mesh_attributes = kMeshAttributes;
         // Shadow casters read only the position and UV (and the skinning attributes).
@@ -2629,6 +2808,10 @@ private:
     bool warned_sets_ = false;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     u32 spirv_jobs_ = 0;
+    VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout cull_layout_ = VK_NULL_HANDLE;
+    VkPipeline cull_pipelines_[3] = {};  // reset, cull, arguments
+    Buffer cull_out_, cull_args_;        // the visible rows; the count + one indirect draw per batch
     VkQueryPool timestamp_pool_ = VK_NULL_HANDLE;  // kGpuTimestamps per frame in flight
     u32 timestamps_set_[kFramesInFlight] = {};
     f64 gpu_ms_[kGpuTimestamps] = {};
