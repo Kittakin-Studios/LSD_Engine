@@ -303,7 +303,7 @@ static void test_assistant() {
     using namespace lsd::editor::assistant;
     Settings claude;
     claude.key = "k";
-    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", "", {}, {}}};
+    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", "", {}, {}, ""}};
     const std::string body = request_body(claude, "You are LSD Assistant", turns);
     CHECK(request_url(claude) == "https://api.anthropic.com/v1/messages");
     CHECK(body.find("\"model\":\"claude-opus-5-5\"") != std::string::npos && body.find("\"cache_control\":{\"type\":\"ephemeral\"}") != std::string::npos);
@@ -321,13 +321,22 @@ static void test_assistant() {
     haiku.model = "claude-haiku-4-5";  // no effort, no fallback on older models
     const std::string old = request_body(haiku, "s", turns);
     CHECK(old.find("effort") == std::string::npos && old.find("fallbacks") == std::string::npos);
+    // A picture with the message: base64 PNG, an image block before the text (Anthropic) or a data URL (OpenAI).
+    const u8 bytes[5] = {'M', 'a', 'n', 0xFF, 0x00};
+    CHECK(base64(bytes, 3) == "TWFu" && base64(bytes, 4) == "TWFu/w==" && base64(bytes, 5) == "TWFu/wA=" && base64(bytes, 0).empty());
+    std::vector<Turn> pictured{{true, "What is wrong here?", "", {}, {}, "AAAA"}};
+    const std::string with_image = request_body(claude, "s", pictured);
+    CHECK(with_image.find("[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AAAA\"}},{\"type\":\"text\"") != std::string::npos);
+    Settings openai = claude;
+    openai.provider = kOpenAICompatible;
+    CHECK(request_body(openai, "s", pictured).find("\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}") != std::string::npos);
 
     const std::string reply = R"({"id":"m","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"abc"},)"
                               R"({"type":"text","text":"Here:\n```lua Content/Script/Door.lua\nfunction on_start(self) end\n```\nDone \u00e9"}],"stop_reason":"end_turn"})";
     const Reply r = parse_reply(claude, 200, reply);
     CHECK(r.ok && r.text.find("Done \xc3\xa9") != std::string::npos && r.raw.find("\"signature\":\"abc\"") != std::string::npos && r.raw.front() == '[');
-    turns.push_back({false, r.text, r.raw, {}, {}});
-    turns.push_back({true, "thanks", "", {}, {}});
+    turns.push_back({false, r.text, r.raw, {}, {}, ""});
+    turns.push_back({true, "thanks", "", {}, {}, ""});
     const std::string next = request_body(claude, "s", turns);
     CHECK(next.find("\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"") != std::string::npos);  // sent back unchanged
     const std::vector<CodeBlock> blocks = code_blocks(r.text);
@@ -366,7 +375,7 @@ static void test_assistant() {
     local.model = "llama3.1";
     CHECK(request_url(local) == "http://localhost:11434/v1/chat/completions");
     CHECK(request_headers(local).size() == 1);  // no key: no Authorization header
-    CHECK(request_body(local, "sys", {{true, "hi", "", {}, {}}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
+    CHECK(request_body(local, "sys", {{true, "hi", "", {}, {}, ""}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
     const Reply o = parse_reply(local, 200, R"({"choices":[{"message":{"role":"assistant","content":"hello"}}]})");
     CHECK(o.ok && o.text == "hello");
     const Reply os = parse_stream(local, 200, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"
@@ -376,7 +385,7 @@ static void test_assistant() {
     // Tools: offered when on, calls read back from both providers' streams, results sent the way each expects.
     CHECK(request_body(claude, "s", turns, true).find("\"tools\":[{\"name\":\"console\"") != std::string::npos);
     CHECK(request_body(claude, "s", turns).find("\"tools\"") == std::string::npos);
-    CHECK(request_body(local, "s", {{true, "hi", "", {}, {}}}, true).find("{\"type\":\"function\",\"function\":{\"name\":\"console\"") != std::string::npos);
+    CHECK(request_body(local, "s", {{true, "hi", "", {}, {}, ""}}, true).find("{\"type\":\"function\",\"function\":{\"name\":\"console\"") != std::string::npos);
     const Reply use = parse_stream(claude, 200,
         "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
         "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Starting Play.\"}}\n\n"
@@ -387,14 +396,14 @@ static void test_assistant() {
     CHECK(use.ok && use.text == "Starting Play." && use.calls.size() == 1 && use.calls[0].id == "tu_1" && use.calls[0].name == "console");
     CHECK(tool_arg(use.calls[0].input, "command") == "play" && tool_arg("{\"lines\":20}", "lines") == "20" && tool_arg("{}", "x").empty());
     CHECK(use.raw.find("{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"console\",\"input\":{\"command\": \"play\"}}") != std::string::npos);
-    std::vector<Turn> acted{{true, "play it", "", {}, {}}, {false, use.text, use.raw, use.calls, {}}, {true, "", "", {}, {{"tu_1", "Play started", false}}}};
+    std::vector<Turn> acted{{true, "play it", "", {}, {}, ""}, {false, use.text, use.raw, use.calls, {}, ""}, {true, "", "", {}, {{"tu_1", "Play started", false}}, ""}};
     const std::string back = request_body(claude, "s", acted, true);
     CHECK(back.find("{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu_1\",\"content\":\"Play started\"}]}") != std::string::npos);
     const Reply ocall = parse_stream(local, 200,
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"\"}}]}}]}\n\n"
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"lines\\\":5}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n");
     CHECK(ocall.ok && ocall.calls.size() == 1 && ocall.calls[0].id == "call_9" && ocall.calls[0].name == "read_log" && tool_arg(ocall.calls[0].input, "lines") == "5");
-    std::vector<Turn> oacted{{true, "log?", "", {}, {}}, {false, "", "", ocall.calls, {}}, {true, "", "", {}, {{"call_9", "[game] ok", false}}}};
+    std::vector<Turn> oacted{{true, "log?", "", {}, {}, ""}, {false, "", "", ocall.calls, {}, ""}, {true, "", "", {}, {{"call_9", "[game] ok", false}}, ""}};
     const std::string oback = request_body(local, "s", oacted, true);
     CHECK(oback.find("\"tool_calls\":[{\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"{\\\"lines\\\":5}\"}}]") != std::string::npos);
     CHECK(oback.find("{\"role\":\"tool\",\"tool_call_id\":\"call_9\",\"content\":\"[game] ok\"}") != std::string::npos);

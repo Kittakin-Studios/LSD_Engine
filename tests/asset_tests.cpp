@@ -279,6 +279,9 @@ static void test_texture(const fs::path& root) {
     CHECK(loaded.width == 2 && loaded.height == 2 && loaded.mip_count == 2);
     CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 0 && loaded.mip(0)[5] == 255 && loaded.mip(0)[10] == 255);  // red, green, blue
     CHECK(!asset::load_texture((root / "missing.png").string().c_str(), true, 4096, loaded));
+    Array<u8> png(default_allocator());  // a picture for the assistant: PNG bytes in memory, halved to fit
+    CHECK(asset::encode_png(tga.string().c_str(), 1, png) && png.size() > 8 && png[0] == 0x89 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G');
+    CHECK(!asset::encode_png((root / "missing.png").string().c_str(), 64, png));
     CHECK(asset::type_from_extension(".PNG") == asset::AssetType::Texture && asset::type_from_extension(".tga") == asset::AssetType::Texture);
 
     // Float images: a 2x1 Radiance .hdr (flat RGBE: 1, 0.5, 0.25 and 4, 0, 0) and an EXR written by tinyexr.

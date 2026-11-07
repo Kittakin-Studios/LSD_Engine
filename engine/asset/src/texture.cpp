@@ -166,6 +166,19 @@ bool load_grey16(const char* path, u32& width, u32& height, Array<u16>& out) {
     return true;
 }
 
+bool encode_png(const char* path, u32 max_side, Array<u8>& png) {
+    TextureData image(png.allocator());
+    if (!load_texture(path, false, max_side, image)) return false;  // halves it until it fits
+    png.clear();
+    auto append = [](void* context, void* data, int size) {
+        auto& out = *static_cast<Array<u8>*>(context);
+        const usize at = out.size();
+        out.resize(at + static_cast<usize>(size));
+        std::memcpy(out.data() + at, data, static_cast<usize>(size));
+    };
+    return stbi_write_png_to_func(append, &png, static_cast<int>(image.width), static_cast<int>(image.height), 4, image.mip(0), static_cast<int>(image.width * 4)) != 0;
+}
+
 bool write_png(const char* path, u32 width, u32 height, const u8* rgba) {
     return stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, rgba, static_cast<int>(width * 4)) != 0;
 }

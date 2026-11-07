@@ -181,6 +181,20 @@ std::string json_escape(const std::string& text) {
     return out + "\"";
 }
 
+std::string base64(const u8* data, usize size) {
+    static const char kDigits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((size + 2) / 3 * 4);
+    for (usize i = 0; i < size; i += 3) {
+        const u32 n = static_cast<u32>(data[i]) << 16 | (i + 1 < size ? static_cast<u32>(data[i + 1]) << 8 : 0u) | (i + 2 < size ? data[i + 2] : 0u);
+        out += kDigits[(n >> 18) & 63];
+        out += kDigits[(n >> 12) & 63];
+        out += i + 1 < size ? kDigits[(n >> 6) & 63] : '=';
+        out += i + 2 < size ? kDigits[n & 63] : '=';
+    }
+    return out;
+}
+
 std::string request_url(const Settings& st) {
     std::string base = st.endpoint.empty() ? (st.provider == kAnthropic ? "https://api.anthropic.com" : "https://api.openai.com/v1") : st.endpoint;
     while (!base.empty() && base.back() == '/') base.pop_back();
@@ -260,6 +274,9 @@ std::string request_body(const Settings& st, const std::string& system, const st
                          json_escape(t.results[k].content) + (t.results[k].error ? ",\"is_error\":true}" : "}");
                 }
                 b += "]}";
+            } else if (t.user && !t.image.empty()) {  // a picture, then the words about it
+                b += "{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + t.image +
+                     "\"}},{\"type\":\"text\",\"text\":" + json_escape(t.text) + "}]}";
             } else {
                 b += t.user ? "{\"role\":\"user\",\"content\":" + json_escape(t.text) + "}"
                             : "{\"role\":\"assistant\",\"content\":" + (t.raw.empty() ? json_escape(t.text) : t.raw) + "}";
@@ -279,6 +296,11 @@ std::string request_body(const Settings& st, const std::string& system, const st
     for (const Turn& t : turns) {
         if (t.user && !t.results.empty()) {
             for (const ToolResult& r : t.results) b += ",{\"role\":\"tool\",\"tool_call_id\":" + json_escape(r.id) + ",\"content\":" + json_escape(r.content) + "}";
+            continue;
+        }
+        if (t.user && !t.image.empty()) {  // OpenAI-compatible vision: the text, then the picture as a data URL
+            b += ",{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":" + json_escape(t.text) +
+                 "},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64," + t.image + "\"}}]}";
             continue;
         }
         b += std::string(",{\"role\":\"") + (t.user ? "user" : "assistant") + "\",\"content\":" + json_escape(t.text);

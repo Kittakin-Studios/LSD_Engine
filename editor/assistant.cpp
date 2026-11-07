@@ -4,6 +4,8 @@
 #include "remote_console.h"
 
 #include "lsd/asset/material_import.h"
+#include "lsd/asset/texture.h"
+#include "lsd/core/console.h"
 #include "lsd/rhi/rhi.h"
 #include "tips.h"
 
@@ -203,6 +205,7 @@ struct Chat {
     std::vector<ToolCall> pending;  // tool calls waiting for Allow / Deny (Ask mode)
     int rounds = 0;                 // tool rounds since the developer's last message
     bool allow_all = false;         // "Allow all" in this chat
+    char image[300] = "";           // a picture for the next message (a path), "" = none
 };
 constexpr int kMaxToolRounds = 12;  // then it stops and says so: a model looping on tools costs money
 Chat g_chat;
@@ -258,6 +261,15 @@ void send(EditorState& s) {
     Turn t;
     t.user = true;
     t.text = (g_chat.include_context ? project_context(s) : std::string()) + g_chat.input;
+    if (g_chat.image[0]) {  // the attached picture, made small enough for the model (1568 px: Claude's recommended largest side)
+        Array<u8> png(default_allocator());
+        if (!asset::encode_png(g_chat.image, 1568, png)) {
+            g_chat.last_error = std::string("Could not read the image ") + g_chat.image + " (take the screenshot again, or pick another file)";
+            return;
+        }
+        t.image = base64(png.data(), png.size());
+        g_chat.image[0] = '\0';
+    }
     g_chat.turns.push_back(t);
     g_chat.roles.push_back(-1);
     g_chat.input[0] = '\0';
@@ -664,6 +676,15 @@ void draw_window(EditorState& s, bool* open) {
     }
     ImGui::SameLine();
     with_tip(ImGui::Checkbox("Project context", &g_chat.include_context), "Includes the level, the selected object's components and the asset list with the message");
+    // A picture with the message (models that see images: Claude, GPT-4o...): the editor's screenshot or any image file.
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Screenshot"), "Takes a screenshot of the editor (next frame; OpenGL or Vulkan) and attaches it to the next message")) {
+        console::execute("screenshot");
+        std::snprintf(g_chat.image, sizeof g_chat.image, "Saved/screenshot.bmp");
+    }
+    ImGui::SetNextItemWidth(-1.0f);
+    with_tip(ImGui::InputTextWithHint("##image", "Attach an image (a path: PNG, JPG, BMP...)", g_chat.image, sizeof g_chat.image),
+             "This image goes with the next message (halved until it is at most 1568 px); empty = none");
     ImGui::End();
 }
 

@@ -26,6 +26,9 @@ bool texture_size(const char* path, u32& width, u32& height);
 // An image's grey (its first channel) at 16 bits, rows top to bottom (16-bit PNGs keep theirs; 8-bit ones are
 // widened): heightmaps. False if it is not a readable image.
 bool load_grey16(const char* path, u32& width, u32& height, Array<u16>& out);
+// Any readable image as PNG bytes in memory, halved until its longer side fits `max_side` (a picture for a chat
+// model). False if it is not a readable image.
+bool encode_png(const char* path, u32 max_side, Array<u8>& png);
 // RGBA8 pixels (rows top to bottom) to a PNG file.
 bool write_png(const char* path, u32 width, u32 height, const u8* rgba);
 // Same from RGBA8 pixels in memory (tests, generated textures).

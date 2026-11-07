@@ -45,8 +45,10 @@ struct Turn {
     std::string raw;
     std::vector<ToolCall> calls;
     std::vector<ToolResult> results;
+    std::string image;  // a user turn's picture: PNG bytes as base64 (a screenshot of the editor); "" = none
 };
 
+std::string base64(const u8* data, usize size);
 std::string request_url(const Settings& settings);
 std::vector<std::string> request_headers(const Settings& settings);  // "Name: value" lines
 // `tools`: offer the tools (the editor's setting allows them).

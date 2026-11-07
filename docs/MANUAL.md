@@ -1167,6 +1167,11 @@ the open level, the selected object (its components and values) and the asset li
 your project (untick **Project context** to leave it out). It knows the engine's Lua API from the
 engine's own documentation and maps Unreal features you name onto LSD_Engine's.
 
+**Pictures**: **Screenshot** attaches the editor as it looks now (OpenGL or Vulkan) to your next
+message, or type an image's path in the box under it (PNG, JPG, BMP...): "why is this wall black?",
+"make the HUD look like this". It is halved until its longer side is at most 1568 px and sent once,
+with that message. Needs a model that sees images (Claude; GPT-4o and others on OpenAI-compatible servers).
+
 Set it up once in **Edit > Editor Preferences > Plugins > LSD Assistant**:
 
 | Provider | Model | Endpoint | Key |
