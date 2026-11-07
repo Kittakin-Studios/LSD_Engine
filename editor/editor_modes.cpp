@@ -579,7 +579,15 @@ u64 pcg_hash(const world::World& w, Entity e) {
     world::PcgVolume rules = *w.get<world::PcgVolume>(e);
     rules.output[0] = '\0';
     const Mat4 m = w.world_matrix(e);
-    return fnv(m.m, sizeof m.m, fnv(&rules, sizeof rules));
+    u64 h = fnv(m.m, sizeof m.m, fnv(&rules, sizeof rules));
+    const reflect::TypeInfo& type = reflect::type_of<world::PcgVolume>();
+    for (u32 i = 0; i < w.count(type); ++i) {  // moving an exclusion box rebuilds the volumes around it
+        const Entity other = w.owner(type, i);
+        if (other == e || !static_cast<const world::PcgVolume*>(w.at(type, i))->exclude) continue;
+        const Mat4 x = w.world_matrix(other);
+        h = fnv(x.m, sizeof x.m, h);
+    }
+    return h;
 }
 
 void draw_pcg(EditorState& s) {
@@ -1057,11 +1065,46 @@ void generate_pcg(EditorState& s, Entity volume) {
         std::snprintf(v->output, sizeof v->output, "%s", name);
     }
     const world::PcgVolume rules = *v;
-    auto* ism = w.add<world::InstancedStaticMesh>(out);
-    std::snprintf(ism->mesh, sizeof ism->mesh, "%s", rules.mesh);
-    std::snprintf(ism->material, sizeof ism->material, "%s", rules.material);
-    ism->color = rules.color;
-    ism->instances.count = 0;
+    // One Instanced Static Mesh per mesh: the output for the main one, its "Variant N" children for More Meshes.
+    std::vector<Entity> outputs{out};
+    for (u32 k = 1; k <= world::PcgVolume{}.more_meshes.capacity(); ++k) {
+        char name[32];
+        std::snprintf(name, sizeof name, "Variant %u", k);
+        Entity child;
+        for (u32 slot = 0; slot < w.slot_count() && !child.valid(); ++slot) {
+            const Entity c = w.entity_at_slot(slot);
+            if (c.valid() && w.parent(c) == out && std::strcmp(w.name(c), name) == 0) child = c;
+        }
+        if (!child.valid() && k <= rules.more_meshes.count && !rules.exclude) {
+            child = w.create(name);
+            w.set_parent(child, out, false);
+        }
+        if (child.valid()) {
+            if (k > rules.more_meshes.count || rules.exclude) w.add<world::InstancedStaticMesh>(child)->instances.count = 0;  // no longer used
+            else outputs.push_back(child);
+        }
+    }
+    for (u32 k = 0; k < outputs.size(); ++k) {
+        auto* target = w.add<world::InstancedStaticMesh>(outputs[k]);
+        std::snprintf(target->mesh, sizeof target->mesh, "%s", k ? rules.more_meshes[k - 1].mesh : rules.mesh);
+        std::snprintf(target->material, sizeof target->material, "%s", k ? rules.more_meshes[k - 1].material : rules.material);
+        target->color = k ? rules.more_meshes[k - 1].color : rules.color;
+        target->instances.count = 0;
+    }
+    if (rules.exclude) {  // an exclusion box scatters nothing
+        g_pcg_hash[w.name(volume)] = pcg_hash(w, volume);
+        return;
+    }
+    std::vector<Mat4> excluded;  // the exclusion boxes, as world-to-box
+    {
+        const reflect::TypeInfo& type = reflect::type_of<world::PcgVolume>();
+        for (u32 i = 0; i < w.count(type); ++i) {
+            if (w.owner(type, i) != volume && static_cast<const world::PcgVolume*>(w.at(type, i))->exclude) excluded.push_back(affine_inverse(w.world_matrix(w.owner(type, i))));
+        }
+    }
+    f32 total_weight = rules.weight > 0.0f ? rules.weight : 0.0f;
+    for (const world::PcgMesh& extra : rules.more_meshes) total_weight += extra.weight > 0.0f ? extra.weight : 0.0f;
+    auto* ism = w.get<world::InstancedStaticMesh>(out);
     const Mat4 m = w.world_matrix(volume), to_out = affine_inverse(w.world_matrix(out));
     const f32 area = length(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}) * length(Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)});
     const u32 count = static_cast<u32>(std::fmin(static_cast<f32>(ism->instances.capacity()), rules.density * area / 100.0f));
@@ -1100,7 +1143,25 @@ void generate_pcg(EditorState& s, Entity volume) {
         }
         const f32 scale = rules.scale_min + (rules.scale_max - rules.scale_min) * k;
         in.scale = {scale, scale, scale};
-        ism->instances.push_back(in);
+        u32 pick = 0;  // which mesh (drawn only with More Meshes, so a single-mesh layout stays as it was)
+        if (rules.more_meshes.count && total_weight > 0.0f) {
+            f32 r = unit(rng) * total_weight - (rules.weight > 0.0f ? rules.weight : 0.0f);
+            while (r >= 0.0f && pick < rules.more_meshes.count) {
+                ++pick;
+                if (pick <= rules.more_meshes.count) r -= rules.more_meshes[pick - 1].weight > 0.0f ? rules.more_meshes[pick - 1].weight : 0.0f;
+            }
+            if (pick > rules.more_meshes.count) pick = rules.more_meshes.count;
+        }
+        bool inside = false;
+        for (const Mat4& x : excluded) {
+            const Vec3 q = transform_point(x, p);
+            inside |= q.x >= -0.5f && q.x <= 0.5f && q.y >= -0.5f && q.y <= 0.5f && q.z >= 0.0f && q.z <= 1.0f;
+        }
+        if (inside) continue;
+        if (pick >= outputs.size()) pick = 0;
+        auto* target = pick ? w.get<world::InstancedStaticMesh>(outputs[pick]) : ism;
+        if (pick) in.position = transform_point(affine_inverse(w.world_matrix(outputs[pick])), p);
+        if (target->instances.count < target->instances.capacity()) target->instances.push_back(in);
     }
     g_pcg_hash[w.name(volume)] = pcg_hash(w, volume);
 }

@@ -481,9 +481,21 @@ struct Landscape {
     LSD_PROPERTY(Save) List<u32, 4225> holes;    // per height: 1 cuts the squares around it (caves, tunnels); empty until the first hole
 };
 
+// One more mesh a PCG Volume scatters, picked for a point by its weight against the others.
+LSD_STRUCT(Category = "Procedural")
+struct PcgMesh {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "Another mesh to scatter (rocks among the trees)") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Its material") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Its colour (without a material)") LinearColor color = LinearColor::hex(0x8A8A8E);
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "How often it is picked against the main mesh's Weight and the others'") f32 weight = 1.0f;
+};
+
 // Scatters copies of a mesh on whatever surfaces are inside this box (Unreal's PCG Volume with a
 // surface sampler): density, slope and scale rules, the same result for the same seed. The copies go
-// to an Instanced Static Mesh on a separate object (`output`), rebuilt when a rule or the box changes.
+// to an Instanced Static Mesh on a separate object (`output`; More Meshes to its "Variant N" children),
+// rebuilt when a rule or the box changes. An Exclude volume scatters nothing and keeps the others out
+// of its box (Unreal's PCG difference / exclusion).
 LSD_STRUCT(Component, Category = "Procedural", Tooltip = "Scatters a mesh on the surfaces in its box by density, slope and seed")
 struct PcgVolume {
     LSD_GENERATED()
@@ -497,6 +509,9 @@ struct PcgVolume {
     LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Largest random size of a scattered mesh") f32 scale_max = 1.2f;
     LSD_PROPERTY(Edit, Tooltip = "Turn each copy at random around Z") bool random_yaw = true;
     LSD_PROPERTY(Edit, Tooltip = "Tilt copies to the surface (rocks on a slope) instead of standing upright") bool align_to_surface = false;
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "How often the main mesh is picked against More Meshes' weights") f32 weight = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Other meshes scattered with it, each picked by its weight (several kinds of plants, rocks)") List<PcgMesh, 8> more_meshes;
+    LSD_PROPERTY(Edit, Tooltip = "An exclusion box: it scatters nothing, and the other PCG Volumes leave its box empty (paths, clearings, buildings)") bool exclude = false;
     LSD_PROPERTY(Visible, Tooltip = "The object holding the copies") char output[64] = "";
 };
 
