@@ -8,6 +8,7 @@
 #include "material_cache.h"
 #include "mesh_cache.h"
 
+#include "lsd/asset/data_asset.h"
 #include "lsd/asset/texture.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/guid.h"
@@ -20,6 +21,7 @@
 
 #include <SDL3/SDL.h>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
@@ -499,8 +501,67 @@ void draw_foliage(EditorState& s) {
         types.remove(static_cast<u32>(g_foliage_selected));
         g_foliage_selected = 0;
     }
+    // Foliage Type assets (Unreal's): the same types for the whole team, in Content.
+    if (s.registry && types.count < types.capacity()) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130);
+        if (ImGui::BeginCombo("##fromasset", "Add from Asset")) {
+            for (usize i = 0; i < s.registry->count(); ++i) {
+                const asset::AssetRecord& r = s.registry->get(i);
+                if (r.type != asset::AssetType::Data || std::strcmp(r.data_type, "FoliageType") != 0) continue;
+                if (ImGui::Selectable(r.name)) {
+                    char path[300];
+                    s.registry->source_path(r, path, sizeof path);
+                    FoliageType loaded;
+                    if (asset::load_data_asset(path, loaded)) {
+                        asset::to_string(r.guid, loaded.asset);
+                        loaded.enabled = true;
+                        types.push_back(loaded);
+                        g_foliage_selected = static_cast<int>(types.count - 1);
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SetItemTooltip("Adds a Foliage Type asset from the project (Content Browser > New Data Asset > FoliageType, or Save as Asset below)");
+    }
     FoliageType& t = types[static_cast<u32>(g_foliage_selected)];
     ImGui::SeparatorText("Selected Type");
+    if (s.registry) {
+        asset::Guid guid;
+        const asset::AssetRecord* from = t.asset[0] && asset::parse_guid(t.asset, guid) ? s.registry->find(guid) : nullptr;
+        if (from) {
+            ImGui::TextDisabled("From asset %s", from->name);
+            ImGui::SameLine();
+            if (with_tip(ImGui::SmallButton("Save to Asset"), "Writes this type's settings back into its Foliage Type asset (for everyone who uses it)")) {
+                char path[300];
+                s.registry->source_path(*from, path, sizeof path);
+                std::snprintf(s.status, sizeof s.status, asset::save_data_asset(path, reflect::type_of<FoliageType>(), &t) ? "Saved %s" : "Could not save %s", from->name);
+            }
+        } else if (with_tip(ImGui::SmallButton("Save as Asset"), "Writes this type as a Foliage Type asset in Content/Foliage, so the team paints with the same settings")) {
+            namespace fs = std::filesystem;
+            const fs::path dir = fs::path(s.registry->content_dir()) / "Foliage";
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            std::string base = t.mesh;
+            for (char& c : base) {
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') c = '_';
+            }
+            fs::path file = dir / ("FT_" + base + ".lsdasset");
+            for (int n = 2; fs::exists(file) && n < 100; ++n) file = dir / ("FT_" + base + "_" + std::to_string(n) + ".lsdasset");
+            if (asset::save_data_asset(file.string().c_str(), reflect::type_of<FoliageType>(), &t)) {
+                s.registry->scan();
+                for (usize i = 0; i < s.registry->count(); ++i) {
+                    char path[300];
+                    s.registry->source_path(s.registry->get(i), path, sizeof path);
+                    if (fs::path(path).lexically_normal() == file.lexically_normal()) asset::to_string(s.registry->get(i).guid, t.asset);
+                }
+                std::snprintf(s.status, sizeof s.status, "Saved %s", file.generic_string().c_str());
+            } else {
+                std::snprintf(s.status, sizeof s.status, "Could not write %s", file.generic_string().c_str());
+            }
+        }
+    }
     mesh_combo(s, "Mesh", t.mesh, sizeof t.mesh);
     with_tip(ImGui::ColorEdit3("Tint", &t.color.r), "Colour of the painted copies");
     with_tip(ImGui::DragFloat("Density (per m2)", &t.density, 0.02f, 0.01f, 20.0f, "%.2f"), "How many copies a stroke puts in each square metre");
@@ -1063,6 +1124,84 @@ void draw_mode_panel(EditorState& s) {
     if (!open) s.mode = EditorMode::Select;
 }
 
+// Blockout resize handles (Unreal's BSP box handles): a selected Cube shows a square on each face;
+// dragging one moves that side only (the opposite side stays where it is), in metres along its axis.
+struct ResizeDrag {
+    int handle = -1;   // 0..5: +X, -X, +Y, -Y, +Z (top), -Z (bottom)
+    Vec3 axis;         // outward, world space (unit)
+};
+ResizeDrag g_resize;
+
+// The parameter along the line (p, d) nearest to the ray (o, r): both unit directions.
+f32 nearest_on_line(Vec3 p, Vec3 d, Vec3 o, Vec3 r) {
+    const Vec3 w = p - o;
+    const f32 b = dot(d, r), denom = 1.0f - b * b;
+    if (std::fabs(denom) < 1e-5f) return 0.0f;  // looking straight along it
+    return (b * dot(r, w) - dot(d, w)) / denom;
+}
+
+bool resize_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
+    world::Transform* t = s.world->alive(s.selected) ? s.world->get<world::Transform>(s.selected) : nullptr;
+    const auto* mesh = t ? s.world->get<world::StaticMesh>(s.selected) : nullptr;
+    if (!mesh || std::strcmp(mesh->mesh, "Cube") != 0 || s.world->get<world::EditableMesh>(s.selected)) {
+        g_resize.handle = -1;
+        return false;
+    }
+    const Mat4 m = s.world->world_matrix(s.selected);
+    const Vec3 local[6] = {{0.5f, 0, 0.5f}, {-0.5f, 0, 0.5f}, {0, 0.5f, 0.5f}, {0, -0.5f, 0.5f}, {0, 0, 1.0f}, {0, 0, 0}};  // face centres of the 1 m box
+    const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    int hot = -1;
+    f32 best = 81.0f;
+    for (int h = 0; h < 6; ++h) {
+        ImVec2 at;
+        if (!project(view_proj, transform_point(m, local[h]), pos, size, at)) continue;
+        const bool active = g_resize.handle == h;
+        const f32 dx = at.x - io.MousePos.x, dy = at.y - io.MousePos.y;
+        if (hovered && g_resize.handle < 0 && dx * dx + dy * dy < best) {
+            best = dx * dx + dy * dy;
+            hot = h;
+        }
+        const ImU32 color = active ? IM_COL32(243, 195, 18, 255) : IM_COL32(255, 255, 255, 220);
+        fg->AddRectFilled(ImVec2(at.x - 5, at.y - 5), ImVec2(at.x + 5, at.y + 5), color);
+        fg->AddRect(ImVec2(at.x - 5, at.y - 5), ImVec2(at.x + 5, at.y + 5), IM_COL32(0, 0, 0, 255));
+    }
+    if (hot >= 0) {
+        ImVec2 at;
+        if (project(view_proj, transform_point(m, local[hot]), pos, size, at)) fg->AddRect(ImVec2(at.x - 8, at.y - 8), ImVec2(at.x + 8, at.y + 8), IM_COL32(120, 230, 255, 255), 0, 0, 2.0f);
+    }
+    Vec3 o, r;
+    viewport_ray(s.camera, pos, size, io.MousePos, o, r);
+    if (hot >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyAlt) {  // start a drag
+        g_resize.handle = hot;
+        g_resize.axis = normalize(transform_vector(m, dirs[hot]));
+        return true;
+    }
+    if (g_resize.handle < 0) return false;
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {  // released: one undo step
+        g_resize.handle = -1;
+        mark_edited(s, "Resize");
+        return true;
+    }
+    const int h = g_resize.handle;
+    const u32 axis = static_cast<u32>(h / 2);
+    // How far past the side the mouse is now (measured from where the side is this frame).
+    f32 delta = nearest_on_line(transform_point(m, local[h]), g_resize.axis, o, r);
+    const f32 size_now = axis == 0 ? t->scale.x : axis == 1 ? t->scale.y : t->scale.z;
+    if (size_now + delta < 0.05f) delta = 0.05f - size_now;  // never inside out
+    if (std::fabs(delta) < 1e-5f) return true;
+    f32& size_ref = axis == 0 ? t->scale.x : axis == 1 ? t->scale.y : t->scale.z;
+    size_ref += delta;
+    // Centred along X / Y: the middle moves half; the box stands on its bottom along Z: the top moves nothing, the bottom all.
+    const f32 move = axis < 2 ? delta * 0.5f : (h == 5 ? delta : 0.0f);
+    const Vec3 world_move = g_resize.axis * move;
+    const world::Entity parent = s.world->parent(s.selected);
+    const Vec3 local_move = parent.valid() ? transform_vector(affine_inverse(s.world->world_matrix(parent)), world_move) : world_move;
+    t->position = t->position + local_move;
+    return true;
+}
+
 // Modeling: the selected Editable Mesh's faces are picked with a click, the picked one outlined.
 bool face_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
     world::EditableMesh* m = editable(s);
@@ -1163,7 +1302,7 @@ bool face_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
 
 bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, bool hovered) {
     if (s.mode == EditorMode::Paper2D) return tile_brush(s, view_proj, pos, size, hovered);
-    if (s.mode == EditorMode::Modeling) return face_brush(s, view_proj, pos, size, hovered);
+    if (s.mode == EditorMode::Modeling) return resize_brush(s, view_proj, pos, size, hovered) || face_brush(s, view_proj, pos, size, hovered);
     static bool stroke = false;
     static f32 flatten_z = 0.0f, since_stamp = 0.0f;
     const ImGuiIO& io = ImGui::GetIO();

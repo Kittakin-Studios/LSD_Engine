@@ -5194,6 +5194,7 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Plays this level for 5 seconds and reports any errors it logs (Unreal's automation smoke test)");
         if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
+        if (with_tip(ImGui::MenuItem("Source Control Changes"), "Every changed asset (Git): tick and submit them together, or revert one (Unreal's View Changelists)")) source_control::open_changes();
         if (with_tip(ImGui::MenuItem("Gather Text"), "Localization (Unreal's Gather Text): adds every key the project shows (lsd.text in scripts, Localized Text nodes, UI document texts) that the string table lacks")) {
             bool changed = false;
             gather_project_text(s.project, *s.registry, s.status, sizeof s.status, changed);

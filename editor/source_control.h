@@ -21,6 +21,7 @@ char status(const char* content_path);
 std::string locked_by(const char* content_path, bool& mine);
 
 void asset_menu(const char* content_path);  // a "Source Control" submenu for the asset's right-click menu
+void open_changes();  // the Changes window (Unreal's View Changelists): every changed asset, submit or revert
 void draw();  // its History / Diff window and the Submit dialog
 
 } // namespace lsd::editor::source_control
