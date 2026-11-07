@@ -827,6 +827,58 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return true;
     };
     host.net_join_codes = [](void* user, char* out, usize capacity) { static_cast<PlaySession*>(user)->join_codes(out, capacity, true); };
+    host.assets = [](void* user, const char* type, const char* folder, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        std::vector<const asset::AssetRecord*> hits;
+        const usize folder_len = std::strlen(folder);
+        for (usize i = 0; i < self.registry_->count(); ++i) {
+            const asset::AssetRecord& r = self.registry_->get(i);
+            if (std::strcmp(asset::to_string(r.type), type) != 0 || std::strncmp(r.folder, folder, folder_len) != 0) continue;
+            if (folder_len && r.folder[folder_len] && r.folder[folder_len] != '/') continue;  // "Clothes" is not "ClothesOld"
+            hits.push_back(&r);
+        }
+        std::sort(hits.begin(), hits.end(), [](const asset::AssetRecord* a, const asset::AssetRecord* b) { return std::strcmp(a->name, b->name) < 0; });
+        usize used = 0;
+        u32 n = 0;
+        for (const asset::AssetRecord* r : hits) {
+            char guid[33];
+            asset::to_string(r->guid, guid);
+            const int w = std::snprintf(out + used, capacity - used, "%s%s|%s|%s", n ? "\n" : "", r->name, guid, r->folder);
+            if (w < 0 || used + static_cast<usize>(w) >= capacity) break;
+            used += static_cast<usize>(w);
+            ++n;
+        }
+        if (!n && capacity) out[0] = 0;
+        return n;
+    };
+    host.morph_names = [](void* user, world::Entity e, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        if (capacity) out[0] = 0;
+        if (!self.skinned_) return 0u;
+        const auto& type = reflect::type_of<world::SkeletalMesh>();
+        const world::SkeletalMesh* mesh = self.world_->get<world::SkeletalMesh>(e);
+        for (u32 i = 0; !mesh && i < self.world_->count(type); ++i) {  // a Character's mesh child
+            const world::Entity child = self.world_->owner(type, i);
+            if (self.world_->parent(child) == e && !self.world_->get<world::OutfitPiece>(child)) mesh = self.world_->get<world::SkeletalMesh>(child);
+        }
+        const SkinnedEntry* model = mesh ? self.skinned_->get(mesh->mesh) : nullptr;
+        if (!model) return 0u;
+        usize used = 0;
+        u32 n = 0;
+        for (const anim::MorphTarget& t : model->model->morphs) {
+            bool seen = false;  // several meshes of a file share a name
+            for (const anim::MorphTarget& u : model->model->morphs) {
+                if (&u == &t) break;
+                if (std::strcmp(u.name, t.name) == 0) seen = true;
+            }
+            if (seen) continue;
+            const int w = std::snprintf(out + used, capacity - used, "%s%s", n ? "\n" : "", t.name);
+            if (w < 0 || used + static_cast<usize>(w) >= capacity) break;
+            used += static_cast<usize>(w);
+            ++n;
+        }
+        return n;
+    };
     host.editor_workspace = [](void* user) -> const char* { return static_cast<PlaySession*>(user)->workspace_; };
     host.net_find_games = [](void* user, f32 seconds, char* out, usize capacity) {
         const auto& self = *static_cast<PlaySession*>(user);

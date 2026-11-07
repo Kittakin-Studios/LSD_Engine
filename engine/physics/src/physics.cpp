@@ -125,6 +125,8 @@ public:
     void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&, JPH::ContactSettings&) override {
         add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()));
     }
+    using JPH::ContactListener::OnContactValidate;  // the other overloads stay as Jolt has them
+    using JPH::CharacterContactListener::OnContactValidate;
     // One-way platforms: the character only meets them from above (its feet at or over their top).
     bool OnContactValidate(const JPH::CharacterVirtual* character, const JPH::CharacterContact& contact) override {
         if (!system || !one_way_top || one_way_top->empty() || contact.mBodyB.IsInvalid()) return true;

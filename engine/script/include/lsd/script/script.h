@@ -35,6 +35,11 @@
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_morph(e, name, weight)        a morph target (blend shape) weight on e's skeletal mesh (or its child's)
+//   lsd.morph_names(e) -> {"Nose_Wide", ...}   the morph targets e's skeletal mesh (or its child's) has
+//   lsd.set_outfit(e, slot, mesh [, r, g, b])  what e's Outfit wears in a slot ("Shirt", "Shoes"...), a mesh
+//                                         asset by name or GUID ("" takes it off); the slot is added if new
+//   lsd.assets(type [, folder]) -> {{name =, guid =, folder =}, ...}   assets of a type ("Mesh", "Prefab",
+//                                         "Sound"...) in a folder and below (Content/ relative; "" = all), by name
 //   lsd.play_montage(e, animation [, rate = 1 [, from_bone = "" [, blend = 0.2 [, root_motion = false]]]]) -> seconds   an animation file
 //                                         (by asset name) played once over what e plays, from from_bone down
 //                                         ("spine_01": the upper body only; "": all of it), blended in and out
@@ -292,6 +297,10 @@ struct ScriptHost {
     // Join codes, as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
     void (*net_join_codes)(void* user, char* out, usize capacity) = nullptr;
     const char* (*editor_workspace)(void* user) = nullptr;  // the editor's workspace tab; "" in a packaged game
+    // "name|guid|folder" lines of the assets of `type` (to_string(AssetType)) under `folder`; returns how many.
+    u32 (*assets)(void* user, const char* type, const char* folder, char* out, usize capacity) = nullptr;
+    // Newline-separated morph target names of e's skeletal mesh (or its child's); returns how many.
+    u32 (*morph_names)(void* user, world::Entity e, char* out, usize capacity) = nullptr;
 };
 
 class ScriptSystem {

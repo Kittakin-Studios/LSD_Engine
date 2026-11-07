@@ -60,6 +60,8 @@ void init_types() {
         &reflect::type_of<Vehicle>(),
         &reflect::type_of<Transport>(),
         &reflect::type_of<SubLevel>(),
+        &reflect::type_of<Outfit>(),
+        &reflect::type_of<OutfitPiece>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     for (const reflect::TypeInfo* t : types) g_types[g_type_count++] = t;

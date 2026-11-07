@@ -1222,25 +1222,27 @@ void register_console(EditorState& s) {
                 e.motion.y = y;
                 SDL_PushEvent(&e);
             };
-            auto button = [&](bool down) {
+            auto button = [&](bool down, float x, float y) {  // where the mouse is, like real button events (the game UI reads it)
                 SDL_Event e{};
                 e.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
                 e.button.windowID = window;
                 e.button.button = SDL_BUTTON_LEFT;
                 e.button.down = down;
+                e.button.x = x;
+                e.button.y = y;
                 SDL_PushEvent(&e);
             };
             move(d.x0, d.y0);
             SDL_Delay(150);
             key(true);
             SDL_Delay(50);
-            button(true);
+            button(true, d.x0, d.y0);
             for (int i = 1; i <= 20; ++i) {  // a steady hand: 20 steps over about a second
                 SDL_Delay(50);
                 move(d.x0 + (d.x1 - d.x0) * static_cast<float>(i) / 20.0f, d.y0 + (d.y1 - d.y0) * static_cast<float>(i) / 20.0f);
             }
             SDL_Delay(150);
-            button(false);
+            button(false, d.x1, d.y1);
             SDL_Delay(50);
             key(false);
             return 0;
@@ -1407,7 +1409,9 @@ void register_console(EditorState& s) {
                 return lsd::editor::build_template(st, kind, nullptr);
             }
         }
-        lsd::editor::remote::print("Templates: Empty, First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D");
+        std::string names = "Templates:";
+        for (int t = 0; t < static_cast<int>(lsd::editor::Template::Count); ++t) names += std::string(t ? ", " : " ") + lsd::editor::template_name(static_cast<lsd::editor::Template>(t));
+        lsd::editor::remote::print(names.c_str());
     }, &s, "template.New <name>: a new level from a template (Empty, First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D)");
     console::add_command("workspace", [](void* user, const char* args) {
         std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
@@ -2608,6 +2612,7 @@ int main(int argc, char** argv) {
             if (shown) lsd::asset::to_string(tree, guid);
             lsd::editor::set_graph_active_nodes(active, shown ? play.active_bt_nodes(guid, active, 64) : 0);
         }
+        animations->update_outfits(world, *skinned_cache);  // clothes follow their Outfit slots
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
                            state.playing && !state.paused ? &sounds : nullptr);

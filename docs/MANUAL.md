@@ -92,15 +92,20 @@ and opens it. Next time the editor opens that level straight away; the picker do
 template plays at once (Play): the player uses the built-in WASD / mouse / Space controls until
 you give it an Input Mapping Context.
 
+The picker lists the five game perspectives first, then the rest:
+
 | Template | What you get | Viewports |
 | --- | --- | --- |
-| **Empty** | A sun and a sky, nothing else: start from scratch | 3D |
-| **First Person** | A walled blockout arena (ramp, stairs, ledge, columns, crates to push), the view from the player's eyes | 3D |
-| **Third Person** | The same arena, the player's body in view on a spring arm over the shoulder | 3D |
+| **Third Person** | A walled blockout arena (ramp, stairs, ledge, columns, crates to push), the player's body in view on a spring arm over the shoulder | 3D |
+| **First Person** | The same arena seen from the player's eyes | 3D |
+| **Side Scroller** | A 3D level run along X (pits, platforms, a lift, a goal) with a side-on follow camera | 2.5D + 3D |
 | **Platformer** | Floating platforms, a lift, a spinning bar and a slider (Movers), a goal at the top; falling below Kill Z respawns you | 3D |
-| **Side Scrolling** | A 3D level run along X (pits, platforms, a lift, a goal) with a side-on follow camera | 2.5D + 3D |
+| **Orthographic** | Top-down / isometric: the arena through an orthographic camera 45 degrees above and behind the player, riding along (W walks up the screen) | 2D + 3D |
 | **2D** | Paper2D: a painted Tile Map level, an animated player Sprite (idle, walk, jump), coins to collect with a HUD counter, crates (2D physics), a backdrop, an orthographic follow camera; the Level tab opens in 2D mode | 2D |
 | **2.5D** | 3D models in depth layers (mountains, trees, rocks) around a 2D play plane, seen through a side-on perspective camera | 2.5D |
+| **Character Customization** | A character creator (below): the body on a stage, tabbed morph sliders, clothes per body area, sounds, saved to the character | 3D |
+| **Character Selection** | Pick a ready-made character from the presets you bring (below) | 3D |
+| **Empty** | A sun and a sky, nothing else: start from scratch | 3D |
 
 The **2D** template also writes its starter files into `Content/Templates/2D/` (kept if you change
 them): `T_Tiles` (the tileset: grass, dirt, bricks, planks and colour tiles to paint with), `T_Hero`
@@ -113,6 +118,56 @@ template too: `template.New 2D`.
 
 ![The 2D template playing](images/template_2d_play.jpg)
 *Playing it: the player walks with A / D, jumps with Space, and the coin counter goes up.*
+
+![The Orthographic template playing](images/template_orthographic.jpg)
+*The Orthographic template in Play: an isometric orthographic view that follows the player.*
+
+#### Character Customization and Character Selection
+
+Two ready-made levels for character creators (Unreal's MetaHuman-style creator screens and the
+character select of a menu). Both put a **Character** on a lit stage with a camera on it. The
+Character is a Skeletal Mesh using the project's **UE5-skeleton** body: the template looks for a
+rigged mesh with UE5 Manny bones (a UE4 Mannequin, then any rig, if there is none; names such as
+Manny, Quinn, SKM or Char are tried first). With no rigged mesh in Content, a grey stand-in shows
+until you set **Skeletal Mesh > Mesh**. Their scripts, UI documents and sounds go into
+`Content/Templates/Character/` (kept if you change them), and the folders for your own art are
+made in `Content/Characters/`.
+
+![Character Customization](images/template_character_customization.jpg)
+*Character Customization in Play: tabs along the top, a slider per morph target, Back / Next / Reset / Save.*
+
+**Character Customization** (`CharacterCustomization.lua`, `UI_CharacterCustomization`):
+
+- **Tabs**: Body, Head, Face, Eyes, Nose, Mouth, Ears, Clothes. Click one, use **Back / Next**, or
+  press **Q / E** (gamepad shoulders).
+- **Sliders**: each morph target of the body (Unreal's Morph Targets: export them with the FBX) gets
+  a slider (0..1) on the tab whose word its name contains: `Nose_Width` goes to Nose, `Eye_Size` to
+  Eyes, `Jaw_Wide` to Face, `Lip_Full` and the visemes (`V_Open`...) to Mouth, `Ear_Point` to Ears.
+  Everything else goes to Body (anatomy: `Chest`, `Belly`, `Arm_Muscle`...). Up to 12 per tab.
+- **Clothes**: one row per body area (Hair, Hat, Glasses, Shirt, Jacket, Gloves, Pants, Belt, Shoes,
+  Backpack). **<** and **>** step through the meshes in `Content/Characters/Clothes/<area>/` (and None).
+  Clothes skinned to the same UE5 skeleton follow the body's animation bone by bone. Rigid pieces
+  (a hat, glasses, a watch) stick to that area's bone: head, spine_03 (chest), spine_05, hand_r,
+  pelvis, foot_r. A rigid pair adds its left piece from a mesh named `<name>_L` (`Boot_Leather` +
+  `Boot_Leather_L`).
+- **Sounds**: `SFX_UI_Click` on every button, tab and clothes step, `SFX_UI_Slide` while a slider moves
+  (swap them with the script's `click_sound` / `slide_sound` properties in Details).
+- **Save** writes the look (morph weights and the clothes per area) to the save game
+  `appearance_<character>`. The character is the one picked in Character Selection, else the
+  object's name. The next time the level plays, the look is back. **Reset** clears it.
+
+Put `CharacterAppearance.lua` on the object with the Skeletal Mesh in your game level (a Character's
+body) and the chosen body and saved look are applied there when Play starts.
+
+![Character Selection](images/template_character_selection.jpg)
+*Character Selection: < and > (A / D, the arrows, the gamepad shoulders) browse, Select picks.*
+
+**Character Selection** (`CharacterSelection.lua`, `UI_CharacterSelection`) shows the rigged
+characters in `Content/Characters/Presets/` one at a time on the stage. Drop in your own FBX / glTF
+characters; each needs a skeleton. **Select** (Enter, gamepad A) saves the choice as
+`selected_character`. Character Customization then edits that character, and `CharacterAppearance.lua`
+puts it in your levels. Set the script's `next_level` property in Details to open the game level after
+Select. `presets_folder` changes where the presets come from.
 
 ---
 
@@ -1342,6 +1397,15 @@ animates itself, with no Anim Graph to build. Leave it off to use your own Anima
   Walk Speed near your walk clip's speed (about 1.5 m/s for a walk, 3.5 for a jog) for the best
   matches. Details > Skeletal Mesh shows what plays: "Motion Matching: Anim_Walk at 0.78 s".
 
+**Outfit** (Unreal's modular characters with a Leader Pose Component): add it to the object with the
+body's Skeletal Mesh. It lists body areas (empty: Hair, Hat, Glasses, Shirt, Jacket, Gloves / Glove L,
+Pants, Belt, Shoes / Shoe L, Backpack with their UE5 bones). Each area takes a **Mesh** and a **Bone**.
+The Outfit makes a child per worn piece. A mesh skinned to the same skeleton gets a Skeletal Mesh
+with **Leader Pose** set to the body, so it copies the body's pose bone by bone (by bone name) and
+plays no animation of its own. A rigid mesh is attached to the area's bone. Scripts change it with
+`lsd.set_outfit(e, "Shirt", "SK_Shirt_Blue")` (a mesh name or GUID, "" takes it off). **Skeletal Mesh >
+Leader Pose** works on its own too: name the body object and the mesh follows it.
+
 **Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them
 with the rigged FBX. The Mesh Editor lists them under **Morph Targets**: click one to preview it
 (the slider sets the preview weight) and its name is copied. On the Skeletal Mesh, add rows to
@@ -1763,6 +1827,9 @@ Audio and animation
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
+| `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
+| `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |
+| `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"...) under a Content/ folder, by name |
 
 AI
 

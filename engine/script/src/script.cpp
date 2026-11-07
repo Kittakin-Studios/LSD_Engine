@@ -4,6 +4,7 @@
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/data_table.h"
+#include "lsd/asset/guid.h"
 #include "lsd/asset/localization.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/spline.h"
@@ -21,6 +22,7 @@ extern "C" {
 #include <cctype>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace lsd::script {
 
@@ -504,11 +506,11 @@ struct Api {
     }
     // Validates into a copy first, so a bad field leaves the component as it was.
     static void write(lua_State* L, world::Entity e, const reflect::TypeInfo& type, void* data, int fields) {
-        alignas(16) u8 copy[4096];  // Script / Native Script with their property lists are ~1.6 KB
-        if (type.size > sizeof copy) luaL_error(L, "%s is too big to set from Lua", type.name);
-        std::memcpy(copy, data, type.size);
-        read_struct(L, fields, type, copy);
-        std::memcpy(world(L).get(e, type), copy, type.size);
+        static std::vector<u8> copy;  // reused: components with long lists (a Skeletal Mesh's morphs) pass 8 KB
+        if (copy.size() < type.size) copy.resize(type.size);
+        std::memcpy(copy.data(), data, type.size);
+        read_struct(L, fields, type, copy.data());
+        std::memcpy(world(L).get(e, type), copy.data(), type.size);
     }
     static int set(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
@@ -1293,6 +1295,90 @@ struct Api {
         mesh->morphs.push_back(m);
         return 0;
     }
+    // Splits host "a|b|c" lines into a list of tables with the given keys.
+    static int push_lines(lua_State* L, const char* text, const char* const* keys, int key_count) {
+        lua_newtable(L);
+        int n = 0;
+        for (const char* line = text; *line;) {
+            const char* end = std::strchr(line, '\n');
+            if (!end) end = line + std::strlen(line);
+            lua_newtable(L);
+            const char* field = line;
+            for (int k = 0; k < key_count; ++k) {
+                const char* bar = static_cast<const char*>(std::memchr(field, '|', static_cast<usize>(end - field)));
+                const char* stop = bar && k + 1 < key_count ? bar : end;
+                lua_pushlstring(L, field, static_cast<usize>(stop - field));
+                lua_setfield(L, -2, keys[k]);
+                field = stop < end ? stop + 1 : end;
+            }
+            lua_rawseti(L, -2, ++n);
+            line = *end ? end + 1 : end;
+        }
+        return 1;
+    }
+    static int assets(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        static char text[64 * 1024];
+        text[0] = 0;
+        if (host.assets) host.assets(host.user, luaL_checkstring(L, 1), luaL_optstring(L, 2, ""), text, sizeof text);
+        static const char* const kKeys[] = {"name", "guid", "folder"};
+        return push_lines(L, text, kKeys, 3);
+    }
+    static int morph_names(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        static char text[16 * 1024];
+        text[0] = 0;
+        if (host.morph_names) host.morph_names(host.user, live_entity(L, 1), text, sizeof text);
+        lua_newtable(L);
+        int n = 0;
+        for (const char* line = text; *line;) {
+            const char* end = std::strchr(line, '\n');
+            if (!end) end = line + std::strlen(line);
+            lua_pushlstring(L, line, static_cast<usize>(end - line));
+            lua_rawseti(L, -2, ++n);
+            line = *end ? end + 1 : end;
+        }
+        return 1;
+    }
+    static int set_outfit(lua_State* L) {
+        world::World& w = world(L);
+        const world::Entity e = live_entity(L, 1);
+        const char* slot = luaL_checkstring(L, 2);
+        const char* mesh = luaL_checkstring(L, 3);
+        char guid[33] = "";
+        asset::Guid parsed;
+        if (asset::parse_guid(mesh, parsed)) std::snprintf(guid, sizeof guid, "%s", mesh);
+        else if (mesh[0]) {  // by name
+            const ScriptHost& host = system(L).host_;
+            static char text[64 * 1024];
+            text[0] = 0;
+            if (host.assets) host.assets(host.user, "Mesh", "", text, sizeof text);
+            for (const char* line = text; *line && !guid[0];) {
+                const char* bar = std::strchr(line, '|');
+                const char* end = std::strchr(line, '\n');
+                if (!end) end = line + std::strlen(line);
+                if (bar && bar < end && static_cast<usize>(bar - line) == std::strlen(mesh) && std::strncmp(line, mesh, std::strlen(mesh)) == 0)
+                    std::snprintf(guid, sizeof guid, "%.32s", bar + 1);
+                line = *end ? end + 1 : end;
+            }
+            if (!guid[0]) return luaL_error(L, "set_outfit: no mesh named '%s'", mesh);
+        }
+        auto* outfit = w.get<world::Outfit>(e) ? w.get<world::Outfit>(e) : w.add<world::Outfit>(e);
+        world::OutfitSlot* target = nullptr;
+        for (world::OutfitSlot& s : outfit->slots) {
+            if (std::strcmp(s.slot, slot) == 0) target = &s;
+        }
+        if (!target) {
+            if (outfit->slots.count == outfit->slots.capacity()) return luaL_error(L, "set_outfit: %s has no room for slot %s", w.name(e), slot);
+            world::OutfitSlot s;
+            std::snprintf(s.slot, sizeof s.slot, "%s", slot);
+            outfit->slots.push_back(s);
+            target = &outfit->slots[outfit->slots.count - 1];
+        }
+        std::snprintf(target->mesh, sizeof target->mesh, "%s", guid);
+        if (lua_gettop(L) >= 6) target->color = {static_cast<f32>(luaL_checknumber(L, 4)), static_cast<f32>(luaL_checknumber(L, 5)), static_cast<f32>(luaL_checknumber(L, 6)), 1.0f};
+        return 0;
+    }
     static int set_class_volume(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.set_class_volume) host.set_class_volume(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
@@ -1625,7 +1711,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
         {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
-        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"set_morph", Api::set_morph}, {"morph_names", Api::morph_names}, {"set_outfit", Api::set_outfit}, {"assets", Api::assets}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {

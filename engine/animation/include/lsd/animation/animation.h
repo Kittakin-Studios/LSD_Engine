@@ -152,6 +152,10 @@ public:
     // plane through its forward axis (`forward_yaw` radians about Z, 0 = +X) and up. The bind pose
     // (the skinning pose) mirrors onto itself. Call after sample / sample_blend.
     bool mirror(const SkinnedModel& model, f32 forward_yaw);
+    // Leader pose (Unreal's Leader Pose Component: clothes skinned to the same skeleton as a body):
+    // each of `model`'s joints takes the model-space pose of `leader`'s joint with the same name
+    // (from `leader_model`); joints the leader lacks stay at their bind pose. Replaces any sampled pose.
+    bool follow(const SkinnedModel& model, const SkinnedModel& leader_model, const Pose& leader);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

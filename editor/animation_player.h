@@ -30,6 +30,9 @@ public:
     bool socket(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* socket, Mat4& out);
     // Attach To Socket components onto their sockets (after update).
     void attach_to_sockets(world::World& world, const SkinnedCache& cache);
+    // Outfits: each slot's mesh as a child piece (skinned: Leader Pose on the body; rigid: attached to
+    // the slot's bone), made, swapped or removed as the slots change. Call before update().
+    void update_outfits(world::World& world, SkinnedCache& cache);
     void reset();  // every object back to time 0 and its graph's entry state (Play starts afresh)
     // An Animation Graph parameter on `e`'s skeletal mesh and on those of its children (a Character
     // with its mesh attached under it).
@@ -113,6 +116,11 @@ private:
     std::vector<MotionInputs> motion_inputs_;
     rhi::Device& device_;
     void update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model);
+    struct Follower {
+        State* state;
+        world::Entity entity;
+    };
+    std::vector<Follower> followers_;  // this update's meshes with a Leader Pose
     State states_[256];
     struct Ik {
         world::Entity entity;

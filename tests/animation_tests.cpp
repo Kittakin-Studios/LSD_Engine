@@ -337,6 +337,16 @@ static void motion_matching_tests(const std::string& data) {
         CHECK(std::fabs(total - 1.0f) < 1e-4f);
     }
     CHECK(settings.blend_mode == 1);  // inertial by default: one input, never a crossfade
+
+    // Leader pose: clothes skinned to the same skeleton copy the body's pose bone by bone, so they skin identically.
+    anim::Pose body, shirt;
+    body.sample(model, &clips[0], clips[0].duration * 0.5f, true);
+    CHECK(shirt.follow(model, model, body) && shirt.joint_count() == body.joint_count());
+    f32 worst = 0.0f;
+    for (u32 i = 0; i < body.joint_count() * 12; ++i) worst = std::fmax(worst, std::fabs(body.joint_rows()[i] - shirt.joint_rows()[i]));
+    CHECK(worst < 1e-4f);
+    anim::Pose alone;  // no leader joints yet: nothing to follow
+    CHECK(!alone.follow(model, model, anim::Pose{}));
     for (int i = 0; i < 30; ++i) CHECK(anim::step_motion(db, settings, walking, state, 1.0f / 30.0f, inputs) == 1);
 
     // Inertialization: right after a jump the pose is still the old one (no pop); a few half-lives

@@ -19,13 +19,16 @@ struct Info {
     const char* description;
 };
 const Info kTemplates[] = {
-    {"Empty", "Nothing but a sun and a sky: start from scratch."},
-    {"First Person", "A blockout arena seen through the player's eyes: walk, look with the mouse, jump onto ramps and stairs, push boxes."},
-    {"Third Person", "The same arena with the player's body in view, the camera on a spring arm over the shoulder."},
+    {"Third Person", "A blockout arena with the player's body in view, the camera on a spring arm over the shoulder."},
+    {"First Person", "The same arena seen through the player's eyes: walk, look with the mouse, jump onto ramps and stairs, push boxes."},
+    {"Side Scroller", "A 3D level played from the side: run and jump along X, the camera follows side-on."},
     {"Platformer", "Floating platforms to jump across, moving and spinning lifts, a goal at the top; falling respawns you."},
-    {"Side Scrolling", "A 3D level played from the side: run and jump along X, the camera follows side-on."},
+    {"Orthographic", "Top-down / isometric: the arena seen from above at an angle through an orthographic camera that follows the player."},
     {"2D", "Paper2D: a tile map level, an animated player sprite (idle, walk, jump), coins, a backdrop and an orthographic camera."},
     {"2.5D", "3D models in layers (foreground, play plane, background) played on a 2D plane through a side-on perspective camera."},
+    {"Character Customization", "A character creator: a UE5-skeleton body on a stage, tabs (Body, Head, Face, Eyes, Nose, Mouth, Ears, Clothes) with morph sliders and clothes per body area, click / slide sounds, saved to the character."},
+    {"Character Selection", "Pick a ready-made character: browse the presets you bring (Content/Characters/Presets) on a stage and choose one."},
+    {"Empty", "Nothing but a sun and a sky: start from scratch."},
 };
 static_assert(sizeof kTemplates / sizeof kTemplates[0] == static_cast<usize>(Template::Count), "one entry per template");
 
@@ -180,6 +183,64 @@ void build_side_scrolling(world::World& w, bool layered) {
     const Entity p = player(w, {0, 0, 0.05f}, 0, true);
     side_scroller(*w.get<world::Character>(p));
     side_camera(w, p, layered ? 22.0f : 14.0f, 2.0f, false, 10.0f);
+}
+
+// Top-down / isometric: the arena through an orthographic camera riding 45 degrees above and behind.
+void build_orthographic(world::World& w) {
+    sun_and_sky(w);
+    arena(w);
+    const Entity p = player(w, {0, 0, 0.05f}, 45, true);
+    w.get<world::Character>(p)->look_sensitivity = 0.0f;  // the view stays put; W is up the screen
+    const Entity cam = w.create("Ortho Camera");
+    w.set_parent(cam, p, false);
+    w.get<world::Transform>(cam)->position = {-14, 0, 14};
+    w.get<world::Transform>(cam)->rotation = {0, 45, 0};  // looking down at 45 degrees
+    auto* c = w.add<world::Camera>(cam);
+    c->auto_activate = true;
+    c->orthographic = true;
+    c->ortho_height = 16.0f;
+}
+
+// A stage for showing a character: floor, backdrop, a key and a fill light, and the camera on it.
+Entity stage(world::World& w, const char* body_name, const char* body_mesh, const char* script, Vec3 camera, f32 camera_fov) {
+    sun_and_sky(w);
+    box(w, "Stage", {0, 0, -0.05f}, {3, 3, 0.1f}, 0x3C3838);
+    box(w, "Floor", {0, 0, -0.2f}, {30, 30, 0.2f}, 0x242855);
+    box(w, "Backdrop", {-3, 0, 3}, {0.2f, 14, 6}, 0x2E2E3A);
+    const Vec3 lights[] = {{2.5f, -2.0f, 2.6f}, {2.0f, 2.5f, 1.6f}};
+    for (const Vec3& at : lights) {
+        const Entity l = w.create("Light");
+        w.get<world::Transform>(l)->position = at;
+        auto* pl = w.add<world::PointLight>(l);
+        pl->intensity = at.y < 0 ? 1600.0f : 700.0f;
+        pl->attenuation_radius = 8.0f;
+    }
+    const Entity body = w.create(body_name);
+    auto* mesh = w.add<world::SkeletalMesh>(body);
+    std::snprintf(mesh->mesh, sizeof mesh->mesh, "%s", body_mesh);
+    if (!body_mesh[0]) {  // no UE5 character in the project yet: a stand-in until one is set
+        const Entity stand_in = box(w, "Placeholder (set the Skeletal Mesh)", {0, 0, 0.9f}, {0.45f, 0.35f, 1.8f}, 0xB4B4B8);
+        w.get<world::StaticMesh>(stand_in)->collision = false;
+        w.set_parent(stand_in, body);
+    }
+    std::snprintf(w.add<world::Script>(body)->script, sizeof(world::Script::script), "%s", script);
+    const Entity cam = w.create("Camera");
+    w.get<world::Transform>(cam)->position = camera;
+    w.get<world::Transform>(cam)->rotation = {0, 4, 180};  // looking back at the body (it faces +X)
+    auto* c = w.add<world::Camera>(cam);
+    c->auto_activate = true;
+    c->fov = camera_fov;
+    return body;
+}
+
+void build_character_customization(world::World& w, const TemplateArt& art) {
+    // Off to the side: the menu covers the left of the screen, the character stands on the right.
+    const Entity body = stage(w, "Character", art.body, art.customize_script, {3.6f, -1.0f, 1.05f}, 40.0f);
+    w.add<world::Outfit>(body);  // its body areas (Shirt, Pants, Shoes...) are filled on the first frame
+}
+
+void build_character_selection(world::World& w, const TemplateArt& art) {
+    stage(w, "Character", art.body, art.select_script, {3.8f, 0.0f, 1.05f}, 40.0f);
 }
 
 void sprite(world::Sprite& s, const char* texture, u32 columns, u32 rows) {
@@ -409,6 +470,9 @@ void build_template_world(world::World& w, Template t, const TemplateArt& art) {
         case Template::SideScrolling: build_side_scrolling(w, false); break;
         case Template::TwoPointFiveD: build_side_scrolling(w, true); break;
         case Template::TwoD: build_2d(w, art); break;
+        case Template::Orthographic: build_orthographic(w); break;
+        case Template::CharacterCustomization: build_character_customization(w, art); break;
+        case Template::CharacterSelection: build_character_selection(w, art); break;
         case Template::Count: break;
     }
 }

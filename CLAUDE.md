@@ -160,8 +160,10 @@ Foliage, Landscape, Animation Sequence, PCG, VFX, 2D in `editor/editor_modes.*`)
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
 Vehicles / Transports / Movers (Place tab, cube placeholders; nodes in the Vehicles and Movers menus).
 Project templates (`editor/templates.*`, levels in `editor/template_levels.*`): the New Project picker on first launch (no saved level) and
-File > New from Template: Empty, First Person, Third Person, Platformer, Side Scrolling, 2D (generated art, scripts and HUD in
-Content/Templates/2D), 2.5D; `template.New <name>`. Window > Viewports: 2D / 2.5D / 3D side by side (`set_viewport_kinds`).
+File > New from Template: Third Person, First Person, Side Scroller, Platformer, Orthographic, 2D (generated art, scripts and HUD in
+Content/Templates/2D), 2.5D, Character Customization / Character Selection (scripts and UI in `editor/template_files/`, embedded at build
+time, written to Content/Templates/Character; clothes in Content/Characters/Clothes/<area>, presets in Content/Characters/Presets), Empty;
+`template.New <name>`. Outfit component (body areas, UE5 bones) + Skeletal Mesh > Leader Pose (`Pose::follow`, `AnimationPlayer::update_outfits`). Window > Viewports: 2D / 2.5D / 3D side by side (`set_viewport_kinds`).
 Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
 script events, text and voice chat (Opus); Play opens a game window per extra player; playtests by join code
 (`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`, the Multiplayer workspace tab (its panel:

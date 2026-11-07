@@ -459,7 +459,15 @@ static void test_templates() {
             editor::build_template_world(w, kind, art);
             const u32 characters = w.count(reflect::type_of<world::Character>());
             CHECK(editor::template_name(kind)[0] && editor::template_description(kind)[0]);
-            CHECK(characters == (kind == editor::Template::Empty ? 0u : 1u));
+            const bool showcase = kind == editor::Template::CharacterCustomization || kind == editor::Template::CharacterSelection;
+            CHECK(characters == (kind == editor::Template::Empty || showcase ? 0u : 1u));
+            if (showcase) {  // a body on a stage, its script, and the camera on it
+                CHECK(w.count(reflect::type_of<world::SkeletalMesh>()) == 1 && w.count(reflect::type_of<world::Script>()) == 1);
+                CHECK(w.count(reflect::type_of<world::Camera>()) == 1);
+                CHECK(w.count(reflect::type_of<world::Outfit>()) == (kind == editor::Template::CharacterCustomization ? 1u : 0u));
+            }
+            CHECK(kind != editor::Template::Orthographic || (w.count(reflect::type_of<world::Camera>()) == 1 &&
+                                                             static_cast<const world::Camera*>(w.at(reflect::type_of<world::Camera>(), 0))->orthographic));
             CHECK(w.count(reflect::type_of<world::DirectionalLight>()) == (kind == editor::Template::TwoD ? 0u : 1u));
             if (characters) {
                 const world::Entity player = w.owner(reflect::type_of<world::Character>(), 0);

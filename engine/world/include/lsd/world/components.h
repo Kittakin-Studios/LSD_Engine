@@ -588,7 +588,36 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:AnimGraph", Tooltip = "A state machine (Idle, Walk/Run blend space, Jump...) driven by parameters; replaces the clip above")
     char anim_graph[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Morph targets (blend shapes: faces, correctives) mixed in by weight; scripts set them with lsd.set_morph")
-    List<MorphWeight, 16> morphs;
+    List<MorphWeight, 64> morphs;
+    LSD_PROPERTY(Edit, Tooltip = "Copies the pose of this object's Skeletal Mesh bone by bone, by bone name (Unreal's Leader Pose Component): clothes and hair skinned to the same skeleton as a body. Empty: its own animation")
+    char leader_pose[64] = "";
+};
+
+// One body area of an Outfit: what is worn there and the bone a rigid piece sticks to.
+LSD_STRUCT(Category = "Character")
+struct OutfitSlot {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The body area (Shirt, Pants, Shoes, Gloves, Hat...); scripts name it in lsd.set_outfit") char slot[24] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "What is worn there: a mesh skinned to the body's skeleton follows its pose; a rigid mesh (a hat, glasses) sticks to Bone. Empty: nothing")
+    char mesh[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The bone (or socket) a rigid piece sticks to (UE5 Manny names: head, spine_03, hand_r, pelvis, foot_r...)") char bone[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Tint of the piece") LinearColor color = LinearColor::hex(0xFFFFFF);
+};
+
+// Modular clothes (Unreal's modular characters with a Leader Pose): each slot's mesh becomes a child
+// of this object, skinned pieces copying its skeleton's pose by bone name, rigid ones attached to
+// their area's bone. An empty list gets the UE5 Manny areas.
+LSD_STRUCT(Component, Category = "Character", Tooltip = "Clothes and gear by body area (shirt on the chest, gloves on the hands...): they follow the Skeletal Mesh's skeleton")
+struct Outfit {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The body areas and what is worn on each") List<OutfitSlot, 16> slots;
+};
+
+// A child the Outfit made for one of its slots (replaced when the slot changes).
+LSD_STRUCT(Component, Category = "Character", Tooltip = "Made by an Outfit for one of its slots")
+struct OutfitPiece {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The Outfit slot it shows") char slot[24] = "";
 };
 
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".

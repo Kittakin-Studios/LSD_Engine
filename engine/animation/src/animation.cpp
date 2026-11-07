@@ -943,6 +943,30 @@ bool Pose::aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forwar
     return rebuild(model, static_cast<i32>(joint));
 }
 
+bool Pose::follow(const SkinnedModel& model, const SkinnedModel& leader_model, const Pose& leader) {
+    const u32 joints = model.joint_count();
+    if (!joints || !leader.impl_ || model.inverse_bind.size() < joints) return false;
+    if (!impl_) impl_ = new Impl();
+    if (joints != joints_) {
+        delete[] rows_;
+        rows_ = new f32[joints * 12];
+        joints_ = joints;
+    }
+    impl_->models.resize(joints);
+    for (u32 j = 0; j < joints; ++j) {
+        const char* name = model.joint_name(j);
+        // The same index first: skeletons exported alike line up (and repeated names stay apart).
+        const i32 l = j < leader_model.joint_count() && std::strcmp(leader_model.joint_name(j), name) == 0 ? static_cast<i32>(j) : leader_model.find_joint(name);
+        const Mat4 joint = l >= 0 ? leader.joint_model(static_cast<u32>(l)) : affine_inverse(model.inverse_bind[j]);  // missing: its bind pose
+        for (int c = 0; c < 4; ++c) impl_->models[j].cols[c] = ozz::math::simd_float4::LoadPtrU(&joint.m[c * 4]);
+        const Mat4 skin = joint * model.inverse_bind[j];
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 4; ++c) rows_[j * 12 + r * 4 + c] = skin.at(r, c);
+        }
+    }
+    return true;
+}
+
 Mat4 Pose::joint_model(u32 joint) const {
     Mat4 m;
     if (!impl_ || joint >= impl_->models.size()) return m;

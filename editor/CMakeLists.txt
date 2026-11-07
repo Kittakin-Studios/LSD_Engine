@@ -11,3 +11,23 @@ if(WIN32)
     COMMAND "$<$<CONFIG:Release>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_FILE:lsd_editor>;${PROJECT_SOURCE_DIR}/lsd_editor.exe>"
     COMMAND_EXPAND_LISTS VERBATIM)
 endif()
+
+# The Character Customization / Selection templates' scripts and UI documents, embedded as text:
+# File > New from Template writes them into Content/Templates/Character.
+set(template_text_dir "${CMAKE_CURRENT_BINARY_DIR}/template_text")
+foreach(pair IN ITEMS "CharacterCustomization.lua;kCustomizationLua" "CharacterSelection.lua;kSelectionLua" "CharacterAppearance.lua;kAppearanceLua"
+                      "UI_CharacterCustomization.rml;kCustomizationRml" "UI_CharacterSelection.rml;kSelectionRml")
+  list(GET pair 0 file)
+  list(GET pair 1 name)
+  add_custom_command(
+    OUTPUT "${template_text_dir}/${name}.h"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${template_text_dir}"
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/template_files/${file} -DOUTPUT=${template_text_dir}/${name}.h -DNAME=${name}
+            -P "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/template_files/${file}" "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
+    COMMENT "Embedding ${file}"
+    VERBATIM
+  )
+  target_sources(lsd_editor PRIVATE "${template_text_dir}/${name}.h")
+endforeach()
+target_include_directories(lsd_editor PRIVATE "${template_text_dir}")

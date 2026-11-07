@@ -390,6 +390,73 @@ bool AnimationPlayer::socket(const world::World& world, const SkinnedCache& cach
     return true;
 }
 
+namespace {
+
+// The UE5 Manny body areas an empty Outfit starts with (bone for rigid pieces).
+const char* const kOutfitAreas[][2] = {{"Hair", "head"},      {"Hat", "head"},        {"Glasses", "head"},  {"Shirt", "spine_03"},
+                                       {"Jacket", "spine_05"}, {"Gloves", "hand_r"},  {"Glove L", "hand_l"}, {"Pants", "pelvis"},
+                                       {"Belt", "pelvis"},     {"Shoes", "foot_r"},   {"Shoe L", "foot_l"},  {"Backpack", "spine_05"}};
+
+} // namespace
+
+void AnimationPlayer::update_outfits(world::World& world, SkinnedCache& cache) {
+    const reflect::TypeInfo& type = reflect::type_of<world::Outfit>();
+    if (!world.count(type)) return;
+    std::vector<world::Entity> bodies;  // first: making pieces adds components and may move the pools
+    for (u32 i = 0; i < world.count(type); ++i) bodies.push_back(world.owner(type, i));
+    for (const world::Entity body : bodies) {
+        auto* outfit = world.get<world::Outfit>(body);
+        if (!outfit) continue;
+        if (!outfit->slots.count) {
+            for (const auto& area : kOutfitAreas) {
+                world::OutfitSlot slot;
+                std::snprintf(slot.slot, sizeof slot.slot, "%s", area[0]);
+                std::snprintf(slot.bone, sizeof slot.bone, "%s", area[1]);
+                outfit->slots.push_back(slot);
+            }
+        }
+        std::vector<world::OutfitSlot> wanted;  // a copy: the pools move below
+        for (u32 i = 0; i < outfit->slots.count; ++i) wanted.push_back(outfit->slots[i]);
+        char body_name[64];
+        std::snprintf(body_name, sizeof body_name, "%s", world.name(body));
+        for (const world::OutfitSlot& slot : wanted) {
+            world::Entity piece;
+            for (u32 s = 0; s < world.slot_count() && !piece.valid(); ++s) {
+                const world::Entity c = world.entity_at_slot(s);
+                const auto* p = c.valid() && world.parent(c) == body ? world.get<world::OutfitPiece>(c) : nullptr;
+                if (p && std::strcmp(p->slot, slot.slot) == 0) piece = c;
+            }
+            if (!slot.mesh[0]) {
+                if (piece.valid()) world.destroy(piece);
+                continue;
+            }
+            const bool skinned = cache.get(slot.mesh) != nullptr;
+            if (!piece.valid()) {
+                piece = world.create(slot.slot);
+                std::snprintf(world.add<world::OutfitPiece>(piece)->slot, sizeof(world::OutfitPiece::slot), "%s", slot.slot);
+                world.set_parent(piece, body, false);  // at the body's origin: skinned pieces share its model space
+            }
+            if (skinned) {
+                if (world.get<world::StaticMesh>(piece)) world.remove(piece, reflect::type_of<world::StaticMesh>());
+                if (world.get<world::AttachToSocket>(piece)) world.remove(piece, reflect::type_of<world::AttachToSocket>());
+                auto* m = world.get<world::SkeletalMesh>(piece) ? world.get<world::SkeletalMesh>(piece) : world.add<world::SkeletalMesh>(piece);
+                if (std::strcmp(m->mesh, slot.mesh) != 0) std::snprintf(m->mesh, sizeof m->mesh, "%s", slot.mesh);
+                std::snprintf(m->leader_pose, sizeof m->leader_pose, "%s", body_name);
+                m->color = slot.color;
+            } else {
+                if (world.get<world::SkeletalMesh>(piece)) world.remove(piece, reflect::type_of<world::SkeletalMesh>());
+                auto* m = world.get<world::StaticMesh>(piece) ? world.get<world::StaticMesh>(piece) : world.add<world::StaticMesh>(piece);
+                if (std::strcmp(m->mesh, slot.mesh) != 0) std::snprintf(m->mesh, sizeof m->mesh, "%s", slot.mesh);
+                m->collision = false;  // worn: the body's capsule collides
+                m->color = slot.color;
+                auto* a = world.get<world::AttachToSocket>(piece) ? world.get<world::AttachToSocket>(piece) : world.add<world::AttachToSocket>(piece);
+                std::snprintf(a->target, sizeof a->target, "%s", body_name);
+                std::snprintf(a->socket, sizeof a->socket, "%s", slot.bone);
+            }
+        }
+    }
+}
+
 void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache& cache) {
     const reflect::TypeInfo& type = reflect::type_of<world::AttachToSocket>();
     for (u32 i = 0; i < world.count(type); ++i) {
@@ -439,6 +506,10 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             }
         }
         if (!state) continue;  // more than 256 animated objects: the rest stay still
+        if (mesh->leader_pose[0]) {  // posed from its leader below, once every leader has its pose
+            followers_.push_back({state, e});
+            continue;
+        }
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
 
@@ -509,6 +580,27 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 from = local(before), to = local(state->time);
         fire_notifies(*set, mesh->clip, from, to, mesh->looping && to < from, at, *sounds);
     }
+    // Leader poses: clothes (and hair, gear) on the same skeleton copy their body's pose by bone name.
+    for (const Follower& f : followers_) {
+        const auto* mesh = world.get<world::SkeletalMesh>(f.entity);
+        const SkinnedEntry* model = mesh ? cache.get(mesh->mesh) : nullptr;
+        if (!model) continue;
+        world::Entity leader;  // by name: its parents first (clothes under a body), then the whole level
+        for (world::Entity p = world.parent(f.entity); p.valid() && !leader.valid(); p = world.parent(p)) {
+            if (std::strcmp(world.name(p), mesh->leader_pose) == 0) leader = p;
+        }
+        for (u32 slot = 0; !leader.valid() && slot < world.slot_count(); ++slot) {
+            const world::Entity c = world.entity_at_slot(slot);
+            if (c.valid() && c != f.entity && std::strcmp(world.name(c), mesh->leader_pose) == 0) leader = c;
+        }
+        const auto* leader_mesh = leader.valid() ? world.get<world::SkeletalMesh>(leader) : nullptr;
+        const SkinnedEntry* leader_model = leader_mesh ? cache.get(leader_mesh->mesh) : nullptr;
+        const anim::Pose* leader_pose = leader_model ? pose(leader) : nullptr;
+        if (leader_pose && leader_pose->joint_count()) f.state->pose.follow(*model->model, *leader_model->model, *leader_pose);
+        else f.state->pose.sample(*model->model, nullptr, 0.0f, false);  // no leader (yet): its rest pose
+        update_morphs(*f.state, *mesh, *model);
+    }
+    followers_.clear();
     ik_count_ = 0;  // requests last one frame
 }
 

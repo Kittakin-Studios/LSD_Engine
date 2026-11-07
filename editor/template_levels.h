@@ -9,7 +9,20 @@ class World;
 
 namespace lsd::editor {
 
-enum class Template : u8 { Empty, FirstPerson, ThirdPerson, Platformer, SideScrolling, TwoD, TwoPointFiveD, Count };
+// In the picker's order: the five game perspectives first.
+enum class Template : u8 {
+    ThirdPerson,
+    FirstPerson,
+    SideScrolling,
+    Platformer,
+    Orthographic,
+    TwoD,
+    TwoPointFiveD,
+    CharacterCustomization,
+    CharacterSelection,
+    Empty,
+    Count
+};
 
 const char* template_name(Template t);
 const char* template_description(Template t);
@@ -22,6 +35,10 @@ struct TemplateArt {
     char backdrop[33] = "";
     char coin_script[33] = "";    // Coin.lua: collected on touch
     char player_script[33] = "";  // Player2D.lua: the coin count on the HUD (UI_HUD2D.rml)
+    // Character Customization / Selection: the body (a UE5-skeleton Skeletal Mesh; empty: a placeholder) and their scripts.
+    char body[33] = "";
+    char customize_script[33] = "";  // CharacterCustomization.lua: tabs, morph sliders, clothes, save
+    char select_script[33] = "";     // CharacterSelection.lua: browse the presets, pick one
 };
 // Fills `world` with the template's level (cleared first). Pure: no files, no editor state.
 void build_template_world(world::World& world, Template t, const TemplateArt& art);
