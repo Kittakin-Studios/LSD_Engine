@@ -1364,9 +1364,18 @@ surface, **Friction** the speed lost along it, **Kill On Hit** removes the parti
 (rain, bullets).
 
 Double-click it to open the **Particle Editor**: a preview (orbit with the mouse), play / pause /
-restart, speed, a timeline to scrub and per-emitter particle counts. Edit in Details; the preview
-follows unsaved changes. Drag the system into the viewport to place a **Particle Effect**
-(Active, Time Scale, Preview in the editor).
+restart, speed, a timeline to scrub and per-emitter particle counts, and the **Emitter Stack**
+(Niagara's stack): a tab per emitter (**+** adds one) and its modules in the order a particle meets
+them, under coloured stages: **Emitter** (name, on / off, local space), **Emitter Update** (Spawn),
+**Particle Spawn** (Initialize Particle, Shape, Velocity), **Particle Update** (Forces, Color, Size,
+Rotation, Over Life, Collision) and **Render** (Renderer). Each stage folds away; **Remove Emitter**
+takes the shown one out. In a wide window the stack sits beside the preview. Edits save by themselves
+a moment later (like Details, which shows the same modules as categories), and the preview follows
+them. Drag the system into the viewport to place a **Particle Effect** (Active, Time Scale, Preview in
+the editor).
+
+![The Emitter Stack](images/ed_particles_stack.jpg)
+*The Particle Editor with its Emitter Stack: Flames and Sparks tabs, the stages and their modules.*
 
 ---
 

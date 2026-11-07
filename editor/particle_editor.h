@@ -39,6 +39,8 @@ private:
     bool loop_ = true;
     f32 speed_ = 1.0f;
     f32 time_ = 0.0f;
+    u32 stack_emitter_ = 0;  // the emitter the stack shows
+    void draw_stack(EditorState& state);
     f32 sim_ms_ = 0.0f;
     f32 yaw_ = -2.4f, pitch_ = 0.3f, distance_ = 5.0f;
     Vec3 focus_{0.0f, 0.0f, 1.0f};

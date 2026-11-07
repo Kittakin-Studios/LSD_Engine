@@ -222,6 +222,7 @@ bool select_asset(EditorState& state, const char* name);
 // The Details panel's working copy of a data asset (unsaved edits included) if it is showing that
 // asset as `type`, else nullptr. Editor windows preview from it (the Particle Editor).
 void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type);
+void mark_data_asset_edited();  // a change made to edited_data_asset's object elsewhere (saved like a Details edit)
 bool asset_matches(const asset::AssetRecord& record, const char* type);
 // The Details panel's look and widgets (asset pickers, choices) for draw_details / draw_properties elsewhere.
 DetailsStyle editor_details_style(EditorState& state);  // "Mesh", "Material", a data type name...

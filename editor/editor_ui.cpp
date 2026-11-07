@@ -3134,6 +3134,8 @@ void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type) 
     return g_data_type == &type && g_data_guid == guid ? g_data : nullptr;
 }
 
+void mark_data_asset_edited() { g_data_dirty = true; }
+
 namespace {
 
 void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
