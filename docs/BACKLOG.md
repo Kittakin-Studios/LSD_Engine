@@ -15,7 +15,7 @@ everything later depends on. Anything a small team does not need to ship a first
 - [x] SDL3 window and event loop
 - [x] RHI interface + adapter scoring, `-gpu=`, `-rhi=`, quality preset recommendation
 - [x] Direct3D 12 backend: adapters, live VRAM budget, debug layer → log
-- [~] Vulkan 1.3 backend: runs (Vulkan SDK 1.4 on the dev PC: DXC compiles its HLSL to SPIR-V at build time, validation layers); a depth buffer, vertex / index buffers, lines and lit meshes (first step: base colour, sun and sky ambient, push constants), the screenshot command (capture_frame); the level draws straight into the window; needs textures, render targets (post pass), shadows, skinning, instancing, sky, particles, material graphs: the D3D12 lit shader shared
+- [~] Vulkan 1.3 backend: runs (Vulkan SDK 1.4 on the dev PC: DXC compiles its HLSL to SPIR-V at build time, validation layers); a depth buffer, vertex / index buffers, textures (mipmapped through a staging buffer, a descriptor set each, shown by ImGui too: thumbnails), the sky, lines and lit meshes (base colour times its texture, Masked, sun and sky ambient, push constants), the screenshot command (capture_frame); the level draws straight into the window; needs render targets (post pass), shadows, skinning, instancing, particles, normal / ORM maps and specular, material graphs: the D3D12 lit shader shared
 - [x] OpenGL 4.6 backend
 - [x] Reflection code generator (`LSD_STRUCT` / `LSD_PROPERTY`) [UHT]
 - [x] Text serialization with versioning (missing keys keep defaults, unknown keys skipped)

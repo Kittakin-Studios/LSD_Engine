@@ -44,7 +44,7 @@ if(LSD_RHI_VULKAN)
   set(spirv_dir "${CMAKE_CURRENT_BINARY_DIR}/spirv")
   if(LSD_DXC_SPIRV)
     # Each shader's vertex and pixel stages, embedded as k<Name>VsSpirv / k<Name>PsSpirv.
-    foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines")
+    foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines" "sky;Sky")
       list(GET pair 0 file)
       list(GET pair 1 name)
       set(hlsl "${CMAKE_CURRENT_SOURCE_DIR}/backends/vulkan/${file}.hlsl")
