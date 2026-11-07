@@ -13,20 +13,53 @@ struct Push {
 [[vk::push_constant]] Push pc;
 [[vk::combinedImageSampler]] [[vk::binding(0, 0)]] Texture2D base_tex;
 [[vk::combinedImageSampler]] [[vk::binding(0, 0)]] SamplerState base_samp;
+#if defined(SKINNED) || defined(INSTANCED)
+// SKINNED: 3 rows (float4) per joint, its skinning matrix; INSTANCED: 3 rows per copy, its world
+// matrix (mvp is then the view-projection). From the frame's ring buffer at this draw's offset.
+[[vk::binding(0, 1)]] StructuredBuffer<float4> rows;
+#endif
 
 struct VsIn {
     [[vk::location(0)]] float3 pos : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float2 uv : TEXCOORD0;
+#ifdef SKINNED
+    [[vk::location(3)]] uint4 joints : BLENDINDICES;
+    [[vk::location(4)]] float4 weights : BLENDWEIGHT;
+#endif
+#ifdef INSTANCED
+    uint instance : SV_InstanceID;
+#endif
 };
 struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float2 uv : TEXCOORD0; };
 
 VsOut vs_main(VsIn i) {
     VsOut o;
-    o.pos = mul(pc.mvp, float4(i.pos, 1));
-    o.normal = pc.n0.xyz * i.normal.x + pc.n1.xyz * i.normal.y + pc.n2.xyz * i.normal.z;
+    float3 position = i.pos, normal = i.normal;
+#ifdef INSTANCED
+    const float4 r0 = rows[i.instance * 3], r1 = rows[i.instance * 3 + 1], r2 = rows[i.instance * 3 + 2];
+    const float4 local = float4(position, 1);
+    o.pos = mul(pc.mvp, float4(dot(r0, local), dot(r1, local), dot(r2, local), 1));
+    const float3 c0 = float3(r0.x, r1.x, r2.x), c1 = float3(r0.y, r1.y, r2.y), c2 = float3(r0.z, r1.z, r2.z);
+    o.normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;  // cofactor: right under any scale
     o.uv = i.uv;
     return o;
+#else
+#ifdef SKINNED
+    float4 r0 = 0, r1 = 0, r2 = 0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        r0 += rows[i.joints[k] * 3] * i.weights[k];
+        r1 += rows[i.joints[k] * 3 + 1] * i.weights[k];
+        r2 += rows[i.joints[k] * 3 + 2] * i.weights[k];
+    }
+    position = float3(dot(r0, float4(position, 1)), dot(r1, float4(position, 1)), dot(r2, float4(position, 1)));
+    normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
+#endif
+    o.pos = mul(pc.mvp, float4(position, 1));
+    o.normal = pc.n0.xyz * normal.x + pc.n1.xyz * normal.y + pc.n2.xyz * normal.z;
+    o.uv = i.uv;
+    return o;
+#endif
 }
 
 float3 to_srgb(float3 c) {

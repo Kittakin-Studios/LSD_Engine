@@ -2,8 +2,9 @@
 // a depth buffer, vertex / index buffers, textures (mipmapped, also shown by ImGui), the sky, lines
 // and lit meshes (base colour and its texture, Masked, sun and sky ambient), the test triangle
 // (SPIR-V compiled from HLSL by DXC at build time) and ImGui.
-// shortcut: no render targets, shadows, skinning, instancing, particles or post pass yet; the scene
-// draws straight into the window (the editor then skips the post pass)
+// Skinned and instanced meshes read their joint / copy matrices from a per-frame ring buffer.
+// shortcut: no render targets, shadows, particles or post pass yet; the scene draws straight into
+// the window (the editor then skips the post pass)
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -34,6 +35,10 @@
 #include "lines_ps.spv.h"
 #include "sky_vs.spv.h"
 #include "sky_ps.spv.h"
+#include "mesh_skinned_vs.spv.h"
+#include "mesh_skinned_ps.spv.h"
+#include "mesh_instanced_vs.spv.h"
+#include "mesh_instanced_ps.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -48,6 +53,9 @@ constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 constexpr u32 kMeshPushBytes = 192;  // mesh.hlsl's Push
 constexpr u32 kSkyPushBytes = 160;   // sky.hlsl's Push
 constexpr u32 kMaxTextures = 4096;
+constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
+constexpr VkDeviceSize kRowsWindow = 64u << 10;    // what one draw may read from it (the descriptor's range)
+constexpr u32 kInstancesPerDraw = static_cast<u32>(kRowsWindow / 48);  // 3 float4 rows per copy
 
 bool check(VkResult result, const char* what) {
     if (result == VK_SUCCESS) return true;
@@ -110,6 +118,15 @@ public:
             vkDestroyPipelineLayout(device_, line_layout_, nullptr);
             vkDestroyPipeline(device_, sky_pipeline_, nullptr);
             vkDestroyPipelineLayout(device_, sky_layout_, nullptr);
+            vkDestroyPipeline(device_, skinned_pipeline_, nullptr);
+            vkDestroyPipeline(device_, instanced_pipeline_, nullptr);
+            vkDestroyPipelineLayout(device_, rows_layout_, nullptr);
+            for (Frame& f : frames_) {
+                if (f.ring) vkDestroyBuffer(device_, f.ring, nullptr);
+                if (f.ring_memory) vkFreeMemory(device_, f.ring_memory, nullptr);
+            }
+            if (rows_pool_) vkDestroyDescriptorPool(device_, rows_pool_, nullptr);
+            if (rows_set_layout_) vkDestroyDescriptorSetLayout(device_, rows_set_layout_, nullptr);
             for (Texture& t : textures_) release_texture(t);
             if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
             if (texture_pool_) vkDestroyDescriptorPool(device_, texture_pool_, nullptr);
@@ -207,6 +224,7 @@ public:
         if (skip_frame_) return;
         vkResetFences(device_, 1, &f.fence);
         vkResetCommandPool(device_, f.pool, 0);
+        f.ring_used = 0;  // the GPU is done with this frame's ring
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(f.cmd, &begin);
@@ -434,8 +452,9 @@ public:
     void set_lightmap_atlas(TextureHandle) override {}
     void draw_mesh(const MeshDraw& draw) override {
         if (skip_frame_ || !mesh_pipeline_) return;
-        // shortcut: skinned and instanced meshes wait for their pipelines (joint and instance buffers)
-        if ((draw.joint_rows && draw.joint_count) || (draw.instance_rows && draw.instance_count)) return;
+        const bool skinned = draw.joint_rows && draw.joint_count;
+        const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
+        if ((skinned && !skinned_pipeline_) || (instanced && !instanced_pipeline_)) return;
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
         if (!vb || !ib || draw.index_count == 0) return;
@@ -451,16 +470,32 @@ public:
         push[39] = has_sun_ ? 1.0f : 0.0f;
         std::memcpy(push + 40, sky_, sizeof(f32) * 3);
         std::memcpy(push + 44, ground_, sizeof(f32) * 3);
-        const VkCommandBuffer cmd = frames_[frame_].cmd;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline_);
-        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, push);
+        Frame& f = frames_[frame_];
+        const VkCommandBuffer cmd = f.cmd;
+        const VkPipelineLayout layout = skinned || instanced ? rows_layout_ : mesh_layout_;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skinned ? skinned_pipeline_ : instanced ? instanced_pipeline_ : mesh_pipeline_);
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, push);
         const Texture* base = lookup_texture(draw.base_color_texture);
         if (!base) base = lookup_texture(white_);
-        if (base) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1, &base->set, 0, nullptr);
+        if (base) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &base->set, 0, nullptr);
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
         vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
+        if (!skinned && !instanced) {
+            vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
+            return;
+        }
+        // Joints (all at once, at most kMaxJoints) or the copies in batches the descriptor's window holds.
+        const u32 total = skinned ? std::min(draw.joint_count, kMaxJoints) : draw.instance_count;
+        const f32* rows = skinned ? draw.joint_rows : draw.instance_rows;
+        for (u32 first = 0; first < total;) {
+            const u32 count = skinned ? total : std::min(total - first, kInstancesPerDraw);
+            u32 at = 0;
+            if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, at)) return;  // full this frame: the rest waits
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &f.rows_set, 1, &at);
+            vkCmdDrawIndexed(cmd, draw.index_count, skinned ? 1 : count, 0, 0, 0);
+            first += count;
+        }
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32* mvp) override {
@@ -770,7 +805,74 @@ private:
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         VkSemaphore image_available = VK_NULL_HANDLE;
+        VkBuffer ring = VK_NULL_HANDLE;  // joints and instance matrices written this frame
+        VkDeviceMemory ring_memory = VK_NULL_HANDLE;
+        u8* ring_mapped = nullptr;
+        VkDeviceSize ring_used = 0;
+        VkDescriptorSet rows_set = VK_NULL_HANDLE;  // the ring as a dynamic storage buffer
     };
+
+    // Copies `bytes` into the frame's ring; `offset` gets where (for the dynamic descriptor).
+    bool ring_write(Frame& f, const void* data, VkDeviceSize bytes, u32& offset) {
+        const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+        const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
+        if (!f.ring_mapped || bytes > kRowsWindow || at + kRowsWindow > kRingBytes) {
+            if (!warned_ring_) LSD_LOG_WARN("vulkan", "This frame's joint / instance buffer is full: some skinned or instanced meshes are skipped.");
+            warned_ring_ = true;
+            return false;
+        }
+        std::memcpy(f.ring_mapped + at, data, bytes);
+        f.ring_used = at + bytes;
+        offset = static_cast<u32>(at);
+        return true;
+    }
+
+    // Each frame's ring buffer (persistently mapped) and its descriptor set (set 1: a dynamic storage buffer).
+    bool create_rings() {
+        VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 1;
+        layout.pBindings = &binding;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &rows_set_layout_), "vkCreateDescriptorSetLayout (rows)")) return false;
+        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, kFramesInFlight};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.maxSets = kFramesInFlight;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &size;
+        if (!check(vkCreateDescriptorPool(device_, &pool, nullptr, &rows_pool_), "vkCreateDescriptorPool (rows)")) return false;
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(gpu_.handle, &props);
+        storage_alignment_ = props.limits.minStorageBufferOffsetAlignment;
+        for (Frame& f : frames_) {
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = kRingBytes;
+            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            if (!check(vkCreateBuffer(device_, &info, nullptr, &f.ring), "vkCreateBuffer (ring)")) return false;
+            VkMemoryRequirements need;
+            vkGetBufferMemoryRequirements(device_, f.ring, &need);
+            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            alloc.allocationSize = need.size;
+            alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            void* mapped = nullptr;
+            if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &f.ring_memory), "vkAllocateMemory (ring)") ||
+                !check(vkBindBufferMemory(device_, f.ring, f.ring_memory, 0), "vkBindBufferMemory (ring)") ||
+                !check(vkMapMemory(device_, f.ring_memory, 0, kRingBytes, 0, &mapped), "vkMapMemory (ring)")) return false;
+            f.ring_mapped = static_cast<u8*>(mapped);
+            VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            set_info.descriptorPool = rows_pool_;
+            set_info.descriptorSetCount = 1;
+            set_info.pSetLayouts = &rows_set_layout_;
+            if (!check(vkAllocateDescriptorSets(device_, &set_info, &f.rows_set), "vkAllocateDescriptorSets (rows)")) return false;
+            VkDescriptorBufferInfo described{f.ring, 0, kRowsWindow};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = f.rows_set;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+            write.pBufferInfo = &described;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+        return true;
+    }
 
     bool create_instance(bool validation) {
         u32 sdl_count = 0;
@@ -1108,16 +1210,19 @@ private:
     // A pipeline for the scene pass (colour + depth): vertex layout, topology, depth test, push constants.
     bool make_pipeline(const u32* vs, usize vs_size, const u32* ps, usize ps_size, const VkVertexInputAttributeDescription* attributes, u32 attribute_count,
                        u32 stride, VkPrimitiveTopology topology, u32 push_bytes, VkShaderStageFlags push_stages, VkPipelineLayout& layout_out, VkPipeline& out,
-                       bool textured = false, bool depth_test = true) {
-        VkPushConstantRange push{push_stages, 0, push_bytes};
-        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layout.pushConstantRangeCount = 1;
-        layout.pPushConstantRanges = &push;
-        if (textured) {
-            layout.setLayoutCount = 1;
-            layout.pSetLayouts = &texture_set_layout_;
+                       bool textured = false, bool depth_test = true, bool rows = false) {
+        if (!layout_out) {  // pipelines sharing a layout (skinned and instanced) make it once
+            VkPushConstantRange push{push_stages, 0, push_bytes};
+            VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layout.pushConstantRangeCount = 1;
+            layout.pPushConstantRanges = &push;
+            const VkDescriptorSetLayout sets[2] = {texture_set_layout_, rows_set_layout_};
+            if (textured) {
+                layout.setLayoutCount = rows ? 2 : 1;
+                layout.pSetLayouts = sets;
+            }
+            if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &layout_out), "vkCreatePipelineLayout (scene)")) return false;
         }
-        if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &layout_out), "vkCreatePipelineLayout (scene)")) return false;
         VkShaderModule modules[2] = {};
         const u32* code[2] = {vs, ps};
         const usize sizes[2] = {vs_size, ps_size};
@@ -1195,7 +1300,14 @@ private:
             LSD_LOG_WARN("vulkan", "This GPU offers %u bytes of push constants (meshes need %u): meshes are not drawn.", props.limits.maxPushConstantsSize, kMeshPushBytes);
             return true;
         }
-        if (!create_texture_support()) return false;
+        if (!create_texture_support() || !create_rings()) return false;
+        const VkVertexInputAttributeDescription skinned_attributes[5] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, position)},
+            {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, normal)},
+            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SkinnedVertex, uv)},
+            {3, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(SkinnedVertex, joints)},
+            {4, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(SkinnedVertex, weights)},
+        };
         const VkVertexInputAttributeDescription mesh_attributes[3] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
@@ -1209,6 +1321,10 @@ private:
                              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, mesh_pipeline_, true) &&
                make_pipeline(kSkyVsSpirv, sizeof kSkyVsSpirv, kSkyPsSpirv, sizeof kSkyPsSpirv, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
                              kSkyPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sky_layout_, sky_pipeline_, false, false) &&
+               make_pipeline(kMeshSkinnedVsSpirv, sizeof kMeshSkinnedVsSpirv, kMeshSkinnedPsSpirv, sizeof kMeshSkinnedPsSpirv, skinned_attributes, 5, sizeof(SkinnedVertex),
+                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, rows_layout_, skinned_pipeline_, true, true, true) &&
+               make_pipeline(kMeshInstancedVsSpirv, sizeof kMeshInstancedVsSpirv, kMeshInstancedPsSpirv, sizeof kMeshInstancedPsSpirv, mesh_attributes, 3, sizeof(MeshVertex),
+                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, rows_layout_, instanced_pipeline_, true, true, true) &&
                make_pipeline(kLinesVsSpirv, sizeof kLinesVsSpirv, kLinesPsSpirv, sizeof kLinesPsSpirv, line_attributes, 2, sizeof(LineVertex),
                              VK_PRIMITIVE_TOPOLOGY_LINE_LIST, sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT, line_layout_, line_pipeline_);
 #else
@@ -1274,6 +1390,12 @@ private:
     VkCommandPool upload_pool_ = VK_NULL_HANDLE;
     VkPipelineLayout sky_layout_ = VK_NULL_HANDLE;
     VkPipeline sky_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout rows_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool rows_pool_ = VK_NULL_HANDLE;
+    VkPipelineLayout rows_layout_ = VK_NULL_HANDLE;  // skinned and instanced: texture set + rows set
+    VkPipeline skinned_pipeline_ = VK_NULL_HANDLE, instanced_pipeline_ = VK_NULL_HANDLE;
+    VkDeviceSize storage_alignment_ = 0;
+    bool warned_ring_ = false;
 };
 
 } // namespace

@@ -44,13 +44,23 @@ if(LSD_RHI_VULKAN)
   set(spirv_dir "${CMAKE_CURRENT_BINARY_DIR}/spirv")
   if(LSD_DXC_SPIRV)
     # Each shader's vertex and pixel stages, embedded as k<Name>VsSpirv / k<Name>PsSpirv.
-    foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines" "sky;Sky")
+    # "file;Name[;DEFINE]": a define makes a variant (mesh_skinned from mesh.hlsl with -DSKINNED...).
+    foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines" "sky;Sky" "mesh;MeshSkinned;SKINNED" "mesh;MeshInstanced;INSTANCED")
       list(GET pair 0 file)
       list(GET pair 1 name)
+      list(LENGTH pair parts)
+      set(defines "")
+      set(out "${file}")
+      if(parts GREATER 2)
+        list(GET pair 2 define)
+        set(defines "-D${define}")
+        string(TOLOWER "${define}" suffix)
+        set(out "${file}_${suffix}")
+      endif()
       set(hlsl "${CMAKE_CURRENT_SOURCE_DIR}/backends/vulkan/${file}.hlsl")
       foreach(stage IN ITEMS vs ps)
-        set(spv "${spirv_dir}/${file}_${stage}.spv")
-        set(header "${spirv_dir}/${file}_${stage}.spv.h")
+        set(spv "${spirv_dir}/${out}_${stage}.spv")
+        set(header "${spirv_dir}/${out}_${stage}.spv.h")
         if(stage STREQUAL "vs")
           set(array k${name}VsSpirv)
         else()
@@ -59,10 +69,10 @@ if(LSD_RHI_VULKAN)
         add_custom_command(
           OUTPUT "${header}"
           COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
-          COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${stage}_6_0 -E ${stage}_main -Fo "${spv}" "${hlsl}"
+          COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${stage}_6_0 -E ${stage}_main ${defines} -Fo "${spv}" "${hlsl}"
           COMMAND "${CMAKE_COMMAND}" -DINPUT=${spv} -DOUTPUT=${header} -DNAME=${array} -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
           DEPENDS "${hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
-          COMMENT "Compiling ${file}.hlsl (${stage}) to SPIR-V"
+          COMMENT "Compiling ${file}.hlsl (${stage} ${defines}) to SPIR-V"
           VERBATIM
         )
         target_sources(lsd_rhi PRIVATE "${header}")
