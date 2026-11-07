@@ -1644,6 +1644,18 @@ button:focus, button:hover { background-color: #EEA70E; }
 - **Menus**: `lsd.ui_show_cursor(true)` frees the mouse for the UI. Arrow keys / D-pad move the
   focus between elements with `nav: auto`; Enter / Space / gamepad A press it.
 - **Over objects**: `lsd.ui_follow(doc, "tag", enemy, 2.2)` keeps an element above an object.
+- **Ready-made HUD widgets** (no document to make; also the UI nodes Health Bar, Remove Health Bar,
+  Damage Number, Show Prompt):
+  - `lsd.health_bar(enemy, hp / max_hp)` puts a bar over an object that goes from green to red as it
+    empties. Call it again to update it; `lsd.remove_health_bar(enemy)` takes it away.
+  - `lsd.damage_number(enemy, 25)` shows a number that rises from the object and fades within a second.
+  - `lsd.prompt("Press E to open")` shows a prompt at the bottom of the screen, `lsd.prompt(nil)` hides it.
+    `lsd.prompt("Pick up", item)` floats over an object instead.
+
+  Widgets of destroyed objects go by themselves.
+
+![HUD widgets](images/hud_widgets.jpg)
+*A health bar and a damage number over the player, and a prompt.*
 - Fonts: `font-family: sans` is always there; add your own `.ttf` / `.otf` to `Content/Fonts` and use
   their family name. Every element starts inline: give blocks `display: block`.
 
@@ -1872,6 +1884,9 @@ UI, saving, settings, languages
 | `lsd.ui_data(name, value)` | a data binding: `{{game.name}}` in documents with `data-model="game"` |
 | `lsd.ui_show_cursor(on)` | menus: free the mouse |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
+| `lsd.ui_style(doc, id, property, value)`, `lsd.ui_rml(doc, id, markup)` | one style property; an element's contents as markup |
+| `lsd.health_bar(e, fraction [, height, color])`, `lsd.remove_health_bar(e)` | a health bar over e |
+| `lsd.damage_number(e, amount [, color])`, `lsd.prompt(text [, e])` | a rising damage number; a prompt (nil hides) |
 | `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
 | `lsd.save_objects(slot, objects, [components], [extra])`, `lsd.load_objects(slot)` | whole objects' components by name |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |

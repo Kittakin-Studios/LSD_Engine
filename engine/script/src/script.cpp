@@ -330,8 +330,127 @@ function lsd.load_objects(slot)
   end
   return data.extra, found
 end
+-- Ready-made HUD widgets: one built-in document, an element per widget, rebuilt when the set changes.
+local hud = {doc = nil, list = {}, order = {}, prompt = false}
+local HUD_RML = [[<rml><head><style>
+body { width: 100%; height: 100%; font-family: sans; }
+div { display: block; }
+.w { position: absolute; }
+.bar { width: 84px; height: 10px; margin-left: -42px; margin-top: -5px; background-color: rgba(13, 4, 4, 210); border: 1px #000000; border-radius: 3px; }
+.fill { height: 100%; width: 100%; background-color: #9BE11F; border-radius: 2px; }
+.dmg { width: 160px; margin-left: -80px; margin-top: -16px; text-align: center; font-size: 28px; font-weight: bold; color: #FFE51A; }
+.prompt { width: 640px; margin-left: -320px; text-align: center; font-size: 22px; color: #FFFFFF; padding: 6px 12px; background-color: rgba(13, 4, 4, 190); border-radius: 6px; }
+#screen_prompt { position: absolute; left: 50%; bottom: 12%; display: none; }
+</style></head><body><div id="widgets"></div><div id="screen_prompt" class="prompt"></div></body></rml>]]
+local function hud_doc()
+  if not hud.doc then hud.doc = lsd._ui_open_text(HUD_RML) end
+  return hud.doc
+end
+local function hud_bar_color(w)
+  if w.color then return w.color end
+  local f = math.max(0, math.min(1, w.fraction))
+  return string.format("#%02X%02X1F", math.floor(255 * (1 - f) + 155 * f), math.floor(60 * (1 - f) + 225 * f))
+end
+local function hud_apply(key, w)
+  local doc = hud.doc
+  if w.kind == "bar" then
+    lsd.ui_style(doc, key .. "_fill", "width", string.format("%.1f%%", math.max(0, math.min(1, w.fraction)) * 100))
+    lsd.ui_style(doc, key .. "_fill", "background-color", hud_bar_color(w))
+  elseif w.kind == "dmg" then
+    if w.color then lsd.ui_style(doc, key, "color", w.color) end
+  end
+  lsd.ui_follow(doc, key, w.e, w.height)
+end
+local function hud_rebuild()
+  local doc = hud_doc()
+  if not doc then return end
+  local parts = {}
+  for _, key in ipairs(hud.order) do
+    local w = hud.list[key]
+    if w.kind == "bar" then parts[#parts + 1] = '<div class="w bar" id="' .. key .. '"><div class="fill" id="' .. key .. '_fill"></div></div>'
+    elseif w.kind == "dmg" then parts[#parts + 1] = '<div class="w dmg" id="' .. key .. '">' .. w.text .. '</div>'
+    else parts[#parts + 1] = '<div class="w prompt" id="' .. key .. '">' .. w.text .. '</div>' end
+  end
+  lsd.ui_rml(doc, "widgets", table.concat(parts))
+  for _, key in ipairs(hud.order) do hud_apply(key, hud.list[key]) end
+end
+local function hud_escape(text)
+  return (string.gsub(tostring(text), "[<>&]", {["<"] = "&lt;", [">"] = "&gt;", ["&"] = "&amp;"}))
+end
+local function hud_add(key, w)
+  if not hud.list[key] then hud.order[#hud.order + 1] = key end
+  hud.list[key] = w
+  hud_rebuild()
+end
+local function hud_remove(key)
+  if not hud.list[key] then return end
+  hud.list[key] = nil
+  for i, k in ipairs(hud.order) do if k == key then table.remove(hud.order, i) break end end
+  if hud.doc then lsd.ui_unfollow(hud.doc, key) end
+  hud_rebuild()
+end
+local hud_number = 0
+function lsd.health_bar(e, fraction, height, color)
+  local key = "hb" .. tostring(e)
+  local w = hud.list[key]
+  if w then
+    w.fraction, w.height, w.color = fraction, height or w.height, color or w.color
+    if hud.doc then hud_apply(key, w) end
+  else
+    hud_add(key, {kind = "bar", e = e, fraction = fraction, height = height or 2.2, color = color})
+  end
+end
+function lsd.remove_health_bar(e) hud_remove("hb" .. tostring(e)) end
+function lsd.damage_number(e, amount, color)
+  if not lsd.alive(e) then return end
+  local live = 0
+  for _, k in ipairs(hud.order) do if hud.list[k].kind == "dmg" then live = live + 1 end end
+  if live >= 32 then return end  -- the oldest are still rising
+  hud_number = hud_number + 1
+  local x, y, z = lsd.position(e)
+  hud_add("dn" .. hud_number, {kind = "dmg", e = e, text = hud_escape(amount), color = color, height = 2.0, born = lsd.time(), base = 2.0})
+end
+function lsd.prompt(text, e)
+  if e then
+    local key = "pr" .. tostring(e)
+    if text == nil then hud_remove(key) else hud_add(key, {kind = "prompt", e = e, text = hud_escape(text), height = 2.4}) end
+    return
+  end
+  local doc = hud_doc()
+  if not doc then return end
+  if text == nil then
+    lsd.ui_style(doc, "screen_prompt", "display", "none")
+  else
+    lsd.ui_set_text(doc, "screen_prompt", tostring(text))
+    lsd.ui_style(doc, "screen_prompt", "display", "block")
+  end
+end
+local function hud_tick(now)
+  if #hud.order == 0 then return end
+  local gone = {}
+  for _, key in ipairs(hud.order) do
+    local w = hud.list[key]
+    if not lsd.alive(w.e) then gone[#gone + 1] = key
+    elseif w.kind == "dmg" then
+      local age = now - w.born
+      if age >= 1.0 then gone[#gone + 1] = key
+      else
+        w.height = w.base + age * 1.2
+        lsd.ui_follow(hud.doc, key, w.e, w.height)
+        lsd.ui_style(hud.doc, key, "opacity", string.format("%.2f", 1.0 - age * age))
+      end
+    end
+  end
+  for _, key in ipairs(gone) do
+    hud.list[key] = nil
+    for i, k in ipairs(hud.order) do if k == key then table.remove(hud.order, i) break end end
+    if hud.doc then lsd.ui_unfollow(hud.doc, key) end
+  end
+  if #gone > 0 then hud_rebuild() end
+end
 function lsd._tick()
   local now, due = lsd.time(), {}
+  hud_tick(now)
   for id, t in pairs(timers) do if now >= t.at then due[#due + 1] = id end end
   table.sort(due)
   for _, id in ipairs(due) do
@@ -1148,6 +1267,24 @@ struct Api {
         lua_pushstring(L, text);
         return 1;
     }
+    static int ui_style(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_style && host.ui_style(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3),
+                                                          luaL_tolstring_compat(L, 4)));
+        return 1;
+    }
+    static int ui_rml(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_rml && host.ui_rml(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3)));
+        return 1;
+    }
+    static int ui_open_text(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const i32 doc = host.ui_open_text ? host.ui_open_text(host.user, luaL_checkstring(L, 1)) : -1;
+        if (doc < 0) lua_pushnil(L);
+        else lua_pushinteger(L, doc);
+        return 1;
+    }
     static int ui_follow(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.ui_follow) host.ui_follow(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), live_entity(L, 3), static_cast<f32>(luaL_optnumber(L, 4, 2.0)));
@@ -1703,7 +1840,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
-        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
+        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow}, {"ui_style", Api::ui_style}, {"ui_rml", Api::ui_rml}, {"_ui_open_text", Api::ui_open_text},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
