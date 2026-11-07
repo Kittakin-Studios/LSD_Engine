@@ -423,8 +423,9 @@ namespace {
 void ActionListener::ProcessEvent(Rml::Event& event) {
     Rml::Element* target = event.GetCurrentElement();
     Rml::Context* context = target ? target->GetContext() : nullptr;
-    auto found = context && g_contexts ? g_contexts->find(context) : decltype(g_contexts->end()){};
-    if (!g_contexts || found == g_contexts->end()) return;
+    if (!context || !g_contexts) return;  // still loading (a slider clamped to its min sends "change" then): not in a context yet
+    const auto found = g_contexts->find(context);
+    if (found == g_contexts->end()) return;
     // A range slider sends "change" before it stores its new value: store it now, so scripts read it.
     if (event.GetId() == Rml::EventId::Change && target->GetTagName() == "input" && target->GetAttribute<Rml::String>("type", "") == "range")
         target->SetAttribute("value", event.GetParameter<float>("value", target->GetAttribute<float>("value", 0.0f)));

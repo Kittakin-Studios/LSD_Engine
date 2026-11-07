@@ -455,7 +455,7 @@ input.range sliderbar { width: 16px; height: 18px; background-color: #F3C312; bo
 <div class="row"><span class="label">Master volume</span><input type="range" class="range" id="master_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Music</span><input type="range" class="range" id="music_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Effects</span><input type="range" class="range" id="effects_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
-<div class="row"><span class="label">Mouse sensitivity</span><input type="range" class="range" id="mouse_sensitivity" min="0" max="50" step="1" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Mouse sensitivity</span><input type="range" class="range" id="mouse_sensitivity" min="1" max="50" step="1" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Invert look</span><button class="button" id="invert_look" onclick="__lsd_toggle">Off</button></div>
 <button class="button" id="close" onclick="__lsd_settings_close">Close</button>
 </div></body></rml>]]
@@ -487,7 +487,7 @@ lsd.on_ui("__lsd_quality", function(id) lsd.set_settings({quality = tonumber(str
 lsd.on_ui("__lsd_toggle", function(id) local s = lsd.get_settings() lsd.set_settings({[id] = not s[id]}) settings_show() end)
 lsd.on_ui("__lsd_slider", function(id)
   local v = tonumber(lsd.ui_value(settings_doc, id))
-  if v and id == "mouse_sensitivity" then v = math.max(v, 1) / 10 end  -- tenths from 0 (shortcut: a range with min above 0 hangs RmlUi here; find out why before using one)
+  if v and id == "mouse_sensitivity" then v = v / 10 end  -- the slider is in tenths (whole steps)
   if v then lsd.set_settings({[id] = v}) end
 end)
 lsd.on_ui("__lsd_settings_close", function() lsd.settings_menu(false) end)
