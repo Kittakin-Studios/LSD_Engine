@@ -581,7 +581,14 @@ Atmosphere:
   ![A mirror sphere without and with a Reflection Capture](images/reflection_capture.jpg)
   *A mirror sphere: the sky gradient only (left), and with a Reflection Capture (right): the floor, the characters and the real sky.*
 - **Height Fog**: exponential fog, thickest at the object's height and thinning upwards; density,
-  falloff, colour, start distance, max opacity.
+  falloff, colour, start distance, max opacity. **Volumetric** (Unreal's Volumetric Fog): the sun
+  lights the fog and its shadows cut through it, so fog glows in sunlight, stays dark behind walls
+  and columns, and makes light shafts. It needs a Directional Light that casts shadows.
+  **Scattering** is how strong the effect is, **Anisotropy** how much brighter it glows looking toward
+  the sun, **View Distance** how far it is traced, **Steps** its quality (16 is a good start).
+
+  ![Volumetric fog](images/volumetric_fog.jpg)
+  *The same view without (top) and with Volumetric: sunlit fog glows, shadowed fog stays dark.*
 - **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in
   wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
   **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA, or

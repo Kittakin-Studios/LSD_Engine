@@ -122,6 +122,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 decal_info; vec4 decals[80];
     vec4 reflection_info; vec4 reflections[8];
     vec4 lightmap_info;
+    vec4 volumetric;
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -168,6 +169,31 @@ float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) lit += texture(shadow_tex, vec3(clamp(uv + vec2(x, y) * shadow_info.z, lo, hi), s.z));
     return lit / 9.0;
+}
+float sun_visibility(vec3 p, vec3 cam) {  // one tap of the sun's shadow in the air (volumetric fog)
+    float dist = length(p - cam);
+    int count = int(shadow_info.x);
+    int c = 0;
+    while (c + 1 < count && dist > shadow_split[c]) ++c;
+    if (dist > shadow_split[count - 1]) return 1.0;
+    vec4 s = shadow_vp[c] * vec4(p, 1.0);
+    vec2 uv = s.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0) return 1.0;
+    vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
+    return texture(shadow_tex, vec3(origin + uv * shadow_tile[c].z, s.z));
+}
+float fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the fog along the view ray
+    if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
+    vec3 to = wpos - cam;
+    float len = min(length(to), volumetric.z);
+    vec3 dir = to / max(length(to), 1e-4);
+    int steps = int(max(volumetric.w, 1.0));
+    float vis = 0.0;
+    for (int k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * (float(k) + 0.5) / float(steps)), cam);
+    vis /= float(steps);
+    float g = volumetric.y, cosv = dot(dir, -lights[int(shadow_info.y)].dir_range.xyz);
+    float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+    return mix(1.0, min(vis * phase, 4.0), volumetric.x);
 }
 float local_shadow(Light L, vec3 wpos, vec3 n) {
     int tile = int(L.spot.y);
@@ -251,14 +277,14 @@ vec2 env_brdf(float ndv, float roughness) {
 }
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
-vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
+vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
     c *= tint.rgb;
     if (post.w > 0.5) c = aces(c);
     if (fog.w > 0.0) {
         float d = max(length(wpos - cam) - fog_color.w, 0.0);
         float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
         float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-        c = mix(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+        c = mix(c, fog_color.rgb * fog_lit, min(1.0 - exp(-fog.x * d * ray), fog.w));
     }
     float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
     c = max(mix(vec3(luma), c, post.x), 0.0);
@@ -270,17 +296,17 @@ vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
     return c;
 }
 vec3 hdr_encode(vec3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
+vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
     if (hdr_out.x > 0.5) {
         if (fog.w > 0.0) {
             float d = max(length(wpos - cam) - fog_color.w, 0.0);
             float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
             float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-            c = mix(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+            c = mix(c, fog_color.rgb * fog_lit, min(1.0 - exp(-fog.x * d * ray), fog.w));
         }
         return hdr_encode(c);
     }
-    return to_srgb(finish(c, wpos, cam, pixel));
+    return to_srgb(finish(c, wpos, cam, pixel, fog_lit));
 }
 vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
     vec3 dp1 = dFdx(wpos), dp2 = dFdy(wpos);
@@ -382,7 +408,7 @@ void main() {
     float horizon = clamp(1.0 + 1.2 * dot(r, geometric_n), 0.0, 1.0);
     lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
-    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
+    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy, fog.w > 0.0 ? fog_light(v_wpos, u_mat[1].yzw) : 1.0), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 #else
 // The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
@@ -395,7 +421,7 @@ void main() {
         float s = dot(d, u_sky[3].xyz);
         c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0) + 0.06 * pow(clamp(s, 0.0, 1.0), 6.0));
     }
-    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy), 1.0);
+    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy, 1.0), 1.0);
 }
 #endif
 )";

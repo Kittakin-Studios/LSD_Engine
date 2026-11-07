@@ -36,6 +36,7 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 decal_info; float4 decals[80];
     float4 reflection_info; float4 reflections[8];
     float4 lightmap_info;
+    float4 volumetric;
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -82,6 +83,32 @@ float sun_shadow(float3 wpos, float3 n, float3 cam) {
     [unroll] for (int y = -1; y <= 1; ++y)
         [unroll] for (int x = -1; x <= 1; ++x) lit += shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * shadow_info.z, lo, hi), s.z);
     return lit / 9.0;
+}
+// One hardware-filtered tap of the sun's shadow at a point in the air (volumetric fog).
+float sun_visibility(float3 p, float3 cam) {
+    const float dist = length(p - cam);
+    uint c = 0;
+    while (c + 1 < (uint)shadow_info.x && dist > shadow_split[c]) ++c;
+    if (dist > shadow_split[(uint)shadow_info.x - 1]) return 1.0;
+    const float4 s = mul(shadow_vp[c], float4(p, 1.0));
+    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0) return 1.0;
+    return shadow_tex.SampleCmpLevelZero(shadow_samp, shadow_tile[c].xy + uv * shadow_tile[c].z, s.z);
+}
+// Volumetric fog: how lit the fog toward wpos is (1 = plain height fog). The sun's light reaching
+// points along the view ray (its shadow sampled at each step), shaped by a Henyey-Greenstein phase.
+float fog_light(float3 wpos, float3 cam) {
+    if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
+    const float3 to = wpos - cam;
+    const float len = min(length(to), volumetric.z);
+    const float3 dir = to / max(length(to), 1e-4);
+    const uint steps = (uint)max(volumetric.w, 1.0);
+    float vis = 0.0;
+    for (uint k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * ((float)k + 0.5) / (float)steps), cam);
+    vis /= (float)steps;
+    const float g = volumetric.y, cosv = dot(dir, -lights[(uint)shadow_info.y].dir_range.xyz);
+    const float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+    return lerp(1.0, min(vis * phase, 4.0), volumetric.x);
 }
 // Spot / point light shadow: the light's tile (a point light's cube face by the major axis).
 float local_shadow(Light L, float3 wpos, float3 n) {
@@ -223,14 +250,14 @@ float3 to_srgb(float3 c) { c = saturate(c); return lerp(1.055 * pow(c, 1.0 / 2.4
 // Fog and post-processing on an exposed colour (see rhi::LightSetup): tint, filmic tonemap, height
 // fog, saturation, contrast, vignette. `pixel` is SV_Position.xy.
 float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
-float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel) {
+float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel, float fog_lit) {
     c *= tint.rgb;
     if (post.w > 0.5) c = aces(c);
     if (fog.w > 0.0) {  // exponential height fog: density falls off with height, integrated along the view ray
         const float d = max(length(wpos - cam) - fog_color.w, 0.0);
         const float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
         const float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-        c = lerp(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+        c = lerp(c, fog_color.rgb * fog_lit, min(1.0 - exp(-fog.x * d * ray), fog.w));
     }
     const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = max(lerp(luma.xxx, c, post.x), 0.0);
@@ -243,17 +270,17 @@ float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel) {
 }
 // Scene targets for the post pass (LightSetup.output): exposed colour, fog applied, range-compressed.
 float3 hdr_encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel) {
+float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel, float fog_lit) {
     if (hdr_out.x > 0.5) {
         if (fog.w > 0.0) {
             const float d = max(length(wpos - cam) - fog_color.w, 0.0);
             const float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
             const float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-            c = lerp(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+            c = lerp(c, fog_color.rgb * fog_lit, min(1.0 - exp(-fog.x * d * ray), fog.w));
         }
         return hdr_encode(c);
     }
-    return to_srgb(finish(c, wpos, cam, pixel));
+    return to_srgb(finish(c, wpos, cam, pixel, fog_lit));
 }
 
 // Normal map without stored tangents: a tangent frame from screen derivatives.
@@ -360,7 +387,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
     lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
-    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
+    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(i.wpos, mat1.yzw) : 1.0), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 
 // The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
@@ -381,5 +408,5 @@ float4 ps_sky(SkyOut i) : SV_Target {
         const float s = dot(d, w0.xyz);
         c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));  // disc + glow + the wide haze around the sun (Mie)
     }
-    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy), 1.0);
+    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy, 1.0), 1.0);
 }

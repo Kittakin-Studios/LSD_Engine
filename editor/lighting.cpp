@@ -118,6 +118,12 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
         s.fog_color[1] = fog->color.g;
         s.fog_color[2] = fog->color.b;
         s.fog_color[3] = fog->start_distance;
+        if (fog->volumetric) {
+            s.volumetric[0] = fog->scattering;
+            s.volumetric[1] = fog->anisotropy;
+            s.volumetric[2] = fog->view_distance;
+            s.volumetric[3] = static_cast<f32>(fog->steps < 4 ? 4u : fog->steps > 64 ? 64u : fog->steps);
+        }
         break;
     }
     const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();

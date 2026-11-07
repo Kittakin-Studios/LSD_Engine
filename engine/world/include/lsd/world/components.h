@@ -865,6 +865,12 @@ struct HeightFog {
     LSD_PROPERTY(Edit, Tooltip = "Colour of the fog") LinearColor color = LinearColor::hex(0xB8D2EA);
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "No fog nearer than this") f32 start_distance = 0.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Never thicker than this (1 = can hide everything)") f32 max_opacity = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Tooltip = "Volumetric fog (Unreal's): the sun lights the fog and shadows cut through it (light shafts, god rays). Needs a Directional Light that casts shadows")
+    bool volumetric = false;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Min = 0, Max = 1, Tooltip = "How strongly light and shadow shape the fog (0 = plain height fog)") f32 scattering = 0.8f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Min = -0.9, Max = 0.9, Tooltip = "How much the light scatters forward: higher glows brighter looking toward the sun") f32 anisotropy = 0.5f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Units = "m", Min = 1, Tooltip = "How far from the camera shafts are traced") f32 view_distance = 60.0f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Min = 4, Max = 64, Tooltip = "Samples along each view ray: more is smoother and slower") u32 steps = 16;
 };
 
 // Colour grading and camera effects (Unreal's Post Process Volume): applies while the camera is
