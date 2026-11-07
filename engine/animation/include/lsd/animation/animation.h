@@ -45,6 +45,8 @@ struct SkinnedModel {
     const char* joint_name(u32 joint) const;
     i32 joint_parent(u32 joint) const;   // -1 for a root
     i32 find_joint(const char* name) const;  // -1 if there is none
+    // The bone root motion comes from: Unreal's "root", else the top bone under the import's Root (Mixamo's Hips).
+    i32 motion_root() const;
 
     struct Impl;
     Impl* impl = nullptr;  // the ozz skeleton
@@ -145,8 +147,8 @@ public:
     // A clip over the sampled pose (Unreal's Layered Blend per Bone, as montages use): from
     // `from_joint` down its children (-1: every joint), mixed in by `weight` 0..1. Call after sample.
     bool layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 weight, i32 from_joint);
-    // Root motion: the root joint's sideways (x, y) move away from its rest place is taken out of the
-    // pose (the mesh stays over its capsule) and returned, in model space; the game moves the object.
+    // Root motion: the motion root's (SkinnedModel::motion_root) sideways (x, y) move away from its rest place
+    // is taken out of the pose (the mesh stays over its capsule) and returned, in model space; the game moves the object.
     Vec3 strip_root(const SkinnedModel& model);
     // Inertial blending (Unreal's Inertialization): call right after sample / sample_blend. When
     // `switched` (the animation jumped this frame), the difference from last frame's pose is kept

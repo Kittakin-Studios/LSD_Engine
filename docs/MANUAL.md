@@ -1415,6 +1415,18 @@ row to change that slot on this object only; the **<** button goes back to the m
 **Notifies** (Unreal's AnimNotify): in the animation file's Details, add a time and a sound; it plays
 at the object when the clip passes that time in Play.
 
+**Root Motion** (Unreal's Root Motion from Everything): tick Skeletal Mesh > **Root Motion** for clips made
+with travel (a walk that moves forward, a lunge, a dodge). In Play the root's sideways travel moves the
+object instead of sliding the mesh away: a Character goes through its capsule (so walls stop it), any other
+object moves itself. The editor shows the clip in place. The travel comes from Unreal's `root` bone, or the
+top bone of other rigs (Mixamo's Hips). Montages started with Root Motion work the same way.
+
+**Curves** (Unreal's Anim Curves): named values keyed along a take, read by scripts while it plays:
+`lsd.anim_curve(self, "Footstep")` (visual scripts: **Get Curve Value**). In the Mesh Editor's Animations,
+scrub to a time, type the curve's name and value, **Key Curve Here**, then **Save**. Values run straight
+between keys and hold past the ends; a blend mixes the clips' values like the pose (a clip without the
+curve counts as 0). The keys are the file's **Curve Keys** in its Details too.
+
 **Animation Graph** (New Data Asset > Animation Graph; Unreal's Anim Blueprint state machine):
 
 - **States**: a clip, or a 1D **blend space** (clips placed along a parameter such as Speed), or a
@@ -1961,6 +1973,7 @@ Audio and animation
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
+| `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
 | `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |

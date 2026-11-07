@@ -66,6 +66,7 @@ public:
     const SkinnedEntry* get(const char* mesh_guid);
     // The clips of `anim_guid` (empty: the mesh's own file) on the mesh's skeleton; nullptr if none.
     const ClipSet* clips(const char* mesh_guid, const char* anim_guid);
+    const ClipSet* set_of(const anim::Clip* clip) const;  // the loaded set holding `clip` (its .meta: curves, notifies)
     const anim::AnimGraph* graph(const char* guid);  // an AnimGraph data asset; nullptr if missing
     void check_files();  // about once a second: reload changed files and notifies
     const asset::AssetRegistry& registry() const { return registry_; }

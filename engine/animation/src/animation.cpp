@@ -1226,13 +1226,41 @@ bool Pose::layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 wei
     return blend.Run() && rebuild(model, -1);
 }
 
+i32 SkinnedModel::motion_root() const {
+    const i32 named = find_joint("root");  // Unreal rigs: the bone made for it, under the import's Root
+    if (named >= 0) return named;
+    for (u32 j = 1; j < joint_count(); ++j) {
+        if (joint_parent(j) == 0) return static_cast<i32>(j);  // joint 0 is the import's Root (axes, scale), which never moves
+    }
+    return joint_count() ? 0 : -1;
+}
+
 Vec3 Pose::strip_root(const SkinnedModel& model) {
     if (!impl_ || impl_->locals.empty() || !model.impl || !model.impl->skeleton) return {};
-    ozz::math::SoaFloat3& t = impl_->locals[0].translation;  // joint 0 is the root (no parent): its local place is its model place
-    const ozz::math::SoaFloat3& rest = model.impl->skeleton->joint_rest_poses()[0].translation;
-    const Vec3 moved{ozz::math::GetX(t.x) - ozz::math::GetX(rest.x), ozz::math::GetX(t.y) - ozz::math::GetX(rest.y), 0.0f};
-    t.x = ozz::math::SetX(t.x, rest.x);
-    t.y = ozz::math::SetX(t.y, rest.y);
+    const i32 r = model.motion_root();
+    if (r < 0 || static_cast<u32>(r) >= joints_) return {};
+    const u32 j = static_cast<u32>(r), lane = j % 4;
+    const i32 parent = model.joint_parent(j);
+    const Mat4 to_model = parent >= 0 ? joint_model(static_cast<u32>(parent)) : Mat4{};  // the bone's local space -> model space
+    ozz::math::SoaFloat3& t = impl_->locals[j / 4].translation;
+    const ozz::math::SoaFloat3& rest = model.impl->skeleton->joint_rest_poses()[j / 4].translation;
+    float x[4], y[4], z[4], rx[4], ry[4], rz[4];
+    ozz::math::StorePtrU(t.x, x);
+    ozz::math::StorePtrU(t.y, y);
+    ozz::math::StorePtrU(t.z, z);
+    ozz::math::StorePtrU(rest.x, rx);
+    ozz::math::StorePtrU(rest.y, ry);
+    ozz::math::StorePtrU(rest.z, rz);
+    const Vec3 local_move{x[lane] - rx[lane], y[lane] - ry[lane], z[lane] - rz[lane]};
+    const Vec3 in_model = transform_vector(to_model, local_move);
+    const Vec3 moved{in_model.x, in_model.y, 0.0f};  // sideways only: height stays the animation's
+    const Vec3 back = transform_vector(affine_inverse(to_model), moved);
+    x[lane] -= back.x;
+    y[lane] -= back.y;
+    z[lane] -= back.z;
+    t.x = ozz::math::simd_float4::LoadPtrU(x);
+    t.y = ozz::math::simd_float4::LoadPtrU(y);
+    t.z = ozz::math::simd_float4::LoadPtrU(z);
     rebuild(model, -1);
     return moved;
 }

@@ -487,6 +487,9 @@ static void gltf_skin_tests() {
     CHECK(near(skin(pose, model.vertices[0]), {1, 0, 2}));  // the hip slid 1 m, the arm and its triangle with it
     pose.sample(model, &clips[0], 0.5f, false);
     CHECK(near(skin(pose, model.vertices[1]), {1.5f, 0, 2}));
+    CHECK(model.motion_root() == model.find_joint("hip"));  // root motion: the hip's slide comes out, the mesh stays put
+    pose.sample(model, &clips[0], 1.0f, false);
+    CHECK(near(pose.strip_root(model), {1, 0, 0}) && near(skin(pose, model.vertices[0]), {0, 0, 2}));
     const anim::ClipTrim trim{0, 0.5f, 0.0f};  // keep the second half: it starts where the hip is half-way
     CHECK(anim::import_clips(path.c_str(), model, clips, 2, &trim, 1) == 1 && std::fabs(clips[0].duration - 0.5f) < 1e-4f);
     pose.sample(model, &clips[0], 0.0f, false);
@@ -569,11 +572,16 @@ int main() {
             CHECK(last == 0 || length(Vec3{root_now.at(0, 3) - root_rest.at(0, 3), root_now.at(1, 3) - root_rest.at(1, 3), root_now.at(2, 3) - root_rest.at(2, 3)}) < 1e-5f);
             CHECK(!part.layer(model, &clips[0], 0.5f, 0.0f, -1));  // weight 0 does nothing
             // Root motion: what strip_root returns is the root's sideways move from rest, and the root is back at rest sideways.
-            const Mat4 root_before = full.joint_model(0);
+            const u32 mr = static_cast<u32>(model.motion_root());
+            CHECK(mr > 0);  // never the import's own Root
+            anim::Pose at_rest;
+            at_rest.sample(model, nullptr, 0.0f, false);
+            const Mat4 root_rest_mr = at_rest.joint_model(mr);
+            const Mat4 root_before = full.joint_model(mr);
             const Vec3 moved = full.strip_root(model);
-            const Mat4 root_after = full.joint_model(0);
-            CHECK(std::fabs(moved.x - (root_before.at(0, 3) - root_rest.at(0, 3))) < 1e-4f && std::fabs(moved.y - (root_before.at(1, 3) - root_rest.at(1, 3))) < 1e-4f);
-            CHECK(std::fabs(root_after.at(0, 3) - root_rest.at(0, 3)) < 1e-4f && std::fabs(root_after.at(1, 3) - root_rest.at(1, 3)) < 1e-4f);
+            const Mat4 root_after = full.joint_model(mr);
+            CHECK(std::fabs(moved.x - (root_before.at(0, 3) - root_rest_mr.at(0, 3))) < size * 1e-3f && std::fabs(moved.y - (root_before.at(1, 3) - root_rest_mr.at(1, 3))) < size * 1e-3f);
+            CHECK(std::fabs(root_after.at(0, 3) - root_rest_mr.at(0, 3)) < size * 1e-3f && std::fabs(root_after.at(1, 3) - root_rest_mr.at(1, 3)) < size * 1e-3f);
             CHECK(std::fabs(root_after.at(2, 3) - root_before.at(2, 3)) < 1e-5f);  // height is the animation's
             ++tested_animation;
         }

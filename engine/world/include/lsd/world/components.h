@@ -647,6 +647,8 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the animation (1 = as made)") f32 play_rate = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends") bool looping = true;
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too, so you see the motion while building") bool playing = true;
+    LSD_PROPERTY(Edit, Tooltip = "Root Motion (Unreal's Root Motion from Everything): in Play the animation's root travel moves the object (a Character through its capsule) instead of sliding the mesh away; the editor shows it in place")
+    bool root_motion = false;
     LSD_PROPERTY(Edit, Widget = "Asset:AnimGraph", Tooltip = "A state machine (Idle, Walk/Run blend space, Jump...) driven by parameters; replaces the clip above")
     char anim_graph[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Morph targets (blend shapes: faces, correctives) mixed in by weight; scripts set them with lsd.set_morph")

@@ -45,6 +45,8 @@ struct MeshWindow {
     i32 clip = -1;            // the animation previewed (-1 = the rest pose), from the mesh's own file
     f32 clip_time = 0.0f;
     bool clip_playing = true;
+    char curve[32] = "Footstep";  // Animations: the curve keyed with Key Curve Here
+    f32 curve_key = 1.0f;
 };
 MeshWindow g_mw;
 
@@ -363,6 +365,38 @@ void draw_mesh_editor(EditorState& s) {
                         g_mw.meta_dirty = true;
                     }
                     ImGui::TextDisabled("Save to cut it; notify times count from the new start.");
+                }
+                // Curves (Unreal's Anim Curves): a key of a named value at the scrubbed time; scripts read it with lsd.anim_curve.
+                ImGui::SetNextItemWidth(110);
+                ImGui::InputText("##curve", g_mw.curve, sizeof g_mw.curve);
+                ImGui::SetItemTooltip("The curve's name (scripts: lsd.anim_curve(self, name); visual scripts: Get Curve Value)");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60);
+                ImGui::DragFloat("##curve_value", &g_mw.curve_key, 0.01f);
+                ImGui::SetItemTooltip("The value at this key");
+                ImGui::SameLine();
+                if (with_tip(ImGui::SmallButton("Key Curve Here"), "Adds (or moves) a key of this curve at the scrubbed time; Save to keep it") && g_mw.curve[0]) {
+                    asset::AnimCurveKey key;
+                    std::snprintf(key.curve, sizeof key.curve, "%s", g_mw.curve);
+                    key.clip = static_cast<u32>(g_mw.clip);
+                    key.time = g_mw.clip_time;
+                    key.value = g_mw.curve_key;
+                    bool replaced = false;
+                    for (asset::AnimCurveKey& k : g_mw.meta.curve_keys) {
+                        if (k.clip == key.clip && std::strcmp(k.curve, key.curve) == 0 && std::fabs(k.time - key.time) < 1.0f / 60.0f) k = key, replaced = true;
+                    }
+                    if (replaced || g_mw.meta.curve_keys.push_back(key)) g_mw.meta_dirty = true;
+                }
+                u32 keys = 0;
+                for (const asset::AnimCurveKey& k : g_mw.meta.curve_keys) keys += k.clip == static_cast<u32>(g_mw.clip) ? 1u : 0u;
+                if (keys) {
+                    f32 v = 0.0f;
+                    const bool has = asset::curve_value(g_mw.meta, static_cast<u32>(g_mw.clip), g_mw.curve, g_mw.clip_time, v);
+                    ImGui::TextDisabled("%u curve key(s) on this take%s", keys, has ? "" : " (none for this name)");
+                    if (has) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("- %s here: %.3f", g_mw.curve, static_cast<f64>(v));
+                    }
                 }
             }
         }

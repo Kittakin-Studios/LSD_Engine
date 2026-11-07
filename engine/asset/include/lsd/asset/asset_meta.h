@@ -4,6 +4,8 @@
 #include "lsd/foundation/math.h"
 #include "lsd/reflect/reflect.h"
 
+#include <cstring>
+
 namespace lsd::asset {
 
 // Something that happens at a moment of an animation (Unreal's AnimNotify): for now, a sound.
@@ -22,6 +24,17 @@ struct ClipRange {
     LSD_PROPERTY(Edit, Tooltip = "Which animation in the file (0 = the first)") u32 clip = 0;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Where the kept part starts in the file's take") f32 start = 0.0f;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Where it ends (0 = the take's end)") f32 end = 0.0f;
+};
+
+// One key of an animation curve (Unreal's Anim Curve): a named value along a clip that scripts read while it plays
+// (lsd.anim_curve): footstep loudness, a weapon trail's strength, how much IK to use.
+LSD_STRUCT()
+struct AnimCurveKey {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The curve's name (scripts ask for it)") char curve[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Which animation in the file (0 = the first)") u32 clip = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "When in the clip") f32 time = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The curve's value there (straight lines between keys, held past the ends)") f32 value = 0.0f;
 };
 
 // A named point on a bone of a skinned mesh (Unreal's Skeletal Mesh Socket): weapons in hands, hats
@@ -77,6 +90,8 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Events at times in this clip (footsteps, sounds, a script call), like Unreal's Anim Notifies") List<AnimNotify, 16> notifies;
     LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Trims takes to a part of them (Unreal's Crop): start and end seconds per clip")
     List<ClipRange, 16> clip_ranges;
+    LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Animation curves (Unreal's Anim Curves): keys of named values along the clips; lsd.anim_curve reads them")
+    List<AnimCurveKey, 64> curve_keys;
     LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Named points on bones to attach props to (Unreal's Sockets)") List<MeshSocket, 16> sockets;
     LSD_PROPERTY(Edit, Category = "Materials", Tooltip = "The material for each of the file's materials (Unreal's Material Slots); Import Materials fills them")
     List<MaterialSlot, 48> material_slots;  // kMaxMaterialSlots (the reflection generator reads the number)
@@ -95,5 +110,24 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "Sound", Widget = "Asset:SoundConcurrency", Tooltip = "How many of its group may play at once") char concurrency[33] = "";
     LSD_PROPERTY(Edit, Category = "Sound", Tooltip = "Text shown at the bottom of the screen while it plays (when subtitles are on)") char subtitle[128] = "";
 };
+
+// Curve `name` of clip `clip` at `time` seconds: straight between its keys (in any order), held past the ends.
+// False when that clip has no such curve.
+inline bool curve_value(const AssetMeta& meta, u32 clip, const char* name, f32 time, f32& out) {
+    const AnimCurveKey *before = nullptr, *after = nullptr;
+    for (const AnimCurveKey& k : meta.curve_keys) {
+        if (k.clip != clip || std::strcmp(k.curve, name) != 0) continue;
+        if (k.time <= time && (!before || k.time >= before->time)) before = &k;
+        if (k.time >= time && (!after || k.time < after->time)) after = &k;
+    }
+    if (!before && !after) return false;
+    if (!before || !after || after->time <= before->time) {
+        out = before ? before->value : after->value;
+        return true;
+    }
+    const f32 t = (time - before->time) / (after->time - before->time);
+    out = before->value + (after->value - before->value) * t;
+    return true;
+}
 
 } // namespace lsd::asset

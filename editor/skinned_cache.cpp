@@ -185,6 +185,13 @@ void SkinnedCache::load(ClipSet& set, const SkinnedEntry& model) {
     set.count = anim::import_clips(path, *model.model, set.clips, 16, trims, set.meta.clip_ranges.count);
 }
 
+const ClipSet* SkinnedCache::set_of(const anim::Clip* clip) const {
+    for (u32 i = 0; i < set_count_; ++i) {
+        if (clip >= sets_[i]->clips && clip < sets_[i]->clips + sets_[i]->count) return sets_[i];
+    }
+    return nullptr;
+}
+
 const ClipSet* SkinnedCache::clips(const char* mesh_guid, const char* anim_guid) {
     const SkinnedEntry* model = get(mesh_guid);
     if (!model) return nullptr;

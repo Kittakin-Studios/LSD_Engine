@@ -1,5 +1,6 @@
 // Asset pipeline tests, including the milestone 2 exit test on a real Blender FBX:
 // import it into Content/, find it by search, compile it and load the result.
+#include "lsd/asset/asset_meta.h"
 #include "lsd/asset/localization.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
@@ -279,6 +280,30 @@ static void test_texture(const fs::path& root) {
     CHECK(asset::type_from_extension(".PNG") == asset::AssetType::Texture && asset::type_from_extension(".tga") == asset::AssetType::Texture);
 }
 
+// Animation curves: straight between keys given in any order, held past the ends, per clip and name.
+static void test_anim_curves() {
+    asset::AssetMeta meta;
+    auto key = [&](const char* curve, u32 clip, f32 time, f32 value) {
+        asset::AnimCurveKey k;
+        std::snprintf(k.curve, sizeof k.curve, "%s", curve);
+        k.clip = clip;
+        k.time = time;
+        k.value = value;
+        meta.curve_keys.push_back(k);
+    };
+    key("Footstep", 0, 1.0f, 1.0f);
+    key("Footstep", 0, 0.0f, 0.0f);
+    key("Footstep", 1, 0.0f, 5.0f);
+    key("Trail", 0, 0.5f, 2.0f);
+    f32 v = -1.0f;
+    CHECK(asset::curve_value(meta, 0, "Footstep", 0.25f, v) && std::fabs(v - 0.25f) < 1e-6f);
+    CHECK(asset::curve_value(meta, 0, "Footstep", 3.0f, v) && v == 1.0f);   // held after the last key
+    CHECK(asset::curve_value(meta, 0, "Footstep", -1.0f, v) && v == 0.0f);  // and before the first
+    CHECK(asset::curve_value(meta, 1, "Footstep", 0.7f, v) && v == 5.0f);   // another clip's own keys
+    CHECK(asset::curve_value(meta, 0, "Trail", 0.0f, v) && v == 2.0f);      // one key: everywhere
+    CHECK(!asset::curve_value(meta, 2, "Footstep", 0.0f, v) && !asset::curve_value(meta, 0, "Nope", 0.0f, v));
+}
+
 static void test_localization() {
     const char* path = LSD_TEST_TEMP_DIR "/ST_Test.csv";
     if (FILE* f = std::fopen(path, "wb")) {
@@ -428,6 +453,7 @@ static void test_material_import(const fs::path& root) {
 int main() {
     test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();
+    test_anim_curves();
     test_fbx_parts();
     test_normals();
     const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "asset_tests";

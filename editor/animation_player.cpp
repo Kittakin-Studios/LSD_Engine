@@ -282,7 +282,72 @@ bool AnimationPlayer::take_root_motion(world::Entity e, Vec3& moved) {
         m.moved = {};
         return true;
     }
+    for (State& s : states_) {
+        if (!s.used || !s.root_on || s.owner != e) continue;
+        moved = s.root_moved;
+        s.root_moved = {};
+        return true;
+    }
     return false;
+}
+
+void AnimationPlayer::step_root_motion(const world::World& world, State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& entry, const anim::BlendInput* inputs, u32 count) {
+    state.root_on = mesh.root_motion;
+    if (!mesh.root_motion) {
+        state.root_started = false;
+        state.root_moved = {};
+        return;
+    }
+    u32 best = 0;  // a loop wraps when the strongest clip goes back to its start
+    for (u32 k = 1; k < count; ++k) {
+        if (inputs[k].weight > inputs[best].weight) best = k;
+    }
+    const anim::Clip* clip = count ? inputs[best].clip : nullptr;
+    const f32 ratio = count ? inputs[best].ratio : 0.0f;
+    const bool wrapped = clip && clip == state.root_clip && ratio < state.root_ratio;
+    state.root_clip = clip;
+    state.root_ratio = ratio;
+    const Vec3 offset = state.pose.strip_root(*entry.model);
+    // shortcut: the frame a loop wraps repeats last frame's step (the root jumps back to its start); exact would sample the clip's ends
+    const Vec3 step = !state.root_started ? Vec3{} : wrapped ? state.root_step : offset - state.root_last;
+    state.root_step = step;
+    state.root_last = offset;
+    state.root_started = true;
+    if (in_play_) state.root_moved = state.root_moved + transform_vector(skeletal_matrix(world, state.entity, mesh, &entry), step);  // the editor shows it in place
+}
+
+bool AnimationPlayer::curve_value(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* name, f32& value) const {
+    for (const State& s : states_) {
+        if (!s.used || !s.input_count) continue;
+        bool mine = false;  // e itself, or a parent of the mesh (a Character)
+        for (world::Entity p = s.entity; p.valid() && !mine; p = world.parent(p)) mine = p == e;
+        if (!mine) continue;
+        f32 sum = 0.0f, total = 0.0f;
+        bool any = false;
+        for (u32 k = 0; k < s.input_count; ++k) {
+            const anim::BlendInput& in = s.inputs[k];
+            const ClipSet* set = in.clip ? cache.set_of(in.clip) : nullptr;
+            f32 v = 0.0f;  // a clip without the curve counts as 0 (as Unreal's)
+            if (set && asset::curve_value(set->meta, static_cast<u32>(in.clip - set->clips), name, in.ratio * in.clip->duration, v)) any = true;
+            sum += v * in.weight;
+            total += in.weight;
+        }
+        if (!any) continue;
+        value = total > 0.0f ? sum / total : 0.0f;
+        return true;
+    }
+    return false;
+}
+
+void AnimationPlayer::apply_root_motion(world::World& world, world::Entity player) {
+    for (State& s : states_) {
+        if (!s.used || !s.root_on || s.owner == player || !world.alive(s.owner)) continue;
+        Mat4 m = world.world_matrix(s.owner);
+        m.at(0, 3) += s.root_moved.x;
+        m.at(1, 3) += s.root_moved.y;
+        world.set_world_matrix(s.owner, m);
+        s.root_moved = {};
+    }
 }
 
 void AnimationPlayer::take_finished_montages(std::vector<world::Entity>& out) {
@@ -480,6 +545,7 @@ void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache&
 void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds) {
     cache_ = &cache;
     dt_ = dt;
+    in_play_ = sounds != nullptr;  // Play, running
     for (State& s : states_) {  // objects deleted or without the component any more
         if (!s.used || (world.alive(s.entity) && world.get<world::SkeletalMesh>(s.entity))) continue;
         s.used = false;
@@ -514,6 +580,13 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         }
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        state->owner = e;  // root motion moves its Character (this object or a parent), else the object itself
+        for (world::Entity p = e; p.valid(); p = world.parent(p)) {
+            if (world.get<world::Character>(p)) {
+                state->owner = p;
+                break;
+            }
+        }
 
         // Motion Matching: the Character (this object or a parent) asks for it; it picks the frames.
         const world::Character* character = nullptr;
@@ -571,6 +644,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             const u32 n = anim::step_graph(*run, table, table_count, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
+            step_root_motion(world, *state, *mesh, *model, inputs, n);
             apply_ik(world, *state, *model);
             update_morphs(*state, *mesh, *model);
             // Notifies follow the strongest clip (a blend space's feet are in step, so one is enough).
@@ -595,11 +669,12 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 before = state->time;
         if (clip && mesh->playing) state->time += dt * mesh->play_rate;
         state->pose.sample(*model->model, clip, state->time, mesh->looping);
-        apply_ik(world, *state, *model);
         f32 ratio = clip && clip->duration > 0.0f ? state->time / clip->duration : 0.0f;  // as Pose::sample does
         ratio = mesh->looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
         state->inputs[0] = {clip, ratio, 1.0f};
         state->input_count = clip ? 1 : 0;
+        step_root_motion(world, *state, *mesh, *model, state->inputs, state->input_count);
+        apply_ik(world, *state, *model);
         update_morphs(*state, *mesh, *model);
 
         // Notifies whose time this frame's advance crossed (wrapping when looping).

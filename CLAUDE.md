@@ -188,7 +188,7 @@ never art), tools (console, lua, objects, assets, log, read / write code files; 
 Gun on a hand socket), project context, `assistant.Ask` / `assistant.Lesson`.
 Motion Matching (`engine/animation/motion_matching.*`): Character > Motion Matching; databases built in `AnimationPlayer::motion_for`.
 State Machine window for AnimGraphs (`editor/anim_graph_editor.*`, double-click the asset). Montages and root motion (`lsd.play_montage`, Play / Stop Montage nodes, `Pose::layer` / `strip_root`, `on_montage_ended`), `lsd.camera_forward`.
-Rigged glTF / GLB (`import_skinned_gltf` / `import_clips_gltf` in `engine/animation/src/animation.cpp`, cgltf) and take trims (.meta `clip_ranges`, `anim::ClipTrim`; Mesh Editor > Animations: preview, scrub, Trim).
+Rigged glTF / GLB (`import_skinned_gltf` / `import_clips_gltf` in `engine/animation/src/animation.cpp`, cgltf) and take trims (.meta `clip_ranges`, `anim::ClipTrim`; Mesh Editor > Animations: preview, scrub, Trim). SkeletalMesh::root_motion (`AnimationPlayer::step_root_motion`, `Pose::strip_root` from `SkinnedModel::motion_root`), animation curves (.meta `curve_keys`, `asset::curve_value`, `lsd.anim_curve`).
 Post: Color Grading LUT, camera motion blur, contact shadows (Directional Light). Reflection Captures (`engine/render/reflection.*`, Build >
 Build Reflection Captures). Masked materials cast cut-out shadows (`rhi::ShadowCutout`). CPU occlusion culling (`engine/render/occlusion.*`,
 `r.OcclusionCulling`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.

@@ -812,6 +812,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const auto* a = static_cast<PlaySession*>(user)->animations_;
         return a && a->montage_playing(e, slot);
     };
+    host.anim_curve = [](void* user, world::Entity e, const char* name, f32& value) {
+        const auto& self = *static_cast<PlaySession*>(user);
+        return self.animations_ && self.skinned_ && self.animations_->curve_value(*self.world_, *self.skinned_, e, name, value);
+    };
     host.set_anim_param = [](void* user, world::Entity e, const char* name, f32 value) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.animations_) self.animations_->set_param(*self.world_, e, name, value);
@@ -1811,6 +1815,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         sounds_->audio()->set_position(emitters_[i].voice, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
     }
     update_audio_volumes(world, dt);
+    if (animations_) animations_->apply_root_motion(world, character_);  // root motion of objects without the player's Character
     send_hits();
     update_triggers(world);
     {

@@ -53,7 +53,12 @@ public:
     // Objects whose montage ended (played out or stopped) since the last call: Play sends them on_montage_ended.
     void take_finished_montages(std::vector<world::Entity>& out);
     // How far a root-motion montage moved `e` since the last call (world space, metres); false when none plays.
+    // Also a Skeletal Mesh with Root Motion on: `e` is its Character (this object or a parent).
     bool take_root_motion(world::Entity e, Vec3& moved);
+    // Play: root motion of objects that are not `player` (whose Character takes it) moves the object itself.
+    void apply_root_motion(world::World& world, world::Entity player);
+    // Animation curve `name` where `e` (or the Skeletal Mesh below it) plays now, blended like the pose; false if no clip has it.
+    bool curve_value(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* name, f32& value) const;
 
     // IK for the next update (scripts call it every frame they want it): a bone reaches a world
     // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
@@ -80,7 +85,14 @@ private:
         bool used = false;
         anim::MotionState motion;
         const anim::MotionData* motion_data = nullptr;  // what `motion` indexes (a rebuild restarts it)
+        // Root motion (SkeletalMesh::root_motion): who it moves, and the root's travel not yet taken.
+        world::Entity owner;
+        bool root_on = false, root_started = false;
+        const anim::Clip* root_clip = nullptr;  // the strongest clip last frame and where it was (a loop wrapping)
+        f32 root_ratio = 0.0f;
+        Vec3 root_last, root_step, root_moved;
     };
+    void step_root_motion(const world::World& world, State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& entry, const anim::BlendInput* inputs, u32 count);
     // Motion Databases built for a skeleton, rebuilt when a clip file or the database changes.
     struct Motion {
         char mesh[33];
@@ -108,6 +120,7 @@ private:
     std::vector<world::Entity> finished_montages_;
     SkinnedCache* cache_ = nullptr;  // during update (montages read their clips)
     f32 dt_ = 0.0f;
+    bool in_play_ = false;  // root motion moves objects only in Play
     void apply_montage(const world::World& world, State& state, const SkinnedEntry& entry);
     const Motion* motion_for(SkinnedCache& cache, const world::SkeletalMesh& mesh, const SkinnedEntry& model, const world::Character& character);
     struct MotionInputs {
