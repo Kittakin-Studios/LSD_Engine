@@ -150,6 +150,17 @@ u32 ParticlePlayer::take_finished(world::Entity* out, u32 capacity) {
     return n;
 }
 
+// The mesh shader's exponential height fog per vertex (the particles are already in world space): alpha
+// particles take on the fog's colour, additive ones fade to nothing (fog adds no light of its own).
+void ParticlePlayer::apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 eye, bool additive) const {
+    if (fog_[3] <= 0.0f) return;
+    for (u32 i = 0; i < count; ++i) {
+        rhi::ParticleVertex& v = vertices[i];
+        const f32 f = particles::fog_amount(fog_, fog_color_[3], eye, {v.position[0], v.position[1], v.position[2]});
+        for (int c = 0; c < 3; ++c) v.color[c] = additive ? v.color[c] * (1.0f - f) : v.color[c] + (fog_color_[c] - v.color[c]) * f;
+    }
+}
+
 void ParticlePlayer::draw_instance(rhi::Device& device, const particles::ParticleInstance& instance, const particles::ParticleSystem& system,
                                    const Mat4& world, const Mat4& view_proj, const Mat4& view, Vec3 eye) {
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
@@ -201,6 +212,7 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
         const u32 n = emitter.renderer == 2 ? instance.build_ribbon(system, k, world, eye, vertices_, kMaxVertices)
                                              : instance.build_sprites(system, k, world, eye, right, up, vertices_, kMaxVertices);
         if (!n) continue;
+        apply_fog(vertices_, n, eye, emitter.blend == 1);
         const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
         device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);
     }

@@ -174,6 +174,14 @@ void bracket(const List<Key, N>& keys, f32 t, u32& a, u32& b, f32& blend) {
 
 } // namespace
 
+f32 fog_amount(const f32 fog[4], f32 start, Vec3 eye, Vec3 p) {
+    if (fog[3] <= 0.0f) return 0.0f;
+    const f32 d = std::fmax(length(p - eye) - start, 0.0f);
+    const f32 h0 = eye.z - fog[2], h1 = p.z - fog[2], dh = h1 - h0;
+    const f32 ray = std::fabs(dh * fog[1]) > 1e-4f ? (std::exp(-fog[1] * h0) - std::exp(-fog[1] * h1)) / (fog[1] * dh) : std::exp(-fog[1] * h0);
+    return std::fmin(1.0f - std::exp(-fog[0] * d * ray), fog[3]);
+}
+
 ParticleEmitter active_modules(const ParticleEmitter& in) {
     ParticleEmitter e = in;
     const u32 off = in.disabled_modules;

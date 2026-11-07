@@ -103,6 +103,9 @@ enum ModuleBit : u32 { kModuleShape = 1, kModuleVelocity = 2, kModuleForces = 4,
 // The emitter as it runs: switched-off modules neutral (no shape, no speed, no forces, Start colour / size kept, no
 // spin, no over-life keys, no collision).
 ParticleEmitter active_modules(const ParticleEmitter& e);
+// How much height fog covers a point seen from `eye` (0..1), the mesh shader's exponential height fog:
+// fog = density, height falloff, base height, max opacity; start = no fog nearer than this.
+f32 fog_amount(const f32 fog[4], f32 start, Vec3 eye, Vec3 point);
 f32 size_at(const ParticleEmitter& e, f32 t);
 LinearColor color_at(const ParticleEmitter& e, f32 t);
 

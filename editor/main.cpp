@@ -225,6 +225,7 @@ const lsd::editor::CachedMesh* lightmapped_mesh(lsd::editor::MeshCache& meshes, 
 
 // Skinned shadow casters (within `range` of `light` when range > 0).
 bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false);  // below
+lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fog, fog_color), for the particles
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
 
@@ -671,6 +672,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     }
     device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
     device.set_lights(lights);
+    std::memcpy(g_view_fog, lights.fog, sizeof lights.fog);
+    std::memcpy(g_view_fog + 4, lights.fog_color, sizeof lights.fog_color);
     lsd::rhi::SkyDraw sky;
     if (!stats.view_mode_unlit_or_wire() && lsd::editor::world_sky(world, view_proj, eye, skip_hidden, sky)) device.draw_sky(sky);  // behind everything
     stats.stat_draws = 0;
@@ -2856,6 +2859,7 @@ int main(int argc, char** argv) {
                         encoded[c] = std::sqrt(lin / (1.0f + lin));
                     }
                     draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_scene, encoded, true);
+                    effects->set_fog(g_view_fog, g_view_fog + 4);
                     effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
                     lsd::rhi::PostDraw shot = post;
                     shot.taa = false;  // one frame: no history
@@ -2865,6 +2869,7 @@ int main(int argc, char** argv) {
                     device->draw_post(shot);
                 } else if (shot_target.valid()) {
                     draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_target, clear_color, false);
+                    effects->set_fog(g_view_fog, g_view_fog + 4);
                     effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
                 }
                 device->set_render_target({}, nullptr);
@@ -2885,6 +2890,7 @@ int main(int argc, char** argv) {
                                                                                        : view_proj;
                 device->draw_lines(grid.vertices, grid.vertex_count, grid_proj.m);
             }
+            effects->set_fog(g_view_fog, g_view_fog + 4);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
             if (scene.valid()) {
                 post.scene = scene;

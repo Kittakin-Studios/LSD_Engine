@@ -114,11 +114,24 @@ static void test_modules(Allocator& heap) {
     CHECK(fx.particles(0)[0].position.z < 1.0f);  // back on: it falls
 }
 
+// Height fog on particles: none up close, more with distance, thinner higher up, capped by max opacity.
+static void test_fog() {
+    const f32 fog[4] = {0.05f, 0.2f, 0.0f, 0.9f};
+    const Vec3 eye{0, 0, 1};
+    const f32 near = particles::fog_amount(fog, 0.0f, eye, {2, 0, 1}), far = particles::fog_amount(fog, 0.0f, eye, {100, 0, 1});
+    CHECK(near > 0.0f && near < 0.2f && far > near && far <= 0.9f + 1e-6f);
+    CHECK(particles::fog_amount(fog, 0.0f, eye, {50, 0, 30}) < particles::fog_amount(fog, 0.0f, eye, {50, 0, 1}));  // up in thinner air
+    CHECK(particles::fog_amount(fog, 10.0f, eye, {5, 0, 1}) == 0.0f);  // nearer than the start distance
+    const f32 none[4] = {0.05f, 0.2f, 0.0f, 0.0f};
+    CHECK(particles::fog_amount(none, 0.0f, eye, {100, 0, 1}) == 0.0f);  // no fog in the level
+}
+
 int main() {
     Allocator& heap = default_allocator();
     test_collision(heap);
     test_ribbon(heap);
     test_modules(heap);
+    test_fog();
     particles::ParticleSystem system;
     system.emitters.count = 1;
     particles::ParticleEmitter& e = system.emitters[0];

@@ -35,8 +35,14 @@ public:
     void reset();         // every effect starts over (Play)
     void check_files();   // about once a second
     u32 particle_count() const { return particle_count_; }
+    // The view's height fog (rhi::LightSetup fog / fog_color): sprites and ribbons fade into it like meshes.
+    void set_fog(const f32 fog[4], const f32 fog_color[4]) {
+        for (int k = 0; k < 4; ++k) fog_[k] = fog[k], fog_color_[k] = fog_color[k];
+    }
 
 private:
+    f32 fog_[4] = {}, fog_color_[4] = {};
+    void apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 eye, bool additive) const;
     struct System {
         char guid[33];
         particles::ParticleSystem system;
