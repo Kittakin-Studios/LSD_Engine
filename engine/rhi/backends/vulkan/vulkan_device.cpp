@@ -5,8 +5,8 @@
 // Skinned and instanced meshes read their joint / copy matrices from a per-frame ring buffer; the sun
 // and the spot / point lights cast shadows (depth-only passes into shadow atlases, compare sampler);
 // game UI and particles stream their vertices through a per-frame buffer. Render targets (colour +
-// depth) take thumbnails, previews and the scene for the post pass, which runs D3D12's shared
-// shaders/post.hlsl compiled to SPIR-V.
+// depth) take thumbnails, previews and the scene for the post pass. Lit meshes, the sky and the post
+// pass run D3D12's own shaders (engine/rhi/shaders/mesh.hlsl and post.hlsl) compiled to SPIR-V.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <new>
 #include <vector>
@@ -75,8 +76,10 @@ constexpr u32 kMaxAdapters = 16;
 constexpr u32 kMaxSwapchainImages = 8;
 constexpr u32 kMaxBuffers = 4096;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
-constexpr u32 kMeshPushBytes = 192;  // mesh.hlsl's Push
-constexpr u32 kSkyPushBytes = 160;   // sky.hlsl's Push
+constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 floats, as D3D12's root constants)
+constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
+constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / Instances block: 3 float4 rows each
+constexpr VkDeviceSize kParamsBytes = 256;            // its MaterialParams block (16 float4)
 constexpr u32 kMaxTextures = 4096;
 constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
 constexpr VkDeviceSize kRowsWindow = 64u << 10;    // what one draw may read from it (the descriptor's range)
@@ -85,7 +88,9 @@ constexpr u32 kShadowPushBytes = 80;  // shadow.hlsl's Push
 constexpr u32 kUiPushBytes = 16;      // ui.hlsl's Push
 constexpr u32 kParticlePushBytes = 80;  // particle.hlsl's Push
 constexpr VkDeviceSize kStreamBytes = kParticleRingBytes;  // per frame in flight: UI and particle vertices
-enum class Blend { Opaque, Premultiplied, Alpha, Additive };  // make_pipeline's colour blending
+// make_pipeline's colour blending: UI (premultiplied), particles / outline (alpha, additive) and the
+// lit meshes' MeshDraw::blend modes, which keep the scene target's alpha (SSR) as D3D12 does.
+enum class Blend { Opaque, Premultiplied, Alpha, Additive, MeshTranslucent, MeshAdditive, MeshOverdraw };
 constexpr u32 kPostPushBytes = 192;  // post.hlsl's Post constants (48 floats)
 enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kPostPasses };
 constexpr u32 kPostSetsPerFrame = 512;  // post passes' descriptor sets a frame (about 16 a view)
@@ -128,6 +133,7 @@ struct PhysicalDevice {
 class VulkanDevice final : public Device {
 private:
     struct Texture;  // defined below; passes take it by reference
+    struct Frame;
 
 public:
     ~VulkanDevice() override {
@@ -148,14 +154,14 @@ public:
             }
             vkDestroyPipeline(device_, pipeline_, nullptr);
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
-            vkDestroyPipeline(device_, mesh_pipeline_, nullptr);
+            for (auto& kind : mesh_pipelines_) {
+                for (VkPipeline pipeline : kind) vkDestroyPipeline(device_, pipeline, nullptr);
+            }
             vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
+            vkDestroyPipelineLayout(device_, shadow_layout_, nullptr);
             vkDestroyPipeline(device_, line_pipeline_, nullptr);
             vkDestroyPipelineLayout(device_, line_layout_, nullptr);
             vkDestroyPipeline(device_, sky_pipeline_, nullptr);
-            vkDestroyPipelineLayout(device_, sky_layout_, nullptr);
-            vkDestroyPipeline(device_, skinned_pipeline_, nullptr);
-            vkDestroyPipeline(device_, instanced_pipeline_, nullptr);
             for (VkPipeline shadow : shadow_pipelines_) vkDestroyPipeline(device_, shadow, nullptr);
             vkDestroyPipeline(device_, ui_pipeline_, nullptr);
             vkDestroyPipeline(device_, particle_pipelines_[0], nullptr);
@@ -170,8 +176,13 @@ public:
             if (post_set_layout_) vkDestroyDescriptorSetLayout(device_, post_set_layout_, nullptr);
             if (post_sampler_) vkDestroySampler(device_, post_sampler_, nullptr);
             if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
-            for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
-            if (shadow_set_layout_) vkDestroyDescriptorSetLayout(device_, shadow_set_layout_, nullptr);
+            for (Frame& f : frames_) {
+                if (f.draw_pool) vkDestroyDescriptorPool(device_, f.draw_pool, nullptr);
+            }
+            if (buffers_pool_) vkDestroyDescriptorPool(device_, buffers_pool_, nullptr);
+            for (VkDescriptorSetLayout layout : {material_set_layout_, view_set_layout_, buffers_set_layout_}) {
+                if (layout) vkDestroyDescriptorSetLayout(device_, layout, nullptr);
+            }
             for (Frame& f : frames_) {
                 if (f.ring) vkDestroyBuffer(device_, f.ring, nullptr);
                 if (f.ring_memory) vkFreeMemory(device_, f.ring_memory, nullptr);
@@ -291,12 +302,16 @@ public:
                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-        scene_in_ring_ = false;
+        lights_in_ring_ = false;
+        view_set_ = VK_NULL_HANDLE;
+        f.memo_count = 0;
+        if (f.draw_pool) vkResetDescriptorPool(device_, f.draw_pool, 0);
         shadow_pass_ = nullptr;
         target_ = nullptr;
         sun_shadow_ = {};
         local_shadow_ = {};
         begin_main_pass(clear_color);
+        set_lights(default_lights());  // as D3D12: every view starts from the default look
     }
 
     // The window pass (colour + depth). clear_color null: carries on after a shadow pass (load what is there).
@@ -604,10 +619,8 @@ public:
         vkDeviceWaitIdle(device_);  // shortcut: stalls; deferred release when textures churn
         if (t->ui_set && debug_ui_) ImGui_ImplVulkan_RemoveTexture(t->ui_set);
         t->ui_set = VK_NULL_HANDLE;
-        if (t->shadow_size) {  // its view leaves the cached shadow sets (the GPU is idle here)
-            for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
-            shadow_set_count_ = 0;
-        }
+        frames_[frame_].memo_count = 0;  // this frame's material / view sets may name its view
+        view_set_ = VK_NULL_HANDLE;
         release_texture(*t);
         ++t->generation;
     }
@@ -624,10 +637,10 @@ public:
         if (!t->ui_set) t->ui_set = ImGui_ImplVulkan_AddTexture(sampler_, t->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         return reinterpret_cast<u64>(t->ui_set);
     }
-    void set_lights(const LightSetup& lights) override {  // mesh.hlsl's Scene: LightSetup up to the local shadow tiles, and its output
-        std::memcpy(scene_.prefix, &lights, sizeof scene_.prefix);
-        std::memcpy(scene_.output, lights.output, sizeof scene_.output);
-        scene_in_ring_ = false;
+    void set_lights(const LightSetup& lights) override {  // mesh.hlsl's Lights block, as D3D12 (the viewport filled in)
+        lights_ = lights;
+        std::memcpy(lights_.viewport, viewport_, sizeof lights_.viewport);
+        lights_in_ring_ = false;
     }
 
     // A square depth texture, kept in the shader-read layout between shadow passes (cleared to far at first).
@@ -738,95 +751,146 @@ public:
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
         sun_shadow_ = sun;
         local_shadow_ = local;
+        view_set_ = VK_NULL_HANDLE;
     }
-    void set_decal_atlas(TextureHandle) override {}
-    void set_reflection_atlas(TextureHandle) override {}
-    void set_lightmap_atlas(TextureHandle) override {}
+    void set_decal_atlas(TextureHandle atlas) override {
+        decal_atlas_ = atlas;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    void set_reflection_atlas(TextureHandle atlas) override {
+        reflection_atlas_ = atlas;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    void set_lightmap_atlas(TextureHandle atlas) override {
+        lightmap_atlas_ = atlas;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    // As D3D12's draw_mesh: the same constants (mesh.hlsl's Draw) and pipelines per kind (static,
+    // skinned, instanced) and mode (opaque, wireframe, translucent, additive, overdraw).
+    // shortcut: no Material Graph shaders on Vulkan yet (the built-in material draws); no GPU culling.
     void draw_mesh(const MeshDraw& draw) override {
-        if (skip_frame_ || !mesh_pipeline_) return;
+        if (skip_frame_ || shadow_pass_) return;
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
-        if ((skinned && !skinned_pipeline_) || (instanced && !instanced_pipeline_)) return;
+        const u32 kind = skinned ? 1u : instanced ? 2u : 0u;
+        const u32 mode = draw.wireframe ? 1u : draw.blend >= 1 && draw.blend <= 3 ? 1u + draw.blend : 0u;
+        const VkPipeline pipeline = mesh_pipelines_[kind][mode];
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
-        if (!vb || !ib || draw.index_count == 0) return;
+        if (!pipeline || !vb || !ib || draw.index_count == 0) return;
         Frame& f = frames_[frame_];
-        if (!scene_in_ring_) {  // this view's Scene block, once per set_lights
-            if (!ring_write(f, &scene_, sizeof scene_, scene_at_)) return;
-            scene_in_ring_ = true;
+        if (!lights_in_ring_) {  // this view's Lights block, once per set_lights
+            if (!ring_write(f, &lights_, sizeof lights_, lights_at_)) return;
+            lights_in_ring_ = true;
         }
-        f32 push[kMeshPushBytes / sizeof(f32)] = {};
-        std::memcpy(push, draw.mvp, sizeof draw.mvp);
-        std::memcpy(push + 16, draw.world, sizeof draw.world);
-        std::memcpy(push + 28, draw.normal_matrix, sizeof draw.normal_matrix);
-        push[31] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
-        push[35] = draw.alpha_cutoff > 0.0f ? draw.alpha_cutoff : 0.0f;  // Masked
-        push[39] = draw.roughness;
-        std::memcpy(push + 40, draw.color, sizeof draw.color);
-        std::memcpy(push + 44, draw.camera_position, sizeof draw.camera_position);
+        f32 c[kMeshPushBytes / sizeof(f32)] = {};
+        std::memcpy(c, draw.mvp, sizeof draw.mvp);
+        std::memcpy(c + 16, draw.normal_matrix, sizeof draw.normal_matrix);
+        std::memcpy(c + 28, draw.world, sizeof draw.world);
+        std::memcpy(c + 40, draw.color, sizeof draw.color);
+        c[19] = draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view);
+        const Texture* normal = lookup_texture(draw.normal_texture);
+        if (normal && normal->shadow_size) normal = nullptr;
+        const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
+        c[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f);  // see n1.w in the shader
+        c[27] = draw.time;  // the normal matrix's spare w
+        c[44] = draw.metallic;
+        c[45] = draw.roughness;
+        c[46] = draw.emissive[0];
+        c[47] = draw.emissive[1];
+        c[48] = draw.emissive[2];
+        std::memcpy(c + 49, draw.camera_position, sizeof draw.camera_position);
+        const VkDescriptorSet sets[2] = {material_set(f, view_of(draw.base_color_texture, white_), normal ? normal->view : view_of({}, flat_normal_),
+                                                      view_of(draw.orm_texture, white_)),
+                                         view_set(f)};
+        if (!sets[0] || !sets[1]) return;
         const VkCommandBuffer cmd = f.cmd;
-        const VkPipelineLayout layout = mesh_layout_;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skinned ? skinned_pipeline_ : instanced ? instanced_pipeline_ : mesh_pipeline_);
-        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, push);
-        const Texture* base = lookup_texture(draw.base_color_texture);
-        if (!base) base = lookup_texture(white_);
-        if (base) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &base->set, 0, nullptr);
-        if (const VkDescriptorSet shadows = shadow_set(sun_shadow_, local_shadow_))
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &shadows, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1, &f.rows_set, 1, &scene_at_);
-        const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 2, sets, 0, nullptr);
+        u32 offsets[3] = {lights_at_, lights_at_, lights_at_};  // Lights, rows, material parameters (unused: any valid offset)
+        const VkDeviceSize zero = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &zero);
         vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
         if (!skinned && !instanced) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
             vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
             return;
         }
-        // Joints (all at once, at most kMaxJoints) or the copies in batches the descriptor's window holds.
+        // Joints (at most kMaxJoints) or the copies in batches of kMaxJoints, as D3D12.
         const u32 total = skinned ? std::min(draw.joint_count, kMaxJoints) : draw.instance_count;
         const f32* rows = skinned ? draw.joint_rows : draw.instance_rows;
         for (u32 first = 0; first < total;) {
-            const u32 count = skinned ? total : std::min(total - first, kInstancesPerDraw);
-            u32 at = 0;
-            if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, at)) return;  // full this frame: the rest waits
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &f.rows_set, 1, &at);
+            const u32 count = skinned ? total : std::min(total - first, kMaxJoints);
+            if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, offsets[1])) return;  // full this frame: the rest waits
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
             vkCmdDrawIndexed(cmd, draw.index_count, skinned ? 1 : count, 0, 0, 0);
             first += count;
         }
     }
 
-    // Set 3: the sun's and the local lights' atlases (the far 1x1 map for a missing one), one set per pair, kept.
-    VkDescriptorSet shadow_set(TextureHandle sun, TextureHandle local) {
-        const Texture* maps[2] = {lookup_texture(sun), lookup_texture(local)};
-        for (const Texture*& m : maps) {
-            if (!m || !m->shadow_size) m = lookup_texture(no_shadow_);
-            if (!m) return VK_NULL_HANDLE;
+    // A texture's view for the lit shader (not a shadow map), else the fallback's (white, flat normal).
+    VkImageView view_of(TextureHandle handle, TextureHandle fallback) {
+        const Texture* t = lookup_texture(handle);
+        if (!t || t->shadow_size) t = lookup_texture(fallback);
+        return t ? t->view : VK_NULL_HANDLE;
+    }
+
+    // Set 0: a material's base colour, normal and ORM textures; the frame's last few kept (draws repeat them).
+    VkDescriptorSet material_set(Frame& f, VkImageView base, VkImageView normal, VkImageView orm) {
+        if (!base || !normal || !orm) return VK_NULL_HANDLE;
+        for (u32 i = 0; i < std::min(f.memo_count, kMaterialMemo); ++i) {
+            const MaterialMemo& m = f.memo[i];
+            if (m.views[0] == base && m.views[1] == normal && m.views[2] == orm) return m.set;
         }
-        for (u32 i = 0; i < shadow_set_count_; ++i) {
-            if (shadow_sets_[i].sun == maps[0]->view && shadow_sets_[i].local == maps[1]->view) return shadow_sets_[i].set;
+        const VkImageView views[3] = {base, normal, orm};
+        const VkDescriptorSet set = allocate_set(f, material_set_layout_, views, 3);
+        if (set) {
+            MaterialMemo& m = f.memo[f.memo_count++ % kMaterialMemo];
+            std::memcpy(m.views, views, sizeof views);
+            m.set = set;
         }
-        if (shadow_set_count_ == kMaxShadowSets) {  // atlases re-made many times: start over (none is in use once idle)
-            vkDeviceWaitIdle(device_);
-            for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
-            shadow_set_count_ = 0;
+        return set;
+    }
+
+    // Set 1: the view's shadow maps (the far 1x1 one for a missing one), decal, reflection and lightmap atlases (white when unset).
+    VkDescriptorSet view_set(Frame& f) {
+        if (view_set_) return view_set_;
+        auto shadow_view = [&](TextureHandle h) {
+            const Texture* t = lookup_texture(h);
+            if (!t || !t->shadow_size) t = lookup_texture(no_shadow_);
+            return t ? t->view : VK_NULL_HANDLE;
+        };
+        const VkImageView views[5] = {shadow_view(sun_shadow_), shadow_view(local_shadow_), view_of(decal_atlas_, white_), view_of(reflection_atlas_, white_),
+                                      view_of(lightmap_atlas_, white_)};
+        for (VkImageView v : views) {
+            if (!v) return VK_NULL_HANDLE;
         }
-        ShadowSet& entry = shadow_sets_[shadow_set_count_];
+        view_set_ = allocate_set(f, view_set_layout_, views, 5);
+        return view_set_;
+    }
+
+    // A set from the frame's pool with `count` sampled images at bindings 0.. (its samplers are immutable).
+    VkDescriptorSet allocate_set(Frame& f, VkDescriptorSetLayout layout, const VkImageView* views, u32 count) {
         VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        info.descriptorPool = texture_pool_;
+        info.descriptorPool = f.draw_pool;
         info.descriptorSetCount = 1;
-        info.pSetLayouts = &shadow_set_layout_;
-        if (!check(vkAllocateDescriptorSets(device_, &info, &entry.set), "vkAllocateDescriptorSets (shadows)")) return VK_NULL_HANDLE;
-        const VkDescriptorImageInfo images[2] = {{shadow_sampler_, maps[0]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                                 {shadow_sampler_, maps[1]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        info.pSetLayouts = &layout;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!f.draw_pool || vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) {
+            if (!warned_sets_) LSD_LOG_WARN("vulkan", "Too many material / view changes this frame: some meshes are skipped.");
+            warned_sets_ = true;
+            return VK_NULL_HANDLE;
+        }
+        VkDescriptorImageInfo images[5] = {};
+        for (u32 i = 0; i < count; ++i) images[i] = {VK_NULL_HANDLE, views[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = entry.set;
-        write.descriptorCount = 2;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.dstSet = set;
+        write.descriptorCount = count;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         write.pImageInfo = images;
         vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-        entry.sun = maps[0]->view;
-        entry.local = maps[1]->view;
-        ++shadow_set_count_;
-        return entry.set;
+        return set;
     }
 
     // One caster: kind 0 static, 1 skinned (rows = joints), 2 instanced (rows = copies, mvp = the light's view-projection), 3 Masked.
@@ -843,8 +907,8 @@ public:
         push[16] = cutoff;
         push[17] = alpha;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipelines_[kind]);
-        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kShadowPushBytes, push);
-        if (masked) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1, &masked, 0, nullptr);
+        vkCmdPushConstants(cmd, shadow_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kShadowPushBytes, push);
+        if (masked) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_layout_, 0, 1, &masked, 0, nullptr);
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
         vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -856,7 +920,7 @@ public:
             const u32 count = kind == 1 ? row_count : std::min(row_count - first, kInstancesPerDraw);
             u32 at = 0;
             if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, at)) return;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1, &f.rows_set, 1, &at);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_layout_, 1, 1, &f.rows_set, 1, &at);
             vkCmdDrawIndexed(cmd, index_count, kind == 1 ? 1 : count, 0, 0, 0);
             first += count;
         }
@@ -873,20 +937,26 @@ public:
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
         vkCmdDraw(cmd, vertex_count, 1, 0, 0);
     }
-    void draw_sky(const SkyDraw& sky) override {
-        if (skip_frame_ || !sky_pipeline_) return;
-        f32 push[kSkyPushBytes / sizeof(f32)];
-        std::memcpy(push, sky.inv_view_proj, sizeof sky.inv_view_proj);
-        std::memcpy(push + 16, sky.zenith, sizeof sky.zenith);
-        std::memcpy(push + 20, sky.horizon, sizeof sky.horizon);
-        std::memcpy(push + 24, sky.ground, sizeof sky.ground);
-        std::memcpy(push + 28, sky.sun_direction, sizeof sky.sun_direction);
-        std::memcpy(push + 32, sky.sun_color, sizeof sky.sun_color);
-        std::memcpy(push + 36, sky.camera, sizeof sky.camera);
-        push[39] = scene_.output[0];  // into a scene target: range-compressed
-        const VkCommandBuffer cmd = frames_[frame_].cmd;
+    void draw_sky(const SkyDraw& sky) override {  // mesh.hlsl's sky through the Draw constants, as D3D12
+        if (skip_frame_ || shadow_pass_ || !sky_pipeline_) return;
+        Frame& f = frames_[frame_];
+        if (!lights_in_ring_) {
+            if (!ring_write(f, &lights_, sizeof lights_, lights_at_)) return;
+            lights_in_ring_ = true;
+        }
+        f32 c[kMeshPushBytes / sizeof(f32)] = {};
+        std::memcpy(c, sky.inv_view_proj, sizeof sky.inv_view_proj);
+        std::memcpy(c + 16, sky.zenith, 16);
+        std::memcpy(c + 20, sky.horizon, 16);
+        std::memcpy(c + 24, sky.ground, 16);
+        std::memcpy(c + 28, sky.sun_direction, 16);
+        std::memcpy(c + 32, sky.sun_color, 16);
+        std::memcpy(c + 49, sky.camera, 12);
+        const u32 offsets[3] = {lights_at_, lights_at_, lights_at_};
+        const VkCommandBuffer cmd = f.cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_pipeline_);
-        vkCmdPushConstants(cmd, sky_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kSkyPushBytes, push);
+        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
         vkCmdDraw(cmd, 3, 1, 0, 0);
     }
     void draw_ui(const UiDraw& d) override {
@@ -1269,7 +1339,7 @@ public:
         if (!stream_write(f, vertices, static_cast<VkDeviceSize>(vertex_count) * sizeof(ParticleVertex), at)) return;
         f32 push[kParticlePushBytes / sizeof(f32)] = {};
         std::memcpy(push, view_proj, sizeof(f32) * 16);
-        push[16] = scene_.output[0];  // into a scene target: range-compressed
+        push[16] = lights_.output[0];  // into a scene target: range-compressed
         const Texture* t = lookup_texture(texture);
         if (!t || t->shadow_size) t = lookup_texture(white_);
         if (!t) return;
@@ -1566,14 +1636,11 @@ private:
         compare.compareEnable = VK_TRUE;
         compare.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         if (!check(vkCreateSampler(device_, &compare, nullptr, &shadow_sampler_), "vkCreateSampler (shadow)")) return false;
-        const VkDescriptorSetLayoutBinding shadow_bindings[2] = {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-                                                                 {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
-        VkDescriptorSetLayoutCreateInfo shadow_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        shadow_layout.bindingCount = 2;
-        shadow_layout.pBindings = shadow_bindings;
-        if (!check(vkCreateDescriptorSetLayout(device_, &shadow_layout, nullptr, &shadow_set_layout_), "vkCreateDescriptorSetLayout (shadows)")) return false;
+        const u32 flat = 0xFFFF8080u;  // RGBA bytes (little-endian): a normal map's "straight out"
+        const void* flat_mip = &flat;
+        flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, &flat_mip);
         no_shadow_ = create_shadow_map(1);  // bound for a view without sun or local shadows (all lit)
-        return white_.valid() && no_shadow_.valid();
+        return white_.valid() && flat_normal_.valid() && no_shadow_.valid();
     }
 
     u32 memory_type(u32 allowed, VkMemoryPropertyFlags wanted) const {
@@ -1585,6 +1652,11 @@ private:
         return UINT32_MAX;
     }
 
+    static constexpr u32 kMaterialMemo = 64;  // material sets a frame remembers (draws repeat them)
+    struct MaterialMemo {
+        VkImageView views[3] = {};
+        VkDescriptorSet set = VK_NULL_HANDLE;
+    };
     struct Frame {
         VkCommandPool pool = VK_NULL_HANDLE;
         VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -1600,6 +1672,10 @@ private:
         u8* stream_mapped = nullptr;
         VkDeviceSize stream_used = 0;
         VkDescriptorPool post_pool = VK_NULL_HANDLE;  // the post passes' sets, reset each frame
+        VkDescriptorPool draw_pool = VK_NULL_HANDLE;  // the lit meshes' material / view sets, reset each frame
+        VkDescriptorSet buffers_set = VK_NULL_HANDLE; // mesh.hlsl's set 2 over this frame's ring
+        MaterialMemo memo[kMaterialMemo];
+        u32 memo_count = 0;
     };
 
     // Copies `bytes` into the frame's vertex stream; `offset` gets where.
@@ -1646,11 +1722,11 @@ private:
         if (!check(vkCreateDescriptorPool(device_, &pool, nullptr, &rows_pool_), "vkCreateDescriptorPool (rows)")) return false;
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(gpu_.handle, &props);
-        storage_alignment_ = props.limits.minStorageBufferOffsetAlignment;
+        storage_alignment_ = std::max(props.limits.minStorageBufferOffsetAlignment, props.limits.minUniformBufferOffsetAlignment);
         for (Frame& f : frames_) {
             VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
             info.size = kRingBytes;
-            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
             if (!check(vkCreateBuffer(device_, &info, nullptr, &f.ring), "vkCreateBuffer (ring)")) return false;
             VkMemoryRequirements need;
             vkGetBufferMemoryRequirements(device_, f.ring, &need);
@@ -1836,6 +1912,8 @@ private:
         vkGetPhysicalDeviceFeatures(gpu_.handle, &supported);
         depth_clamp_ = supported.depthClamp == VK_TRUE;  // shadow casters behind the light's near plane still cast (D3D12's DepthClipEnable off)
         features.features.depthClamp = supported.depthClamp;
+        fill_non_solid_ = supported.fillModeNonSolid == VK_TRUE;  // the Wireframe view mode's line fill
+        features.features.fillModeNonSolid = supported.fillModeNonSolid;
 
         const char* extensions[2] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME};
         VkDeviceCreateInfo create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -2033,17 +2111,16 @@ private:
     // shader when ps is null, depth bias, depth clamp): vertex layout, topology, depth test, push constants.
     bool make_pipeline(const u32* vs, usize vs_size, const u32* ps, usize ps_size, const VkVertexInputAttributeDescription* attributes, u32 attribute_count,
                        u32 stride, VkPrimitiveTopology topology, u32 push_bytes, VkShaderStageFlags push_stages, VkPipelineLayout& layout_out, VkPipeline& out,
-                       bool textured = false, bool depth_test = true, bool shadow = false, Blend blend_mode = Blend::Opaque) {
+                       bool textured = false, bool depth_test = true, bool shadow = false, Blend blend_mode = Blend::Opaque,
+                       VkPolygonMode polygon = VK_POLYGON_MODE_FILL) {
         if (!layout_out) {  // pipelines sharing a layout (every mesh and shadow pipeline) make it once
             VkPushConstantRange push{push_stages, 0, push_bytes};
             VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
             layout.pushConstantRangeCount = 1;
             layout.pPushConstantRanges = &push;
-            // 0 base colour texture, 1 joint / copy rows, 2 the Scene block (both in the frame's ring), 3 the shadow atlases
-            const VkDescriptorSetLayout sets[4] = {texture_set_layout_, rows_set_layout_, rows_set_layout_, shadow_set_layout_};
-            if (textured) {
-                layout.setLayoutCount = 4;
-                layout.pSetLayouts = sets;
+            if (textured) {  // UI and particles: their texture (set 0)
+                layout.setLayoutCount = 1;
+                layout.pSetLayouts = &texture_set_layout_;
             }
             if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &layout_out), "vkCreatePipelineLayout (scene)")) return false;
         }
@@ -2076,7 +2153,7 @@ private:
         viewport.viewportCount = 1;
         viewport.scissorCount = 1;
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.polygonMode = polygon;
         raster.cullMode = VK_CULL_MODE_NONE;  // as D3D12: both sides until imported winding is verified
         raster.lineWidth = 1.0f;
         if (shadow) {
@@ -2087,19 +2164,22 @@ private:
         VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        depth.depthTestEnable = depth_test ? VK_TRUE : VK_FALSE;
+        depth.depthTestEnable = depth_test && blend_mode != Blend::MeshOverdraw ? VK_TRUE : VK_FALSE;
         depth.depthWriteEnable = depth_test && blend_mode == Blend::Opaque ? VK_TRUE : VK_FALSE;  // blended sprites never hide each other
         depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VkPipelineColorBlendAttachmentState blend_attachment{};
         blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        if (blend_mode != Blend::Opaque) {  // UI: premultiplied; particles: alpha or additive (as D3D12)
+        if (blend_mode != Blend::Opaque) {
+            const bool mesh = blend_mode == Blend::MeshTranslucent || blend_mode == Blend::MeshAdditive || blend_mode == Blend::MeshOverdraw;
+            const bool adds = blend_mode == Blend::Additive || blend_mode == Blend::MeshAdditive || blend_mode == Blend::MeshOverdraw;
             blend_attachment.blendEnable = VK_TRUE;
             blend_attachment.srcColorBlendFactor = blend_mode == Blend::Premultiplied ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
-            blend_attachment.dstColorBlendFactor = blend_mode == Blend::Additive ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            blend_attachment.dstColorBlendFactor = adds ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-            blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            // Meshes: the scene target's alpha is mirror-likeness (SSR); translucent surfaces cover it by their opacity, additive ones leave it.
+            blend_attachment.srcAlphaBlendFactor = mesh ? VK_BLEND_FACTOR_ZERO : VK_BLEND_FACTOR_ONE;
+            blend_attachment.dstAlphaBlendFactor = mesh && adds ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
         }
         blend.attachmentCount = shadow ? 0 : 1;
@@ -2131,15 +2211,95 @@ private:
         return ok;
     }
 
+    // The lit meshes' descriptor set layouts (mesh.hlsl's VK_BIND): 0 the material (t0-t2, s0), 1 the
+    // view (t3-t7, s1 compare, s2 clamped), 2 the Lights / rows / material parameter blocks (dynamic
+    // uniform buffers over the frame's ring); a descriptor pool per frame and each frame's set 2.
+    bool create_mesh_layouts() {
+        const VkShaderStageFlags fragment = VK_SHADER_STAGE_FRAGMENT_BIT, both = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        const VkDescriptorSetLayoutBinding material[4] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                          {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                          {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                          {3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &sampler_}};
+        const VkDescriptorSetLayoutBinding view[7] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {5, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &shadow_sampler_},
+                                                      {6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &post_sampler_}};
+        const VkDescriptorSetLayoutBinding buffers[3] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr},
+                                                         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr},
+                                                         {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr}};
+        const struct {
+            const VkDescriptorSetLayoutBinding* bindings;
+            u32 count;
+            VkDescriptorSetLayout* out;
+        } layouts[3] = {{material, 4, &material_set_layout_}, {view, 7, &view_set_layout_}, {buffers, 3, &buffers_set_layout_}};
+        for (const auto& l : layouts) {
+            VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            info.bindingCount = l.count;
+            info.pBindings = l.bindings;
+            if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
+        }
+        const VkDescriptorPoolSize draw_sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2}};
+        VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        draw_pool.maxSets = kDrawSetsPerFrame;
+        draw_pool.poolSizeCount = 2;
+        draw_pool.pPoolSizes = draw_sizes;
+        const VkDescriptorPoolSize buffer_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kFramesInFlight * 3};
+        VkDescriptorPoolCreateInfo buffer_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        buffer_pool.maxSets = kFramesInFlight;
+        buffer_pool.poolSizeCount = 1;
+        buffer_pool.pPoolSizes = &buffer_size;
+        if (!check(vkCreateDescriptorPool(device_, &buffer_pool, nullptr, &buffers_pool_), "vkCreateDescriptorPool (mesh buffers)")) return false;
+        for (Frame& f : frames_) {
+            if (!check(vkCreateDescriptorPool(device_, &draw_pool, nullptr, &f.draw_pool), "vkCreateDescriptorPool (mesh)")) return false;
+            VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            info.descriptorPool = buffers_pool_;
+            info.descriptorSetCount = 1;
+            info.pSetLayouts = &buffers_set_layout_;
+            if (!check(vkAllocateDescriptorSets(device_, &info, &f.buffers_set), "vkAllocateDescriptorSets (mesh buffers)")) return false;
+            const VkDescriptorBufferInfo ranges[3] = {{f.ring, 0, sizeof(LightSetup)}, {f.ring, 0, kRowsBytes}, {f.ring, 0, kParamsBytes}};
+            VkWriteDescriptorSet writes[3] = {};
+            for (u32 i = 0; i < 3; ++i) {
+                writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                writes[i].dstSet = f.buffers_set;
+                writes[i].dstBinding = i;
+                writes[i].descriptorCount = 1;
+                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                writes[i].pBufferInfo = &ranges[i];
+            }
+            vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        }
+        const VkPushConstantRange push{both, 0, kMeshPushBytes};
+        VkPipelineLayoutCreateInfo mesh{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        const VkDescriptorSetLayout mesh_sets[3] = {material_set_layout_, view_set_layout_, buffers_set_layout_};
+        mesh.setLayoutCount = 3;
+        mesh.pSetLayouts = mesh_sets;
+        mesh.pushConstantRangeCount = 1;
+        mesh.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &mesh, nullptr, &mesh_layout_), "vkCreatePipelineLayout (mesh)")) return false;
+        // Shadow casters (shadow.hlsl): the Masked cut-out's texture (set 0) and the rows (set 1, storage).
+        const VkPushConstantRange shadow_push{both, 0, kShadowPushBytes};
+        const VkDescriptorSetLayout shadow_sets[2] = {texture_set_layout_, rows_set_layout_};
+        VkPipelineLayoutCreateInfo shadow{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        shadow.setLayoutCount = 2;
+        shadow.pSetLayouts = shadow_sets;
+        shadow.pushConstantRangeCount = 1;
+        shadow.pPushConstantRanges = &shadow_push;
+        return check(vkCreatePipelineLayout(device_, &shadow, nullptr, &shadow_layout_), "vkCreatePipelineLayout (shadow)");
+    }
+
     bool create_scene_pipelines() {
 #if LSD_VULKAN_HAVE_SPIRV
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(gpu_.handle, &props);
-        if (props.limits.maxPushConstantsSize < kMeshPushBytes) {
-            LSD_LOG_WARN("vulkan", "This GPU offers %u bytes of push constants (meshes need %u): meshes are not drawn.", props.limits.maxPushConstantsSize, kMeshPushBytes);
+        if (props.limits.maxPushConstantsSize < kMeshPushBytes || props.limits.maxUniformBufferRange < sizeof(LightSetup)) {
+            LSD_LOG_WARN("vulkan", "This GPU offers %u bytes of push constants and %u-byte uniform buffers (meshes need %u and %u): meshes are not drawn.",
+                         props.limits.maxPushConstantsSize, props.limits.maxUniformBufferRange, kMeshPushBytes, static_cast<u32>(sizeof(LightSetup)));
             return true;
         }
-        if (!create_texture_support() || !create_rings() || !create_post_pipelines()) return false;
+        if (!create_texture_support() || !create_rings() || !create_post_pipelines() || !create_mesh_layouts()) return false;
         const VkVertexInputAttributeDescription skinned_attributes[5] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, position)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, normal)},
@@ -2147,10 +2307,11 @@ private:
             {3, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(SkinnedVertex, joints)},
             {4, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(SkinnedVertex, weights)},
         };
-        const VkVertexInputAttributeDescription mesh_attributes[3] = {
+        const VkVertexInputAttributeDescription mesh_attributes[4] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
             {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
+            {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, lightmap_uv)},
         };
         // Shadow casters read only the position and UV (and the skinning attributes).
         const VkVertexInputAttributeDescription shadow_attributes[2] = {mesh_attributes[0], mesh_attributes[2]};
@@ -2171,22 +2332,34 @@ private:
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LineVertex, position)},
             {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(LineVertex, color)},
         };
-        return make_pipeline(kMeshVsSpirv, sizeof kMeshVsSpirv, kMeshPsSpirv, sizeof kMeshPsSpirv, mesh_attributes, 3, sizeof(MeshVertex),
-                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, mesh_pipeline_, true) &&
-               make_pipeline(kSkyVsSpirv, sizeof kSkyVsSpirv, kSkyPsSpirv, sizeof kSkyPsSpirv, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-                             kSkyPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sky_layout_, sky_pipeline_, false, false) &&
-               make_pipeline(kMeshSkinnedVsSpirv, sizeof kMeshSkinnedVsSpirv, kMeshSkinnedPsSpirv, sizeof kMeshSkinnedPsSpirv, skinned_attributes, 5, sizeof(SkinnedVertex),
-                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, skinned_pipeline_, true) &&
-               make_pipeline(kMeshInstancedVsSpirv, sizeof kMeshInstancedVsSpirv, kMeshInstancedPsSpirv, sizeof kMeshInstancedPsSpirv, mesh_attributes, 3, sizeof(MeshVertex),
-                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, instanced_pipeline_, true) &&
-               make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles, kMeshPushBytes, stages,
-                             mesh_layout_, shadow_pipelines_[0], true, true, true) &&
+        // The lit meshes: [static, skinned, instanced] x [opaque, wireframe, translucent, additive, overdraw], as D3D12's.
+        struct Kind {
+            const u32 *vs, *ps;
+            usize vs_size, ps_size;
+            const VkVertexInputAttributeDescription* attributes;
+            u32 attribute_count, stride;
+        };
+        const Kind kinds[3] = {{kMeshVsSpirv, kMeshPsSpirv, sizeof kMeshVsSpirv, sizeof kMeshPsSpirv, mesh_attributes, 4, sizeof(MeshVertex)},
+                               {kMeshSkinnedVsSpirv, kMeshSkinnedPsSpirv, sizeof kMeshSkinnedVsSpirv, sizeof kMeshSkinnedPsSpirv, skinned_attributes, 5, sizeof(SkinnedVertex)},
+                               {kMeshInstancedVsSpirv, kMeshInstancedPsSpirv, sizeof kMeshInstancedVsSpirv, sizeof kMeshInstancedPsSpirv, mesh_attributes, 3, sizeof(MeshVertex)}};  // copies are not lightmapped: no lightmap UV
+        const Blend modes[5] = {Blend::Opaque, Blend::Opaque, Blend::MeshTranslucent, Blend::MeshAdditive, Blend::MeshOverdraw};
+        for (u32 k = 0; k < 3; ++k) {
+            for (u32 m = 0; m < 5; ++m) {
+                const VkPolygonMode polygon = m == 1 && fill_non_solid_ ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
+                if (!make_pipeline(kinds[k].vs, kinds[k].vs_size, kinds[k].ps, kinds[k].ps_size, kinds[k].attributes, kinds[k].attribute_count, kinds[k].stride, triangles,
+                                   kMeshPushBytes, stages, mesh_layout_, mesh_pipelines_[k][m], false, true, false, modes[m], polygon)) return false;
+            }
+        }
+        return make_pipeline(kSkyVsSpirv, sizeof kSkyVsSpirv, kSkyPsSpirv, sizeof kSkyPsSpirv, nullptr, 0, 0, triangles, kMeshPushBytes, stages, mesh_layout_,
+                             sky_pipeline_, false, false) &&  // behind everything: drawn first, depth untouched
+               make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles, kShadowPushBytes, stages,
+                             shadow_layout_, shadow_pipelines_[0], false, true, true) &&
                make_pipeline(kShadowSkinnedVsSpirv, sizeof kShadowSkinnedVsSpirv, nullptr, 0, shadow_skinned_attributes, 4, sizeof(SkinnedVertex), triangles,
-                             kMeshPushBytes, stages, mesh_layout_, shadow_pipelines_[1], true, true, true) &&
+                             kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[1], false, true, true) &&
                make_pipeline(kShadowInstancedVsSpirv, sizeof kShadowInstancedVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles,
-                             kMeshPushBytes, stages, mesh_layout_, shadow_pipelines_[2], true, true, true) &&
+                             kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[2], false, true, true) &&
                make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, kShadowPsSpirv, sizeof kShadowPsSpirv, shadow_attributes, 2, sizeof(MeshVertex), triangles,
-                             kMeshPushBytes, stages, mesh_layout_, shadow_pipelines_[3], true, true, true) &&
+                             kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[3], false, true, true) &&
                make_pipeline(kUiVsSpirv, sizeof kUiVsSpirv, kUiPsSpirv, sizeof kUiPsSpirv, ui_attributes, 3, sizeof(UiVertex), triangles, kUiPushBytes, stages,
                              ui_layout_, ui_pipeline_, true, false, false, Blend::Premultiplied) &&
                make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
@@ -2244,25 +2417,18 @@ private:
     VkImage depth_image_ = VK_NULL_HANDLE;
     VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
     VkImageView depth_view_ = VK_NULL_HANDLE;
-    VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE, line_layout_ = VK_NULL_HANDLE;
-    VkPipeline mesh_pipeline_ = VK_NULL_HANDLE, line_pipeline_ = VK_NULL_HANDLE;
-    struct Scene {  // mesh.hlsl's Scene (set 2): LightSetup's bytes up to local_tiles, then its output
-        u8 prefix[offsetof(LightSetup, fog)] = {};
-        f32 output[4] = {};
-    };
-    static_assert(offsetof(LightSetup, fog) == offsetof(LightSetup, local_tiles) + sizeof(LightSetup::local_tiles), "mesh.hlsl's Scene ends at local_tiles");
-    struct ShadowSet {
-        VkImageView sun = VK_NULL_HANDLE, local = VK_NULL_HANDLE;
-        VkDescriptorSet set = VK_NULL_HANDLE;
-    };
-    static constexpr u32 kMaxShadowSets = 16;
-    ShadowSet shadow_sets_[kMaxShadowSets];
-    u32 shadow_set_count_ = 0;
-    VkDescriptorSetLayout shadow_set_layout_ = VK_NULL_HANDLE;
-    TextureHandle local_shadow_;
-    Scene scene_;
-    bool scene_in_ring_ = false;  // written into this frame's ring since the last set_lights
-    u32 scene_at_ = 0;
+    VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE, line_layout_ = VK_NULL_HANDLE, shadow_layout_ = VK_NULL_HANDLE;
+    VkPipeline mesh_pipelines_[3][5] = {};  // [static, skinned, instanced][opaque, wireframe, translucent, additive, overdraw]
+    VkPipeline line_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout material_set_layout_ = VK_NULL_HANDLE, view_set_layout_ = VK_NULL_HANDLE, buffers_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool buffers_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet view_set_ = VK_NULL_HANDLE;  // this frame's set 1 (made again when a shadow map or atlas changes)
+    LightSetup lights_ = default_lights();
+    bool lights_in_ring_ = false;  // written into this frame's ring since the last set_lights
+    u32 lights_at_ = 0;
+    TextureHandle local_shadow_, decal_atlas_, reflection_atlas_, lightmap_atlas_, flat_normal_;
+    bool fill_non_solid_ = false;
+    bool warned_sets_ = false;
     TextureHandle sun_shadow_, no_shadow_;
     Texture* shadow_pass_ = nullptr;   // the shadow map being drawn (between begin / end_shadow_pass)
     VkSampler shadow_sampler_ = VK_NULL_HANDLE;
@@ -2291,11 +2457,9 @@ private:
     VkDescriptorSetLayout texture_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool texture_pool_ = VK_NULL_HANDLE;
     VkCommandPool upload_pool_ = VK_NULL_HANDLE;
-    VkPipelineLayout sky_layout_ = VK_NULL_HANDLE;
     VkPipeline sky_pipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout rows_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool rows_pool_ = VK_NULL_HANDLE;
-    VkPipeline skinned_pipeline_ = VK_NULL_HANDLE, instanced_pipeline_ = VK_NULL_HANDLE;
     VkDeviceSize storage_alignment_ = 0;
     bool warned_ring_ = false;
 };

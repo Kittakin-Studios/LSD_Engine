@@ -26,16 +26,20 @@ if(LSD_RHI_D3D12)
   target_link_libraries(lsd_rhi PRIVATE d3d12 dxgi d3dcompiler)
   # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup.
   set(text_dir "${CMAKE_CURRENT_BINARY_DIR}/shader_text")
-  add_custom_command(
-    OUTPUT "${text_dir}/post_hlsl.h"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${text_dir}"
-    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl -DOUTPUT=${text_dir}/post_hlsl.h -DNAME=kPostHlsl
-            -P "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl" "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
-    COMMENT "Embedding post.hlsl"
-    VERBATIM
-  )
-  target_sources(lsd_rhi PRIVATE "${text_dir}/post_hlsl.h")
+  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl")
+    list(GET pair 0 file)
+    list(GET pair 1 name)
+    add_custom_command(
+      OUTPUT "${text_dir}/${file}_hlsl.h"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${text_dir}"
+      COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/shaders/${file}.hlsl -DOUTPUT=${text_dir}/${file}_hlsl.h -DNAME=${name}
+              -P "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${file}.hlsl" "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
+      COMMENT "Embedding ${file}.hlsl"
+      VERBATIM
+    )
+    target_sources(lsd_rhi PRIVATE "${text_dir}/${file}_hlsl.h")
+  endforeach()
   target_include_directories(lsd_rhi PRIVATE "${text_dir}")
 endif()
 
@@ -58,7 +62,7 @@ if(LSD_RHI_VULKAN)
   if(LSD_DXC_SPIRV)
     # Each shader's vertex and pixel stages, embedded as k<Name>VsSpirv / k<Name>PsSpirv.
     # "file;Name[;DEFINE]": a define makes a variant (mesh_skinned from mesh.hlsl with -DSKINNED...).
-    foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines" "sky;Sky" "mesh;MeshSkinned;SKINNED" "mesh;MeshInstanced;INSTANCED"
+    foreach(pair IN ITEMS "triangle;Triangle" "lines;Lines"
                          "shadow;Shadow" "shadow;ShadowSkinned;SKINNED" "shadow;ShadowInstanced;INSTANCED"
                          "ui;Ui" "particle;Particle")
       list(GET pair 0 file)
@@ -88,6 +92,42 @@ if(LSD_RHI_VULKAN)
           COMMAND "${CMAKE_COMMAND}" -DINPUT=${spv} -DOUTPUT=${header} -DNAME=${array} -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
           DEPENDS "${hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
           COMMENT "Compiling ${file}.hlsl (${stage} ${defines}) to SPIR-V"
+          VERBATIM
+        )
+        target_sources(lsd_rhi PRIVATE "${header}")
+      endforeach()
+    endforeach()
+    # The shared lit meshes and sky (shaders/mesh.hlsl): "out|Name|entry|define" -> k<Name>Vs/PsSpirv
+    # from vs_<entry> / ps_<entry> (renamed vs_main / ps_main).
+    set(mesh_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/mesh.hlsl")
+    foreach(item IN ITEMS "mesh|Mesh|main|" "mesh_skinned|MeshSkinned|main|SKINNED" "mesh_instanced|MeshInstanced|main|INSTANCED" "sky|Sky|sky|")
+      string(REPLACE "|" ";" parts "${item}")
+      list(GET parts 0 out)
+      list(GET parts 1 name)
+      list(GET parts 2 entry)
+      list(LENGTH parts count)
+      set(defines "")
+      if(count GREATER 3)
+        list(GET parts 3 define)
+        if(define)
+          set(defines "-D${define}")
+        endif()
+      endif()
+      foreach(stage IN ITEMS vs ps)
+        set(spv "${spirv_dir}/${out}_${stage}.spv")
+        set(header "${spirv_dir}/${out}_${stage}.spv.h")
+        if(stage STREQUAL "vs")
+          set(array k${name}VsSpirv)
+        else()
+          set(array k${name}PsSpirv)
+        endif()
+        add_custom_command(
+          OUTPUT "${header}"
+          COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
+          COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${stage}_6_0 -E ${stage}_${entry} -fspv-entrypoint-name=${stage}_main ${defines} -Fo "${spv}" "${mesh_hlsl}"
+          COMMAND "${CMAKE_COMMAND}" -DINPUT=${spv} -DOUTPUT=${header} -DNAME=${array} -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+          DEPENDS "${mesh_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+          COMMENT "Compiling mesh.hlsl (${stage}_${entry} ${defines}) to SPIR-V"
           VERBATIM
         )
         target_sources(lsd_rhi PRIVATE "${header}")
