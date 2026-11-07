@@ -1755,6 +1755,7 @@ int main(int argc, char** argv) {
     bool dedicated_arg = false;        // -dedicated: host without a player of its own
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
+    const char* remote_password = nullptr;  // -remotepassword=<text>: other PCs too, after "auth <text>"
     float smoke_arg = 0.0f;            // -smoketest=<seconds>: play the level that long, exit 0 if no errors (CI)
     long vram_arg = 0;                 // -vram=<MB>: pretend the card has that much video memory (tests the scaling)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
@@ -1780,6 +1781,7 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
         else if (std::strcmp(argv[i], "-remote") == 0) remote_arg = lsd::editor::remote::kDefaultPort;
         else if (std::strncmp(argv[i], "-remote=", 8) == 0) remote_arg = std::atoi(argv[i] + 8);
+        else if (std::strncmp(argv[i], "-remotepassword=", 16) == 0) remote_password = argv[i] + 16;
         else if (std::strncmp(argv[i], "-smoketest=", 11) == 0) smoke_arg = static_cast<float>(std::atof(argv[i] + 11));
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
@@ -2038,7 +2040,7 @@ int main(int argc, char** argv) {
     effects->set_meshes(&meshes);  // the Mesh renderer
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
-    if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg));
+    if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg), remote_password && remote_password[0] ? remote_password : nullptr);
 
     lsd::audio::AudioSystem audio;
     audio.init(!no_sound);

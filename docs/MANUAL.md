@@ -1787,7 +1787,11 @@ in the project folder, the splash too).
   On a build server: `lsd_editor.exe -nosound -level=Content/Levels/Main.lsdlevel -smoketest=10`
   exits with 0 (clean) or 1 (errors).
 - **Remote Console** (Tools menu): start the packaged game with `-remote`, click Connect, and type
-  console commands into it while it runs; each one's log lines come back to the window.
+  console commands into it while it runs; each one's log lines come back to the window. On another
+  PC (a test machine on the network, a handheld) start it with `-remote -remotepassword=<a password>`.
+  It then listens on every network instead of this PC only. In the window, type that PC's address
+  (192.168.x.x) as **Host** and the **Password**, then Connect. A wrong password closes the connection;
+  five in a row close the remote console until the game restarts. Shipping packages ignore `-remote`.
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).

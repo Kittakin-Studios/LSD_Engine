@@ -98,6 +98,9 @@ bool receive(Socket s, std::string& buffer) {
 // Game side.
 Socket g_listener = kNoSocket, g_client = kNoSocket;
 std::string g_in;
+std::string g_password;  // "" = this PC only, no login
+bool g_authed = false;
+u32 g_failures = 0;
 
 // While a remote line runs, its log lines go back to the editor (and on to the Output Log).
 std::string* g_capture = nullptr;
@@ -113,14 +116,19 @@ Socket g_server = kNoSocket;
 std::string g_out, g_reply;
 char g_line[256] = "";
 int g_port = kDefaultPort;
+char g_host[64] = "127.0.0.1";
+char g_pass[64] = "";
 
 } // namespace
 
-bool listen(u16 port) {
+bool listen(u16 port, const char* password) {
     if (!start_sockets()) return false;
     g_listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (g_listener == kNoSocket) return false;
-    const sockaddr_in a = localhost(port);
+    g_password = password ? password : "";
+    g_failures = 0;
+    sockaddr_in a = localhost(port);
+    if (!g_password.empty()) a.sin_addr.s_addr = htonl(INADDR_ANY);  // other PCs too, behind the password
     if (::bind(g_listener, reinterpret_cast<const sockaddr*>(&a), sizeof a) != 0 || ::listen(g_listener, 1) != 0) {
         LSD_LOG_WARN("remote", "Remote console: port %u is in use", port);
         LSD_CLOSE_SOCKET(g_listener);
@@ -128,7 +136,8 @@ bool listen(u16 port) {
         return false;
     }
     set_non_blocking(g_listener);
-    LSD_LOG_INFO("remote", "Remote console listening on 127.0.0.1:%u", port);
+    if (g_password.empty()) LSD_LOG_INFO("remote", "Remote console listening on 127.0.0.1:%u", port);
+    else LSD_LOG_INFO("remote", "Remote console listening on every network, port %u (password required)", port);
     return true;
 }
 
@@ -139,6 +148,7 @@ void poll() {
         if (g_client == kNoSocket) return;
         set_non_blocking(g_client);
         g_in.clear();
+        g_authed = g_password.empty();
         LSD_LOG_INFO("remote", "Remote console connected");
     }
     if (!receive(g_client, g_in)) {
@@ -152,6 +162,23 @@ void poll() {
         std::string line = g_in.substr(0, end);
         g_in.erase(0, end + 1);
         if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!g_authed) {  // the first line logs in
+            if (line == "auth " + g_password) {
+                g_authed = true;
+                send_all(g_client, "Logged in\n.\n");
+                continue;
+            }
+            send_all(g_client, "Wrong password\n.\n");
+            LSD_CLOSE_SOCKET(g_client);
+            g_client = kNoSocket;
+            LSD_LOG_WARN("remote", "Remote console: a wrong password");
+            if (++g_failures >= 5) {  // someone guessing: stop listening until the game restarts
+                LSD_CLOSE_SOCKET(g_listener);
+                g_listener = kNoSocket;
+                LSD_LOG_WARN("remote", "Remote console closed after 5 wrong passwords");
+            }
+            return;
+        }
         send_all(g_client, run_captured(line.c_str()) + ".\n");
     }
 }
@@ -208,19 +235,30 @@ void draw_window(bool* open) {
         return;
     }
     if (g_server == kNoSocket) {
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(140);
+        ImGui::InputText("Host", g_host, sizeof g_host);
+        ImGui::SetItemTooltip("The PC the game runs on: 127.0.0.1 for this one, or another PC's address (192.168.x.x; its game needs -remotepassword)");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
         ImGui::InputInt("Port", &g_port, 0);
         ImGui::SameLine();
-        if (with_tip(ImGui::Button("Connect"), "Connects to a game started with -remote on this PC") && start_sockets()) {
+        ImGui::SetNextItemWidth(120);
+        ImGui::InputText("Password", g_pass, sizeof g_pass, ImGuiInputTextFlags_Password);
+        ImGui::SetItemTooltip("The game's -remotepassword (empty for a game on this PC started with plain -remote)");
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("Connect"), "Connects to a game started with -remote (this PC) or -remote -remotepassword=... (any PC on the network)") && start_sockets()) {
             g_server = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            const sockaddr_in a = localhost(static_cast<u16>(g_port));
-            if (g_server != kNoSocket && ::connect(g_server, reinterpret_cast<const sockaddr*>(&a), sizeof a) == 0) {
+            sockaddr_in a = localhost(static_cast<u16>(g_port));
+            const bool address = inet_pton(AF_INET, g_host, &a.sin_addr) == 1;
+            if (address && g_server != kNoSocket && ::connect(g_server, reinterpret_cast<const sockaddr*>(&a), sizeof a) == 0) {
                 set_non_blocking(g_server);
-                g_out += "Connected to 127.0.0.1:" + std::to_string(g_port) + "\n";
+                g_out += std::string("Connected to ") + g_host + ":" + std::to_string(g_port) + "\n";
+                if (g_pass[0]) send_all(g_server, std::string("auth ") + g_pass + "\n");
             } else {
                 if (g_server != kNoSocket) LSD_CLOSE_SOCKET(g_server);
                 g_server = kNoSocket;
-                g_out += "No game is listening there. Start it with -remote (File > Package Project, then run it with -remote).\n";
+                g_out += address ? "No game is listening there. Start it with -remote (and -remotepassword=... to reach it from another PC).\n"
+                                 : "The host must be an IPv4 address such as 192.168.1.20.\n";
             }
         }
     } else {
