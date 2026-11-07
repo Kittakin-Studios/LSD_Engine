@@ -7,7 +7,7 @@
 struct Push {
     float4x4 mvp;
     float4 w0, w1, w2;   // world matrix rows (world positions for shadows)
-    float4 n0, n1, n2;   // normal matrix columns; n0.w = 1: unlit (colour only), n1.w the Masked cutoff (0 = off)
+    float4 n0, n1, n2;   // normal matrix columns; n0.w = 1: unlit (colour only), n1.w the Masked cutoff (0 = off), n2.w roughness
     float4 color;        // base colour, linear
     float4 camera;       // xyz (picks the shadow cascade)
 };
@@ -132,11 +132,14 @@ float local_shadow(Light L, float3 wpos, float3 n) {
     return lit / 9.0;
 }
 
+// Into a scene target (output.x = 1, for the post pass): exposed colour range-compressed; else display sRGB.
+float3 scene_out(float3 c) { return scene[0].output.x > 0.5 ? sqrt(max(c, 0.0) / (1.0 + max(c, 0.0))) : to_srgb(c); }
+
 float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float4 texel = pc.color * base_tex.Sample(base_samp, i.uv);
     if (pc.n1.w > 0.0 && texel.a < pc.n1.w) discard;  // Masked
     const float3 base = texel.rgb;
-    if (pc.n0.w > 0.5) return float4(to_srgb(base), texel.a);
+    if (pc.n0.w > 0.5) return float4(scene_out(base), texel.a);
     const float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
     float3 lit = base * lerp(scene[0].ground.rgb, scene[0].sky.rgb, n.z * 0.5 + 0.5);
     const uint count = min(scene[0].light_count, 16u);
@@ -161,5 +164,6 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
         lit += base / 3.14159265 * L.color_inner.xyz * ndl * atten;
     }
-    return float4(to_srgb(lit * scene[0].exposure), texel.a);
+    const float smooth = (1.0 - pc.n2.w) * (1.0 - pc.n2.w);  // scene target alpha: how mirror-like (SSR reads it)
+    return float4(scene_out(lit * scene[0].exposure), scene[0].output.x > 0.5 ? smooth : texel.a);
 }

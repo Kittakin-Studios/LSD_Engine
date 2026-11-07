@@ -1,0 +1,22 @@
+# cmake -DINPUT=<file> -DOUTPUT=<file.h> -DNAME=<array name> -P EmbedText.cmake
+# Writes a text file (a shader) as a C++ string: raw-string pieces of at most ~8000 characters
+# (MSVC caps one literal near 16 KB), split at line ends.
+file(READ "${INPUT}" text)
+set(out "// Generated from ${INPUT}. Do not edit.\nconstexpr char ${NAME}[] =\n")
+string(LENGTH "${text}" left)
+while(left GREATER 0)
+  string(SUBSTRING "${text}" 0 8000 piece)
+  string(LENGTH "${piece}" piece_length)
+  if(piece_length LESS left)
+    string(FIND "${piece}" "\n" cut REVERSE)
+    if(cut GREATER 0)
+      math(EXPR piece_length "${cut} + 1")
+      string(SUBSTRING "${text}" 0 ${piece_length} piece)
+    endif()
+  endif()
+  string(APPEND out "R\"lsdtext(${piece})lsdtext\"\n")
+  string(SUBSTRING "${text}" ${piece_length} -1 text)
+  string(LENGTH "${text}" left)
+endwhile()
+string(APPEND out ";\n")
+file(WRITE "${OUTPUT}" "${out}")

@@ -24,6 +24,19 @@ target_compile_definitions(lsd_rhi PUBLIC
 if(LSD_RHI_D3D12)
   target_sources(lsd_rhi PRIVATE backends/d3d12/d3d12_device.cpp ${LSD_IMGUI_DIR}/backends/imgui_impl_dx12.cpp)
   target_link_libraries(lsd_rhi PRIVATE d3d12 dxgi d3dcompiler)
+  # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup.
+  set(text_dir "${CMAKE_CURRENT_BINARY_DIR}/shader_text")
+  add_custom_command(
+    OUTPUT "${text_dir}/post_hlsl.h"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${text_dir}"
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl -DOUTPUT=${text_dir}/post_hlsl.h -DNAME=kPostHlsl
+            -P "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl" "${PROJECT_SOURCE_DIR}/cmake/EmbedText.cmake"
+    COMMENT "Embedding post.hlsl"
+    VERBATIM
+  )
+  target_sources(lsd_rhi PRIVATE "${text_dir}/post_hlsl.h")
+  target_include_directories(lsd_rhi PRIVATE "${text_dir}")
 endif()
 
 if(LSD_RHI_OPENGL)
@@ -79,6 +92,33 @@ if(LSD_RHI_VULKAN)
         )
         target_sources(lsd_rhi PRIVATE "${header}")
       endforeach()
+    endforeach()
+    # The shared post-process passes (shaders/post.hlsl): vs_full and one pixel shader per pass,
+    # embedded as kPost<Pass>Spirv (entry points renamed vs_main / ps_main); t registers at bindings 0-2, s registers from 16 (s2 = 18).
+    set(post_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl")
+    foreach(entry IN ITEMS vs_full ps_prefilter ps_down ps_up ps_composite ps_fxaa ps_ssr ps_ao ps_ao_apply ps_taa ps_dof ps_motion ps_meter ps_expose ps_outline)
+      string(SUBSTRING "${entry}" 0 2 stage)
+      string(SUBSTRING "${entry}" 3 -1 pass)
+      string(REPLACE "_" ";" words "${pass}")
+      set(name "")
+      foreach(word IN LISTS words)
+        string(SUBSTRING "${word}" 0 1 first)
+        string(TOUPPER "${first}" first)
+        string(SUBSTRING "${word}" 1 -1 rest)
+        string(APPEND name "${first}${rest}")
+      endforeach()
+      set(spv "${spirv_dir}/post_${pass}.spv")
+      set(header "${spirv_dir}/post_${pass}.spv.h")
+      add_custom_command(
+        OUTPUT "${header}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
+        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${stage}_6_0 -E ${entry} -fspv-entrypoint-name=${stage}_main -fvk-t-shift 0 0 -fvk-s-shift 16 0 -Fo "${spv}" "${post_hlsl}"
+        COMMAND "${CMAKE_COMMAND}" -DINPUT=${spv} -DOUTPUT=${header} -DNAME=kPost${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        DEPENDS "${post_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        COMMENT "Compiling post.hlsl (${entry}) to SPIR-V"
+        VERBATIM
+      )
+      target_sources(lsd_rhi PRIVATE "${header}")
     endforeach()
     target_include_directories(lsd_rhi PRIVATE "${spirv_dir}")
     target_compile_definitions(lsd_rhi PRIVATE LSD_VULKAN_HAVE_SPIRV=1)

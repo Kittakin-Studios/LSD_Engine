@@ -4,9 +4,9 @@
 // (SPIR-V compiled from HLSL by DXC at build time) and ImGui.
 // Skinned and instanced meshes read their joint / copy matrices from a per-frame ring buffer; the sun
 // and the spot / point lights cast shadows (depth-only passes into shadow atlases, compare sampler);
-// game UI and particles stream their vertices through a per-frame buffer.
-// shortcut: no render targets or post pass yet; the scene draws straight into the window (the editor
-// then skips the post pass)
+// game UI and particles stream their vertices through a per-frame buffer. Render targets (colour +
+// depth) take thumbnails, previews and the scene for the post pass, which runs D3D12's shared
+// shaders/post.hlsl compiled to SPIR-V.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -49,6 +49,21 @@
 #include "ui_ps.spv.h"
 #include "particle_vs.spv.h"
 #include "particle_ps.spv.h"
+#include "post_full.spv.h"
+#include "post_prefilter.spv.h"
+#include "post_down.spv.h"
+#include "post_up.spv.h"
+#include "post_composite.spv.h"
+#include "post_fxaa.spv.h"
+#include "post_ssr.spv.h"
+#include "post_ao.spv.h"
+#include "post_ao_apply.spv.h"
+#include "post_taa.spv.h"
+#include "post_dof.spv.h"
+#include "post_motion.spv.h"
+#include "post_meter.spv.h"
+#include "post_expose.spv.h"
+#include "post_outline.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -71,6 +86,9 @@ constexpr u32 kUiPushBytes = 16;      // ui.hlsl's Push
 constexpr u32 kParticlePushBytes = 80;  // particle.hlsl's Push
 constexpr VkDeviceSize kStreamBytes = kParticleRingBytes;  // per frame in flight: UI and particle vertices
 enum class Blend { Opaque, Premultiplied, Alpha, Additive };  // make_pipeline's colour blending
+constexpr u32 kPostPushBytes = 192;  // post.hlsl's Post constants (48 floats)
+enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kPostPasses };
+constexpr u32 kPostSetsPerFrame = 512;  // post passes' descriptor sets a frame (about 16 a view)
 
 bool check(VkResult result, const char* what) {
     if (result == VK_SUCCESS) return true;
@@ -108,6 +126,9 @@ struct PhysicalDevice {
 };
 
 class VulkanDevice final : public Device {
+private:
+    struct Texture;  // defined below; passes take it by reference
+
 public:
     ~VulkanDevice() override {
         if (device_) vkDeviceWaitIdle(device_);
@@ -141,6 +162,13 @@ public:
             vkDestroyPipeline(device_, particle_pipelines_[1], nullptr);
             vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
             vkDestroyPipelineLayout(device_, particle_layout_, nullptr);
+            for (VkPipeline post : post_pipelines_) vkDestroyPipeline(device_, post, nullptr);
+            vkDestroyPipelineLayout(device_, post_layout_, nullptr);
+            for (Frame& f : frames_) {
+                if (f.post_pool) vkDestroyDescriptorPool(device_, f.post_pool, nullptr);
+            }
+            if (post_set_layout_) vkDestroyDescriptorSetLayout(device_, post_set_layout_, nullptr);
+            if (post_sampler_) vkDestroySampler(device_, post_sampler_, nullptr);
             if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
             for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
             if (shadow_set_layout_) vkDestroyDescriptorSetLayout(device_, shadow_set_layout_, nullptr);
@@ -251,6 +279,7 @@ public:
         vkResetCommandPool(device_, f.pool, 0);
         f.ring_used = 0;  // the GPU is done with this frame's ring and stream
         f.stream_used = 0;
+        if (f.post_pool) vkResetDescriptorPool(device_, f.post_pool, 0);
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(f.cmd, &begin);
@@ -264,6 +293,7 @@ public:
                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
         scene_in_ring_ = false;
         shadow_pass_ = nullptr;
+        target_ = nullptr;
         sun_shadow_ = {};
         local_shadow_ = {};
         begin_main_pass(clear_color);
@@ -291,9 +321,87 @@ public:
         rendering.pColorAttachments = &color;
         rendering.pDepthAttachment = &depth;
         vkCmdBeginRendering(cmd, &rendering);
-
-        // Negative height flips Y so clip space matches D3D12 and OpenGL (+Y up).
+        in_pass_ = true;
         set_viewport(0.0f, 0.0f, static_cast<f32>(extent_.width), static_cast<f32>(extent_.height));
+    }
+
+    // Ends the pass being recorded (the window's, a render target's, a shadow map's); a render
+    // target's colour goes back to shader-readable.
+    void end_pass() {
+        if (!in_pass_) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdEndRendering(cmd);
+        in_pass_ = false;
+        if (target_) {
+            transition(cmd, target_->image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            target_ = nullptr;
+        }
+    }
+
+    // Draws into a render target: cleared to clear_color (null: carries on with what it holds).
+    void begin_target_pass(Texture& t, const f32* clear_color) {
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        transition(cmd, t.image, clear_color ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        if (clear_color || t.depth_readable) {  // a cleared depth starts from nothing; a read one goes back to being drawn into
+            transition(cmd, t.depth_image, clear_color ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | tests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, tests,
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+            t.depth_readable = false;
+        }
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = t.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        if (clear_color) std::memcpy(color.clearValue.color.float32, clear_color, sizeof(f32) * 4);
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = t.depth_view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil.depth = 1.0f;
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea.extent = {t.width, t.height};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        in_pass_ = true;
+        target_ = &t;
+        set_viewport(0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height));
+    }
+
+    // A device-local image and its view (render targets' colour and depth).
+    bool make_image(u32 width, u32 height, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkImage& image, VkDeviceMemory& memory, VkImageView& view) {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = format;
+        info.extent = {width, height, 1};
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = usage;
+        if (!check(vkCreateImage(device_, &info, nullptr, &image), "vkCreateImage (render target)")) return false;
+        VkMemoryRequirements need;
+        vkGetImageMemoryRequirements(device_, image, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &memory), "vkAllocateMemory (render target)") ||
+            !check(vkBindImageMemory(device_, image, memory, 0), "vkBindImageMemory (render target)")) return false;
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = format;
+        view_info.subresourceRange = {aspect, 0, 1, 0, 1};
+        return check(vkCreateImageView(device_, &view_info, nullptr, &view), "vkCreateImageView (render target)");
     }
 
     // shortcut: host-visible memory (no staging copy), one allocation per buffer; a staging upload and
@@ -341,7 +449,53 @@ public:
         b->memory = VK_NULL_HANDLE;
         ++b->generation;
     }
-    TextureHandle create_render_target(u32, u32) override { return {}; }
+    // Offscreen colour (the window's format) with its own depth buffer; the colour is kept
+    // shader-readable between passes, the depth readable by the post pass.
+    TextureHandle create_render_target(u32 width, u32 height) override {
+        if (!texture_set_layout_ || width == 0 || height == 0) return {};
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].image) ++slot;
+        if (slot == kMaxTextures) {
+            LSD_LOG_ERROR("vulkan", "create_render_target failed: table full (%u).", kMaxTextures);
+            return {};
+        }
+        Texture& t = textures_[slot];
+        bool ok = make_image(width, height, format_.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             VK_IMAGE_ASPECT_COLOR_BIT, t.image, t.memory, t.view) &&
+                  make_image(width, height, kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+                             t.depth_image, t.depth_memory, t.depth_view);
+        if (ok) {
+            const VkCommandBuffer cmd = begin_upload();
+            ok = cmd != VK_NULL_HANDLE;
+            if (ok) {
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                transition(cmd, t.depth_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                ok = end_upload(cmd);
+            }
+        }
+        VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        set_info.descriptorPool = texture_pool_;
+        set_info.descriptorSetCount = 1;
+        set_info.pSetLayouts = &texture_set_layout_;
+        ok = ok && check(vkAllocateDescriptorSets(device_, &set_info, &t.set), "vkAllocateDescriptorSets (render target)");
+        if (!ok) {
+            release_texture(t);
+            return {};
+        }
+        VkDescriptorImageInfo described{sampler_, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = t.set;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &described;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        t.width = width;
+        t.height = height;
+        t.depth_readable = true;
+        return TextureHandle::make(slot, t.generation);
+    }
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
         if (!texture_set_layout_ || width == 0 || height == 0 || mip_count == 0 || !mips) return {};
         u32 slot = 0;
@@ -457,7 +611,13 @@ public:
         release_texture(*t);
         ++t->generation;
     }
-    void set_render_target(TextureHandle, const f32*) override {}
+    void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
+        if (skip_frame_ || shadow_pass_) return;
+        Texture* t = lookup_texture(handle);
+        end_pass();
+        if (t && t->depth_image) begin_target_pass(*t, clear_color);
+        else begin_main_pass(nullptr);  // back to the window, not cleared again
+    }
     u64 debug_ui_texture(TextureHandle handle) override {  // ImGui's descriptor for it (thumbnails, previews), made on first use
         Texture* t = lookup_texture(handle);
         if (!t || !debug_ui_) return 0;
@@ -527,7 +687,8 @@ public:
         Texture* t = lookup_texture(handle);
         if (skip_frame_ || shadow_pass_ || !t || !t->shadow_size) return;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
-        vkCmdEndRendering(cmd);
+        resume_target_ = target_;  // end_shadow_pass carries on drawing into it
+        end_pass();
         transition(cmd, t->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
@@ -543,6 +704,7 @@ public:
         rendering.layerCount = 1;
         rendering.pDepthAttachment = &depth;
         vkCmdBeginRendering(cmd, &rendering);
+        in_pass_ = true;
         shadow_pass_ = t;
         const f32 size = static_cast<f32>(t->shadow_size);
         set_viewport(0.0f, 0.0f, size, size);
@@ -563,12 +725,14 @@ public:
     void end_shadow_pass() override {
         if (skip_frame_ || !shadow_pass_) return;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
-        vkCmdEndRendering(cmd);
+        end_pass();
         transition(cmd, shadow_pass_->image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                    VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
         shadow_pass_ = nullptr;
-        begin_main_pass(nullptr);
+        if (resume_target_) begin_target_pass(*resume_target_, nullptr);
+        else begin_main_pass(nullptr);
+        resume_target_ = nullptr;
     }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
@@ -597,6 +761,7 @@ public:
         std::memcpy(push + 28, draw.normal_matrix, sizeof draw.normal_matrix);
         push[31] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
         push[35] = draw.alpha_cutoff > 0.0f ? draw.alpha_cutoff : 0.0f;  // Masked
+        push[39] = draw.roughness;
         std::memcpy(push + 40, draw.color, sizeof draw.color);
         std::memcpy(push + 44, draw.camera_position, sizeof draw.camera_position);
         const VkCommandBuffer cmd = f.cmd;
@@ -718,6 +883,7 @@ public:
         std::memcpy(push + 28, sky.sun_direction, sizeof sky.sun_direction);
         std::memcpy(push + 32, sky.sun_color, sizeof sky.sun_color);
         std::memcpy(push + 36, sky.camera, sizeof sky.camera);
+        push[39] = scene_.output[0];  // into a scene target: range-compressed
         const VkCommandBuffer cmd = frames_[frame_].cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_pipeline_);
         vkCmdPushConstants(cmd, sky_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kSkyPushBytes, push);
@@ -749,8 +915,352 @@ public:
         vkCmdDrawIndexed(cmd, d.index_count, 1, 0, 0, 0);
         set_viewport(saved[0], saved[1], saved[2], saved[3]);  // back to the caller's rectangle
     }
-    void draw_post(const PostDraw&) override {}
-    bool read_render_target(TextureHandle, u8*) override { return false; }
+    // Post-processing (Unreal's post-process stack), as D3D12's draw_post: the same passes from
+    // shaders/post.hlsl, into a chain of targets per scene size.
+    void draw_post(const PostDraw& p) override {
+        Texture* scene = lookup_texture(p.scene);
+        if (skip_frame_ || shadow_pass_ || !scene || !scene->depth_image || !post_pipelines_[kComposite]) return;
+        PostChain& c = post_chain(scene->width, scene->height);
+        auto size = [&](TextureHandle t, f32* out) {
+            const Texture* target = lookup_texture(t);
+            out[0] = target && target->width ? 1.0f / static_cast<f32>(target->width) : 0.0f;
+            out[1] = target && target->height ? 1.0f / static_cast<f32>(target->height) : 0.0f;
+        };
+        const bool depth_effects = p.proj[0] != 0.0f;
+        const bool ao = depth_effects && (p.ao_intensity > 0.0f || p.contact_shadow[3] > 0.0f);
+        const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
+        const bool taa = depth_effects && p.taa;
+        const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
+        if (!taa) c.history_valid = false;
+        f32 k[48] = {};  // the constants every pass reads (post.hlsl's Post)
+        for (int i = 0; i < 4; ++i) k[16 + i] = p.proj[i];
+        k[20] = p.ao_radius > 0.01f ? p.ao_radius : 0.01f;
+        k[21] = p.ao_intensity;
+        k[22] = p.ssr_intensity;
+        k[23] = p.ssr_max_distance > 0.5f ? p.ssr_max_distance : 0.5f;
+        k[24] = p.dof_focal_distance;
+        k[25] = p.dof_focal_region;
+        k[26] = p.dof_max_blur;
+        k[27] = p.dof_transition;
+        k[28] = 0.1f;  // TAA: how much of this frame goes in
+        k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        k[30] = p.motion_blur;
+        k[31] = p.motion_blur_max;
+        for (int r = 0; r < 4; ++r) {
+            for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
+        }
+        size(p.scene, k);
+        end_pass();  // the scene's colour (and depth below) become readable
+        if ((ao || dof || taa || ssr || motion) && !scene->depth_readable) {
+            const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            transition(frames_[frame_].cmd, scene->depth_image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tests,
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+            scene->depth_readable = true;
+        }
+        TextureHandle src = p.scene;
+        if (ssr) {  // first: it reads the scene's alpha (reflectivity)
+            post_pass(kSsr, c.ssr, nullptr, p.scene, {}, p.scene, k);
+            src = c.ssr;
+        }
+        if (ao) {
+            f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
+            std::memcpy(ka, k, sizeof ka);
+            std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
+            post_pass(kAo, c.ao, nullptr, {}, {}, p.scene, ka);
+            post_pass(kAoApply, c.lit, nullptr, src, c.ao, p.scene, k);
+            src = c.lit;
+        }
+        if (taa) {
+            const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
+            post_pass(kTaa, out, nullptr, src, history, p.scene, k);
+            c.taa_index ^= 1u;
+            c.history_valid = true;
+            src = out;
+        }
+        if (dof) {
+            post_pass(kDof, c.dof, nullptr, src, {}, p.scene, k);
+            src = c.dof;
+        }
+        if (motion) {
+            post_pass(kMotion, c.motion, nullptr, src, {}, p.scene, k);
+            src = c.motion;
+        }
+        if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
+            f32 e[48] = {};
+            e[4] = p.exposure_min_ev;
+            e[5] = p.exposure_max_ev;
+            e[6] = p.exposure_compensation;
+            e[7] = c.exposure_valid && p.delta_seconds > 0.0f ? 0.0f : 1.0f;  // 1: jump to the target
+            e[8] = p.delta_seconds * p.exposure_speed_up;
+            e[9] = p.delta_seconds * p.exposure_speed_down;
+            const TextureHandle now = c.exposure[c.exposure_index], last = c.exposure[c.exposure_index ^ 1u];
+            post_pass(kMeter, now, nullptr, src, last, {}, e);
+            post_pass(kExpose, c.exposed, nullptr, src, now, {}, e);
+            c.exposure_index ^= 1u;
+            c.exposure_valid = true;
+            src = c.exposed;
+        } else {
+            c.exposure_valid = false;
+        }
+        const bool bloom = p.bloom_intensity > 0.0f;
+        if (bloom) {
+            k[4] = p.bloom_threshold;
+            size(src, k);
+            post_pass(kPrefilter, c.down[0], nullptr, src, {}, {}, k);
+            for (u32 i = 1; i < 5; ++i) {
+                size(c.down[i - 1], k);
+                post_pass(kDown, c.down[i], nullptr, c.down[i - 1], {}, {}, k);
+            }
+            for (i32 i = 3; i >= 0; --i) {  // up[i] = down[i] + blur(up[i + 1]); the lowest uses down[4]
+                const TextureHandle below = i == 3 ? c.down[4] : c.up[i + 1];
+                size(c.down[i], k);
+                size(below, k + 2);
+                post_pass(kUp, c.up[i], nullptr, c.down[i], below, {}, k);
+            }
+        }
+        f32 g[48] = {};
+        g[5] = bloom ? p.bloom_intensity : 0.0f;
+        g[8] = p.tint[0];
+        g[9] = p.tint[1];
+        g[10] = p.tint[2];
+        g[11] = p.tonemap ? 1.0f : 0.0f;
+        g[12] = p.saturation;
+        g[13] = p.contrast;
+        g[14] = p.vignette;
+        g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
+        const bool fxaa = p.fxaa && !taa;
+        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        if (fxaa) {
+            f32 f[48] = {};
+            size(c.ldr, f);
+            post_pass(kFxaa, p.output, p.viewport, c.ldr, {}, {}, f);
+        }
+        set_render_target({}, nullptr);
+        set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
+    }
+
+    // The selection outline: the selected meshes as a white mask, its edge painted over the viewport.
+    void draw_outline(const MeshDraw* draws, u32 count, const f32 color[4], const f32 viewport[4]) override {
+        const u32 w = static_cast<u32>(viewport[2]), h = static_cast<u32>(viewport[3]);
+        if (skip_frame_ || shadow_pass_ || !count || !w || !h || !post_pipelines_[kOutline]) return;
+        if (outline_size_[0] != w || outline_size_[1] != h) {  // the mask: one per viewport size, kept
+            destroy_texture(outline_mask_);
+            outline_mask_ = create_render_target(w, h);
+            outline_size_[0] = w;
+            outline_size_[1] = h;
+        }
+        const f32 clear[4] = {0, 0, 0, 0};
+        set_render_target(outline_mask_, clear);
+        for (u32 i = 0; i < count; ++i) {  // each as plain white: only where it covers matters
+            MeshDraw d = draws[i];
+            d.unlit = true;
+            d.wireframe = false;
+            d.alpha_cutoff = 0.0f;
+            d.base_color_texture = {};
+            d.color[0] = d.color[1] = d.color[2] = d.color[3] = 1.0f;
+            draw_mesh(d);
+        }
+        f32 k[48] = {};
+        k[0] = 1.0f / static_cast<f32>(w);
+        k[1] = 1.0f / static_cast<f32>(h);
+        for (int c = 0; c < 4; ++c) k[8 + c] = color[c];
+        post_pass(kOutline, {}, viewport, outline_mask_, {}, {}, k);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+
+    // Post-processing targets: the bloom chain, the FXAA input and the effects', one set per scene size (a few kept).
+    struct PostChain {
+        u32 width = 0, height = 0;
+        TextureHandle down[5], up[4], ldr;
+        TextureHandle ao, lit, dof, motion, taa[2], ssr;
+        TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
+        u32 exposure_index = 0;
+        bool exposure_valid = false;
+        u32 taa_index = 0;
+        bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
+    };
+    PostChain& post_chain(u32 width, u32 height) {
+        for (PostChain& c : post_chains_) {
+            if (c.width == width && c.height == height) return c;
+        }
+        PostChain& c = post_chains_[post_chain_next_++ % 4];
+        for (TextureHandle& t : c.down) destroy_texture(t);
+        for (TextureHandle& t : c.up) destroy_texture(t);
+        for (TextureHandle& t : c.taa) destroy_texture(t);
+        for (TextureHandle& t : c.exposure) destroy_texture(t);
+        for (TextureHandle t : {c.ao, c.lit, c.dof, c.motion, c.ssr, c.ldr, c.exposed}) destroy_texture(t);
+        c = PostChain{};
+        c.width = width;
+        c.height = height;
+        for (u32 i = 0; i < 5; ++i) {
+            const u32 w = (width >> (i + 1)) ? (width >> (i + 1)) : 1u, h = (height >> (i + 1)) ? (height >> (i + 1)) : 1u;
+            c.down[i] = create_render_target(w, h);
+            if (i < 4) c.up[i] = create_render_target(w, h);
+        }
+        c.ldr = create_render_target(width, height);
+        c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
+        c.lit = create_render_target(width, height);
+        c.dof = create_render_target(width, height);
+        c.motion = create_render_target(width, height);
+        c.ssr = create_render_target(width, height);
+        c.taa[0] = create_render_target(width, height);
+        c.taa[1] = create_render_target(width, height);
+        c.exposure[0] = create_render_target(1, 1);
+        c.exposure[1] = create_render_target(1, 1);
+        c.exposed = create_render_target(width, height);
+        return c;
+    }
+
+    // The view post.hlsl reads for one input: a render target's colour (or, as t2 of a target, its
+    // depth once readable), an ordinary texture (the Color Grading LUT), else white.
+    VkImageView post_input(TextureHandle handle, bool depth) {
+        const Texture* t = lookup_texture(handle);
+        if (t && depth && t->depth_image) return t->depth_readable ? t->depth_view : lookup_texture(white_)->view;
+        if (t && !t->shadow_size) return t->view;
+        return lookup_texture(white_)->view;
+    }
+
+    // One full-screen pass into `target` (invalid: the window, in `window_rect`).
+    void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48]) {
+        const f32 black[4] = {0, 0, 0, 1};
+        if (lookup_texture(target)) {
+            set_render_target(target, black);
+        } else {
+            set_render_target({}, nullptr);
+            set_viewport(window_rect[0], window_rect[1], window_rect[2], window_rect[3]);
+        }
+        Frame& f = frames_[frame_];
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.post_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &post_set_layout_;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!f.post_pool || vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) {
+            if (!warned_post_) LSD_LOG_WARN("vulkan", "Too many post-process passes this frame: some are skipped.");
+            warned_post_ = true;
+            return;
+        }
+        const VkDescriptorImageInfo images[3] = {{VK_NULL_HANDLE, post_input(in0, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                 {VK_NULL_HANDLE, post_input(in1, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                 {VK_NULL_HANDLE, post_input(in2, true), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.descriptorCount = 3;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = images;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        const VkCommandBuffer cmd = f.cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipelines_[pass]);
+        vkCmdPushConstants(cmd, post_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes, constants);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_layout_, 0, 1, &set, 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
+    // post.hlsl's resources: t0-t2 (bindings 0-2) and the clamped linear sampler s2 (binding 18,
+    // immutable); a descriptor pool per frame for the passes' sets; one pipeline per pass.
+    bool create_post_pipelines() {
+        VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sampler.magFilter = VK_FILTER_LINEAR;
+        sampler.minFilter = VK_FILTER_LINEAR;
+        sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler.maxLod = VK_LOD_CLAMP_NONE;
+        if (!check(vkCreateSampler(device_, &sampler, nullptr, &post_sampler_), "vkCreateSampler (post)")) return false;
+        const VkDescriptorSetLayoutBinding bindings[4] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                         {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                         {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                         {18, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, &post_sampler_}};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 4;
+        layout.pBindings = bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &post_set_layout_), "vkCreateDescriptorSetLayout (post)")) return false;
+        const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes};
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = 1;
+        pipeline_layout.pSetLayouts = &post_set_layout_;
+        pipeline_layout.pushConstantRangeCount = 1;
+        pipeline_layout.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &post_layout_), "vkCreatePipelineLayout (post)")) return false;
+        const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kPostSetsPerFrame * 3}, {VK_DESCRIPTOR_TYPE_SAMPLER, kPostSetsPerFrame}};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.maxSets = kPostSetsPerFrame;
+        pool.poolSizeCount = 2;
+        pool.pPoolSizes = sizes;
+        for (Frame& f : frames_) {
+            if (!check(vkCreateDescriptorPool(device_, &pool, nullptr, &f.post_pool), "vkCreateDescriptorPool (post)")) return false;
+        }
+#if LSD_VULKAN_HAVE_SPIRV
+        struct Entry {
+            const u32* code;
+            usize size;
+        };
+        const Entry entries[kPostPasses] = {
+            {kPostPrefilterSpirv, sizeof kPostPrefilterSpirv}, {kPostDownSpirv, sizeof kPostDownSpirv}, {kPostUpSpirv, sizeof kPostUpSpirv},
+            {kPostCompositeSpirv, sizeof kPostCompositeSpirv}, {kPostFxaaSpirv, sizeof kPostFxaaSpirv}, {kPostSsrSpirv, sizeof kPostSsrSpirv},
+            {kPostAoSpirv, sizeof kPostAoSpirv}, {kPostAoApplySpirv, sizeof kPostAoApplySpirv}, {kPostTaaSpirv, sizeof kPostTaaSpirv},
+            {kPostDofSpirv, sizeof kPostDofSpirv}, {kPostMotionSpirv, sizeof kPostMotionSpirv}, {kPostMeterSpirv, sizeof kPostMeterSpirv},
+            {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv},
+        };
+        for (u32 i = 0; i < kPostPasses; ++i) {  // the outline is painted over the image; the rest replace it
+            if (!make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, post_pipelines_[i], false, false, false,
+                               i == kOutline ? Blend::Alpha : Blend::Opaque)) return false;
+        }
+#endif
+        return true;
+    }
+    bool read_render_target(TextureHandle handle, u8* rgba) override {
+        Texture* t = lookup_texture(handle);
+        if (!t || !t->depth_image || !rgba) return false;
+        vkDeviceWaitIdle(device_);
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(t->width) * t->height * 4;
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = bytes;
+        info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VkBuffer readback = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        bool ok = check(vkCreateBuffer(device_, &info, nullptr, &readback), "vkCreateBuffer (readback)");
+        if (ok) {
+            VkMemoryRequirements need;
+            vkGetBufferMemoryRequirements(device_, readback, &need);
+            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            alloc.allocationSize = need.size;
+            alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            ok = alloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &alloc, nullptr, &memory), "vkAllocateMemory (readback)") &&
+                 check(vkBindBufferMemory(device_, readback, memory, 0), "vkBindBufferMemory (readback)");
+        }
+        const VkCommandBuffer cmd = ok ? begin_upload() : VK_NULL_HANDLE;
+        ok = ok && cmd != VK_NULL_HANDLE;
+        if (ok) {
+            transition(cmd, t->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                       VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            VkBufferImageCopy region{};
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageExtent = {t->width, t->height, 1};
+            vkCmdCopyImageToBuffer(cmd, t->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1, &region);
+            transition(cmd, t->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, 0,
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            ok = end_upload(cmd);
+        }
+        void* mapped = nullptr;
+        if (ok && check(vkMapMemory(device_, memory, 0, bytes, 0, &mapped), "vkMapMemory (readback)")) {
+            const u8* src = static_cast<const u8*>(mapped);
+            const bool bgra = format_.format == VK_FORMAT_B8G8R8A8_UNORM || format_.format == VK_FORMAT_B8G8R8A8_SRGB;
+            for (VkDeviceSize i = 0; i < bytes; i += 4) {  // rows top to bottom, as the target holds them; RGBA
+                rgba[i] = src[i + (bgra ? 2 : 0)];
+                rgba[i + 1] = src[i + 1];
+                rgba[i + 2] = src[i + (bgra ? 0 : 2)];
+                rgba[i + 3] = src[i + 3];
+            }
+            vkUnmapMemory(device_, memory);
+        } else {
+            ok = false;
+        }
+        if (readback) vkDestroyBuffer(device_, readback, nullptr);
+        if (memory) vkFreeMemory(device_, memory, nullptr);
+        return ok;
+    }
     void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
         const VkPipeline pipeline = particle_pipelines_[additive ? 1 : 0];
         if (skip_frame_ || shadow_pass_ || !pipeline || !vertex_count) return;
@@ -758,7 +1268,8 @@ public:
         VkDeviceSize at = 0;
         if (!stream_write(f, vertices, static_cast<VkDeviceSize>(vertex_count) * sizeof(ParticleVertex), at)) return;
         f32 push[kParticlePushBytes / sizeof(f32)] = {};
-        std::memcpy(push, view_proj, sizeof(f32) * 16);  // push[16] = 0: straight into the window (no scene target yet)
+        std::memcpy(push, view_proj, sizeof(f32) * 16);
+        push[16] = scene_.output[0];  // into a scene target: range-compressed
         const Texture* t = lookup_texture(texture);
         if (!t || t->shadow_size) t = lookup_texture(white_);
         if (!t) return;
@@ -804,7 +1315,7 @@ public:
     void end_frame() override {
         if (skip_frame_) return;
         Frame& f = frames_[frame_];
-        vkCmdEndRendering(f.cmd);
+        end_pass();
         VkBuffer capture = VK_NULL_HANDLE;
         VkDeviceMemory capture_memory = VK_NULL_HANDLE;
         if (capture_path_[0]) {  // swapchain image -> a host-visible buffer
@@ -958,6 +1469,11 @@ private:
         VkDescriptorSet set = VK_NULL_HANDLE;     // the mesh shader's
         VkDescriptorSet ui_set = VK_NULL_HANDLE;  // ImGui's (debug_ui_texture)
         u32 shadow_size = 0;                      // a shadow map (create_shadow_map): its size; 0 = a colour texture
+        VkImage depth_image = VK_NULL_HANDLE;     // a render target's depth (create_render_target)
+        VkDeviceMemory depth_memory = VK_NULL_HANDLE;
+        VkImageView depth_view = VK_NULL_HANDLE;
+        u32 width = 0, height = 0;                // a render target's size
+        bool depth_readable = false;              // its depth is in the shader-read layout (the post pass reads it)
         u32 generation = 0;
     };
 
@@ -978,6 +1494,14 @@ private:
         t.image = VK_NULL_HANDLE;
         t.memory = VK_NULL_HANDLE;
         t.shadow_size = 0;
+        if (t.depth_view) vkDestroyImageView(device_, t.depth_view, nullptr);
+        if (t.depth_image) vkDestroyImage(device_, t.depth_image, nullptr);
+        if (t.depth_memory) vkFreeMemory(device_, t.depth_memory, nullptr);
+        t.depth_view = VK_NULL_HANDLE;
+        t.depth_image = VK_NULL_HANDLE;
+        t.depth_memory = VK_NULL_HANDLE;
+        t.width = t.height = 0;
+        t.depth_readable = false;
     }
 
     // One-off command buffers for uploads, run at once (shortcut: waits for the queue).
@@ -1075,6 +1599,7 @@ private:
         VkDeviceMemory stream_memory = VK_NULL_HANDLE;
         u8* stream_mapped = nullptr;
         VkDeviceSize stream_used = 0;
+        VkDescriptorPool post_pool = VK_NULL_HANDLE;  // the post passes' sets, reset each frame
     };
 
     // Copies `bytes` into the frame's vertex stream; `offset` gets where.
@@ -1614,7 +2139,7 @@ private:
             LSD_LOG_WARN("vulkan", "This GPU offers %u bytes of push constants (meshes need %u): meshes are not drawn.", props.limits.maxPushConstantsSize, kMeshPushBytes);
             return true;
         }
-        if (!create_texture_support() || !create_rings()) return false;
+        if (!create_texture_support() || !create_rings() || !create_post_pipelines()) return false;
         const VkVertexInputAttributeDescription skinned_attributes[5] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, position)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, normal)},
@@ -1747,6 +2272,18 @@ private:
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE, particle_layout_ = VK_NULL_HANDLE;
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE, particle_pipelines_[2] = {};  // alpha, additive
     bool warned_stream_ = false;
+    bool in_pass_ = false;               // between vkCmdBeginRendering and vkCmdEndRendering
+    Texture* target_ = nullptr;          // the render target being drawn into (null: the window or a shadow map)
+    Texture* resume_target_ = nullptr;   // the target a shadow pass interrupted
+    VkSampler post_sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout post_set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout post_layout_ = VK_NULL_HANDLE;
+    VkPipeline post_pipelines_[kPostPasses] = {};
+    PostChain post_chains_[4];
+    u32 post_chain_next_ = 0;
+    TextureHandle outline_mask_;
+    u32 outline_size_[2] = {};
+    bool warned_post_ = false;
     char capture_path_[260] = "";
     Texture textures_[kMaxTextures];
     TextureHandle white_;

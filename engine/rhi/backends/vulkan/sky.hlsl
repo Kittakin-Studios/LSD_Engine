@@ -4,7 +4,7 @@ struct Push {
     float4 zenith, horizon, ground;
     float4 sun_direction;  // xyz towards the sun, w = disc size (cosine of its angular radius)
     float4 sun_color;      // w = 0: no disc
-    float4 camera;
+    float4 camera;         // w = 1: into a scene target (range-compressed for the post pass)
 };
 [[vk::push_constant]] Push pc;
 
@@ -31,5 +31,5 @@ float4 ps_main(SkyOut i) : SV_Target {
         const float s = dot(d, pc.sun_direction.xyz);
         c += pc.sun_color.rgb * (smoothstep(pc.sun_direction.w, pc.sun_direction.w + (1.0 - pc.sun_direction.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));
     }
-    return float4(to_srgb(c), 1.0);
+    return float4(pc.camera.w > 0.5 ? sqrt(max(c, 0.0) / (1.0 + max(c, 0.0))) : to_srgb(c), 1.0);
 }
