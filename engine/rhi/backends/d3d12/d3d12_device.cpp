@@ -62,17 +62,7 @@ float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 // sRGB by hand (the swapchain is UNORM so the UI keeps its exact colours).
 #include "mesh_hlsl.h"  // kMeshHlsl: engine/rhi/shaders/mesh.hlsl
 
-// Material Graph code goes in at //@MATERIAL with these definitions (see lsd/script/material_graph.h).
-constexpr char kMaterialPreludeHlsl[] = R"(
-#define LSD_MATERIAL 1
-struct MaterialIn { float3 uv; float3 wpos; float3 normal; float3 view; float time; };
-struct Surface { float3 base_color; float metallic; float roughness; float3 emissive; float3 normal; float ao; float opacity; };
-float3 lsd_v3(float x) { return float3(x, x, x); }
-float4 lsd_tex0(float3 uv) { return base_tex.Sample(samp, uv.xy); }
-float4 lsd_tex1(float3 uv) { return normal_tex.Sample(samp, uv.xy); }
-float4 lsd_tex2(float3 uv) { return orm_tex.Sample(samp, uv.xy); }
-VK_BIND(2, 2) cbuffer MaterialParams : register(b3) { float4 lsd_params[16]; };
-)";
+#include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl: engine/rhi/shaders/material_prelude.hlsl
 
 // Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(

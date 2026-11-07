@@ -1,4 +1,4 @@
-// Lit meshes (static, SKINNED, INSTANCED; Material Graph code goes in at //@MATERIAL) and the sky,
+// Lit meshes (static, SKINNED, INSTANCED; Material Graph code goes in at the MATERIAL marker below) and the sky,
 // shared by D3D12 (embedded as text, compiled at startup) and Vulkan (compiled to SPIR-V at build
 // time; VK_BIND gives each resource its Vulkan set and binding). The OpenGL backend keeps a GLSL
 // mirror in step.

@@ -24,9 +24,13 @@ target_compile_definitions(lsd_rhi PUBLIC
 if(LSD_RHI_D3D12)
   target_sources(lsd_rhi PRIVATE backends/d3d12/d3d12_device.cpp ${LSD_IMGUI_DIR}/backends/imgui_impl_dx12.cpp)
   target_link_libraries(lsd_rhi PRIVATE d3d12 dxgi d3dcompiler)
-  # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup.
+endif()
+
+if(LSD_RHI_D3D12 OR LSD_RHI_VULKAN)
+  # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup, Vulkan builds Material
+  # Graph shaders from it (through the Vulkan SDK's DXC when installed).
   set(text_dir "${CMAKE_CURRENT_BINARY_DIR}/shader_text")
-  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl")
+  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl")
     list(GET pair 0 file)
     list(GET pair 1 name)
     add_custom_command(

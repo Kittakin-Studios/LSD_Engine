@@ -6,7 +6,8 @@
 // and the spot / point lights cast shadows (depth-only passes into shadow atlases, compare sampler);
 // game UI and particles stream their vertices through a per-frame buffer. Render targets (colour +
 // depth) take thumbnails, previews and the scene for the post pass. Lit meshes, the sky and the post
-// pass run D3D12's own shaders (engine/rhi/shaders/mesh.hlsl and post.hlsl) compiled to SPIR-V.
+// pass run D3D12's own shaders (engine/rhi/shaders/mesh.hlsl and post.hlsl) compiled to SPIR-V;
+// Material Graph shaders compile at runtime through the Vulkan SDK's DXC when it is installed.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -21,7 +22,10 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <new>
+#include <string>
 #include <vector>
 
 // Vulkan's idiom `VkXxxInfo info{VK_STRUCTURE_TYPE_...}` zeroes the rest (pNext, flags...) on purpose.
@@ -71,11 +75,15 @@ namespace lsd::rhi {
 
 namespace {
 
+#include "mesh_hlsl.h"              // kMeshHlsl: engine/rhi/shaders/mesh.hlsl (Material Graph shaders start from it)
+#include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl
+
 constexpr u32 kFramesInFlight = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr u32 kMaxSwapchainImages = 8;
 constexpr u32 kMaxBuffers = 4096;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+constexpr u32 kMaxMaterialShaders = 256;
 constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 floats, as D3D12's root constants)
 constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
 constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / Instances block: 3 float4 rows each
@@ -90,6 +98,21 @@ constexpr u32 kParticlePushBytes = 80;  // particle.hlsl's Push
 constexpr VkDeviceSize kStreamBytes = kParticleRingBytes;  // per frame in flight: UI and particle vertices
 // make_pipeline's colour blending: UI (premultiplied), particles / outline (alpha, additive) and the
 // lit meshes' MeshDraw::blend modes, which keep the scene target's alpha (SSR) as D3D12 does.
+// The lit meshes' vertex layouts (mesh.hlsl's VsIn: locations in declaration order).
+constexpr VkVertexInputAttributeDescription kMeshAttributes[4] = {
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
+    {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
+    {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, lightmap_uv)},
+};
+constexpr VkVertexInputAttributeDescription kSkinnedAttributes[5] = {
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, position)},
+    {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, normal)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SkinnedVertex, uv)},
+    {3, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(SkinnedVertex, joints)},
+    {4, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(SkinnedVertex, weights)},
+};
+
 enum class Blend { Opaque, Premultiplied, Alpha, Additive, MeshTranslucent, MeshAdditive, MeshOverdraw };
 constexpr u32 kPostPushBytes = 192;  // post.hlsl's Post constants (48 floats)
 enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kPostPasses };
@@ -134,6 +157,7 @@ class VulkanDevice final : public Device {
 private:
     struct Texture;  // defined below; passes take it by reference
     struct Frame;
+    struct MaterialShader;
 
 public:
     ~VulkanDevice() override {
@@ -154,6 +178,7 @@ public:
             }
             vkDestroyPipeline(device_, pipeline_, nullptr);
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
+            for (MaterialShader& m : material_shaders_) release_material(m);
             for (auto& kind : mesh_pipelines_) {
                 for (VkPipeline pipeline : kind) vkDestroyPipeline(device_, pipeline, nullptr);
             }
@@ -774,7 +799,9 @@ public:
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         const u32 kind = skinned ? 1u : instanced ? 2u : 0u;
         const u32 mode = draw.wireframe ? 1u : draw.blend >= 1 && draw.blend <= 3 ? 1u + draw.blend : 0u;
-        const VkPipeline pipeline = mesh_pipelines_[kind][mode];
+        // A Material Graph (not wireframe, not instanced) draws with its own pipelines; the Overdraw mode stays built-in.
+        const MaterialShader* material = draw.wireframe || instanced ? nullptr : lookup_material(draw.material_shader);
+        const VkPipeline pipeline = material && draw.blend < 3 ? material->pipelines[kind][draw.blend] : mesh_pipelines_[kind][mode];
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
         if (!pipeline || !vb || !ib || draw.index_count == 0) return;
@@ -809,6 +836,12 @@ public:
         vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 2, sets, 0, nullptr);
         u32 offsets[3] = {lights_at_, lights_at_, lights_at_};  // Lights, rows, material parameters (unused: any valid offset)
+        if (material) {  // its parameters: 16 float4, unset ones 0
+            f32 values[kParamsBytes / sizeof(f32)] = {};
+            const u32 count = std::min(draw.material_param_count, static_cast<u32>(kParamsBytes / 16));
+            if (draw.material_params) std::memcpy(values, draw.material_params, count * 16);
+            if (!ring_write(f, values, sizeof values, offsets[2])) return;
+        }
         const VkDeviceSize zero = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &zero);
         vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1350,8 +1383,46 @@ public:
         vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &at);
         vkCmdDraw(cmd, vertex_count, 1, 0, 0);
     }
-    MaterialShaderHandle create_material_shader(const char*) override { return {}; }
-    void destroy_material_shader(MaterialShaderHandle) override {}
+    // Material Graph code built into the lit pipelines (static and skinned; opaque, translucent, additive),
+    // as D3D12's: shaders/mesh.hlsl with the prelude and the code at //@MATERIAL, compiled by the Vulkan
+    // SDK's DXC. Without the SDK it is invalid and the built-in material draws (the log says so once).
+    MaterialShaderHandle create_material_shader(const char* code) override {
+        if (!code || !mesh_layout_) return {};
+        u32 slot = 0;
+        while (slot < kMaxMaterialShaders && material_shaders_[slot].pipelines[0][0]) ++slot;
+        if (slot == kMaxMaterialShaders) return {};
+        std::string source = kMeshHlsl;
+        source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
+        std::vector<u32> spirv[2][2];  // [static, skinned][vertex, pixel]
+        for (u32 k = 0; k < 2; ++k) {
+            for (u32 st = 0; st < 2; ++st) {
+                if (!compile_spirv(source, st == 0 ? "vs" : "ps", k == 1 ? "SKINNED" : nullptr, spirv[k][st])) return {};
+            }
+        }
+        MaterialShader& m = material_shaders_[slot];
+        const Blend modes[3] = {Blend::Opaque, Blend::MeshTranslucent, Blend::MeshAdditive};
+        bool ok = true;
+        for (u32 k = 0; k < 2 && ok; ++k) {
+            for (u32 b = 0; b < 3 && ok; ++b) {
+                ok = make_pipeline(spirv[k][0].data(), spirv[k][0].size() * 4, spirv[k][1].data(), spirv[k][1].size() * 4, k ? kSkinnedAttributes : kMeshAttributes,
+                                   k ? 5u : 4u, k ? static_cast<u32>(sizeof(SkinnedVertex)) : static_cast<u32>(sizeof(MeshVertex)), VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                                   kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, m.pipelines[k][b], false, true, false, modes[b]);
+            }
+        }
+        if (!ok) {
+            release_material(m);
+            return {};
+        }
+        return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    void destroy_material_shader(MaterialShaderHandle handle) override {
+        MaterialShader* m = lookup_material(handle);
+        if (!m) return;
+        vkDeviceWaitIdle(device_);  // shortcut: stalls; fine for edits in the editor, defer when materials churn
+        release_material(*m);
+        ++m->generation;
+    }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         if (skip_frame_) return;
@@ -1546,6 +1617,97 @@ private:
         bool depth_readable = false;              // its depth is in the shader-read layout (the post pass reads it)
         u32 generation = 0;
     };
+
+    struct MaterialShader {
+        VkPipeline pipelines[2][3] = {};  // [static, skinned][opaque, translucent, additive]
+        u32 generation = 0;
+    };
+
+    MaterialShader* lookup_material(MaterialShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxMaterialShaders) return nullptr;
+        MaterialShader& m = material_shaders_[handle.index()];
+        return m.pipelines[0][0] && (m.generation & MaterialShaderHandle::kGenerationMask) == handle.generation() ? &m : nullptr;
+    }
+
+    void release_material(MaterialShader& m) {
+        for (auto& kind : m.pipelines) {
+            for (VkPipeline& pipeline : kind) {
+                if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+    }
+
+    // The Vulkan SDK's DXC ($VULKAN_SDK/Bin/dxc): only it builds SPIR-V (the Windows SDK's dxc cannot).
+    std::filesystem::path dxc_path() {
+        const char* sdk = SDL_getenv("VULKAN_SDK");
+        if (!sdk || !*sdk) return {};
+#if defined(_WIN32)
+        const std::filesystem::path dxc = std::filesystem::path(sdk) / "Bin" / "dxc.exe";
+#else
+        const std::filesystem::path dxc = std::filesystem::path(sdk) / "bin" / "dxc";
+#endif
+        std::error_code ec;
+        return std::filesystem::exists(dxc, ec) ? dxc : std::filesystem::path{};
+    }
+
+    // HLSL -> SPIR-V through DXC in a hidden process (editor-time: Material Graph edits and loads).
+    // shortcut: a process and temp files per stage (a few hundred ms a material); load dxcompiler in-process if it gets slow
+    bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out) {
+        const std::filesystem::path dxc = dxc_path();
+        if (dxc.empty()) {
+            if (!warned_dxc_) LSD_LOG_INFO("vulkan", "Material Graph materials draw with the built-in material on Vulkan: the Vulkan SDK's DXC compiles them (not installed).");
+            warned_dxc_ = true;
+            return false;
+        }
+        std::error_code ec;
+        const std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+        if (ec) return false;
+        const std::string base = "lsd_material_" + std::to_string(reinterpret_cast<uintptr_t>(this)) + "_" + std::to_string(++spirv_jobs_);
+        const std::filesystem::path hlsl = dir / (base + ".hlsl"), spv = dir / (base + ".spv"), errors = dir / (base + ".txt");
+        {
+            std::ofstream file(hlsl, std::ios::binary);
+            file << source;
+            if (!file) return false;
+        }
+        const std::string target = std::string(stage) + "_6_0", entry = std::string(stage) + "_main", dxc_s = dxc.string(), hlsl_s = hlsl.string(),
+                          spv_s = spv.string(), errors_s = errors.string(), define_s = define ? std::string("-D") + define : std::string();
+        std::vector<const char*> args = {dxc_s.c_str(), "-spirv", "-fspv-target-env=vulkan1.3", "-T", target.c_str(), "-E", entry.c_str(),
+                                         "-Fo", spv_s.c_str(), "-Fe", errors_s.c_str()};
+        if (define) args.push_back(define_s.c_str());
+        args.push_back(hlsl_s.c_str());
+        args.push_back(nullptr);
+        const SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args.data());
+        SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);  // no console window
+        SDL_Process* process = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+        if (process) {
+            SDL_WaitProcess(process, true, nullptr);
+            SDL_DestroyProcess(process);
+        } else {
+            LSD_LOG_ERROR("vulkan", "Could not run %s: %s", dxc_s.c_str(), SDL_GetError());
+        }
+        out.clear();
+        if (std::ifstream file{spv, std::ios::binary | std::ios::ate}) {
+            const std::streamoff size = file.tellg();
+            if (size > 0 && size % 4 == 0) {
+                out.resize(static_cast<usize>(size) / 4);
+                file.seekg(0);
+                file.read(reinterpret_cast<char*>(out.data()), size);
+            }
+        }
+        if (out.empty()) {  // a compile error: DXC wrote why
+            std::ifstream file(errors, std::ios::binary);
+            std::string why((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            if (why.size() > 2000) why.resize(2000);
+            LSD_LOG_ERROR("vulkan", "Material Graph shader (%s%s%s) did not compile:\n%s", stage, define ? " " : "", define ? define : "", why.c_str());
+        }
+        std::filesystem::remove(hlsl, ec);
+        std::filesystem::remove(spv, ec);
+        std::filesystem::remove(errors, ec);
+        return !out.empty();
+    }
 
     Texture* lookup_texture(TextureHandle handle) {
         if (!handle.valid() || handle.index() >= kMaxTextures) return nullptr;
@@ -2300,19 +2462,8 @@ private:
             return true;
         }
         if (!create_texture_support() || !create_rings() || !create_post_pipelines() || !create_mesh_layouts()) return false;
-        const VkVertexInputAttributeDescription skinned_attributes[5] = {
-            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, position)},
-            {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, normal)},
-            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SkinnedVertex, uv)},
-            {3, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(SkinnedVertex, joints)},
-            {4, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(SkinnedVertex, weights)},
-        };
-        const VkVertexInputAttributeDescription mesh_attributes[4] = {
-            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
-            {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
-            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
-            {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, lightmap_uv)},
-        };
+        const auto& skinned_attributes = kSkinnedAttributes;
+        const auto& mesh_attributes = kMeshAttributes;
         // Shadow casters read only the position and UV (and the skinning attributes).
         const VkVertexInputAttributeDescription shadow_attributes[2] = {mesh_attributes[0], mesh_attributes[2]};
         const VkVertexInputAttributeDescription shadow_skinned_attributes[4] = {skinned_attributes[0], skinned_attributes[2], skinned_attributes[3], skinned_attributes[4]};
@@ -2429,6 +2580,9 @@ private:
     TextureHandle local_shadow_, decal_atlas_, reflection_atlas_, lightmap_atlas_, flat_normal_;
     bool fill_non_solid_ = false;
     bool warned_sets_ = false;
+    MaterialShader material_shaders_[kMaxMaterialShaders];
+    u32 spirv_jobs_ = 0;
+    bool warned_dxc_ = false;
     TextureHandle sun_shadow_, no_shadow_;
     Texture* shadow_pass_ = nullptr;   // the shadow map being drawn (between begin / end_shadow_pass)
     VkSampler shadow_sampler_ = VK_NULL_HANDLE;

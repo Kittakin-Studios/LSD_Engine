@@ -127,7 +127,7 @@ the same format for a sub-tree; instances remember per-field overrides.
 ### RHI
 
 `rhi::Device` is one interface with three backends (`engine/rhi/backends/`): Direct3D 12 (default),
-OpenGL 4.6 and Vulkan 1.3 (in progress: HLSL compiled to SPIR-V by the Vulkan SDK's DXC; lit, skinned and instanced meshes, every light and its shadows, sky, lines, particles, game UI, render targets, the post pass and the editor UI). The lit meshes / sky and the post-process passes are HLSL files in `engine/rhi/shaders/` (`mesh.hlsl`, `post.hlsl`), embedded as text for D3D12 (compiled at startup, Material Graph code spliced in) and compiled to SPIR-V for Vulkan at build time (`VK_BIND` gives each resource its Vulkan set / binding; the per-draw constants become push constants under `__spirv__`). The
+OpenGL 4.6 and Vulkan 1.3 (in progress: HLSL compiled to SPIR-V by the Vulkan SDK's DXC; lit, skinned and instanced meshes, every light and its shadows, sky, lines, particles, game UI, render targets, the post pass and the editor UI). The lit meshes / sky and the post-process passes are HLSL files in `engine/rhi/shaders/` (`mesh.hlsl`, `post.hlsl`, `material_prelude.hlsl`), embedded as text for D3D12 (compiled at startup, Material Graph code spliced in; Vulkan splices it the same way and runs the Vulkan SDK's `dxc`) and compiled to SPIR-V for Vulkan at build time (`VK_BIND` gives each resource its Vulkan set / binding; the per-draw constants become push constants under `__spirv__`). The
 device is chosen by scoring adapters (discrete over integrated, VRAM, features). The interface is
 built-in pipelines rather than general command lists:
 
