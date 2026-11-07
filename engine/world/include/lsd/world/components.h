@@ -23,6 +23,7 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drag a material from the Content Browser onto the object in the viewport, or pick it here") char material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Tints the material (white = as the material is)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "Blocks the player in Play") bool collision = true;
+    LSD_PROPERTY(Edit, Tooltip = "A jump-through platform: the player passes up and sideways through it and lands on its top (Collision on)") bool one_way = false;
     LSD_PROPERTY(Edit, Widget = "Choice:Box,Mesh", Tooltip = "Box: the bounds (fast). Mesh: the triangles themselves (arches, ramps, stairs; Unreal's Use Complex As Simple)")
     u32 collision_shape = 0;
     LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "The surface's friction and bounciness") char physical_material[33] = "";
@@ -340,8 +341,8 @@ struct NetReplicated {
 LSD_STRUCT(Category = "2D")
 struct TileShape {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Widget = "Choice:Full,None,Top Half,Bottom Half,Slope Up,Slope Down",
-                 Tooltip = "Full: the whole square blocks. None: drawn only (decoration). Halves: the upper or lower half. Slopes: a ramp rising to the right (Up) or to the left (Down)")
+    LSD_PROPERTY(Edit, Widget = "Choice:Full,None,Top Half,Bottom Half,Slope Up,Slope Down,One Way",
+                 Tooltip = "Full: the whole square blocks. None: drawn only (decoration). Halves: the upper or lower half. Slopes: a ramp rising to the right (Up) or to the left (Down). One Way: the player jumps up through it and lands on top")
     u32 shape = 0;
 };
 
@@ -385,6 +386,7 @@ struct Sprite {
     LSD_PROPERTY(Edit, Tooltip = "Translucent sprites at the same depth: higher draws on top (Unreal's Translucency Sort Priority)") i32 sort_order = 0;
     LSD_PROPERTY(Edit, Tooltip = "Lit sprites cast shadows from the level's lights (its cut-out shape)") bool cast_shadows = true;
     LSD_PROPERTY(Edit, Tooltip = "Blocks in Play: a box the sprite's size, 1 m deep (a RigidBody uses the same box)") bool collision = false;
+    LSD_PROPERTY(Edit, Tooltip = "With Collision: a jump-through platform (the player lands on it from above)") bool one_way = false;
     // On a side-scroller Character (Paper2D Character's flipbooks): Frame / Frame Count are the idle animation.
     LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell of the walk animation") u32 walk_frame = 0;
     LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the walk animation; 0 = keep the idle one while walking") u32 walk_count = 0;

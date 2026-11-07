@@ -1082,6 +1082,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
         apply_material(d, mesh->physical_material);
+        d.one_way = mesh->one_way;
         add_body(e, d);
     }
     if (const auto* ism = world.get<world::InstancedStaticMesh>(e); ism && ism->collision && ism->instances.count) {
@@ -1097,7 +1098,9 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         }
     }
     if (const auto* sprite = world.get<world::Sprite>(e); sprite && sprite->collision && !cached) {
-        add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));  // the sprite's quad, 1 m deep
+        physics::BodyDesc d = fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre);  // the sprite's quad, 1 m deep
+        d.one_way = sprite->one_way;
+        add_body(e, d);
     }
     if (const auto* map = world.get<world::TileMap>(e); map && map->collision) {  // a box per run of solid tiles in a row
         static TileRun runs[4096];
@@ -1105,8 +1108,10 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         const Mat4 map_world = world.world_matrix(e);
         for (u32 k = 0; k < count; ++k) {
             Vec3 run_scale, run_centre;
-            if (runs[k].kind == 0) {
-                add_body(e, fitted_body(map_world, runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre));
+            if (runs[k].kind == 0 || runs[k].kind == 3) {
+                physics::BodyDesc d = fitted_body(map_world, runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre);
+                d.one_way = runs[k].kind == 3;
+                add_body(e, d);
                 continue;
             }
             // A ramp: the wedge's six corners in world space, around its centre (a convex body).

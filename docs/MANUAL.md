@@ -723,7 +723,9 @@ the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z pl
   function: an Event `step` calls `function step(self)` (footsteps, a sword swing's hit frame).
 - **Tile collision shapes**: in the 2D mode, pick a tile in the palette and set **Tile Collision**:
   Full, None (decoration only), Top Half, Bottom Half, Slope Up (a ramp rising to the right) or
-  Slope Down. It applies to every painted copy of that tile (the map's Collision > Tile Shapes list).
+  Slope Down, or **One Way** (a jump-through platform: the player jumps up through it and lands on
+  top). It applies to every painted copy of that tile (the map's Collision > Tile Shapes list).
+  Static Meshes and Sprites have **One Way** too (with Collision on), for 3D or sprite platforms.
   A second Tile Map with Collision off is a decoration layer in front of or behind the play layer.
 - **Translucent sprites**: Sprite > **Translucent** blends soft edges and see-through colours (glass,
   smoke, glows) over what is behind instead of cutting them out; they draw after the solid ones, far

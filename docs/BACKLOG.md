@@ -342,7 +342,8 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Window > Viewports: 2D (orthographic side-on), 2.5D (side-on long-lens perspective) and 3D side by side, remembered; the 2D template opens in the 2D viewport and 2D mode
 - [x] Side-scroller sprite animations [Paper2D Character flipbooks]: Sprite > Character Animation (walk / jump cells) besides Frame / Frame Count (idle), switched by the side-scroller Character in Play
 - [x] 2D shadows, flipbooks, tile shapes, translucency: lit Sprites and Tile Maps cast cut-out shadows (sun and spot / point passes); Flipbook data assets (frames with cell, duration and an event that calls the sprite's script function in Play; Sprite > Flipbook, side-scroller Walk / Jump Flipbooks); per-tile collision shapes (Full, None, Top / Bottom Half, Slope Up / Down: boxes and convex ramps, the 2D mode's Tile Collision); translucent sprites drawn after the solid ones with Sort Order then far to near (`editor/paper2d_core.*`, tested in editor_tests)
-- [~] Still to do (2D): one-way platforms, flipbook editor window (frames edited in Details for now), tile map layers inside one map (separate Tile Maps work as layers)
+- [x] One-way (jump-through) platforms: the One Way tile shape, Static Mesh > One Way and Sprite > One Way; the character meets them only from above (Jolt character contact validation; tested in physics_tests)
+- [~] Still to do (2D): flipbook editor window (frames edited in Details for now), tile map layers inside one map (separate Tile Maps work as layers)
 
 ## Later
 

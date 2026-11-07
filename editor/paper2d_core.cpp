@@ -34,7 +34,7 @@ u32 tile_runs(const world::TileMap& map, TileRun* out, u32 capacity) {
             const u32 start = x;  // a run of the same box shape
             while (x < map.width && shape_at(x) == shape) ++x;
             const f32 lo = shape == kTileTopHalf ? y0 + s * 0.5f : y0, hi = shape == kTileBottomHalf ? y0 + s * 0.5f : y0 + s;
-            out[n++] = {{static_cast<f32>(start) * s, -0.5f, lo}, {static_cast<f32>(x) * s, 0.5f, hi}, 0u};
+            out[n++] = {{static_cast<f32>(start) * s, -0.5f, lo}, {static_cast<f32>(x) * s, 0.5f, hi}, shape == kTileOneWay ? 3u : 0u};
         }
     }
     return n;

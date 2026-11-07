@@ -10,9 +10,9 @@ namespace lsd::editor {
 // along a row) or one tile's ramp. 1 m deep so a character on the plane y = 0 stands on it.
 struct TileRun {
     Vec3 lo, hi;
-    u32 kind = 0;  // 0 box; 1 a ramp rising toward +X; 2 a ramp falling toward +X (the wedge inside lo..hi)
+    u32 kind = 0;  // 0 box; 1 a ramp rising toward +X; 2 a ramp falling toward +X (the wedge inside lo..hi); 3 a one-way box
 };
-enum TileShapeKind : u32 { kTileFull, kTileNone, kTileTopHalf, kTileBottomHalf, kTileSlopeUp, kTileSlopeDown };
+enum TileShapeKind : u32 { kTileFull, kTileNone, kTileTopHalf, kTileBottomHalf, kTileSlopeUp, kTileSlopeDown, kTileOneWay };
 // The shape of tileset tile `tile` (painted value, 1-based) in `map`; Full when not set.
 u32 tile_shape(const world::TileMap& map, i32 tile);
 // The map's collision pieces; returns how many (at most `capacity`).

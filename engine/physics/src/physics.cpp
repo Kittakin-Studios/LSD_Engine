@@ -40,6 +40,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -124,6 +125,17 @@ public:
     void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&, JPH::ContactSettings&) override {
         add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()));
     }
+    // One-way platforms: the character only meets them from above (its feet at or over their top).
+    bool OnContactValidate(const JPH::CharacterVirtual* character, const JPH::CharacterContact& contact) override {
+        if (!system || !one_way_top || one_way_top->empty() || contact.mBodyB.IsInvalid()) return true;
+        JPH::BodyLockRead lock(system->GetBodyLockInterfaceNoLock(), contact.mBodyB);
+        if (!lock.Succeeded()) return true;
+        const u64 index = lock.GetBody().GetUserData();
+        if (index >= one_way_top->size()) return true;
+        const f32 top = (*one_way_top)[static_cast<usize>(index)];
+        if (top != top) return true;  // NaN: an ordinary body
+        return static_cast<f32>(character->GetPosition().GetZ()) >= top - 0.05f;
+    }
     void OnContactAdded(const JPH::CharacterVirtual*, const JPH::CharacterContact& contact, JPH::CharacterContactSettings&) override {
         if (contact.mBodyB.IsInvalid() || !system) return;
         JPH::BodyLockRead lock(system->GetBodyLockInterfaceNoLock(), contact.mBodyB);
@@ -134,6 +146,7 @@ public:
         if (pending.size() < 4096) pending.push_back({a, b});
     }
     JPH::PhysicsSystem* system = nullptr;
+    const std::vector<f32>* one_way_top = nullptr;  // per body: a one-way platform's top height, NaN for others
     std::mutex mutex;
     std::vector<Contact> pending;
 };
@@ -149,6 +162,7 @@ struct PhysicsWorld::Impl {
                                   static_cast<int>(std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1)};
     JPH::PhysicsSystem system;
     std::vector<JPH::BodyID> bodies;
+    std::vector<f32> one_way_top;  // per body (see Contacts::OnContactValidate)
     JPH::Ref<JPH::CharacterVirtual> character;
     Contacts contacts;
     struct Joint {
@@ -264,6 +278,12 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
         settings, desc.motion == Motion::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     if (id.IsInvalid()) LSD_LOG_ERROR("physics", "Out of bodies");
     impl_->bodies.push_back(id);
+    f32 top = std::numeric_limits<f32>::quiet_NaN();
+    if (desc.one_way && !id.IsInvalid()) {
+        top = static_cast<f32>(impl_->system.GetBodyInterface().GetTransformedShape(id).GetWorldSpaceBounds().mMax.GetZ());
+        impl_->contacts.one_way_top = &impl_->one_way_top;
+    }
+    impl_->one_way_top.push_back(top);
     return static_cast<u32>(impl_->bodies.size() - 1);
 }
 
