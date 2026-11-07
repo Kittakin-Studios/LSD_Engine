@@ -260,27 +260,19 @@ float3 sky_radiance(float3 d) {
     const float h = 1.0 - abs(d.z);
     return lerp(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
 }
-// Reflection captures: the capture this point is inside (fading out over its last quarter) replaces
-// the sky along the reflection; its lat-long tile in the atlas, blurrier mips for rougher surfaces.
-// Box captures (Unreal's Box Reflection Capture) fade in over their transition distance inside the walls and
-// bend the ray to where it meets them (parallax correction), so reflections line up with the room.
-float3 capture_reflection(float3 sky_part, float3 r, float roughness, float3 wpos) {
-    float best = 0.0;
-    uint tile = 0;
-    for (uint k = 0; k < (uint)reflection_info.x && k < 8; ++k) {
-        float w;
-        if (reflection_boxes[k].w > 0.0) {
-            const float3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
-            w = saturate(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w);
-        } else {
-            w = saturate((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3));
-        }
-        if (w > best) { best = w; tile = k; }
+// How much a surface at `wpos` is inside capture k (1 inside, fading to 0 at its edge).
+float capture_weight(uint k, float3 wpos) {
+    if (reflection_boxes[k].w > 0.0) {
+        const float3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
+        return saturate(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w);
     }
-    if (best <= 0.0) return sky_part;
-    if (reflection_boxes[tile].w > 0.0) {
+    return saturate((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3));
+}
+// Capture k along r: a box bends r to where it meets the walls; the lat-long tile, blurrier mips for rougher surfaces.
+float3 capture_sample(uint k, float3 r, float roughness, float3 wpos) {
+    if (reflection_boxes[k].w > 0.0) {
         const float3 safe = r + float3(r.x >= 0.0 ? 1e-5 : -1e-5, r.y >= 0.0 ? 1e-5 : -1e-5, r.z >= 0.0 ? 1e-5 : -1e-5);
-        const float3 c = reflections[tile].xyz, e = reflection_boxes[tile].xyz;
+        const float3 c = reflections[k].xyz, e = reflection_boxes[k].xyz;
         const float3 far_side = max((c + e - wpos) / safe, (c - e - wpos) / safe);
         const float t = min(min(far_side.x, far_side.y), far_side.z);
         r = normalize(wpos + r * t - c);
@@ -289,10 +281,24 @@ float3 capture_reflection(float3 sky_part, float3 r, float roughness, float3 wpo
     const float2 margin = 0.5 * exp2(lod) / float2(256.0, 128.0);
     float2 uv = float2(atan2(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
     uv = clamp(uv, margin, 1.0 - margin);
-    const float2 atlas = (float2(tile % 2, tile / 2) + uv) / float2(2.0, 4.0);
+    const float2 atlas = (float2(k % 2, k / 2) + uv) / float2(2.0, 4.0);
     float3 c = min(reflection_tex.SampleLevel(samp, atlas, lod).rgb, 0.999);
-    c = c * c / (1.0 - c * c) / max(exposure, 1e-6);  // stored like the scene target: exposed, range-compressed
-    return lerp(sky_part, c, best);
+    return c * c / (1.0 - c * c) / max(exposure, 1e-6);  // stored like the scene target: exposed, range-compressed
+}
+// Reflection captures over the sky reflection: the two this point is most inside, blended by how far inside each is
+// (no pop where captures overlap); outside every capture, the sky.
+float3 capture_reflection(float3 sky_part, float3 r, float roughness, float3 wpos) {
+    float near_w = 0.0, next_w = 0.0;
+    uint k1 = 0, k2 = 0;
+    for (uint k = 0; k < (uint)reflection_info.x && k < 8; ++k) {
+        const float w = capture_weight(k, wpos);
+        if (w > near_w) { next_w = near_w; k2 = k1; near_w = w; k1 = k; }
+        else if (w > next_w) { next_w = w; k2 = k; }
+    }
+    if (near_w <= 0.0) return sky_part;
+    float3 c = capture_sample(k1, r, roughness, wpos);
+    if (next_w > 0.0) c = lerp(c, capture_sample(k2, r, roughness, wpos), next_w / (near_w + next_w));
+    return lerp(sky_part, c, near_w);
 }
 // The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
 float2 env_brdf(float ndv, float roughness) {

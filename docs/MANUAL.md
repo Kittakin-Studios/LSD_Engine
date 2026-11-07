@@ -582,7 +582,7 @@ Atmosphere:
   surfaces within its **Radius** reflect what is around it (the room, the props, the characters)
   instead of only the sky, sharp on smooth surfaces and blurrier on rough ones. It captures when the
   level opens; after moving things, **Build > Build Reflection Captures** (console `BuildReflections`).
-  Up to 8 in a level; where several overlap, the one a surface is most inside wins. Put one in the
+  Up to 8 in a level; where two overlap, a surface blends them by how far inside each it is (no seam where one room meets the next). Put one in the
   middle of each room. **Shape: Box** (Unreal's Box Reflection Capture) fits a room: set **Box Size**
   to the room (world axes, centred on the capture) and surfaces inside reflect it bent to where each
   ray meets the walls, so a shiny floor shows the walls where they really are; it fades in over

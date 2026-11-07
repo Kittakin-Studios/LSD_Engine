@@ -287,24 +287,17 @@ vec3 sky_radiance(vec3 d) {
     float h = 1.0 - abs(d.z);
     return mix(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
 }
-// Reflection captures (as the HLSL): the capture this point is inside replaces the sky reflection.
-vec3 capture_reflection(vec3 sky_part, vec3 r, float roughness, vec3 wpos) {
-    float best = 0.0;
-    uint tile = 0u;
-    for (uint k = 0u; k < uint(reflection_info.x) && k < 8u; ++k) {
-        float w;
-        if (reflection_boxes[k].w > 0.0) {  // a box capture (see the HLSL)
-            vec3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
-            w = clamp(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w, 0.0, 1.0);
-        } else {
-            w = clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
-        }
-        if (w > best) { best = w; tile = k; }
+float capture_weight(uint k, vec3 wpos) {  // as the HLSL's
+    if (reflection_boxes[k].w > 0.0) {
+        vec3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
+        return clamp(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w, 0.0, 1.0);
     }
-    if (best <= 0.0) return sky_part;
-    if (reflection_boxes[tile].w > 0.0) {
+    return clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
+}
+vec3 capture_sample(uint k, vec3 r, float roughness, vec3 wpos) {
+    if (reflection_boxes[k].w > 0.0) {
         vec3 safe = r + vec3(r.x >= 0.0 ? 1e-5 : -1e-5, r.y >= 0.0 ? 1e-5 : -1e-5, r.z >= 0.0 ? 1e-5 : -1e-5);
-        vec3 c = reflections[tile].xyz, e = reflection_boxes[tile].xyz;
+        vec3 c = reflections[k].xyz, e = reflection_boxes[k].xyz;
         vec3 far_side = max((c + e - wpos) / safe, (c - e - wpos) / safe);
         float t = min(min(far_side.x, far_side.y), far_side.z);
         r = normalize(wpos + r * t - c);
@@ -313,10 +306,23 @@ vec3 capture_reflection(vec3 sky_part, vec3 r, float roughness, vec3 wpos) {
     vec2 margin = 0.5 * exp2(lod) / vec2(256.0, 128.0);
     vec2 uv = vec2(atan(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
     uv = clamp(uv, margin, 1.0 - margin);
-    vec2 atlas = (vec2(float(tile % 2u), float(tile / 2u)) + uv) / vec2(2.0, 4.0);
+    vec2 atlas = (vec2(float(k % 2u), float(k / 2u)) + uv) / vec2(2.0, 4.0);
     vec3 c = min(textureLod(reflection_tex, atlas, lod).rgb, vec3(0.999));
-    c = c * c / (1.0 - c * c) / max(exposure, 1e-6);
-    return mix(sky_part, c, best);
+    return c * c / (1.0 - c * c) / max(exposure, 1e-6);
+}
+// Reflection captures (as the HLSL): the two this point is most inside, blended, over the sky reflection.
+vec3 capture_reflection(vec3 sky_part, vec3 r, float roughness, vec3 wpos) {
+    float near_w = 0.0, next_w = 0.0;
+    uint k1 = 0u, k2 = 0u;
+    for (uint k = 0u; k < uint(reflection_info.x) && k < 8u; ++k) {
+        float w = capture_weight(k, wpos);
+        if (w > near_w) { next_w = near_w; k2 = k1; near_w = w; k1 = k; }
+        else if (w > next_w) { next_w = w; k2 = k; }
+    }
+    if (near_w <= 0.0) return sky_part;
+    vec3 c = capture_sample(k1, r, roughness, wpos);
+    if (next_w > 0.0) c = mix(c, capture_sample(k2, r, roughness, wpos), next_w / (near_w + next_w));
+    return mix(sky_part, c, near_w);
 }
 // The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
 vec2 env_brdf(float ndv, float roughness) {
