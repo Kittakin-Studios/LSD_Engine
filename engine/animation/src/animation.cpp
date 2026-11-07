@@ -302,7 +302,8 @@ Mat4 gltf_up() {
 
 // The first skin's meshes, with a "Root" joint carrying the Y-up turn and the import scale (FBX's scene root does
 // the same). Vertices and bind matrices are in engine axes, unscaled, like the FBX path.
-// shortcut: one skin, no morph targets from glTF yet; add them when a rigged glTF with several skins or shape keys turns up.
+// Morph targets (glTF's targets, named by the mesh's targetNames) become MorphTargets, position offsets only.
+// shortcut: one skin; add more when a rigged glTF with several skins turns up.
 bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity, u32 normals, f32 smoothing_angle) {
     cgltf_data* data = load_gltf(path, error, error_capacity);
     if (!data) return false;
@@ -400,6 +401,7 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
             if (!pos) continue;
             const u32 section = section_of(prim.material && prim.material->name ? prim.material->name : "");
             const cgltf_size count = prim.indices ? prim.indices->count : pos->count;
+            const u32 first_vertex = static_cast<u32>(out.vertices.size());
             for (cgltf_size t = 0; t + 3 <= count; t += 3) triangle_section.push_back(section);
             for (cgltf_size i = 0; i < count - count % 3; ++i) {
                 const cgltf_size v = prim.indices ? cgltf_accessor_read_index(prim.indices, i) : i;
@@ -432,6 +434,28 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
                 out.bounds_min = vmin(out.bounds_min, p3 * scale);  // bind pose (glTF binds where the mesh rests)
                 out.bounds_max = vmax(out.bounds_max, p3 * scale);
             }
+            // Morph targets: each target's position offsets at this primitive's corners (same names across primitives move together).
+            for (cgltf_size m = 0; m < prim.targets_count; ++m) {
+                const cgltf_accessor* offsets = nullptr;
+                for (cgltf_size a = 0; a < prim.targets[m].attributes_count; ++a) {
+                    if (prim.targets[m].attributes[a].type == cgltf_attribute_type_position) offsets = prim.targets[m].attributes[a].data;
+                }
+                if (!offsets) continue;
+                MorphTarget target;
+                if (m < node.mesh->target_names_count && node.mesh->target_names[m]) std::snprintf(target.name, sizeof target.name, "%s", node.mesh->target_names[m]);
+                else std::snprintf(target.name, sizeof target.name, "Morph%u", static_cast<u32>(m));
+                target.first = static_cast<u32>(out.morph_deltas.size());
+                for (cgltf_size i = 0; i < count - count % 3; ++i) {
+                    const cgltf_size v = prim.indices ? cgltf_accessor_read_index(prim.indices, i) : i;
+                    cgltf_float d[3] = {0, 0, 0};
+                    cgltf_accessor_read_float(offsets, v, d, 3);
+                    if (d[0] == 0.0f && d[1] == 0.0f && d[2] == 0.0f) continue;
+                    const Vec3 e = transform_vector(up, {d[0], d[1], d[2]});
+                    out.morph_deltas.push_back({first_vertex + static_cast<u32>(i), {e.x, e.y, e.z}});
+                }
+                target.count = static_cast<u32>(out.morph_deltas.size()) - target.first;
+                if (target.count) out.morphs.push_back(target);
+            }
         }
     }
     if (out.bounds_min.x > out.bounds_max.x) out.bounds_min = out.bounds_max = {};
@@ -448,6 +472,7 @@ struct GltfTrack {
     const cgltf_animation_channel* channel = nullptr;
     std::vector<f32> times, values;  // values: comps per key (x3 for cubic spline: in-tangent, value, out-tangent)
     u32 comps = 3;
+    bool rotation = false;  // a quaternion: interpolated the short way and normalised
     // The value at `t` (linear; step holds; cubic spline uses its key values linearly).
     void sample(f32 t, f32* out) const {
         const usize keys = times.size();
@@ -465,13 +490,13 @@ struct GltfTrack {
         const f32* b = value(k);
         f32 f = channel->sampler->interpolation == cgltf_interpolation_type_step ? 0.0f : (t - times[k - 1]) / (times[k] - times[k - 1]);
         f32 sign = 1.0f;
-        if (comps == 4 && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0.0f) sign = -1.0f;  // the short way round
+        if (rotation && a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0.0f) sign = -1.0f;  // the short way round
         f32 len = 0.0f;
         for (u32 c = 0; c < comps; ++c) {
             out[c] = a[c] * (1.0f - f) + b[c] * sign * f;
             len += out[c] * out[c];
         }
-        if (comps == 4 && len > 0.0f) {  // shortcut: normalised lerp, not slerp; fine at 30 fps keys
+        if (rotation && len > 0.0f) {  // shortcut: normalised lerp, not slerp; fine at 30 fps keys
             const f32 inv = 1.0f / std::sqrt(len);
             for (u32 c = 0; c < 4; ++c) out[c] *= inv;
         }
@@ -479,7 +504,8 @@ struct GltfTrack {
 };
 
 // Each glTF animation becomes a clip, bones matched by name (so a glTF of takes drives a model from another file).
-// shortcut: no retargeting between rigs and no morph weights from glTF yet; the FBX path does both.
+// Morph weights (glTF weights channels) become the clip's morph curves, matched to the model's morphs by name.
+// shortcut: no retargeting between rigs from glTF yet; the FBX path does it.
 u32 import_clips_gltf(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims, u32 trim_count) {
     char error[256];
     cgltf_data* data = load_gltf(path, error, sizeof error);
@@ -503,15 +529,33 @@ u32 import_clips_gltf(const char* path, const SkinnedModel& model, Clip* out, u3
     for (cgltf_size a = 0; a < data->animations_count && written < capacity; ++a) {
         const cgltf_animation& anim = data->animations[a];
         std::vector<std::vector<GltfTrack>> tracks(joints);
+        std::vector<GltfTrack> weight_tracks;  // morph weights, one value per target of the node's mesh
         f32 begin = 1e30f, end = -1e30f;
         for (cgltf_size c = 0; c < anim.channels_count; ++c) {
             const cgltf_animation_channel& ch = anim.channels[c];
+            if (ch.target_node && ch.sampler && ch.target_path == cgltf_animation_path_type_weights && ch.target_node->mesh) {
+                const cgltf_mesh& mesh = *ch.target_node->mesh;
+                GltfTrack track;
+                track.channel = &ch;
+                track.comps = static_cast<u32>(mesh.primitives_count ? mesh.primitives[0].targets_count : 0);
+                if (!track.comps) continue;
+                track.times.resize(ch.sampler->input->count);
+                for (cgltf_size k = 0; k < track.times.size(); ++k) cgltf_accessor_read_float(ch.sampler->input, k, &track.times[k], 1);
+                track.values.resize(ch.sampler->output->count);  // scalars: comps per key
+                for (cgltf_size k = 0; k < ch.sampler->output->count; ++k) cgltf_accessor_read_float(ch.sampler->output, k, &track.values[k], 1);
+                if (track.times.empty() || track.values.size() < track.times.size() * track.comps) continue;
+                begin = std::fmin(begin, track.times.front());
+                end = std::fmax(end, track.times.back());
+                weight_tracks.push_back(std::move(track));
+                continue;
+            }
             if (!ch.target_node || !ch.sampler || ch.target_path == cgltf_animation_path_type_weights || ch.target_path == cgltf_animation_path_type_invalid) continue;
             const i32 j = joint_of[cgltf_node_index(data, ch.target_node)];
             if (j < 0) continue;
             GltfTrack track;
             track.channel = &ch;
             track.comps = ch.target_path == cgltf_animation_path_type_rotation ? 4 : 3;
+            track.rotation = ch.target_path == cgltf_animation_path_type_rotation;
             track.times.resize(ch.sampler->input->count);
             for (cgltf_size k = 0; k < track.times.size(); ++k) cgltf_accessor_read_float(ch.sampler->input, k, &track.times[k], 1);
             track.values.resize(ch.sampler->output->count * track.comps);
@@ -562,6 +606,21 @@ u32 import_clips_gltf(const char* path, const SkinnedModel& model, Clip* out, u3
         }
         std::snprintf(clip.name, sizeof clip.name, "%s", anim.name && anim.name[0] ? anim.name : "Take");
         clip.duration = raw.duration;
+        for (const GltfTrack& g : weight_tracks) {  // morph curves at 30 a second, as the FBX path samples them
+            const cgltf_mesh& mesh = *g.channel->target_node->mesh;
+            std::vector<f32> value(g.comps);
+            std::vector<Clip::Impl::MorphCurve> curves(g.comps);
+            for (u32 m = 0; m < g.comps; ++m) {
+                curves[m].name = m < mesh.target_names_count && mesh.target_names[m] ? mesh.target_names[m] : "Morph" + std::to_string(m);
+                curves[m].weights.resize(frames);
+            }
+            for (u32 f = 0; f < frames; ++f) {
+                const f32 t = f + 1 == frames ? length : static_cast<f32>(f) / 30.0f;
+                g.sample(begin + t, value.data());
+                for (u32 m = 0; m < g.comps; ++m) curves[m].weights[f] = value[m];
+            }
+            for (Clip::Impl::MorphCurve& curve : curves) clip.impl->morphs.push_back(std::move(curve));
+        }
         ++written;
     }
     cgltf_free(data);

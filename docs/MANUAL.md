@@ -1401,8 +1401,9 @@ Drop a rigged FBX, glTF or GLB into the viewport to get a **Skeletal Mesh**. Pic
 same file, or another one with the same bone names: the Mixamo workflow; FBX and glTF mix) and the **Clip** (Details
 lists the file's clips by name and length). With an Animation Graph, Details shows the state it is
 in while it plays. Animations
-play in the editor too. A rigged glTF uses its first skin; its animations become clips (glTF morph
-targets and retargeting between Unreal rigs are FBX-only for now).
+play in the editor too. A rigged glTF uses its first skin; its animations become clips, and its morph
+targets (shape keys, by their target names) and animated weights work as an FBX's do (retargeting between
+Unreal rigs is FBX-only for now).
 
 **Preview and trim a take** (Unreal's Animation Sequence preview and Crop): double-click the rigged
 mesh; the Mesh Editor's **Animations** list plays any take of the file in the preview (Pause, and the

@@ -441,27 +441,33 @@ static void gltf_skin_tests() {
     }
     const f32 times[2] = {0, 1};
     const f32 moves[6] = {0, 1, 0, 1, 1, 0};
+    const f32 smile[9] = {0, 0, 0, 0, 0.5f, 0, 0, 0, 0};  // the second corner moves 0.5 m up (file Y) at full weight
+    const f32 smile_weights[2] = {0, 1};
     put(positions, sizeof positions);  // 0
     put(joints, sizeof joints);        // 36
     put(weights, sizeof weights);      // 48
     put(ibm, sizeof ibm);              // 96
     put(times, sizeof times);          // 224
-    put(moves, sizeof moves);          // 232, 256 in all
+    put(moves, sizeof moves);          // 232
+    put(smile, sizeof smile);          // 256
+    put(smile_weights, sizeof smile_weights);  // 292, 300 in all
     if (FILE* f = std::fopen((dir / "rig.bin").string().c_str(), "wb")) {
         std::fwrite(bin.data(), 1, bin.size(), f);
         std::fclose(f);
     }
     const char* json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,2]}],
 "nodes":[{"name":"hip","translation":[0,1,0],"children":[1]},{"name":"arm","translation":[0,1,0]},{"name":"body","mesh":0,"skin":0}],
-"meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2}}]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2},"targets":[{"POSITION":6}]}],"weights":[0],"extras":{"targetNames":["Smile"]}}],
 "skins":[{"joints":[0,1],"inverseBindMatrices":3}],
-"animations":[{"name":"Slide","samplers":[{"input":4,"output":5}],"channels":[{"sampler":0,"target":{"node":0,"path":"translation"}}]}],
-"buffers":[{"uri":"rig.bin","byteLength":256}],
+"animations":[{"name":"Slide","samplers":[{"input":4,"output":5},{"input":4,"output":7}],"channels":[{"sampler":0,"target":{"node":0,"path":"translation"}},{"sampler":1,"target":{"node":2,"path":"weights"}}]}],
+"buffers":[{"uri":"rig.bin","byteLength":300}],
 "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12},{"buffer":0,"byteOffset":48,"byteLength":48},
-{"buffer":0,"byteOffset":96,"byteLength":128},{"buffer":0,"byteOffset":224,"byteLength":8},{"buffer":0,"byteOffset":232,"byteLength":24}],
+{"buffer":0,"byteOffset":96,"byteLength":128},{"buffer":0,"byteOffset":224,"byteLength":8},{"buffer":0,"byteOffset":232,"byteLength":24},
+{"buffer":0,"byteOffset":256,"byteLength":36},{"buffer":0,"byteOffset":292,"byteLength":8}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,2,0],"max":[1,2,1]},{"bufferView":1,"componentType":5121,"count":3,"type":"VEC4"},
 {"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":3,"componentType":5126,"count":2,"type":"MAT4"},
-{"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},{"bufferView":5,"componentType":5126,"count":2,"type":"VEC3"}]})";
+{"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},{"bufferView":5,"componentType":5126,"count":2,"type":"VEC3"},
+{"bufferView":6,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":7,"componentType":5126,"count":2,"type":"SCALAR"}]})";
     const std::string path = (dir / "rig.gltf").string();
     if (FILE* f = std::fopen(path.c_str(), "wb")) {
         std::fwrite(json, 1, std::strlen(json), f);
@@ -483,6 +489,14 @@ static void gltf_skin_tests() {
     anim::Clip clips[2];
     CHECK(anim::import_clips(path.c_str(), model, clips, 2) == 1);
     CHECK(std::strcmp(clips[0].name, "Slide") == 0 && std::fabs(clips[0].duration - 1.0f) < 1e-4f);
+    // Morph targets: "Smile" moves the second corner 0.5 m up (Z in the engine); the take raises its weight 0 to 1.
+    CHECK(model.morphs.size() == 1 && std::strcmp(model.morphs[0].name, "Smile") == 0 && model.morphs[0].count == 1);
+    if (model.morphs.size() == 1 && model.morphs[0].count == 1) {
+        const anim::MorphDelta& d = model.morph_deltas[model.morphs[0].first];
+        CHECK(d.vertex == 1 && std::fabs(d.offset[2] - 0.5f) < 1e-5f && std::fabs(d.offset[1]) < 1e-5f);
+    }
+    f32 smile_now = -1.0f;
+    CHECK(clips[0].morph_weight("Smile", 0.5f, smile_now) && std::fabs(smile_now - 0.5f) < 0.02f);
     pose.sample(model, &clips[0], 1.0f, false);
     CHECK(near(skin(pose, model.vertices[0]), {1, 0, 2}));  // the hip slid 1 m, the arm and its triangle with it
     pose.sample(model, &clips[0], 0.5f, false);
