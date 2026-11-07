@@ -74,7 +74,7 @@ before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy 
 | Area | Decision |
 | --- | --- |
 | Language | C++20 engine and editor. Gameplay: LuaJIT, visual scripts (compiled to Lua) and C / C++ scripts (a `Game.dll` from `Source/` over the C API `lsd_game.h` + `lsd/game.hpp`, Native Script component, reloaded on rebuild) and JavaScript scripts (`.js` on the Script component, QuickJS-ng, sharing the Lua `lsd` API). UI: HTML / CSS (RmlUi) + each document's `.js` |
-| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (in progress: lit textured, skinned and instanced meshes, sky and lines; no shadows / particles / post yet; needs the Vulkan SDK for its DXC). Built-in shaders are HLSL + a GLSL mirror kept in step |
+| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (in progress: lit textured, skinned and instanced meshes, sun shadows, sky and lines; no local light shadows / particles / post yet; needs the Vulkan SDK for its DXC). Built-in shaders are HLSL + a GLSL mirror kept in step |
 | Architecture | Data-oriented: entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets, hot reload everywhere |
 | Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |

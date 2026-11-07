@@ -2,9 +2,10 @@
 // a depth buffer, vertex / index buffers, textures (mipmapped, also shown by ImGui), the sky, lines
 // and lit meshes (base colour and its texture, Masked, sun and sky ambient), the test triangle
 // (SPIR-V compiled from HLSL by DXC at build time) and ImGui.
-// Skinned and instanced meshes read their joint / copy matrices from a per-frame ring buffer.
-// shortcut: no render targets, shadows, particles or post pass yet; the scene draws straight into
-// the window (the editor then skips the post pass)
+// Skinned and instanced meshes read their joint / copy matrices from a per-frame ring buffer; the sun
+// casts cascaded shadows (depth-only passes into a shadow atlas, sampled with a compare sampler).
+// shortcut: no render targets, local light shadows, particles or post pass yet; the scene draws straight
+// into the window (the editor then skips the post pass)
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -39,6 +40,10 @@
 #include "mesh_skinned_ps.spv.h"
 #include "mesh_instanced_vs.spv.h"
 #include "mesh_instanced_ps.spv.h"
+#include "shadow_vs.spv.h"
+#include "shadow_ps.spv.h"
+#include "shadow_skinned_vs.spv.h"
+#include "shadow_instanced_vs.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -56,6 +61,7 @@ constexpr u32 kMaxTextures = 4096;
 constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
 constexpr VkDeviceSize kRowsWindow = 64u << 10;    // what one draw may read from it (the descriptor's range)
 constexpr u32 kInstancesPerDraw = static_cast<u32>(kRowsWindow / 48);  // 3 float4 rows per copy
+constexpr u32 kShadowPushBytes = 80;  // shadow.hlsl's Push
 
 bool check(VkResult result, const char* what) {
     if (result == VK_SUCCESS) return true;
@@ -120,7 +126,8 @@ public:
             vkDestroyPipelineLayout(device_, sky_layout_, nullptr);
             vkDestroyPipeline(device_, skinned_pipeline_, nullptr);
             vkDestroyPipeline(device_, instanced_pipeline_, nullptr);
-            vkDestroyPipelineLayout(device_, rows_layout_, nullptr);
+            for (VkPipeline shadow : shadow_pipelines_) vkDestroyPipeline(device_, shadow, nullptr);
+            if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
             for (Frame& f : frames_) {
                 if (f.ring) vkDestroyBuffer(device_, f.ring, nullptr);
                 if (f.ring_memory) vkFreeMemory(device_, f.ring_memory, nullptr);
@@ -236,18 +243,26 @@ public:
                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        scene_in_ring_ = false;
+        shadow_pass_ = nullptr;
+        sun_shadow_ = {};
+        begin_main_pass(clear_color);
+    }
 
+    // The window pass (colour + depth). clear_color null: carries on after a shadow pass (load what is there).
+    void begin_main_pass(const f32* clear_color) {
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         color.imageView = views_[image_];
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        std::memcpy(color.clearValue.color.float32, clear_color, sizeof(f32) * 4);
+        if (clear_color) std::memcpy(color.clearValue.color.float32, clear_color, sizeof(f32) * 4);
         VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         depth.imageView = depth_view_;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;  // kept: a shadow pass may split the frame's pass
         depth.clearValue.depthStencil.depth = 1.0f;  // as D3D12: 0 near, 1 far, LESS_EQUAL
         VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
         rendering.renderArea.extent = extent_;
@@ -255,13 +270,13 @@ public:
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachments = &color;
         rendering.pDepthAttachment = &depth;
-        vkCmdBeginRendering(f.cmd, &rendering);
+        vkCmdBeginRendering(cmd, &rendering);
 
         // Negative height flips Y so clip space matches D3D12 and OpenGL (+Y up).
         const VkViewport viewport{0.0f, static_cast<f32>(extent_.height), static_cast<f32>(extent_.width), -static_cast<f32>(extent_.height), 0.0f, 1.0f};
         const VkRect2D scissor{{0, 0}, extent_};
-        vkCmdSetViewport(f.cmd, 0, 1, &viewport);
-        vkCmdSetScissor(f.cmd, 0, 1, &scissor);
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
     }
 
     // shortcut: host-visible memory (no staging copy), one allocation per buffer; a staging upload and
@@ -428,25 +443,143 @@ public:
         if (!t->ui_set) t->ui_set = ImGui_ImplVulkan_AddTexture(sampler_, t->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         return reinterpret_cast<u64>(t->ui_set);
     }
-    void set_lights(const LightSetup& lights) override {  // the first step's mesh shader takes the sun and the sky / ground ambient
-        exposure_ = lights.exposure;
-        std::memcpy(sky_, lights.sky, sizeof sky_);
-        std::memcpy(ground_, lights.ground, sizeof ground_);
-        has_sun_ = false;
+    void set_lights(const LightSetup& lights) override {  // mesh.hlsl's Scene: the first sun, the sky / ground ambient, the sun's cascades
+        scene_ = Scene{};
+        scene_.sun_dir[2] = -1.0f;
+        scene_.sun_dir[3] = lights.exposure;
+        std::memcpy(scene_.sky, lights.sky, sizeof scene_.sky);
+        std::memcpy(scene_.ground, lights.ground, sizeof scene_.ground);
+        i32 sun = -1;
         for (u32 i = 0; i < lights.count && i < kMaxLights; ++i) {
             if (lights.lights[i].type >= 0.5f) continue;
-            std::memcpy(sun_dir_, lights.lights[i].direction, sizeof sun_dir_);
-            std::memcpy(sun_color_, lights.lights[i].color, sizeof sun_color_);
-            has_sun_ = true;
+            std::memcpy(scene_.sun_dir, lights.lights[i].direction, sizeof(f32) * 3);
+            std::memcpy(scene_.sun_color, lights.lights[i].color, sizeof(f32) * 3);
+            scene_.sun_color[3] = 1.0f;
+            sun = static_cast<i32>(i);
             break;
         }
+        std::memcpy(scene_.shadow_info, lights.shadow_info, sizeof scene_.shadow_info);
+        if (sun < 0 || static_cast<f32>(sun) != lights.shadow_info[1]) scene_.shadow_info[1] = -1.0f;  // only the first sun's shadows
+        std::memcpy(scene_.shadow_split, lights.shadow_splits, sizeof scene_.shadow_split);
+        std::memcpy(scene_.shadow_vp, lights.shadow_matrices, sizeof scene_.shadow_vp);
+        std::memcpy(scene_.shadow_tile, lights.shadow_tiles, sizeof scene_.shadow_tile);
+        scene_in_ring_ = false;
     }
-    TextureHandle create_shadow_map(u32) override { return {}; }
-    void begin_shadow_pass(TextureHandle) override {}
-    void draw_shadow_caster(BufferHandle, BufferHandle, u32, const f32*, const f32*, u32, const ShadowCutout*) override {}
-    void draw_shadow_instances(BufferHandle, BufferHandle, u32, const f32*, const f32*, u32) override {}
-    void end_shadow_pass() override {}
-    void set_shadow_map(TextureHandle, TextureHandle) override {}
+
+    // A square depth texture, kept in the shader-read layout between shadow passes (cleared to far at first).
+    TextureHandle create_shadow_map(u32 size) override {
+        if (!texture_set_layout_ || !shadow_sampler_ || size == 0) return {};
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].image) ++slot;
+        if (slot == kMaxTextures) return {};
+        Texture& t = textures_[slot];
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.format = kDepthFormat;
+        image.extent = {size, size, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (!check(vkCreateImage(device_, &image, nullptr, &t.image), "vkCreateImage (shadow map)")) return {};
+        VkMemoryRequirements need;
+        vkGetImageMemoryRequirements(device_, t.image, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        bool ok = alloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &alloc, nullptr, &t.memory), "vkAllocateMemory (shadow map)") &&
+                  check(vkBindImageMemory(device_, t.image, t.memory, 0), "vkBindImageMemory (shadow map)");
+        if (ok) {
+            const VkCommandBuffer cmd = begin_upload();
+            ok = cmd != VK_NULL_HANDLE;
+            if (ok) {
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                const VkClearDepthStencilValue far{1.0f, 0};
+                const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                vkCmdClearDepthStencilImage(cmd, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &range);
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                ok = end_upload(cmd);
+            }
+        }
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = t.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = kDepthFormat;
+        view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        ok = ok && check(vkCreateImageView(device_, &view, nullptr, &t.view), "vkCreateImageView (shadow map)");
+        VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        set_info.descriptorPool = texture_pool_;
+        set_info.descriptorSetCount = 1;
+        set_info.pSetLayouts = &texture_set_layout_;
+        ok = ok && check(vkAllocateDescriptorSets(device_, &set_info, &t.set), "vkAllocateDescriptorSets (shadow map)");
+        if (!ok) {
+            release_texture(t);
+            return {};
+        }
+        VkDescriptorImageInfo described{shadow_sampler_, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = t.set;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &described;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        t.shadow_size = size;
+        return TextureHandle::make(slot, t.generation);
+    }
+
+    // Leaves the window pass, draws depth into the shadow map (set_viewport picks its tiles); end_shadow_pass returns.
+    void begin_shadow_pass(TextureHandle handle) override {
+        Texture* t = lookup_texture(handle);
+        if (skip_frame_ || shadow_pass_ || !t || !t->shadow_size) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdEndRendering(cmd);
+        transition(cmd, t->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                   VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = t->view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil.depth = 1.0f;
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea.extent = {t->shadow_size, t->shadow_size};
+        rendering.layerCount = 1;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        shadow_pass_ = t;
+        const f32 size = static_cast<f32>(t->shadow_size);
+        set_viewport(0.0f, 0.0f, size, size);
+    }
+
+    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
+                            const f32* joint_rows, u32 joint_count, const ShadowCutout* cutout) override {
+        const bool skinned = joint_rows && joint_count;
+        const Texture* masked = !skinned && cutout ? lookup_texture(cutout->texture) : nullptr;  // shortcut: skinned casters cast solid
+        draw_shadow(vertices, indices, index_count, light_mvp, skinned ? 1 : masked ? 3 : 0, joint_rows, skinned ? std::min(joint_count, kMaxJoints) : 0, masked ? masked->set : VK_NULL_HANDLE,
+                    masked ? cutout->cutoff : 0.0f, masked ? cutout->alpha : 1.0f);
+    }
+
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+        if (rows && count) draw_shadow(vertices, indices, index_count, view_proj, 2, rows, count, VK_NULL_HANDLE, 0.0f, 1.0f);
+    }
+
+    void end_shadow_pass() override {
+        if (skip_frame_ || !shadow_pass_) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdEndRendering(cmd);
+        transition(cmd, shadow_pass_->image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        shadow_pass_ = nullptr;
+        begin_main_pass(nullptr);
+    }
+
+    void set_shadow_map(TextureHandle sun, TextureHandle) override { sun_shadow_ = sun; }  // shortcut: local light shadows not drawn yet
     void set_decal_atlas(TextureHandle) override {}
     void set_reflection_atlas(TextureHandle) override {}
     void set_lightmap_atlas(TextureHandle) override {}
@@ -458,26 +591,30 @@ public:
         const Buffer* vb = lookup(draw.vertices);
         const Buffer* ib = lookup(draw.indices);
         if (!vb || !ib || draw.index_count == 0) return;
+        Frame& f = frames_[frame_];
+        if (!scene_in_ring_) {  // this view's Scene block, once per set_lights
+            if (!ring_write(f, &scene_, sizeof scene_, scene_at_)) return;
+            scene_in_ring_ = true;
+        }
         f32 push[kMeshPushBytes / sizeof(f32)] = {};
         std::memcpy(push, draw.mvp, sizeof draw.mvp);
-        std::memcpy(push + 16, draw.normal_matrix, sizeof draw.normal_matrix);
-        push[19] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
-        push[23] = draw.alpha_cutoff > 0.0f ? draw.alpha_cutoff : 0.0f;  // Masked
-        std::memcpy(push + 28, draw.color, sizeof draw.color);
-        std::memcpy(push + 32, sun_dir_, sizeof sun_dir_);
-        push[35] = exposure_;
-        std::memcpy(push + 36, sun_color_, sizeof sun_color_);
-        push[39] = has_sun_ ? 1.0f : 0.0f;
-        std::memcpy(push + 40, sky_, sizeof(f32) * 3);
-        std::memcpy(push + 44, ground_, sizeof(f32) * 3);
-        Frame& f = frames_[frame_];
+        std::memcpy(push + 16, draw.world, sizeof draw.world);
+        std::memcpy(push + 28, draw.normal_matrix, sizeof draw.normal_matrix);
+        push[31] = draw.unlit || draw.wireframe ? 1.0f : 0.0f;
+        push[35] = draw.alpha_cutoff > 0.0f ? draw.alpha_cutoff : 0.0f;  // Masked
+        std::memcpy(push + 40, draw.color, sizeof draw.color);
+        std::memcpy(push + 44, draw.camera_position, sizeof draw.camera_position);
         const VkCommandBuffer cmd = f.cmd;
-        const VkPipelineLayout layout = skinned || instanced ? rows_layout_ : mesh_layout_;
+        const VkPipelineLayout layout = mesh_layout_;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skinned ? skinned_pipeline_ : instanced ? instanced_pipeline_ : mesh_pipeline_);
         vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, push);
         const Texture* base = lookup_texture(draw.base_color_texture);
         if (!base) base = lookup_texture(white_);
         if (base) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &base->set, 0, nullptr);
+        const Texture* shadow = lookup_texture(sun_shadow_);
+        if (!shadow || !shadow->shadow_size) shadow = lookup_texture(no_shadow_);
+        if (shadow) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &shadow->set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1, &f.rows_set, 1, &scene_at_);
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
         vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -494,6 +631,39 @@ public:
             if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, at)) return;  // full this frame: the rest waits
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &f.rows_set, 1, &at);
             vkCmdDrawIndexed(cmd, draw.index_count, skinned ? 1 : count, 0, 0, 0);
+            first += count;
+        }
+    }
+
+    // One caster: kind 0 static, 1 skinned (rows = joints), 2 instanced (rows = copies, mvp = the light's view-projection), 3 Masked.
+    void draw_shadow(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32* mvp, int kind, const f32* rows, u32 row_count,
+                     VkDescriptorSet masked, f32 cutoff, f32 alpha) {
+        if (skip_frame_ || !shadow_pass_ || !shadow_pipelines_[kind] || index_count == 0) return;
+        const Buffer* vb = lookup(vertices);
+        const Buffer* ib = lookup(indices);
+        if (!vb || !ib) return;
+        Frame& f = frames_[frame_];
+        const VkCommandBuffer cmd = f.cmd;
+        f32 push[kShadowPushBytes / sizeof(f32)] = {};
+        std::memcpy(push, mvp, sizeof(f32) * 16);
+        push[16] = cutoff;
+        push[17] = alpha;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipelines_[kind]);
+        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kShadowPushBytes, push);
+        if (masked) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1, &masked, 0, nullptr);
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
+        vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
+        if (kind == 0 || kind == 3) {
+            vkCmdDrawIndexed(cmd, index_count, 1, 0, 0, 0);
+            return;
+        }
+        for (u32 first = 0; first < row_count;) {
+            const u32 count = kind == 1 ? row_count : std::min(row_count - first, kInstancesPerDraw);
+            u32 at = 0;
+            if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, at)) return;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1, &f.rows_set, 1, &at);
+            vkCmdDrawIndexed(cmd, index_count, kind == 1 ? 1 : count, 0, 0, 0);
             first += count;
         }
     }
@@ -712,6 +882,7 @@ private:
         VkImageView view = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE;     // the mesh shader's
         VkDescriptorSet ui_set = VK_NULL_HANDLE;  // ImGui's (debug_ui_texture)
+        u32 shadow_size = 0;                      // a shadow map (create_shadow_map): its size; 0 = a colour texture
         u32 generation = 0;
     };
 
@@ -731,6 +902,7 @@ private:
         t.view = VK_NULL_HANDLE;
         t.image = VK_NULL_HANDLE;
         t.memory = VK_NULL_HANDLE;
+        t.shadow_size = 0;
     }
 
     // One-off command buffers for uploads, run at once (shortcut: waits for the queue).
@@ -788,7 +960,15 @@ private:
         const u8 white[4] = {255, 255, 255, 255};
         const void* mip = white;
         white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, &mip);
-        return white_.valid();
+        VkSamplerCreateInfo compare{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};  // as D3D12's s1: 2x2 filtered depth compare
+        compare.magFilter = VK_FILTER_LINEAR;
+        compare.minFilter = VK_FILTER_LINEAR;
+        compare.addressModeU = compare.addressModeV = compare.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        compare.compareEnable = VK_TRUE;
+        compare.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        if (!check(vkCreateSampler(device_, &compare, nullptr, &shadow_sampler_), "vkCreateSampler (shadow)")) return false;
+        no_shadow_ = create_shadow_map(1);  // bound when the view has no sun shadows (all lit)
+        return white_.valid() && no_shadow_.valid();
     }
 
     u32 memory_type(u32 allowed, VkMemoryPropertyFlags wanted) const {
@@ -827,9 +1007,9 @@ private:
         return true;
     }
 
-    // Each frame's ring buffer (persistently mapped) and its descriptor set (set 1: a dynamic storage buffer).
+    // Each frame's ring buffer (persistently mapped) and its descriptor set (a dynamic storage buffer: set 1 rows, set 2 the Scene block).
     bool create_rings() {
-        VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+        VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};  // rows and the Scene block
         VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         layout.bindingCount = 1;
         layout.pBindings = &binding;
@@ -1014,6 +1194,10 @@ private:
         features13.shaderDemoteToHelperInvocation = VK_TRUE;  // core in 1.3: DXC turns HLSL discard into it (Masked materials)
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         features.pNext = &features13;
+        VkPhysicalDeviceFeatures supported{};
+        vkGetPhysicalDeviceFeatures(gpu_.handle, &supported);
+        depth_clamp_ = supported.depthClamp == VK_TRUE;  // shadow casters behind the light's near plane still cast (D3D12's DepthClipEnable off)
+        features.features.depthClamp = supported.depthClamp;
 
         const char* extensions[2] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME};
         VkDeviceCreateInfo create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -1207,18 +1391,20 @@ private:
 #endif
     }
 
-    // A pipeline for the scene pass (colour + depth): vertex layout, topology, depth test, push constants.
+    // A pipeline for the scene pass (colour + depth) or, `shadow`, a depth-only shadow pass (no pixel
+    // shader when ps is null, depth bias, depth clamp): vertex layout, topology, depth test, push constants.
     bool make_pipeline(const u32* vs, usize vs_size, const u32* ps, usize ps_size, const VkVertexInputAttributeDescription* attributes, u32 attribute_count,
                        u32 stride, VkPrimitiveTopology topology, u32 push_bytes, VkShaderStageFlags push_stages, VkPipelineLayout& layout_out, VkPipeline& out,
-                       bool textured = false, bool depth_test = true, bool rows = false) {
-        if (!layout_out) {  // pipelines sharing a layout (skinned and instanced) make it once
+                       bool textured = false, bool depth_test = true, bool shadow = false) {
+        if (!layout_out) {  // pipelines sharing a layout (every mesh and shadow pipeline) make it once
             VkPushConstantRange push{push_stages, 0, push_bytes};
             VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
             layout.pushConstantRangeCount = 1;
             layout.pPushConstantRanges = &push;
-            const VkDescriptorSetLayout sets[2] = {texture_set_layout_, rows_set_layout_};
+            // 0 base colour texture, 1 joint / copy rows, 2 the Scene block (both in the frame's ring), 3 the sun's shadow map
+            const VkDescriptorSetLayout sets[4] = {texture_set_layout_, rows_set_layout_, rows_set_layout_, texture_set_layout_};
             if (textured) {
-                layout.setLayoutCount = rows ? 2 : 1;
+                layout.setLayoutCount = 4;
                 layout.pSetLayouts = sets;
             }
             if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &layout_out), "vkCreatePipelineLayout (scene)")) return false;
@@ -1226,7 +1412,8 @@ private:
         VkShaderModule modules[2] = {};
         const u32* code[2] = {vs, ps};
         const usize sizes[2] = {vs_size, ps_size};
-        for (int i = 0; i < 2; ++i) {
+        const u32 stage_count = ps ? 2 : 1;
+        for (u32 i = 0; i < stage_count; ++i) {
             VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
             info.codeSize = sizes[i];
             info.pCode = code[i];
@@ -1254,6 +1441,11 @@ private:
         raster.polygonMode = VK_POLYGON_MODE_FILL;
         raster.cullMode = VK_CULL_MODE_NONE;  // as D3D12: both sides until imported winding is verified
         raster.lineWidth = 1.0f;
+        if (shadow) {
+            raster.depthClampEnable = depth_clamp_ ? VK_TRUE : VK_FALSE;
+            raster.depthBiasEnable = VK_TRUE;
+            raster.depthBiasSlopeFactor = 2.0f;  // as D3D12's SlopeScaledDepthBias: against acne on slopes
+        }
         VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -1263,19 +1455,19 @@ private:
         VkPipelineColorBlendAttachmentState blend_attachment{};
         blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        blend.attachmentCount = 1;
+        blend.attachmentCount = shadow ? 0 : 1;
         blend.pAttachments = &blend_attachment;
         const VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = 2;
         dynamic.pDynamicStates = dynamic_states;
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        rendering.colorAttachmentCount = 1;
+        rendering.colorAttachmentCount = shadow ? 0 : 1;
         rendering.pColorAttachmentFormats = &format_.format;
         rendering.depthAttachmentFormat = kDepthFormat;
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         create.pNext = &rendering;
-        create.stageCount = 2;
+        create.stageCount = stage_count;
         create.pStages = stages;
         create.pVertexInputState = &vertex_input;
         create.pInputAssemblyState = &input_assembly;
@@ -1288,7 +1480,7 @@ private:
         create.layout = layout_out;
         const bool ok = check(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &out), "vkCreateGraphicsPipelines (scene)");
         vkDestroyShaderModule(device_, modules[0], nullptr);
-        vkDestroyShaderModule(device_, modules[1], nullptr);
+        if (modules[1]) vkDestroyShaderModule(device_, modules[1], nullptr);
         return ok;
     }
 
@@ -1313,6 +1505,11 @@ private:
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
             {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
         };
+        // Shadow casters read only the position and UV (and the skinning attributes).
+        const VkVertexInputAttributeDescription shadow_attributes[2] = {mesh_attributes[0], mesh_attributes[2]};
+        const VkVertexInputAttributeDescription shadow_skinned_attributes[4] = {skinned_attributes[0], skinned_attributes[2], skinned_attributes[3], skinned_attributes[4]};
+        const VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        const VkPrimitiveTopology triangles = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const VkVertexInputAttributeDescription line_attributes[2] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LineVertex, position)},
             {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(LineVertex, color)},
@@ -1322,9 +1519,17 @@ private:
                make_pipeline(kSkyVsSpirv, sizeof kSkyVsSpirv, kSkyPsSpirv, sizeof kSkyPsSpirv, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
                              kSkyPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sky_layout_, sky_pipeline_, false, false) &&
                make_pipeline(kMeshSkinnedVsSpirv, sizeof kMeshSkinnedVsSpirv, kMeshSkinnedPsSpirv, sizeof kMeshSkinnedPsSpirv, skinned_attributes, 5, sizeof(SkinnedVertex),
-                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, rows_layout_, skinned_pipeline_, true, true, true) &&
+                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, skinned_pipeline_, true) &&
                make_pipeline(kMeshInstancedVsSpirv, sizeof kMeshInstancedVsSpirv, kMeshInstancedPsSpirv, sizeof kMeshInstancedPsSpirv, mesh_attributes, 3, sizeof(MeshVertex),
-                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, rows_layout_, instanced_pipeline_, true, true, true) &&
+                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, instanced_pipeline_, true) &&
+               make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles, kMeshPushBytes, stages,
+                             mesh_layout_, shadow_pipelines_[0], true, true, true) &&
+               make_pipeline(kShadowSkinnedVsSpirv, sizeof kShadowSkinnedVsSpirv, nullptr, 0, shadow_skinned_attributes, 4, sizeof(SkinnedVertex), triangles,
+                             kMeshPushBytes, stages, mesh_layout_, shadow_pipelines_[1], true, true, true) &&
+               make_pipeline(kShadowInstancedVsSpirv, sizeof kShadowInstancedVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles,
+                             kMeshPushBytes, stages, mesh_layout_, shadow_pipelines_[2], true, true, true) &&
+               make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, kShadowPsSpirv, sizeof kShadowPsSpirv, shadow_attributes, 2, sizeof(MeshVertex), triangles,
+                             kMeshPushBytes, stages, mesh_layout_, shadow_pipelines_[3], true, true, true) &&
                make_pipeline(kLinesVsSpirv, sizeof kLinesVsSpirv, kLinesPsSpirv, sizeof kLinesPsSpirv, line_attributes, 2, sizeof(LineVertex),
                              VK_PRIMITIVE_TOPOLOGY_LINE_LIST, sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT, line_layout_, line_pipeline_);
 #else
@@ -1378,9 +1583,24 @@ private:
     VkImageView depth_view_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE, line_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE, line_pipeline_ = VK_NULL_HANDLE;
-    f32 exposure_ = 1.0f, sky_[4] = {0.30f, 0.36f, 0.45f, 0.0f}, ground_[4] = {0.16f, 0.15f, 0.14f, 0.0f};
-    f32 sun_dir_[3] = {0.0f, 0.0f, -1.0f}, sun_color_[3] = {};
-    bool has_sun_ = false;
+    struct Scene {  // mesh.hlsl's Scene (set 2), from set_lights
+        f32 sun_dir[4] = {0.0f, 0.0f, -1.0f, 1.0f};
+        f32 sun_color[4] = {};
+        f32 sky[4] = {0.30f, 0.36f, 0.45f, 0.0f};
+        f32 ground[4] = {0.16f, 0.15f, 0.14f, 0.0f};
+        f32 shadow_info[4] = {0, -1, 0, 0};
+        f32 shadow_split[4] = {};
+        f32 shadow_vp[4][16] = {};
+        f32 shadow_tile[4][4] = {};
+    };
+    Scene scene_;
+    bool scene_in_ring_ = false;  // written into this frame's ring since the last set_lights
+    u32 scene_at_ = 0;
+    TextureHandle sun_shadow_, no_shadow_;
+    Texture* shadow_pass_ = nullptr;   // the shadow map being drawn (between begin / end_shadow_pass)
+    VkSampler shadow_sampler_ = VK_NULL_HANDLE;
+    VkPipeline shadow_pipelines_[4] = {};  // static, skinned, instanced, Masked
+    bool depth_clamp_ = false;
     char capture_path_[260] = "";
     Texture textures_[kMaxTextures];
     TextureHandle white_;
@@ -1392,7 +1612,6 @@ private:
     VkPipeline sky_pipeline_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout rows_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool rows_pool_ = VK_NULL_HANDLE;
-    VkPipelineLayout rows_layout_ = VK_NULL_HANDLE;  // skinned and instanced: texture set + rows set
     VkPipeline skinned_pipeline_ = VK_NULL_HANDLE, instanced_pipeline_ = VK_NULL_HANDLE;
     VkDeviceSize storage_alignment_ = 0;
     bool warned_ring_ = false;
