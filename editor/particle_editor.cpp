@@ -78,6 +78,9 @@ void ParticleEditor::draw(EditorState& s) {
     ImGui::Checkbox("Loop", &loop_);
     ImGui::SetItemTooltip("Start again when every emitter has finished (non-looping systems)");
     ImGui::SameLine();
+    ImGui::Checkbox("Bounds", &show_bounds_);
+    ImGui::SetItemTooltip("Draws the box the live particles fill (Niagara's bounds): how far the effect reaches");
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
     with_tip(ImGui::SliderFloat("Speed", &speed_, 0.05f, 4.0f, "%.2fx", ImGuiSliderFlags_Logarithmic), "Preview speed (slow motion or fast forward)");
 
@@ -98,8 +101,31 @@ void ParticleEditor::draw(EditorState& s) {
     // Preview (rendered by render() this frame), orbit with the mouse.
     const f32 side = ImGui::GetContentRegionAvail().x < 512.0f ? ImGui::GetContentRegionAvail().x : 512.0f;
     const bool flipped = s.device->render_targets_flipped();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::Image(static_cast<ImTextureID>(s.device->debug_ui_texture(target_)), ImVec2(side, side), ImVec2(0, flipped ? 1.0f : 0.0f),
                  ImVec2(1, flipped ? 0.0f : 1.0f));
+    if (Vec3 lo, hi; show_bounds_ && instance_.bounds(lo, hi)) {  // its 12 edges over the picture, and its size
+        ImVec2 corner[8];
+        bool ok = true;
+        for (int c = 0; c < 8 && ok; ++c) {
+            const Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
+            const f32 x = view_proj_.at(0, 0) * p.x + view_proj_.at(0, 1) * p.y + view_proj_.at(0, 2) * p.z + view_proj_.at(0, 3);
+            const f32 y = view_proj_.at(1, 0) * p.x + view_proj_.at(1, 1) * p.y + view_proj_.at(1, 2) * p.z + view_proj_.at(1, 3);
+            const f32 w = view_proj_.at(3, 0) * p.x + view_proj_.at(3, 1) * p.y + view_proj_.at(3, 2) * p.z + view_proj_.at(3, 3);
+            ok = w > 0.01f;
+            corner[c] = ImVec2(at.x + (x / w * 0.5f + 0.5f) * side, at.y + (0.5f - y / w * 0.5f) * side);
+        }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        for (int c = 0; c < 8 && ok; ++c) {
+            for (int axis = 1; axis < 8; axis <<= 1) {
+                if (!(c & axis)) dl->AddLine(corner[c], corner[c | axis], IM_COL32(243, 195, 18, 220), 1.5f);
+            }
+        }
+        const Vec3 size = hi - lo;
+        char text[96];
+        std::snprintf(text, sizeof text, "Bounds %.2f x %.2f x %.2f m", static_cast<f64>(size.x), static_cast<f64>(size.y), static_cast<f64>(size.z));
+        dl->AddText(ImVec2(at.x + 6, at.y + side - 20), IM_COL32(243, 195, 18, 255), text);
+    }
     if (ImGui::IsItemHovered()) {
         const ImGuiIO& io = ImGui::GetIO();
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {

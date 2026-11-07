@@ -112,6 +112,18 @@ static void test_modules(Allocator& heap) {
     e.disabled_modules = 0;
     for (int i = 0; i < 60; ++i) fx.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, false);
     CHECK(fx.particles(0)[0].position.z < 1.0f);  // back on: it falls
+    Vec3 lo, hi;
+    CHECK(fx.bounds(lo, hi) && lo.z == hi.z && lo.z < 1.0f);  // one particle: a point box
+    // Scalability: an emitter asking for Epic spawns nothing at High.
+    e.min_quality = 3;
+    particles::set_effects_quality(2);
+    particles::ParticleInstance scaled(heap);
+    for (int i = 0; i < 10; ++i) scaled.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, i == 0);
+    CHECK(scaled.count(0) == 0 && !scaled.bounds(lo, hi));
+    particles::set_effects_quality(3);
+    particles::ParticleInstance epic(heap);
+    epic.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, true);
+    CHECK(epic.count(0) == 1);
 }
 
 // Height fog on particles: none up close, more with distance, thinner higher up, capped by max opacity.

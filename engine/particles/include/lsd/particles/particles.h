@@ -82,6 +82,9 @@ struct ParticleEmitter {
     // Modules switched off in the Particle Editor's stack (Niagara's module checkboxes), a ModuleBit each: the
     // module's settings stay, the emitter runs as if it were not there.
     LSD_PROPERTY(Save, Tooltip = "Modules switched off in the Emitter Stack") u32 disabled_modules = 0;
+    LSD_PROPERTY(Edit, Category = "Emitter", Widget = "Choice:Low,Medium,High,Epic",
+                 Tooltip = "Minimum Effects Quality (Niagara's emitter scalability): below it this emitter spawns nothing (extra sparks, embers, mist only on stronger PCs)")
+    u32 min_quality = 0;
 };
 
 constexpr u32 kMaxEmitters = 8;
@@ -97,6 +100,7 @@ struct ParticleSystem {
 // A particle's size and colour at `t` (0..1 through its life): the over-life keys, else start -> end.
 // Effects quality (Unreal's sg.EffectsQuality): every emitter's rate and burst times this (1 = as made).
 void set_spawn_scale(f32 scale);
+void set_effects_quality(u32 quality);  // 0 Low .. 3 Epic: emitters asking for more spawn nothing
 // The stack's modules that can be switched off (ParticleEmitter::disabled_modules).
 enum ModuleBit : u32 { kModuleShape = 1, kModuleVelocity = 2, kModuleForces = 4, kModuleColor = 8, kModuleSize = 16, kModuleRotation = 32,
                        kModuleOverLife = 64, kModuleCollision = 128 };
@@ -137,6 +141,8 @@ public:
     void restart();          // no particles, every emitter back to its start (and its burst)
     bool finished() const;   // nothing alive and nothing more to emit (every emitter non-looping and done)
     u32 count(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].count : 0; }
+    // The box every live particle is in (local or world space as each emitter keeps them); false when there are none.
+    bool bounds(Vec3& lo, Vec3& hi) const;
     const Particle* particles(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].particles : nullptr; }
 
     // Ribbon renderer: one strip through the particles from oldest to newest, facing the camera, as wide

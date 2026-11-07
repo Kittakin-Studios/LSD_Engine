@@ -10,6 +10,8 @@ namespace {
 f32 g_spawn_scale = 1.0f;
 }
 void set_spawn_scale(f32 scale) { g_spawn_scale = scale > 0.0f ? scale : 0.0f; }
+u32 g_effects_quality = 3;
+void set_effects_quality(u32 quality) { g_effects_quality = quality; }
 
 ParticleInstance::~ParticleInstance() {
     for (Emitter& e : emitters_) {
@@ -75,7 +77,7 @@ void ParticleInstance::spawn(const ParticleEmitter& e, Emitter& s, const Mat4& w
 void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f32 dt, f32 gravity, bool emitting, ParticleCollider* collider) {
     for (u32 i = 0; i < kMaxEmitters; ++i) {
         Emitter& s = emitters_[i];
-        if (i >= system.emitters.count || !system.emitters[i].enabled) {
+        if (i >= system.emitters.count || !system.emitters[i].enabled || system.emitters[i].min_quality > g_effects_quality) {
             s.count = 0;
             s.done = true;
             continue;
@@ -180,6 +182,19 @@ f32 fog_amount(const f32 fog[4], f32 start, Vec3 eye, Vec3 p) {
     const f32 h0 = eye.z - fog[2], h1 = p.z - fog[2], dh = h1 - h0;
     const f32 ray = std::fabs(dh * fog[1]) > 1e-4f ? (std::exp(-fog[1] * h0) - std::exp(-fog[1] * h1)) / (fog[1] * dh) : std::exp(-fog[1] * h0);
     return std::fmin(1.0f - std::exp(-fog[0] * d * ray), fog[3]);
+}
+
+bool ParticleInstance::bounds(Vec3& lo, Vec3& hi) const {
+    bool any = false;
+    for (u32 i = 0; i < kMaxEmitters; ++i) {
+        for (u32 k = 0; k < emitters_[i].count; ++k) {
+            const Vec3 p = emitters_[i].particles[k].position;
+            lo = any ? vmin(lo, p) : p;
+            hi = any ? vmax(hi, p) : p;
+            any = true;
+        }
+    }
+    return any;
 }
 
 ParticleEmitter active_modules(const ParticleEmitter& in) {

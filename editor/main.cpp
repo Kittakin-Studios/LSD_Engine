@@ -2101,6 +2101,7 @@ int main(int argc, char** argv) {
         lsd::editor::set_post_quality(scalability.post);
         g_view_distance_scale = lsd::editor::view_distance_scale(scalability.view_distance);
         lsd::particles::set_spawn_scale(lsd::editor::effects_scale(scalability.effects));
+        lsd::particles::set_effects_quality(scalability.effects);
         sounds.set_class_volume("Master", user_settings.master_volume);
         sounds.set_class_volume("Music", user_settings.music_volume, false);  // projects without these classes: nothing to set
         sounds.set_class_volume("SFX", user_settings.effects_volume, false);

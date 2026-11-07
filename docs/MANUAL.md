@@ -1613,7 +1613,10 @@ them, under coloured stages: **Emitter** (name, on / off, local space), **Emitte
 **Particle Spawn** (Initialize Particle, Shape, Velocity), **Particle Update** (Forces, Color, Size,
 Rotation, Over Life, Collision) and **Render** (Renderer). Shape, Velocity, Forces, Color, Size,
 Rotation, Over Life and Collision each have a **Use** box (Niagara's module checkboxes): untick one to
-see the effect without it; its settings stay for when you tick it again. Each stage folds away; **Remove Emitter**
+see the effect without it; its settings stay for when you tick it again. **Bounds** draws the box the
+live particles fill (and its size), to see how far an effect reaches. **Min Quality** on an emitter
+(Niagara's emitter scalability) leaves it out below that Effects Quality: extra embers or mist only
+on stronger PCs. Each stage folds away; **Remove Emitter**
 takes the shown one out. In a wide window the stack sits beside the preview. Edits save by themselves
 a moment later (like Details, which shows the same modules as categories), and the preview follows
 them. Drag the system into the viewport to place a **Particle Effect** (Active, Time Scale, Preview in
