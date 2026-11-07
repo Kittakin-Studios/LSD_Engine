@@ -1264,7 +1264,11 @@ animates itself, with no Anim Graph to build. Leave it off to use your own Anima
   found, and it moves there. **Blend Mode** says how: **Inertial** (the default, Unreal's
   Inertialization) jumps to the new frame at once and eases out the difference from the old pose
   over Blend Time, so it reacts sooner and never mixes two clips (no foot sliding from blends);
-  **Crossfade** blends the two clips over Blend Time. The capsule still moves the character; the animation
+  **Crossfade** blends the two clips over Blend Time. **Mirror** (Unreal's Mirror Data Table, Inertial
+  only) also uses every clip mirrored, so a left turn serves as a right turn and a left-foot start as a
+  right-foot one: half the clips for the same coverage. Bones are paired by name (`_l` / `_r`,
+  `Left` / `Right`, `l_` / `r_`) and reflected across the character's forward axis (the Skeletal Mesh's
+  Facing); the skinning pose is the reference, so it must be symmetric (T or A pose). The capsule still moves the character; the animation
   follows it. Clips made in place get their movement from the planted foot; root-motion clips use
   their root (Unreal rigs' `root`) or travelling hips.
 - **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more

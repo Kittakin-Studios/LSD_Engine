@@ -107,6 +107,7 @@ struct BlendInput {
     const Clip* clip = nullptr;  // nullptr: the rest pose
     f32 ratio = 0.0f;            // 0..1 through the clip
     f32 weight = 1.0f;
+    bool mirrored = false;       // motion matching: play it mirrored (Pose::mirror)
 };
 constexpr u32 kMaxBlendInputs = 6;  // a 2D blend space (3) crossfading from another (3)
 
@@ -146,6 +147,11 @@ public:
     // `switched` (the animation jumped this frame), the difference from last frame's pose is kept
     // and added back, halving every `half_life` seconds, so the jump eases out instead of popping.
     bool inertialize(const SkinnedModel& model, bool switched, f32 dt, f32 half_life);
+    // Mirrors the sampled pose left to right (Unreal's Mirror Data Table): each joint takes its
+    // partner's pose (paired by name: _l / _r, Left / Right, l_ / r_), reflected across the model's
+    // plane through its forward axis (`forward_yaw` radians about Z, 0 = +X) and up. The bind pose
+    // (the skinning pose) mirrors onto itself. Call after sample / sample_blend.
+    bool mirror(const SkinnedModel& model, f32 forward_yaw);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

@@ -363,6 +363,42 @@ static void motion_matching_tests(const std::string& data) {
         eased.inertialize(model, false, 1.0f / 60.0f, 0.05f);
     }
     CHECK(distance(eased, b) < apart * 0.01f);
+
+    // Mirroring: the mirrored rows are the originals with sideways values negated and the feet
+    // swapped; a pose mirrored twice is itself; the mirrored left foot is where the right one was,
+    // reflected (the bind pose is the symmetric reference, this rig's rest pose is mid-stride).
+    anim::MotionDatabase mirrored_settings;
+    mirrored_settings.mirror = true;
+    anim::MotionData mdb(default_allocator());
+    CHECK(mdb.build(model, list, loops, count, mirrored_settings, 0.0f) && mdb.clip_count == db.clip_count * 2 && mdb.mirrored[1] && !mdb.mirrored[0]);
+    if (mdb.clip_count >= 2) {
+        const f32* f = &mdb.features[static_cast<usize>(mdb.clip_first[0] + 3) * anim::kMotionFeatures];
+        const f32* g = &mdb.features[static_cast<usize>(mdb.clip_first[1] + 3) * anim::kMotionFeatures];
+        CHECK(std::fabs(g[1] + f[4]) < 1e-4f && std::fabs(g[0] - f[3]) < 1e-4f && std::fabs(g[16] + f[16]) < 1e-4f && std::fabs(g[22] + f[22]) < 1e-4f);
+    }
+    const anim::BlendInput still{nullptr, 0.0f, 1.0f};
+    anim::Pose rest, rest_mirrored, walk, twice;
+    rest.sample_blend(model, &still, 1);
+    rest_mirrored.sample_blend(model, &still, 1);
+    CHECK(rest_mirrored.mirror(model, 0.0f) && rest_mirrored.mirror(model, 0.0f));
+    walk.sample_blend(model, &from, 1);
+    twice.sample_blend(model, &from, 1);
+    CHECK(twice.mirror(model, 0.0f) && twice.mirror(model, 0.0f));
+    const i32 lf = model.find_joint("LeftFoot"), rf = model.find_joint("RightFoot");
+    anim::Pose once;
+    once.sample_blend(model, &from, 1);
+    f32 foot_error = 1e9f;
+    if (lf >= 0 && rf >= 0) {
+        // Which way the feet sit apart in the bind pose: the sideways axis (this rig faces along Y).
+        const Mat4 bl = affine_inverse(model.inverse_bind[static_cast<u32>(lf)]), br = affine_inverse(model.inverse_bind[static_cast<u32>(rf)]);
+        const bool sideways_x = std::fabs(bl.at(0, 3) - br.at(0, 3)) > std::fabs(bl.at(1, 3) - br.at(1, 3));
+        once.mirror(model, sideways_x ? 1.5707963f : 0.0f);
+        const Mat4 l = once.joint_model(static_cast<u32>(lf)), r = walk.joint_model(static_cast<u32>(rf));
+        foot_error = sideways_x ? std::fabs(l.at(0, 3) + r.at(0, 3)) + std::fabs(l.at(1, 3) - r.at(1, 3)) + std::fabs(l.at(2, 3) - r.at(2, 3))
+                                : std::fabs(l.at(0, 3) - r.at(0, 3)) + std::fabs(l.at(1, 3) + r.at(1, 3)) + std::fabs(l.at(2, 3) - r.at(2, 3));
+    }
+    std::printf("  mirror: rest twice %.5f, twice %.5f, foot %.4f\n", static_cast<double>(distance(rest, rest_mirrored)), static_cast<double>(distance(walk, twice)), static_cast<double>(foot_error));
+    CHECK(distance(rest, rest_mirrored) < 1e-3f && distance(walk, twice) < 1e-3f && foot_error < 0.05f);
 }
 
 int main() {

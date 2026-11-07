@@ -33,6 +33,8 @@ struct MotionDatabase {
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How much the way it faces ahead counts") f32 facing_weight = 1.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How much the current feet and hips count (higher: smoother, slower to react)") f32 pose_weight = 1.0f;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Max = 2, Tooltip = "A pick on the clip it plays, within this much of where it is, is not a jump: it plays on (fewer pops)") f32 same_clip_window = 0.25f;
+    LSD_PROPERTY(Edit, Tooltip = "Also use every clip mirrored (Unreal's Mirror Data Table): a left turn serves as a right turn, a left-foot start as a right-foot one. Bones are paired by name (_l / _r, Left / Right); Inertial blending only")
+    bool mirror = false;
     LSD_PROPERTY(Edit, Tooltip = "Left foot bone; empty: found by name (foot_l, LeftFoot...)") char left_foot[48] = "";
     LSD_PROPERTY(Edit, Tooltip = "Right foot bone; empty: found by name") char right_foot[48] = "";
     LSD_PROPERTY(Edit, Tooltip = "Hips bone; empty: found by name (pelvis, Hips...)") char hips[48] = "";
@@ -62,7 +64,9 @@ struct MotionData {
     char names[64][64] = {};
     u32 clip_first[64] = {};   // each clip's first frame in `frames`
     u32 clip_frames[64] = {};  // and how many
+    bool mirrored[64] = {};    // played mirrored (MotionDatabase::mirror): a copy of the clip before it
     u32 clip_count = 0;
+    f32 forward_yaw = 0.0f;    // the model's facing it was built with (Pose::mirror reflects across it)
     // Bake: every 1/30 s of each clip on `model` (feet, hips and the path in the character's own space:
     // x its facing, z up). `model_forward_yaw`: the way the model faces in its own space (radians; the
     // Skeletal Mesh's Facing). Clips made in place get their movement from the planted foot. False

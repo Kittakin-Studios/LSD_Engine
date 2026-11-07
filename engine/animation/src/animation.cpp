@@ -582,6 +582,11 @@ struct Pose::Impl {
     // inertialize(): last frame's output and the offset easing out since the last jump.
     std::vector<ozz::math::SoaTransform> last, offset;
     f32 offset_age = 0.0f;
+    // mirror(): the joint pairs and rest corrections, made once per model and facing.
+    const SkinnedModel* mirror_model = nullptr;
+    f32 mirror_yaw = 0.0f;
+    std::vector<i32> mirror_of;
+    std::vector<ozz::math::Float4x4> mirror_fix, mirrored;
     std::vector<ozz::math::Float4x4> models;
     // Blending: one sampled pose per input.
     ozz::animation::SamplingJob::Context contexts[kMaxBlendInputs];
@@ -643,6 +648,105 @@ bool Pose::inertialize(const SkinnedModel& model, bool switched, f32 dt, f32 hal
     }
     impl_->last = now;
     return changed ? rebuild(model, -1) : true;
+}
+
+namespace {
+
+// The joint's name with left and right swapped ("" when it has no side).
+std::string other_side(const char* name) {
+    std::string s = name;
+    const struct { const char* a; const char* b; } pairs[] = {{"Left", "Right"}, {"left", "right"}, {"LEFT", "RIGHT"}, {"_l_", "_r_"}, {"_L_", "_R_"}, {".l", ".r"}, {".L", ".R"}};
+    for (const auto& p : pairs) {
+        for (int way = 0; way < 2; ++way) {
+            const char* from = way ? p.b : p.a;
+            const char* to = way ? p.a : p.b;
+            const usize at = s.find(from);
+            if (at != std::string::npos) return s.replace(at, std::strlen(from), to);
+        }
+    }
+    auto ends = [&](const char* suf) { return s.size() > 2 && s.compare(s.size() - 2, 2, suf) == 0; };
+    if (ends("_l") || ends("_L")) return s.substr(0, s.size() - 1) + (s.back() == 'l' ? "r" : "R");
+    if (ends("_r") || ends("_R")) return s.substr(0, s.size() - 1) + (s.back() == 'r' ? "l" : "L");
+    auto starts = [&](const char* pre) { return s.compare(0, 2, pre) == 0; };
+    if (starts("l_") || starts("L_")) return (s[0] == 'l' ? "r" : "R") + s.substr(1);
+    if (starts("r_") || starts("R_")) return (s[0] == 'r' ? "l" : "L") + s.substr(1);
+    return "";
+}
+
+} // namespace
+
+bool Pose::mirror(const SkinnedModel& model, f32 forward_yaw) {
+    if (!impl_ || impl_->models.empty() || !model.impl || !model.impl->skeleton) return false;
+    namespace m = ozz::math;
+    using ::operator*;
+    const auto& skeleton = *model.impl->skeleton;
+    const u32 joints = joints_;
+    const m::SimdFloat4 l = m::simd_float4::Load(-std::sin(forward_yaw), std::cos(forward_yaw), 0.0f, 0.0f);  // sideways
+    // R = I - 2 l l^T: the reflection across the forward / up plane (its own inverse).
+    m::Float4x4 reflect;
+    for (int c = 0; c < 3; ++c) {
+        f32 col[4];
+        const f32 lc = c == 0 ? -std::sin(forward_yaw) : c == 1 ? std::cos(forward_yaw) : 0.0f;
+        m::StorePtrU(l * m::simd_float4::Load1(-2.0f * lc), col);
+        col[c] += 1.0f;
+        col[3] = 0.0f;
+        reflect.cols[c] = m::simd_float4::LoadPtrU(col);
+    }
+    reflect.cols[3] = m::simd_float4::w_axis();
+    if (impl_->mirror_model != &model || impl_->mirror_yaw != forward_yaw || impl_->mirror_of.size() != joints) {
+        impl_->mirror_model = &model;
+        impl_->mirror_yaw = forward_yaw;
+        impl_->mirror_of.assign(joints, -1);
+        for (u32 j = 0; j < joints; ++j) {
+            const std::string partner = other_side(model.joint_name(j));
+            const i32 k = partner.empty() ? -1 : model.find_joint(partner.c_str());
+            impl_->mirror_of[j] = k >= 0 ? k : static_cast<i32>(j);
+        }
+        // The bind pose in model space (the T / A pose it was skinned in: symmetric, unlike many
+        // animation rest poses), and per joint the correction that maps it onto itself:
+        // fix_j = (R * bind_partner * R)^-1 * bind_j.
+        std::vector<m::Float4x4> rest_models(joints);
+        for (u32 j = 0; j < joints; ++j) {
+            const Mat4 bind = j < model.inverse_bind.size() ? affine_inverse(model.inverse_bind[j]) : Mat4{};
+            for (int c = 0; c < 4; ++c) rest_models[j].cols[c] = m::simd_float4::LoadPtrU(&bind.m[c * 4]);
+        }
+        impl_->mirror_fix.resize(joints);
+        for (u32 j = 0; j < joints; ++j) {
+            impl_->mirror_fix[j] = m::Invert(reflect * rest_models[static_cast<usize>(impl_->mirror_of[j])] * reflect) * rest_models[j];
+        }
+    }
+    auto& out = impl_->mirrored;
+    out.resize(joints);
+    for (u32 j = 0; j < joints; ++j) out[j] = reflect * impl_->models[static_cast<usize>(impl_->mirror_of[j])] * reflect * impl_->mirror_fix[j];
+    // Back to local transforms (parent^-1 * model), packed four joints at a time.
+    const auto parents = skeleton.joint_parents();
+    for (u32 soa = 0; soa < impl_->locals.size(); ++soa) {
+        f32 t[3][4] = {}, q[4][4] = {}, s[3][4] = {};
+        for (u32 lane = 0; lane < 4; ++lane) {
+            const u32 j = soa * 4 + lane;
+            q[3][lane] = 1.0f;
+            s[0][lane] = s[1][lane] = s[2][lane] = 1.0f;
+            if (j >= joints) continue;
+            const i16 parent = parents[j];
+            const m::Float4x4 local = parent >= 0 ? m::Invert(out[static_cast<usize>(parent)]) * out[j] : out[j];
+            m::SimdFloat4 tt, qq, ss;
+            if (!m::ToAffine(local, &tt, &qq, &ss)) continue;
+            f32 a[4], b[4], c[4];
+            m::StorePtrU(tt, a);
+            m::StorePtrU(qq, b);
+            m::StorePtrU(ss, c);
+            for (int k = 0; k < 3; ++k) {
+                t[k][lane] = a[k];
+                s[k][lane] = c[k];
+            }
+            for (int k = 0; k < 4; ++k) q[k][lane] = b[k];
+        }
+        m::SoaTransform& x = impl_->locals[soa];
+        x.translation = {m::simd_float4::LoadPtrU(t[0]), m::simd_float4::LoadPtrU(t[1]), m::simd_float4::LoadPtrU(t[2])};
+        x.rotation = {m::simd_float4::LoadPtrU(q[0]), m::simd_float4::LoadPtrU(q[1]), m::simd_float4::LoadPtrU(q[2]), m::simd_float4::LoadPtrU(q[3])};
+        x.scale = {m::simd_float4::LoadPtrU(s[0]), m::simd_float4::LoadPtrU(s[1]), m::simd_float4::LoadPtrU(s[2])};
+    }
+    return rebuild(model, -1);
 }
 
 void Pose::sample_blend(const SkinnedModel& model, const BlendInput* inputs, u32 count) {

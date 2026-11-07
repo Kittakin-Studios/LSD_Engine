@@ -457,6 +457,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             const u32 n = anim::step_motion(motion->data, motion->settings, input, state->motion, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
+            if (n == 1 && inputs[0].mirrored) state->pose.mirror(*model->model, motion->data.forward_yaw);  // a mirrored clip's frame
             if (motion->settings.blend_mode == 1) state->pose.inertialize(*model->model, state->motion.switched, mesh->playing ? dt * mesh->play_rate : 0.0f, motion->settings.blend_time * 0.25f);
             apply_ik(world, *state, *model);
             update_morphs(*state, *mesh, *model);

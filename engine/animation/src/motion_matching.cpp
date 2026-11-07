@@ -61,6 +61,8 @@ bool MotionData::build(const SkinnedModel& model, const Clip* const* source, con
     features.clear();
     frames.clear();
     clip_count = 0;
+    forward_yaw = model_forward_yaw;
+    for (bool& m : mirrored) m = false;
     const i32 foot_l = find_bone(model, settings.left_foot, left_foot);
     const i32 foot_r = find_bone(model, settings.right_foot, right_foot);
     const i32 hip = find_bone(model, settings.hips, hips);
@@ -176,6 +178,29 @@ bool MotionData::build(const SkinnedModel& model, const Clip* const* source, con
         looping[clip_count] = loops[c];
         std::snprintf(names[clip_count], sizeof names[0], "%s", clip->name);
         ++clip_count;
+        if (settings.mirror && settings.blend_mode == 1 && clip_count < 64) {
+            // Its mirror, straight from the features (the character's own space: x ahead, y to the left):
+            // sideways values change sign, the feet swap, turns go the other way.
+            const usize first = raw.size() - static_cast<usize>(n) * kMotionFeatures;
+            clip_first[clip_count] = static_cast<u32>(frames.size());
+            for (u32 k = 0; k < n; ++k) {
+                f32 f[kMotionFeatures];
+                std::memcpy(f, &raw[first + static_cast<usize>(k) * kMotionFeatures], sizeof f);
+                for (u32 a = 0; a < 3; ++a) {
+                    std::swap(f[a], f[3 + a]);
+                    std::swap(f[6 + a], f[9 + a]);
+                }
+                for (const u32 y : {1u, 4u, 7u, 10u, 13u, 16u, 18u, 20u, 22u, 24u, 26u}) f[y] = -f[y];
+                raw.insert(raw.end(), f, f + kMotionFeatures);
+                frames.push_back({clip_count, frames[clip_first[clip_count - 1] + k].time});
+            }
+            clip_frames[clip_count] = n;
+            clips[clip_count] = clip;
+            looping[clip_count] = loops[c];
+            mirrored[clip_count] = true;
+            std::snprintf(names[clip_count], sizeof names[0], "%.52s (mirrored)", clip->name);
+            ++clip_count;
+        }
     }
     const usize count_frames = frames.size();
     if (!count_frames) return false;
@@ -294,8 +319,8 @@ u32 step_motion(const MotionData& data, const MotionDatabase& settings, const Mo
         }
     }
     u32 n = 0;
-    if (s.fade < 1.0f && s.previous_clip >= 0) out[n++] = {data.clips[s.previous_clip], s.previous_time / duration(s.previous_clip), 1.0f - s.fade};
-    out[n++] = {data.clips[s.clip], s.time / duration(s.clip), s.fade < 1.0f && s.previous_clip >= 0 ? s.fade : 1.0f};
+    if (s.fade < 1.0f && s.previous_clip >= 0) out[n++] = {data.clips[s.previous_clip], s.previous_time / duration(s.previous_clip), 1.0f - s.fade, data.mirrored[s.previous_clip]};
+    out[n++] = {data.clips[s.clip], s.time / duration(s.clip), s.fade < 1.0f && s.previous_clip >= 0 ? s.fade : 1.0f, data.mirrored[s.clip]};
     return n;
 }
 
