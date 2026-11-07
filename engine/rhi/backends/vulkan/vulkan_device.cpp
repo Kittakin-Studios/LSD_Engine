@@ -215,6 +215,7 @@ public:
                 if (f.stream_memory) vkFreeMemory(device_, f.stream_memory, nullptr);
             }
             if (rows_pool_) vkDestroyDescriptorPool(device_, rows_pool_, nullptr);
+            if (timestamp_pool_) vkDestroyQueryPool(device_, timestamp_pool_, nullptr);
             if (rows_set_layout_) vkDestroyDescriptorSetLayout(device_, rows_set_layout_, nullptr);
             for (Texture& t : textures_) release_texture(t);
             if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
@@ -313,12 +314,14 @@ public:
         if (skip_frame_) return;
         vkResetFences(device_, 1, &f.fence);
         vkResetCommandPool(device_, f.pool, 0);
+        read_timestamps();  // this slot's last frame has finished: its GPU timings
         f.ring_used = 0;  // the GPU is done with this frame's ring and stream
         f.stream_used = 0;
         if (f.post_pool) vkResetDescriptorPool(device_, f.post_pool, 0);
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(f.cmd, &begin);
+        if (timestamp_pool_) vkCmdResetQueryPool(f.cmd, timestamp_pool_, frame_ * kGpuTimestamps, kGpuTimestamps);  // outside any pass
 
         transition(f.cmd, images_[image_], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
@@ -1446,6 +1449,19 @@ public:
         vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
+    // GPU timings (stat dump), as D3D12's: a timestamp per slot in this frame, read when the frame is done.
+    void gpu_timestamp(u32 slot) override {
+        if (skip_frame_ || !timestamp_pool_ || slot >= kGpuTimestamps) return;
+        vkCmdWriteTimestamp2(frames_[frame_].cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timestamp_pool_, frame_ * kGpuTimestamps + slot);
+        timestamps_set_[frame_] |= 1u << slot;
+    }
+
+    bool gpu_timings(f64 out_ms[kGpuTimestamps]) override {
+        if (!have_timings_) return false;
+        for (u32 i = 0; i < kGpuTimestamps; ++i) out_ms[i] = gpu_ms_[i];
+        return true;
+    }
+
     // The screenshot command: the frame is copied out at end_frame and written as a BMP once it is done.
     bool capture_frame(const char* bmp_path) override {
         if (skip_frame_) return false;
@@ -1869,6 +1885,22 @@ private:
         return true;
     }
 
+    void read_timestamps() {
+        const u32 set = timestamps_set_[frame_];
+        timestamps_set_[frame_] = 0;
+        if (!timestamp_pool_ || !(set & 1u)) return;  // slot 0 is where the others count from
+        u64 ticks[kGpuTimestamps] = {};
+        for (u32 i = 0; i < kGpuTimestamps; ++i) {
+            if (!((set >> i) & 1u)) continue;
+            if (vkGetQueryPoolResults(device_, timestamp_pool_, frame_ * kGpuTimestamps + i, 1, sizeof(u64), &ticks[i], sizeof(u64), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+            ticks[i] &= timestamp_mask_;
+        }
+        for (u32 i = 0; i < kGpuTimestamps; ++i) {
+            gpu_ms_[i] = (set >> i) & 1u ? static_cast<f64>((ticks[i] - ticks[0]) & timestamp_mask_) * static_cast<f64>(timestamp_period_) / 1.0e6 : -1.0;
+        }
+        have_timings_ = true;
+    }
+
     // Each frame's ring buffer (persistently mapped) and its descriptor set (a dynamic storage buffer: set 1 rows, set 2 the Scene block).
     bool create_rings() {
         VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};  // rows and the Scene block
@@ -1885,6 +1917,21 @@ private:
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(gpu_.handle, &props);
         storage_alignment_ = std::max(props.limits.minStorageBufferOffsetAlignment, props.limits.minUniformBufferOffsetAlignment);
+        u32 family_count = 0;  // timestamps: when the graphics queue keeps them (stat dump's GPU times)
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu_.handle, &family_count, nullptr);
+        VkQueueFamilyProperties families[32];
+        family_count = std::min(family_count, 32u);
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu_.handle, &family_count, families);
+        const u32 bits = gpu_.queue_family < family_count ? families[gpu_.queue_family].timestampValidBits : 0;
+        if (bits && props.limits.timestampPeriod > 0.0f) {
+            VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            query.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            query.queryCount = kFramesInFlight * kGpuTimestamps;
+            if (check(vkCreateQueryPool(device_, &query, nullptr, &timestamp_pool_), "vkCreateQueryPool")) {
+                timestamp_period_ = props.limits.timestampPeriod;
+                timestamp_mask_ = bits >= 64 ? ~u64{0} : (u64{1} << bits) - 1;
+            }
+        }
         for (Frame& f : frames_) {
             VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
             info.size = kRingBytes;
@@ -2582,6 +2629,12 @@ private:
     bool warned_sets_ = false;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     u32 spirv_jobs_ = 0;
+    VkQueryPool timestamp_pool_ = VK_NULL_HANDLE;  // kGpuTimestamps per frame in flight
+    u32 timestamps_set_[kFramesInFlight] = {};
+    f64 gpu_ms_[kGpuTimestamps] = {};
+    f32 timestamp_period_ = 0.0f;  // nanoseconds a tick
+    u64 timestamp_mask_ = 0;
+    bool have_timings_ = false;
     bool warned_dxc_ = false;
     TextureHandle sun_shadow_, no_shadow_;
     Texture* shadow_pass_ = nullptr;   // the shadow map being drawn (between begin / end_shadow_pass)
