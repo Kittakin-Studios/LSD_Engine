@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace lsd::editor {
 
@@ -30,6 +31,7 @@ void ParticleEditor::open(EditorState& s, const asset::AssetRecord& r) {
     time_ = 0.0f;
     instance_.restart();
     select_asset(s, r.name);  // its emitters in Details
+    if (std::strcmp(s.settings.workspace, "Particles") != 0) std::snprintf(s.workspace_request, sizeof s.workspace_request, "Particles");  // Niagara opens in its own space
     ImGui::SetWindowFocus("###ParticleEditor");
 }
 

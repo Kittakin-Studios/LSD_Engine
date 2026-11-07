@@ -1046,6 +1046,15 @@ ImGuiID build_scripting_workspace(ImGuiID root) {  // Blender's Scripting: a big
     return area;
 }
 
+ImGuiID build_particles_workspace(ImGuiID root) {  // Niagara's layout: a big Particle Editor, a smaller viewport beside it
+    ImGuiID right = 0, left = 0, content = 0, rest = 0, area = 0, viewport = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.22f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.24f, &content, &rest);
+    ImGui::DockBuilderSplitNode(rest, ImGuiDir_Left, 0.64f, &area, &viewport);
+    dock_panels(right, 0.35f, content);
+    return area;
+}
+
 constexpr char kMultiplayerWindow[] = "Multiplayer###MultiplayerPanel";
 
 ImGuiID build_multiplayer_workspace(ImGuiID root) {  // the viewport, the Multiplayer panel under it beside the Content Browser
@@ -1066,6 +1075,7 @@ constexpr WorkspaceDef kWorkspaces[] = {
     {"Scripting", "Visual scripts, the Lua Debugger and a small viewport", "Double-click a visual script to edit it here (Lua opens in your code editor).", true, build_scripting_workspace},
     {"UI", "Game UI documents (HTML / CSS) along the bottom", "Double-click a UI document (.rml) to edit it here.", false, build_bottom_editor_workspace},
     {"Effects", "Particle systems (Niagara) and sound cues beside the viewport", "Double-click a particle system or a sound cue to edit it here.", false, build_side_editor_workspace},
+    {"Particles", "The Particle Editor (Niagara) big, with its preview and Emitter Stack, beside a small viewport", "Double-click a Particle System to edit it here (it opens this workspace by itself).", false, build_particles_workspace},
     {"Multiplayer", "Host, join and playtest multiplayer: settings, join codes, LAN games, players and traffic", nullptr, false, build_multiplayer_workspace, true},
 };
 

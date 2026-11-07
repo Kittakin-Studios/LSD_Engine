@@ -173,8 +173,8 @@ still move the camera). Every stroke is one undo step.
 | *Animation: timelines and animation graphs.* | *Scripting: the Lua Debugger and visual scripts beside a small viewport.* |
 | ![UI workspace](images/ws_ui.jpg) | ![Effects workspace](images/ws_effects.jpg) |
 | *UI: UI documents and their designer.* | *Effects: particle systems and sound cues.* |
-| ![Multiplayer workspace](images/mp_workspace.jpg) | |
-| *Multiplayer: settings, Play as Host / Join, the session, join codes.* | |
+| ![Multiplayer workspace](images/mp_workspace.jpg) | ![Particles workspace](images/ws_particles.jpg) |
+| *Multiplayer: settings, Play as Host / Join, the session, join codes.* | *Particles: the Particle Editor (preview and Emitter Stack) big, a small viewport beside it.* |
 
 **Panel tabs** (the top row, like Unreal's tabs across the top of the editor): the first tab is
 **Level** (the viewport, Outliner, Details, Content Browser). An editor you open from Layout (double-click
@@ -195,6 +195,7 @@ unchanged.
 | **Scripting** | Small viewport, big editor area with the **Lua Debugger** | Visual scripts |
 | **UI** | Viewport, editor along the bottom | UI documents (UMG) |
 | **Effects** | Viewport with an editor beside it | Particle systems (Niagara), Sound Cues |
+| **Particles** | A big editor area beside a smaller viewport; double-clicking a Particle System switches here (Unreal opens Niagara in its own window) | The Particle Editor |
 | **Multiplayer** | Viewport, the **Multiplayer** panel under it: project settings, Play as Host, Play and Join (a code or address), Find LAN Games, the session (players, ping, traffic), join codes with Copy | none |
 
 Each workspace remembers how you resize and rearrange it (in `Saved/Layouts/Workspaces/`).
