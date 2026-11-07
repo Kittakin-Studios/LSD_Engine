@@ -188,106 +188,149 @@ void draw_modeling(EditorState& s) {
 
 // ---- Foliage ----
 
-struct FoliageBrush {
-    char mesh[40] = "Sphere";
-    f32 radius = 3.0f;
-    f32 density = 1.0f;  // copies per square metre
-    f32 scale_min = 0.8f, scale_max = 1.2f;
-    bool random_yaw = true;
-    LinearColor color = LinearColor::hex(0x4F8A3C);
-};
-FoliageBrush g_foliage;
+f32 g_foliage_radius = 3.0f;
+int g_foliage_selected = 0;  // the type the panel edits
 std::mt19937 g_rng{12345};
 
 f32 random01() { return std::uniform_real_distribution<f32>(0.0f, 1.0f)(g_rng); }
+
+List<FoliageType, 8>& foliage_types(EditorState& s) {
+    auto& types = s.settings.foliage_types;
+    if (types.count == 0) types.push_back(FoliageType{});
+    return types;
+}
 
 bool is_foliage(const world::World& w, Entity e, const char* mesh) {
     const auto* ism = w.get<world::InstancedStaticMesh>(e);
     return ism && std::strncmp(w.name(e), "Foliage", 7) == 0 && std::strcmp(ism->mesh, mesh) == 0;
 }
 
+// The surface's normal at `p` (found by two more rays beside it), for Align to Normal.
+Vec3 surface_normal(EditorState& s, Vec3 p, f32 step) {
+    f32 tx, ty;
+    const Vec3 above{0, 0, step * 4.0f};
+    if (!surface_ray(s, p + Vec3{step, 0, 0} + above, {0, 0, -1}, tx) || !surface_ray(s, p + Vec3{0, step, 0} + above, {0, 0, -1}, ty)) return {0, 0, 1};
+    const Vec3 px = p + Vec3{step, 0, 0} + above + Vec3{0, 0, -tx}, py = p + Vec3{0, step, 0} + above + Vec3{0, 0, -ty};
+    const Vec3 n = normalize(cross(px - p, py - p));
+    return n.z > 0.05f ? n : Vec3{0, 0, 1};
+}
+
+// Euler degrees (X, then Y, then Z, as the Transform) that turn +Z onto `n` after a turn of `yaw` degrees.
+Vec3 align_rotation(Vec3 n, f32 yaw) {
+    const f32 c = radians(yaw);
+    const Vec3 local{n.x * std::cos(-c) - n.y * std::sin(-c), n.x * std::sin(-c) + n.y * std::cos(-c), n.z};  // n before the yaw
+    const f32 ax = std::asin(std::clamp(-local.y, -1.0f, 1.0f)), by = std::atan2(local.x, local.z);
+    return {ax * 180.0f / kPi, by * 180.0f / kPi, yaw};
+}
+
 void foliage_stamp(EditorState& s, Vec3 center, bool erase) {
     world::World& w = *s.world;
-    const FoliageBrush& b = g_foliage;
-    std::vector<Entity> layers;  // shortcut: std in editor-only code
-    for (u32 slot = 0; slot < w.slot_count(); ++slot) {
-        const Entity e = w.entity_at_slot(slot);
-        if (e.valid() && is_foliage(w, e, b.mesh)) layers.push_back(e);
-    }
+    auto& types = foliage_types(s);
+    const f32 radius = g_foliage_radius;
     bool changed = false;
-    if (erase) {
-        for (const Entity e : layers) {
-            auto* ism = w.get<world::InstancedStaticMesh>(e);
-            const Mat4 m = w.world_matrix(e);
-            for (u32 k = ism->instances.count; k-- > 0;) {
-                const Vec3 p = transform_point(m, ism->instances[k].position);
-                if ((p.x - center.x) * (p.x - center.x) + (p.y - center.y) * (p.y - center.y) < b.radius * b.radius) {
-                    ism->instances.remove(k);
-                    changed = true;
+    for (const FoliageType& type : types) {
+        if (!type.enabled) continue;
+        std::vector<Entity> layers;  // shortcut: std in editor-only code
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const Entity e = w.entity_at_slot(slot);
+            if (e.valid() && is_foliage(w, e, type.mesh)) layers.push_back(e);
+        }
+        if (erase) {
+            for (const Entity e : layers) {
+                auto* ism = w.get<world::InstancedStaticMesh>(e);
+                const Mat4 m = w.world_matrix(e);
+                for (u32 k = ism->instances.count; k-- > 0;) {
+                    const Vec3 p = transform_point(m, ism->instances[k].position);
+                    if ((p.x - center.x) * (p.x - center.x) + (p.y - center.y) * (p.y - center.y) < radius * radius) {
+                        ism->instances.remove(k);
+                        changed = true;
+                    }
                 }
             }
+            continue;
         }
-        if (changed) mark_edited(s, "Erase Foliage");
-        return;
-    }
-    const f32 spacing = 1.0f / std::sqrt(std::fmax(b.density, 0.001f)) * 0.7f;
-    const u32 tries = static_cast<u32>(std::fmin(24.0f, std::fmax(1.0f, b.density * kPi * b.radius * b.radius * 0.08f)));
-    for (u32 i = 0; i < tries; ++i) {
-        const f32 r = b.radius * std::sqrt(random01()), a = random01() * 2.0f * kPi;
-        const Vec3 top{center.x + r * std::cos(a), center.y + r * std::sin(a), center.z + b.radius + 20.0f};
-        f32 t;
-        if (!surface_ray(s, top, {0, 0, -1}, t)) continue;
-        const Vec3 p = top + Vec3{0, 0, -t};
-        bool crowded = false;
-        for (const Entity e : layers) {
-            const auto* ism = w.get<world::InstancedStaticMesh>(e);
-            const Mat4 m = w.world_matrix(e);
-            for (u32 k = 0; k < ism->instances.count && !crowded; ++k) {
-                const Vec3 q = transform_point(m, ism->instances[k].position);
-                crowded = length(q - p) < spacing;
+        const f32 spacing = 1.0f / std::sqrt(std::fmax(type.density, 0.001f)) * 0.7f;
+        const u32 tries = static_cast<u32>(std::fmin(24.0f, std::fmax(1.0f, type.density * kPi * radius * radius * 0.08f)));
+        for (u32 i = 0; i < tries; ++i) {
+            const f32 r = radius * std::sqrt(random01()), a = random01() * 2.0f * kPi;
+            const Vec3 top{center.x + r * std::cos(a), center.y + r * std::sin(a), center.z + radius + 20.0f};
+            f32 t;
+            if (!surface_ray(s, top, {0, 0, -1}, t)) continue;
+            const Vec3 p = top + Vec3{0, 0, -t};
+            bool crowded = false;  // only its own kind: grass grows between the trees
+            for (const Entity e : layers) {
+                const auto* ism = w.get<world::InstancedStaticMesh>(e);
+                const Mat4 m = w.world_matrix(e);
+                for (u32 k = 0; k < ism->instances.count && !crowded; ++k) crowded = length(transform_point(m, ism->instances[k].position) - p) < spacing;
             }
+            if (crowded) continue;
+            Entity layer;
+            for (const Entity e : layers) {
+                if (w.get<world::InstancedStaticMesh>(e)->instances.count < decltype(world::InstancedStaticMesh::instances)::capacity()) layer = e;
+            }
+            if (!layer.valid()) {  // a new layer object for this mesh (1024 copies each)
+                char name[64];
+                w.unique_name("Foliage", name, sizeof name);
+                layer = w.create(name);
+                auto* ism = w.add<world::InstancedStaticMesh>(layer);
+                std::snprintf(ism->mesh, sizeof ism->mesh, "%s", type.mesh);
+                ism->color = type.color;
+                layers.push_back(layer);
+            }
+            world::MeshInstance in;
+            in.position = transform_point(affine_inverse(w.world_matrix(layer)), p);
+            const f32 yaw = type.random_yaw ? random01() * 360.0f : 0.0f;
+            in.rotation = type.align_to_normal ? align_rotation(surface_normal(s, p, 0.25f), yaw) : Vec3{0, 0, yaw};
+            const f32 k = type.scale_min + (type.scale_max - type.scale_min) * random01();
+            in.scale = {k, k, k};
+            w.get<world::InstancedStaticMesh>(layer)->instances.push_back(in);
+            changed = true;
         }
-        if (crowded) continue;
-        Entity layer;
-        for (const Entity e : layers) {
-            if (w.get<world::InstancedStaticMesh>(e)->instances.count < decltype(world::InstancedStaticMesh::instances)::capacity()) layer = e;
-        }
-        if (!layer.valid()) {  // a new layer object for this mesh (1024 copies each)
-            char name[64];
-            w.unique_name("Foliage", name, sizeof name);
-            layer = w.create(name);
-            auto* ism = w.add<world::InstancedStaticMesh>(layer);
-            std::snprintf(ism->mesh, sizeof ism->mesh, "%s", b.mesh);
-            ism->color = b.color;
-            layers.push_back(layer);
-        }
-        world::MeshInstance in;
-        in.position = transform_point(affine_inverse(w.world_matrix(layer)), p);
-        in.rotation = {0, 0, b.random_yaw ? random01() * 360.0f : 0.0f};
-        const f32 k = b.scale_min + (b.scale_max - b.scale_min) * random01();
-        in.scale = {k, k, k};
-        w.get<world::InstancedStaticMesh>(layer)->instances.push_back(in);
-        changed = true;
     }
-    if (changed) mark_edited(s, "Paint Foliage");
+    if (changed) mark_edited(s, erase ? "Erase Foliage" : "Paint Foliage");
 }
 
 void draw_foliage(EditorState& s) {
-    ImGui::SeparatorText("Paint");
-    mesh_combo(s, "Mesh", g_foliage.mesh, sizeof g_foliage.mesh);
-    with_tip(ImGui::ColorEdit3("Tint", &g_foliage.color.r), "Colour of the painted copies");
-    with_tip(ImGui::DragFloat("Brush Size (m)", &g_foliage.radius, 0.1f, 0.2f, 100.0f, "%.1f"), "Radius of the brush circle in the viewport");
-    with_tip(ImGui::DragFloat("Density (per m2)", &g_foliage.density, 0.02f, 0.01f, 20.0f, "%.2f"), "How many copies a stroke puts in each square metre");
-    ImGui::DragFloatRange2("Scale", &g_foliage.scale_min, &g_foliage.scale_max, 0.01f, 0.05f, 10.0f, "%.2f");
-    with_tip(ImGui::Checkbox("Random turn", &g_foliage.random_yaw), "Each copy gets a random turn so they do not all face the same way");
-    hint("LMB drag in the viewport paints; Shift+LMB erases.");
-    hint("Copies go to Foliage objects (Instanced Static Meshes).");
+    auto& types = foliage_types(s);
+    ImGui::SeparatorText("Foliage Types");
+    if (g_foliage_selected >= static_cast<int>(types.count)) g_foliage_selected = 0;
+    for (u32 k = 0; k < types.count; ++k) {
+        ImGui::PushID(static_cast<int>(k));
+        with_tip(ImGui::Checkbox("##on", &types[k].enabled), "Painted (and erased) with the brush when ticked");
+        ImGui::SameLine();
+        char label[64];
+        std::snprintf(label, sizeof label, "%s", types[k].mesh);
+        if (ImGui::Selectable(label, g_foliage_selected == static_cast<int>(k))) g_foliage_selected = static_cast<int>(k);
+        ImGui::SetItemTooltip("Click to edit this type below");
+        ImGui::PopID();
+    }
+    if (with_tip(ImGui::Button("+ Type"), "Adds a foliage type (Unreal's + Foliage Type); up to 8") && types.count < types.capacity()) {
+        types.push_back(FoliageType{});
+        g_foliage_selected = static_cast<int>(types.count - 1);
+    }
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Remove"), "Removes the selected type from the list (its painted copies stay)") && types.count > 1) {
+        types.remove(static_cast<u32>(g_foliage_selected));
+        g_foliage_selected = 0;
+    }
+    FoliageType& t = types[static_cast<u32>(g_foliage_selected)];
+    ImGui::SeparatorText("Selected Type");
+    mesh_combo(s, "Mesh", t.mesh, sizeof t.mesh);
+    with_tip(ImGui::ColorEdit3("Tint", &t.color.r), "Colour of the painted copies");
+    with_tip(ImGui::DragFloat("Density (per m2)", &t.density, 0.02f, 0.01f, 20.0f, "%.2f"), "How many copies a stroke puts in each square metre");
+    ImGui::DragFloatRange2("Scale", &t.scale_min, &t.scale_max, 0.01f, 0.05f, 10.0f, "%.2f");
+    with_tip(ImGui::Checkbox("Random turn", &t.random_yaw), "Each copy gets a random turn so they do not all face the same way");
+    with_tip(ImGui::Checkbox("Align to Normal", &t.align_to_normal), "Tilts each copy to the slope it lands on (grass, rocks); off keeps them upright (trees)");
+    ImGui::SeparatorText("Brush");
+    with_tip(ImGui::DragFloat("Brush Size (m)", &g_foliage_radius, 0.1f, 0.2f, 100.0f, "%.1f"), "Radius of the brush circle in the viewport");
+    hint("LMB drag paints every ticked type, each keeping its own spacing; Shift+LMB erases the ticked types.");
+    hint("Copies go to Foliage objects (Instanced Static Meshes), one per mesh.");
     u32 total = 0;
     for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
         const Entity e = s.world->entity_at_slot(slot);
-        if (e.valid() && is_foliage(*s.world, e, g_foliage.mesh)) total += s.world->get<world::InstancedStaticMesh>(e)->instances.count;
+        if (e.valid() && is_foliage(*s.world, e, t.mesh)) total += s.world->get<world::InstancedStaticMesh>(e)->instances.count;
     }
-    ImGui::Text("%u copies of this mesh", total);
+    ImGui::Text("%u copies of this type's mesh", total);
 }
 
 // ---- Landscape ----
@@ -733,7 +776,7 @@ bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
     if (surface_ray(s, o, d, t)) p = o + d * t;
     else if (d.z < -1e-4f) p = o + d * (-o.z / d.z);
     else return hovered;
-    const f32 radius = s.mode == EditorMode::Foliage ? g_foliage.radius : g_sculpt.radius;
+    const f32 radius = s.mode == EditorMode::Foliage ? g_foliage_radius : g_sculpt.radius;
     ImDrawList* dl = ImGui::GetForegroundDrawList();  // the brush ring, lying on the surface height
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
     ImVec2 ring[48];

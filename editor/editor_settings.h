@@ -1,5 +1,6 @@
 #pragma once
 // Per-user editor settings, saved to Saved/editor_settings.json (like Unreal's EditorPerProjectUserSettings).
+#include "lsd/reflect/color.h"
 #include "lsd/reflect/reflect.h"
 
 namespace lsd::editor {
@@ -32,6 +33,20 @@ struct CustomWorkspace {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "The workspace tab's name") char name[32] = "";
     LSD_PROPERTY(Edit, Tooltip = "The built-in workspace it was made from (decides where asset editors open)") char base[32] = "";  // the built-in workspace it was made from (its editor area)
+};
+
+// One Foliage mode type (Unreal's Foliage Type): a mesh and how it is scattered by the brush.
+LSD_STRUCT()
+struct FoliageType {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Painted with the others when ticked") bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "The mesh it scatters") char mesh[40] = "Sphere";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of its copies") LinearColor color = LinearColor::hex(0x4F8A3C);
+    LSD_PROPERTY(Edit, Min = 0.01, Max = 20, Tooltip = "Copies per square metre a stroke puts down") f32 density = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0.05, Max = 10, Tooltip = "Smallest random size") f32 scale_min = 0.8f;
+    LSD_PROPERTY(Edit, Min = 0.05, Max = 10, Tooltip = "Largest random size") f32 scale_max = 1.2f;
+    LSD_PROPERTY(Edit, Tooltip = "A random turn around Z for each copy") bool random_yaw = true;
+    LSD_PROPERTY(Edit, Tooltip = "Tilt each copy to the surface it lands on (grass on slopes); off: always upright (trees)") bool align_to_normal = false;
 };
 
 // A keyboard shortcut the user changed (Editor Preferences > Keyboard Shortcuts); keys "" = none.
@@ -78,6 +93,7 @@ struct EditorSettings {
     LSD_PROPERTY(Save) char workspace[32] = "Layout";
     LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;
     LSD_PROPERTY(Save) List<ShortcutOverride, 64> shortcuts;  // Editor Preferences > Keyboard Shortcuts
+    LSD_PROPERTY(Save) List<FoliageType, 8> foliage_types;    // Foliage mode's list (none: one Sphere type)
 };
 
 // A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and

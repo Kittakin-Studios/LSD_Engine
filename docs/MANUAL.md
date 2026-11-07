@@ -134,7 +134,7 @@ The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel
 | Mode | What it does (Unreal) |
 | --- | --- |
 | **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m (Modeling Mode basics; no extrude / bevel yet) |
-| **Foliage** | Pick a mesh, brush size, density (copies per m2), scale range; **LMB drag** paints copies onto surfaces, **Shift+LMB** erases. Copies go to *Foliage* objects (Instanced Static Meshes, 1024 each) |
+| **Foliage** | A list of **Foliage Types** (Unreal's Foliage Types, up to 8, kept in your editor settings): **+ Type**, Remove, a tick to paint each; the selected one's mesh, tint, density (copies per m2), scale range, random turn and **Align to Normal** (tilted to the slope: grass, rocks; off: upright trees). **LMB drag** paints every ticked type at once, each spaced by its own density; **Shift+LMB** erases the ticked types. Copies go to *Foliage* objects (Instanced Static Meshes, one per mesh, 1024 each) |
 | **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks, then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All; **Paint** layers (below). It collides in Play; without layers its material is on its Static Mesh |
 | **Animation Sequence** | Your Timelines (double-click to edit), New Timeline, a button to the Animation workspace (Sequencer) |
 | **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output* |
@@ -156,6 +156,9 @@ The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel
 
 Detail is limited by that texture (1024 x 1024 over the landscape: about 16 texels a metre on a 64 m
 one), so keep Tile at a few metres and use textures that read well from a distance.
+
+![Foliage Types](images/mode_foliage_types.jpg)
+*Foliage mode with two types, Sphere and Cube (Align to Normal), painted in one stroke on hills.*
 
 In Foliage and Landscape a ring shows the brush; clicks paint instead of selecting (Alt, RMB and MMB
 still move the camera). Every stroke is one undo step.
