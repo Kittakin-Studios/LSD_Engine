@@ -21,6 +21,7 @@ add_test(NAME render COMMAND lsd_render_tests)
 
 add_executable(lsd_asset_tests asset_tests.cpp)
 target_link_libraries(lsd_asset_tests PRIVATE lsd_asset)
+target_include_directories(lsd_asset_tests SYSTEM PRIVATE ${LSD_TINYEXR_DIR})  # the test writes an EXR
 target_compile_definitions(lsd_asset_tests PRIVATE
   LSD_UFBX_DATA_DIR="${LSD_UFBX_DATA_DIR}"
   LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")

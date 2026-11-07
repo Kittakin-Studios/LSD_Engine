@@ -77,7 +77,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdbt") == 0) return AssetType::BehaviorTree;
     if (std::strcmp(lower, ".rml") == 0) return AssetType::UiDocument;
     if (std::strcmp(lower, ".rcss") == 0) return AssetType::UiStyle;
-    for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd"}) {
+    for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd", ".hdr", ".exr"}) {
         if (std::strcmp(lower, image) == 0) return AssetType::Texture;
     }
     if (std::strcmp(lower, ".wav") == 0 || std::strcmp(lower, ".ogg") == 0 || std::strcmp(lower, ".flac") == 0 || std::strcmp(lower, ".mp3") == 0) return AssetType::Sound;

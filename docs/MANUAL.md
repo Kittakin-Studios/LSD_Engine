@@ -402,7 +402,7 @@ like Unreal's asset metadata): the Content Browser search box matches tags as we
 | You drop / create | It becomes | Opens in | Unreal |
 | --- | --- | --- | --- |
 | `.fbx`, `.gltf`, `.glb` | Mesh (a skinned mesh if it has bones) | Details (import scale) | Static / Skeletal Mesh |
-| `.png .jpg .tga .bmp .psd` | Texture | Details (max size) | Texture |
+| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept linear in data slots and sRGB-encoded in colour slots, values above 1 clipped) | Details (max size) | Texture |
 | `.wav .ogg .flac .mp3` | Sound | Details (volume, class...); double-click plays | Sound Wave |
 | `.csv` | Data Table | Data Table window | Data Table |
 | `.lua` | Lua Script | your text editor | — |

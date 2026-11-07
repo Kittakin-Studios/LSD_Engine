@@ -8,6 +8,8 @@
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/array.h"
 
+#include <tinyexr.h>
+
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -278,6 +280,27 @@ static void test_texture(const fs::path& root) {
     CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 0 && loaded.mip(0)[5] == 255 && loaded.mip(0)[10] == 255);  // red, green, blue
     CHECK(!asset::load_texture((root / "missing.png").string().c_str(), true, 4096, loaded));
     CHECK(asset::type_from_extension(".PNG") == asset::AssetType::Texture && asset::type_from_extension(".tga") == asset::AssetType::Texture);
+
+    // Float images: a 2x1 Radiance .hdr (flat RGBE: 1, 0.5, 0.25 and 4, 0, 0) and an EXR written by tinyexr.
+    CHECK(asset::type_from_extension(".hdr") == asset::AssetType::Texture && asset::type_from_extension(".EXR") == asset::AssetType::Texture);
+    const fs::path hdr = root / "ramp.hdr";
+    f = std::fopen(hdr.string().c_str(), "wb");
+    const char hdr_header[] = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n";
+    const u8 rgbe[8] = {128, 64, 32, 129, 128, 0, 0, 131};
+    std::fwrite(hdr_header, 1, sizeof hdr_header - 1, f);
+    std::fwrite(rgbe, 1, sizeof rgbe, f);
+    std::fclose(f);
+    CHECK(asset::load_texture(hdr.string().c_str(), false, 4096, loaded) && loaded.width == 2 && loaded.height == 1);
+    CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 128 && loaded.mip(0)[2] == 64 && loaded.mip(0)[4] == 255 && loaded.mip(0)[5] == 0);  // linear; 4 clipped to 1
+    CHECK(asset::load_texture(hdr.string().c_str(), true, 4096, loaded) && loaded.mip(0)[1] >= 186 && loaded.mip(0)[1] <= 189);  // 0.5 linear as sRGB
+    const fs::path exr = root / "ramp.exr";
+    const float exr_pixels[2 * 2 * 4] = {0.25f, 0.5f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 2.0f, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f};
+    const char* err = nullptr;
+    CHECK(SaveEXR(exr_pixels, 2, 2, 4, 1, exr.string().c_str(), &err) == TINYEXR_SUCCESS);
+    u32 ew = 0, eh = 0;
+    CHECK(asset::texture_size(exr.string().c_str(), ew, eh) && ew == 2 && eh == 2);  // from the header
+    CHECK(asset::load_texture(exr.string().c_str(), false, 4096, loaded) && loaded.width == 2 && loaded.height == 2);
+    CHECK(loaded.mip(0)[0] == 64 && loaded.mip(0)[1] == 128 && loaded.mip(0)[2] == 255 && loaded.mip(0)[8] == 255 && loaded.mip(0)[11] == 128);  // 0.25, 0.5, 1; 2 clipped; alpha 0.5
 }
 
 // Animation curves: straight between keys given in any order, held past the ends, per clip and name.

@@ -4,8 +4,11 @@
 
 #include <stb_image.h>
 #include <stb_image_write.h>
+#include <tinyexr.h>
 
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace lsd::asset {
@@ -95,8 +98,52 @@ bool build_texture(const u8* rgba, u32 width, u32 height, bool srgb, u32 max_siz
     return true;
 }
 
+static bool is_float_image(const char* path, bool& exr) {
+    const usize n = std::strlen(path);
+    auto ends = [&](const char* ext) {
+        const usize e = std::strlen(ext);
+        if (n < e) return false;
+        for (usize i = 0; i < e; ++i) {
+            if (std::tolower(static_cast<unsigned char>(path[n - e + i])) != ext[i]) return false;
+        }
+        return true;
+    };
+    exr = ends(".exr");
+    return exr || ends(".hdr");
+}
+
+// Float RGBA (linear) to bytes: sRGB-encoded for colour, as they are for data; clipped to 0..1.
+static void float_to_rgba8(const f32* in, usize pixels, bool srgb, u8* out) {
+    for (usize i = 0; i < pixels * 4; ++i) {
+        const f32 v = in[i] != in[i] ? 0.0f : in[i] < 0.0f ? 0.0f : in[i] > 1.0f ? 1.0f : in[i];  // NaN: black
+        out[i] = srgb && i % 4 != 3 ? srgb_tables().to_srgb[static_cast<u32>(v * 4095.0f + 0.5f)] : static_cast<u8>(v * 255.0f + 0.5f);
+    }
+}
+
 bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out) {
     int w = 0, h = 0, channels = 0;
+    if (bool exr; is_float_image(path, exr)) {
+        f32* rgba = nullptr;
+        const char* err = nullptr;
+        if (exr) {
+            if (LoadEXR(&rgba, &w, &h, path, &err) != TINYEXR_SUCCESS) {
+                LSD_LOG_WARN("asset", "Could not read EXR %s: %s", path, err ? err : "unknown error");
+                FreeEXRErrorMessage(err);
+                return false;
+            }
+        } else {
+            rgba = stbi_loadf(path, &w, &h, &channels, 4);
+            if (!rgba) {
+                LSD_LOG_WARN("asset", "Could not read HDR %s: %s", path, stbi_failure_reason());
+                return false;
+            }
+        }
+        Array<u8> bytes(out.pixels.allocator());
+        bytes.resize(static_cast<usize>(w) * static_cast<usize>(h) * 4);
+        float_to_rgba8(rgba, static_cast<usize>(w) * static_cast<usize>(h), srgb, bytes.data());
+        free(rgba);  // both stb and tinyexr allocate with malloc
+        return build_texture(bytes.data(), static_cast<u32>(w), static_cast<u32>(h), srgb, max_size, out);
+    }
     stbi_uc* pixels = stbi_load(path, &w, &h, &channels, 4);
     if (!pixels) {
         LSD_LOG_WARN("asset", "Could not read image %s: %s", path, stbi_failure_reason());
@@ -113,6 +160,20 @@ bool write_png(const char* path, u32 width, u32 height, const u8* rgba) {
 
 bool texture_size(const char* path, u32& width, u32& height) {
     int w = 0, h = 0, channels = 0;
+    if (bool exr; is_float_image(path, exr) && exr) {  // the header only
+        EXRVersion version;
+        EXRHeader header;
+        InitEXRHeader(&header);
+        const char* err = nullptr;
+        const bool ok = ParseEXRVersionFromFile(&version, path) == TINYEXR_SUCCESS && ParseEXRHeaderFromFile(&header, &version, path, &err) == TINYEXR_SUCCESS;
+        if (ok) {
+            width = static_cast<u32>(header.data_window.max_x - header.data_window.min_x + 1);
+            height = static_cast<u32>(header.data_window.max_y - header.data_window.min_y + 1);
+        }
+        FreeEXRErrorMessage(err);
+        FreeEXRHeader(&header);
+        return ok;
+    }
     if (!stbi_info(path, &w, &h, &channels)) return false;
     width = static_cast<u32>(w);
     height = static_cast<u32>(h);

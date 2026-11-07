@@ -1,5 +1,7 @@
 #pragma once
-// Texture import: PNG, JPG, TGA, BMP, PSD (stb_image) to RGBA8 with a full mip chain. Whether a
+// Texture import: PNG, JPG, TGA, BMP, PSD, HDR (stb_image) and EXR (tinyexr) to RGBA8 with a full mip chain.
+// HDR / EXR are float images: colour ones are encoded to sRGB, data ones (normal, ORM maps) kept linear,
+// both clipped to 0..1 (shortcut: no float textures on the GPU yet; add RGBA16F when HDR skies / emissive need it). Whether a
 // texture is colour (sRGB) or data (linear) is decided by where it is used (a material's base
 // colour slot vs its normal / ORM slots), which also decides how its mips are averaged.
 #include "lsd/foundation/array.h"

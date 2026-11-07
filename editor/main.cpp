@@ -1502,7 +1502,7 @@ bool import_file(const char* source, const char* content_folder, char* status, l
         return imported > 0;
     }
     if (lsd::asset::type_from_extension(src.extension().string().c_str()) == lsd::asset::AssetType::Unknown) {
-        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .csv, .wav, .ogg, .flac, .mp3)", src.filename().string().c_str());
+        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .obj, .png, .jpg, .tga, .bmp, .psd, .hdr, .exr, .csv, .wav, .ogg, .flac, .mp3)", src.filename().string().c_str());
         return false;
     }
     std::error_code error;

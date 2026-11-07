@@ -19,6 +19,7 @@ FreeType Licence. Full license texts are shipped in `THIRD-PARTY-NOTICES.md`.
 | LuaJIT | `8ca76297` (v2.1) | MIT | gameplay scripting |
 | miniaudio | 0.11.25 | MIT-0 / public domain | audio device, decoding, mixing, 3D |
 | stb (stb_image) | `003501f6` | public domain / MIT | texture decoding (PNG, JPG, HDR, ...) |
+| tinyexr | v1.0.12 | BSD-3-Clause | OpenEXR texture decoding (through stb's zlib) |
 | ozz-animation | 0.17.0 | MIT | skeletal animation, compression, IK |
 | Recast & Detour | v1.6.0 | zlib | navmesh, path finding, crowd steering |
 | FreeType | VER-2-13-3 | FreeType Licence (dual: GPL-2.0) | font rasterising for RmlUi |

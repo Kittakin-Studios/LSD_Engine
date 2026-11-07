@@ -223,6 +223,17 @@ FetchContent_Declare(stb
 FetchContent_MakeAvailable(stb)
 set(LSD_STB_DIR ${stb_SOURCE_DIR} PARENT_SCOPE)
 
+# tinyexr (BSD-3): OpenEXR decoding for texture import, inflating through stb's zlib (no miniz).
+# Fetch only: engine/asset compiles the implementation next to stb's.
+FetchContent_Declare(tinyexr
+  GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
+  GIT_TAG v1.0.12
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(tinyexr)
+set(LSD_TINYEXR_DIR ${tinyexr_SOURCE_DIR} PARENT_SCOPE)
+
 # ozz-animation (MIT): skeletons, compressed animations, sampling / blending / IK jobs. Runtime +
 # offline builder libraries only; our importer feeds the offline builders from ufbx.
 set(ozz_build_tools OFF CACHE BOOL "" FORCE)
