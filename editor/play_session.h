@@ -139,7 +139,7 @@ public:
     // `map_port`: a server asks the router to forward its port (once; a couple of seconds).
     void join_codes(char* out, usize capacity, bool map_port);
     // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
-    void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
+    void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4], const f32 ui_rect[4]);  // ui_rect: where the UI is laid out (the safe zone)
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
     // the graph window's live debugging.
     u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;

@@ -167,6 +167,9 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Localization", Tooltip = "The language the game starts in (a column of the string table)") char default_language[16] = "en";
     LSD_PROPERTY(Edit, Category = "Audio", Widget = "Asset:SoundMix", Tooltip = "Pushed when the game starts and never popped (Unreal's Base Sound Mix): the project's overall balance")
     char base_sound_mix[33] = "";
+    LSD_PROPERTY(Edit, Category = "User Interface", Units = "%", Min = 0, Max = 20,
+                 Tooltip = "Safe zone (Unreal's Display Safe Zone): the game UI is laid out this far in from every edge of the view, so TVs that crop the picture keep it whole (5 is usual for TVs, 0 for monitors)")
+    f32 ui_safe_zone = 0.0f;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Validate Assets also checks name prefixes (SM_, T_, M_, MI_, BT_, UI_...)") bool check_naming = false;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Textures larger than this on a side are reported") u32 max_texture_size = 4096;
     LSD_PROPERTY(Edit, Category = "Multiplayer", Tooltip = "Tick for an online / LAN game. Off: a single-player game and nothing networked runs") bool multiplayer = false;

@@ -2871,8 +2871,11 @@ int main(int argc, char** argv) {
                 g_outline.clear();
             }
             if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
-                play.place_ui_followers(world, view_proj, pixels);
-                game_ui->update(pixels);
+                // The safe zone (Project Settings > User Interface): the UI is laid out inside it.
+                const lsd::f32 inset = std::clamp(state.project.ui_safe_zone, 0.0f, 20.0f) * 0.01f;
+                const lsd::f32 safe[4] = {pixels[0] + pixels[2] * inset, pixels[1] + pixels[3] * inset, pixels[2] * (1.0f - 2.0f * inset), pixels[3] * (1.0f - 2.0f * inset)};
+                play.place_ui_followers(world, view_proj, pixels, safe);
+                game_ui->update(safe);
                 game_ui->render(*device);
             }
         }

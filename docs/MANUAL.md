@@ -1795,6 +1795,9 @@ button:focus, button:hover { background-color: #EEA70E; }
 
 ![HUD widgets](images/hud_widgets.jpg)
 *A health bar and a damage number over the player, and a prompt.*
+- **Safe zone** (Unreal's Display Safe Zone): **Project Settings > User Interface > UI Safe Zone** (%)
+  lays the game UI out that far in from every edge of the view, so a TV that crops the picture keeps
+  the HUD whole (5 % is usual for TVs, 0 for monitors). World-anchored elements still sit over their objects.
 - Fonts: `font-family: sans` is always there; add your own `.ttf` / `.otf` to `Content/Fonts` and use
   their family name. Fonts in `Content/Fonts/Fallback` (Unreal's composite font fallbacks) fill in the
   glyphs the others lack: drop Noto Sans JP / SC / KR / Arabic there and Japanese, Chinese, Korean or Arabic

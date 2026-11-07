@@ -1509,7 +1509,7 @@ void PlaySession::start_game_mode(world::World& world) {
     ui_cursor_ = mode.show_cursor;
 }
 
-void PlaySession::place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]) {
+void PlaySession::place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4], const f32 ui_rect[4]) {
     if (!ui_) return;
     for (u32 i = 0; i < ui_follower_count_;) {
         const UiFollower& f = ui_followers_[i];
@@ -1526,8 +1526,9 @@ void PlaySession::place_ui_followers(const world::World& world, const Mat4& view
             ui_->set_property(f.doc, f.id, "visibility", "hidden");  // behind the camera
         } else {
             char left[32], top[32];
-            std::snprintf(left, sizeof left, "%.1fpx", static_cast<f64>((x / w * 0.5f + 0.5f) * viewport[2]));
-            std::snprintf(top, sizeof top, "%.1fpx", static_cast<f64>((0.5f - y / w * 0.5f) * viewport[3]));
+            // Over the object in the view, in the UI's own space (it starts at the safe zone's corner).
+            std::snprintf(left, sizeof left, "%.1fpx", static_cast<f64>((x / w * 0.5f + 0.5f) * viewport[2] + viewport[0] - ui_rect[0]));
+            std::snprintf(top, sizeof top, "%.1fpx", static_cast<f64>((0.5f - y / w * 0.5f) * viewport[3] + viewport[1] - ui_rect[1]));
             ui_->set_property(f.doc, f.id, "left", left);
             ui_->set_property(f.doc, f.id, "top", top);
             ui_->set_property(f.doc, f.id, "visibility", "visible");
