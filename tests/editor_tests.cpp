@@ -15,6 +15,7 @@
 #include "sound_cue.h"
 #include "transactions.h"
 #include "behavior.h"
+#include "landscape_core.h"
 #include "loc_gather.h"
 #include "scalability.h"
 #include "template_levels.h"
@@ -508,6 +509,33 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// Landscape: a heightmap image in and out again, and holes that remove the squares around them.
+static void test_landscape_core() {
+    constexpr u32 kGrid = world::Landscape::kResolution;
+    std::vector<u8> ramp(16 * 8 * 4);
+    for (u32 y = 0; y < 8; ++y) {
+        for (u32 x = 0; x < 16; ++x) {
+            u8* p = &ramp[(y * 16 + x) * 4];
+            p[0] = p[1] = p[2] = static_cast<u8>(x * 17);  // black on the left (-X) to white on the right
+            p[3] = 255;
+        }
+    }
+    world::Landscape l;
+    editor::heights_from_image(l, ramp.data(), 16, 8, 10.0f);
+    CHECK(l.heights.count == kGrid * kGrid);
+    CHECK(std::fabs(l.heights[0]) < 1e-4f && std::fabs(l.heights[kGrid - 1] - 10.0f) < 1e-3f);
+    CHECK(l.heights[kGrid / 2] > 4.0f && l.heights[kGrid / 2] < 6.0f);
+    std::vector<u8> out(static_cast<usize>(kGrid) * kGrid * 4);
+    editor::image_from_heights(l, 10.0f, out.data());
+    CHECK(out[0] == 0 && out[(kGrid - 1) * 4] == 255 && out[3] == 255);
+    CHECK(l.holes.count == 0 && editor::quad_open(l, 3, 3));
+    editor::set_hole(l, 4, 4, true);
+    CHECK(l.holes.count == kGrid * kGrid && editor::is_hole(l, 4, 4));
+    CHECK(!editor::quad_open(l, 3, 3) && !editor::quad_open(l, 4, 4) && editor::quad_open(l, 5, 5));  // the four squares around it
+    editor::set_hole(l, 4, 4, false);
+    CHECK(editor::quad_open(l, 3, 3));
+}
+
 // Gather Text: keys from scripts and UI texts, merged into the string table without duplicates.
 static void test_gather_text() {
     std::vector<editor::GatheredText> found;
@@ -627,6 +655,7 @@ int main() {
     test_scalability();
     test_run_behavior();
     test_gather_text();
+    test_landscape_core();
     test_keymap();
     test_landscape_paint();
     test_assistant();

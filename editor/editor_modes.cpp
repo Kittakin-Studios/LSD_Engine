@@ -1,5 +1,6 @@
 #include "editor_modes.h"
 #include "paper2d_core.h"
+#include "landscape_core.h"
 #include "landscape_paint.h"
 #include "tips.h"
 
@@ -377,10 +378,12 @@ void build_landscape_mesh(const world::Landscape& l, render::MeshData& data) {
     u32 k = 0;
     for (u32 j = 0; j + 1 < kGrid; ++j) {
         for (u32 i = 0; i + 1 < kGrid; ++i) {
+            if (!quad_open(l, i, j)) continue;  // a hole: neither drawn nor collided
             const u32 a = j * kGrid + i, b = a + 1, c = a + kGrid, d = c + 1;
             for (const u32 index : {a, b, d, a, d, c}) data.indices[k++] = index;  // counter-clockwise from above
         }
     }
+    data.index_count = k;
 }
 
 std::vector<Entity> landscapes(const world::World& w) {
@@ -430,6 +433,29 @@ void sculpt(EditorState& s, Vec3 center, f32 dt, f32 flatten_z) {
         }
     }
     if (changed) mark_edited(s, "Sculpt Landscape");
+}
+
+// Holes (Unreal's Landscape Visibility): cuts the terrain under the brush (Shift: fills it again).
+void cut_holes(EditorState& s, Vec3 center) {
+    const bool fill = ImGui::GetIO().KeyShift;
+    bool changed = false;
+    for (const Entity e : landscapes(*s.world)) {
+        auto* l = s.world->get<world::Landscape>(e);
+        const Mat4 m = s.world->world_matrix(e), inv = affine_inverse(m);
+        const Vec3 c = transform_point(inv, center);
+        const f32 sx = length(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+        const f32 radius = g_sculpt.radius / (sx > 1e-4f ? sx : 1.0f);
+        const f32 step = l->size / static_cast<f32>(kGrid - 1), half = l->size * 0.5f;
+        for (u32 j = 0; j < kGrid; ++j) {
+            for (u32 i = 0; i < kGrid; ++i) {
+                const f32 dx = -half + static_cast<f32>(i) * step - c.x, dy = -half + static_cast<f32>(j) * step - c.y;
+                if (dx * dx + dy * dy > radius * radius || is_hole(*l, i, j) == !fill) continue;
+                set_hole(*l, i, j, !fill);
+                changed = true;
+            }
+        }
+    }
+    if (changed) mark_edited(s, fill ? "Fill Landscape Holes" : "Cut Landscape Holes");
 }
 
 // Paint (Unreal's Landscape Paint): adds the chosen layer under the brush (Shift: removes it), the
@@ -490,6 +516,8 @@ void draw_landscape(EditorState& s) {
     ImGui::SetItemTooltip("Levels toward the height where the stroke started");
     ImGui::SameLine();
     with_tip(ImGui::RadioButton("Paint", &g_sculpt.tool, 3), "Paints a layer (Unreal's Landscape Paint): LMB adds it, Shift+LMB removes it");
+    ImGui::SameLine();
+    with_tip(ImGui::RadioButton("Holes", &g_sculpt.tool, 4), "Cuts holes for caves and tunnels (Unreal's Visibility tool): LMB cuts, Shift+LMB fills; no drawing or collision there");
     with_tip(ImGui::DragFloat("Brush Size (m)", &g_sculpt.radius, 0.1f, 0.5f, 200.0f, "%.1f"), "Radius of the brush circle in the viewport");
     with_tip(ImGui::DragFloat("Strength", &g_sculpt.strength, 0.01f, 0.05f, 5.0f, "%.2f"), "How much each stroke raises, lowers or smooths");
     if (g_sculpt.tool == 3) {
@@ -508,6 +536,30 @@ void draw_landscape(EditorState& s) {
         hint("LMB drag paints the layer, Shift+LMB removes it.");
     } else {
         hint("LMB drag on the terrain sculpts (Shift lowers).");
+    }
+    ImGui::SeparatorText("Heightmap");
+    static char heightmap[260] = "Content/Heightmap.png";
+    static f32 max_height = 50.0f;
+    ImGui::SetNextItemWidth(220);
+    with_tip(ImGui::InputText("File", heightmap, sizeof heightmap), "A greyscale image (PNG, JPG, TGA...): black is 0, white is Max Height; it is stretched over the landscape");
+    with_tip(ImGui::DragFloat("Max Height (m)", &max_height, 0.5f, 0.1f, 2000.0f, "%.1f"), "The height white stands for");
+    Entity target = s.world->alive(s.selected) && s.world->get<world::Landscape>(s.selected) ? s.selected : all[0];
+    if (with_tip(ImGui::Button("Import Heightmap"), "Sets the selected landscape's heights from the image (undoable; 8 bits: 256 steps)")) {
+        asset::TextureData image(default_allocator());
+        if (asset::load_texture(heightmap, false, 4096, image)) {
+            heights_from_image(*s.world->get<world::Landscape>(target), image.mip(0), image.width, image.height, max_height);
+            mark_edited(s, "Import Heightmap");
+            std::snprintf(s.status, sizeof s.status, "Imported %s (%u x %u) into %s", heightmap, image.width, image.height, s.world->name(target));
+        } else {
+            std::snprintf(s.status, sizeof s.status, "Could not read the image %s", heightmap);
+        }
+    }
+    ImGui::SameLine();
+    if (with_tip(ImGui::Button("Export Heightmap"), "Writes the selected landscape's heights as a greyscale PNG (65 x 65, 0..Max Height)")) {
+        std::vector<u8> pixels(static_cast<usize>(kGrid) * kGrid * 4);
+        image_from_heights(*s.world->get<world::Landscape>(target), max_height, pixels.data());
+        const bool ok = asset::write_png(heightmap, kGrid, kGrid, pixels.data());
+        std::snprintf(s.status, sizeof s.status, ok ? "Exported %s" : "Could not write %s", heightmap);
     }
     if (with_tip(ImGui::Button("Flatten All"), "Sets every height back to flat (undoable)")) {
         for (const Entity e : all) {
@@ -824,6 +876,7 @@ bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
             }
         } else {
             if (g_sculpt.tool == 3) paint_layers(s, p, io.DeltaTime < 0.1f ? io.DeltaTime : 0.1f);
+            else if (g_sculpt.tool == 4) cut_holes(s, p);
             else sculpt(s, p, io.DeltaTime < 0.1f ? io.DeltaTime : 0.1f, flatten_z);
         }
     }
@@ -975,7 +1028,8 @@ void update_landscapes(world::World& w, MeshCache& meshes) {
             std::snprintf(mesh->mesh, sizeof mesh->mesh, "Landscape:%08x", static_cast<unsigned>(ids()));
         }
         keys.insert(mesh->mesh);
-        const u64 hash = fnv(&l->layers.count, sizeof l->layers.count, fnv(&l->size, sizeof l->size, fnv(&l->uv_tile, sizeof l->uv_tile, fnv(l->heights.items, sizeof(f32) * l->heights.count))));
+        const u64 hash = fnv(l->holes.items, sizeof(u32) * l->holes.count,
+                             fnv(&l->layers.count, sizeof l->layers.count, fnv(&l->size, sizeof l->size, fnv(&l->uv_tile, sizeof l->uv_tile, fnv(l->heights.items, sizeof(f32) * l->heights.count)))));
         const auto it = g_landscape_hash.find(mesh->mesh);
         if (it != g_landscape_hash.end() && it->second == hash && meshes.get(mesh->mesh)) continue;
         render::MeshData data;

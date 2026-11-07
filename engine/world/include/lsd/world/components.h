@@ -467,7 +467,7 @@ struct LandscapeLayer {
 // Terrain sculpted in Landscape mode (Unreal's Landscape): a square grid of heights centred on the
 // object, drawn and collided through the Static Mesh beside it (its mesh is "Landscape:<id>", built
 // from these heights by the editor and the game every time they change).
-// shortcut: one 65 x 65 grid saved in the level, one material; heightmap files and tiles for big worlds
+// shortcut: one 65 x 65 grid saved in the level, one material; tiles (and bigger grids) for big worlds
 LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Sculptable terrain (the Landscape mode)")
 struct Landscape {
     LSD_GENERATED()
@@ -478,6 +478,7 @@ struct Landscape {
     LSD_PROPERTY(Edit, Tooltip = "Paint layers (Landscape mode > Paint). The first covers everything until others are painted over it; 2 or more to paint")
     List<LandscapeLayer, 4> layers;
     LSD_PROPERTY(Save) List<u32, 4225> weights;  // per height: the 4 layers' weights as bytes (layer 0 in the lowest), summing to 255
+    LSD_PROPERTY(Save) List<u32, 4225> holes;    // per height: 1 cuts the squares around it (caves, tunnels); empty until the first hole
 };
 
 // Scatters copies of a mesh on whatever surfaces are inside this box (Unreal's PCG Volume with a
