@@ -46,7 +46,8 @@ if(LSD_RHI_VULKAN)
     # Each shader's vertex and pixel stages, embedded as k<Name>VsSpirv / k<Name>PsSpirv.
     # "file;Name[;DEFINE]": a define makes a variant (mesh_skinned from mesh.hlsl with -DSKINNED...).
     foreach(pair IN ITEMS "triangle;Triangle" "mesh;Mesh" "lines;Lines" "sky;Sky" "mesh;MeshSkinned;SKINNED" "mesh;MeshInstanced;INSTANCED"
-                         "shadow;Shadow" "shadow;ShadowSkinned;SKINNED" "shadow;ShadowInstanced;INSTANCED")
+                         "shadow;Shadow" "shadow;ShadowSkinned;SKINNED" "shadow;ShadowInstanced;INSTANCED"
+                         "ui;Ui" "particle;Particle")
       list(GET pair 0 file)
       list(GET pair 1 name)
       list(LENGTH pair parts)
