@@ -154,6 +154,18 @@ bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out) {
     return ok;
 }
 
+bool load_grey16(const char* path, u32& width, u32& height, Array<u16>& out) {
+    int w = 0, h = 0, channels = 0;
+    stbi_us* grey = stbi_load_16(path, &w, &h, &channels, 1);
+    if (!grey) return false;
+    width = static_cast<u32>(w);
+    height = static_cast<u32>(h);
+    out.resize(static_cast<usize>(w) * static_cast<usize>(h));
+    std::memcpy(out.data(), grey, out.size() * sizeof(u16));
+    stbi_image_free(grey);
+    return true;
+}
+
 bool write_png(const char* path, u32 width, u32 height, const u8* rgba) {
     return stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, rgba, static_cast<int>(width * 4)) != 0;
 }

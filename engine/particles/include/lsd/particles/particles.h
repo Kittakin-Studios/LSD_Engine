@@ -79,6 +79,9 @@ struct ParticleEmitter {
     LSD_PROPERTY(Edit, Category = "Collision", Min = 0, Max = 1, Tooltip = "Speed kept off the surface (0 = stops dead, 1 = bounces fully)") f32 bounce = 0.4f;
     LSD_PROPERTY(Edit, Category = "Collision", Min = 0, Max = 1, Tooltip = "Speed lost along the surface on each hit") f32 friction = 0.2f;
     LSD_PROPERTY(Edit, Category = "Collision", Tooltip = "Dies on its first hit (rain drops, bullets)") bool kill_on_hit = false;
+    // Modules switched off in the Particle Editor's stack (Niagara's module checkboxes), a ModuleBit each: the
+    // module's settings stay, the emitter runs as if it were not there.
+    LSD_PROPERTY(Save, Tooltip = "Modules switched off in the Emitter Stack") u32 disabled_modules = 0;
 };
 
 constexpr u32 kMaxEmitters = 8;
@@ -94,6 +97,12 @@ struct ParticleSystem {
 // A particle's size and colour at `t` (0..1 through its life): the over-life keys, else start -> end.
 // Effects quality (Unreal's sg.EffectsQuality): every emitter's rate and burst times this (1 = as made).
 void set_spawn_scale(f32 scale);
+// The stack's modules that can be switched off (ParticleEmitter::disabled_modules).
+enum ModuleBit : u32 { kModuleShape = 1, kModuleVelocity = 2, kModuleForces = 4, kModuleColor = 8, kModuleSize = 16, kModuleRotation = 32,
+                       kModuleOverLife = 64, kModuleCollision = 128 };
+// The emitter as it runs: switched-off modules neutral (no shape, no speed, no forces, Start colour / size kept, no
+// spin, no over-life keys, no collision).
+ParticleEmitter active_modules(const ParticleEmitter& e);
 f32 size_at(const ParticleEmitter& e, f32 t);
 LinearColor color_at(const ParticleEmitter& e, f32 t);
 

@@ -155,7 +155,7 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
     const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
     for (u32 k = 0; k < system.emitters.count; ++k) {
-        const particles::ParticleEmitter& emitter = system.emitters[k];
+        const particles::ParticleEmitter emitter = particles::active_modules(system.emitters[k]);
         if (emitter.renderer == 1) {  // a lit mesh per particle, in one instanced draw
             const CachedMesh* mesh = meshes_ ? meshes_->get(emitter.mesh) : nullptr;
             const u32 count = instance.count(k);

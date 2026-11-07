@@ -221,9 +221,31 @@ void ParticleEditor::draw_stack(EditorState& s) {
         ImGui::PopStyleColor(2);
         ImGui::SetItemTooltip("%s", stage.tip);
         if (!open) continue;
-        style.categories = stage.modules;
         ImGui::PushID(stage.label);
-        changed = draw_details(reflect::type_of<particles::ParticleEmitter>(), &e, &style) || changed;
+        // Each module of the stage under its own header with an on / off box (Niagara's module checkboxes).
+        static const struct {
+            const char* category;
+            u32 bit;  // 0: always on
+        } kModules[] = {{"Emitter", 0}, {"Spawn", 0}, {"Initialize Particle", 0}, {"Shape", particles::kModuleShape}, {"Velocity", particles::kModuleVelocity},
+                        {"Forces", particles::kModuleForces}, {"Color", particles::kModuleColor}, {"Size", particles::kModuleSize},
+                        {"Rotation", particles::kModuleRotation}, {"Over Life", particles::kModuleOverLife}, {"Collision", particles::kModuleCollision},
+                        {"Renderer", 0}};
+        for (const auto& m : kModules) {
+            if (!std::strstr(stage.modules, m.category)) continue;
+            if (m.bit) {  // its box above its settings; off: the settings fold away
+                bool on = (e.disabled_modules & m.bit) == 0;
+                char label[48];
+                std::snprintf(label, sizeof label, "Use %s", m.category);
+                if (ImGui::Checkbox(label, &on)) {
+                    e.disabled_modules = on ? e.disabled_modules & ~m.bit : e.disabled_modules | m.bit;
+                    changed = true;
+                }
+                ImGui::SetItemTooltip("Switches the %s module off (its settings stay) to see the effect without it", m.category);
+                if (!on) continue;
+            }
+            style.categories = m.category;
+            changed = draw_details(reflect::type_of<particles::ParticleEmitter>(), &e, &style) || changed;
+        }
         ImGui::PopID();
     }
     if (with_tip(ImGui::Button("Remove Emitter"), "Takes this emitter out of the system (undo with Ctrl+Z in Details is not offered: copy the asset first)") && system->emitters.count > 1) {

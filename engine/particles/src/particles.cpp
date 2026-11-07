@@ -80,7 +80,7 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
             s.done = true;
             continue;
         }
-        const ParticleEmitter& e = system.emitters[i];
+        const ParticleEmitter e = active_modules(system.emitters[i]);
         const u32 wanted = e.max_particles < 1 ? 1 : e.max_particles > kMaxParticles ? kMaxParticles : e.max_particles;
         if (s.capacity != wanted) {  // first use, or Max Particles edited: keep what fits
             auto* fresh = static_cast<Particle*>(allocator_.allocate(sizeof(Particle) * wanted, alignof(Particle)));
@@ -174,6 +174,29 @@ void bracket(const List<Key, N>& keys, f32 t, u32& a, u32& b, f32& blend) {
 
 } // namespace
 
+ParticleEmitter active_modules(const ParticleEmitter& in) {
+    ParticleEmitter e = in;
+    const u32 off = in.disabled_modules;
+    if (off & kModuleShape) e.shape = 0;
+    if (off & kModuleVelocity) e.speed_min = e.speed_max = 0.0f;
+    if (off & kModuleForces) {
+        e.gravity_scale = e.drag = 0.0f;
+        e.acceleration = {};
+    }
+    if (off & kModuleColor) {
+        e.color_end = e.color_start;
+        e.color_over_life.count = 0;
+    }
+    if (off & kModuleSize) {
+        e.size_end = e.size_start;
+        e.size_over_life.count = 0;
+    }
+    if (off & kModuleRotation) e.spin = 0.0f;
+    if (off & kModuleOverLife) e.size_over_life.count = e.color_over_life.count = 0;
+    if (off & kModuleCollision) e.collision = 0;
+    return e;
+}
+
 f32 size_at(const ParticleEmitter& e, f32 t) {
     if (e.size_over_life.count == 0) return e.size_start + (e.size_end - e.size_start) * t;
     u32 a, b;
@@ -197,7 +220,7 @@ LinearColor color_at(const ParticleEmitter& e, f32 t) {
 u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, Vec3 right, Vec3 up,
                                     rhi::ParticleVertex* out, u32 capacity) const {
     if (emitter >= system.emitters.count || emitter >= kMaxEmitters) return 0;
-    const ParticleEmitter& e = system.emitters[emitter];
+    const ParticleEmitter e = active_modules(system.emitters[emitter]);
     const Emitter& s = emitters_[emitter];
     u32 n = s.count < capacity / 6 ? s.count : capacity / 6;
     if (!n) return 0;
@@ -237,7 +260,7 @@ u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, c
 
 u32 ParticleInstance::build_ribbon(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, rhi::ParticleVertex* out, u32 capacity) const {
     if (emitter >= system.emitters.count || emitter >= kMaxEmitters) return 0;
-    const ParticleEmitter& e = system.emitters[emitter];
+    const ParticleEmitter e = active_modules(system.emitters[emitter]);
     const Emitter& s = emitters_[emitter];
     if (s.count < 2) return 0;
     // Oldest first: the trail runs from where it was to where it is now.

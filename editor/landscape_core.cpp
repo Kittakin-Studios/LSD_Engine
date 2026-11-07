@@ -1,15 +1,18 @@
 #include "landscape_core.h"
 
+#include <cmath>
+#include <cstdio>
+
 namespace lsd::editor {
 
 namespace {
 constexpr u32 kGrid = world::Landscape::kResolution;
-}
 
-void heights_from_image(world::Landscape& l, const u8* rgba, u32 width, u32 height, f32 max_height) {
+// Samples an image (0..1 per pixel through `red`) bilinearly onto the grid.
+template <typename Red>
+void heights_from(world::Landscape& l, u32 width, u32 height, f32 max_height, Red red) {
     while (l.heights.count < kGrid * kGrid) l.heights.push_back(0.0f);
-    if (!rgba || !width || !height) return;
-    auto red = [&](u32 x, u32 y) { return static_cast<f32>(rgba[(static_cast<usize>(y) * width + x) * 4]) / 255.0f; };
+    if (!width || !height) return;
     for (u32 j = 0; j < kGrid; ++j) {
         for (u32 i = 0; i < kGrid; ++i) {
             // Grid row j runs along +Y; image rows run downwards, so the image's top is the landscape's +Y edge.
@@ -22,6 +25,56 @@ void heights_from_image(world::Landscape& l, const u8* rgba, u32 width, u32 heig
             l.heights[j * kGrid + i] = (top + (bottom - top) * ty) * max_height;
         }
     }
+}
+
+} // namespace
+
+void heights_from_image(world::Landscape& l, const u8* rgba, u32 width, u32 height, f32 max_height) {
+    if (!rgba) return heights_from(l, 0, 0, max_height, [](u32, u32) { return 0.0f; });
+    heights_from(l, width, height, max_height, [&](u32 x, u32 y) { return static_cast<f32>(rgba[(static_cast<usize>(y) * width + x) * 4]) / 255.0f; });
+}
+
+void heights_from_samples(world::Landscape& l, const u16* samples, u32 width, u32 height, f32 max_height) {
+    if (!samples) return heights_from(l, 0, 0, max_height, [](u32, u32) { return 0.0f; });
+    heights_from(l, width, height, max_height, [&](u32 x, u32 y) { return static_cast<f32>(samples[static_cast<usize>(y) * width + x]) / 65535.0f; });
+}
+
+void samples_from_heights(const world::Landscape& l, f32 max_height, u16* samples) {
+    for (u32 j = 0; j < kGrid; ++j) {
+        for (u32 i = 0; i < kGrid; ++i) {
+            const u32 k = j * kGrid + i;
+            const f32 h = k < l.heights.count && max_height > 0.0f ? l.heights[k] / max_height : 0.0f;
+            samples[static_cast<usize>(kGrid - 1 - j) * kGrid + i] = static_cast<u16>(h <= 0.0f ? 0 : h >= 1.0f ? 65535 : static_cast<u32>(h * 65535.0f + 0.5f));
+        }
+    }
+}
+
+bool read_r16(const char* path, std::vector<u16>& samples, u32& side) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::vector<u8> bytes;
+    u8 buffer[65536];
+    for (usize n; (n = std::fread(buffer, 1, sizeof buffer, f)) > 0;) bytes.insert(bytes.end(), buffer, buffer + n);
+    std::fclose(f);
+    const usize count = bytes.size() / 2;
+    side = static_cast<u32>(std::sqrt(static_cast<f64>(count)) + 0.5);
+    if (bytes.size() % 2 || side < 2 || static_cast<usize>(side) * side != count) return false;
+    samples.resize(count);
+    for (usize i = 0; i < count; ++i) samples[i] = static_cast<u16>(bytes[i * 2] | (bytes[i * 2 + 1] << 8));  // little-endian
+    return true;
+}
+
+bool write_r16(const char* path, const u16* samples, u32 side) {
+    FILE* f = std::fopen(path, "wb");
+    if (!f) return false;
+    std::vector<u8> bytes(static_cast<usize>(side) * side * 2);
+    for (usize i = 0; i < static_cast<usize>(side) * side; ++i) {
+        bytes[i * 2] = static_cast<u8>(samples[i] & 0xFF);
+        bytes[i * 2 + 1] = static_cast<u8>(samples[i] >> 8);
+    }
+    const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+    std::fclose(f);
+    return ok;
 }
 
 void image_from_heights(const world::Landscape& l, f32 max_height, u8* rgba) {

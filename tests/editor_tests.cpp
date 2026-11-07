@@ -615,6 +615,20 @@ static void test_landscape_core() {
     std::vector<u8> out(static_cast<usize>(kGrid) * kGrid * 4);
     editor::image_from_heights(l, 10.0f, out.data());
     CHECK(out[0] == 0 && out[(kGrid - 1) * 4] == 255 && out[3] == 255);
+    // 16 bits (Unreal's .r16): a height comes back within 1 / 65535 of the range, through a file too.
+    l.heights[7 * kGrid + 9] = 12.3456f;
+    std::vector<u16> samples(static_cast<usize>(kGrid) * kGrid);
+    editor::samples_from_heights(l, 50.0f, samples.data());
+    const std::string r16 = LSD_TEST_TEMP_DIR "/landscape_test.r16";
+    CHECK(editor::write_r16(r16.c_str(), samples.data(), kGrid));
+    std::vector<u16> read;
+    u32 side = 0;
+    CHECK(editor::read_r16(r16.c_str(), read, side) && side == kGrid && read == samples);
+    world::Landscape back;
+    editor::heights_from_samples(back, read.data(), side, side, 50.0f);
+    CHECK(std::fabs(back.heights[7 * kGrid + 9] - 12.3456f) < 50.0f / 65535.0f + 1e-4f);
+    CHECK(std::fabs(back.heights[kGrid - 1] - 10.0f) < 1e-3f);  // the ramp's top corner
+    std::remove(r16.c_str());
     CHECK(l.holes.count == 0 && editor::quad_open(l, 3, 3));
     editor::set_hole(l, 4, 4, true);
     CHECK(l.holes.count == kGrid * kGrid && editor::is_hole(l, 4, 4));

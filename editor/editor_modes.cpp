@@ -785,24 +785,43 @@ void draw_landscape(EditorState& s) {
     static char heightmap[260] = "Content/Heightmap.png";
     static f32 max_height = 50.0f;
     ImGui::SetNextItemWidth(220);
-    with_tip(ImGui::InputText("File", heightmap, sizeof heightmap), "A greyscale image (PNG, JPG, TGA...): black is 0, white is Max Height; it is stretched over the landscape");
+    with_tip(ImGui::InputText("File", heightmap, sizeof heightmap),
+             "A greyscale image (PNG 8 or 16-bit, JPG, TGA...) or Unreal's RAW .r16: black is 0, white is Max Height; it is stretched over the landscape");
     with_tip(ImGui::DragFloat("Max Height (m)", &max_height, 0.5f, 0.1f, 2000.0f, "%.1f"), "The height white stands for");
     Entity target = s.world->alive(s.selected) && s.world->get<world::Landscape>(s.selected) ? s.selected : all[0];
-    if (with_tip(ImGui::Button("Import Heightmap"), "Sets the selected landscape's heights from the image (undoable; 8 bits: 256 steps)")) {
-        asset::TextureData image(default_allocator());
-        if (asset::load_texture(heightmap, false, 4096, image)) {
-            heights_from_image(*s.world->get<world::Landscape>(target), image.mip(0), image.width, image.height, max_height);
+    const std::string ext = std::filesystem::path(heightmap).extension().string();
+    const bool raw = ext == ".r16" || ext == ".R16" || ext == ".raw" || ext == ".RAW";
+    if (with_tip(ImGui::Button("Import Heightmap"), "Sets the selected landscape's heights from the file (undoable; 16-bit PNG and .r16: 65536 steps, 8-bit images 256)")) {
+        std::vector<u16> samples;
+        u32 w = 0, h = 0;
+        bool ok = false;
+        if (raw) {
+            ok = read_r16(heightmap, samples, w);
+            h = w;
+        } else if (Array<u16> grey(default_allocator()); asset::load_grey16(heightmap, w, h, grey)) {
+            samples.assign(grey.data(), grey.data() + grey.size());
+            ok = true;
+        }
+        if (ok) {
+            heights_from_samples(*s.world->get<world::Landscape>(target), samples.data(), w, h, max_height);
             mark_edited(s, "Import Heightmap");
-            std::snprintf(s.status, sizeof s.status, "Imported %s (%u x %u) into %s", heightmap, image.width, image.height, s.world->name(target));
+            std::snprintf(s.status, sizeof s.status, "Imported %s (%u x %u) into %s", heightmap, w, h, s.world->name(target));
         } else {
-            std::snprintf(s.status, sizeof s.status, "Could not read the image %s", heightmap);
+            std::snprintf(s.status, sizeof s.status, raw ? "Could not read %s (a .r16 must be square 16-bit)" : "Could not read the image %s", heightmap);
         }
     }
     ImGui::SameLine();
-    if (with_tip(ImGui::Button("Export Heightmap"), "Writes the selected landscape's heights as a greyscale PNG (65 x 65, 0..Max Height)")) {
-        std::vector<u8> pixels(static_cast<usize>(kGrid) * kGrid * 4);
-        image_from_heights(*s.world->get<world::Landscape>(target), max_height, pixels.data());
-        const bool ok = asset::write_png(heightmap, kGrid, kGrid, pixels.data());
+    if (with_tip(ImGui::Button("Export Heightmap"), "Writes the selected landscape's heights (0..Max Height): a .r16 file at 16 bits (Unreal's RAW), else a greyscale PNG at 8 bits")) {
+        bool ok;
+        if (raw) {
+            std::vector<u16> samples(static_cast<usize>(kGrid) * kGrid);
+            samples_from_heights(*s.world->get<world::Landscape>(target), max_height, samples.data());
+            ok = write_r16(heightmap, samples.data(), kGrid);
+        } else {
+            std::vector<u8> pixels(static_cast<usize>(kGrid) * kGrid * 4);
+            image_from_heights(*s.world->get<world::Landscape>(target), max_height, pixels.data());
+            ok = asset::write_png(heightmap, kGrid, kGrid, pixels.data());
+        }
         std::snprintf(s.status, sizeof s.status, ok ? "Exported %s" : "Could not write %s", heightmap);
     }
     if (with_tip(ImGui::Button("Flatten All"), "Sets every height back to flat (undoable)")) {

@@ -90,10 +90,35 @@ static void test_ribbon(Allocator& heap) {
     CHECK(vertices[0].position[0] < vertices[2].position[0]);  // oldest (smaller X) first
 }
 
+// Module toggles (Niagara's checkboxes): a switched-off module runs as if it were not there; its settings stay.
+static void test_modules(Allocator& heap) {
+    particles::ParticleSystem system;
+    system.emitters.count = 1;
+    particles::ParticleEmitter& e = system.emitters[0];
+    e.burst = 1;
+    e.spawn_rate = 0.0f;
+    e.lifetime_min = e.lifetime_max = 100.0f;
+    e.speed_min = e.speed_max = 0.0f;
+    e.gravity_scale = 1.0f;
+    e.color_start = {1, 0, 0, 1};
+    e.color_end = {0, 0, 1, 0};
+    e.disabled_modules = particles::kModuleForces | particles::kModuleColor;
+    particles::ParticleInstance fx(heap);
+    for (int i = 0; i < 60; ++i) fx.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, i == 0);
+    CHECK(fx.count(0) == 1 && std::fabs(fx.particles(0)[0].position.z - 2.0f) < 1e-4f);  // no gravity
+    const LinearColor c = particles::color_at(particles::active_modules(e), 0.9f);
+    CHECK(c.r == 1.0f && c.b == 0.0f && c.a == 1.0f);  // the start colour all its life
+    CHECK(e.gravity_scale == 1.0f && e.color_end.b == 1.0f);  // the settings are kept
+    e.disabled_modules = 0;
+    for (int i = 0; i < 60; ++i) fx.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, false);
+    CHECK(fx.particles(0)[0].position.z < 1.0f);  // back on: it falls
+}
+
 int main() {
     Allocator& heap = default_allocator();
     test_collision(heap);
     test_ribbon(heap);
+    test_modules(heap);
     particles::ParticleSystem system;
     system.emitters.count = 1;
     particles::ParticleEmitter& e = system.emitters[0];
