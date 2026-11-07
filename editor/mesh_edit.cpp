@@ -139,6 +139,19 @@ bool delete_face(world::EditableMesh& m, u32 face) {
     return true;
 }
 
+bool delete_point(world::EditableMesh& m, u32 point) {
+    u32 kept = 0;
+    for (u32 f = 0; f < m.faces.count; ++f) {
+        const world::EditFace& face = m.faces[f];
+        bool uses = false;
+        for (u32 i = 0; i < face_size(face); ++i) uses |= corner(face, i) == point;
+        if (!uses) m.faces[kept++] = face;
+    }
+    const bool removed = kept != m.faces.count;
+    m.faces.count = kept;
+    return removed;
+}
+
 bool flip_face(world::EditableMesh& m, u32 face) {
     if (face >= m.faces.count) return false;
     world::EditFace& f = m.faces[face];

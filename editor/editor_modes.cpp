@@ -156,6 +156,7 @@ void asset_list(EditorState& s, const char* data_type, const char* empty, bool p
 
 bool g_box_uv = true;  // new shapes get box-projected UVs (textures do not stretch)
 i32 g_edit_face = -1;   // the Editable Mesh face picked in the viewport
+i32 g_edit_point = -1;  // or the point (a click near one picks it instead of the face)
 Entity g_edit_owner;
 f32 g_extrude = 0.5f, g_inset = 0.25f, g_push = 0.1f;
 
@@ -167,12 +168,25 @@ world::EditableMesh* editable(EditorState& s) {
 void draw_mesh_edit(EditorState& s, world::EditableMesh& m) {
     if (g_edit_owner != s.selected) {
         g_edit_owner = s.selected;
-        g_edit_face = -1;
+        g_edit_face = g_edit_point = -1;
     }
     ImGui::SeparatorText("Edit Mesh");
     ImGui::Text("%u faces, %u points", m.faces.count, m.points.count);
+    if (g_edit_point >= 0 && static_cast<u32>(g_edit_point) < m.points.count) {  // a point: move or delete it
+        ImGui::Text("Point %d selected", g_edit_point + 1);
+        Vec3& p = m.points[static_cast<u32>(g_edit_point)].p;
+        ImGui::DragFloat3("Position", &p.x, 0.01f, -1000.0f, 1000.0f, "%.2f");
+        ImGui::SetItemTooltip("Where the point is, in the object's own space (the faces using it follow)");
+        if (ImGui::IsItemDeactivatedAfterEdit()) mark_edited(s, "Move Point");  // one undo step per drag
+        if (with_tip(ImGui::Button("Delete Point"), "Removes every face that uses the point (an opening)")) {
+            if (delete_point(m, static_cast<u32>(g_edit_point))) mark_edited(s, "Delete Point");
+            g_edit_point = -1;
+        }
+        hint("Click a face instead to extrude, inset or bevel it.");
+        return;
+    }
     if (g_edit_face < 0 || static_cast<u32>(g_edit_face) >= m.faces.count) {
-        hint("Click a face of the mesh in the viewport to edit it.");
+        hint("Click a face of the mesh in the viewport to edit it, or near one of its corners to move that point.");
         return;
     }
     ImGui::Text("Face %d selected", g_edit_face + 1);
@@ -982,14 +996,38 @@ bool face_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
         }
         dl->PopClipRect();
     }
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    i32 near_point = -1;  // the point under the cursor (within 10 px), drawn as a dot
+    f32 best = 100.0f;
+    for (u32 i = 0; i < m->points.count; ++i) {
+        ImVec2 at;
+        if (!project(view_proj, transform_point(world_m, m->points[i].p), pos, size, at)) continue;
+        const f32 dx = at.x - io.MousePos.x, dy = at.y - io.MousePos.y;
+        const bool picked = g_edit_owner == s.selected && g_edit_point == static_cast<i32>(i);
+        if (picked) fg->AddCircleFilled(at, 5.0f, IM_COL32(243, 195, 18, 255));
+        if (hovered && dx * dx + dy * dy < best) {
+            best = dx * dx + dy * dy;
+            near_point = static_cast<i32>(i);
+        }
+    }
+    if (near_point >= 0) {
+        ImVec2 at;
+        if (project(view_proj, transform_point(world_m, m->points[static_cast<u32>(near_point)].p), pos, size, at)) fg->AddCircle(at, 6.0f, IM_COL32(120, 230, 255, 255), 0, 2.0f);
+    }
     if (!hovered || io.KeyAlt || !ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return false;
+    g_edit_owner = s.selected;
+    if (near_point >= 0) {  // a corner wins over the face under it
+        g_edit_point = near_point;
+        g_edit_face = -1;
+        return true;
+    }
     Vec3 o, d;
     viewport_ray(s.camera, pos, size, io.MousePos, o, d);
     f32 t = 0.0f;
     const i32 face = pick_face(*m, transform_point(inv, o), transform_vector(inv, d), t);
     if (face < 0) return false;  // missed the mesh: a normal click (select something else)
-    g_edit_owner = s.selected;
     g_edit_face = face;
+    g_edit_point = -1;
     return true;
 }
 

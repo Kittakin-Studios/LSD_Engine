@@ -2,7 +2,7 @@
 // Modeling-mode mesh editing (Unreal's Modeling Mode PolyEdit): an Editable Mesh's points and faces
 // (quads and triangles) changed by Extrude, Inset, Bevel, Push / Pull, Delete and Flip, and built
 // into a flat-shaded, box-UV mesh. Pure (no GPU, no editor state): the tests run it.
-// shortcut: faces of 3 or 4 points, no edge or point selection, no booleans; add a half-edge mesh then.
+// shortcut: faces of 3 or 4 points, no edge selection, no booleans; add a half-edge mesh then.
 #include "lsd/render/mesh.h"
 #include "lsd/world/components.h"
 
@@ -25,6 +25,8 @@ bool inset(world::EditableMesh& mesh, u32 face, f32 fraction);    // a smaller c
 bool bevel(world::EditableMesh& mesh, u32 face, f32 fraction, f32 distance);  // inset, then extrude: a chamfered step
 bool push_pull(world::EditableMesh& mesh, u32 face, f32 distance);  // moves the face's points along its normal
 bool delete_face(world::EditableMesh& mesh, u32 face);
+// Removes every face that uses the point (the point itself stays, unused); false if none did.
+bool delete_point(world::EditableMesh& mesh, u32 point);
 bool flip_face(world::EditableMesh& mesh, u32 face);  // turns it inside out
 // The nearest face a ray (in the mesh's own space) hits, -1 if none; `t` is the distance along `dir`.
 i32 pick_face(const world::EditableMesh& mesh, Vec3 origin, Vec3 dir, f32& t);

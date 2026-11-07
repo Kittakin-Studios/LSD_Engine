@@ -551,6 +551,9 @@ static void test_mesh_edit() {
     editor::build_edit_mesh(m, data);
     CHECK(data.vertex_count == data.index_count && data.index_count == m.faces.count * 6);  // all quads: 2 triangles each
     render::free_mesh(default_allocator(), data);
+    world::EditableMesh box;  // deleting a box corner takes the three faces meeting there
+    editor::make_box(box);
+    CHECK(editor::delete_point(box, 7) && box.faces.count == 3 && !editor::delete_point(box, 7));
     const std::string obj = editor::to_obj(m, "Box");
     CHECK(obj.find("\nv ") != std::string::npos && obj.find("\nf ") != std::string::npos);
 }
