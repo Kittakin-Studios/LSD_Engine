@@ -1057,6 +1057,41 @@ static void test_material_graph() {
     Graph s(default_allocator());
     const u32 dt = s.add("OnUpdate", 0, 0)->id, pos = s.add("SetPosition", 200, 0)->id;
     CHECK(!s.connect(dt, 1, pos, 1));
+
+    // Material Functions: a graph ending in a Function Output, called by name and compiled in place.
+    Graph fn(default_allocator());
+    GraphNode* in_a = fn.add("MatFunctionInput", 0, 0);
+    std::snprintf(in_a->values[0], sizeof in_a->values[0], "A");
+    const u32 in_a_id = in_a->id;
+    const u32 twice = fn.add("MatMultiply", 200, 0)->id;
+    GraphNode* fn_out = fn.add("MatFunctionOutput", 400, 0);
+    const u32 fn_out_id = fn_out->id;
+    CHECK(fn.connect(in_a_id, 0, twice, 0) && fn.connect(twice, 0, fn_out_id, 0));
+    std::snprintf(fn.find(twice)->values[1], sizeof fn.find(twice)->values[1], "2,2,2");
+    CHECK(compile_material_graph(fn, code, error, sizeof error) && std::strstr(code.code.data(), "s.base_color"));  // a function previews alone
+    static std::string fn_path;
+    fn_path = (std::filesystem::temp_directory_path() / "MF_Double.lsdmatgraph").string();
+    CHECK(save_graph_file(fn, fn_path.c_str()));
+    Graph user(default_allocator());
+    const u32 user_out = user.add("MatOutput", 400, 0)->id;
+    GraphNode* call = user.add("MatFunctionCall", 200, 0);
+    std::snprintf(call->values[0], sizeof call->values[0], "MF_Double");
+    std::snprintf(call->values[1], sizeof call->values[1], "0.25,0.5,0.125");
+    const u32 call_id = call->id;
+    CHECK(user.connect(call_id, 0, user_out, 0));
+    CHECK(!compile_material_graph(user, code, error, sizeof error) && std::strstr(error, "Material Function"));  // nothing finds it yet
+    set_material_function_resolver([](void*, const char* name, char* path, usize capacity) {
+        if (std::strcmp(name, "MF_Double") != 0) return false;
+        std::snprintf(path, capacity, "%s", fn_path.c_str());
+        return true;
+    }, nullptr);
+    CHECK(compile_material_graph(user, code, error, sizeof error));
+    CHECK(std::strstr(code.code.data(), "float3(0.25, 0.5, 0.125)") && std::strstr(code.code.data(), "float3(2.0, 2.0, 2.0)"));
+    char base[64];
+    std::snprintf(base, sizeof base, "s.base_color = v%u_0;", call_id);
+    CHECK(std::strstr(code.code.data(), base));
+    set_material_function_resolver(nullptr, nullptr);
+    std::filesystem::remove(fn_path);
 }
 
 static void test_data_table() {

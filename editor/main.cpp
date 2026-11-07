@@ -10,6 +10,7 @@
 #include "table_editor.h"
 #include "mesh_cache.h"
 #include "lighting.h"
+#include "lsd/script/material_graph.h"
 #include "scalability.h"
 #include "loc_gather.h"
 #include "material_cache.h"
@@ -1904,6 +1905,18 @@ int main(int argc, char** argv) {
     registry.scan();
     import_pending_materials(registry, state.status, sizeof state.status);
     register_script_nodes(registry);
+    // Material Function nodes find their graph by name (a Material Graph asset).
+    lsd::script::set_material_function_resolver([](void* user, const char* name, char* out, lsd::usize capacity) {
+        const auto& reg = *static_cast<const lsd::asset::AssetRegistry*>(user);
+        lsd::usize hits[16];
+        const lsd::usize n = reg.search(name, lsd::asset::AssetType::MaterialGraph, nullptr, hits, 16);
+        for (lsd::usize i = 0; i < n; ++i) {
+            if (std::strcmp(reg.get(hits[i]).name, name) != 0) continue;
+            reg.source_path(reg.get(hits[i]), out, capacity);
+            return true;
+        }
+        return false;
+    }, &registry);
     // The window icon (Project Settings > Platform), editor and game alike.
     lsd::asset::Guid icon_guid;
     if (const lsd::asset::AssetRecord* icon = state.project.icon[0] && lsd::asset::parse_guid(state.project.icon, icon_guid) ? registry.find(icon_guid) : nullptr) {

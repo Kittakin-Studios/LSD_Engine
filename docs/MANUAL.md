@@ -892,10 +892,18 @@ from a pin to wire. The preview on the right (sphere or cube) updates 0.3 s afte
 | Coordinates | Texture Coordinate (tiling), Panner, World Position, Vertex Normal, Camera Vector, Fresnel |
 | Math | Add, Subtract, Multiply, Divide, Lerp, One Minus, Power, Clamp, Dot, Normalize, Sine, Abs, Frac |
 | Utility | Break Vector, Make Vector |
+| Functions | Material Function (calls another graph by name, with A / B / C inputs), Function Input, Function Output |
 
 Numbers and colours connect freely (a number becomes a grey colour). Up to 3 textures and 16
 parameters per material. **Save** to update the level. A Material Instance whose parent is a graph
 lists the graph's parameters (button **Add the graph's parameters**) to set per instance.
+
+**Material Functions** (Unreal's): make a Material Graph, say `MF_Tint`, that ends in a **Function
+Output** instead of a Material Output, and reads its inputs through **Function Input** nodes (Input A,
+B or C; Preview is the value used while you look at the function on its own, where it shows as the
+base colour). In any other material, a **Material Function** node with Function `MF_Tint` runs it
+there, its A / B / C pins feeding the inputs and Result giving the output. Functions can call other
+functions, up to 4 deep. Their textures and parameters count toward the material's 3 and 16.
 
 ---
 

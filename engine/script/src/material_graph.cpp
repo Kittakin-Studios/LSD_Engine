@@ -1,5 +1,7 @@
 #include "lsd/script/material_graph.h"
 
+#include "lsd/foundation/allocator.h"
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -47,6 +49,9 @@ bool contains(const std::vector<u32>& list, u32 id) {
     return false;
 }
 
+MaterialFunctionResolver g_resolver = nullptr;
+void* g_resolver_user = nullptr;
+
 // shortcut: std::string / std::vector here: an editor-time compiler, not a hot path.
 struct Compiler {
     const Graph& graph;
@@ -56,6 +61,31 @@ struct Compiler {
     std::string body;
     std::vector<u32> done;      // nodes whose outputs are declared
     std::vector<u32> visiting;  // on the current path (a loop if met again)
+    std::string prefix;                 // inside a Material Function: its temporaries' names start with this
+    const std::string* args = nullptr;  // inside a Material Function: the caller's A, B, C expressions
+    u32 depth = 0;
+
+    std::string temp(u32 node, u32 pin) const { return prefix + "v" + std::to_string(node) + "_" + std::to_string(pin); }
+
+    // A Material Function node: the named graph compiled here, its Function Inputs reading `inputs`.
+    bool call_function(const GraphNode& node, const std::string* inputs) {
+        if (depth >= 4) return fail("Material Functions nested more than 4 deep (does one call itself?)", &node);
+        char path[300];
+        if (!g_resolver || !node.values[0][0] || !g_resolver(g_resolver_user, node.values[0], path, sizeof path)) return fail("Material Function: no Material Graph with that name", &node);
+        Graph sub(default_allocator());
+        if (!load_graph_file(sub, path)) return fail("Material Function: could not read it", &node);
+        const GraphNode* result = nullptr;
+        for (const GraphNode& n : sub.nodes) {
+            if (std::strcmp(n.type, "MatFunctionOutput") == 0) result = &n;
+        }
+        if (!result) return fail("Material Function: that graph has no Function Output node", &node);
+        Compiler inner{sub, out, error, error_capacity, {}, {}, {}, prefix + "f" + std::to_string(node.id) + "_", inputs, depth + 1};
+        std::string expr;
+        if (!inner.input(*result, *find_node_def("MatFunctionOutput"), 0, expr)) return false;
+        body += inner.body;
+        body += "    float3 " + temp(node.id, 0) + " = " + expr + ";\n";
+        return true;
+    }
 
     bool fail(const char* message, const GraphNode* node) {
         const NodeDef* def = node ? find_node_def(node->type) : nullptr;
@@ -68,9 +98,7 @@ struct Compiler {
     bool input(const GraphNode& node, const NodeDef& def, u32 pin, std::string& expr) {
         if (const GraphLink* link = graph.link_into(node.id, pin)) {
             if (!declare(link->from_node)) return false;
-            char name[32];
-            std::snprintf(name, sizeof name, "v%u_%u", link->from_node, link->from_pin);
-            expr += name;
+            expr += temp(link->from_node, link->from_pin);
             return true;
         }
         literal(expr, pin < kMaxPinValues ? node.values[pin] : def.inputs[pin].default_value);
@@ -127,10 +155,22 @@ struct Compiler {
             if (def->inputs[i].type == PinType::String) continue;  // settings, not values
             if (!input(*node, *def, i, inputs[i])) return false;
         }
+        if (std::strcmp(def->id, "MatFunctionCall") == 0) {
+            if (!call_function(*node, inputs + 1)) return false;
+            visiting.pop_back();
+            done.push_back(id);
+            return true;
+        }
+        if (std::strcmp(def->id, "MatFunctionInput") == 0 && args) {  // the caller's A, B or C
+            const char letter = node->values[0][0];
+            const u32 which = letter == 'B' || letter == 'b' ? 1u : letter == 'C' || letter == 'c' ? 2u : 0u;
+            body += "    float3 " + temp(id, 0) + " = " + args[which] + ";\n";
+            visiting.pop_back();
+            done.push_back(id);
+            return true;
+        }
         for (u32 o = 0; o < def->output_count; ++o) {
-            char head[48];
-            std::snprintf(head, sizeof head, "    float3 v%u_%u = ", id, o);
-            body += head;
+            body += "    float3 " + temp(id, o) + " = ";
             const bool unpack = texture && o == 0 && std::strcmp(node->values[2], "Normal") == 0;
             if (unpack) body += "(";
             for (const char* c = def->output_code[o]; *c; ++c) {
@@ -154,6 +194,11 @@ struct Compiler {
 
 } // namespace
 
+void set_material_function_resolver(MaterialFunctionResolver resolver, void* user) {
+    g_resolver = resolver;
+    g_resolver_user = user;
+}
+
 bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, usize error_capacity) {
     out.code.clear();
     out.texture_count = 0;
@@ -168,10 +213,26 @@ bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, 
         output = &n;
     }
     if (!output) {
-        std::snprintf(error, error_capacity, "No Material Output node");
-        return false;
+        const GraphNode* function_result = nullptr;  // a Material Function opened alone: its result as the colour (a preview)
+        for (const GraphNode& n : graph.nodes) {
+            if (std::strcmp(n.type, "MatFunctionOutput") == 0) function_result = &n;
+        }
+        if (!function_result) {
+            std::snprintf(error, error_capacity, "No Material Output node");
+            return false;
+        }
+        Compiler preview{graph, out, error, error_capacity, {}, {}, {}, {}, nullptr, 0};
+        std::string expr;
+        if (!preview.input(*function_result, *find_node_def("MatFunctionOutput"), 0, expr)) return false;
+        const std::string code = "Surface material_main(MaterialIn mi) {\n    Surface s;\n" + preview.body + "    s.base_color = " + expr +
+                                 ";\n    s.metallic = 0.0;\n    s.roughness = 0.5;\n    s.emissive = lsd_v3(0.0);\n    s.normal = float3(0.0, 0.0, 1.0);\n"
+                                 "    s.ao = 1.0;\n    s.opacity = 1.0;\n    return s;\n}\n";
+        out.blend_mode = 0;
+        out.code.resize(code.size() + 1);
+        std::memcpy(out.code.data(), code.c_str(), code.size() + 1);
+        return true;
     }
-    Compiler c{graph, out, error, error_capacity, {}, {}, {}};
+    Compiler c{graph, out, error, error_capacity, {}, {}, {}, {}, nullptr, 0};
     const NodeDef& def = *find_node_def("MatOutput");
     // Graphs saved before a pin existed have no value for it: use the pin's default (Opacity 1, Opaque).
     GraphNode filled = *output;

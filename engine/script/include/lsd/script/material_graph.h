@@ -39,6 +39,13 @@ struct MaterialCode {
 
 // False with a message naming the problem: no (or two) Material Output, a loop, a Texture Sample
 // without a texture, more than kMaxMaterialTextures textures or kMaxMaterialParams parameters.
+// Material Function nodes are compiled in place (up to 4 deep) from the graph file the resolver finds.
 bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, usize error_capacity);
+
+// Material Functions (Unreal's): a Material Graph with a Function Output node (and Function Input
+// nodes A, B, C) used from other graphs by a Material Function node naming it. The program sets how a
+// name becomes a graph file; without it Material Function nodes fail to compile.
+using MaterialFunctionResolver = bool (*)(void* user, const char* name, char* path, usize capacity);
+void set_material_function_resolver(MaterialFunctionResolver resolver, void* user);
 
 } // namespace lsd::script
