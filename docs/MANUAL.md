@@ -562,8 +562,9 @@ Lights use physical units, like Unreal:
 | Component | Units / notes |
 | --- | --- |
 | Directional Light | lux; its +X axis is the light's direction; Cast Shadows, Shadow Distance (cascaded shadows) |
-| Point Light | lumens, attenuation radius, shadows |
-| Spot Light | lumens, inner / outer cone, shadows |
+| Point Light | lumens, attenuation radius, shadows; **Source Radius** makes it a sphere light (softer, wider highlights) |
+| Spot Light | lumens, inner / outer cone, shadows, Source Radius |
+| Rect Light | lumens from its front (+X); **Shape** Rect (Source Width across Y x Height along Z) or Disc (Width across): windows, screens, softboxes, ceiling panels. Unreal's Rect Light; no shadows yet |
 | Sky Light | ambient from above and below |
 
 Colour can be set by temperature (Kelvin). **World Settings > Exposure (EV100)** sets the camera

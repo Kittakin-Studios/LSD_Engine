@@ -182,6 +182,41 @@ float sun_visibility(vec3 p, vec3 cam) {  // one tap of the sun's shadow in the 
     vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
     return texture(shadow_tex, vec3(origin + uv * shadow_tile[c].z, s.z));
 }
+// Area lights (see the HLSL's area_point): the direction to the light shape's point nearest the reflection.
+void area_point(Light L, vec3 wpos, vec3 rv, float roughness, inout vec3 ls, inout float sa2, inout float norm) {
+    vec3 to = L.pos_type.xyz - wpos;
+    vec3 p = to;
+    float size = 0.0;
+    if (L.pos_type.w > 2.5) {
+        vec3 ln = L.dir_range.xyz;
+        vec3 right = normalize(cross(abs(ln.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), ln));
+        vec3 up = cross(ln, right);
+        float denom = dot(rv, ln);
+        float t = abs(denom) > 1e-4 ? dot(to, ln) / denom : -1.0;
+        vec3 on_plane = rv * t - to;
+        vec2 uv = t > 0.0 ? vec2(dot(on_plane, right), dot(on_plane, up)) : vec2(0.0);
+        if (L.pos_type.w < 3.5) {
+            vec2 extent = vec2(L.color_inner.w, L.spot.x) * 0.5;
+            uv = clamp(uv, -extent, extent);
+            size = length(extent);
+        } else {
+            float len = length(uv);
+            if (len > L.color_inner.w) uv *= L.color_inner.w / len;
+            size = L.color_inner.w;
+        }
+        p = to + right * uv.x + up * uv.y;
+    } else if (L.spot.w > 0.0) {
+        vec3 c = dot(to, rv) * rv - to;
+        p = to + c * clamp(L.spot.w / max(length(c), 1e-4), 0.0, 1.0);
+        size = L.spot.w;
+    }
+    if (size <= 0.0) return;
+    ls = normalize(p);
+    float a = roughness * roughness, wide = clamp(a + size / (2.0 * max(length(to), 1e-3)), 0.0, 1.0);
+    sa2 = wide * wide;
+    norm = (a / wide) * (a / wide);
+}
+
 float fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the fog along the view ray
     if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
     vec3 to = wpos - cam;
@@ -381,20 +416,25 @@ void main() {
             float r = dist2 / (L.dir_range.w * L.dir_range.w);
             float window = clamp(1.0 - r * r, 0.0, 1.0);
             atten = window * window / dist2;
-            if (L.pos_type.w > 1.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+            if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+            if (L.pos_type.w > 2.5) atten *= clamp(dot(-l, L.dir_range.xyz), 0.0, 1.0);  // rect / disc: lights only in front
         }
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;
         if (float(li) == shadow_info.y) atten *= lightmapped ? min(sun_shadow(v_wpos, n, u_mat[1].yzw), baked.a) : sun_shadow(v_wpos, n, u_mat[1].yzw);
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, v_wpos, n);
-        vec3 h = normalize(v + l);
+        vec3 ls = l;  // specular's direction: an area light's nearest point (the centre otherwise)
+        float sa2 = a2, spec_norm = 1.0;
+        if (L.pos_type.w > 0.5) area_point(L, v_wpos, reflect(-v, n), roughness, ls, sa2, spec_norm);
+        float ndls = clamp(dot(n, ls), 0.0, 1.0);
+        vec3 h = normalize(v + ls);
         float ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
-        float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
-        float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+        float d = sa2 / (PI * pow(ndh * ndh * (sa2 - 1.0) + 1.0, 2.0));
+        float g = (ndls / (ndls * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
         vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-        vec3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+        vec3 specular = d * g * f / max(4.0 * ndls * ndv, 1e-4);
         vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
-        lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
+        lit += (diffuse * ndl + specular * ndls * spec_norm) * L.color_inner.xyz * atten;
     }
     // Ambient (see the HLSL): diffuse from the sky / probes, specular from the sky along the reflection.
     vec3 sky = lightmapped ? baked.rgb : ambient_light(v_wpos, n);

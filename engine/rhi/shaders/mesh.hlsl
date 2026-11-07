@@ -97,6 +97,44 @@ float sun_visibility(float3 p, float3 cam) {
 }
 // Volumetric fog: how lit the fog toward wpos is (1 = plain height fog). The sun's light reaching
 // points along the view ray (its shadow sampled at each step), shaped by a Henyey-Greenstein phase.
+// Area lights (Karis 2013, UE4's representative point): `ls` becomes the direction to the point of the light's shape
+// nearest the reflection ray `rv`, the roughness (sa2 = alpha^2) widens by the shape's size, and `norm` keeps the energy.
+// Sphere: a point / spot light with spot.w = radius. Rect (type 3): color_inner.w x spot.x metres; disc (type 4): radius
+// color_inner.w; both face dir_range.xyz. shortcut: a rect's roll follows world up, add an axis when lights need to turn.
+void area_point(Light L, float3 wpos, float3 rv, float roughness, inout float3 ls, inout float sa2, inout float norm) {
+    const float3 to = L.pos_type.xyz - wpos;
+    float3 p = to;
+    float size = 0.0;
+    if (L.pos_type.w > 2.5) {
+        const float3 ln = L.dir_range.xyz;
+        const float3 right = normalize(cross(abs(ln.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0), ln));
+        const float3 up = cross(ln, right);
+        const float denom = dot(rv, ln);
+        const float t = abs(denom) > 1e-4 ? dot(to, ln) / denom : -1.0;
+        const float3 on_plane = rv * t - to;
+        float2 uv = t > 0.0 ? float2(dot(on_plane, right), dot(on_plane, up)) : float2(0.0, 0.0);
+        if (L.pos_type.w < 3.5) {
+            const float2 extent = float2(L.color_inner.w, L.spot.x) * 0.5;
+            uv = clamp(uv, -extent, extent);
+            size = length(extent);
+        } else {
+            const float len = length(uv);
+            if (len > L.color_inner.w) uv *= L.color_inner.w / len;
+            size = L.color_inner.w;
+        }
+        p = to + right * uv.x + up * uv.y;
+    } else if (L.spot.w > 0.0) {
+        const float3 c = dot(to, rv) * rv - to;
+        p = to + c * saturate(L.spot.w / max(length(c), 1e-4));
+        size = L.spot.w;
+    }
+    if (size <= 0.0) return;
+    ls = normalize(p);
+    const float a = roughness * roughness, wide = saturate(a + size / (2.0 * max(length(to), 1e-3)));
+    sa2 = wide * wide;
+    norm = (a / wide) * (a / wide);
+}
+
 float fog_light(float3 wpos, float3 cam) {
     if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
     const float3 to = wpos - cam;
@@ -358,20 +396,25 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
             const float r = dist2 / (L.dir_range.w * L.dir_range.w);  // smooth window to zero at the range (Karis)
             const float window = saturate(1.0 - r * r);
             atten = window * window / dist2;
-            if (L.pos_type.w > 1.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
+            if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
+            if (L.pos_type.w > 2.5) atten *= saturate(dot(-l, L.dir_range.xyz));  // rect / disc: lights only in front
         }
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;
         if ((float)li == shadow_info.y) atten *= lightmapped ? min(sun_shadow(i.wpos, n, mat1.yzw), baked.a) : sun_shadow(i.wpos, n, mat1.yzw);
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
-        const float3 h = normalize(v + l);
+        float3 ls = l;  // specular's direction: an area light's nearest point (the centre otherwise)
+        float sa2 = a2, spec_norm = 1.0;
+        if (L.pos_type.w > 0.5) area_point(L, i.wpos, reflect(-v, n), roughness, ls, sa2, spec_norm);
+        const float ndls = saturate(dot(n, ls));
+        const float3 h = normalize(v + ls);
         const float ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
-        const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
-        const float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+        const float d = sa2 / (PI * pow(ndh * ndh * (sa2 - 1.0) + 1.0, 2.0));
+        const float g = (ndls / (ndls * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
         const float3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-        const float3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+        const float3 specular = d * g * f / max(4.0 * ndls * ndv, 1e-4);
         const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
-        lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
+        lit += (diffuse * ndl + specular * ndls * spec_norm) * L.color_inner.xyz * atten;
     }
     // Ambient: diffuse from the sky / baked probes; specular from the sky along the reflection,
     // blurred toward the diffuse light as roughness grows, darkened where the probes are darker than

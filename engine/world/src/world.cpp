@@ -27,6 +27,7 @@ void init_types() {
         &reflect::type_of<DirectionalLight>(),
         &reflect::type_of<PointLight>(),
         &reflect::type_of<SpotLight>(),
+        &reflect::type_of<RectLight>(),
         &reflect::type_of<SkyLight>(),
         &reflect::type_of<Sky>(),
         &reflect::type_of<HeightFog>(),

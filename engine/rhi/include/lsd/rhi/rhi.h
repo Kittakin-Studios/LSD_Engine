@@ -155,7 +155,8 @@ constexpr u32 kMaxMaterialParams = 16;
 // Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
 // colour = linear colour x intensity (lux for directional; candela, i.e. lumens / 4 pi, for point
 // and spot). The shader multiplies everything by `exposure` and encodes to sRGB.
-enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2 };
+// Rect / Disc: area lights facing `direction` (rect: spot_inner_cos x spot_outer_cos metres; disc: radius spot_inner_cos).
+enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2, Rect = 3, Disc = 4 };
 constexpr u32 kMaxLights = 16;
 constexpr u32 kMaxShadowTiles = 16;
 constexpr u32 kMaxProbes = 512;  // baked light probes (Build Lighting) in one grid
@@ -170,7 +171,7 @@ struct GpuLight {
     f32 spot_outer_cos;
     f32 shadow_tile;     // first tile in the local shadow atlas (point lights use 6: +X -X +Y -Y +Z -Z), -1 = none
     f32 shadow_offset;   // normal offset per metre of distance (texel size grows with distance)
-    f32 pad;
+    f32 source_radius;   // point / spot: a sphere light's radius (soft, wide highlights); 0 = a point
 };
 constexpr u32 kMaxReflectionProbes = 8;  // reflection captures in the atlas (render::kMaxReflections)
 

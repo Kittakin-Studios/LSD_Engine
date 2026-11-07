@@ -288,7 +288,7 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
     {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Nav Link", nullptr, "NavLink"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
-    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Reflection Capture", nullptr, "ReflectionCapture"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
+    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Rect Light", nullptr, "RectLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Reflection Capture", nullptr, "ReflectionCapture"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
     // Movement prefabs, cubes as placeholders: swap the mesh in Details.
     {"Sub Level", nullptr, "SubLevel"}, {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
 };
@@ -1828,7 +1828,7 @@ bool draw_gizmo(EditorState& s, const Mat4& camera_view_matrix, const Mat4& proj
 // A small glyph telling what an object without a mesh is (Unreal's sprite icons), centred on `at`.
 void draw_type_icon(const world::World& w, Entity e, ImDrawList* dl, ImVec2 at, ImU32 color) {
     const f32 x = at.x, y = at.y;
-    if (w.get<world::PointLight>(e) || w.get<world::SpotLight>(e) || w.get<world::DirectionalLight>(e) || w.get<world::SkyLight>(e)) {
+    if (w.get<world::PointLight>(e) || w.get<world::SpotLight>(e) || w.get<world::RectLight>(e) || w.get<world::DirectionalLight>(e) || w.get<world::SkyLight>(e)) {
         dl->AddCircleFilled(at, 4.0f, color);  // a sun: disc and rays
         for (int k = 0; k < 8; ++k) {
             const f32 a = static_cast<f32>(k) * 0.785398f;
@@ -1919,6 +1919,30 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
                 }
             }
         }
+    }
+    // Rect Lights: their panel (or disc) outlined, with a short line out of the lit side.
+    const reflect::TypeInfo& rect_type = reflect::type_of<world::RectLight>();
+    for (u32 i = 0; i < s.world->count(rect_type); ++i) {
+        const Entity e = s.world->owner(rect_type, i);
+        if (s.world->hidden_in_hierarchy(e)) continue;
+        const auto* light = static_cast<const world::RectLight*>(s.world->at(rect_type, i));
+        const Mat4 m = s.world->world_matrix(e);
+        const ImU32 color = s.is_selected(e) ? u32_color(t.details_tab_active) : IM_COL32(255, 220, 90, 230);
+        const f32 hw = light->source_width * 0.5f, hh = (light->shape == 1 ? light->source_width : light->source_height) * 0.5f;
+        constexpr int kSides = 24;
+        const int sides = light->shape == 1 ? kSides : 4;
+        ImVec2 ring[kSides + 1];
+        bool ok = true;
+        for (int k = 0; k <= sides && ok; ++k) {
+            const f32 a = static_cast<f32>(k) / static_cast<f32>(sides) * 6.2831853f + (sides == 4 ? 0.785398f : 0.0f);
+            const f32 u = sides == 4 ? (std::cos(a) > 0 ? hw : -hw) : std::cos(a) * hw, v = sides == 4 ? (std::sin(a) > 0 ? hh : -hh) : std::sin(a) * hh;
+            ok = project(view_proj, transform_point(without_scale(m), {0, u, v}), pos, size, ring[k]);
+        }
+        if (!ok) continue;
+        for (int k = 0; k < sides; ++k) dl->AddLine(ring[k], ring[k + 1], color, 1.5f);
+        ImVec2 a, b;
+        if (project(view_proj, transform_point(without_scale(m), {0, 0, 0}), pos, size, a) && project(view_proj, transform_point(without_scale(m), {0.6f, 0, 0}), pos, size, b))
+            dl->AddLine(a, b, color, 2.0f);
     }
     // A selected AI Controller's perception (Unreal's AI debugger view): the sight cone flat at the
     // object's height out to sight range, and the hearing range as a ring.

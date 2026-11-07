@@ -820,6 +820,7 @@ struct PointLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color (warm bulbs, cold daylight)") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the bulb's size; bigger gives softer, wider highlights (a sphere light)") f32 source_radius = 0.0f;
 };
 
 // A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
@@ -834,6 +835,22 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the lamp's size; bigger gives softer, wider highlights") f32 source_radius = 0.0f;
+};
+
+// An area light (Unreal's Rect Light): a glowing panel or disc lighting what is in front of it (+X), with soft
+// wide highlights: windows, screens, softboxes, ceiling panels.
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "A glowing panel or disc (Unreal's Rect Light): soft light from its front (+X)")
+struct RectLight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The light's colour") LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "lm", Min = 0, Tooltip = "Total light leaving its front") f32 intensity = 1000.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Rect,Disc", Tooltip = "A rectangle (Source Width x Height) or a disc (Source Width across)") u32 shape = 0;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Max = 50, Tooltip = "Its width (a disc: its diameter), across the object's Y") f32 source_width = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Max = 50, Tooltip = "Its height, along the object's Z") f32 source_height = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 8.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2700 K warm panel, 6500 K daylight window") f32 temperature = 6500.0f;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).

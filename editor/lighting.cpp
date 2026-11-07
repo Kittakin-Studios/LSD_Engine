@@ -363,8 +363,9 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
     const reflect::TypeInfo& spot_type = reflect::type_of<world::SpotLight>();
+    const reflect::TypeInfo& rect_type = reflect::type_of<world::RectLight>();
     const reflect::TypeInfo& sky_type = reflect::type_of<world::SkyLight>();
-    if (!w.count(dir_type) && !w.count(point_type) && !w.count(spot_type) && !w.count(sky_type)) return rhi::default_lights();
+    if (!w.count(dir_type) && !w.count(point_type) && !w.count(spot_type) && !w.count(rect_type) && !w.count(sky_type)) return rhi::default_lights();
 
     rhi::LightSetup s;
     s.exposure = 1.0f / (1.2f * std::pow(2.0f, w.settings().exposure_ev100));
@@ -440,7 +441,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
     };
     Candidate candidates[512];
     u32 n = 0;
-    for (const reflect::TypeInfo* type : {&point_type, &spot_type}) {
+    for (const reflect::TypeInfo* type : {&point_type, &spot_type, &rect_type}) {
         for (u32 i = 0; i < w.count(*type) && n < 512; ++i) {
             const world::Entity e = w.owner(*type, i);
             if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
@@ -466,6 +467,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const auto* light = static_cast<const world::PointLight*>(w.at(point_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
+            s.lights[s.count - 1].source_radius = light->source_radius;
             if (light->cast_shadows && g_quality >= 2 && tiles_used + 6 <= rhi::kMaxShadowTiles) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 l.shadow_tile = static_cast<f32>(tiles_used);
@@ -473,6 +475,11 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
                 const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
                 for (int f = 0; f < 6; ++f) add_tile(position, dirs[f], f < 4 ? Vec3{0, 0, 1} : Vec3{1, 0, 0}, kPi * 0.5f, light->attenuation_radius);
             }
+        } else if (candidates[k].type == &rect_type) {  // an area light, one-sided: lumens over pi give its candela straight ahead
+            const auto* light = static_cast<const world::RectLight*>(w.at(rect_type, candidates[k].index));
+            const bool disc = light->shape == 1;
+            put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, forward_of(m), light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
+                light->attenuation_radius, disc ? light->source_width * 0.5f : light->source_width, light->source_height);
         } else {
             const auto* light = static_cast<const world::SpotLight*>(w.at(spot_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
@@ -480,6 +487,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const Vec3 dir = forward_of(m);
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
+            s.lights[s.count - 1].source_radius = light->source_radius;
             if (light->cast_shadows && g_quality >= 2 && tiles_used + 1 <= rhi::kMaxShadowTiles) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 const f32 fov = radians(outer) * 2.0f + 0.1f;  // the cone, plus a little for the filter

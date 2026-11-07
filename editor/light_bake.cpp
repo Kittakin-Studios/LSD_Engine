@@ -159,10 +159,9 @@ Vec3 bounce(const Bvh& bvh, const BakeScene& s, Vec3 p, Vec3 n, Vec3 albedo) {
             const f32 r = dist2 / (light.range * light.range);
             const f32 window = std::clamp(1.0f - r * r, 0.0f, 1.0f);
             atten = window * window / dist2;
-            if (light.type > 1.5f) {
-                const f32 c = dot(to * -1.0f, Vec3{light.direction[0], light.direction[1], light.direction[2]});
-                atten *= std::clamp((c - light.spot_outer_cos) / std::max(light.spot_inner_cos - light.spot_outer_cos, 1e-4f), 0.0f, 1.0f);
-            }
+            const f32 c = dot(to * -1.0f, Vec3{light.direction[0], light.direction[1], light.direction[2]});
+            if (light.type > 1.5f && light.type < 2.5f) atten *= std::clamp((c - light.spot_outer_cos) / std::max(light.spot_inner_cos - light.spot_outer_cos, 1e-4f), 0.0f, 1.0f);
+            if (light.type > 2.5f) atten *= std::max(c, 0.0f);  // rect / disc: only in front (shortcut: baked as a point at its centre)
         }
         const f32 ndl = dot(n, to);
         if (ndl <= 0.0f || atten <= 0.0f) continue;
