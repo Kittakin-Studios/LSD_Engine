@@ -1895,6 +1895,11 @@ Mode, input, sound mixes...) through references, and through names and paths in 
 data so nothing compiles on the first run. `cook_report.txt` in the package lists what was left out:
 check it, since an asset only named in a string built at run time (`"Level" .. n`) is not found.
 
+**Editor-only data** (Unreal's Developers folder and editor-only actors): folders named `Developers` or
+`EditorOnly` in Content never ship, and an object with an **Editor Only** component (Add Component >
+Editor > Editor Only, with a **Note** for the team) and everything under it is left out of Play and
+stripped from the packaged levels: reference meshes, notes, scale figures, test helpers.
+
 **Build Configuration** (Project Settings > Packaging; Unreal's Development / Shipping): a Development
 package still takes `-remote` (Tools > Remote Console from the editor), `-exec` lines and smoke tests,
 for testing on other PCs; a Shipping package, the one players get, ignores them (its log and crash

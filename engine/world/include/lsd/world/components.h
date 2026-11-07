@@ -1027,6 +1027,14 @@ struct AIController {
     LSD_PROPERTY(Edit, Tooltip = "The player's team: an agent on this team (Team not 0) is friendly and ignores the player (no CanSeePlayer)") u32 player_team = 1;
 };
 
+// Editor-only object (Unreal's bIsEditorOnlyActor and Note actor): reference meshes, notes, helpers. Play starts
+// without it (and its children) and packaging strips it from the shipped levels.
+LSD_STRUCT(Component, Category = "Editor", Tooltip = "Exists only in the editor: gone in Play and in packaged games (notes, reference meshes, helpers)")
+struct EditorOnly {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "A note for the team (Unreal's Note actor)") char note[256] = "";
+};
+
 // A jump or drop the navmesh does not join by itself (Unreal's Nav Link Proxy): from the object to End. AI paths
 // may cross it; agents go across in a straight line. Rebuilds the navmesh like any level change.
 LSD_STRUCT(Component, Category = "AI", Tooltip = "A jump, drop or ladder for AI paths: from this object to End")

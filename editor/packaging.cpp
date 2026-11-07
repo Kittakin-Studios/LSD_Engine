@@ -5,6 +5,8 @@
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
 #include "lsd/reflect/reflect.h"
+#include "lsd/world/level.h"
+#include "lsd/world/world.h"
 
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_render.h>
@@ -333,6 +335,32 @@ void close_splash(SDL_Window* splash) {
     SDL_DestroyWindow(splash);
 }
 
+// Editor-only data out of the package (Unreal's Developers folder and editor-only actors): Developers / EditorOnly
+// folders, and objects with an EditorOnly component in the shipped levels.
+// shortcut: prefabs keep theirs (Play removes them when placed); strip prefab files too when a project needs it.
+static void strip_editor_only(const fs::path& content) {
+    std::error_code ec;
+    u32 folders = 0, objects = 0;
+    std::vector<fs::path> drop, levels;
+    for (auto it = fs::recursive_directory_iterator(content, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (it->is_directory(ec) && (name == "Developers" || name == "EditorOnly")) {
+            drop.push_back(it->path());
+            it.disable_recursion_pending();
+        } else if (it->path().extension() == world::kLevelExtension) {
+            levels.push_back(it->path());
+        }
+    }
+    for (const fs::path& d : drop) folders += fs::remove_all(d, ec) ? 1u : 0u;
+    for (const fs::path& level : levels) {
+        world::World w(default_allocator());
+        if (!world::load_level_file(w, level.string().c_str())) continue;
+        const u32 gone = world::destroy_editor_only(w);
+        if (gone && world::save_level_file(w, level.string().c_str())) objects += gone;
+    }
+    if (folders || objects) LSD_LOG_INFO("editor", "Stripped editor-only data: %u folder(s), %u object(s) from the levels", folders, objects);
+}
+
 bool package_project(const ProjectSettings& project, const asset::AssetRegistry& registry, char* message, usize capacity) {
     std::error_code error;
     const u32 problems = validate_assets(project, registry);
@@ -381,6 +409,7 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     } else if (!error) {
         fs::copy("Content", out / "Content", copy_options, error);
     }
+    if (!error) strip_editor_only(out / "Content");
     if (!error) fs::copy("Config", out / "Config", copy_options, error);
     if (!error && fs::exists("Binaries", error)) fs::copy("Binaries", out / "Binaries", copy_options, error);  // the C / C++ game code
     if (error) {

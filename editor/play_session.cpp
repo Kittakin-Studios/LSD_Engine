@@ -566,6 +566,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     registry_ = &registry;
     world_ = &world;
     meshes_ = &meshes;
+    if (const u32 gone = world::destroy_editor_only(world)) LSD_LOG_INFO("play", "%u editor-only object(s) left out of Play", gone);
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
     live_gravity_ = world.settings().gravity;
