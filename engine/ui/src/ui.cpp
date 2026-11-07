@@ -267,8 +267,43 @@ void shutdown() {
 
 // ---- Contexts ----
 
+// The "game" data model's one variable: a struct whose fields are made the first time a document
+// (or set_data) names them, so scripts need not declare them before a document loads.
+struct DataStore {
+    std::unordered_map<std::string, Rml::Variant> values;  // node-based: slots stay where they are
+};
+class DataValueDefinition final : public Rml::VariableDefinition {
+public:
+    DataValueDefinition() : VariableDefinition(Rml::DataVariableType::Scalar) {}
+    bool Get(void* ptr, Rml::Variant& variant) override {
+        variant = *static_cast<Rml::Variant*>(ptr);
+        return true;
+    }
+    bool Set(void* ptr, const Rml::Variant& variant) override {
+        *static_cast<Rml::Variant*>(ptr) = variant;
+        return true;
+    }
+};
+class DataStoreDefinition final : public Rml::VariableDefinition {
+public:
+    DataStoreDefinition() : VariableDefinition(Rml::DataVariableType::Struct) {}
+    Rml::DataVariable Child(void* ptr, const Rml::DataAddressEntry& address) override {
+        if (address.name.empty()) return {};
+        auto& values = static_cast<DataStore*>(ptr)->values;
+        auto it = values.find(address.name);
+        if (it == values.end()) it = values.emplace(address.name, Rml::Variant(0.0)).first;  // not set yet: 0 (bars, counts and data-if read it)
+        return Rml::DataVariable(&value_, &it->second);
+    }
+
+private:
+    DataValueDefinition value_;
+};
+DataStoreDefinition g_data_definition;
+
 struct UiContext::Impl {
     Rml::Context* context = nullptr;
+    DataStore data;
+    Rml::DataModelHandle data_model;
     std::vector<Rml::ElementDocument*> documents;  // by DocumentId (closed: nullptr)
     struct Source {
         Rml::String path;  // a file, or
@@ -329,6 +364,27 @@ void ActionListener::ProcessEvent(Rml::Event& event) {
 UiContext::UiContext(const char* name) : impl_(new Impl()) {
     impl_->context = g_render ? Rml::CreateContext(name, {1, 1}) : nullptr;
     if (impl_->context) (*g_contexts)[impl_->context] = {this, impl_};
+    if (impl_->context) {  // before any document loads: data-model="game" finds it
+        if (Rml::DataModelConstructor model = impl_->context->CreateDataModel("game")) {
+            model.BindCustomDataVariable("game", Rml::DataVariable(&g_data_definition, &impl_->data));
+            impl_->data_model = model.GetModelHandle();
+        }
+    }
+}
+
+void UiContext::set_data(const char* name, f64 number) {
+    impl_->data.values[name] = Rml::Variant(number);
+    if (impl_->data_model) impl_->data_model.DirtyVariable("game");
+}
+
+void UiContext::set_data(const char* name, const char* text) {
+    impl_->data.values[name] = Rml::Variant(Rml::String(text));
+    if (impl_->data_model) impl_->data_model.DirtyVariable("game");
+}
+
+void UiContext::set_data(const char* name, bool value) {
+    impl_->data.values[name] = Rml::Variant(value);
+    if (impl_->data_model) impl_->data_model.DirtyVariable("game");
 }
 
 UiContext::~UiContext() {

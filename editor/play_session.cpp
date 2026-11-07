@@ -869,6 +869,13 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         auto* ui = static_cast<PlaySession*>(user)->ui_;
         return ui && (attribute ? ui->set_attribute(doc, id, attribute, value) : ui->set_text(doc, id, value));
     };
+    host.ui_data = [](void* user, const char* name, int type, f64 number, const char* text) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        if (!ui) return;
+        if (type == 0) ui->set_data(name, number);
+        else if (type == 2) ui->set_data(name, number != 0.0);
+        else ui->set_data(name, text);
+    };
     host.ui_value = [](void* user, i32 doc, const char* id, char* out, usize capacity) {
         auto* ui = static_cast<PlaySession*>(user)->ui_;
         return ui && ui->get_value(doc, id, out, capacity);

@@ -193,4 +193,4 @@ Lightmaps: Build Lighting charts every static mesh into one atlas (xatlas, World
 one bounce and the sun's visibility per texel; each lightmapped object is drawn from a copy of its mesh (MeshVertex::lightmap_uv,
 "Lightmap:<n>" in the mesh cache), the lit shader reads t7 / unit 7 (LightSetup::lightmap_info).
 Later (see BACKLOG, partial items): remote console to other machines, Perforce /
-LFS locking, UI data bindings, per-mesh LOD screen sizes.
+LFS locking, per-mesh LOD screen sizes.

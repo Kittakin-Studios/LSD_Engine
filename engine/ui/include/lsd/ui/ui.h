@@ -63,6 +63,14 @@ public:
     bool element_box(DocumentId document, const char* element_id, f32 box[4]) const;
     bool get_property(DocumentId document, const char* element_id, const char* name, char* out, usize capacity) const;
 
+    // Data bindings (UMG's property bindings, RmlUi data models): a document whose root (or body) has
+    // data-model="game" can show `{{game.health}}`, `data-style-width="game.health + '%'"`,
+    // `data-if="game.alive"`, `data-class-low="game.health < 25"`...; these set a value by name and
+    // every open document using it updates. Names not set yet read as 0.
+    void set_data(const char* name, f64 number);
+    void set_data(const char* name, const char* text);
+    void set_data(const char* name, bool value);
+
     // An action as if an element's on<event> fired it (a document script's ui.send): to the handler.
     void send_action(DocumentId document, const char* action, const char* element_id);
 

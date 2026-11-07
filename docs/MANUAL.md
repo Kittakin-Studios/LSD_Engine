@@ -1453,6 +1453,28 @@ button:focus, button:hover { background-color: #EEA70E; }
 - Change it: `lsd.ui_set_text(doc, "score", 1250)`, `lsd.ui_set(doc, "bar", "style", "width: 40%")`
   (nodes **Set UI Text** and **Set UI Attribute**). A worked health and stamina HUD is in
   [Examples for first timers](Examples/Examples.md).
+- **Data bindings** (UMG's property bindings): instead of setting elements one by one, give the
+  document's body `data-model="game"` and name values in it; `lsd.ui_data(name, value)` (a number,
+  text or boolean) updates every open document that uses them. Names not set yet read as 0.
+
+  ```html
+  <body data-model="game">
+  <div id="bar"><div id="fill" data-style-width="game.health + '%'"></div></div>
+  <div>{{game.name}}: {{game.health}} HP</div>
+  <div data-if="game.health < 25">Low health!</div>
+  </body>
+  ```
+
+  ```lua
+  lsd.ui_data("name", "Soldier")
+  lsd.ui_data("health", self.health)   -- the bar, the label and the warning follow
+  ```
+
+  ![A health bar by data binding](images/ui_data_binding.jpg)
+  *The bar's width, the label and the warning above, after `lsd.ui_data("health", 18)`.*
+
+  `data-class-low="game.health < 25"` (a class while true) and `data-attr-src="game.icon"` work the
+  same way. Lists (`data-for`) are not offered yet: one value per name.
 - **Events**: `onclick="start_game"` calls `start_game(self, element_id)` in every script that has it.
 - **The document's own script** (a Widget Blueprint's event graph, in JavaScript): put `Menu.js` next
   to `Menu.rml`. It runs when the document opens; its functions answer the document's events before
@@ -1684,6 +1706,7 @@ UI, saving, settings, languages
 | `lsd.ui_open(name)` | document handle |
 | `lsd.ui_close(doc)`, `lsd.ui_set_text(doc, id, text)`, `lsd.ui_set(doc, id, attr, value)` | |
 | `lsd.ui_value(doc, id)` | a text field's text |
+| `lsd.ui_data(name, value)` | a data binding: `{{game.name}}` in documents with `data-model="game"` |
 | `lsd.ui_show_cursor(on)` | menus: free the mouse |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
 | `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
