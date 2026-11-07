@@ -1812,6 +1812,7 @@ int main(int argc, char** argv) {
     fs::create_directories("Config", ignored);
     fs::create_directories(kContentDir, ignored);  // the project's assets, like Unreal's Content/
 
+    SDL_Window* splash = game_mode ? lsd::editor::open_splash() : nullptr;  // the packaged game's splash, up while it loads
     lsd::rhi::Device* device = lsd::rhi::create_device(desc, allocator);
     if (!device) {
         LSD_LOG_ERROR("editor", "Could not start the graphics device.");
@@ -2558,6 +2559,10 @@ int main(int argc, char** argv) {
             LSD_LOG_INFO("editor", "Stop");
         }
         if (game_mode && !state.playing && !state.play_requested) running = false;
+        if (splash && state.playing && SDL_GetTicks() >= static_cast<lsd::u64>(state.project.splash_seconds * 1000.0f)) {
+            lsd::editor::close_splash(splash);  // the game is up and the splash had its time
+            splash = nullptr;
+        }
         state.stop_requested = false;
         if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
         if (play.take_settings_changed() || state.user_settings_changed) {  // an options menu, or Settings > Engine Scalability
@@ -2946,6 +2951,7 @@ int main(int argc, char** argv) {
     lsd::rhi::destroy_device(device, allocator);
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
+    lsd::editor::close_splash(splash);  // the game ended before it was up
     SDL_DestroyWindow(window);
     SDL_Quit();
     lsd::log::open_file(nullptr);  // last: a failure while shutting down still reaches the log file

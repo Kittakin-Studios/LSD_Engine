@@ -14,6 +14,7 @@
 
 #include "lsd/foundation/types.h"
 
+struct SDL_Window;
 namespace lsd::asset {
 class AssetRegistry;
 }
@@ -21,6 +22,12 @@ class AssetRegistry;
 namespace lsd::editor {
 
 constexpr char kGameMarker[] = "game.json";
+
+// The packaged game's splash (Project Settings > Platform > Splash), copied beside the exe as
+// splash.<ext>: a borderless window over the game's while it loads (SDL's 2D renderer, so it shows
+// before the graphics device has anything to draw). Null when there is none.
+SDL_Window* open_splash();
+void close_splash(SDL_Window* splash);
 
 // Writes the package; false with the reason in `message` (also the output folder on success).
 // Validates the assets first (problems go to the Message Log; they do not stop the package).

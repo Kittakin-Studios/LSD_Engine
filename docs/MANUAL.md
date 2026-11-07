@@ -1700,7 +1700,7 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 
 ## 17. Packaging and shipping
 
-1. **Edit > Project Settings**: project name, **Game Default Level**, icon, Steam App ID.
+1. **Edit > Project Settings**: project name, company, **Game Default Level**, icon, splash, Steam App ID.
 2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release` (it also
    refreshes `lsd_editor.exe` in the project folder).
 3. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
@@ -1720,7 +1720,18 @@ package still takes `-remote` (Tools > Remote Console from the editor), `-exec` 
 for testing on other PCs; a Shipping package, the one players get, ignores them (its log and crash
 reports stay, for bug reports).
 
-`lsd_editor.exe -game` runs the current project the same way without packaging.
+**Platform** (Project Settings > Platform; Unreal's Windows platform settings):
+
+- **Icon**: a square PNG, 256 x 256 is plenty. It is the game window's icon and, on Windows,
+  it is written into the packaged exe, so Explorer, the taskbar and shortcuts show it.
+- **File details**: the exe's Properties > Details carry the project name, the **Company** and version 1.0.
+- **Splash**: an image (up to 1280 px) shown centred over everything while the packaged game starts,
+  for at least **Splash Seconds** and until the level is playing. It is copied into the package as
+  `splash.<ext>`. Empty: no splash.
+- **Steam App ID** goes into `steam_appid.txt` next to the exe.
+
+`lsd_editor.exe -game` runs the current project the same way without packaging (with a `splash.png`
+in the project folder, the splash too).
 
 ---
 

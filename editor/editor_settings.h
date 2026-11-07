@@ -142,7 +142,10 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Description", Tooltip = "Who makes it (shown in the packaged game's file details)") char company[64] = "Kittakin Studios";
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the packaged game opens first (Content/Levels/...)") char game_default_level[260] = "";
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the editor opens when there is no last level") char editor_startup_level[260] = "";
-    LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "The game window's icon (a square PNG, 256 x 256 is plenty)") char icon[33] = "";
+    LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "The game's icon: the window, the taskbar and the packaged .exe in Explorer (a square PNG, 256 x 256 is plenty)") char icon[33] = "";
+    LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "Splash screen: shown while the packaged game starts (loading the level), centred, at its own size up to 1280 px. Empty: none")
+    char splash[33] = "";
+    LSD_PROPERTY(Edit, Category = "Platform", Units = "s", Min = 0, Max = 10, Tooltip = "The splash stays at least this long, then goes once the game is playing") f32 splash_seconds = 2.0f;
     LSD_PROPERTY(Edit, Category = "Platform", Tooltip = "Steam: written to steam_appid.txt next to the packaged exe (0 = not on Steam)") u32 steam_app_id = 0;
     LSD_PROPERTY(Edit, Category = "Packaging",
                  Tooltip = "Cook (Unreal's): the package gets only the assets the game uses, found from these settings (Game Default Level, Game Mode...) through references and through names in scripts and UI, with their compiled data so nothing compiles on first run. What was left out is listed in cook_report.txt. Off: all of Content/")
