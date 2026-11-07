@@ -96,8 +96,8 @@ void AnimationPlayer::set_motion_input(world::Entity character, const anim::Moti
 bool AnimationPlayer::motion_readout(world::Entity e, char* out, usize capacity) const {
     for (const State& s : states_) {
         if (!s.used || s.entity != e || !s.motion_data || s.motion.clip < 0) continue;
-        std::snprintf(out, capacity, "%s at %.2f s (match %.2f)%s", s.motion_data->names[s.motion.clip], static_cast<f64>(s.motion.time), static_cast<f64>(s.motion.cost),
-                      s.motion.fade < 1.0f && s.motion.previous_clip >= 0 ? ", blending" : "");
+        std::snprintf(out, capacity, "%s at %.2f s (match %.2f)%s%s%s", s.motion_data->names[s.motion.clip], static_cast<f64>(s.motion.time), static_cast<f64>(s.motion.cost),
+                      s.motion.fade < 1.0f && s.motion.previous_clip >= 0 ? ", blending" : "", s.motion.tag[0] ? ", tag " : "", s.motion.tag);
         return true;
     }
     return false;

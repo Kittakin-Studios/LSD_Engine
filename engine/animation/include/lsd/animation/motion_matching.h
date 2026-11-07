@@ -17,6 +17,8 @@ struct MotionClip {
     LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The FBX holding the animation (matched to the character's skeleton by bone names)") char animation[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Which animation (take) in that file, from 0") u32 clip = 0;
     LSD_PROPERTY(Edit, Tooltip = "It repeats (walk and run cycles, idles); off: starts, stops, turns") bool looping = true;
+    LSD_PROPERTY(Edit, Tooltip = "Tags (Unreal's Pose Search databases per stance), comma-separated: \"crouch\", \"swim\", \"air\" or your own. A tagged clip plays only while its tag is asked for (the Character asks for crouch / swim / air by itself; lsd.set_motion_tag sets others); untagged clips play otherwise")
+    char tags[48] = "";
 };
 
 // The clips motion matching picks from, and how it weighs a match (Unreal's Pose Search Database and Schema).
@@ -54,7 +56,7 @@ struct MotionFrame {
 
 // A Motion Database built for one skeleton: normalised features per frame.
 struct MotionData {
-    explicit MotionData(Allocator& allocator) : features(allocator), frames(allocator) {}
+    explicit MotionData(Allocator& allocator) : features(allocator), frames(allocator), chunks(allocator), chunk_box(allocator) {}
     Array<f32> features;        // frames.size() x kMotionFeatures, normalised
     Array<MotionFrame> frames;
     f32 mean[kMotionFeatures] = {};
@@ -66,6 +68,14 @@ struct MotionData {
     u32 clip_frames[64] = {};  // and how many
     bool mirrored[64] = {};    // played mirrored (MotionDatabase::mirror): a copy of the clip before it
     u32 clip_count = 0;
+    char tags[64][48] = {};    // each clip's tags (a mirrored copy shares its clip's)
+    // Search chunks: up to 16 frames of one clip in a row and the box their features fill, so whole chunks that
+    // cannot beat the best so far are skipped (the same answer as looking at every frame, much sooner).
+    struct Chunk {
+        u32 first, count, clip;
+    };
+    Array<Chunk> chunks;
+    Array<f32> chunk_box;  // per chunk: kMotionFeatures lows, then kMotionFeatures highs
     f32 forward_yaw = 0.0f;    // the model's facing it was built with (Pose::mirror reflects across it)
     // Bake: every 1/30 s of each clip on `model` (feet, hips and the path in the character's own space:
     // x its facing, z up). `model_forward_yaw`: the way the model faces in its own space (radians; the
@@ -81,14 +91,18 @@ struct MotionInput {
     Vec3 desired_velocity;
     f32 facing = 0.0f;
     f32 desired_facing = 0.0f;
+    char tag[32] = "";  // the clips to pick from (MotionClip::tags); "" = the untagged ones
 };
 
 // The path the input leads to (a critically damped spring toward the wanted velocity and facing), in
 // the character's own space: positions (x, y) at kMotionTrajectoryTimes and facings (x, y) then.
 void predict_trajectory(const MotionInput& input, f32 positions[6], f32 facings[6]);
 
-// The frame whose features (already normalised) are nearest `query`; `cost` gets its distance².
-u32 search_motion(const MotionData& data, const f32* query, f32* cost = nullptr);
+// The frame whose features (already normalised) are nearest `query`; `cost` gets its distance². `tag`: only clips
+// with that tag ("" or null: untagged ones); when none has it, the untagged ones (and when there are none, any).
+u32 search_motion(const MotionData& data, const f32* query, f32* cost = nullptr, const char* tag = nullptr);
+// True when a comma-separated tag list holds `tag` (any case).
+bool has_motion_tag(const char* tags, const char* tag);
 
 // One object's playback: the clip and time it plays, the one it fades from, when it last searched.
 struct MotionState {
@@ -99,6 +113,7 @@ struct MotionState {
     f32 fade = 1.0f;
     f32 since_search = 1e9f;
     f32 cost = 0.0f;  // of the last pick
+    char tag[32] = "";  // the tag it last searched with (MotionInput::tag)
     bool switched = false;  // Inertial: it jumped to another frame this step (Pose::inertialize takes the offset)
 };
 

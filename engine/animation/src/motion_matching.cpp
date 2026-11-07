@@ -2,6 +2,7 @@
 
 #include "lsd/foundation/log.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -177,6 +178,7 @@ bool MotionData::build(const SkinnedModel& model, const Clip* const* source, con
         clips[clip_count] = clip;
         looping[clip_count] = loops[c];
         std::snprintf(names[clip_count], sizeof names[0], "%s", clip->name);
+        std::snprintf(tags[clip_count], sizeof tags[0], "%s", settings.clips.count == count ? settings.clips[c].tags : "");  // the listed clips' tags
         ++clip_count;
         if (settings.mirror && settings.blend_mode == 1 && clip_count < 64) {
             // Its mirror, straight from the features (the character's own space: x ahead, y to the left):
@@ -199,6 +201,7 @@ bool MotionData::build(const SkinnedModel& model, const Clip* const* source, con
             looping[clip_count] = loops[c];
             mirrored[clip_count] = true;
             std::snprintf(names[clip_count], sizeof names[0], "%.52s (mirrored)", clip->name);
+            std::snprintf(tags[clip_count], sizeof tags[0], "%s", tags[clip_count - 1]);
             ++clip_count;
         }
     }
@@ -228,7 +231,45 @@ bool MotionData::build(const SkinnedModel& model, const Clip* const* source, con
     for (usize i = 0; i < count_frames; ++i) {
         for (u32 d = 0; d < kMotionFeatures; ++d) features[i * kMotionFeatures + d] = (raw[i * kMotionFeatures + d] - mean[d]) * scale[d];
     }
+    // Search chunks: 16 frames of one clip at a time (neighbouring frames are alike, so their boxes are small).
+    chunks.clear();
+    chunk_box.clear();
+    for (u32 c = 0; c < clip_count; ++c) {
+        for (u32 at = 0; at < clip_frames[c]; at += 16) {
+            const Chunk chunk{clip_first[c] + at, std::min(16u, clip_frames[c] - at), c};
+            f32 lo[kMotionFeatures], hi[kMotionFeatures];
+            for (u32 d = 0; d < kMotionFeatures; ++d) lo[d] = hi[d] = features[static_cast<usize>(chunk.first) * kMotionFeatures + d];
+            for (u32 k = 1; k < chunk.count; ++k) {
+                for (u32 d = 0; d < kMotionFeatures; ++d) {
+                    const f32 v = features[static_cast<usize>(chunk.first + k) * kMotionFeatures + d];
+                    lo[d] = std::fmin(lo[d], v);
+                    hi[d] = std::fmax(hi[d], v);
+                }
+            }
+            chunks.push_back(chunk);
+            for (const f32 v : lo) chunk_box.push_back(v);
+            for (const f32 v : hi) chunk_box.push_back(v);
+        }
+    }
     return true;
+}
+
+bool has_motion_tag(const char* tags, const char* tag) {
+    const usize n = std::strlen(tag);
+    for (const char* p = tags; n && *p;) {
+        while (*p == ' ' || *p == ',') ++p;
+        const char* end = p;
+        while (*end && *end != ',') ++end;
+        const char* last = end;
+        while (last > p && last[-1] == ' ') --last;
+        if (static_cast<usize>(last - p) == n) {
+            usize k = 0;
+            while (k < n && std::tolower(static_cast<unsigned char>(p[k])) == std::tolower(static_cast<unsigned char>(tag[k]))) ++k;
+            if (k == n) return true;
+        }
+        p = end;
+    }
+    return false;
 }
 
 void predict_trajectory(const MotionInput& input, f32 positions[6], f32 facings[6]) {
@@ -248,18 +289,37 @@ void predict_trajectory(const MotionInput& input, f32 positions[6], f32 facings[
     }
 }
 
-u32 search_motion(const MotionData& data, const f32* query, f32* cost) {
-    // shortcut: brute force (fine for a few thousand frames); a k-d tree or clustering when databases grow to minutes of motion
+u32 search_motion(const MotionData& data, const f32* query, f32* cost, const char* tag) {
+    // Which clips may be picked: those with the tag, or the untagged ones (also when no clip has the tag).
+    const char* want = tag ? tag : "";
+    bool tagged_exists = false;
+    for (u32 c = 0; want[0] && c < data.clip_count && !tagged_exists; ++c) tagged_exists = has_motion_tag(data.tags[c], want);
+    if (!tagged_exists) want = "";
+    auto allowed = [&](u32 c, bool any) { return any || (want[0] ? has_motion_tag(data.tags[c], want) : data.tags[c][0] == '\0'); };
     u32 best = 0;
     f32 best_cost = 1e30f;
-    const usize n = data.frames.size();
-    for (usize i = 0; i < n; ++i) {
-        const f32* f = &data.features[i * kMotionFeatures];
-        f32 d = 0.0f;
-        for (u32 k = 0; k < kMotionFeatures && d < best_cost; ++k) d += (f[k] - query[k]) * (f[k] - query[k]);
-        if (d < best_cost) {
-            best_cost = d;
-            best = static_cast<u32>(i);
+    for (int pass = 0; pass < 2 && best_cost >= 1e30f; ++pass) {  // the second only when nothing was allowed: any clip
+        for (usize c = 0; c < data.chunks.size(); ++c) {
+            const MotionData::Chunk& chunk = data.chunks[c];
+            if (!allowed(chunk.clip, pass == 1)) continue;
+            // The nearest the box can be to the query: if not nearer than the best so far, none of its frames is.
+            const f32* lo = &data.chunk_box[c * 2 * kMotionFeatures];
+            const f32* hi = lo + kMotionFeatures;
+            f32 bound = 0.0f;
+            for (u32 k = 0; k < kMotionFeatures && bound < best_cost; ++k) {
+                const f32 out = query[k] < lo[k] ? lo[k] - query[k] : query[k] > hi[k] ? query[k] - hi[k] : 0.0f;
+                bound += out * out;
+            }
+            if (bound >= best_cost) continue;
+            for (u32 i = chunk.first; i < chunk.first + chunk.count; ++i) {
+                const f32* f = &data.features[static_cast<usize>(i) * kMotionFeatures];
+                f32 d = 0.0f;
+                for (u32 k = 0; k < kMotionFeatures && d < best_cost; ++k) d += (f[k] - query[k]) * (f[k] - query[k]);
+                if (d < best_cost) {
+                    best_cost = d;
+                    best = i;
+                }
+            }
         }
     }
     if (cost) *cost = best_cost;
@@ -301,7 +361,8 @@ u32 step_motion(const MotionData& data, const MotionDatabase& settings, const Mo
             query[15 + k] = (positions[k] - data.mean[15 + k]) * data.scale[15 + k];
             query[21 + k] = (facings[k] - data.mean[21 + k]) * data.scale[21 + k];
         }
-        const u32 best = search_motion(data, query, &s.cost);
+        const u32 best = search_motion(data, query, &s.cost, input.tag);
+        std::snprintf(s.tag, sizeof s.tag, "%s", input.tag);
         const MotionFrame& f = data.frames[best];
         f32 gap = std::fabs(f.time - s.time);
         if (s.clip >= 0 && data.looping[s.clip]) gap = std::fmin(gap, duration(s.clip) - gap);

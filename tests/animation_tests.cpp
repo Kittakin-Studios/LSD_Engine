@@ -338,6 +338,35 @@ static void motion_matching_tests(const std::string& data) {
         const u32 found = anim::search_motion(db, &db.features[k * anim::kMotionFeatures], &cost);
         CHECK(cost < 1e-6f && (found == k || cost == 0.0f));
     }
+    // The chunked search finds what looking at every frame finds (queries between frames, not only on them).
+    for (u32 k = 0; k + 1 < db.frames.size(); k += 7) {
+        f32 q[anim::kMotionFeatures];
+        for (u32 d = 0; d < anim::kMotionFeatures; ++d) q[d] = (db.features[k * anim::kMotionFeatures + d] + db.features[(k + 1) * anim::kMotionFeatures + d]) * 0.5f + 0.3f;
+        f32 brute = 1e30f, fast = 0.0f;
+        for (u32 i = 0; i < db.frames.size(); ++i) {
+            f32 d2 = 0.0f;
+            for (u32 d = 0; d < anim::kMotionFeatures; ++d) d2 += (db.features[i * anim::kMotionFeatures + d] - q[d]) * (db.features[i * anim::kMotionFeatures + d] - q[d]);
+            brute = std::fmin(brute, d2);
+        }
+        anim::search_motion(db, q, &fast);
+        CHECK(std::fabs(fast - brute) < 1e-4f);
+    }
+    CHECK(!db.chunks.empty() && db.chunks.size() == db.chunk_box.size() / (2 * anim::kMotionFeatures));
+    // Tags: the same take twice, the second tagged "crouch": asked for crouch it is picked, else the untagged one.
+    {
+        const anim::Clip* twice[2] = {&clips[0], &clips[0]};
+        const bool loop2[2] = {true, true};
+        anim::MotionDatabase tagged = settings;
+        tagged.clips.count = 2;
+        std::snprintf(tagged.clips[1].tags, sizeof tagged.clips[1].tags, "%s", "Crouch, slow");
+        anim::MotionData db2(default_allocator());
+        CHECK(db2.build(model, twice, loop2, 2, tagged, 0.0f));
+        const f32* q = &db2.features[3 * anim::kMotionFeatures];
+        CHECK(db2.frames[anim::search_motion(db2, q, nullptr, "crouch")].clip == 1);
+        CHECK(db2.frames[anim::search_motion(db2, q, nullptr, "")].clip == 0);
+        CHECK(db2.frames[anim::search_motion(db2, q, nullptr, "swim")].clip == 0);  // no clip has it: the untagged ones
+        CHECK(anim::has_motion_tag("crouch, Slow", "slow") && !anim::has_motion_tag("crouching", "crouch"));
+    }
     anim::MotionState state;
     anim::BlendInput inputs[2];
     for (int i = 0; i < 90; ++i) {

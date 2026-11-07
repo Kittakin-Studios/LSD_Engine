@@ -461,6 +461,7 @@ void PlaySession::stop() {
     driving_ = riding_ = {};
     play_clock_ = 0.0;
     nav_checked_ = 0.0;
+    motion_tag_[0] = '\0';
     nav_seen_hash_ = 0;
     nav_watch_.clear();
     nav_always_moving_.clear();
@@ -937,6 +938,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.montage_playing = [](void* user, world::Entity e, const char* slot) {
         const auto* a = static_cast<PlaySession*>(user)->animations_;
         return a && a->montage_playing(e, slot);
+    };
+    host.set_motion_tag = [](void* user, world::Entity e, const char* tag) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (e == self.character_) std::snprintf(self.motion_tag_, sizeof self.motion_tag_, "%s", tag);  // shortcut: the player's only (it is the one fed input)
     };
     host.anim_curve = [](void* user, world::Entity e, const char* name, f32& value) {
         const auto& self = *static_cast<PlaySession*>(user);
@@ -1845,6 +1850,9 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 speed = crouched_ ? settings_.crouch_speed : settings_.walk_speed;
         motion.desired_velocity = aboard ? Vec3{} : Vec3{velocity.x * speed, velocity.y * speed, 0.0f};
         motion.facing = motion.desired_facing = yaw_;
+        // Which clips (MotionClip::tags): a script's tag, else the Character's stance; none: the untagged ones.
+        const char* stance = crouched_ ? "crouch" : swimming_ ? "swim" : !physics_->character_on_ground() ? "air" : "";
+        std::snprintf(motion.tag, sizeof motion.tag, "%s", motion_tag_[0] ? motion_tag_ : stance);
         animations_->set_motion_input(character_, motion);
         animations_->set_param(world, character_, "VerticalSpeed", moved.z / dt);
         animations_->set_param(world, character_, "InAir", physics_->character_on_ground() || swimming_ ? 0.0f : 1.0f);

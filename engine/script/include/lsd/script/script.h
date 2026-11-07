@@ -51,6 +51,8 @@
 //                                         a "Face" blink) play over it at the same time, in the order started
 //   lsd.stop_montage(e [, blend = 0.2 [, slot]]), lsd.montage_playing(e [, slot]) -> bool   (no slot: every slot)
 //   lsd.anim_curve(e, name) -> number     an animation curve's value where e's animation is now (0 when none has it)
+//   lsd.set_motion_tag(e, tag)            motion matching picks only clips with this tag ("" = back to automatic:
+//                                         crouch / swim / air from the Character, else the untagged clips)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes.
 //                                         A Curve Vector gives x, y, z; a Curve Color r, g, b, a
@@ -302,6 +304,7 @@ struct ScriptHost {
     void (*stop_montage)(void* user, world::Entity e, f32 blend, const char* slot) = nullptr;  // slot "": all
     bool (*montage_playing)(void* user, world::Entity e, const char* slot) = nullptr;          // slot "": any
     bool (*anim_curve)(void* user, world::Entity e, const char* name, f32& value) = nullptr;
+    void (*set_motion_tag)(void* user, world::Entity e, const char* tag) = nullptr;
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
     // Vehicles and movers: 0 enter vehicle, 1 exit, 2 driven vehicle, 3 ride, 4 get off, 5 / 6 / 7 start / stop / restart a mover.
     u32 (*ride)(void* user, int what, world::Entity e) = nullptr;

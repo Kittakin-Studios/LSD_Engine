@@ -1512,6 +1512,15 @@ animates itself, with no Anim Graph to build. Leave it off to use your own Anima
   Facing); the skinning pose is the reference, so it must be symmetric (T or A pose). The capsule still moves the character; the animation
   follows it. Clips made in place get their movement from the planted foot; root-motion clips use
   their root (Unreal rigs' `root`) or travelling hips.
+- **Tags** (Unreal's Pose Search databases per stance): give clips **Tags** in the Motion Database
+  ("crouch", "swim", "air" or your own, comma-separated). A tagged clip is picked only while its tag is
+  asked for, the untagged ones otherwise: the Character asks for **crouch** while crouched, **swim** in
+  water and **air** off the ground by itself, and `lsd.set_motion_tag(self, "injured")` (or the **Set
+  Motion Tag** node) asks for your own ("" goes back to automatic). With no clip carrying the tag asked
+  for, the untagged ones play, so adding tags never leaves it without a pose. The Character's Details
+  show what it plays, the match cost and the tag (the debugger line).
+- **Big databases**: the search groups frames 16 at a time and skips whole groups that cannot beat the
+  best match so far (the same answer as checking every frame), so minutes of motion stay cheap.
 - **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more
   closely, or stay smoother), Same Clip Window, and the foot / hips bones if their names are unusual
   (found by name otherwise: foot_l / LeftFoot / CC_Base_L_Foot, pelvis / Hips). Set the Character's

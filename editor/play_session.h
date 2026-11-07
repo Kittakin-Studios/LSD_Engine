@@ -321,6 +321,7 @@ private:
         bool has_target = false;  // where it was sent (kept through navmesh rebuilds)
         Vec3 target;
     };
+    char motion_tag_[32] = "";  // lsd.set_motion_tag on the player: overrides crouch / swim / air
     bool rebuild_navmesh();      // the navmesh again from the level as it is now; false if nothing walkable
     void remember_target(world::Entity e, Vec3 target, bool sent) {
         for (u32 i = 0; i < agent_count_; ++i) {

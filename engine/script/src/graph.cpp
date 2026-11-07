@@ -163,6 +163,8 @@ NodeDef g_defs[] = {
      {kExecOut, {"Seconds", PinType::Float, ""}}, 0, "local $o1 = lsd.play_montage($1, $2, $3, $4, $5, $6, $7)", {}},
     {"StopMontage", "Stop Montage", "Animation", "Blends the target's montage out (Slot empty: every slot)",
      {kExecIn, kTarget, {"Blend", PinType::Float, "0.2"}, {"Slot", PinType::String, ""}}, 0, {kExecOut}, 0, "lsd.stop_montage($1, $2, $3)", {}},
+    {"SetMotionTag", "Set Motion Tag", "Animation", "Motion matching picks only clips with this tag (a Motion Database clip's Tags); empty: back to automatic (crouch / swim / air)",
+     {kExecIn, kTarget, {"Tag", PinType::String, ""}}, 0, {kExecOut}, 0, "lsd.set_motion_tag($1, $2)", {}},
     {"GetAnimCurve", "Get Curve Value", "Animation", "An animation curve's value where the target's animation is now (Unreal's Get Curve Value); 0 when none has it",
      {kTarget, {"Curve", PinType::String, "Footstep"}}, 0, {{"Value", PinType::Float, ""}}, 0, nullptr, {"lsd.anim_curve($0, $1)"}},
     {"SetMorph", "Set Morph Target", "Animation", "A morph target (blend shape) weight on the target's skeletal mesh: 0 rest, 1 full",
