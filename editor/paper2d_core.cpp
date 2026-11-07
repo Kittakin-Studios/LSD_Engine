@@ -10,13 +10,20 @@ u32 tile_shape(const world::TileMap& map, i32 tile) {
     return cell < map.tile_shapes.count ? map.tile_shapes[cell].shape : kTileFull;
 }
 
-u32 tile_runs(const world::TileMap& map, TileRun* out, u32 capacity) {
+u32 tile_runs(const world::TileMap& map, TileRun* out, u32 capacity) { return tile_runs(map, map.tiles, out, capacity); }
+
+List<i32, 4096>* layer_tiles(world::TileMap& map, u32 layer) {
+    if (layer == 0) return &map.tiles;
+    return layer - 1 < map.layers.count ? &map.layers[layer - 1].tiles : nullptr;
+}
+
+u32 tile_runs(const world::TileMap& map, const List<i32, 4096>& tiles, TileRun* out, u32 capacity) {
     u32 n = 0;
     const f32 s = map.tile_size;
     for (u32 y = 0; y < map.height; ++y) {
         auto shape_at = [&](u32 at) {
             const u32 i = y * map.width + at;
-            return i < map.tiles.count ? tile_shape(map, map.tiles[i]) : static_cast<u32>(kTileNone);
+            return i < tiles.count ? tile_shape(map, tiles[i]) : static_cast<u32>(kTileNone);
         };
         u32 x = 0;
         while (x < map.width && n < capacity) {

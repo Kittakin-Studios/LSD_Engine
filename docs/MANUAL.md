@@ -774,6 +774,10 @@ the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z pl
   Columns / Rows, the map's Width / Height and Tile Size in Details. The panel shows the tileset:
   click a tile, then **LMB paints** it on the map in the viewport and **Shift+LMB erases** (each
   stroke is one undo). Painted tiles block in Play (rows of tiles become boxes).
+  **Layers** (Unreal's Tile Map layers): the panel's **Layer** list picks what the brush paints:
+  **Main** (the map's own tiles) or one of up to 3 more (**+** adds one, **-** removes the chosen one).
+  Each layer has **Visible**, **Depth** (negative in front of the main tiles, such as foreground
+  grass; positive behind, such as walls and windows) and, in Details, **Collision**. All layers use the map's tileset.
 - **2D physics**: RigidBody > **Lock 2D** keeps a body in its X-Z plane, turning only around Y.
 - **Side-scroller player**: Character > **Side Scroller**: Move's left / right walks along X,
   Jump jumps, and the player's Sprite faces the way it walks. Its animations (Unreal's Paper2D

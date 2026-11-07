@@ -510,6 +510,21 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// Tile map layers: layer 0 is the map's own tiles, the others its Layers; a layer's tiles give their own runs.
+static void test_tile_layers() {
+    world::TileMap map;
+    map.width = 4;
+    map.height = 2;
+    for (u32 i = 0; i < 8; ++i) map.tiles.push_back(i < 4 ? 1 : 0);  // the bottom row solid
+    world::TileLayer deco;
+    for (u32 i = 0; i < 8; ++i) deco.tiles.push_back(i == 5 || i == 6 ? 2 : 0);  // two tiles on the second row
+    map.layers.push_back(deco);
+    CHECK(editor::layer_tiles(map, 0) == &map.tiles && editor::layer_tiles(map, 1) == &map.layers[0].tiles && !editor::layer_tiles(map, 2));
+    editor::TileRun runs[8];
+    CHECK(editor::tile_runs(map, runs, 8) == 1 && std::fabs(runs[0].hi.x - 4.0f) < 1e-5f);
+    CHECK(editor::tile_runs(map, map.layers[0].tiles, runs, 8) == 1 && std::fabs(runs[0].lo.x - 1.0f) < 1e-5f && std::fabs(runs[0].lo.z - 1.0f) < 1e-5f);
+}
+
 // Modeling: a box extruded, inset, bevelled and picked stays a closed, outward-facing mesh.
 static void test_mesh_edit() {
     world::EditableMesh m;
@@ -688,6 +703,7 @@ int main() {
     test_gather_text();
     test_landscape_core();
     test_mesh_edit();
+    test_tile_layers();
     test_keymap();
     test_landscape_paint();
     test_assistant();

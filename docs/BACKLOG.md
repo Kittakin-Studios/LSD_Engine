@@ -348,7 +348,7 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] 2D shadows, flipbooks, tile shapes, translucency: lit Sprites and Tile Maps cast cut-out shadows (sun and spot / point passes); Flipbook data assets (frames with cell, duration and an event that calls the sprite's script function in Play; Sprite > Flipbook, side-scroller Walk / Jump Flipbooks); per-tile collision shapes (Full, None, Top / Bottom Half, Slope Up / Down: boxes and convex ramps, the 2D mode's Tile Collision); translucent sprites drawn after the solid ones with Sort Order then far to near (`editor/paper2d_core.*`, tested in editor_tests)
 - [x] One-way (jump-through) platforms: the One Way tile shape, Static Mesh > One Way and Sprite > One Way; the character meets them only from above (Jolt character contact validation; tested in physics_tests)
 - [x] Flipbook window [Paper2D Flipbook Editor] (`editor/flipbook_editor.*`, double-click a Flipbook): playing preview with the frame's event, the preview sheet with a grid (click a cell to add a frame), the frame list (cell, duration, event, reorder, delete, Set All Durations), saved live to sprites
-- [~] Still to do (2D): tile map layers inside one map (separate Tile Maps work as layers)
+- [x] Tile map layers [Paper2D Tile Map layers]: up to 3 Layers per Tile Map besides its main tiles (name, Visible, Depth in front / behind, Collision), painted from the 2D mode's Layer list (+ / -), drawn back to front in the map's mesh; colliding layers add their runs in Play (tested in editor_tests)
 
 ## Later
 

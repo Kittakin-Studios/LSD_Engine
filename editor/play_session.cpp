@@ -1220,7 +1220,10 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     }
     if (const auto* map = world.get<world::TileMap>(e); map && map->collision) {  // a box per run of solid tiles in a row
         static TileRun runs[4096];
-        const u32 count = tile_runs(*map, runs, 4096);
+        u32 count = tile_runs(*map, runs, 4096);
+        for (const world::TileLayer& layer : map->layers) {  // layers that collide add theirs (on the same play plane)
+            if (layer.collision && count < 4096) count += tile_runs(*map, layer.tiles, runs + count, 4096 - count);
+        }
         const Mat4 map_world = world.world_matrix(e);
         for (u32 k = 0; k < count; ++k) {
             Vec3 run_scale, run_centre;

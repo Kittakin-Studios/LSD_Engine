@@ -367,6 +367,18 @@ struct Flipbook {
     LSD_PROPERTY(Edit, Category = "Preview", Min = 1, Max = 64, Tooltip = "Cells down the preview sheet") u32 preview_rows = 1;
 };
 
+// One more layer of a Tile Map (Unreal's Paper2D Tile Map layers): decoration in front of or behind
+// the main tiles, painted from the same tileset.
+LSD_STRUCT(Category = "2D")
+struct TileLayer {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Its name in the 2D mode's layer list (Background, Foreground...)") char name[32] = "Layer";
+    LSD_PROPERTY(Edit, Tooltip = "Drawn; off: hidden (still kept)") bool visible = true;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Along +Y from the main tiles: positive behind them (backgrounds), negative in front (foreground grass)") f32 depth = 0.1f;
+    LSD_PROPERTY(Edit, Tooltip = "Its tiles block in Play too (with the map's Collision on)") bool collision = false;
+    LSD_PROPERTY(Save) List<i32, 4096> tiles;  // as the map's own tiles
+};
+
 LSD_STRUCT(Component, Category = "2D", Tooltip = "A flat image for 2D games, with sprite-sheet frames and flipbook animation")
 struct Sprite {
     LSD_GENERATED()
@@ -422,6 +434,7 @@ struct TileMap {
     List<TileShape, 256> tile_shapes;
     // Row by row from the bottom-left: the tileset cell + 1 (cells count left to right, then down), 0 = empty.
     LSD_PROPERTY(Save) List<i32, 4096> tiles;
+    LSD_PROPERTY(Edit, Tooltip = "More layers over or under the main tiles (the 2D mode's Layer list paints them)") List<TileLayer, 3> layers;
 };
 
 // A picture projected onto whatever is inside its box (Unreal's Decal Actor): blood, dirt, cracks,

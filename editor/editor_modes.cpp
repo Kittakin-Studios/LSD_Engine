@@ -723,6 +723,7 @@ void draw_vfx(EditorState& s) {
 
 char g_2d_texture[33] = "";  // the image new sprites / tile maps use
 u32 g_tile = 0;              // the palette's chosen tile (tileset cell)
+u32 g_tile_layer = 0;        // the layer it paints: 0 the map's own tiles, 1.. its Layers
 
 // The tile map being painted: the selected one, else the first.
 world::TileMap* paint_map(EditorState& s, Entity& owner) {
@@ -787,6 +788,43 @@ void draw_2d(EditorState& s) {
         return;
     }
     ImGui::Text("Painting %s", s.world->name(owner));
+    // Layers (Unreal's Tile Map layers): Main is the map's own tiles, the others its Layers list.
+    if (g_tile_layer > map->layers.count) g_tile_layer = 0;
+    const char* layer_name = g_tile_layer ? map->layers[g_tile_layer - 1].name : "Main";
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::BeginCombo("Layer", layer_name)) {
+        if (ImGui::Selectable("Main", g_tile_layer == 0)) g_tile_layer = 0;
+        for (u32 k = 0; k < map->layers.count; ++k) {
+            char label[48];
+            std::snprintf(label, sizeof label, "%s##layer%u", map->layers[k].name, k);
+            if (ImGui::Selectable(label, g_tile_layer == k + 1)) g_tile_layer = k + 1;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("The layer the brush paints: Main (it collides), or one of the map's Layers (depth, visibility and collision in Details)");
+    ImGui::SameLine();
+    if (with_tip(ImGui::SmallButton("+"), "Adds a layer (up to 3) in front of the main tiles") && map->layers.count < map->layers.capacity()) {
+        world::TileLayer layer;
+        std::snprintf(layer.name, sizeof layer.name, "Layer %u", map->layers.count + 1);
+        layer.depth = -0.1f * static_cast<f32>(map->layers.count + 1);
+        map->layers.push_back(layer);
+        g_tile_layer = map->layers.count;
+        mark_edited(s, "Add Tile Layer");
+    }
+    ImGui::SameLine();
+    if (with_tip(ImGui::SmallButton("-"), "Removes the chosen layer and its tiles (undoable)") && g_tile_layer > 0) {
+        for (u32 k = g_tile_layer - 1; k + 1 < map->layers.count; ++k) map->layers[k] = map->layers[k + 1];
+        --map->layers.count;
+        g_tile_layer = 0;
+        mark_edited(s, "Remove Tile Layer");
+    }
+    if (g_tile_layer > 0) {
+        world::TileLayer& layer = map->layers[g_tile_layer - 1];
+        if (with_tip(ImGui::Checkbox("Visible", &layer.visible), "Shows or hides the layer")) mark_edited(s, "Tile Layer");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        if (with_tip(ImGui::DragFloat("Depth", &layer.depth, 0.01f, -10.0f, 10.0f, "%.2f m"), "Negative: in front of the main tiles; positive: behind")) mark_edited(s, "Tile Layer");
+    }
     const rhi::TextureHandle tileset = map->tileset[0] && s.textures ? s.textures->get(map->tileset, true) : rhi::TextureHandle{};
     const u64 image = tileset.valid() && s.device ? s.device->debug_ui_texture(tileset) : 0;
     if (!image) {
@@ -862,12 +900,14 @@ bool tile_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) stroke = true;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) stroke = false;
     if (stroke) {
-        const u32 cells = map->width * map->height < map->tiles.capacity() ? map->width * map->height : map->tiles.capacity();
-        while (map->tiles.count < cells) map->tiles.push_back(0);
+        List<i32, 4096>* tiles = layer_tiles(*map, g_tile_layer);
+        if (!tiles) tiles = &map->tiles;
+        const u32 cells = map->width * map->height < tiles->capacity() ? map->width * map->height : tiles->capacity();
+        while (tiles->count < cells) tiles->push_back(0);
         const u32 index = static_cast<u32>(tz) * map->width + static_cast<u32>(tx);
         const i32 value = io.KeyShift ? 0 : static_cast<i32>(g_tile) + 1;
-        if (index < map->tiles.count && map->tiles[index] != value) {
-            map->tiles[index] = value;
+        if (index < tiles->count && (*tiles)[index] != value) {
+            (*tiles)[index] = value;
             mark_edited(s, "Paint Tiles");
         }
     }

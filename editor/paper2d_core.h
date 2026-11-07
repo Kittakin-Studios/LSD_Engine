@@ -17,6 +17,10 @@ enum TileShapeKind : u32 { kTileFull, kTileNone, kTileTopHalf, kTileBottomHalf, 
 u32 tile_shape(const world::TileMap& map, i32 tile);
 // The map's collision pieces; returns how many (at most `capacity`).
 u32 tile_runs(const world::TileMap& map, TileRun* out, u32 capacity);
+// The same for other tiles of the map's size (a layer's).
+u32 tile_runs(const world::TileMap& map, const List<i32, 4096>& tiles, TileRun* out, u32 capacity);
+// The tiles of layer `layer`: 0 the map's own, 1.. its Layers; nullptr if there is no such layer.
+List<i32, 4096>* layer_tiles(world::TileMap& map, u32 layer);
 
 // The index into fb.frames playing `seconds` after it started (looping, or held on the last frame);
 // -1 when it has no frames.

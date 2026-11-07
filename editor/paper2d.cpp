@@ -7,6 +7,7 @@
 #include "lsd/asset/guid.h"
 #include "lsd/render/mesh.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -22,14 +23,14 @@ namespace {
 constexpr f32 kInset = 1e-4f;  // UVs stay just inside their cell: whole-texel sampling never reads the neighbour
 
 // One quad facing -Y and its back (facing +Y), x0..x1 by z0..z1 at y = 0, with a cell's UVs.
-void add_quad(std::vector<rhi::MeshVertex>& v, std::vector<u32>& idx, f32 x0, f32 z0, f32 x1, f32 z1, f32 u0, f32 v0, f32 u1, f32 v1) {
+void add_quad(std::vector<rhi::MeshVertex>& v, std::vector<u32>& idx, f32 x0, f32 z0, f32 x1, f32 z1, f32 u0, f32 v0, f32 u1, f32 v1, f32 y = 0.0f) {
     for (int side = 0; side < 2; ++side) {
         const u32 base = static_cast<u32>(v.size());
         const f32 ny = side == 0 ? -1.0f : 1.0f;
-        v.push_back({{x0, 0, z0}, {0, ny, 0}, {u0, v1}});
-        v.push_back({{x1, 0, z0}, {0, ny, 0}, {u1, v1}});
-        v.push_back({{x1, 0, z1}, {0, ny, 0}, {u1, v0}});
-        v.push_back({{x0, 0, z1}, {0, ny, 0}, {u0, v0}});
+        v.push_back({{x0, y, z0}, {0, ny, 0}, {u0, v1}});
+        v.push_back({{x1, y, z0}, {0, ny, 0}, {u1, v1}});
+        v.push_back({{x1, y, z1}, {0, ny, 0}, {u1, v0}});
+        v.push_back({{x0, y, z1}, {0, ny, 0}, {u0, v0}});
         const u32 front[6] = {0, 1, 2, 0, 2, 3}, back[6] = {0, 2, 1, 0, 3, 2};
         for (u32 i : side == 0 ? front : back) idx.push_back(base + i);
     }
@@ -94,6 +95,11 @@ const CachedMesh* tile_map_mesh(MeshCache& meshes, const world::TileMap& map, u3
     mix(map.tileset_rows);
     mix(static_cast<u32>(map.tile_size * 1000.0f));
     for (u32 i = 0; i < map.tiles.count; ++i) mix(static_cast<u32>(map.tiles[i]));
+    for (const world::TileLayer& layer : map.layers) {
+        mix(layer.visible ? 1u : 0u);
+        mix(static_cast<u32>(static_cast<i32>(layer.depth * 1000.0f)));
+        for (u32 i = 0; i < layer.tiles.count; ++i) mix(static_cast<u32>(layer.tiles[i]));
+    }
     // One mesh per map (keyed by its object), rebuilt in place when the hash of its tiles changes.
     static std::unordered_map<u32, u32> built;
     char key[32];
@@ -106,14 +112,22 @@ const CachedMesh* tile_map_mesh(MeshCache& meshes, const world::TileMap& map, u3
     std::vector<rhi::MeshVertex> v;
     std::vector<u32> idx;
     const f32 s = map.tile_size;
-    for (u32 y = 0; y < map.height; ++y) {
-        for (u32 x = 0; x < map.width; ++x) {
-            const u32 i = y * map.width + x;
-            const i32 tile = i < map.tiles.count ? map.tiles[i] : 0;
-            if (tile <= 0) continue;
-            f32 u0, v0, u1, v1;
-            cell_uv(static_cast<u32>(tile - 1), map.tileset_columns, map.tileset_rows, u0, v0, u1, v1);
-            add_quad(v, idx, static_cast<f32>(x) * s, static_cast<f32>(y) * s, static_cast<f32>(x + 1) * s, static_cast<f32>(y + 1) * s, u0, v0, u1, v1);
+    // Back to front along the view (+Y is away from the 2D camera), so cut-out edges stay tidy.
+    std::vector<std::pair<f32, const List<i32, 4096>*>> layers{{0.0f, &map.tiles}};
+    for (const world::TileLayer& layer : map.layers) {
+        if (layer.visible) layers.push_back({layer.depth, &layer.tiles});
+    }
+    std::stable_sort(layers.begin(), layers.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [depth, tiles] : layers) {
+        for (u32 y = 0; y < map.height; ++y) {
+            for (u32 x = 0; x < map.width; ++x) {
+                const u32 i = y * map.width + x;
+                const i32 tile = i < tiles->count ? (*tiles)[i] : 0;
+                if (tile <= 0) continue;
+                f32 u0, v0, u1, v1;
+                cell_uv(static_cast<u32>(tile - 1), map.tileset_columns, map.tileset_rows, u0, v0, u1, v1);
+                add_quad(v, idx, static_cast<f32>(x) * s, static_cast<f32>(y) * s, static_cast<f32>(x + 1) * s, static_cast<f32>(y + 1) * s, u0, v0, u1, v1, depth);
+            }
         }
     }
     if (idx.empty()) add_quad(v, idx, 0, 0, 0, 0, 0, 0, 0, 0);  // nothing painted yet: an empty quad keeps the key
