@@ -37,6 +37,7 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 reflection_info; float4 reflections[8];
     float4 lightmap_info;
     float4 volumetric;
+    float4 reflection_boxes[8];  // box captures: half size, w = fade-in distance (0: a sphere)
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -261,14 +262,29 @@ float3 sky_radiance(float3 d) {
 }
 // Reflection captures: the capture this point is inside (fading out over its last quarter) replaces
 // the sky along the reflection; its lat-long tile in the atlas, blurrier mips for rougher surfaces.
+// Box captures (Unreal's Box Reflection Capture) fade in over their transition distance inside the walls and
+// bend the ray to where it meets them (parallax correction), so reflections line up with the room.
 float3 capture_reflection(float3 sky_part, float3 r, float roughness, float3 wpos) {
     float best = 0.0;
     uint tile = 0;
     for (uint k = 0; k < (uint)reflection_info.x && k < 8; ++k) {
-        const float w = saturate((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3));
+        float w;
+        if (reflection_boxes[k].w > 0.0) {
+            const float3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
+            w = saturate(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w);
+        } else {
+            w = saturate((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3));
+        }
         if (w > best) { best = w; tile = k; }
     }
     if (best <= 0.0) return sky_part;
+    if (reflection_boxes[tile].w > 0.0) {
+        const float3 safe = r + float3(r.x >= 0.0 ? 1e-5 : -1e-5, r.y >= 0.0 ? 1e-5 : -1e-5, r.z >= 0.0 ? 1e-5 : -1e-5);
+        const float3 c = reflections[tile].xyz, e = reflection_boxes[tile].xyz;
+        const float3 far_side = max((c + e - wpos) / safe, (c - e - wpos) / safe);
+        const float t = min(min(far_side.x, far_side.y), far_side.z);
+        r = normalize(wpos + r * t - c);
+    }
     const float lod = roughness * 5.0;
     const float2 margin = 0.5 * exp2(lod) / float2(256.0, 128.0);
     float2 uv = float2(atan2(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);

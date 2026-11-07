@@ -31,7 +31,7 @@ rhi::LightSetup level_lights(const world::World& world, const LightView& view);
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
 // The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
-void set_reflection_probes(const f32 (*probes)[4], u32 count);
+void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count);  // boxes: half size, fade (w 0 = sphere)
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
 // casts them further.
 void set_shadow_quality(u32 quality);

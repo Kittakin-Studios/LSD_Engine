@@ -230,9 +230,12 @@ struct LightSetup {
     // much light scatters forward), z = how far the march reaches (m), w = steps. The fog is marched
     // toward each surface through the sun's shadow: lit where the sun reaches it, dark in shadow.
     f32 volumetric[4] = {};
+    // Box reflection captures (in reflections' order): half size xyz (world axes), w = the fade-in distance;
+    // w = 0: a sphere capture.
+    f32 reflection_boxes[kMaxReflectionProbes][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with

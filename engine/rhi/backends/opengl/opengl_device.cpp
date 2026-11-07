@@ -123,6 +123,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 reflection_info; vec4 reflections[8];
     vec4 lightmap_info;
     vec4 volumetric;
+    vec4 reflection_boxes[8];
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -291,10 +292,23 @@ vec3 capture_reflection(vec3 sky_part, vec3 r, float roughness, vec3 wpos) {
     float best = 0.0;
     uint tile = 0u;
     for (uint k = 0u; k < uint(reflection_info.x) && k < 8u; ++k) {
-        float w = clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
+        float w;
+        if (reflection_boxes[k].w > 0.0) {  // a box capture (see the HLSL)
+            vec3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
+            w = clamp(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w, 0.0, 1.0);
+        } else {
+            w = clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
+        }
         if (w > best) { best = w; tile = k; }
     }
     if (best <= 0.0) return sky_part;
+    if (reflection_boxes[tile].w > 0.0) {
+        vec3 safe = r + vec3(r.x >= 0.0 ? 1e-5 : -1e-5, r.y >= 0.0 ? 1e-5 : -1e-5, r.z >= 0.0 ? 1e-5 : -1e-5);
+        vec3 c = reflections[tile].xyz, e = reflection_boxes[tile].xyz;
+        vec3 far_side = max((c + e - wpos) / safe, (c - e - wpos) / safe);
+        float t = min(min(far_side.x, far_side.y), far_side.z);
+        r = normalize(wpos + r * t - c);
+    }
     float lod = roughness * 5.0;
     vec2 margin = 0.5 * exp2(lod) / vec2(256.0, 128.0);
     vec2 uv = vec2(atan(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);

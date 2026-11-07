@@ -2127,6 +2127,7 @@ int main(int argc, char** argv) {
     lsd::rhi::TextureHandle shot_target, shot_scene;  // HighResShot, read back after the frame
     lsd::rhi::TextureHandle reflection_faces[lsd::render::kMaxReflections * 6], reflection_atlas;  // reflection captures
     lsd::f32 reflection_probes[lsd::render::kMaxReflections][4] = {};
+    lsd::f32 reflection_boxes[lsd::render::kMaxReflections][4] = {};  // box captures: half size, fade-in (w 0 = sphere)
     lsd::u32 reflection_capture_count = 0;  // captures rendered this frame, read back after it
     lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
@@ -2724,7 +2725,13 @@ int main(int argc, char** argv) {
                 reflection_probes[k][0] = at.x;
                 reflection_probes[k][1] = at.y;
                 reflection_probes[k][2] = at.z;
-                reflection_probes[k][3] = static_cast<const lsd::world::ReflectionCapture*>(world.at(rtype, i))->radius;
+                const auto* capture = static_cast<const lsd::world::ReflectionCapture*>(world.at(rtype, i));
+                reflection_probes[k][3] = capture->radius;
+                const bool box = capture->shape == 1;
+                reflection_boxes[k][0] = box ? std::fabs(capture->box_size.x) * 0.5f : 0.0f;
+                reflection_boxes[k][1] = box ? std::fabs(capture->box_size.y) * 0.5f : 0.0f;
+                reflection_boxes[k][2] = box ? std::fabs(capture->box_size.z) * 0.5f : 0.0f;
+                reflection_boxes[k][3] = box ? std::max(capture->box_transition, 0.01f) : 0.0f;
                 for (int f = 0; f < 6; ++f) {
                     reflection_faces[k * 6 + static_cast<lsd::u32>(f)] = device->create_render_target(lsd::render::kReflectionFace, lsd::render::kReflectionFace);
                     lsd::editor::LightView face_view{at, dirs[f], lsd::radians(90.0f), 1.0f};
@@ -2733,7 +2740,7 @@ int main(int argc, char** argv) {
             }
             device->set_render_target({}, nullptr);
             if (reflection_capture_count == 0) {  // none in the level: nothing to reflect but the sky
-                lsd::editor::set_reflection_probes(reflection_probes, 0);
+                lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, 0);
                 device->set_reflection_atlas({});
             }
         }
@@ -2914,7 +2921,7 @@ int main(int argc, char** argv) {
             device->set_reflection_atlas(atlas);
             if (reflection_atlas.valid()) device->destroy_texture(reflection_atlas);  // shortcut: freed at once; defer a frame if a backend complains
             reflection_atlas = atlas;
-            lsd::editor::set_reflection_probes(reflection_probes, reflection_capture_count);
+            lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, reflection_capture_count);
             LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
             reflection_capture_count = 0;
         }

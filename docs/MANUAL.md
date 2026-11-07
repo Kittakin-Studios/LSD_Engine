@@ -583,7 +583,10 @@ Atmosphere:
   instead of only the sky, sharp on smooth surfaces and blurrier on rough ones. It captures when the
   level opens; after moving things, **Build > Build Reflection Captures** (console `BuildReflections`).
   Up to 8 in a level; where several overlap, the one a surface is most inside wins. Put one in the
-  middle of each room.
+  middle of each room. **Shape: Box** (Unreal's Box Reflection Capture) fits a room: set **Box Size**
+  to the room (world axes, centred on the capture) and surfaces inside reflect it bent to where each
+  ray meets the walls, so a shiny floor shows the walls where they really are; it fades in over
+  **Box Transition** inside the walls.
 
   ![A mirror sphere without and with a Reflection Capture](images/reflection_capture.jpg)
   *A mirror sphere: the sky gradient only (left), and with a Reflection Capture (right): the floor, the characters and the real sky.*

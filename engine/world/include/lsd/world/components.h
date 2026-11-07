@@ -807,7 +807,12 @@ struct DirectionalLight {
 LSD_STRUCT(Component, Category = "Lights", Tooltip = "Shiny surfaces inside its radius reflect what is around it (Sphere Reflection Capture); Build > Build Reflection Captures after changes")
 struct ReflectionCapture {
     LSD_GENERATED()
-    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Max = 500, Tooltip = "Surfaces this close reflect this capture (it fades out over the last quarter)") f32 radius = 10.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Max = 500, Tooltip = "Sphere: surfaces this close reflect this capture (it fades out over the last quarter)") f32 radius = 10.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Sphere,Box",
+                 Tooltip = "Box (Unreal's Box Reflection Capture): surfaces inside Box Size reflect it, bent to where each ray meets the box's walls, so a room's reflections line up with its walls")
+    u32 shape = 0;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Box: its size along X, Y, Z, centred on the capture (match the room; world axes, the capture's turn is ignored)") Vec3 box_size = {10.0f, 10.0f, 4.0f};
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "Box: it fades in over this distance inside its walls") f32 box_transition = 1.0f;
 };
 
 // A bulb (Unreal's Point Light): shines in every direction.

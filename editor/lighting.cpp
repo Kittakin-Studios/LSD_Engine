@@ -167,13 +167,17 @@ void set_shadow_atlas_size(u32 size) { g_atlas_size = size; }
 
 namespace {
 f32 g_reflection_probes[rhi::kMaxReflectionProbes][4] = {};
+f32 g_reflection_boxes[rhi::kMaxReflectionProbes][4] = {};
 u32 g_reflection_count = 0;
 } // namespace
 
-void set_reflection_probes(const f32 (*probes)[4], u32 count) {
+void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count) {
     g_reflection_count = count < rhi::kMaxReflectionProbes ? count : rhi::kMaxReflectionProbes;
     for (u32 i = 0; i < g_reflection_count; ++i) {
-        for (int c = 0; c < 4; ++c) g_reflection_probes[i][c] = probes[i][c];
+        for (int c = 0; c < 4; ++c) {
+            g_reflection_probes[i][c] = probes[i][c];
+            g_reflection_boxes[i][c] = boxes ? boxes[i][c] : 0.0f;
+        }
     }
 }
 
@@ -181,7 +185,10 @@ rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool 
     rhi::LightSetup s = lights_only(w, view, skip_hidden);
     s.reflection_info[0] = static_cast<f32>(g_reflection_count);
     for (u32 k = 0; k < g_reflection_count; ++k) {
-        for (int c = 0; c < 4; ++c) s.reflections[k][c] = g_reflection_probes[k][c];
+        for (int c = 0; c < 4; ++c) {
+            s.reflections[k][c] = g_reflection_probes[k][c];
+            s.reflection_boxes[k][c] = g_reflection_boxes[k][c];
+        }
     }
     add_atmosphere(w, view.eye, skip_hidden, s);
     s.output[1] = 1.0f / static_cast<f32>(g_atlas_size);  // the local atlas's texel, for its filtering
