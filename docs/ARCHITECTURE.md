@@ -127,7 +127,7 @@ the same format for a sub-tree; instances remember per-field overrides.
 ### RHI
 
 `rhi::Device` is one interface with three backends (`engine/rhi/backends/`): Direct3D 12 (default),
-OpenGL 4.6 and Vulkan 1.3 (in progress: HLSL compiled to SPIR-V by the Vulkan SDK's DXC; lit, skinned and instanced meshes, sun shadows, sky, lines, UI). The
+OpenGL 4.6 and Vulkan 1.3 (in progress: HLSL compiled to SPIR-V by the Vulkan SDK's DXC; lit, skinned and instanced meshes, every light and its shadows, sky, lines, UI). The
 device is chosen by scoring adapters (discrete over integrated, VRAM, features). The interface is
 built-in pipelines rather than general command lists:
 

@@ -1766,7 +1766,7 @@ on a graph node and a debugger line.
 
 | Flag | Meaning |
 | --- | --- |
-| `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, debug layer (D3D12; Vulkan with the Vulkan SDK). Vulkan is in progress: lit, textured, animated and instanced meshes, sun shadows, the sky and lines, without spot / point light shadows, particles or post yet (install the [Vulkan SDK](https://vulkan.lunarg.com) to build it: `winget install KhronosGroup.VulkanSDK`) |
+| `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, debug layer (D3D12; Vulkan with the Vulkan SDK). Vulkan is in progress: lit, textured, animated and instanced meshes, sun / point / spot lights and their shadows, the sky and lines, without specular, particles or post yet (install the [Vulkan SDK](https://vulkan.lunarg.com) to build it: `winget install KhronosGroup.VulkanSDK`) |
 | `-level=<path>`, `-play`, `-game` | open a level, start Play, run as the game |
 | `-nosound` | no audio device |
 | `-exec="<console line>"` | run a console command on the first frame, after `-play` has started (repeatable) |

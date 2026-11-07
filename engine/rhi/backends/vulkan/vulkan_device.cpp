@@ -128,6 +128,8 @@ public:
             vkDestroyPipeline(device_, instanced_pipeline_, nullptr);
             for (VkPipeline shadow : shadow_pipelines_) vkDestroyPipeline(device_, shadow, nullptr);
             if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
+            for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
+            if (shadow_set_layout_) vkDestroyDescriptorSetLayout(device_, shadow_set_layout_, nullptr);
             for (Frame& f : frames_) {
                 if (f.ring) vkDestroyBuffer(device_, f.ring, nullptr);
                 if (f.ring_memory) vkFreeMemory(device_, f.ring_memory, nullptr);
@@ -246,6 +248,7 @@ public:
         scene_in_ring_ = false;
         shadow_pass_ = nullptr;
         sun_shadow_ = {};
+        local_shadow_ = {};
         begin_main_pass(clear_color);
     }
 
@@ -433,6 +436,10 @@ public:
         vkDeviceWaitIdle(device_);  // shortcut: stalls; deferred release when textures churn
         if (t->ui_set && debug_ui_) ImGui_ImplVulkan_RemoveTexture(t->ui_set);
         t->ui_set = VK_NULL_HANDLE;
+        if (t->shadow_size) {  // its view leaves the cached shadow sets (the GPU is idle here)
+            for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
+            shadow_set_count_ = 0;
+        }
         release_texture(*t);
         ++t->generation;
     }
@@ -443,26 +450,9 @@ public:
         if (!t->ui_set) t->ui_set = ImGui_ImplVulkan_AddTexture(sampler_, t->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         return reinterpret_cast<u64>(t->ui_set);
     }
-    void set_lights(const LightSetup& lights) override {  // mesh.hlsl's Scene: the first sun, the sky / ground ambient, the sun's cascades
-        scene_ = Scene{};
-        scene_.sun_dir[2] = -1.0f;
-        scene_.sun_dir[3] = lights.exposure;
-        std::memcpy(scene_.sky, lights.sky, sizeof scene_.sky);
-        std::memcpy(scene_.ground, lights.ground, sizeof scene_.ground);
-        i32 sun = -1;
-        for (u32 i = 0; i < lights.count && i < kMaxLights; ++i) {
-            if (lights.lights[i].type >= 0.5f) continue;
-            std::memcpy(scene_.sun_dir, lights.lights[i].direction, sizeof(f32) * 3);
-            std::memcpy(scene_.sun_color, lights.lights[i].color, sizeof(f32) * 3);
-            scene_.sun_color[3] = 1.0f;
-            sun = static_cast<i32>(i);
-            break;
-        }
-        std::memcpy(scene_.shadow_info, lights.shadow_info, sizeof scene_.shadow_info);
-        if (sun < 0 || static_cast<f32>(sun) != lights.shadow_info[1]) scene_.shadow_info[1] = -1.0f;  // only the first sun's shadows
-        std::memcpy(scene_.shadow_split, lights.shadow_splits, sizeof scene_.shadow_split);
-        std::memcpy(scene_.shadow_vp, lights.shadow_matrices, sizeof scene_.shadow_vp);
-        std::memcpy(scene_.shadow_tile, lights.shadow_tiles, sizeof scene_.shadow_tile);
+    void set_lights(const LightSetup& lights) override {  // mesh.hlsl's Scene: LightSetup up to the local shadow tiles, and its output
+        std::memcpy(scene_.prefix, &lights, sizeof scene_.prefix);
+        std::memcpy(scene_.output, lights.output, sizeof scene_.output);
         scene_in_ring_ = false;
     }
 
@@ -510,22 +500,10 @@ public:
         view.format = kDepthFormat;
         view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
         ok = ok && check(vkCreateImageView(device_, &view, nullptr, &t.view), "vkCreateImageView (shadow map)");
-        VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        set_info.descriptorPool = texture_pool_;
-        set_info.descriptorSetCount = 1;
-        set_info.pSetLayouts = &texture_set_layout_;
-        ok = ok && check(vkAllocateDescriptorSets(device_, &set_info, &t.set), "vkAllocateDescriptorSets (shadow map)");
         if (!ok) {
             release_texture(t);
             return {};
         }
-        VkDescriptorImageInfo described{shadow_sampler_, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = t.set;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &described;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
         t.shadow_size = size;
         return TextureHandle::make(slot, t.generation);
     }
@@ -579,7 +557,10 @@ public:
         begin_main_pass(nullptr);
     }
 
-    void set_shadow_map(TextureHandle sun, TextureHandle) override { sun_shadow_ = sun; }  // shortcut: local light shadows not drawn yet
+    void set_shadow_map(TextureHandle sun, TextureHandle local) override {
+        sun_shadow_ = sun;
+        local_shadow_ = local;
+    }
     void set_decal_atlas(TextureHandle) override {}
     void set_reflection_atlas(TextureHandle) override {}
     void set_lightmap_atlas(TextureHandle) override {}
@@ -611,9 +592,8 @@ public:
         const Texture* base = lookup_texture(draw.base_color_texture);
         if (!base) base = lookup_texture(white_);
         if (base) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &base->set, 0, nullptr);
-        const Texture* shadow = lookup_texture(sun_shadow_);
-        if (!shadow || !shadow->shadow_size) shadow = lookup_texture(no_shadow_);
-        if (shadow) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &shadow->set, 0, nullptr);
+        if (const VkDescriptorSet shadows = shadow_set(sun_shadow_, local_shadow_))
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &shadows, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1, &f.rows_set, 1, &scene_at_);
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
@@ -633,6 +613,41 @@ public:
             vkCmdDrawIndexed(cmd, draw.index_count, skinned ? 1 : count, 0, 0, 0);
             first += count;
         }
+    }
+
+    // Set 3: the sun's and the local lights' atlases (the far 1x1 map for a missing one), one set per pair, kept.
+    VkDescriptorSet shadow_set(TextureHandle sun, TextureHandle local) {
+        const Texture* maps[2] = {lookup_texture(sun), lookup_texture(local)};
+        for (const Texture*& m : maps) {
+            if (!m || !m->shadow_size) m = lookup_texture(no_shadow_);
+            if (!m) return VK_NULL_HANDLE;
+        }
+        for (u32 i = 0; i < shadow_set_count_; ++i) {
+            if (shadow_sets_[i].sun == maps[0]->view && shadow_sets_[i].local == maps[1]->view) return shadow_sets_[i].set;
+        }
+        if (shadow_set_count_ == kMaxShadowSets) {  // atlases re-made many times: start over (none is in use once idle)
+            vkDeviceWaitIdle(device_);
+            for (u32 i = 0; i < shadow_set_count_; ++i) vkFreeDescriptorSets(device_, texture_pool_, 1, &shadow_sets_[i].set);
+            shadow_set_count_ = 0;
+        }
+        ShadowSet& entry = shadow_sets_[shadow_set_count_];
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = texture_pool_;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &shadow_set_layout_;
+        if (!check(vkAllocateDescriptorSets(device_, &info, &entry.set), "vkAllocateDescriptorSets (shadows)")) return VK_NULL_HANDLE;
+        const VkDescriptorImageInfo images[2] = {{shadow_sampler_, maps[0]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                 {shadow_sampler_, maps[1]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = entry.set;
+        write.descriptorCount = 2;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = images;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        entry.sun = maps[0]->view;
+        entry.local = maps[1]->view;
+        ++shadow_set_count_;
+        return entry.set;
     }
 
     // One caster: kind 0 static, 1 skinned (rows = joints), 2 instanced (rows = copies, mvp = the light's view-projection), 3 Masked.
@@ -967,7 +982,13 @@ private:
         compare.compareEnable = VK_TRUE;
         compare.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         if (!check(vkCreateSampler(device_, &compare, nullptr, &shadow_sampler_), "vkCreateSampler (shadow)")) return false;
-        no_shadow_ = create_shadow_map(1);  // bound when the view has no sun shadows (all lit)
+        const VkDescriptorSetLayoutBinding shadow_bindings[2] = {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                                 {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+        VkDescriptorSetLayoutCreateInfo shadow_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        shadow_layout.bindingCount = 2;
+        shadow_layout.pBindings = shadow_bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &shadow_layout, nullptr, &shadow_set_layout_), "vkCreateDescriptorSetLayout (shadows)")) return false;
+        no_shadow_ = create_shadow_map(1);  // bound for a view without sun or local shadows (all lit)
         return white_.valid() && no_shadow_.valid();
     }
 
@@ -1401,8 +1422,8 @@ private:
             VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
             layout.pushConstantRangeCount = 1;
             layout.pPushConstantRanges = &push;
-            // 0 base colour texture, 1 joint / copy rows, 2 the Scene block (both in the frame's ring), 3 the sun's shadow map
-            const VkDescriptorSetLayout sets[4] = {texture_set_layout_, rows_set_layout_, rows_set_layout_, texture_set_layout_};
+            // 0 base colour texture, 1 joint / copy rows, 2 the Scene block (both in the frame's ring), 3 the shadow atlases
+            const VkDescriptorSetLayout sets[4] = {texture_set_layout_, rows_set_layout_, rows_set_layout_, shadow_set_layout_};
             if (textured) {
                 layout.setLayoutCount = 4;
                 layout.pSetLayouts = sets;
@@ -1583,16 +1604,20 @@ private:
     VkImageView depth_view_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE, line_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE, line_pipeline_ = VK_NULL_HANDLE;
-    struct Scene {  // mesh.hlsl's Scene (set 2), from set_lights
-        f32 sun_dir[4] = {0.0f, 0.0f, -1.0f, 1.0f};
-        f32 sun_color[4] = {};
-        f32 sky[4] = {0.30f, 0.36f, 0.45f, 0.0f};
-        f32 ground[4] = {0.16f, 0.15f, 0.14f, 0.0f};
-        f32 shadow_info[4] = {0, -1, 0, 0};
-        f32 shadow_split[4] = {};
-        f32 shadow_vp[4][16] = {};
-        f32 shadow_tile[4][4] = {};
+    struct Scene {  // mesh.hlsl's Scene (set 2): LightSetup's bytes up to local_tiles, then its output
+        u8 prefix[offsetof(LightSetup, fog)] = {};
+        f32 output[4] = {};
     };
+    static_assert(offsetof(LightSetup, fog) == offsetof(LightSetup, local_tiles) + sizeof(LightSetup::local_tiles), "mesh.hlsl's Scene ends at local_tiles");
+    struct ShadowSet {
+        VkImageView sun = VK_NULL_HANDLE, local = VK_NULL_HANDLE;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+    };
+    static constexpr u32 kMaxShadowSets = 16;
+    ShadowSet shadow_sets_[kMaxShadowSets];
+    u32 shadow_set_count_ = 0;
+    VkDescriptorSetLayout shadow_set_layout_ = VK_NULL_HANDLE;
+    TextureHandle local_shadow_;
     Scene scene_;
     bool scene_in_ring_ = false;  // written into this frame's ring since the last set_lights
     u32 scene_at_ = 0;
