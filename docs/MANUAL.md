@@ -905,6 +905,28 @@ Numbers and colours connect freely (a number becomes a grey colour). Up to 3 tex
 parameters per material. **Save** to update the level. A Material Instance whose parent is a graph
 lists the graph's parameters (button **Add the graph's parameters**) to set per instance.
 
+**Shader assets** (a material written as code, like a whole-material version of Unreal's Custom
+node): Content Browser right-click > **New Shader** makes `SH_New.hlsl`; double-click opens it in your
+code editor, and saving recompiles it. It writes the function a Material Graph compiles to:
+
+```hlsl
+// texture: T_Rock color        (color, normal or data: lsd_tex0, lsd_tex1, lsd_tex2 in this order)
+// param: Tint 1, 0.45, 0.2     (lsd_params[0]; Material Instances change it by name)
+// param: Pulse 2               (lsd_params[1].x)
+// blend: translucent           (optional: masked, translucent, additive)
+Surface material_main(MaterialIn mi) {   // mi.uv, mi.wpos, mi.normal, mi.view, mi.time
+    Surface s;
+    s.base_color = lsd_tex0(mi.uv).rgb * lsd_params[0].xyz;
+    s.metallic = 0.0; s.roughness = 0.5; s.emissive = lsd_v3(0.0);
+    s.normal = float3(0.0, 0.0, 1.0); s.ao = 1.0; s.opacity = 1.0;
+    return s;
+}
+```
+
+Use it like a Material Graph: drag it onto an object, put it in a Material Slot, or make a Material
+Instance of it. The same code runs on D3D12, Vulkan and OpenGL (keep to `float3`, `lerp`, `frac`,
+`saturate` and the usual maths: OpenGL translates those).
+
 **Material Functions** (Unreal's): make a Material Graph, say `MF_Tint`, that ends in a **Function
 Output** instead of a Material Output, and reads its inputs through **Function Input** nodes (Input A,
 B or C; Preview is the value used while you look at the function on its own, where it shows as the

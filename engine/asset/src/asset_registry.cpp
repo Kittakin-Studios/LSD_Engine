@@ -64,6 +64,7 @@ const char* to_string(AssetType type) {
 AssetType type_from_extension(const char* extension) {
     char lower[16] = "";
     for (usize i = 0; i + 1 < sizeof lower && extension[i]; ++i) lower[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(extension[i])));
+    if (std::strcmp(lower, ".hlsl") == 0) return AssetType::MaterialGraph;  // a shader asset: a material written as code
     if (std::strcmp(lower, ".fbx") == 0 || std::strcmp(lower, ".gltf") == 0 || std::strcmp(lower, ".glb") == 0 || std::strcmp(lower, ".obj") == 0) return AssetType::Mesh;
     if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
     if (std::strcmp(lower, ".lsdasset") == 0) return AssetType::Data;

@@ -194,6 +194,58 @@ struct Compiler {
 
 } // namespace
 
+bool parse_shader_source(const char* text, MaterialCode& out, char* error, usize error_capacity) {
+    out.code.clear();
+    out.texture_count = 0;
+    out.param_count = 0;
+    out.blend_mode = 0;
+    if (!std::strstr(text, "material_main")) {
+        std::snprintf(error, error_capacity, "No material_main function: a shader asset writes Surface material_main(MaterialIn mi)");
+        return false;
+    }
+    for (const char* line = text; *line;) {
+        const char* end = std::strchr(line, '\n');
+        if (!end) end = line + std::strlen(line);
+        const std::string l(line, end);
+        line = *end ? end + 1 : end;
+        const usize tex = l.find("// texture:"), par = l.find("// param:"), blend = l.find("// blend:");
+        if (tex != std::string::npos) {
+            char name[64] = "", kind[16] = "color";
+            if (std::sscanf(l.c_str() + tex + 11, " %63s %15s", name, kind) < 1) continue;
+            if (out.texture_count == kMaxMaterialTextures) {
+                std::snprintf(error, error_capacity, "More than 3 textures in one shader");
+                return false;
+            }
+            MaterialTextureSlot& t = out.textures[out.texture_count++];
+            std::snprintf(t.name, sizeof t.name, "%s", name);
+            t.srgb = std::strcmp(kind, "normal") != 0 && std::strcmp(kind, "data") != 0;
+        } else if (par != std::string::npos) {
+            char name[32] = "";
+            f32 v[3] = {0, 0, 0};
+            const int n = std::sscanf(l.c_str() + par + 9, " %31s %f , %f , %f", name, &v[0], &v[1], &v[2]);
+            if (n < 1) continue;
+            if (out.param_count == kMaxMaterialParams) {
+                std::snprintf(error, error_capacity, "More than 16 parameters in one shader");
+                return false;
+            }
+            MaterialParam& p = out.params[out.param_count++];
+            std::snprintf(p.name, sizeof p.name, "%s", name);
+            p.vector = n >= 4;
+            p.value[0] = v[0];
+            p.value[1] = p.vector ? v[1] : v[0];
+            p.value[2] = p.vector ? v[2] : v[0];
+            p.value[3] = 1.0f;
+        } else if (blend != std::string::npos) {  // // blend: masked | translucent | additive
+            const std::string mode = l.substr(blend + 9);
+            out.blend_mode = mode.find("masked") != std::string::npos ? 1u : mode.find("translucent") != std::string::npos ? 2u : mode.find("additive") != std::string::npos ? 3u : 0u;
+        }
+    }
+    const usize length = std::strlen(text);
+    out.code.resize(length + 1);
+    std::memcpy(out.code.data(), text, length + 1);
+    return true;
+}
+
 void set_material_function_resolver(MaterialFunctionResolver resolver, void* user) {
     g_resolver = resolver;
     g_resolver_user = user;

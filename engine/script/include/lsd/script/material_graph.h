@@ -48,4 +48,12 @@ bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, 
 using MaterialFunctionResolver = bool (*)(void* user, const char* name, char* path, usize capacity);
 void set_material_function_resolver(MaterialFunctionResolver resolver, void* user);
 
+// Shader assets (a .hlsl file in Content): a material written as code, the same function a graph
+// compiles to (`Surface material_main(MaterialIn mi)`, with lsd_tex0..2, lsd_params[], mi.time...).
+// Lines `// texture: T_Rock color` (color / normal / data) and `// param: Brightness 1.0` or
+// `// param: Tint 1, 0.5, 0` declare its textures (slots in order) and parameters (lsd_params[slot]).
+// False with a message when there is no material_main or too many textures / parameters.
+bool parse_shader_source(const char* text, MaterialCode& out, char* error, usize error_capacity);
+constexpr char kShaderExtension[] = ".hlsl";
+
 } // namespace lsd::script

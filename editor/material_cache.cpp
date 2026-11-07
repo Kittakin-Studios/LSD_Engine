@@ -8,6 +8,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace lsd::editor {
 
@@ -204,8 +207,18 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
     script::Graph graph(default_allocator());
     script::MaterialCode code(default_allocator());
     char error[256] = "";
-    if (!script::load_graph_file(graph, path) || !script::compile_material_graph(graph, code, error, sizeof error)) {
-        LSD_LOG_ERROR("material", "%s: %s", path, error[0] ? error : "could not read the graph");
+    const bool shader_asset = std::filesystem::path(path).extension() == script::kShaderExtension;
+    bool ok = false;
+    if (shader_asset) {  // a material written as code
+        std::ifstream f(path, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        ok = !text.empty() && script::parse_shader_source(text.c_str(), code, error, sizeof error);
+        e.blend_mode = code.blend_mode;
+    } else {
+        ok = script::load_graph_file(graph, path) && script::compile_material_graph(graph, code, error, sizeof error);
+    }
+    if (!ok) {
+        LSD_LOG_ERROR("material", "%s: %s", path, error[0] ? error : shader_asset ? "could not read the shader" : "could not read the graph");
         e.failed = true;
         return;
     }
@@ -226,7 +239,7 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
         e.texture_srgb[i] = code.textures[i].srgb;
     }
     resolve_textures(e);
-    LSD_LOG_INFO("material", "Compiled material graph %s", path);
+    LSD_LOG_INFO("material", shader_asset ? "Compiled shader %s" : "Compiled material graph %s", path);
 }
 
 void MaterialCache::load(Entry& e) {

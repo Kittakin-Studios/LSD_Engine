@@ -1092,6 +1092,15 @@ static void test_material_graph() {
     CHECK(std::strstr(code.code.data(), base));
     set_material_function_resolver(nullptr, nullptr);
     std::filesystem::remove(fn_path);
+
+    // Shader assets: the code as written, its texture / parameter / blend lines read.
+    const char shader[] = "// texture: T_Rock color\n// texture: T_Rock_N normal\n// param: Tint 1, 0.5, 0.25\n// param: Speed 2\n// blend: translucent\n"
+                          "Surface material_main(MaterialIn mi) { Surface s; return s; }\n";
+    CHECK(parse_shader_source(shader, code, error, sizeof error));
+    CHECK(code.texture_count == 2 && code.textures[0].srgb && !code.textures[1].srgb && std::strcmp(code.textures[1].name, "T_Rock_N") == 0);
+    CHECK(code.param_count == 2 && code.params[0].vector && code.params[0].value[2] == 0.25f && !code.params[1].vector && code.params[1].value[1] == 2.0f);
+    CHECK(code.blend_mode == 2 && std::strcmp(code.code.data(), shader) == 0);
+    CHECK(!parse_shader_source("float4 main() { return 1; }", code, error, sizeof error) && std::strstr(error, "material_main"));
 }
 
 static void test_data_table() {

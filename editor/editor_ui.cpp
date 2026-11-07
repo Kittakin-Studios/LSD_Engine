@@ -3847,6 +3847,8 @@ bool open_record(EditorState& s, const asset::AssetRecord& r) {
         request_open(s, path);
     } else if (r.type == asset::AssetType::Script) {
         open_external(s, r);
+    } else if (r.type == asset::AssetType::MaterialGraph && std::filesystem::path(r.path).extension() == script::kShaderExtension) {
+        open_external(s, r);  // a shader asset: code, in the code editor (saving it recompiles)
     } else if (r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree) {
         open_graph(s, r);
     } else if (r.type == asset::AssetType::Table) {
@@ -4459,6 +4461,42 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A material built from nodes (textures, maths, Time, Fresnel...) like Unreal's Material Editor. Double-click to edit; drag onto an object");
+        if (with_tip(ImGui::MenuItem("New Shader"), "Makes a material written in HLSL code (Unreal's Custom node, as a whole material) here")) {
+            namespace fs = std::filesystem;
+            const fs::path dir = fs::path(kContentDir) / s.content_folder;
+            fs::path file = dir / "SH_New.hlsl";
+            for (int n = 2; fs::exists(file) && n < 100; ++n) file = dir / ("SH_New" + std::to_string(n) + ".hlsl");
+            static const char kStarter[] =
+                "// A shader asset: a material written in code (the function a Material Graph compiles to).\n"
+                "// Declare textures and parameters on lines like these (they become lsd_tex0.. and lsd_params[0..]):\n"
+                "// param: Tint 1, 0.45, 0.2\n"
+                "// param: Pulse 2\n"
+                "// (textures: // texture: T_Rock color   - color, normal or data; blend: // blend: translucent)\n"
+                "Surface material_main(MaterialIn mi) {\n"
+                "    Surface s;\n"
+                "    float glow = 0.5 + 0.5 * sin(mi.time * lsd_params[1].x);\n"
+                "    s.base_color = lsd_params[0].xyz;\n"
+                "    s.metallic = 0.0;\n"
+                "    s.roughness = 0.4;\n"
+                "    s.emissive = lsd_params[0].xyz * glow;\n"
+                "    s.normal = float3(0.0, 0.0, 1.0);\n"
+                "    s.ao = 1.0;\n"
+                "    s.opacity = 1.0;\n"
+                "    return s;\n"
+                "}\n";
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (FILE* f = std::fopen(file.string().c_str(), "wb")) {
+                std::fwrite(kStarter, 1, sizeof kStarter - 1, f);
+                std::fclose(f);
+            }
+            s.registry->scan();
+            if (const asset::AssetRecord* r = record_at(s, file.generic_string())) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
         if (with_tip(ImGui::MenuItem("New UI Document"), "Makes an HTML / CSS game UI document (Unreal's Widget Blueprint) here")) {
             const std::string path = create_ui_document((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "UI_New");
             s.registry->scan();
