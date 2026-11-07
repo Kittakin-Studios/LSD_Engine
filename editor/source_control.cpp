@@ -35,6 +35,13 @@ struct Entry {
 
 std::mutex g_mutex;
 std::vector<Entry> g_status;  // changed files only
+struct Lock {
+    std::string path;  // relative to Content/
+    std::string owner;
+    bool mine;
+};
+std::vector<Lock> g_locks;  // Git LFS locks under Content/
+std::atomic<bool> g_lfs{false}, g_locks_dirty{false};
 std::thread g_thread;
 std::atomic<bool> g_running{false}, g_dirty{false}, g_enabled{false};
 
@@ -97,6 +104,46 @@ void read_status() {
     g_enabled = true;
 }
 
+// A JSON string value after `key` from `at` on ("" if none); `at` moves past it.
+std::string json_value(const std::string& json, const char* key, usize& at) {
+    const std::string k = std::string("\"") + key + "\":";
+    usize p = json.find(k, at);
+    if (p == std::string::npos) return {};
+    p = json.find('"', p + k.size());
+    if (p == std::string::npos) return {};
+    std::string v;
+    for (++p; p < json.size() && json[p] != '"'; ++p) {
+        if (json[p] == '\\' && p + 1 < json.size()) ++p;
+        v += json[p];
+    }
+    at = p;
+    return v;
+}
+
+// `git lfs locks --verify --json`: {"ours": [{"path": ..., "owner": {"name": ...}}], "theirs": [...]}
+// (without --verify support: a plain list, matched to this user's name).
+void read_locks() {
+    std::string out;
+    bool verified = git("lfs locks --verify --json", out);
+    if (!verified && !git("lfs locks --json", out)) return;  // no LFS remote: no locks
+    std::string me;
+    if (!verified && git("config user.name", me)) {
+        while (!me.empty() && (me.back() == '\n' || me.back() == '\r')) me.pop_back();
+    }
+    const usize theirs = verified ? out.find("\"theirs\"") : std::string::npos;
+    std::vector<Lock> locks;
+    for (usize at = 0;;) {
+        const std::string path = json_value(out, "path", at);
+        if (path.empty()) break;
+        const usize here = at;
+        const std::string owner = json_value(out, "name", at);
+        if (path.rfind("Content/", 0) != 0) continue;
+        locks.push_back({path.substr(8), owner, verified ? (theirs == std::string::npos || here < theirs) : owner == me});
+    }
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_locks.swap(locks);
+}
+
 void show(const char* title, const std::string& content_path, const std::string& args) {
     g_title = std::string(title) + ": Content/" + content_path;
     if (!git(args, g_output) && g_output.empty()) g_output = "git failed";
@@ -112,11 +159,18 @@ void start() {
     g_dirty = true;
     g_thread = std::thread([] {
         auto last = std::chrono::steady_clock::now() - std::chrono::hours(1);
+        auto last_locks = last;
+        std::string version;
+        g_lfs = git("lfs version", version);
         while (g_running) {
             const auto now = std::chrono::steady_clock::now();
             if (g_dirty.exchange(false) || now - last > std::chrono::seconds(4)) {
                 read_status();
                 last = std::chrono::steady_clock::now();
+            }
+            if (g_lfs && g_enabled && (g_locks_dirty.exchange(false) || now - last_locks > std::chrono::seconds(20))) {
+                read_locks();
+                last_locks = std::chrono::steady_clock::now();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -145,6 +199,19 @@ char status(const char* content_path) {
     return code;
 }
 
+std::string locked_by(const char* content_path, bool& mine) {
+    mine = false;
+    if (!g_lfs) return {};
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (const Lock& l : g_locks) {
+        if (l.path == content_path) {
+            mine = l.mine;
+            return l.owner;  // a copy: the background thread replaces the list
+        }
+    }
+    return {};
+}
+
 void asset_menu(const char* content_path) {
     if (!g_enabled || !with_tip(ImGui::BeginMenu("Source Control"), "Git: history, diff and submit for this asset")) return;
     const std::string path = content_path;
@@ -160,7 +227,32 @@ void asset_menu(const char* content_path) {
             g_open_submit = true;
         }
     }
-    if (with_tip(ImGui::MenuItem("Refresh Status"), "Asks Git again what changed")) refresh();
+    if (g_lfs && safe(path)) {
+        ImGui::Separator();
+        bool mine = false;
+        const std::string owner = locked_by(content_path, mine);
+        if (owner.empty()) {
+            if (with_tip(ImGui::MenuItem("Lock (Check Out)"), "Git LFS: locks the asset on the server so teammates know you are changing it (they cannot push it)")) {
+                show("Lock", path, "lfs lock \"Content/" + path + "\"");
+                g_locks_dirty = true;
+            }
+        } else if (mine) {
+            if (with_tip(ImGui::MenuItem("Unlock (Check In)"), "Git LFS: releases your lock (push your changes first)")) {
+                show("Unlock", path, "lfs unlock \"Content/" + path + "\"");
+                g_locks_dirty = true;
+            }
+        } else {
+            ImGui::TextDisabled("Locked by %s", owner.c_str());
+            if (with_tip(ImGui::MenuItem("Break Lock"), "Git LFS: removes a teammate's lock (only when they cannot: it may lose their work)")) {
+                show("Break Lock", path, "lfs unlock --force \"Content/" + path + "\"");
+                g_locks_dirty = true;
+            }
+        }
+    }
+    if (with_tip(ImGui::MenuItem("Refresh Status"), "Asks Git again what changed (and who holds locks)")) {
+        refresh();
+        g_locks_dirty = true;
+    }
     ImGui::EndMenu();
 }
 

@@ -494,6 +494,13 @@ counts too). Right-click an asset > **Source Control**: **History** (its last 50
 Against Last Commit**, **Submit...** (commits the asset and its `.meta` with your description; push
 from your Git tool to share it), **Refresh Status**. Status is re-read every few seconds.
 
+**Locking** (Unreal's Check Out / Check In, with Git LFS: `git lfs install`, and a remote that supports
+locks, such as GitHub or GitLab): **Lock (Check Out)** tells the team you are changing an asset (levels,
+meshes and other files that cannot be merged), **Unlock (Check In)** releases it after you push. A locked
+tile gets an **L** badge in its top-left corner: green when it is yours, red when a teammate holds it
+(hover it for who). **Break Lock** removes a teammate's lock when they cannot. Locks are re-read
+every 20 seconds.
+
 **File > Validate Assets** reports references to missing assets, oversize textures and (optional,
 Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `UI_`.
 

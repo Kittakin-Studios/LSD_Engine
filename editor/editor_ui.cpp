@@ -4765,6 +4765,17 @@ void draw_asset_grid(EditorState& s) {
             const ImVec2 size = ImGui::CalcTextSize(text);
             dl->AddText(ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), IM_COL32(0, 0, 0, 255), text);
         }
+        bool lock_mine = false;
+        if (const std::string owner = source_control::locked_by(r.path, lock_mine); !owner.empty()) {  // Git LFS lock: green yours, red a teammate's
+            const ImVec2 c(lo.x + 9, lo.y + 9);
+            dl->AddCircleFilled(c, 8.0f, lock_mine ? IM_COL32(155, 225, 31, 255) : IM_COL32(220, 60, 50, 255));
+            const ImVec2 size = ImGui::CalcTextSize("L");
+            dl->AddText(ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), IM_COL32(0, 0, 0, 255), "L");
+            if (ImGui::IsMouseHoveringRect(ImVec2(c.x - 8, c.y - 8), ImVec2(c.x + 8, c.y + 8))) {
+                if (lock_mine) ImGui::SetTooltip("Locked by you (Git LFS)");
+                else ImGui::SetTooltip("Locked by %s (Git LFS)", owner.c_str());
+            }
+        }
         dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
         dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), r.name);
         dl->PopClipRect();
