@@ -255,6 +255,20 @@ static void morph_tests(const std::string& data) {
     }
     CHECK(found > 0);
 
+    // Skinned LODs: fewer triangles, every index one of the mesh's own vertices (skinning and morphs unchanged).
+    {
+        anim::SkinnedModel big(default_allocator());
+        char err[256] = "";
+        CHECK(anim::import_skinned((data + "/blender_293_barbarian_7400_binary.fbx").c_str(), 1.0f, big, err, sizeof err));
+        std::vector<u32> lod(big.indices.size());
+        const u32 n = anim::simplify_skinned(big, big.indices.data(), static_cast<u32>(big.indices.size()), 0.25f, lod.data());
+        std::printf("  skinned LOD: %zu -> %u indices\n", big.indices.size(), n);
+        CHECK(n > 0 && n % 3 == 0 && n < big.indices.size() / 2);
+        bool inside = true;
+        for (u32 i = 0; i < n; ++i) inside = inside && lod[i] < big.vertices.size();
+        CHECK(inside);
+    }
+
     // Curves from the file: an FBX user-defined number property animated in the take, matching ufbx's own value.
     {
         anim::SkinnedModel host(default_allocator());

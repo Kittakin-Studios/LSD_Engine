@@ -946,11 +946,25 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
         draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+        // Auto LODs: by how big it looks (bind bounds' radius over distance), as static meshes.
+        lsd::u32 lod = 0;
+        if (model->lod_count > 1) {
+            const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
+            const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
+            const lsd::f32 scale = lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+            lod = model->pick_lod(lsd::length(grow) * scale / distance);
+        }
         // One draw per material slot (Unreal's mesh sections), each with its slot's material.
         for (lsd::u32 s = 0; s < model->section_count; ++s) {
             lsd::rhi::MeshDraw section = draw;
             section.indices = model->sections[s].indices;
             section.index_count = model->sections[s].index_count;
+            for (lsd::u32 l = lod; l > 0; --l) {  // that LOD, or the nearest finer one this section has
+                if (!model->sections[s].lod_index_count[l]) continue;
+                section.indices = model->sections[s].lod_indices[l];
+                section.index_count = model->sections[s].lod_index_count[l];
+                break;
+            }
             const char* material = lsd::editor::section_material(*component, *model, s);
             if (material[0]) section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;  // the material's own colours
             else to_rgba(component->color, section.color);

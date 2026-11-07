@@ -104,6 +104,11 @@ void apply_morphs(const SkinnedModel& model, WeightOf weight, rhi::SkinnedVertex
     }
 }
 
+// A simpler version of some of a skinned mesh's triangles (an LOD): `indices` (a section of model.indices) cut to about
+// `ratio` of its triangles, written to `out` as indices into the same vertices (skinning and morphs unchanged). Returns
+// how many; 0 when it will not get simpler. Corners are welded to simplify, then each kept vertex is one of its corners.
+u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f32 ratio, u32* out);
+
 // Import: each morph target's normal offsets, from its full shape's normals recomputed the way the mesh's are.
 void add_morph_normals(SkinnedModel& model, u32 normals, f32 smoothing_angle);
 

@@ -19,6 +19,7 @@
 #include <ozz/base/maths/simd_quaternion.h>
 #include <ozz/base/maths/soa_transform.h>
 #include <cgltf.h>
+#include <meshoptimizer.h>
 #include <ufbx.h>
 
 #include <algorithm>
@@ -144,6 +145,28 @@ const char* rig_source_bone(Rig target, Rig source, const char* bone) {
         if (std::strcmp(pairs[i].target, bone) == 0) return pairs[i].source;
     }
     return bone;
+}
+
+u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f32 ratio, u32* out) {
+    const usize n = model.vertices.size();
+    if (!n || count < 3) return 0;
+    // Weld: corners alike in everything (place, normal, UV, bones) become one vertex, so the simplifier sees the surface.
+    std::vector<u32> remap(n);
+    const usize unique = meshopt_generateVertexRemap(remap.data(), nullptr, n, model.vertices.data(), n, sizeof(rhi::SkinnedVertex));
+    std::vector<u32> corner(unique, ~0u);  // a corner standing for each welded vertex
+    std::vector<f32> positions(unique * 3);
+    for (u32 v = 0; v < n; ++v) {
+        if (corner[remap[v]] != ~0u) continue;
+        corner[remap[v]] = v;
+        std::memcpy(&positions[static_cast<usize>(remap[v]) * 3], model.vertices[v].position, 3 * sizeof(f32));
+    }
+    std::vector<u32> welded(count);
+    for (u32 i = 0; i < count; ++i) welded[i] = remap[indices[i]];
+    const usize target = static_cast<usize>(static_cast<f32>(count) * ratio) / 3 * 3;
+    constexpr f32 kMaxError = 0.05f;  // of the mesh's size, as static meshes' LODs
+    const usize got = meshopt_simplify(out, welded.data(), count, positions.data(), unique, 3 * sizeof(f32), target, kMaxError, 0, nullptr);
+    for (usize i = 0; i < got; ++i) out[i] = corner[out[i]];
+    return static_cast<u32>(got);
 }
 
 void add_morph_normals(SkinnedModel& model, u32 normals, f32 smoothing_angle) {

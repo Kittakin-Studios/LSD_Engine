@@ -18,11 +18,22 @@ struct SkinnedEntry {
     u32 index_count = 0;
     // One draw per material slot: its triangles' indices and the slot's material from the mesh's
     // .meta (Material Slots; "" = none), refreshed when the .meta changes.
+    static constexpr u32 kMaxLods = 4;
     struct Section {
         rhi::BufferHandle indices;
         u32 index_count = 0;
         char slot_material[33] = "";
+        rhi::BufferHandle lod_indices[kMaxLods];  // [1..]: simpler versions over the same vertices (index 0 unused)
+        u32 lod_index_count[kMaxLods] = {};
     };
+    u32 lod_count = 1;                   // auto LODs (sections with 512+ triangles); 1 = none
+    f32 lod_screen_size[kMaxLods] = {};  // [1..3]: from the mesh's import settings (LOD category)
+    // The LOD for an object `radius_over_distance` across on screen (bounding radius over distance), as static meshes pick.
+    u32 pick_lod(f32 radius_over_distance) const {
+        u32 lod = 0;
+        while (lod + 1 < lod_count && radius_over_distance < lod_screen_size[lod + 1]) ++lod;
+        return lod;
+    }
     Section sections[asset::kMaxMaterialSlots];
     u32 section_count = 0;
     i64 meta_modified = 0;

@@ -3,10 +3,12 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -30,9 +32,14 @@ static void destroy_buffers(rhi::Device& device, SkinnedEntry& e) {
     if (e.indices.valid()) device.destroy_buffer(e.indices);
     for (u32 s = 0; s < e.section_count; ++s) {
         if (e.sections[s].indices.valid()) device.destroy_buffer(e.sections[s].indices);
+        for (rhi::BufferHandle& lod : e.sections[s].lod_indices) {
+            if (lod.valid()) device.destroy_buffer(lod);
+            lod = {};
+        }
     }
     e.vertices = e.indices = {};
     e.section_count = 0;
+    e.lod_count = 1;
 }
 
 SkinnedCache::~SkinnedCache() {
@@ -88,6 +95,33 @@ bool SkinnedCache::load(SkinnedEntry& e) {
         SkinnedEntry::Section& s = e.sections[e.section_count++];
         s.indices = device_.create_buffer(rhi::BufferUsage::Index, e.model->indices.data() + section.first_index, section.index_count * sizeof(u32));
         s.index_count = section.index_count;
+    }
+    // Auto LODs (as static meshes): halving the triangles each step while it still gets simpler; sections too small keep theirs.
+    if (e.index_count / 3 >= 512) {
+        e.lod_screen_size[1] = meta.lod1_screen_size;
+        e.lod_screen_size[2] = meta.lod2_screen_size;
+        e.lod_screen_size[3] = meta.lod3_screen_size;
+        std::vector<u32> lod(e.model->indices.size());
+        u32 k = 0;
+        for (const anim::MeshSection& section : e.model->sections) {
+            if (k == e.section_count) break;
+            if (!section.index_count) continue;
+            SkinnedEntry::Section& s = e.sections[k++];
+            u32 previous = section.index_count;
+            f32 ratio = 0.5f;
+            for (u32 l = 1; l < SkinnedEntry::kMaxLods; ++l, ratio *= 0.5f) {
+                const u32 count = section.index_count / 3 >= 128 ? anim::simplify_skinned(*e.model, e.model->indices.data() + section.first_index, section.index_count, ratio, lod.data()) : 0;
+                if (count == 0 || count > previous * 3 / 4) {  // will not get simpler: the last LOD again
+                    s.lod_indices[l] = {};
+                    s.lod_index_count[l] = 0;
+                    continue;
+                }
+                s.lod_indices[l] = device_.create_buffer(rhi::BufferUsage::Index, lod.data(), count * sizeof(u32));
+                s.lod_index_count[l] = count;
+                previous = count;
+                e.lod_count = std::max(e.lod_count, l + 1);
+            }
+        }
     }
     if (e.model->sections.size() > asset::kMaxMaterialSlots) LSD_LOG_WARN("anim", "%s: %zu materials, only the first %u are drawn", path, e.model->sections.size(), asset::kMaxMaterialSlots);
     load_slots(e);
