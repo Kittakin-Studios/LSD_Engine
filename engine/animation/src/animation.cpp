@@ -579,6 +579,9 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
 struct Pose::Impl {
     ozz::animation::SamplingJob::Context context;
     std::vector<ozz::math::SoaTransform> locals;
+    // inertialize(): last frame's output and the offset easing out since the last jump.
+    std::vector<ozz::math::SoaTransform> last, offset;
+    f32 offset_age = 0.0f;
     std::vector<ozz::math::Float4x4> models;
     // Blending: one sampled pose per input.
     ozz::animation::SamplingJob::Context contexts[kMaxBlendInputs];
@@ -599,6 +602,47 @@ void Pose::sample(const SkinnedModel& model, const Clip* clip, f32 time, bool lo
     ratio = looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
     const BlendInput input{clip, ratio, 1.0f};
     sample_blend(model, &input, 1);
+}
+
+bool Pose::inertialize(const SkinnedModel& model, bool switched, f32 dt, f32 half_life) {
+    if (!impl_ || impl_->locals.empty()) return false;
+    namespace m = ozz::math;
+    using ::operator+;  // ozz's SoA operators are global; lsd's own (Vec3...) hide them in here
+    using ::operator-;
+    using ::operator*;
+    std::vector<m::SoaTransform>& now = impl_->locals;
+    std::vector<m::SoaTransform>& off = impl_->offset;
+    if (switched && impl_->last.size() == now.size()) {
+        off.resize(now.size());
+        for (usize i = 0; i < now.size(); ++i) {
+            off[i].translation = impl_->last[i].translation - now[i].translation;
+            off[i].scale = impl_->last[i].scale - now[i].scale;
+            m::SoaQuaternion q = impl_->last[i].rotation * m::Conjugate(now[i].rotation);
+            const m::SimdFloat4 sign = m::Select(m::CmpLt(q.w, m::simd_float4::zero()), m::simd_float4::Load1(-1.0f), m::simd_float4::one());
+            q = {q.x * sign, q.y * sign, q.z * sign, q.w * sign};  // the short way round
+            off[i].rotation = q;
+        }
+        impl_->offset_age = 0.0f;
+    }
+    bool changed = false;
+    if (!off.empty()) {
+        impl_->offset_age += dt;
+        const f32 left = half_life > 0.0f ? std::exp2(-impl_->offset_age / half_life) : 0.0f;
+        if (left < 1e-3f) {
+            off.clear();
+        } else {
+            const m::SimdFloat4 k = m::simd_float4::Load1(left);
+            const m::SoaQuaternion identity = m::SoaQuaternion::identity();
+            for (usize i = 0; i < now.size(); ++i) {
+                now[i].translation = now[i].translation + off[i].translation * k;
+                now[i].scale = now[i].scale + off[i].scale * k;
+                now[i].rotation = m::NLerp(identity, off[i].rotation, k) * now[i].rotation;
+            }
+            changed = true;
+        }
+    }
+    impl_->last = now;
+    return changed ? rebuild(model, -1) : true;
 }
 
 void Pose::sample_blend(const SkinnedModel& model, const BlendInput* inputs, u32 count) {

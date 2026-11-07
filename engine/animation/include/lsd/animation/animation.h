@@ -142,6 +142,10 @@ public:
     // Root motion: the root joint's sideways (x, y) move away from its rest place is taken out of the
     // pose (the mesh stays over its capsule) and returned, in model space; the game moves the object.
     Vec3 strip_root(const SkinnedModel& model);
+    // Inertial blending (Unreal's Inertialization): call right after sample / sample_blend. When
+    // `switched` (the animation jumped this frame), the difference from last frame's pose is kept
+    // and added back, halving every `half_life` seconds, so the jump eases out instead of popping.
+    bool inertialize(const SkinnedModel& model, bool switched, f32 dt, f32 half_life);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

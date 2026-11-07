@@ -336,6 +336,33 @@ static void motion_matching_tests(const std::string& data) {
         for (u32 k = 0; k < n; ++k) total += inputs[k].weight;
         CHECK(std::fabs(total - 1.0f) < 1e-4f);
     }
+    CHECK(settings.blend_mode == 1);  // inertial by default: one input, never a crossfade
+    for (int i = 0; i < 30; ++i) CHECK(anim::step_motion(db, settings, walking, state, 1.0f / 30.0f, inputs) == 1);
+
+    // Inertialization: right after a jump the pose is still the old one (no pop); a few half-lives
+    // later it is the new one.
+    const anim::Clip* other = count > 1 ? &clips[1] : &clips[0];
+    const anim::BlendInput from{&clips[0], 0.25f, 1.0f}, to{other, 0.75f, 1.0f};
+    anim::Pose a, b, eased;
+    a.sample_blend(model, &from, 1);
+    b.sample_blend(model, &to, 1);
+    eased.sample_blend(model, &from, 1);
+    CHECK(eased.inertialize(model, false, 0.0f, 0.05f));  // remembers the pose it showed
+    eased.sample_blend(model, &to, 1);
+    CHECK(eased.inertialize(model, true, 0.0f, 0.05f));
+    auto distance = [&](const anim::Pose& p, const anim::Pose& q) {
+        f32 worst = 0.0f;
+        for (u32 k = 0; k < p.joint_count() * 12; ++k) worst = std::fmax(worst, std::fabs(p.joint_rows()[k] - q.joint_rows()[k]));
+        return worst;
+    };
+    const f32 apart = distance(a, b);
+    std::printf("  inertial: poses %.3f apart, %.4f from the old one at the jump\n", static_cast<double>(apart), static_cast<double>(distance(eased, a)));
+    CHECK(apart > 1e-3f && distance(eased, a) < apart * 0.02f);
+    for (int i = 0; i < 30; ++i) {  // 0.5 s: ten half-lives
+        eased.sample_blend(model, &to, 1);
+        eased.inertialize(model, false, 1.0f / 60.0f, 0.05f);
+    }
+    CHECK(distance(eased, b) < apart * 0.01f);
 }
 
 int main() {

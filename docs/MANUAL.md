@@ -1258,7 +1258,10 @@ animates itself, with no Anim Graph to build. Leave it off to use your own Anima
 - **How it picks**: every frame of those clips is described by where the feet are and how they and
   the hips move, and where the character goes over the next second and which way it faces. Every
   0.1 s (Search Interval) the frame nearest to the current pose plus the path your input asks for is
-  found, and it crossfades there (Blend Time). The capsule still moves the character; the animation
+  found, and it moves there. **Blend Mode** says how: **Inertial** (the default, Unreal's
+  Inertialization) jumps to the new frame at once and eases out the difference from the old pose
+  over Blend Time, so it reacts sooner and never mixes two clips (no foot sliding from blends);
+  **Crossfade** blends the two clips over Blend Time. The capsule still moves the character; the animation
   follows it. Clips made in place get their movement from the planted foot; root-motion clips use
   their root (Unreal rigs' `root`) or travelling hips.
 - **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more

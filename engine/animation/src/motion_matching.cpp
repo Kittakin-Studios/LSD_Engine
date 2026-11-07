@@ -255,6 +255,8 @@ u32 step_motion(const MotionData& data, const MotionDatabase& settings, const Mo
         return true;
     };
     bool ran_out = false;
+    s.switched = false;
+    const bool inertial = settings.blend_mode == 1;
     if (s.clip >= 0) {
         ran_out = advance(s.clip, s.time);
         if (s.previous_clip >= 0) advance(s.previous_clip, s.previous_time);
@@ -287,7 +289,8 @@ u32 step_motion(const MotionData& data, const MotionDatabase& settings, const Mo
             s.previous_time = s.time;
             s.clip = static_cast<i32>(f.clip);
             s.time = f.time;
-            s.fade = settings.blend_time > 0.0f ? 0.0f : 1.0f;
+            s.fade = settings.blend_time > 0.0f && !inertial ? 0.0f : 1.0f;
+            s.switched = inertial;
         }
     }
     u32 n = 0;

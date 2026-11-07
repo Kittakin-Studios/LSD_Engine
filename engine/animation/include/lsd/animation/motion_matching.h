@@ -26,7 +26,9 @@ struct MotionDatabase {
     LSD_PROPERTY(Edit, Tooltip = "Locomotion clips: idles, walk / jog / run cycles, starts, stops, turns, strafes. Empty: those next to the character's mesh, found by name")
     List<MotionClip, 64> clips;
     LSD_PROPERTY(Edit, Units = "s", Min = 0.02, Max = 1, Tooltip = "How often it looks for a better frame") f32 search_interval = 0.1f;
-    LSD_PROPERTY(Edit, Units = "s", Min = 0, Max = 1, Tooltip = "Crossfade to the frame it picks") f32 blend_time = 0.2f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Crossfade,Inertial", Tooltip = "Inertial (Unreal's Inertialization): jumps to the new frame at once and eases out the difference, so it reacts sooner and never mixes two clips. Crossfade: blends the two clips")
+    u32 blend_mode = 1;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Max = 1, Tooltip = "How long the change to a new frame takes (crossfade, or the inertial ease-out)") f32 blend_time = 0.2f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How much the path ahead counts (higher: follows the input more closely)") f32 trajectory_weight = 1.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How much the way it faces ahead counts") f32 facing_weight = 1.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How much the current feet and hips count (higher: smoother, slower to react)") f32 pose_weight = 1.0f;
@@ -93,6 +95,7 @@ struct MotionState {
     f32 fade = 1.0f;
     f32 since_search = 1e9f;
     f32 cost = 0.0f;  // of the last pick
+    bool switched = false;  // Inertial: it jumped to another frame this step (Pose::inertialize takes the offset)
 };
 
 // Advances by dt, searches when it is time, and writes what to sample (up to 2 inputs: the clip and
