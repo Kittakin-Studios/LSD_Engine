@@ -490,10 +490,24 @@ static void gltf_skin_tests() {
     CHECK(anim::import_clips(path.c_str(), model, clips, 2) == 1);
     CHECK(std::strcmp(clips[0].name, "Slide") == 0 && std::fabs(clips[0].duration - 1.0f) < 1e-4f);
     // Morph targets: "Smile" moves the second corner 0.5 m up (Z in the engine); the take raises its weight 0 to 1.
-    CHECK(model.morphs.size() == 1 && std::strcmp(model.morphs[0].name, "Smile") == 0 && model.morphs[0].count == 1);
-    if (model.morphs.size() == 1 && model.morphs[0].count == 1) {
-        const anim::MorphDelta& d = model.morph_deltas[model.morphs[0].first];
-        CHECK(d.vertex == 1 && std::fabs(d.offset[2] - 0.5f) < 1e-5f && std::fabs(d.offset[1]) < 1e-5f);
+    // Its normals turn too: all three corners of the tilted triangle get a normal offset.
+    CHECK(model.morphs.size() == 1 && std::strcmp(model.morphs[0].name, "Smile") == 0 && model.morphs[0].count == 3);
+    bool moved = false;
+    for (u32 i = model.morphs[0].first; model.morphs.size() == 1 && i < model.morphs[0].first + model.morphs[0].count; ++i) {
+        const anim::MorphDelta& d = model.morph_deltas[i];
+        if (d.vertex == 1) moved = std::fabs(d.offset[2] - 0.5f) < 1e-5f && std::fabs(d.offset[1]) < 1e-5f;
+        else CHECK(d.offset[0] == 0.0f && d.offset[1] == 0.0f && d.offset[2] == 0.0f);
+    }
+    CHECK(moved);
+    {  // at full weight every corner's normal is the morphed triangle's
+        std::vector<rhi::SkinnedVertex> shaped(model.vertices.size());
+        anim::apply_morphs(model, [](const char*) { return 1.0f; }, shaped.data());
+        const Vec3 a{shaped[0].position[0], shaped[0].position[1], shaped[0].position[2]}, b{shaped[1].position[0], shaped[1].position[1], shaped[1].position[2]},
+            c{shaped[2].position[0], shaped[2].position[1], shaped[2].position[2]};
+        Vec3 face = normalize(cross(b - a, c - a));
+        const Vec3 n{shaped[0].normal[0], shaped[0].normal[1], shaped[0].normal[2]};
+        if (dot(face, n) < 0.0f) face = face * -1.0f;
+        CHECK(dot(face, n) > 0.999f && std::fabs(length(n) - 1.0f) < 1e-4f);
     }
     f32 smile_now = -1.0f;
     CHECK(clips[0].morph_weight("Smile", 0.5f, smile_now) && std::fabs(smile_now - 0.5f) < 0.02f);

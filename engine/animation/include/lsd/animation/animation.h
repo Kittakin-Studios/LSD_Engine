@@ -7,6 +7,9 @@
 #include "lsd/foundation/math.h"
 #include "lsd/rhi/rhi.h"
 
+#include <cmath>
+#include <cstring>
+
 namespace lsd::anim {
 
 // A morph target (Unreal's Morph Target, Blender's shape key): sparse position offsets from the
@@ -18,6 +21,7 @@ struct MorphTarget {
 struct MorphDelta {
     u32 vertex = 0;
     f32 offset[3] = {0, 0, 0};
+    f32 normal[3] = {0, 0, 0};  // how the vertex's normal turns at full weight (its neighbours' too, with no offset)
 };
 
 // The triangles of a skinned mesh that use one of the file's materials (Unreal's Material Slot /
@@ -72,19 +76,36 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
 
 // The bind pose with morph targets mixed in: `weight(name)` for each target (0 = untouched, 1 = the
 // full shape; outside 0..1 exaggerates). Writes model.vertices.size() vertices to `out`, ready to skin.
-// shortcut: positions only (normals stay the bind pose's), fine for faces; add normal offsets for big shape changes
+// Normals turn with the shape (their offsets blended by weight, then made unit length again).
 template <typename WeightOf>
 void apply_morphs(const SkinnedModel& model, WeightOf weight, rhi::SkinnedVertex* out) {
     std::memcpy(out, model.vertices.data(), model.vertices.size() * sizeof(rhi::SkinnedVertex));
+    bool turned = false;
     for (const MorphTarget& t : model.morphs) {
         const f32 w = weight(t.name);
         if (w == 0.0f) continue;
         for (u32 i = t.first; i < t.first + t.count; ++i) {
             const MorphDelta& d = model.morph_deltas[i];
-            for (int k = 0; k < 3; ++k) out[d.vertex].position[k] += d.offset[k] * w;
+            for (int k = 0; k < 3; ++k) {
+                out[d.vertex].position[k] += d.offset[k] * w;
+                out[d.vertex].normal[k] += d.normal[k] * w;
+            }
+            turned = turned || d.normal[0] != 0.0f || d.normal[1] != 0.0f || d.normal[2] != 0.0f;
+        }
+    }
+    if (!turned) return;
+    for (const MorphTarget& t : model.morphs) {
+        if (weight(t.name) == 0.0f) continue;
+        for (u32 i = t.first; i < t.first + t.count; ++i) {
+            f32* n = out[model.morph_deltas[i].vertex].normal;
+            const f32 len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+            if (len > 1e-6f) n[0] /= len, n[1] /= len, n[2] /= len;
         }
     }
 }
+
+// Import: each morph target's normal offsets, from its full shape's normals recomputed the way the mesh's are.
+void add_morph_normals(SkinnedModel& model, u32 normals, f32 smoothing_angle);
 
 struct Clip {
     Clip() = default;

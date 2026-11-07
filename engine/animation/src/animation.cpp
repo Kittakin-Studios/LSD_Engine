@@ -145,6 +145,41 @@ const char* rig_source_bone(Rig target, Rig source, const char* bone) {
     return bone;
 }
 
+void add_morph_normals(SkinnedModel& model, u32 normals, f32 smoothing_angle) {
+    if (model.morphs.empty() || normals == 0) return;  // Import: the file's normals stay as they are (none recomputed)
+    std::vector<MorphDelta> rebuilt;
+    std::vector<rhi::SkinnedVertex> shape(model.vertices.size());
+    std::vector<i32> offset_of(model.vertices.size(), -1);  // this target's delta per vertex
+    for (MorphTarget& t : model.morphs) {
+        std::memcpy(shape.data(), model.vertices.data(), shape.size() * sizeof(rhi::SkinnedVertex));
+        for (u32 i = t.first; i < t.first + t.count; ++i) {
+            const MorphDelta& d = model.morph_deltas[i];
+            for (int k = 0; k < 3; ++k) shape[d.vertex].position[k] += d.offset[k];
+            offset_of[d.vertex] = static_cast<i32>(i);
+        }
+        asset::compute_normals(shape.data(), shape.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position), offsetof(rhi::SkinnedVertex, normal),
+                               normals, smoothing_angle, model.vertices.allocator());
+        const u32 first = static_cast<u32>(rebuilt.size());
+        for (u32 v = 0; v < shape.size(); ++v) {
+            MorphDelta d;
+            if (offset_of[v] >= 0) d = model.morph_deltas[static_cast<u32>(offset_of[v])];
+            d.vertex = v;
+            f32 turn = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                d.normal[k] = shape[v].normal[k] - model.vertices[v].normal[k];
+                turn += d.normal[k] * d.normal[k];
+            }
+            if (turn < 1e-6f) d.normal[0] = d.normal[1] = d.normal[2] = 0.0f;  // under a twentieth of a degree: not worth a delta
+            if (offset_of[v] >= 0 || turn >= 1e-6f) rebuilt.push_back(d);
+        }
+        for (u32 i = t.first; i < t.first + t.count; ++i) offset_of[model.morph_deltas[i].vertex] = -1;
+        t.first = first;
+        t.count = static_cast<u32>(rebuilt.size()) - first;
+    }
+    model.morph_deltas.clear();
+    for (const MorphDelta& d : rebuilt) model.morph_deltas.push_back(d);
+}
+
 Rig model_rig(const SkinnedModel& model) {
     std::vector<const char*> names(model.joint_count());
     for (u32 j = 0; j < model.joint_count(); ++j) names[j] = model.joint_name(j);
@@ -462,6 +497,7 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
     group_sections(out, triangle_section);
     asset::compute_normals(out.vertices.data(), out.vertices.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position),
                            offsetof(rhi::SkinnedVertex, normal), normals, smoothing_angle, out.vertices.allocator());
+    add_morph_normals(out, normals, smoothing_angle);
     if (out.vertices.size() > 0 && joints > 255) LSD_LOG_WARN("anim", "%s: %u joints; vertices can only use the first 256", path, joints);
     cgltf_free(data);
     return !out.vertices.empty();
@@ -834,6 +870,7 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
     group_sections(out, triangle_section);
     asset::compute_normals(out.vertices.data(), out.vertices.size(), sizeof(rhi::SkinnedVertex), offsetof(rhi::SkinnedVertex, position),
                            offsetof(rhi::SkinnedVertex, normal), normals, smoothing_angle, out.vertices.allocator());
+    add_morph_normals(out, normals, smoothing_angle);
     if (out.vertices.size() > 0 && joints > 255) LSD_LOG_WARN("anim", "%s: %u joints; vertices can only use the first 256", path, joints);
     ufbx_free_scene(scene);
     return !out.vertices.empty();
