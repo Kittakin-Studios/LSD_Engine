@@ -1427,6 +1427,12 @@ id = lsd.every(0.1, function() many = many + 1; if many == 3 then lsd.cancel(id)
         scripts.send(mover, "on_overlap_begin", target);
         scripts.send(mover, "on_not_defined", target);  // fine: scripts need not handle every event
         CHECK(scripts.run("assert(hit == 'Target', hit)") && w.get<Transform>(mover)->position.x == 0.0f);
+        // Damage (Unreal's Apply Damage / Event AnyDamage): on_damage(self, amount, instigator).
+        write(kMover, "function on_damage(self, amount, by) _G.hurt = amount; _G.by = by and lsd.name(by) end\n");
+        std::filesystem::last_write_time(kMover, std::filesystem::last_write_time(kMover) + std::chrono::seconds(12));
+        scripts.update(0.5f);
+        CHECK(scripts.run("lsd.apply_damage(lsd.find('Mover'), 25, lsd.find('Target')) assert(hurt == 25 and by == 'Target', tostring(by))"));
+        CHECK(scripts.run("lsd.apply_damage(lsd.find('Mover'), 5) assert(hurt == 5 and by == nil)"));  // no instigator
 
         // Spawning: the new object's script starts (its on_overlap_begin is defined, on_start is not: fine).
         write(kMover, "function on_start(self) _G.started = self.name end\n");

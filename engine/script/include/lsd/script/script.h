@@ -62,6 +62,7 @@
 //   lsd.bb_set(e, key, number | x, y, z), lsd.bb_get(e, key) -> number | x, y, z | nil, lsd.bb_clear(e, key)
 //                                         an AI Controller's blackboard (what its behaviour tree reads)
 //   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
+//   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
 //   lsd.ui_open(name) -> doc              a UI document (.rml) by asset name over the game; nil if none
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
 //   lsd.ui_value(doc, id) -> text         a text field's value
@@ -250,6 +251,7 @@ struct ScriptHost {
     int (*bb_get)(void* user, world::Entity e, const char* key, f32* value) = nullptr;
     void (*bb_clear)(void* user, world::Entity e, const char* key) = nullptr;
     void (*report_noise)(void* user, Vec3 at, f32 loudness) = nullptr;
+    void (*damaged)(void* user, world::Entity target, f32 amount, world::Entity instigator) = nullptr;  // AI damage sense
     i32 (*ui_open)(void* user, const char* name) = nullptr;  // -1 if none
     void (*ui_close)(void* user, i32 doc) = nullptr;
     bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text
@@ -347,6 +349,8 @@ public:
     // Calls `event(self, other)` on the scripts of `target`, if they define it.
     // Native behaviours on `target` get it too. Returns how many scripts / behaviours had it.
     u32 send(world::Entity target, const char* event, world::Entity other);
+    // The same with numbers for its arguments (entities as their handle value, NaN as nil); native behaviours get `other`.
+    u32 send(world::Entity target, const char* event, const f64* args, u32 count, world::Entity other);
     // A behaviour tree's Run Script: `function(self, dt)` on `target`'s script. 1 = returned true,
     // 0 = false (or an error), 2 = nothing (still running), -1 = no such function.
     int call_task(world::Entity target, const char* function, f32 dt);

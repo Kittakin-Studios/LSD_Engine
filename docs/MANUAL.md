@@ -1646,7 +1646,9 @@ Unreal attaches decorators and services to a node; here they are nodes with one 
 
 Perception fills the blackboard: **CanSeePlayer** (1 while in sight range, field of view and line
 of sight), **PlayerLocation** (last seen), **NoiseLocation** / **HeardNoise** (from
-`lsd.report_noise`). What it saw or heard fades: PlayerLocation, EnemyLocation and NoiseLocation /
+`lsd.report_noise`), **Damaged** / **DamageAmount** / **Attacker** / **AttackerLocation** (when a script hurts it
+with `lsd.apply_damage(target, amount, instigator)` or the **Apply Damage** node; Unreal's damage sense),
+**TouchedPlayer** (the player bumps into it, seen or not; Unreal's touch sense). What it saw or heard fades: PlayerLocation, EnemyLocation and NoiseLocation /
 HeardNoise are cleared **Memory Seconds** (10) after the last sighting or noise (0 keeps them), so a
 "search where it was last seen" branch ends by itself. **Team** (Unreal's affiliation): agents on
 different teams (not 0) see each other as enemies, **CanSeeEnemy** / **EnemyLocation** (the nearest
@@ -1988,6 +1990,7 @@ Audio and animation
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
+| `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |

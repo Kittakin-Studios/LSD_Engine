@@ -334,7 +334,7 @@ private:
         ai::Blackboard board;
         ai::BlackboardSchema schema;  // from the AI Controller's Blackboard asset (empty: untyped)
         f32 dt;
-        f64 seen_player = -1e9, seen_enemy = -1e9, heard = -1e9;  // play clock of the last sighting / noise (memory)
+        f64 seen_player = -1e9, seen_enemy = -1e9, heard = -1e9, hurt = -1e9;  // play clock of the last sighting / noise / damage (memory)
     };
     std::vector<std::string> bb_warned_;  // Blackboard keys a script wrote wrongly (warned once each)
     static constexpr u32 kMaxBrains = 64;

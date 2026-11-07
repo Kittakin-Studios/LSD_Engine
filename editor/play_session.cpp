@@ -296,6 +296,15 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
         } else {
             b.board.clear("CanSeePlayer");
         }
+        // Touch: the player bumps into it (feet within a metre sideways and about the same height), seen or not (from behind).
+        const Vec3 gap = feet_ - at;
+        if (std::sqrt(gap.x * gap.x + gap.y * gap.y) < 1.0f && std::fabs(gap.z) < 1.0f && !(controller->team && controller->team == controller->player_team)) {
+            b.board.set("TouchedPlayer", 1.0f);
+            b.board.set("PlayerLocation", feet_);
+            b.seen_player = play_clock_;
+        } else {
+            b.board.clear("TouchedPlayer");
+        }
         // Teams (Unreal's affiliation): the nearest agent of another team it can see.
         if (controller->team) {
             f32 best = controller->sight_range;
@@ -340,6 +349,9 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
             if (b.board.find("NoiseLocation") && play_clock_ - b.heard > age) {
                 b.board.clear("NoiseLocation");
                 b.board.clear("HeardNoise");
+            }
+            if (b.board.find("Damaged") && play_clock_ - b.hurt > age) {
+                for (const char* key : {"Damaged", "DamageAmount", "Attacker", "AttackerLocation"}) b.board.clear(key);
             }
         }
         if (!b.tree) b.tree = tree_for(b.tree_guid);  // a tree that failed to load may have been fixed
@@ -1125,6 +1137,19 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     };
     host.bb_clear = [](void* user, world::Entity e, const char* key) {
         if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) b->board.clear(key);
+    };
+    host.damaged = [](void* user, world::Entity target, f32 amount, world::Entity instigator) {  // the damage sense
+        auto& self = *static_cast<PlaySession*>(user);
+        Brain* b = self.brain_of(target);
+        if (!b) return;
+        b->board.set("Damaged", 1.0f);
+        b->board.set("DamageAmount", amount);
+        if (self.world_->alive(instigator)) {  // the player too: its Character is an object
+            const Mat4 m = self.world_->world_matrix(instigator);
+            b->board.set("Attacker", static_cast<f32>(instigator.value));
+            b->board.set("AttackerLocation", Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        }
+        b->hurt = self.play_clock_;
     };
     host.report_noise = [](void* user, Vec3 at, f32 loudness) {
         auto& self = *static_cast<PlaySession*>(user);
