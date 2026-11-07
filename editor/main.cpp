@@ -695,6 +695,12 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         to_rgba(component->color, draw.color);
         draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
         materials.apply(component->material, draw);  // base colour x tint, textures, metallic / roughness, emissive
+        if (std::strncmp(component->mesh, "Landscape:", 10) == 0) {  // painted layers, blended
+            if (const lsd::rhi::TextureHandle t = lsd::editor::landscape_texture(component->mesh); t.valid()) {
+                draw.base_color_texture = t;
+                draw.color[0] = draw.color[1] = draw.color[2] = 1.0f;  // the layers carry their own tints
+            }
+        }
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
         draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;

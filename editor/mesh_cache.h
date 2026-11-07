@@ -56,6 +56,8 @@ public:
     // Puts `data` under `key` (drawn, picked and collided like any mesh), replacing what was there.
     // Keys starting "Landscape:" are only ever generated: get() is quiet about them until then.
     void set_generated(const char* key, const render::MeshData& data);
+    rhi::Device& device() { return device_; }
+    const asset::AssetRegistry& registry() const { return registry_; }
 
 private:
     bool load(CachedMesh& entry);

@@ -4,6 +4,7 @@
 #include "material_cache.h"
 #include "mesh_cache.h"
 
+#include "lsd/asset/texture.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/guid.h"
 #include "lsd/foundation/allocator.h"
@@ -13,6 +14,8 @@
 #include "lsd/world/timeline.h"
 #include "lsd/world/world.h"
 
+#include <SDL3/SDL.h>
+#include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -288,9 +291,10 @@ void draw_foliage(EditorState& s) {
 // ---- Landscape ----
 
 struct SculptBrush {
-    int tool = 0;  // 0 Sculpt, 1 Smooth, 2 Flatten
+    int tool = 0;  // 0 Sculpt, 1 Smooth, 2 Flatten, 3 Paint
     f32 radius = 5.0f;
     f32 strength = 1.0f;
+    int layer = 1;  // Paint: the layer the brush adds
 };
 SculptBrush g_sculpt;
 f32 g_new_size = 64.0f;
@@ -311,7 +315,9 @@ void build_landscape_mesh(const world::Landscape& l, render::MeshData& data) {
             rhi::MeshVertex& v = data.vertices[static_cast<u32>(j) * kGrid + static_cast<u32>(i)];
             const f32 x = -half + static_cast<f32>(i) * step, y = -half + static_cast<f32>(j) * step;
             const Vec3 n = normalize(Vec3{(h(i - 1, j) - h(i + 1, j)) / (2.0f * step), (h(i, j - 1) - h(i, j + 1)) / (2.0f * step), 1.0f});
-            v = {{x, y, h(i, j)}, {n.x, n.y, n.z}, {x / tile, -y / tile}};
+            // Painted layers: one blended texture over the whole landscape; else the material tiles.
+            const f32 u = l.layers.count ? (x + half) / l.size : x / tile, w = l.layers.count ? (half - y) / l.size : -y / tile;
+            v = {{x, y, h(i, j)}, {n.x, n.y, n.z}, {u, w}};
         }
     }
     u32 k = 0;
@@ -372,6 +378,60 @@ void sculpt(EditorState& s, Vec3 center, f32 dt, f32 flatten_z) {
     if (changed) mark_edited(s, "Sculpt Landscape");
 }
 
+// Paint (Unreal's Landscape Paint): adds the chosen layer under the brush (Shift: removes it), the
+// others giving way so the weights still sum to 255.
+void paint_layers(EditorState& s, Vec3 center, f32 dt) {
+    const bool erase = ImGui::GetIO().KeyShift;
+    bool changed = false;
+    for (const Entity e : landscapes(*s.world)) {
+        auto* l = s.world->get<world::Landscape>(e);
+        if (l->layers.count < 2 || g_sculpt.layer >= static_cast<int>(l->layers.count)) continue;
+        while (l->weights.count < kGrid * kGrid) l->weights.push_back(255u);  // all the first layer
+        const Mat4 m = s.world->world_matrix(e), inv = affine_inverse(m);
+        const Vec3 c = transform_point(inv, center);
+        const f32 sx = length(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+        const f32 radius = g_sculpt.radius / (sx > 1e-4f ? sx : 1.0f);
+        const f32 step = l->size / static_cast<f32>(kGrid - 1), half = l->size * 0.5f;
+        const i32 i0 = static_cast<i32>(std::floor((c.x - radius + half) / step)), i1 = static_cast<i32>(std::ceil((c.x + radius + half) / step));
+        const i32 j0 = static_cast<i32>(std::floor((c.y - radius + half) / step)), j1 = static_cast<i32>(std::ceil((c.y + radius + half) / step));
+        for (i32 j = j0 < 0 ? 0 : j0; j <= j1 && j < static_cast<i32>(kGrid); ++j) {
+            for (i32 i = i0 < 0 ? 0 : i0; i <= i1 && i < static_cast<i32>(kGrid); ++i) {
+                const f32 dx = -half + static_cast<f32>(i) * step - c.x, dy = -half + static_cast<f32>(j) * step - c.y;
+                const f32 d = std::sqrt(dx * dx + dy * dy);
+                if (d > radius) continue;
+                const f32 amount = std::fmin(1.0f, g_sculpt.strength * dt * 3.0f * 0.5f * (1.0f + std::cos(kPi * d / radius)));
+                u32& packed = l->weights[static_cast<u32>(j) * kGrid + static_cast<u32>(i)];
+                f32 w[4];
+                for (int k = 0; k < 4; ++k) w[k] = static_cast<f32>((packed >> (8 * k)) & 0xFFu) / 255.0f;
+                const int k = g_sculpt.layer;
+                const f32 goal = erase ? 0.0f : 1.0f;
+                const f32 before = w[k];
+                w[k] += (goal - w[k]) * amount;
+                const f32 rest = 1.0f - before, now_rest = 1.0f - w[k];
+                for (int o = 0; o < 4; ++o) {  // the other layers share what is left, as they did
+                    if (o == k) continue;
+                    w[o] = rest > 1e-4f ? w[o] * now_rest / rest : (o == (k == 0 ? 1 : 0) ? now_rest : 0.0f);
+                }
+                u32 out = 0, sum = 0;
+                for (int o = 0; o < 4; ++o) {
+                    const u32 b = static_cast<u32>(std::lround(std::clamp(w[o], 0.0f, 1.0f) * 255.0f));
+                    sum += b;
+                    out |= b << (8 * o);
+                }
+                if (sum != 255u) {  // rounding: the painted layer takes the difference
+                    const i32 fixed = std::clamp(static_cast<i32>((out >> (8 * k)) & 0xFFu) + 255 - static_cast<i32>(sum), 0, 255);
+                    out = (out & ~(0xFFu << (8 * k))) | (static_cast<u32>(fixed) << (8 * k));
+                }
+                if (out != packed) {
+                    packed = out;
+                    changed = true;
+                }
+            }
+        }
+    }
+    if (changed) mark_edited(s, "Paint Landscape");
+}
+
 void draw_landscape(EditorState& s) {
     const std::vector<Entity> all = landscapes(*s.world);
     ImGui::SeparatorText("New Landscape");
@@ -394,9 +454,27 @@ void draw_landscape(EditorState& s) {
     ImGui::SameLine();
     ImGui::RadioButton("Flatten", &g_sculpt.tool, 2);
     ImGui::SetItemTooltip("Levels toward the height where the stroke started");
+    ImGui::SameLine();
+    with_tip(ImGui::RadioButton("Paint", &g_sculpt.tool, 3), "Paints a layer (Unreal's Landscape Paint): LMB adds it, Shift+LMB removes it");
     with_tip(ImGui::DragFloat("Brush Size (m)", &g_sculpt.radius, 0.1f, 0.5f, 200.0f, "%.1f"), "Radius of the brush circle in the viewport");
     with_tip(ImGui::DragFloat("Strength", &g_sculpt.strength, 0.01f, 0.05f, 5.0f, "%.2f"), "How much each stroke raises, lowers or smooths");
-    hint("LMB drag on the terrain sculpts (Shift lowers).");
+    if (g_sculpt.tool == 3) {
+        const auto* first = s.world->get<world::Landscape>(s.world->alive(s.selected) && s.world->get<world::Landscape>(s.selected) ? s.selected : all[0]);
+        ImGui::SeparatorText("Layers");
+        if (!first || first->layers.count < 2) {
+            hint("Select the landscape and add 2 or more Layers in Details > Landscape > Layers (a texture, tint and tile size each).");
+        } else {
+            for (u32 k = 0; k < first->layers.count; ++k) {
+                char label[64];
+                std::snprintf(label, sizeof label, "%s##layer%u", first->layers[k].name[0] ? first->layers[k].name : "Layer", k);
+                ImGui::RadioButton(label, &g_sculpt.layer, static_cast<int>(k));
+                ImGui::SetItemTooltip("Paint this layer (layer %u)%s", k + 1, k == 0 ? "; the first covers everything at the start" : "");
+            }
+        }
+        hint("LMB drag paints the layer, Shift+LMB removes it.");
+    } else {
+        hint("LMB drag on the terrain sculpts (Shift lowers).");
+    }
     if (with_tip(ImGui::Button("Flatten All"), "Sets every height back to flat (undoable)")) {
         for (const Entity e : all) {
             auto* l = s.world->get<world::Landscape>(e);
@@ -699,10 +777,138 @@ bool mode_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
                 foliage_stamp(s, p, io.KeyShift);
             }
         } else {
-            sculpt(s, p, io.DeltaTime < 0.1f ? io.DeltaTime : 0.1f, flatten_z);
+            if (g_sculpt.tool == 3) paint_layers(s, p, io.DeltaTime < 0.1f ? io.DeltaTime : 0.1f);
+            else sculpt(s, p, io.DeltaTime < 0.1f ? io.DeltaTime : 0.1f, flatten_z);
         }
     }
     return true;
+}
+
+// ---- Landscape layers: blended on the CPU into one colour texture per landscape ----
+// shortcut: one 1024 texture over the whole terrain (detail is limited by it: about 16 texels a metre
+// on a 64 m landscape); blend in the shader with a weight map when terrains get big.
+
+struct LandscapeTexture {
+    u64 hash = 0;
+    rhi::TextureHandle texture;
+    u64 built_ms = 0;
+};
+std::unordered_map<std::string, LandscapeTexture> g_landscape_textures;  // mesh key -> its blended layers
+struct LayerImage {
+    std::vector<u8> pixels;  // RGBA8 sRGB, mip 0
+    u32 width = 0, height = 0;
+    i64 modified = 0;
+};
+std::unordered_map<std::string, LayerImage> g_layer_images;  // texture GUID -> its pixels
+
+const LayerImage* layer_image(const asset::AssetRegistry& registry, const char* guid_text) {
+    asset::Guid guid;
+    if (!guid_text[0] || !asset::parse_guid(guid_text, guid)) return nullptr;
+    const asset::AssetRecord* r = registry.find(guid);
+    if (!r) return nullptr;
+    char path[300];
+    registry.source_path(*r, path, sizeof path);
+    std::error_code ec;
+    const i64 modified = static_cast<i64>(std::filesystem::last_write_time(path, ec).time_since_epoch().count());
+    LayerImage& image = g_layer_images[guid_text];
+    if (image.width && image.modified == modified) return &image;
+    asset::TextureData data(default_allocator());
+    if (!asset::load_texture(path, true, 1024, data)) return nullptr;
+    image.width = data.width;
+    image.height = data.height;
+    image.pixels.assign(data.mip(0), data.mip(0) + static_cast<usize>(data.width) * data.height * 4);
+    image.modified = modified;
+    return &image;
+}
+
+u8 to_srgb_byte(f32 linear) {
+    const f32 c = std::clamp(linear, 0.0f, 1.0f);
+    return static_cast<u8>(std::lround((c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f) * 255.0f));
+}
+
+void blend_landscape_layers(const world::Landscape& l, const asset::AssetRegistry& registry, u32 size, std::vector<u8>& out) {
+    out.assign(static_cast<usize>(size) * size * 4, 255);
+    const LayerImage* images[4] = {};
+    u8 tint[4][3];
+    for (u32 k = 0; k < l.layers.count; ++k) {
+        images[k] = layer_image(registry, l.layers[k].texture);
+        tint[k][0] = to_srgb_byte(l.layers[k].tint.r);
+        tint[k][1] = to_srgb_byte(l.layers[k].tint.g);
+        tint[k][2] = to_srgb_byte(l.layers[k].tint.b);
+    }
+    auto weights_at = [&](u32 i, u32 j, f32 w[4]) {
+        const u32 packed = l.weights.count >= kGrid * kGrid ? l.weights[j * kGrid + i] : 255u;
+        for (int k = 0; k < 4; ++k) w[k] = static_cast<f32>((packed >> (8 * k)) & 0xFFu) / 255.0f;
+    };
+    for (u32 y = 0; y < size; ++y) {
+        // Texel (x, y): row 0 is the landscape's +Y edge (the mesh's UV v runs along -Y).
+        const f32 gy = (1.0f - (static_cast<f32>(y) + 0.5f) / static_cast<f32>(size)) * static_cast<f32>(kGrid - 1);
+        const u32 j = std::min(static_cast<u32>(gy), kGrid - 2);
+        const f32 fy = gy - static_cast<f32>(j);
+        for (u32 x = 0; x < size; ++x) {
+            const f32 gx = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(kGrid - 1);
+            const u32 i = std::min(static_cast<u32>(gx), kGrid - 2);
+            const f32 fx = gx - static_cast<f32>(i);
+            f32 w00[4], w10[4], w01[4], w11[4], w[4];
+            weights_at(i, j, w00);
+            weights_at(i + 1, j, w10);
+            weights_at(i, j + 1, w01);
+            weights_at(i + 1, j + 1, w11);
+            for (int k = 0; k < 4; ++k) w[k] = (w00[k] * (1 - fx) + w10[k] * fx) * (1 - fy) + (w01[k] * (1 - fx) + w11[k] * fx) * fy;
+            const f32 wx = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(size) * l.size, wy = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(size) * l.size;  // metres from the corner
+            f32 rgb[3] = {};
+            for (u32 k = 0; k < l.layers.count; ++k) {
+                if (w[k] <= 0.0f) continue;
+                u8 texel[3] = {255, 255, 255};
+                if (const LayerImage* im = images[k]) {
+                    const f32 tile = l.layers[k].tile > 0.1f ? l.layers[k].tile : 0.1f;
+                    const f32 u = wx / tile, v = wy / tile;
+                    const u32 tx = static_cast<u32>((u - std::floor(u)) * static_cast<f32>(im->width)) % im->width;
+                    const u32 ty = static_cast<u32>((v - std::floor(v)) * static_cast<f32>(im->height)) % im->height;
+                    const u8* p = &im->pixels[(static_cast<usize>(ty) * im->width + tx) * 4];
+                    texel[0] = p[0];
+                    texel[1] = p[1];
+                    texel[2] = p[2];
+                }
+                for (int c = 0; c < 3; ++c) rgb[c] += w[k] * static_cast<f32>(texel[c]) * static_cast<f32>(tint[k][c]) / 255.0f;
+            }
+            u8* o = &out[(static_cast<usize>(y) * size + x) * 4];
+            for (int c = 0; c < 3; ++c) o[c] = static_cast<u8>(std::lround(std::clamp(rgb[c], 0.0f, 255.0f)));
+        }
+    }
+}
+
+rhi::TextureHandle landscape_texture(const char* mesh_key) {
+    const auto it = g_landscape_textures.find(mesh_key);
+    return it == g_landscape_textures.end() ? rhi::TextureHandle{} : it->second.texture;
+}
+
+void update_landscape_texture(const world::Landscape& l, const char* key, MeshCache& meshes) {
+    LandscapeTexture& t = g_landscape_textures[key];
+    if (l.layers.count == 0) {
+        if (t.texture.valid()) meshes.device().destroy_texture(t.texture);
+        t = LandscapeTexture{};
+        return;
+    }
+    u64 hash = fnv(&l.size, sizeof l.size, fnv(l.layers.items, sizeof(world::LandscapeLayer) * l.layers.count, fnv(l.weights.items, sizeof(u32) * l.weights.count)));
+    for (u32 k = 0; k < l.layers.count; ++k) {  // a layer's texture file edited in Photoshop: blend again
+        if (const auto im = g_layer_images.find(l.layers[k].texture); im != g_layer_images.end()) hash = fnv(&im->second.modified, sizeof im->second.modified, hash);
+    }
+    const u64 now = SDL_GetTicks();
+    if (t.texture.valid() && t.hash == hash) return;
+    if (t.texture.valid() && ImGui::IsMouseDown(ImGuiMouseButton_Left) && now - t.built_ms < 250) return;  // painting: a few times a second
+    static std::vector<u8> pixels;
+    constexpr u32 kSize = 1024;
+    blend_landscape_layers(l, meshes.registry(), kSize, pixels);
+    asset::TextureData data(default_allocator());
+    if (!asset::build_texture(pixels.data(), kSize, kSize, true, kSize, data)) return;
+    const void* mips[asset::kMaxTextureMips] = {};
+    for (u32 m = 0; m < data.mip_count; ++m) mips[m] = data.mip(m);
+    const rhi::TextureHandle fresh = meshes.device().create_texture(data.width, data.height, data.mip_count, rhi::TextureFormat::RGBA8_sRGB, mips);
+    if (t.texture.valid()) meshes.device().destroy_texture(t.texture);  // shortcut: freed at once, like the reflection atlas
+    t.texture = fresh;
+    t.hash = hash;
+    t.built_ms = now;
 }
 
 void update_landscapes(world::World& w, MeshCache& meshes) {
@@ -723,7 +929,7 @@ void update_landscapes(world::World& w, MeshCache& meshes) {
             std::snprintf(mesh->mesh, sizeof mesh->mesh, "Landscape:%08x", static_cast<unsigned>(ids()));
         }
         keys.insert(mesh->mesh);
-        const u64 hash = fnv(&l->size, sizeof l->size, fnv(&l->uv_tile, sizeof l->uv_tile, fnv(l->heights.items, sizeof(f32) * l->heights.count)));
+        const u64 hash = fnv(&l->layers.count, sizeof l->layers.count, fnv(&l->size, sizeof l->size, fnv(&l->uv_tile, sizeof l->uv_tile, fnv(l->heights.items, sizeof(f32) * l->heights.count))));
         const auto it = g_landscape_hash.find(mesh->mesh);
         if (it != g_landscape_hash.end() && it->second == hash && meshes.get(mesh->mesh)) continue;
         render::MeshData data;
@@ -731,6 +937,9 @@ void update_landscapes(world::World& w, MeshCache& meshes) {
         meshes.set_generated(mesh->mesh, data);
         render::free_mesh(default_allocator(), data);
         g_landscape_hash[mesh->mesh] = hash;
+    }
+    for (const Entity e : landscapes(w)) {  // their painted layers (after the meshes: a new key exists now)
+        if (const world::StaticMesh* mesh = w.get<world::StaticMesh>(e)) update_landscape_texture(*w.get<world::Landscape>(e), mesh->mesh, meshes);
     }
 }
 

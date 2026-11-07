@@ -407,6 +407,16 @@ struct InstancedStaticMesh {
     LSD_PROPERTY(Edit, Tooltip = "The copies (foliage paints them); drawn together in one go") List<MeshInstance, 1024> instances;
 };
 
+// A Landscape's paint layer (Unreal's Landscape Layer Info): a texture tiled over the terrain, tinted.
+LSD_STRUCT()
+struct LandscapeLayer {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Its name in the Landscape mode's Paint list (Grass, Rock, Sand...)") char name[32] = "Layer";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The texture tiled where this layer is painted (none: the tint alone)") char texture[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour, multiplied with the texture") LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "Metres per texture tile") f32 tile = 4.0f;
+};
+
 // Terrain sculpted in Landscape mode (Unreal's Landscape): a square grid of heights centred on the
 // object, drawn and collided through the Static Mesh beside it (its mesh is "Landscape:<id>", built
 // from these heights by the editor and the game every time they change).
@@ -418,6 +428,9 @@ struct Landscape {
     LSD_PROPERTY(Edit, Units = "m", Min = 1, Tooltip = "Width of the square (the grid stretches with it)") f32 size = 64.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "Metres per texture tile") f32 uv_tile = 4.0f;
     LSD_PROPERTY(Save) List<f32, 4225> heights;  // kResolution x kResolution, row by row (y, then x), metres
+    LSD_PROPERTY(Edit, Tooltip = "Paint layers (Landscape mode > Paint). The first covers everything until others are painted over it; 2 or more to paint")
+    List<LandscapeLayer, 4> layers;
+    LSD_PROPERTY(Save) List<u32, 4225> weights;  // per height: the 4 layers' weights as bytes (layer 0 in the lowest), summing to 255
 };
 
 // Scatters copies of a mesh on whatever surfaces are inside this box (Unreal's PCG Volume with a

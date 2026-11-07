@@ -268,7 +268,7 @@ pointers) and the reflection tables. Both become the C API, so every language se
 ## v2 (after the vertical slice)
 
 - [x] Level modes in the Level tab (Select, 3D Modeling, Foliage, Landscape, Animation Sequence, PCG, VFX) with a Mode panel; `mode <name>` [Unreal's mode dropdown]
-- [~] Landscape: Landscape component (65 x 65 heights in the level, drawn and collided as a generated mesh), Create + Sculpt / Smooth / Flatten brushes; needs paint layers, heightmap import / export, holes, bigger grids and tiles, LODs [Landscape]
+- [~] Landscape: Landscape component (65 x 65 heights in the level, drawn and collided as a generated mesh), Create + Sculpt / Smooth / Flatten brushes; paint layers (up to 4 Landscape Layers: texture, tint, tile; Paint tool with Shift to remove; weights per height saved in the level, blended on the CPU into one 1024 colour texture); needs heightmap import / export, holes, bigger grids and tiles, LODs [Landscape]
 - [~] Foliage painting: brush paints / erases copies of a mesh onto surfaces into Instanced Static Meshes (density, scale, random turn); needs several foliage types at once, align to normal, per-copy collision [Foliage]
 - [~] PCG: PCG Volume scatters a mesh on the surfaces in its box (density, seed, slope, scale, align), rebuilt on change; needs graphs of rules, several meshes, exclusions, splines as input [PCG]
 - World: level streaming volumes, water bodies (lake, river, ocean) [Water]

@@ -135,10 +135,27 @@ The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel
 | --- | --- |
 | **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m (Modeling Mode basics; no extrude / bevel yet) |
 | **Foliage** | Pick a mesh, brush size, density (copies per m2), scale range; **LMB drag** paints copies onto surfaces, **Shift+LMB** erases. Copies go to *Foliage* objects (Instanced Static Meshes, 1024 each) |
-| **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks, then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All. It collides in Play; its material is on its Static Mesh |
+| **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks, then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All; **Paint** layers (below). It collides in Play; without layers its material is on its Static Mesh |
 | **Animation Sequence** | Your Timelines (double-click to edit), New Timeline, a button to the Animation workspace (Sequencer) |
 | **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output* |
 | **VFX** | Your particle systems (double-click to edit, **Place** puts one where the view looks), New Particle System, a button to the Effects workspace (Niagara) |
+
+**Landscape paint layers** (Unreal's Landscape Paint with Layer Infos):
+
+![Painting a landscape layer](images/landscape_paint.jpg)
+*Landscape mode > Paint: the Cloth layer painted over Grass on sculpted hills.*
+
+1. Select the landscape. In Details > Landscape > **Layers**, add 2 to 4 layers: a **Name**
+   (Grass, Rock, Sand...), a **Texture** (or none: the tint alone), a **Tint** and **Tile** (metres
+   per texture tile). The first layer covers the whole terrain to start with.
+2. Landscape mode > **Paint**, pick the layer in the **Layers** list, and LMB-drag on the terrain
+   (Shift+LMB removes it). Brush Size and Strength work as for sculpting; every stroke is undoable.
+3. The layers are blended into one colour texture for the whole landscape (a few times a second
+   while you paint) and used instead of the Static Mesh's material and colour; it is saved with the
+   level (the weights) and rebuilt in the game.
+
+Detail is limited by that texture (1024 x 1024 over the landscape: about 16 texels a metre on a 64 m
+one), so keep Tile at a few metres and use textures that read well from a distance.
 
 In Foliage and Landscape a ring shows the brush; clicks paint instead of selecting (Alt, RMB and MMB
 still move the camera). Every stroke is one undo step.
