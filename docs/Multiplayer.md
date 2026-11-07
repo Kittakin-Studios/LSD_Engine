@@ -73,7 +73,9 @@ any object, or place an empty one from the Place tab. Then, in **Details**:
 3. Its settings appear under **Script properties**: **toggle_key** (M opens and closes the menu)
    and **open_at_start** (the menu shows when the game starts).
 
-Save the level (Ctrl+S). The menu's look is `Content/Multiplayer/WBP_Multiplayer.rml`:
+Save the level (Ctrl+S). In the editor the menu belongs to the **Multiplayer workspace**: it opens
+when you Play from that tab (or switch to it while playing), and stays hidden in Layout and the other
+workspaces. A packaged game always shows it. The menu's look is `Content/Multiplayer/WBP_Multiplayer.rml`:
 double-click it to restyle it in the UI window, like a UMG widget.
 
 ## 4. Host
@@ -168,6 +170,7 @@ The menu is ordinary Lua: copy it and change it. The calls it uses:
 | `lsd.net_leave([level])` | back to single player |
 | `lsd.net_join_code()` | `{upnp, message, internet, lan = {{address, code, tailscale}, ...}}` for the host |
 | `lsd.net_find_games(seconds)` | games on the local network |
+| `lsd.editor_workspace()` | the editor's workspace tab while playing ("Layout", "Multiplayer"...), "" in a packaged game |
 | `on_connected(self, id)`, `on_disconnected(self)` | how a join went |
 
 More in [MANUAL.md](MANUAL.md#multiplayer) (replication, events, chat, voice) and [CODING.md](CODING.md).

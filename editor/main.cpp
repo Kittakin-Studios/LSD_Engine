@@ -447,7 +447,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             const lsd::Mat4 mvp = vp * m;
             if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
             if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-            Caster caster{mesh->gpu.vertices, indices, count, m};
+            Caster caster{mesh->gpu.vertices, indices, count, m, false, {}};
             caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
             casters.push_back(caster);
         }
@@ -489,7 +489,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 lsd::rhi::BufferHandle indices;
                 lsd::u32 count = 0;
                 if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-                Caster caster{mesh->gpu.vertices, indices, count, m};
+                Caster caster{mesh->gpu.vertices, indices, count, m, false, {}};
                 caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
                 casters.push_back(caster);
             }
@@ -2206,6 +2206,7 @@ int main(int argc, char** argv) {
             }
         }
         if (g_lightmaps_changed) upload_lightmaps(*device, meshes);
+        play.set_workspace(game_mode ? "" : state.settings.workspace);  // lsd.editor_workspace
         if (g_lighting_build) {
             LightingBuild& build = *g_lighting_build;
             const lsd::u32 total = build.total.load() ? build.total.load() : 1u;

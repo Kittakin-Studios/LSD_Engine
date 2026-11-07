@@ -616,7 +616,8 @@ game is single player and nothing networked runs. On:
 - **The ready-made menu**: `Content/Multiplayer/Multiplayer.lua` with `WBP_Multiplayer`. Put the script
   on any object in the level the game starts on (Project Settings > Multiplayer on). It has Host,
   Show join codes, a code box with Join, Find LAN games and Leave; **M** opens and closes it
-  (`toggle_key` in Details), and `open_at_start` shows it when the game starts.
+  (`toggle_key` in Details), and `open_at_start` shows it when the game starts. In the editor it
+  shows only in the Multiplayer workspace (`lsd.editor_workspace()`); a packaged game always has it.
 
 #### Playtesting over the internet
 

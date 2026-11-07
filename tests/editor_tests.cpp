@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include "keymap.h"
+#include "landscape_paint.h"
 #include "rml_edit.h"
 #include "editor_settings.h"
 #include "sound_cue.h"
@@ -16,6 +17,7 @@
 
 #include "lsd/world/components.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -293,7 +295,7 @@ static void test_assistant() {
     using namespace lsd::editor::assistant;
     Settings claude;
     claude.key = "k";
-    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", ""}};
+    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", "", {}, {}}};
     const std::string body = request_body(claude, "You are LSD Assistant", turns);
     CHECK(request_url(claude) == "https://api.anthropic.com/v1/messages");
     CHECK(body.find("\"model\":\"claude-opus-5-5\"") != std::string::npos && body.find("\"cache_control\":{\"type\":\"ephemeral\"}") != std::string::npos);
@@ -316,8 +318,8 @@ static void test_assistant() {
                               R"({"type":"text","text":"Here:\n```lua Content/Script/Door.lua\nfunction on_start(self) end\n```\nDone \u00e9"}],"stop_reason":"end_turn"})";
     const Reply r = parse_reply(claude, 200, reply);
     CHECK(r.ok && r.text.find("Done \xc3\xa9") != std::string::npos && r.raw.find("\"signature\":\"abc\"") != std::string::npos && r.raw.front() == '[');
-    turns.push_back({false, r.text, r.raw});
-    turns.push_back({true, "thanks", ""});
+    turns.push_back({false, r.text, r.raw, {}, {}});
+    turns.push_back({true, "thanks", "", {}, {}});
     const std::string next = request_body(claude, "s", turns);
     CHECK(next.find("\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"") != std::string::npos);  // sent back unchanged
     const std::vector<CodeBlock> blocks = code_blocks(r.text);
@@ -356,7 +358,7 @@ static void test_assistant() {
     local.model = "llama3.1";
     CHECK(request_url(local) == "http://localhost:11434/v1/chat/completions");
     CHECK(request_headers(local).size() == 1);  // no key: no Authorization header
-    CHECK(request_body(local, "sys", {{true, "hi", ""}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
+    CHECK(request_body(local, "sys", {{true, "hi", "", {}, {}}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
     const Reply o = parse_reply(local, 200, R"({"choices":[{"message":{"role":"assistant","content":"hello"}}]})");
     CHECK(o.ok && o.text == "hello");
     const Reply os = parse_stream(local, 200, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"
@@ -366,7 +368,7 @@ static void test_assistant() {
     // Tools: offered when on, calls read back from both providers' streams, results sent the way each expects.
     CHECK(request_body(claude, "s", turns, true).find("\"tools\":[{\"name\":\"console\"") != std::string::npos);
     CHECK(request_body(claude, "s", turns).find("\"tools\"") == std::string::npos);
-    CHECK(request_body(local, "s", {{true, "hi", ""}}, true).find("{\"type\":\"function\",\"function\":{\"name\":\"console\"") != std::string::npos);
+    CHECK(request_body(local, "s", {{true, "hi", "", {}, {}}}, true).find("{\"type\":\"function\",\"function\":{\"name\":\"console\"") != std::string::npos);
     const Reply use = parse_stream(claude, 200,
         "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
         "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Starting Play.\"}}\n\n"
@@ -377,14 +379,14 @@ static void test_assistant() {
     CHECK(use.ok && use.text == "Starting Play." && use.calls.size() == 1 && use.calls[0].id == "tu_1" && use.calls[0].name == "console");
     CHECK(tool_arg(use.calls[0].input, "command") == "play" && tool_arg("{\"lines\":20}", "lines") == "20" && tool_arg("{}", "x").empty());
     CHECK(use.raw.find("{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"console\",\"input\":{\"command\": \"play\"}}") != std::string::npos);
-    std::vector<Turn> acted{{true, "play it", ""}, {false, use.text, use.raw, use.calls, {}}, {true, "", "", {}, {{"tu_1", "Play started", false}}}};
+    std::vector<Turn> acted{{true, "play it", "", {}, {}}, {false, use.text, use.raw, use.calls, {}}, {true, "", "", {}, {{"tu_1", "Play started", false}}}};
     const std::string back = request_body(claude, "s", acted, true);
     CHECK(back.find("{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu_1\",\"content\":\"Play started\"}]}") != std::string::npos);
     const Reply ocall = parse_stream(local, 200,
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"\"}}]}}]}\n\n"
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"lines\\\":5}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n");
     CHECK(ocall.ok && ocall.calls.size() == 1 && ocall.calls[0].id == "call_9" && ocall.calls[0].name == "read_log" && tool_arg(ocall.calls[0].input, "lines") == "5");
-    std::vector<Turn> oacted{{true, "log?", ""}, {false, "", "", ocall.calls, {}}, {true, "", "", {}, {{"call_9", "[game] ok", false}}}};
+    std::vector<Turn> oacted{{true, "log?", "", {}, {}}, {false, "", "", ocall.calls, {}}, {true, "", "", {}, {{"call_9", "[game] ok", false}}}};
     const std::string oback = request_body(local, "s", oacted, true);
     CHECK(oback.find("\"tool_calls\":[{\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"{\\\"lines\\\":5}\"}}]") != std::string::npos);
     CHECK(oback.find("{\"role\":\"tool\",\"tool_call_id\":\"call_9\",\"content\":\"[game] ok\"}") != std::string::npos);
@@ -419,8 +421,32 @@ static void test_keymap() {
     editor::load_keymap(editor::EditorSettings{});
 }
 
+// Landscape paint: the weights always sum to 255, painting moves toward the layer, erasing away.
+static void test_landscape_paint() {
+    auto sum = [](u32 p) { return (p & 0xFFu) + ((p >> 8) & 0xFFu) + ((p >> 16) & 0xFFu) + (p >> 24); };
+    auto layer = [](u32 p, int k) { return (p >> (8 * k)) & 0xFFu; };
+    u32 w = 255u;  // all layer 0
+    w = editor::paint_weight(w, 1, 0.5f, false);
+    CHECK(sum(w) == 255 && layer(w, 1) >= 126 && layer(w, 1) <= 129 && layer(w, 0) + layer(w, 1) == 255);
+    w = editor::paint_weight(w, 2, 0.5f, false);  // the others give way in proportion
+    CHECK(sum(w) == 255 && layer(w, 2) >= 126 && layer(w, 0) > 50 && layer(w, 1) > 50);
+    for (int i = 0; i < 40; ++i) w = editor::paint_weight(w, 3, 0.3f, false);
+    CHECK(sum(w) == 255 && layer(w, 3) >= 254);
+    w = editor::paint_weight(w, 3, 1.0f, true);  // all of layer 3 erased: the rest goes back to layer 0
+    CHECK(sum(w) == 255 && layer(w, 3) == 0 && layer(w, 0) == 255);
+    w = editor::paint_weight(w, 0, 1.0f, true);  // erasing the only layer: layer 1 takes it
+    CHECK(sum(w) == 255 && layer(w, 0) == 0 && layer(w, 1) == 255);
+    for (u32 seed = 1; seed < 2000; ++seed) {  // any mix, any step: still 255
+        u32 p = 255u;
+        for (int s = 0; s < 6; ++s) p = editor::paint_weight(p, static_cast<int>((seed + s) % 4), static_cast<f32>((seed * 7 + s) % 10) / 9.0f, (seed + s) % 3 == 0);
+        CHECK(sum(p) == 255);
+    }
+    CHECK(editor::paint_weight(0x12345678u, 7, 1.0f, false) == 0x12345678u);
+}
+
 int main() {
     test_keymap();
+    test_landscape_paint();
     test_assistant();
     test_undo_redo();
     test_references();

@@ -1,4 +1,5 @@
 #include "editor_modes.h"
+#include "landscape_paint.h"
 #include "tips.h"
 
 #include "material_cache.h"
@@ -15,6 +16,7 @@
 #include "lsd/world/world.h"
 
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
@@ -401,27 +403,7 @@ void paint_layers(EditorState& s, Vec3 center, f32 dt) {
                 if (d > radius) continue;
                 const f32 amount = std::fmin(1.0f, g_sculpt.strength * dt * 3.0f * 0.5f * (1.0f + std::cos(kPi * d / radius)));
                 u32& packed = l->weights[static_cast<u32>(j) * kGrid + static_cast<u32>(i)];
-                f32 w[4];
-                for (int k = 0; k < 4; ++k) w[k] = static_cast<f32>((packed >> (8 * k)) & 0xFFu) / 255.0f;
-                const int k = g_sculpt.layer;
-                const f32 goal = erase ? 0.0f : 1.0f;
-                const f32 before = w[k];
-                w[k] += (goal - w[k]) * amount;
-                const f32 rest = 1.0f - before, now_rest = 1.0f - w[k];
-                for (int o = 0; o < 4; ++o) {  // the other layers share what is left, as they did
-                    if (o == k) continue;
-                    w[o] = rest > 1e-4f ? w[o] * now_rest / rest : (o == (k == 0 ? 1 : 0) ? now_rest : 0.0f);
-                }
-                u32 out = 0, sum = 0;
-                for (int o = 0; o < 4; ++o) {
-                    const u32 b = static_cast<u32>(std::lround(std::clamp(w[o], 0.0f, 1.0f) * 255.0f));
-                    sum += b;
-                    out |= b << (8 * o);
-                }
-                if (sum != 255u) {  // rounding: the painted layer takes the difference
-                    const i32 fixed = std::clamp(static_cast<i32>((out >> (8 * k)) & 0xFFu) + 255 - static_cast<i32>(sum), 0, 255);
-                    out = (out & ~(0xFFu << (8 * k))) | (static_cast<u32>(fixed) << (8 * k));
-                }
+                const u32 out = paint_weight(packed, g_sculpt.layer, amount, erase);
                 if (out != packed) {
                     packed = out;
                     changed = true;

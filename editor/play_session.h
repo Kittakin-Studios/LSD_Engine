@@ -132,6 +132,8 @@ public:
     // The level's asset name (a joining player follows the server's); set before start.
     void set_level_name(const char* name) { std::snprintf(level_name_, sizeof level_name_, "%s", name); }
     void close_port() { upnp_.stop(); }  // Play ended: the router forward (lsd.net_join_code) goes
+    // The editor's workspace tab (lsd.editor_workspace); "" in a packaged game.
+    void set_workspace(const char* name) { std::snprintf(workspace_, sizeof workspace_, "%s", name); }
     // Join codes as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
     // `map_port`: a server asks the router to forward its port (once; a couple of seconds).
     void join_codes(char* out, usize capacity, bool map_port);
@@ -268,6 +270,7 @@ private:
     char level_request_[300] = "";
     char current_level_[300] = "*";  // the level playing now ("*": the one Play started on)
     char level_name_[64] = "";
+    char workspace_[32] = "";
     net::PortMapper upnp_;
     world::Character settings_;
     world::Entity character_;  // invalid for the default walker

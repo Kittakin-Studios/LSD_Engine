@@ -458,7 +458,7 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
     // Stored as x / (1 + x) of the light in units of its average: precise in the dark, never clipped.
     f64 sum = 0.0;
     for (u32 i : todo) sum += std::max({ambient[i].x, ambient[i].y, ambient[i].z});
-    out.lightmap_scale = std::max(static_cast<f32>(sum / std::max<usize>(todo.size(), 1)), 1e-6f);
+    out.lightmap_scale = std::max(static_cast<f32>(sum / static_cast<f64>(std::max<usize>(todo.size(), 1))), 1e-6f);
     out.lightmap_size = size;
     out.lightmap.assign(static_cast<usize>(size) * size * 4, 0);
     for (usize i = 0; i < texels.size(); ++i) {

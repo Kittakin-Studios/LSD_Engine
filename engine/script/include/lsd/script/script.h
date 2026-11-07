@@ -161,6 +161,7 @@
 //   lsd.net_join(code) -> ok, why        a join code ("K7QF2-MXA9P") or an address ("1.2.3.4[:port]"): restarts as a client,
 //                                        then follows the server to its level (on_connected / on_disconnected tell how it went)
 //   lsd.net_leave([level]) -> ok         back to single player
+//   lsd.editor_workspace() -> name       the editor's workspace tab while playing in it ("Layout", "Multiplayer"...); "" in a packaged game
 //   lsd.net_join_code() -> { upnp = "off" | "working" | "open" | "failed", message, internet = code | nil,
 //                            lan = { {address, code, tailscale = bool}, ... } }   server: codes to give playtesters;
 //                                        the first call asks the router to open the port (UPnP, a couple of seconds)
@@ -286,6 +287,7 @@ struct ScriptHost {
     bool (*net_session)(void* user, int what, const char* arg, char* why, usize capacity) = nullptr;
     // Join codes, as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
     void (*net_join_codes)(void* user, char* out, usize capacity) = nullptr;
+    const char* (*editor_workspace)(void* user) = nullptr;  // the editor's workspace tab; "" in a packaged game
 };
 
 class ScriptSystem {

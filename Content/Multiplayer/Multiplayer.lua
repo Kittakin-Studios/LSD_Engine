@@ -8,6 +8,13 @@ properties = {
   open_at_start = true, -- shown when the game starts
 }
 
+-- In the editor the menu belongs to the Multiplayer workspace (not Layout or the others); a
+-- packaged game always has it.
+local function allowed()
+  local ws = lsd.editor_workspace()
+  return ws == "" or ws == "Multiplayer"
+end
+
 local function set(self, id, text)
   lsd.ui_set_text(self.menu, id, text or "")
 end
@@ -46,7 +53,7 @@ local function show_codes(self)
 end
 
 local function open_menu(self)
-  if self.menu then return end
+  if self.menu or not allowed() then return end
   self.menu = lsd.ui_open("WBP_Multiplayer")
   if not self.menu then return end
   lsd.ui_show_cursor(true)
@@ -64,10 +71,15 @@ end
 
 function on_start(self)
   self.codes_shown = lsd.net_mode() == "server" and lsd.game_instance().mp_codes_shown == true
+  self.was_allowed = allowed()
   if self.open_at_start then open_menu(self) end
 end
 
 function on_update(self, dt)
+  local ok = allowed()
+  if self.menu and not ok then close_menu(self) end  -- switched to another workspace while playing
+  if ok and not self.was_allowed and self.open_at_start then open_menu(self) end  -- switched to Multiplayer
+  self.was_allowed = ok
   if lsd.key_pressed() == self.toggle_key then
     if self.menu then close_menu(self) else open_menu(self) end
   end

@@ -822,6 +822,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return true;
     };
     host.net_join_codes = [](void* user, char* out, usize capacity) { static_cast<PlaySession*>(user)->join_codes(out, capacity, true); };
+    host.editor_workspace = [](void* user) -> const char* { return static_cast<PlaySession*>(user)->workspace_; };
     host.net_find_games = [](void* user, f32 seconds, char* out, usize capacity) {
         const auto& self = *static_cast<PlaySession*>(user);
         net::LanGame games[32];

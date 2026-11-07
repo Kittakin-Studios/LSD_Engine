@@ -911,6 +911,11 @@ struct Api {
         return 2;
     }
     static int net_host(lua_State* L) { return net_session(L, 0, luaL_optstring(L, 1, "")); }
+    static int editor_workspace(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushstring(L, host.editor_workspace ? host.editor_workspace(host.user) : "");
+        return 1;
+    }
     static int net_join(lua_State* L) { return net_session(L, 1, luaL_checkstring(L, 1)); }
     static int net_leave(lua_State* L) { return net_session(L, 2, luaL_optstring(L, 1, "")); }
     static int net_join_code(lua_State* L) {
@@ -1609,7 +1614,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
-        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
