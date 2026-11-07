@@ -554,6 +554,44 @@ static void test_mesh_edit() {
     world::EditableMesh box;  // deleting a box corner takes the three faces meeting there
     editor::make_box(box);
     CHECK(editor::delete_point(box, 7) && box.faces.count == 3 && !editor::delete_point(box, 7));
+    editor::make_box(box);  // an edge belongs to two faces
+    CHECK(editor::delete_edge(box, 4, 5) && box.faces.count == 4);
+
+    // Booleans: a box against a copy moved half a metre along X.
+    auto x_range = [](const world::EditableMesh& mesh, f32& lo, f32& hi) {
+        lo = 1e9f;
+        hi = -1e9f;
+        for (u32 f = 0; f < mesh.faces.count; ++f) {
+            for (u32 i = 0; i < editor::face_size(mesh.faces[f]); ++i) {
+                const f32 x = editor::face_point(mesh, mesh.faces[f], i).x;
+                lo = std::fmin(lo, x);
+                hi = std::fmax(hi, x);
+            }
+        }
+    };
+    const Mat4 shifted = translation({0.5f, 0.0f, 0.0f});
+    world::EditableMesh tool;
+    editor::make_box(tool);
+    f32 lo = 0.0f, hi = 0.0f;
+    world::EditableMesh u;
+    editor::make_box(u);
+    CHECK(editor::boolean_op(u, tool, shifted, editor::BooleanOp::Union));
+    x_range(u, lo, hi);
+    CHECK(std::fabs(lo + 0.5f) < 1e-4f && std::fabs(hi - 1.0f) < 1e-4f);
+    world::EditableMesh sub;
+    editor::make_box(sub);
+    CHECK(editor::boolean_op(sub, tool, shifted, editor::BooleanOp::Subtract));
+    x_range(sub, lo, hi);
+    CHECK(std::fabs(lo + 0.5f) < 1e-4f && std::fabs(hi) < 1e-4f);  // what is left: the box's -X half
+    world::EditableMesh both;
+    editor::make_box(both);
+    CHECK(editor::boolean_op(both, tool, shifted, editor::BooleanOp::Intersect));
+    x_range(both, lo, hi);
+    CHECK(std::fabs(lo) < 1e-4f && std::fabs(hi - 0.5f) < 1e-4f);
+    for (u32 f = 0; f < sub.faces.count; ++f) CHECK(dot(editor::face_normal(sub, f), editor::face_centre(sub, f) - Vec3{-0.25f, 0, 0.5f}) > 0.0f);  // still facing out
+    world::EditableMesh apart;  // nothing in common: an empty intersection leaves the mesh as it was
+    editor::make_box(apart);
+    CHECK(!editor::boolean_op(apart, tool, translation({5.0f, 0.0f, 0.0f}), editor::BooleanOp::Intersect) && apart.faces.count == 6);
     const std::string obj = editor::to_obj(m, "Box");
     CHECK(obj.find("\nv ") != std::string::npos && obj.find("\nf ") != std::string::npos);
 }

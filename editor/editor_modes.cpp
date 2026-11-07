@@ -157,6 +157,22 @@ void asset_list(EditorState& s, const char* data_type, const char* empty, bool p
 bool g_box_uv = true;  // new shapes get box-projected UVs (textures do not stretch)
 i32 g_edit_face = -1;   // the Editable Mesh face picked in the viewport
 i32 g_edit_point = -1;  // or the point (a click near one picks it instead of the face)
+i32 g_edit_edge[2] = {-1, -1};  // or the edge (its two points), picked near its line
+Vec3 g_edge_moved;              // the edge's Move field: how far it went in this drag
+Entity g_boolean_with;          // Boolean: the other object
+bool g_boolean_hide = true;     // Boolean: hide the other object afterwards
+
+// `e`'s shape as an Editable Mesh (its own, or the box a Cube is); false if it has neither.
+bool shape_of(const world::World& w, Entity e, world::EditableMesh& out) {
+    if (const auto* m = w.get<world::EditableMesh>(e)) {
+        out = *m;
+        return true;
+    }
+    const auto* mesh = w.get<world::StaticMesh>(e);
+    if (!mesh || std::strcmp(mesh->mesh, "Cube") != 0) return false;
+    make_box(out);
+    return true;
+}
 Entity g_edit_owner;
 f32 g_extrude = 0.5f, g_inset = 0.25f, g_push = 0.1f;
 
@@ -164,11 +180,79 @@ world::EditableMesh* editable(EditorState& s) {
     return s.world->alive(s.selected) ? s.world->get<world::EditableMesh>(s.selected) : nullptr;
 }
 
+// Boolean (Unreal's Modeling Mode Boolean): the selected mesh with another Editable Mesh or Cube.
+void draw_boolean(EditorState& s, world::EditableMesh& m) {
+    ImGui::SeparatorText("Boolean");
+    world::World& w = *s.world;
+    const char* name = w.alive(g_boolean_with) && g_boolean_with != s.selected ? w.name(g_boolean_with) : "(pick an object)";
+    ImGui::SetNextItemWidth(180);
+    if (ImGui::BeginCombo("With", name)) {
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const Entity e = w.entity_at_slot(slot);
+            world::EditableMesh shape;
+            if (!e.valid() || e == s.selected || !shape_of(w, e, shape)) continue;
+            ImGui::PushID(static_cast<int>(slot));
+            if (ImGui::Selectable(w.name(e), e == g_boolean_with)) g_boolean_with = e;
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("The other shape: an Editable Mesh or a Cube, where it stands in the level");
+    with_tip(ImGui::Checkbox("Hide it afterwards", &g_boolean_hide), "Hides the other object once it has shaped this one (undo brings it back)");
+    world::EditableMesh other;
+    const bool ready = w.alive(g_boolean_with) && g_boolean_with != s.selected && shape_of(w, g_boolean_with, other);
+    if (!ready) ImGui::BeginDisabled();
+    const struct {
+        const char* label;
+        BooleanOp op;
+        const char* tip;
+    } ops[] = {{"Union", BooleanOp::Union, "Joins both shapes into one"},
+               {"Subtract", BooleanOp::Subtract, "Cuts the other shape out of this one (doors, windows, holes)"},
+               {"Intersect", BooleanOp::Intersect, "Keeps only where the two shapes overlap"}};
+    for (const auto& o : ops) {
+        if (with_tip(ImGui::Button(o.label), o.tip) && ready) {
+            const Mat4 to_mesh = affine_inverse(w.world_matrix(s.selected)) * w.world_matrix(g_boolean_with);
+            if (boolean_op(m, other, to_mesh, o.op)) {
+                if (g_boolean_hide) w.set_hidden(g_boolean_with, true);
+                g_edit_face = g_edit_point = -1;
+                g_edit_edge[0] = g_edit_edge[1] = -1;
+                mark_edited(s, o.label);
+            } else {
+                std::snprintf(s.status, sizeof s.status, "%s: nothing left, or the result is over 1024 points / faces", o.label);
+            }
+        }
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    if (!ready) ImGui::EndDisabled();
+}
+
 // The selected Editable Mesh's face tools.
 void draw_mesh_edit(EditorState& s, world::EditableMesh& m) {
     if (g_edit_owner != s.selected) {
         g_edit_owner = s.selected;
         g_edit_face = g_edit_point = -1;
+        g_edit_edge[0] = g_edit_edge[1] = -1;
+    }
+    if (g_edit_edge[0] >= 0 && static_cast<u32>(g_edit_edge[0]) < m.points.count && static_cast<u32>(g_edit_edge[1]) < m.points.count) {  // an edge
+        ImGui::Text("Edge %d - %d selected", g_edit_edge[0] + 1, g_edit_edge[1] + 1);
+        Vec3 moved = g_edge_moved;
+        if (ImGui::DragFloat3("Move", &moved.x, 0.01f, -1000.0f, 1000.0f, "%.2f")) {
+            const Vec3 step = moved - g_edge_moved;
+            for (const i32 p : g_edit_edge) m.points[static_cast<u32>(p)].p = m.points[static_cast<u32>(p)].p + step;  // both ends; its faces follow
+            g_edge_moved = moved;
+        }
+        ImGui::SetItemTooltip("Drag to move the edge (both its points) in the object's own space");
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            mark_edited(s, "Move Edge");
+            g_edge_moved = {};
+        }
+        if (with_tip(ImGui::Button("Delete Edge"), "Removes the faces on both sides of the edge (an opening)")) {
+            if (delete_edge(m, static_cast<u32>(g_edit_edge[0]), static_cast<u32>(g_edit_edge[1]))) mark_edited(s, "Delete Edge");
+            g_edit_edge[0] = g_edit_edge[1] = -1;
+        }
+        hint("Click a face or a corner instead to edit those.");
+        return;
     }
     ImGui::SeparatorText("Edit Mesh");
     ImGui::Text("%u faces, %u points", m.faces.count, m.points.count);
@@ -186,7 +270,8 @@ void draw_mesh_edit(EditorState& s, world::EditableMesh& m) {
         return;
     }
     if (g_edit_face < 0 || static_cast<u32>(g_edit_face) >= m.faces.count) {
-        hint("Click a face of the mesh in the viewport to edit it, or near one of its corners to move that point.");
+        hint("Click a face of the mesh in the viewport to edit it, near a corner to move that point, or near an edge to move that edge.");
+        draw_boolean(s, m);
         return;
     }
     ImGui::Text("Face %d selected", g_edit_face + 1);
@@ -217,6 +302,9 @@ void draw_mesh_edit(EditorState& s, world::EditableMesh& m) {
     }
     ImGui::SeparatorText("Mesh");
     with_tip(ImGui::DragFloat("UV Scale", &m.uv_scale, 0.01f, 0.01f, 100.0f, "%.2f"), "Texture tiles per metre");
+    with_tip(ImGui::DragFloat2("UV Offset", &m.uv_offset_u, 0.01f, -100.0f, 100.0f, "%.2f"), "Slides the texture on every face (U, V)");
+    with_tip(ImGui::DragFloat("UV Rotation", &m.uv_rotation, 1.0f, -360.0f, 360.0f, "%.0f deg"), "Turns the texture on every face");
+    draw_boolean(s, m);
     if (with_tip(ImGui::Button("Save as Mesh Asset"), "Writes it as an OBJ in Content/Meshes (a mesh asset you can place many times or open in Blender)")) {
         namespace fs = std::filesystem;
         const fs::path dir = fs::path(s.registry ? s.registry->content_dir() : "Content") / "Meshes";
@@ -1014,11 +1102,52 @@ bool face_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
         ImVec2 at;
         if (project(view_proj, transform_point(world_m, m->points[static_cast<u32>(near_point)].p), pos, size, at)) fg->AddCircle(at, 6.0f, IM_COL32(120, 230, 255, 255), 0, 2.0f);
     }
+    // Edges: the one under the cursor (within 8 px of its line, no corner nearer) is drawn, the picked one in yellow.
+    i32 near_edge[2] = {-1, -1};
+    f32 edge_best = 64.0f;
+    for (u32 f = 0; f < m->faces.count && near_point < 0; ++f) {
+        const world::EditFace& face = m->faces[f];
+        const u32 n = face_size(face);
+        for (u32 i = 0; i < n; ++i) {
+            const u32 ids[4] = {face.a, face.b, face.c, face.d};
+            const u32 a = ids[i], b = ids[(i + 1) % n];
+            if (a >= m->points.count || b >= m->points.count) continue;
+            ImVec2 pa, pb;
+            if (!project(view_proj, transform_point(world_m, m->points[a].p), pos, size, pa) || !project(view_proj, transform_point(world_m, m->points[b].p), pos, size, pb)) continue;
+            const f32 ex = pb.x - pa.x, ey = pb.y - pa.y, len2 = ex * ex + ey * ey;
+            if (len2 < 1.0f) continue;
+            f32 t = ((io.MousePos.x - pa.x) * ex + (io.MousePos.y - pa.y) * ey) / len2;
+            t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+            const f32 dx = pa.x + ex * t - io.MousePos.x, dy = pa.y + ey * t - io.MousePos.y;
+            if (hovered && dx * dx + dy * dy < edge_best) {
+                edge_best = dx * dx + dy * dy;
+                near_edge[0] = static_cast<i32>(a);
+                near_edge[1] = static_cast<i32>(b);
+            }
+        }
+    }
+    auto draw_edge = [&](const i32* edge, ImU32 color) {
+        ImVec2 pa, pb;
+        if (project(view_proj, transform_point(world_m, m->points[static_cast<u32>(edge[0])].p), pos, size, pa) &&
+            project(view_proj, transform_point(world_m, m->points[static_cast<u32>(edge[1])].p), pos, size, pb))
+            fg->AddLine(pa, pb, color, 3.0f);
+    };
+    if (g_edit_owner == s.selected && g_edit_edge[0] >= 0 && static_cast<u32>(g_edit_edge[0]) < m->points.count && static_cast<u32>(g_edit_edge[1]) < m->points.count)
+        draw_edge(g_edit_edge, IM_COL32(243, 195, 18, 255));
+    if (near_edge[0] >= 0) draw_edge(near_edge, IM_COL32(120, 230, 255, 255));
     if (!hovered || io.KeyAlt || !ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return false;
     g_edit_owner = s.selected;
     if (near_point >= 0) {  // a corner wins over the face under it
         g_edit_point = near_point;
         g_edit_face = -1;
+        g_edit_edge[0] = g_edit_edge[1] = -1;
+        return true;
+    }
+    if (near_edge[0] >= 0) {  // then an edge
+        g_edit_edge[0] = near_edge[0];
+        g_edit_edge[1] = near_edge[1];
+        g_edit_face = g_edit_point = -1;
+        g_edge_moved = {};
         return true;
     }
     Vec3 o, d;
@@ -1028,6 +1157,7 @@ bool face_brush(EditorState& s, const Mat4& view_proj, ImVec2 pos, ImVec2 size, 
     if (face < 0) return false;  // missed the mesh: a normal click (select something else)
     g_edit_face = face;
     g_edit_point = -1;
+    g_edit_edge[0] = g_edit_edge[1] = -1;
     return true;
 }
 

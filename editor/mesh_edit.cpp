@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -152,6 +154,239 @@ bool delete_point(world::EditableMesh& m, u32 point) {
     return removed;
 }
 
+bool delete_edge(world::EditableMesh& m, u32 a, u32 b) {
+    u32 kept = 0;
+    for (u32 f = 0; f < m.faces.count; ++f) {
+        const world::EditFace& face = m.faces[f];
+        bool has_a = false, has_b = false;
+        for (u32 i = 0; i < face_size(face); ++i) {
+            has_a |= corner(face, i) == a;
+            has_b |= corner(face, i) == b;
+        }
+        if (!(has_a && has_b)) m.faces[kept++] = face;
+    }
+    const bool removed = kept != m.faces.count;
+    m.faces.count = kept;
+    return removed;
+}
+
+// ---- Booleans: constructive solid geometry with BSP trees (convex polygons split by planes) ----
+
+namespace {
+
+constexpr f32 kPlaneEpsilon = 1e-5f;
+
+struct Poly {
+    std::vector<Vec3> v;
+    Vec3 n;  // the plane: dot(n, p) = w
+    f32 w = 0.0f;
+};
+
+bool make_plane(Poly& p) {
+    const Vec3 n = cross(p.v[1] - p.v[0], p.v[2] - p.v[0]);
+    const f32 l = length(n);
+    if (l < 1e-12f) return false;
+    p.n = n * (1.0f / l);
+    p.w = dot(p.n, p.v[0]);
+    return true;
+}
+
+void flip(Poly& p) {
+    std::vector<Vec3> r(p.v.rbegin(), p.v.rend());
+    p.v = r;
+    p.n = p.n * -1.0f;
+    p.w = -p.w;
+}
+
+// Sorts `poly` by the plane (n, w) into the four lists (coplanar ones by facing).
+void split(const Vec3& n, f32 w, const Poly& poly, std::vector<Poly>& coplanar_front, std::vector<Poly>& coplanar_back, std::vector<Poly>& front, std::vector<Poly>& back) {
+    enum { kCoplanar = 0, kFront = 1, kBack = 2, kSpanning = 3 };
+    int type = 0;
+    std::vector<int> types(poly.v.size());
+    for (usize i = 0; i < poly.v.size(); ++i) {
+        const f32 t = dot(n, poly.v[i]) - w;
+        types[i] = t < -kPlaneEpsilon ? kBack : t > kPlaneEpsilon ? kFront : kCoplanar;
+        type |= types[i];
+    }
+    if (type == kCoplanar) {
+        (dot(n, poly.n) > 0.0f ? coplanar_front : coplanar_back).push_back(poly);
+    } else if (type == kFront) {
+        front.push_back(poly);
+    } else if (type == kBack) {
+        back.push_back(poly);
+    } else {
+        Poly f, b;
+        for (usize i = 0; i < poly.v.size(); ++i) {
+            const usize j = (i + 1) % poly.v.size();
+            const int ti = types[i], tj = types[j];
+            const Vec3 vi = poly.v[i], vj = poly.v[j];
+            if (ti != kBack) f.v.push_back(vi);
+            if (ti != kFront) b.v.push_back(vi);
+            if ((ti | tj) == kSpanning) {
+                const f32 t = (w - dot(n, vi)) / dot(n, vj - vi);
+                const Vec3 cut = vi + (vj - vi) * t;
+                f.v.push_back(cut);
+                b.v.push_back(cut);
+            }
+        }
+        f.n = b.n = poly.n;
+        f.w = b.w = poly.w;
+        if (f.v.size() >= 3) front.push_back(f);
+        if (b.v.size() >= 3) back.push_back(b);
+    }
+}
+
+struct Node {
+    bool has_plane = false;
+    Vec3 n;
+    f32 w = 0.0f;
+    std::unique_ptr<Node> front, back;
+    std::vector<Poly> polys;
+
+    void invert() {
+        for (Poly& p : polys) flip(p);
+        n = n * -1.0f;
+        w = -w;
+        std::swap(front, back);
+        if (front) front->invert();
+        if (back) back->invert();
+    }
+    // The parts of `list` outside this solid.
+    std::vector<Poly> clip(const std::vector<Poly>& list) const {
+        if (!has_plane) return list;
+        std::vector<Poly> f, b;
+        for (const Poly& p : list) split(n, w, p, f, b, f, b);
+        if (front) f = front->clip(f);
+        if (back) b = back->clip(b);
+        else b.clear();
+        f.insert(f.end(), b.begin(), b.end());
+        return f;
+    }
+    void clip_to(const Node& other) {
+        polys = other.clip(polys);
+        if (front) front->clip_to(other);
+        if (back) back->clip_to(other);
+    }
+    void all(std::vector<Poly>& out) const {
+        out.insert(out.end(), polys.begin(), polys.end());
+        if (front) front->all(out);
+        if (back) back->all(out);
+    }
+    void build(const std::vector<Poly>& list) {
+        if (list.empty()) return;
+        if (!has_plane) {
+            has_plane = true;
+            n = list[0].n;
+            w = list[0].w;
+        }
+        std::vector<Poly> f, b;
+        for (const Poly& p : list) split(n, w, p, polys, polys, f, b);
+        if (!f.empty()) {
+            if (!front) front = std::make_unique<Node>();
+            front->build(f);
+        }
+        if (!b.empty()) {
+            if (!back) back = std::make_unique<Node>();
+            back->build(b);
+        }
+    }
+};
+
+std::vector<Poly> polys_of(const world::EditableMesh& m, const Mat4* to) {
+    std::vector<Poly> out;
+    for (u32 face = 0; face < m.faces.count; ++face) {
+        if (!valid(m, face)) continue;
+        Poly p;
+        for (u32 i = 0; i < face_size(m.faces[face]); ++i) {
+            const Vec3 v = face_point(m, m.faces[face], i);
+            p.v.push_back(to ? transform_point(*to, v) : v);
+        }
+        if (make_plane(p)) out.push_back(p);
+    }
+    return out;
+}
+
+} // namespace
+
+bool boolean_op(world::EditableMesh& m, const world::EditableMesh& other, const Mat4& to_mesh, BooleanOp op) {
+    Node a, b;
+    a.build(polys_of(m, nullptr));
+    b.build(polys_of(other, &to_mesh));
+    if (op == BooleanOp::Union) {
+        a.clip_to(b);
+        b.clip_to(a);
+        b.invert();
+        b.clip_to(a);
+        b.invert();
+        std::vector<Poly> rest;
+        b.all(rest);
+        a.build(rest);
+    } else if (op == BooleanOp::Subtract) {
+        a.invert();
+        a.clip_to(b);
+        b.clip_to(a);
+        b.invert();
+        b.clip_to(a);
+        b.invert();
+        std::vector<Poly> rest;
+        b.all(rest);
+        a.build(rest);
+        a.invert();
+    } else {
+        a.invert();
+        b.clip_to(a);
+        b.invert();
+        a.clip_to(b);
+        b.clip_to(a);
+        std::vector<Poly> rest;
+        b.all(rest);
+        a.build(rest);
+        a.invert();
+    }
+    std::vector<Poly> result;
+    a.all(result);
+    if (result.empty()) return false;
+    // Back into points and faces: shared corners merged, polygons over 4 corners cut into a fan of triangles.
+    world::EditableMesh out = m;
+    out.points.count = 0;
+    out.faces.count = 0;
+    auto point_index = [&](Vec3 p, u32& index) {
+        for (u32 i = 0; i < out.points.count; ++i) {
+            const Vec3 d = out.points[i].p - p;
+            if (dot(d, d) < 1e-10f) {
+                index = i;
+                return true;
+            }
+        }
+        if (out.points.count == out.points.capacity()) return false;
+        index = add_point(out, p);
+        return true;
+    };
+    for (const Poly& p : result) {
+        std::vector<u32> ids;
+        for (const Vec3& v : p.v) {
+            u32 id = 0;
+            if (!point_index(v, id)) return false;
+            if (ids.empty() || ids.back() != id) ids.push_back(id);
+        }
+        if (ids.size() > 1 && ids.front() == ids.back()) ids.pop_back();
+        if (ids.size() < 3) continue;
+        if (ids.size() <= 4) {
+            if (out.faces.count == out.faces.capacity()) return false;
+            out.faces.push_back(make_face(ids.data(), static_cast<u32>(ids.size())));
+            continue;
+        }
+        for (usize k = 1; k + 1 < ids.size(); ++k) {
+            const u32 tri[3] = {ids[0], ids[k], ids[k + 1]};
+            if (out.faces.count == out.faces.capacity()) return false;
+            out.faces.push_back(make_face(tri, 3));
+        }
+    }
+    if (!out.faces.count) return false;
+    m = out;
+    return true;
+}
+
 bool flip_face(world::EditableMesh& m, u32 face) {
     if (face >= m.faces.count) return false;
     world::EditFace& f = m.faces[face];
@@ -202,6 +437,7 @@ void build_edit_mesh(const world::EditableMesh& m, render::MeshData& out) {
     }
     out = render::allocate_mesh(default_allocator(), corners, corners);
     const f32 scale = m.uv_scale > 1e-4f ? m.uv_scale : 1.0f;
+    const f32 turn = m.uv_rotation * 3.14159265f / 180.0f, cs = std::cos(turn), sn = std::sin(turn);
     u32 k = 0;
     for (u32 face = 0; face < m.faces.count; ++face) {
         if (!valid(m, face)) continue;
@@ -214,7 +450,8 @@ void build_edit_mesh(const world::EditableMesh& m, render::MeshData& out) {
                 // Box UV: projected along the face's main axis.
                 const f32 u = az >= ax && az >= ay ? p.x : ax >= ay ? p.y : p.x, v = az >= ax && az >= ay ? p.y : p.z;
                 rhi::MeshVertex& vx = out.vertices[k];
-                vx = {{p.x, p.y, p.z}, {n.x, n.y, n.z}, {u * scale, -v * scale}};
+                const f32 su = u * scale, sv = -v * scale;  // UV tools: turned, then slid
+                vx = {{p.x, p.y, p.z}, {n.x, n.y, n.z}, {su * cs - sv * sn + m.uv_offset_u, su * sn + sv * cs + m.uv_offset_v}};
                 out.indices[k] = k;
                 ++k;
             }

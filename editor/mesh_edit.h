@@ -2,7 +2,7 @@
 // Modeling-mode mesh editing (Unreal's Modeling Mode PolyEdit): an Editable Mesh's points and faces
 // (quads and triangles) changed by Extrude, Inset, Bevel, Push / Pull, Delete and Flip, and built
 // into a flat-shaded, box-UV mesh. Pure (no GPU, no editor state): the tests run it.
-// shortcut: faces of 3 or 4 points, no edge selection, no booleans; add a half-edge mesh then.
+// shortcut: faces of 3 or 4 points (booleans cut bigger ones into triangles); add a half-edge mesh for loops and bevelled edges.
 #include "lsd/render/mesh.h"
 #include "lsd/world/components.h"
 
@@ -27,6 +27,14 @@ bool push_pull(world::EditableMesh& mesh, u32 face, f32 distance);  // moves the
 bool delete_face(world::EditableMesh& mesh, u32 face);
 // Removes every face that uses the point (the point itself stays, unused); false if none did.
 bool delete_point(world::EditableMesh& mesh, u32 point);
+// Removes every face that has the edge a-b (both points, in either order); false if none did.
+bool delete_edge(world::EditableMesh& mesh, u32 a, u32 b);
+
+// Booleans (Unreal's Modeling Mode Boolean, as CSG on BSP trees): `other`'s points are given in
+// `mesh`'s space (`to_mesh` maps them there). The result replaces `mesh`; false (unchanged) when it
+// would not fit (1024 points / faces) or is empty.
+enum class BooleanOp : u8 { Union, Subtract, Intersect };
+bool boolean_op(world::EditableMesh& mesh, const world::EditableMesh& other, const Mat4& to_mesh, BooleanOp op);
 bool flip_face(world::EditableMesh& mesh, u32 face);  // turns it inside out
 // The nearest face a ray (in the mesh's own space) hits, -1 if none; `t` is the distance along `dir`.
 i32 pick_face(const world::EditableMesh& mesh, Vec3 origin, Vec3 dir, f32& t);

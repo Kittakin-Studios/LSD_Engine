@@ -495,6 +495,9 @@ struct EditableMesh {
     LSD_PROPERTY(Save) List<EditPoint, 1024> points;
     LSD_PROPERTY(Save) List<EditFace, 1024> faces;
     LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Texture tiles per metre (its UVs are projected from each face's side)") f32 uv_scale = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Slides the texture along U") f32 uv_offset_u = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Slides the texture along V") f32 uv_offset_v = 0.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turns the texture on every face") f32 uv_rotation = 0.0f;
 };
 
 // A Landscape's paint layer (Unreal's Landscape Layer Info): a texture tiled over the terrain, tinted.
