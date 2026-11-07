@@ -40,6 +40,17 @@ namespace {
 
 std::string json_string(const char* text);  // a JSON string literal (with Multiplayer, below)
 
+// Sight: `dir` (normalised, from the eye) inside the field of view `angle` (degrees) around m's flat +X.
+bool in_view(const Mat4& m, f32 angle, Vec3 dir) {
+    if (angle >= 360.0f) return true;
+    Vec3 forward = transform_vector(m, {1, 0, 0});
+    forward.z = 0;
+    const f32 flat = length(forward);
+    const Vec3 along{dir.x, dir.y, 0};
+    if (flat <= 1e-4f || length(along) <= 1e-4f) return false;
+    return dot(forward * (1.0f / flat), normalize(along)) >= std::cos(radians(angle * 0.5f));
+}
+
 // Action ids of the built-in controls used when the level has no Character (not real asset GUIDs).
 constexpr char kDefaultMove[] = "000000000000000000000000000d0001";
 constexpr char kDefaultLook[] = "000000000000000000000000000d0002";
@@ -149,7 +160,13 @@ const ai::BehaviorTree* PlaySession::tree_for(const char* guid) {
     const asset::AssetRecord* r = asset::parse_guid(guid, id) ? registry_->find(id) : nullptr;
     char path[300], error[256] = "";
     if (r) registry_->source_path(*r, path, sizeof path);
-    t->ok = r && load_behavior_tree(path, t->tree, error, sizeof error);
+    auto resolve = [](void* user, const char* name, char* out, usize capacity) {  // Run Behavior nodes
+        const auto& self = *static_cast<const PlaySession*>(user);
+        const asset::AssetRecord* tree = self.find_asset(asset::AssetType::BehaviorTree, name);
+        if (tree) self.registry_->source_path(*tree, out, capacity);
+        return tree != nullptr;
+    };
+    t->ok = r && load_behavior_tree(path, t->tree, error, sizeof error, resolve, this);
     if (!t->ok) LSD_LOG_ERROR("ai", "Behaviour tree %s: %s", r ? r->name : guid, error[0] ? error : "not found");
     return t->ok ? &t->tree : nullptr;
 }
@@ -223,20 +240,44 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
         bool sees = distance <= controller->sight_range && distance > 1e-3f;
         if (sees) {
             const Vec3 dir = to_player * (1.0f / distance);
-            Vec3 forward = transform_vector(m, {1, 0, 0});
-            forward.z = 0;
-            const f32 flat = length(forward);
-            const f32 half = radians(controller->sight_angle * 0.5f);
-            sees = controller->sight_angle >= 360.0f || (flat > 1e-4f && dot(forward * (1.0f / flat), normalize(Vec3{dir.x, dir.y, 0})) >= std::cos(half));
+            sees = in_view(m, controller->sight_angle, dir);
             physics::RayHit hit;
             const f32 skip = 0.6f;  // past the agent's own body
             if (sees && distance > skip && physics_->raycast(eye + dir * skip, dir, distance - skip - 0.3f, hit)) sees = false;
         }
-        if (sees) {
+        if (sees && !(controller->team && controller->team == controller->player_team)) {
             b.board.set("CanSeePlayer", 1.0f);
             b.board.set("PlayerLocation", feet_);
+            b.seen_player = play_clock_;
         } else {
             b.board.clear("CanSeePlayer");
+        }
+        // Teams (Unreal's affiliation): the nearest agent of another team it can see.
+        if (controller->team) {
+            f32 best = controller->sight_range;
+            Vec3 enemy;
+            bool found = false;
+            for (u32 o = 0; o < brain_count_; ++o) {
+                const auto* other = o != i && world.alive(brains_[o].entity) ? world.get<world::AIController>(brains_[o].entity) : nullptr;
+                if (!other || !other->team || other->team == controller->team) continue;
+                const Mat4 om = world.world_matrix(brains_[o].entity);
+                const Vec3 target{om.at(0, 3), om.at(1, 3), om.at(2, 3) + 1.0f};
+                const f32 d = length(target - eye);
+                if (d >= best || d < 1e-3f || !in_view(m, controller->sight_angle, (target - eye) * (1.0f / d))) continue;
+                physics::RayHit hit;
+                const Vec3 dir = (target - eye) * (1.0f / d);
+                if (d > 1.2f && physics_->raycast(eye + dir * 0.6f, dir, d - 1.2f, hit)) continue;  // past both bodies
+                best = d;
+                enemy = target - Vec3{0, 0, 1.0f};
+                found = true;
+            }
+            if (found) {
+                b.board.set("CanSeeEnemy", 1.0f);
+                b.board.set("EnemyLocation", enemy);
+                b.seen_enemy = play_clock_;
+            } else {
+                b.board.clear("CanSeeEnemy");
+            }
         }
         // Hearing.
         for (u32 n = 0; n < noise_count_; ++n) {
@@ -245,6 +286,17 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
             if (dot(d, d) > reach * reach) continue;
             b.board.set("NoiseLocation", noises_[n].at);
             b.board.set("HeardNoise", 1.0f);
+            b.heard = play_clock_;
+        }
+        // Memory (Unreal's Max Age): what was last seen or heard is forgotten after a while.
+        if (controller->memory_seconds > 0.0f) {
+            const f32 age = controller->memory_seconds;
+            if (b.board.find("PlayerLocation") && play_clock_ - b.seen_player > age) b.board.clear("PlayerLocation");
+            if (b.board.find("EnemyLocation") && play_clock_ - b.seen_enemy > age) b.board.clear("EnemyLocation");
+            if (b.board.find("NoiseLocation") && play_clock_ - b.heard > age) {
+                b.board.clear("NoiseLocation");
+                b.board.clear("HeardNoise");
+            }
         }
         if (b.tree) {
             b.dt = dt;

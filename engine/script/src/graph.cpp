@@ -477,6 +477,8 @@ NodeDef g_bt_defs[] = {
     {"BtSetKey", "Set Key", "Tasks", "Sets a blackboard key to a number or a location (x,y,z)",
      {kParent, {"Key", PinType::String, "Alert"}, {"Value", PinType::String, "1"}}, 0, {}, 0, nullptr, {}},
     {"BtClearKey", "Clear Key", "Tasks", "Removes a blackboard key", {kParent, {"Key", PinType::String, "Alert"}}, 0, {}, 0, nullptr, {}},
+    {"BtRunBehavior", "Run Behavior", "Tasks", "Runs another Behavior Tree here, by name (Unreal's Run Behavior): its Root's branch with this agent's blackboard",
+     {kParent, {"Tree", PinType::String, "BT_Patrol"}}, 0, {}, 0, nullptr, {}},
     {"BtRunScript", "Run Script", "Tasks", "Calls a function of the agent's Lua script: return true (success), false (failure) or nothing (still running)",
      {kParent, {"Function", PinType::String, "bt_attack"}}, 0, {}, 0, nullptr, {}},
     {"BtIsSet", "Is Set", "Conditions", "Succeeds if the key is set and not 0 (CanSeePlayer, HeardNoise...)",

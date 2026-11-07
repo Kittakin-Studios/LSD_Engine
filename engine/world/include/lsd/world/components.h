@@ -903,7 +903,8 @@ struct NavAgent {
 
 // Thinks for a Nav Agent (Unreal's AI Controller): runs a Behavior Tree with its own blackboard,
 // and sees / hears the player. Perception sets CanSeePlayer (1 while in view), PlayerLocation (where
-// it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range).
+// it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range); with a
+// Team, CanSeeEnemy / EnemyLocation for agents of other teams; memories fade after Memory Seconds.
 LSD_STRUCT(Component, Category = "AI", Tooltip = "An AI brain: a Behavior Tree, sight and hearing")
 struct AIController {
     LSD_GENERATED()
@@ -911,6 +912,12 @@ struct AIController {
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it sees the player (CanSeePlayer)") f32 sight_range = 15.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 360, Tooltip = "Field of view, centred on the object's +X") f32 sight_angle = 120.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it hears noises (lsd.report_noise / Report Noise)") f32 hearing_range = 12.0f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0,
+                 Tooltip = "Memory (Unreal's Max Age): PlayerLocation, EnemyLocation and NoiseLocation / HeardNoise are forgotten this long after it last saw or heard them (0 = never)")
+    f32 memory_seconds = 10.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Team (0 = none): it sees agents of other teams as enemies (CanSeeEnemy, EnemyLocation); guards and monsters on different teams fight")
+    u32 team = 0;
+    LSD_PROPERTY(Edit, Tooltip = "The player's team: an agent on this team (Team not 0) is friendly and ignores the player (no CanSeePlayer)") u32 player_team = 1;
 };
 
 // How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).

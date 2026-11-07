@@ -36,10 +36,10 @@ add_test(NAME world COMMAND lsd_world_tests)
 # Editor logic that needs no GPU (undo / redo history).
 add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/assistant_core.cpp ${PROJECT_SOURCE_DIR}/editor/transactions.cpp ${PROJECT_SOURCE_DIR}/editor/sound_cue.cpp ${PROJECT_SOURCE_DIR}/editor/rml_edit.cpp
   ${PROJECT_SOURCE_DIR}/editor/light_bake.cpp ${PROJECT_SOURCE_DIR}/editor/lighting.cpp
-  ${PROJECT_SOURCE_DIR}/editor/references.cpp ${PROJECT_SOURCE_DIR}/editor/keymap.cpp ${PROJECT_SOURCE_DIR}/editor/landscape_paint.cpp ${PROJECT_SOURCE_DIR}/editor/template_levels.cpp ${PROJECT_SOURCE_DIR}/editor/paper2d_core.cpp ${PROJECT_SOURCE_DIR}/editor/scalability.cpp)
+  ${PROJECT_SOURCE_DIR}/editor/references.cpp ${PROJECT_SOURCE_DIR}/editor/keymap.cpp ${PROJECT_SOURCE_DIR}/editor/landscape_paint.cpp ${PROJECT_SOURCE_DIR}/editor/template_levels.cpp ${PROJECT_SOURCE_DIR}/editor/paper2d_core.cpp ${PROJECT_SOURCE_DIR}/editor/scalability.cpp ${PROJECT_SOURCE_DIR}/editor/behavior.cpp)
 target_compile_definitions(lsd_editor_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(lsd_editor_tests PRIVATE ${PROJECT_SOURCE_DIR}/editor)
-target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script lsd_asset lsd_render lsd_rhi imgui xatlas)
+target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script lsd_ai lsd_asset lsd_render lsd_rhi imgui xatlas)
 lsd_configure_target(lsd_editor_tests)
 add_test(NAME editor COMMAND lsd_editor_tests)
 

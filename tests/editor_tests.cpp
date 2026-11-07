@@ -14,6 +14,7 @@
 #include "editor_settings.h"
 #include "sound_cue.h"
 #include "transactions.h"
+#include "behavior.h"
 #include "scalability.h"
 #include "template_levels.h"
 #include "paper2d_core.h"
@@ -506,6 +507,42 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// Run Behavior: another tree's branch is copied in where the node is, glowing as that node.
+static void test_run_behavior() {
+    HeapAllocator heap("bt");
+    script::Graph sub(heap);
+    const u32 sub_root = sub.add("BtRoot", 0, 0)->id;
+    script::GraphNode* wait = sub.add("BtWait", 0, 0);
+    std::snprintf(wait->values[1], sizeof wait->values[1], "%s", "3");
+    CHECK(sub.connect(sub_root, 0, wait->id, 0));
+    static std::string sub_path;
+    sub_path = std::string(LSD_TEST_TEMP_DIR) + "/BT_Sub.lsdbt";
+    CHECK(script::save_graph_file(sub, sub_path.c_str()));
+    script::Graph main_tree(heap);
+    const u32 root = main_tree.add("BtRoot", 0, 0)->id;
+    const u32 seq = main_tree.add("BtSequence", 0, 0)->id;
+    script::GraphNode* run = main_tree.add("BtRunBehavior", 0, 0);
+    CHECK(run != nullptr);
+    if (!run) return;
+    std::snprintf(run->values[1], sizeof run->values[1], "%s", "BT_Sub");
+    const u32 run_id = run->id;
+    const u32 set = main_tree.add("BtSetKey", 0, 0)->id;
+    CHECK(main_tree.connect(root, 0, seq, 0) && main_tree.connect(seq, 0, run_id, 0) && main_tree.connect(seq, 1, set, 0));
+    ai::BehaviorTree tree;
+    char error[256] = "";
+    auto resolve = [](void*, const char* name, char* out, usize capacity) {
+        if (std::strcmp(name, "BT_Sub") != 0) return false;
+        std::snprintf(out, capacity, "%s", sub_path.c_str());
+        return true;
+    };
+    CHECK(editor::build_behavior_tree(main_tree, tree, error, sizeof error, resolve, nullptr));
+    bool copied = false;
+    for (u32 i = 0; i < tree.count; ++i) copied |= tree.nodes[i].type == ai::BtType::Wait && tree.nodes[i].value == 3.0f && tree.nodes[i].id == run_id;
+    CHECK(copied && tree.count == 5);  // root, sequence, run behavior (a one-child sequence), wait, set key
+    CHECK(!editor::build_behavior_tree(main_tree, tree, error, sizeof error) && error[0]);  // nothing to find the tree with
+    std::filesystem::remove(sub_path);
+}
+
 // Engine Scalability: groups follow the overall quality unless set, and Low trims the post pass.
 static void test_scalability() {
     editor::GameUserSettings s;
@@ -569,6 +606,7 @@ int main() {
     test_paper2d();
     test_templates();
     test_scalability();
+    test_run_behavior();
     test_keymap();
     test_landscape_paint();
     test_assistant();

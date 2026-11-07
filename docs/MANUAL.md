@@ -1541,6 +1541,7 @@ the editor).
 | Move To | walks to a location in a blackboard key; follows it if it moves |
 | Wait, Random Location, Set Key, Clear Key | waiting, patrols, blackboard edits |
 | Run Script | calls a function of the agent's Lua script (return true / false / nothing = running) |
+| Run Behavior | runs another Behavior Tree here, by name (Unreal's Run Behavior): share a patrol or a search between enemies |
 | Is Set, Compare | conditions on blackboard keys |
 | Blackboard Condition | decorator: runs its one child only while Key <Op> Value holds (or is set / not set), stopping it the moment it does not |
 | Loop, Cooldown, Time Limit, Force Success | decorators: repeat the child, rest after it, give up after a time, ignore its failure |
@@ -1550,7 +1551,12 @@ Unreal attaches decorators and services to a node; here they are nodes with one 
 
 Perception fills the blackboard: **CanSeePlayer** (1 while in sight range, field of view and line
 of sight), **PlayerLocation** (last seen), **NoiseLocation** / **HeardNoise** (from
-`lsd.report_noise`). While playing, the open tree's running branch glows green. Select an object
+`lsd.report_noise`). What it saw or heard fades: PlayerLocation, EnemyLocation and NoiseLocation /
+HeardNoise are cleared **Memory Seconds** (10) after the last sighting or noise (0 keeps them), so a
+"search where it was last seen" branch ends by itself. **Team** (Unreal's affiliation): agents on
+different teams (not 0) see each other as enemies, **CanSeeEnemy** / **EnemyLocation** (the nearest
+one in view). An agent on the **Player Team** is friendly and never sets CanSeePlayer. While playing,
+the open tree's running branch glows green (a Run Behavior node glows while its tree runs). Select an object
 with an AI Controller to see its sight cone (green) and hearing range (blue) in the viewport.
 
 ---

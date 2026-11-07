@@ -332,6 +332,7 @@ private:
         ai::BtRunner runner;
         ai::Blackboard board;
         f32 dt;
+        f64 seen_player = -1e9, seen_enemy = -1e9, heard = -1e9;  // play clock of the last sighting / noise (memory)
     };
     static constexpr u32 kMaxBrains = 64;
     Brain* brains_ = nullptr;  // kMaxBrains, while playing
