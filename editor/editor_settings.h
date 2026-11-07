@@ -47,6 +47,7 @@ struct FoliageType {
     LSD_PROPERTY(Edit, Min = 0.05, Max = 10, Tooltip = "Largest random size") f32 scale_max = 1.2f;
     LSD_PROPERTY(Edit, Tooltip = "A random turn around Z for each copy") bool random_yaw = true;
     LSD_PROPERTY(Edit, Tooltip = "Tilt each copy to the surface it lands on (grass on slopes); off: always upright (trees)") bool align_to_normal = false;
+    LSD_PROPERTY(Edit, Tooltip = "Its copies block in Play (trees, rocks); off for grass and flowers") bool collision = false;
 };
 
 // A keyboard shortcut the user changed (Editor Preferences > Keyboard Shortcuts); keys "" = none.

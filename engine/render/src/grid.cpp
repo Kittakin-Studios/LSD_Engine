@@ -2,6 +2,10 @@
 
 namespace lsd::render {
 
+// 5 mm under z = 0: floors and flat landscapes at 0 hide it cleanly instead of fighting it for the
+// same depth (a shimmer of broken lines); the grid still reads as the ground plane.
+constexpr f32 kGridZ = -0.005f;
+
 GpuLines create_grid(rhi::Device& device, Allocator& allocator, const GridColors& colors, i32 half_extent) {
     const u32 lines_per_axis = static_cast<u32>(half_extent * 2 + 1);
     const u32 count = lines_per_axis * 2 * 2;  // two directions, two vertices per line
@@ -9,8 +13,8 @@ GpuLines create_grid(rhi::Device& device, Allocator& allocator, const GridColors
     const f32 h = static_cast<f32>(half_extent);
     u32 v = 0;
     auto add = [&](f32 x0, f32 y0, f32 x1, f32 y1, const f32 color[4]) {
-        vertices[v] = {{x0, y0, 0.0f}, {color[0], color[1], color[2], color[3]}};
-        vertices[v + 1] = {{x1, y1, 0.0f}, {color[0], color[1], color[2], color[3]}};
+        vertices[v] = {{x0, y0, kGridZ}, {color[0], color[1], color[2], color[3]}};
+        vertices[v + 1] = {{x1, y1, kGridZ}, {color[0], color[1], color[2], color[3]}};
         v += 2;
     };
     for (i32 i = -half_extent; i <= half_extent; ++i) {

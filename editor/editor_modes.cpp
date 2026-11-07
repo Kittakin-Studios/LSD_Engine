@@ -275,6 +275,7 @@ void foliage_stamp(EditorState& s, Vec3 center, bool erase) {
                 auto* ism = w.add<world::InstancedStaticMesh>(layer);
                 std::snprintf(ism->mesh, sizeof ism->mesh, "%s", type.mesh);
                 ism->color = type.color;
+                ism->collision = type.collision;
                 layers.push_back(layer);
             }
             world::MeshInstance in;
@@ -321,6 +322,13 @@ void draw_foliage(EditorState& s) {
     ImGui::DragFloatRange2("Scale", &t.scale_min, &t.scale_max, 0.01f, 0.05f, 10.0f, "%.2f");
     with_tip(ImGui::Checkbox("Random turn", &t.random_yaw), "Each copy gets a random turn so they do not all face the same way");
     with_tip(ImGui::Checkbox("Align to Normal", &t.align_to_normal), "Tilts each copy to the slope it lands on (grass, rocks); off keeps them upright (trees)");
+    if (with_tip(ImGui::Checkbox("Collision", &t.collision), "Its copies block in Play (trees, rocks); off for grass. Also on the Foliage object's Instanced Static Mesh")) {
+        for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {  // the copies already painted follow
+            const Entity e = s.world->entity_at_slot(slot);
+            if (e.valid() && is_foliage(*s.world, e, t.mesh)) s.world->get<world::InstancedStaticMesh>(e)->collision = t.collision;
+        }
+        mark_edited(s, "Foliage Collision");
+    }
     ImGui::SeparatorText("Brush");
     with_tip(ImGui::DragFloat("Brush Size (m)", &g_foliage_radius, 0.1f, 0.2f, 100.0f, "%.1f"), "Radius of the brush circle in the viewport");
     hint("LMB drag paints every ticked type, each keeping its own spacing; Shift+LMB erases the ticked types.");

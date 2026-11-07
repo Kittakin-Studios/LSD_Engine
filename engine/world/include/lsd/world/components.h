@@ -404,6 +404,7 @@ struct InstancedStaticMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for every copy (empty: the mesh's own colour)") char material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Colour of every copy (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "The copies cast shadows") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Tooltip = "Each copy blocks in Play like a Static Mesh with collision (trees, rocks): a box around the mesh, sized and turned as the copy; off for grass") bool collision = false;
     LSD_PROPERTY(Edit, Tooltip = "The copies (foliage paints them); drawn together in one go") List<MeshInstance, 1024> instances;
 };
 

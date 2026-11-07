@@ -1079,6 +1079,18 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         apply_material(d, mesh->physical_material);
         add_body(e, d);
     }
+    if (const auto* ism = world.get<world::InstancedStaticMesh>(e); ism && ism->collision && ism->instances.count) {
+        // Per-copy collision (foliage trees and rocks): a static box per copy, fitted to the mesh's bounds.
+        // shortcut: a body per copy (Jolt handles thousands of static boxes); one compound body per object if levels get dense
+        if (const CachedMesh* copy_mesh = meshes_->get(ism->mesh)) {
+            const Mat4 m = world.world_matrix(e);
+            for (u32 k = 0; k < ism->instances.count; ++k) {
+                const world::MeshInstance& in = ism->instances[k];
+                Vec3 copy_scale, copy_centre;
+                add_body(e, fitted_body(m * trs(in.position, in.rotation, in.scale), copy_mesh->bounds_min, copy_mesh->bounds_max, 0, physics::Motion::Static, copy_scale, copy_centre));
+            }
+        }
+    }
     if (const auto* sprite = world.get<world::Sprite>(e); sprite && sprite->collision && !cached) {
         add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));  // the sprite's quad, 1 m deep
     }
