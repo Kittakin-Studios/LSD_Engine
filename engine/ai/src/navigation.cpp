@@ -56,7 +56,7 @@ bool NavMesh::valid() const { return impl_->query != nullptr; }
 void NavMesh::clear() { impl_->release(); }
 
 bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u32 triangle_count, Vec3 bounds_min, Vec3 bounds_max,
-                    const NavSettings& s, const NavCutout* cutouts, u32 cutout_count) {
+                    const NavSettings& s, const NavCutout* cutouts, u32 cutout_count, const NavLink* links, u32 link_count) {
     impl_->release();
     if (!vertex_count || !triangle_count) return false;
     // shortcut: one tile, built in one go (Recast's "solo mesh"); tile the build for big worlds.
@@ -141,6 +141,27 @@ bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u
         params.cs = cfg.cs;
         params.ch = cfg.ch;
         params.buildBvTree = true;
+        // Nav links as Detour off-mesh connections: walkable area, flag 1 (the query filter includes it).
+        std::vector<f32> link_verts(link_count * 6), link_radius(link_count);
+        std::vector<unsigned char> link_dir(link_count), link_area(link_count, RC_WALKABLE_AREA);
+        std::vector<unsigned short> link_flags(link_count, 1);
+        std::vector<unsigned int> link_ids(link_count);
+        for (u32 i = 0; i < link_count; ++i) {
+            to_recast(links[i].start, &link_verts[i * 6]);
+            to_recast(links[i].end, &link_verts[i * 6 + 3]);
+            link_radius[i] = links[i].radius;
+            link_dir[i] = links[i].both_ways ? DT_OFFMESH_CON_BIDIR : 0;
+            link_ids[i] = i;
+        }
+        if (link_count) {
+            params.offMeshConVerts = link_verts.data();
+            params.offMeshConRad = link_radius.data();
+            params.offMeshConDir = link_dir.data();
+            params.offMeshConAreas = link_area.data();
+            params.offMeshConFlags = link_flags.data();
+            params.offMeshConUserID = link_ids.data();
+            params.offMeshConCount = static_cast<int>(link_count);
+        }
         ok = dtCreateNavMeshData(&params, &data, &data_size);
     } else {
         ok = false;
@@ -226,12 +247,16 @@ u32 NavMesh::debug_lines(Vec3* out, u32 capacity) const {
         if (!tile || !tile->header) continue;
         for (int p = 0; p < tile->header->polyCount; ++p) {
             const dtPoly& poly = tile->polys[p];
-            if (poly.getType() == DT_POLYTYPE_OFFMESH_CONNECTION) continue;
+            if (poly.getType() == DT_POLYTYPE_OFFMESH_CONNECTION) continue;  // drawn below
             for (int k = 0; k < poly.vertCount && n + 2 <= capacity; ++k) {
                 const Vec3 lift{0, 0, 0.05f};  // just above the floor
                 out[n++] = from_recast(&tile->verts[poly.verts[k] * 3]) + lift;
                 out[n++] = from_recast(&tile->verts[poly.verts[(k + 1) % poly.vertCount] * 3]) + lift;
             }
+        }
+        for (int c = 0; c < tile->header->offMeshConCount && n + 2 <= capacity; ++c) {
+            out[n++] = from_recast(&tile->offMeshCons[c].pos[0]) + Vec3{0, 0, 0.05f};
+            out[n++] = from_recast(&tile->offMeshCons[c].pos[3]) + Vec3{0, 0, 0.05f};
         }
     }
     return n;

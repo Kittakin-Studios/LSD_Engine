@@ -1,5 +1,6 @@
 #include "lsd/ai/behavior_tree.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -47,6 +48,40 @@ void Blackboard::clear(const char* name) {
 const Blackboard::Entry* Blackboard::find(const char* name) const {
     for (u32 i = 0; i < count; ++i) {
         if (std::strcmp(entries[i].name, name) == 0) return &entries[i];
+    }
+    return nullptr;
+}
+
+const BbKey* BlackboardSchema::find(const char* name) const {
+    for (u32 i = 0; i < count; ++i) {
+        if (std::strcmp(keys[i].name, name) == 0) return &keys[i];
+    }
+    return nullptr;
+}
+
+void apply_defaults(const BlackboardSchema& schema, Blackboard& board) {
+    for (u32 i = 0; i < schema.count; ++i) {
+        const BbKey& k = schema.keys[i];
+        if (k.type == BbType::Vector) board.set(k.name, Vec3{k.value[0], k.value[1], k.value[2]});
+        else if (k.type == BbType::Bool) board.set(k.name, k.value[0] != 0.0f ? 1.0f : 0.0f);
+        else if (k.type != BbType::Object) board.set(k.name, k.type == BbType::Int ? std::round(k.value[0]) : k.value[0]);
+    }
+}
+
+const char* typed_set(const BlackboardSchema& schema, Blackboard& board, const char* name, const f32* value, bool vector) {
+    if (schema.count == 0) {
+        if (vector) board.set(name, Vec3{value[0], value[1], value[2]});
+        else board.set(name, value[0]);
+        return nullptr;
+    }
+    const BbKey* k = schema.find(name);
+    if (!k) return "not a key of the Blackboard";
+    if ((k->type == BbType::Vector) != vector) return vector ? "wants a number or object" : "wants a location";
+    switch (k->type) {
+        case BbType::Vector: board.set(name, Vec3{value[0], value[1], value[2]}); break;
+        case BbType::Bool: board.set(name, value[0] != 0.0f ? 1.0f : 0.0f); break;
+        case BbType::Int: board.set(name, std::round(value[0])); break;
+        default: board.set(name, value[0]); break;
     }
     return nullptr;
 }

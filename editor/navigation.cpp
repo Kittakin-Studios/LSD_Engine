@@ -90,6 +90,20 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
         if (cut.z_min > cut.z_max) std::swap(cut.z_min, cut.z_max);
         cutouts.push_back(cut);
     }
+    // Nav Links: from the object to its End (in the object's space).
+    std::vector<ai::NavLink> links;
+    const reflect::TypeInfo& link_type = reflect::type_of<world::NavLink>();
+    for (u32 i = 0; i < world.count(link_type); ++i) {
+        const auto* l = static_cast<const world::NavLink*>(world.at(link_type, i));
+        if (!l->enabled) continue;
+        const Mat4 m = world.world_matrix(world.owner(link_type, i));
+        ai::NavLink link;
+        link.start = transform_point(m, {0, 0, 0});
+        link.end = transform_point(m, l->end);
+        link.radius = l->snap_radius;
+        link.both_ways = l->both_ways;
+        links.push_back(link);
+    }
     // Unchanged since the last build (FNV-1a over every input): keep the mesh already built.
     u64 hash = 1469598103934665603ull;
     auto mix = [&hash](const void* p, usize n) {
@@ -99,12 +113,13 @@ bool build_level_navmesh(const world::World& world, MeshCache& meshes, ai::NavMe
     mix(idx.data(), idx.size() * sizeof(u32));
     mix(&lo, sizeof lo), mix(&hi, sizeof hi), mix(&settings, sizeof settings);
     mix(cutouts.data(), cutouts.size() * sizeof(ai::NavCutout));
+    for (const ai::NavLink& l : links) mix(&l.start, sizeof l.start), mix(&l.end, sizeof l.end), mix(&l.radius, sizeof l.radius), mix(&l.both_ways, sizeof l.both_ways);
     if (input_hash && *input_hash == hash && out.valid()) {
         if (reused) *reused = true;
         return true;
     }
     const bool built = out.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), lo, hi, settings, cutouts.data(),
-                                 static_cast<u32>(cutouts.size()));
+                                 static_cast<u32>(cutouts.size()), links.data(), static_cast<u32>(links.size()));
     if (input_hash) *input_hash = built ? hash : 0;
     return built;
 }

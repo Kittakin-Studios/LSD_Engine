@@ -329,11 +329,14 @@ private:
         world::Entity entity;
         char tree_guid[33];
         const ai::BehaviorTree* tree;  // nullptr: no (valid) tree, perception only
+        u32 tree_version = 0;
         ai::BtRunner runner;
         ai::Blackboard board;
+        ai::BlackboardSchema schema;  // from the AI Controller's Blackboard asset (empty: untyped)
         f32 dt;
         f64 seen_player = -1e9, seen_enemy = -1e9, heard = -1e9;  // play clock of the last sighting / noise (memory)
     };
+    std::vector<std::string> bb_warned_;  // Blackboard keys a script wrote wrongly (warned once each)
     static constexpr u32 kMaxBrains = 64;
     Brain* brains_ = nullptr;  // kMaxBrains, while playing
     u32 brain_count_ = 0;
@@ -341,7 +344,12 @@ private:
         char guid[33];
         ai::BehaviorTree tree;
         bool ok;
+        i64 modified = 0;   // the .lsdbt's write time (hot reload while playing)
+        u32 version = 0;    // bumped by each reload: brains on it start the new tree from its root
     };
+    bool load_tree(TreeEntry& t);
+    void reload_trees();  // about once a second: trees saved while playing are read again
+    f64 trees_checked_ = 0.0;
     TreeEntry* trees_[16] = {};
     u32 tree_count_ = 0;
     struct Noise {

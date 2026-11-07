@@ -156,8 +156,14 @@ const ai::BehaviorTree* PlaySession::tree_for(const char* guid) {
     if (tree_count_ == sizeof trees_ / sizeof trees_[0]) return nullptr;
     TreeEntry* t = trees_[tree_count_++] = new TreeEntry();
     std::snprintf(t->guid, sizeof t->guid, "%s", guid);
+    t->ok = load_tree(*t);
+    return t->ok ? &t->tree : nullptr;
+}
+
+// Reads the tree into `t` (a failed read keeps what it had: a half-saved tree never runs).
+bool PlaySession::load_tree(TreeEntry& t) {
     asset::Guid id;
-    const asset::AssetRecord* r = asset::parse_guid(guid, id) ? registry_->find(id) : nullptr;
+    const asset::AssetRecord* r = asset::parse_guid(t.guid, id) ? registry_->find(id) : nullptr;
     char path[300], error[256] = "";
     if (r) registry_->source_path(*r, path, sizeof path);
     auto resolve = [](void* user, const char* name, char* out, usize capacity) {  // Run Behavior nodes
@@ -166,9 +172,35 @@ const ai::BehaviorTree* PlaySession::tree_for(const char* guid) {
         if (tree) self.registry_->source_path(*tree, out, capacity);
         return tree != nullptr;
     };
-    t->ok = r && load_behavior_tree(path, t->tree, error, sizeof error, resolve, this);
-    if (!t->ok) LSD_LOG_ERROR("ai", "Behaviour tree %s: %s", r ? r->name : guid, error[0] ? error : "not found");
-    return t->ok ? &t->tree : nullptr;
+    std::error_code ec;
+    if (r) t.modified = static_cast<i64>(std::filesystem::last_write_time(path, ec).time_since_epoch().count());
+    static ai::BehaviorTree loaded;  // shortcut: one scratch tree (Play is single-threaded)
+    const bool ok = r && load_behavior_tree(path, loaded, error, sizeof error, resolve, this);
+    if (ok) t.tree = loaded;
+    else LSD_LOG_ERROR("ai", "Behaviour tree %s: %s", r ? r->name : t.guid, error[0] ? error : "not found");
+    return ok;
+}
+
+void PlaySession::reload_trees() {
+    if (play_clock_ - trees_checked_ < 1.0) return;
+    trees_checked_ = play_clock_;
+    for (u32 i = 0; i < tree_count_; ++i) {
+        TreeEntry& t = *trees_[i];
+        asset::Guid id;
+        const asset::AssetRecord* r = asset::parse_guid(t.guid, id) ? registry_->find(id) : nullptr;
+        if (!r) continue;
+        char path[300];
+        registry_->source_path(*r, path, sizeof path);
+        std::error_code ec;
+        const i64 now = static_cast<i64>(std::filesystem::last_write_time(path, ec).time_since_epoch().count());
+        if (ec || now == t.modified) continue;
+        if (load_tree(t)) {
+            t.ok = true;
+            ++t.version;
+            LSD_LOG_INFO("ai", "Reloaded behaviour tree %s", r->name);
+        }
+        t.modified = now;  // a broken save is not retried every second
+    }
 }
 
 PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
@@ -184,6 +216,17 @@ PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
     b.entity = e;
     std::snprintf(b.tree_guid, sizeof b.tree_guid, "%s", controller->behavior_tree);
     b.tree = tree_for(b.tree_guid);
+    if (world::BlackboardData data; controller->blackboard[0] && registry_ && load_asset(*registry_, controller->blackboard, data)) {
+        for (const world::BlackboardKey& k : data.keys) {
+            if (!k.name[0] || b.schema.count == ai::kMaxBlackboardKeys) continue;
+            ai::BbKey& key = b.schema.keys[b.schema.count++];
+            std::snprintf(key.name, sizeof key.name, "%s", k.name);
+            key.type = static_cast<ai::BbType>(k.type < 5 ? k.type : 1);
+            if (key.type == ai::BbType::Vector) key.value[0] = k.default_location.x, key.value[1] = k.default_location.y, key.value[2] = k.default_location.z;
+            else key.value[0] = k.default_value;
+        }
+        ai::apply_defaults(b.schema, b.board);
+    }
     return &b;
 }
 
@@ -197,6 +240,7 @@ u32 PlaySession::active_bt_nodes(const char* guid, u32* out, u32 capacity) const
 // Perception, then each AI Controller's behaviour tree.
 void PlaySession::update_brains(world::World& world, f32 dt) {
     if (!brains_) return;
+    reload_trees();
     const reflect::TypeInfo& type = reflect::type_of<world::AIController>();
     for (u32 i = 0; i < world.count(type); ++i) brain_of(world.owner(type, i));  // new ones (spawned) too
     const Vec3 player_eye = feet_ + Vec3{0, 0, settings_.eye_height};
@@ -298,9 +342,16 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
                 b.board.clear("HeardNoise");
             }
         }
+        if (!b.tree) b.tree = tree_for(b.tree_guid);  // a tree that failed to load may have been fixed
         if (b.tree) {
             b.dt = dt;
             host.user = &b;
+            for (u32 k = 0; k < tree_count_; ++k) {
+                if (&trees_[k]->tree != b.tree || trees_[k]->version == b.tree_version) continue;
+                b.runner.reset(host);  // the tree changed under it: stop what it did, start from the new root
+                b.runner = ai::BtRunner{};
+                b.tree_version = trees_[k]->version;
+            }
             b.runner.tick(*b.tree, b.board, host, dt);
         }
         ++i;
@@ -561,6 +612,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     }
     brains_ = new Brain[kMaxBrains];
     brain_count_ = 0;
+    bb_warned_.clear();
     noise_count_ = 0;
     Vec3 scale;
 
@@ -1056,9 +1108,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return n;
     };
     host.bb_set = [](void* user, world::Entity e, const char* key, const f32* value, bool vector) {
-        if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) {
-            if (vector) b->board.set(key, Vec3{value[0], value[1], value[2]});
-            else b->board.set(key, value[0]);
+        auto& self = *static_cast<PlaySession*>(user);
+        Brain* b = self.brain_of(e);
+        const char* problem = b ? ai::typed_set(b->schema, b->board, key, value, vector) : nullptr;
+        if (problem && std::find(self.bb_warned_.begin(), self.bb_warned_.end(), key) == self.bb_warned_.end()) {  // once per key
+            self.bb_warned_.emplace_back(key);
+            LSD_LOG_WARN("ai", "lsd.set_blackboard(%s, \"%s\"): %s; not written", self.world_->name(e), key, problem);
         }
     };
     host.bb_get = [](void* user, world::Entity e, const char* key, f32* value) {

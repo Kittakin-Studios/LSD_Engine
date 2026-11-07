@@ -975,10 +975,30 @@ struct NavAgent {
 // and sees / hears the player. Perception sets CanSeePlayer (1 while in view), PlayerLocation (where
 // it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range); with a
 // Team, CanSeeEnemy / EnemyLocation for agents of other teams; memories fade after Memory Seconds.
+// A Blackboard asset's key (Unreal's Blackboard Key): its name, type and starting value.
+LSD_STRUCT()
+struct BlackboardKey {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The key's name (trees and lsd.set_blackboard use it)") char name[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Bool,Float,Int,Vector,Object", Tooltip = "What it holds: a yes / no, a number, a whole number, a location, or an object") u32 type = 1;
+    LSD_PROPERTY(Edit, Tooltip = "Its starting value (Bool: 0 or 1; Float and Int; ignored for Vector and Object)") f32 default_value = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Its starting location (Vector keys)") Vec3 default_location;
+    LSD_PROPERTY(Edit, Tooltip = "What it is for (a note for the team)") char description[64] = "";
+};
+
+// Blackboard asset (Unreal's Blackboard Data): the keys an AI's tree uses, typed, with defaults. New Data Asset >
+// BlackboardData, then pick it on the AI Controller; scripts writing a key it lacks (or the wrong type) are warned.
+LSD_STRUCT(Category = "AI", Tooltip = "The keys an AI's Behavior Tree uses, typed, with their starting values")
+struct BlackboardData {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The keys (perception's CanSeePlayer, PlayerLocation... need not be listed)") List<BlackboardKey, 32> keys;
+};
+
 LSD_STRUCT(Component, Category = "AI", Tooltip = "An AI brain: a Behavior Tree, sight and hearing")
 struct AIController {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:BehaviorTree", Tooltip = "The Behavior Tree that decides what it does") char behavior_tree[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:BlackboardData", Tooltip = "Its Blackboard asset: typed keys with starting values (empty: any key, all unset)") char blackboard[33] = "";
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it sees the player (CanSeePlayer)") f32 sight_range = 15.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 360, Tooltip = "Field of view, centred on the object's +X") f32 sight_angle = 120.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it hears noises (lsd.report_noise / Report Noise)") f32 hearing_range = 12.0f;
@@ -988,6 +1008,17 @@ struct AIController {
     LSD_PROPERTY(Edit, Tooltip = "Team (0 = none): it sees agents of other teams as enemies (CanSeeEnemy, EnemyLocation); guards and monsters on different teams fight")
     u32 team = 0;
     LSD_PROPERTY(Edit, Tooltip = "The player's team: an agent on this team (Team not 0) is friendly and ignores the player (no CanSeePlayer)") u32 player_team = 1;
+};
+
+// A jump or drop the navmesh does not join by itself (Unreal's Nav Link Proxy): from the object to End. AI paths
+// may cross it; agents go across in a straight line. Rebuilds the navmesh like any level change.
+LSD_STRUCT(Component, Category = "AI", Tooltip = "A jump, drop or ladder for AI paths: from this object to End")
+struct NavLink {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "The far end, from the object (turns with it); both ends must be near the navmesh") Vec3 end = {2.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Tooltip = "Agents may cross both ways; off = only from the object to End (a drop off a ledge)") bool both_ways = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 5, Tooltip = "How far from each end the navmesh may be") f32 snap_radius = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Off: paths ignore it") bool enabled = true;
 };
 
 // How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).

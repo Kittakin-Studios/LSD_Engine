@@ -1619,6 +1619,10 @@ the editor).
    level is used). Press **P** to see the navmesh in green. World Settings > Navigation sets agent
    radius / height, step height, slope and cell size. A **Nav Modifier Volume** cuts its box out of the
    navmesh (Unreal's Nav Modifier with the Null area): AI paths round it though nothing blocks there.
+   A **Nav Link** (Place > Nav Link; Unreal's Nav Link Proxy) joins two places the navmesh does not: a
+   gap to jump, a ledge to drop off, a ladder. It runs from the object to its **End** (in the object's
+   space); untick **Both Ways** for a one-way drop. Agents cross it in a straight line. Show Navigation
+   draws it as a line between the two ends.
 2. Give an enemy a **Nav Agent** (speed, radius, height): it can walk with `lsd.move_to` or the AI
    Move To node, steering round other agents.
 3. Give it an **AI Controller** with a **Behavior Tree** (New Behavior Tree; Unreal's Behavior Tree
@@ -1649,6 +1653,17 @@ different teams (not 0) see each other as enemies, **CanSeeEnemy** / **EnemyLoca
 one in view). An agent on the **Player Team** is friendly and never sets CanSeePlayer. While playing,
 the open tree's running branch glows green (a Run Behavior node glows while its tree runs). Select an object
 with an AI Controller to see its sight cone (green) and hearing range (blue) in the viewport.
+
+**Blackboard asset** (Unreal's Blackboard Data): New Data Asset > **BlackboardData** lists the keys a tree
+uses, each with a **Type** (Bool, Float, Int, Vector, Object), a starting value and a note. Pick it in the
+AI Controller's **Blackboard**: every key but Objects starts at its value when Play begins, an Int is
+rounded and a Bool is 0 or 1 when a script writes it, and `lsd.set_blackboard` with a key the asset lacks
+(a typo) or the wrong kind of value (a location for a number) is refused with a warning in the Output Log,
+once per key. Perception's keys (CanSeePlayer, PlayerLocation...) need not be listed. Without an asset any
+key goes, as before.
+
+**Edit trees while playing**: save the behaviour tree and, within a second, every agent running it starts
+again from the new tree's root (what it was doing is stopped first). A save that does not load keeps the old tree.
 
 ---
 

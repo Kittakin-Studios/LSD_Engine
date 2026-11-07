@@ -169,8 +169,70 @@ static void bt_tests() {
     CHECK(agent.scripts == 3);
 }
 
+// A Blackboard asset's keys: defaults written, writes checked and made to fit their type.
+static void blackboard_schema_tests() {
+    using namespace ai;
+    BlackboardSchema schema;
+    auto key = [&](const char* name, BbType type, f32 a, f32 b = 0.0f, f32 c = 0.0f) {
+        BbKey& k = schema.keys[schema.count++];
+        std::snprintf(k.name, sizeof k.name, "%s", name);
+        k.type = type;
+        k.value[0] = a, k.value[1] = b, k.value[2] = c;
+    };
+    key("Alert", BbType::Bool, 1.0f);
+    key("Ammo", BbType::Int, 6.4f);
+    key("Home", BbType::Vector, 1.0f, 2.0f, 3.0f);
+    key("Target", BbType::Object, 0.0f);
+    Blackboard board;
+    apply_defaults(schema, board);
+    CHECK(board.is_set("Alert") && board.find("Ammo") && board.find("Ammo")->value[0] == 6.0f && !board.find("Target"));
+    CHECK(board.find("Home") && board.find("Home")->vector && board.find("Home")->value[2] == 3.0f);
+    const f32 two_and_a_bit[3] = {2.7f, 0, 0}, place[3] = {5, 6, 7};
+    CHECK(!typed_set(schema, board, "Ammo", two_and_a_bit, false) && board.find("Ammo")->value[0] == 3.0f);  // an Int is rounded
+    CHECK(!typed_set(schema, board, "Alert", two_and_a_bit, false) && board.find("Alert")->value[0] == 1.0f);  // a Bool is 0 or 1
+    CHECK(typed_set(schema, board, "Home", two_and_a_bit, false) != nullptr);  // a location wanted
+    CHECK(typed_set(schema, board, "Ammo", place, true) != nullptr);           // a number wanted
+    CHECK(typed_set(schema, board, "Typo", place, true) != nullptr && !board.find("Typo"));
+    BlackboardSchema untyped;  // no asset: anything goes
+    CHECK(!typed_set(untyped, board, "Typo", place, true) && board.find("Typo"));
+}
+
+// Nav links: two floors 2 m apart have no path between them until a link joins them.
+static void nav_link_tests() {
+    std::vector<f32> verts;
+    std::vector<u32> idx;
+    add_box(verts, idx, {-10, -5, -0.2f}, {-1, 5, 0});
+    add_box(verts, idx, {1, -5, -0.2f}, {10, 5, 0});
+    Vec3 path[32];
+    ai::NavMesh apart;
+    CHECK(apart.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), {-11, -6, -1}, {11, 6, 3}, {}));
+    u32 n = apart.find_path({-5, 0, 0}, {5, 0, 0}, path, 32);
+    CHECK(n == 0 || path[n - 1].x < 0.0f);  // stops on its own side
+    ai::NavLink link;
+    link.start = {-1.8f, 0, 0};
+    link.end = {1.8f, 0, 0};
+    ai::NavMesh joined;
+    CHECK(joined.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), {-11, -6, -1}, {11, 6, 3}, {}, nullptr, 0, &link, 1));
+    n = joined.find_path({-5, 0, 0}, {5, 0, 0}, path, 32);
+    CHECK(n >= 2 && std::fabs(path[n - 1].x - 5.0f) < 0.3f);  // across the gap
+    n = joined.find_path({5, 0, 0}, {-5, 0, 0}, path, 32);
+    CHECK(n >= 2 && std::fabs(path[n - 1].x + 5.0f) < 0.3f);  // both ways
+    link.both_ways = false;
+    ai::NavMesh one_way;
+    CHECK(one_way.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), {-11, -6, -1}, {11, 6, 3}, {}, nullptr, 0, &link, 1));
+    n = one_way.find_path({5, 0, 0}, {-5, 0, 0}, path, 32);
+    CHECK(n == 0 || path[n - 1].x > 0.0f);  // no way back up
+    Vec3 lines[4096];
+    const u32 drawn = joined.debug_lines(lines, 4096);
+    bool link_drawn = false;
+    for (u32 i = 0; i + 1 < drawn; i += 2) link_drawn |= std::fabs(lines[i].x + 1.8f) < 0.3f && std::fabs(lines[i + 1].x - 1.8f) < 0.3f;
+    CHECK(link_drawn);
+}
+
 int main() {
     bt_tests();
+    blackboard_schema_tests();
+    nav_link_tests();
     std::vector<f32> verts;
     std::vector<u32> idx;
     add_box(verts, idx, {-10, -10, -0.2f}, {10, 10, 0});          // floor, top at z = 0
