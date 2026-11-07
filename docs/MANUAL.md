@@ -714,7 +714,23 @@ the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z pl
   Jump jumps, and the player's Sprite faces the way it walks. Its animations (Unreal's Paper2D
   Character flipbooks) are on the Sprite: **Frame / Frame Count** is idle, **Character Animation >
   Walk Frame / Walk Count** plays while walking and **Jump Frame / Jump Count** in the air (a Count of
-  0 keeps the idle one). The 2D template's player has them set up.
+  0 keeps the idle one). The 2D template's player has them set up. **Walk Flipbook / Jump Flipbook**
+  take Flipbook assets instead of cell ranges.
+- **Flipbook assets** (Unreal's Paper2D Flipbook): Content Browser > New Data Asset > **Flipbook**:
+  a list of frames, each a **Cell** of the sprite's sheet with its own **Duration** and an optional
+  **Event**. A Sprite's **Flipbook** plays it instead of Frame / Frame Count / FPS (held on the last
+  frame when Loop is off). In Play, when a frame with an Event starts, the sprite's scripts run that
+  function: an Event `step` calls `function step(self)` (footsteps, a sword swing's hit frame).
+- **Tile collision shapes**: in the 2D mode, pick a tile in the palette and set **Tile Collision**:
+  Full, None (decoration only), Top Half, Bottom Half, Slope Up (a ramp rising to the right) or
+  Slope Down. It applies to every painted copy of that tile (the map's Collision > Tile Shapes list).
+  A second Tile Map with Collision off is a decoration layer in front of or behind the play layer.
+- **Translucent sprites**: Sprite > **Translucent** blends soft edges and see-through colours (glass,
+  smoke, glows) over what is behind instead of cutting them out; they draw after the solid ones, far
+  to near, and **Sort Order** decides which is on top at the same depth (higher wins, Unreal's
+  Translucency Sort Priority).
+- **Shadows**: a **Lit** Sprite or Tile Map casts its cut-out shadow from the level's lights (Cast
+  Shadows, on by default), for 2D scenes lit by a sun or lamps.
 - **2D camera**: a Camera with **Orthographic** (and Ortho Height, metres of world on screen) and
   Auto Activate; make it a child of the player, about 10 m back on -Y turned to look along +Y
   (rotation Z 90), so it follows.

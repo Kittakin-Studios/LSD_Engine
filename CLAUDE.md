@@ -166,8 +166,9 @@ Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicate
 script events, text and voice chat (Opus); Play opens a game window per extra player; playtests by join code
 (`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`, the Multiplayer workspace tab (its panel:
 settings, Play as Host / Join, session, join codes).
-2D (Paper2D, `editor/paper2d.*`, the Level tab's 2D mode): Sprite (sheets + flipbooks), Tile Map
-(palette painting), Lock 2D physics, side-scroller Character, orthographic Camera.
+2D (Paper2D, `editor/paper2d.*`, pure logic in `editor/paper2d_core.*`, the Level tab's 2D mode): Sprite (sheets, Flipbook assets
+with per-frame durations and script events, translucent with Sort Order, lit ones cast shadows), Tile Map (palette painting,
+per-tile collision shapes incl. ramps), Lock 2D physics, side-scroller Character (idle / walk / jump cells or flipbooks), orthographic Camera.
 Graphics: sky reflections without cubemaps, auto exposure, a default look without a volume, sky
 atmosphere from the sun's height.
 Post pass (draw_post, a volume's values or the defaults): SSAO, TAA, depth of field, bloom, ACES,

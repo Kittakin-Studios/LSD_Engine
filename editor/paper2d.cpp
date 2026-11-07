@@ -2,10 +2,16 @@
 
 #include "mesh_cache.h"
 
+#include "lsd/asset/asset_registry.h"
+#include "lsd/asset/data_asset.h"
+#include "lsd/asset/guid.h"
 #include "lsd/render/mesh.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -51,7 +57,11 @@ const CachedMesh* upload(MeshCache& meshes, const char* key, const std::vector<r
 
 } // namespace
 
-u32 sprite_cell(const world::Sprite& sprite, f32 seconds) {
+u32 sprite_cell(const world::Sprite& sprite, f32 seconds, const world::Flipbook* flipbook) {
+    if (flipbook) {
+        const i32 frame = flipbook_frame(*flipbook, seconds);
+        if (frame >= 0) return flipbook->frames[static_cast<u32>(frame)].cell;
+    }
     const u32 count = sprite.frame_count ? sprite.frame_count : 1;
     if (count == 1 || sprite.fps <= 0.0f) return sprite.frame;
     const u32 step = static_cast<u32>(std::floor(seconds * sprite.fps));
@@ -120,24 +130,37 @@ void tile_map_bounds(const world::TileMap& map, Vec3& lo, Vec3& hi) {
     hi = {static_cast<f32>(map.width) * map.tile_size, 0.05f, static_cast<f32>(map.height) * map.tile_size};
 }
 
-u32 tile_runs(const world::TileMap& map, TileRun* out, u32 capacity) {
-    u32 n = 0;
-    const f32 s = map.tile_size;
-    for (u32 y = 0; y < map.height; ++y) {
-        u32 x = 0;
-        while (x < map.width && n < capacity) {
-            auto solid = [&](u32 at) { const u32 i = y * map.width + at; return i < map.tiles.count && map.tiles[i] > 0; };
-            if (!solid(x)) {
-                ++x;
-                continue;
-            }
-            const u32 start = x;
-            while (x < map.width && solid(x)) ++x;
-            // 1 m deep, so a character on the plane y = 0 stands on it.
-            out[n++] = {{static_cast<f32>(start) * s, -0.5f, static_cast<f32>(y) * s}, {static_cast<f32>(x) * s, 0.5f, static_cast<f32>(y + 1) * s}};
-        }
+// shortcut: a file-time check per asset at most once a second, on the main thread; hook the content watcher if flipbooks get many
+const world::Flipbook* find_flipbook(const asset::AssetRegistry* registry, const char* guid) {
+    if (!registry || !guid || !guid[0]) return nullptr;
+    struct Entry {
+        world::Flipbook flipbook;
+        std::filesystem::file_time_type time;
+        u64 checked = 0;  // milliseconds (steady clock)
+        bool loaded = false;
+    };
+    static std::unordered_map<std::string, Entry> cache;
+    Entry& e = cache[guid];
+    const u64 now = static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (e.checked && now - e.checked < 1000) return e.loaded ? &e.flipbook : nullptr;
+    e.checked = now;
+    asset::Guid id;
+    const asset::AssetRecord* r = asset::parse_guid(guid, id) ? registry->find(id) : nullptr;
+    if (!r) {
+        e.loaded = false;
+        return nullptr;
     }
-    return n;
+    char path[300];
+    registry->source_path(*r, path, sizeof path);
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (!e.loaded || time != e.time) {
+        world::Flipbook fresh;
+        e.loaded = asset::load_data_asset(path, fresh);
+        if (e.loaded) e.flipbook = fresh;
+        e.time = time;
+    }
+    return e.loaded ? &e.flipbook : nullptr;
 }
 
 } // namespace lsd::editor

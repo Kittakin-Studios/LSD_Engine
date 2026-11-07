@@ -336,6 +336,32 @@ struct NetReplicated {
 // sheet, on a 1 m quad in the X-Z plane facing -Y (a side-on game looks along +Y: the Front view),
 // pivot at the bottom centre; the Transform's scale sizes it. With Frame Count > 1 it plays that
 // many cells from Frame at FPS (a flipbook); scripts switch animations by setting Frame.
+// A tileset tile's collision in a Tile Map (Paper2D's per-tile collision).
+LSD_STRUCT(Category = "2D")
+struct TileShape {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Full,None,Top Half,Bottom Half,Slope Up,Slope Down",
+                 Tooltip = "Full: the whole square blocks. None: drawn only (decoration). Halves: the upper or lower half. Slopes: a ramp rising to the right (Up) or to the left (Down)")
+    u32 shape = 0;
+};
+
+// One frame of a Flipbook: a cell of the sprite's sheet, how long it shows, and an event.
+LSD_STRUCT(Category = "2D")
+struct FlipbookFrame {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The sheet cell shown (left to right, then down)") u32 cell = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0.001, Tooltip = "How long it shows") f32 duration = 0.1f;
+    LSD_PROPERTY(Edit, Tooltip = "In Play, the sprite's scripts run this function when the frame starts (footstep, swing...); empty = none") char event[32] = "";
+};
+
+// A Flipbook asset (Unreal's Paper2D Flipbook): frames of a sprite sheet, each with its own time and an optional event.
+LSD_STRUCT(Category = "2D")
+struct Flipbook {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The frames in order") List<FlipbookFrame, 256> frames;
+    LSD_PROPERTY(Edit, Tooltip = "Starts over when it ends; off: stops on the last frame") bool loop = true;
+};
+
 LSD_STRUCT(Component, Category = "2D", Tooltip = "A flat image for 2D games, with sprite-sheet frames and flipbook animation")
 struct Sprite {
     LSD_GENERATED()
@@ -347,17 +373,27 @@ struct Sprite {
     LSD_PROPERTY(Edit, Category = "Flipbook", Min = 1, Max = 4096, Tooltip = "Cells the animation plays from Frame; 1 = a still sprite") u32 frame_count = 1;
     LSD_PROPERTY(Edit, Category = "Flipbook", Min = 0, Max = 120, Tooltip = "Frames a second") f32 fps = 12.0f;
     LSD_PROPERTY(Edit, Category = "Flipbook", Tooltip = "The flipbook starts over when it ends") bool loop = true;
+    LSD_PROPERTY(Edit, Category = "Flipbook", Widget = "Asset:Flipbook", Tooltip = "A Flipbook asset (frames of this sheet with their own durations and events) played instead of Frame / Frame Count / FPS")
+    char flipbook[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Mirror left-right (a side-scroller Character sets it from the way it walks)") bool flip_x = false;
     LSD_PROPERTY(Edit, Tooltip = "Mirror the image upside down") bool flip_y = false;
     LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours, like most 2D games") bool lit = false;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Pixels with less alpha are cut out") f32 alpha_cutoff = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Soft edges and see-through colours (glass, smoke, glows): blended over what is behind, drawn far to near after the solid ones. Off: cut out at Alpha Cutoff")
+    bool translucent = false;
+    LSD_PROPERTY(Edit, Tooltip = "Translucent sprites at the same depth: higher draws on top (Unreal's Translucency Sort Priority)") i32 sort_order = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Lit sprites cast shadows from the level's lights (its cut-out shape)") bool cast_shadows = true;
     LSD_PROPERTY(Edit, Tooltip = "Blocks in Play: a box the sprite's size, 1 m deep (a RigidBody uses the same box)") bool collision = false;
     // On a side-scroller Character (Paper2D Character's flipbooks): Frame / Frame Count are the idle animation.
     LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell of the walk animation") u32 walk_frame = 0;
     LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the walk animation; 0 = keep the idle one while walking") u32 walk_count = 0;
     LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell shown in the air (jumping, falling)") u32 jump_frame = 0;
     LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the in-air animation; 0 = keep the idle or walk one") u32 jump_count = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Widget = "Asset:Flipbook", Tooltip = "On a side-scroller Character: a Flipbook played while walking (instead of Walk Frame / Count)")
+    char walk_flipbook[33] = "";
+    LSD_PROPERTY(Edit, Category = "Character Animation", Widget = "Asset:Flipbook", Tooltip = "On a side-scroller Character: a Flipbook played in the air (instead of Jump Frame / Count)")
+    char jump_flipbook[33] = "";
 };
 
 // A grid of tiles from a tileset image (Unreal's Paper2D Tile Map), painted in the 2D level mode:
@@ -375,6 +411,9 @@ struct TileMap {
     LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours") bool lit = false;
     LSD_PROPERTY(Edit, Tooltip = "Painted tiles block in Play (rows of tiles become boxes)") bool collision = true;
+    LSD_PROPERTY(Edit, Tooltip = "Lit maps cast shadows from the level's lights") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Category = "Collision", Tooltip = "Each tileset tile's collision, by tile number (the 2D mode's palette sets it for the chosen tile); missing ones are Full")
+    List<TileShape, 256> tile_shapes;
     // Row by row from the bottom-left: the tileset cell + 1 (cells count left to right, then down), 0 = empty.
     LSD_PROPERTY(Save) List<i32, 4096> tiles;
 };

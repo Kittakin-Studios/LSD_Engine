@@ -70,6 +70,7 @@ public:
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
+    f64 clock() const { return play_clock_; }  // seconds of game time since Play started (flipbooks, events)
     f32 view_ortho() const { return view_ortho_; }  // an orthographic Camera's height in metres; 0: perspective
     // Looks through `camera` (invalid: the player again), cutting or blending over `blend_seconds`.
     void set_view(world::Entity camera, f32 blend_seconds = 0.0f);
@@ -273,7 +274,10 @@ private:
     char workspace_[32] = "";
     net::PortMapper upnp_;
     world::Character settings_;
-    u32 idle_frame_ = 0, idle_count_ = 1;  // a side-scroller sprite's own Frame / Frame Count (its idle animation)
+    u32 idle_frame_ = 0, idle_count_ = 1;
+    char idle_flipbook_[33] = "";  // and its own Flipbook
+    std::unordered_map<u32, i32> flipbook_frames_;  // each flipbook sprite's frame last update (events fire on a change)
+    void update_flipbook_events(world::World& world);  // a side-scroller sprite's own Frame / Frame Count (its idle animation)
     world::Entity character_;  // invalid for the default walker
     bool crouched_ = false;    // the capsule is at crouch_height
     bool swimming_ = false;    // the chest is in a Water Volume

@@ -527,6 +527,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (const auto* sprite = world.get<world::Sprite>(character_)) {
             idle_frame_ = sprite->frame;
             idle_count_ = sprite->frame_count;
+            std::snprintf(idle_flipbook_, sizeof idle_flipbook_, "%s", sprite->flipbook);
         }
         decompose_trs(world.world_matrix(character_), feet_, rotation, scale);
         yaw_ = radians(rotation.z);
@@ -1101,9 +1102,31 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     if (const auto* map = world.get<world::TileMap>(e); map && map->collision) {  // a box per run of solid tiles in a row
         static TileRun runs[4096];
         const u32 count = tile_runs(*map, runs, 4096);
+        const Mat4 map_world = world.world_matrix(e);
         for (u32 k = 0; k < count; ++k) {
             Vec3 run_scale, run_centre;
-            add_body(e, fitted_body(world.world_matrix(e), runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre));
+            if (runs[k].kind == 0) {
+                add_body(e, fitted_body(map_world, runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre));
+                continue;
+            }
+            // A ramp: the wedge's six corners in world space, around its centre (a convex body).
+            const TileRun& r = runs[k];
+            const f32 low_x = r.kind == 1 ? r.hi.x : r.lo.x;  // the tall side: right for Slope Up, left for Slope Down
+            const Vec3 local[6] = {{r.lo.x, r.lo.y, r.lo.z}, {r.hi.x, r.lo.y, r.lo.z}, {low_x, r.lo.y, r.hi.z},
+                                   {r.lo.x, r.hi.y, r.lo.z}, {r.hi.x, r.hi.y, r.lo.z}, {low_x, r.hi.y, r.hi.z}};
+            Vec3 corners[6];
+            Vec3 middle{};
+            for (int c = 0; c < 6; ++c) {
+                corners[c] = transform_point(map_world, local[c]);
+                middle = middle + corners[c] * (1.0f / 6.0f);
+            }
+            for (Vec3& p : corners) p = p - middle;
+            physics::BodyDesc ramp;
+            ramp.shape = physics::Shape::Convex;
+            ramp.transform = translation(middle);
+            ramp.points = corners;
+            ramp.point_count = 6;
+            add_body(e, ramp);
         }
     }
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
@@ -1480,15 +1503,19 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
             if (move.x != 0.0f) sprite->flip_x = move.x < 0.0f;
             const bool air = !physics_->character_on_ground() && !swimming_;
             u32 first = idle_frame_, cells = idle_count_;
-            if (air && sprite->jump_count) {
+            const char* flipbook = idle_flipbook_;
+            if (air && (sprite->jump_flipbook[0] || sprite->jump_count)) {
                 first = sprite->jump_frame;
-                cells = sprite->jump_count;
-            } else if (move.x != 0.0f && sprite->walk_count) {
+                cells = sprite->jump_count ? sprite->jump_count : 1;
+                flipbook = sprite->jump_flipbook;
+            } else if (move.x != 0.0f && (sprite->walk_flipbook[0] || sprite->walk_count)) {
                 first = sprite->walk_frame;
-                cells = sprite->walk_count;
+                cells = sprite->walk_count ? sprite->walk_count : 1;
+                flipbook = sprite->walk_flipbook;
             }
             sprite->frame = first;
             sprite->frame_count = cells;
+            if (flipbook != sprite->flipbook) std::snprintf(sprite->flipbook, sizeof sprite->flipbook, "%s", flipbook);
         }
     }
     const f32 amount = length(velocity);
@@ -1664,6 +1691,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_triggers(world);
     {
         LSD_PROFILE_SCOPE("scripts");
+        update_flipbook_events(world);
         if (animations_) {  // montages that ended last frame: function on_montage_ended(self)
             static std::vector<world::Entity> ended;
             ended.clear();
@@ -1675,6 +1703,22 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_brains(world, dt);
     update_agents(world, dt);
     net_send(world, dt);
+}
+
+// Flipbook events: when a sprite's Flipbook reaches a frame with an Event, its scripts run that function.
+void PlaySession::update_flipbook_events(world::World& world) {
+    const reflect::TypeInfo& sprite_type = reflect::type_of<world::Sprite>();
+    for (u32 i = 0; i < world.count(sprite_type); ++i) {
+        const auto* sprite = static_cast<const world::Sprite*>(world.at(sprite_type, i));
+        const world::Flipbook* fb = sprite->flipbook[0] ? find_flipbook(registry_, sprite->flipbook) : nullptr;
+        if (!fb) continue;
+        const world::Entity e = world.owner(sprite_type, i);
+        const i32 frame = flipbook_frame(*fb, static_cast<f32>(play_clock_));
+        const auto seen = flipbook_frames_.find(e.value);
+        if (seen != flipbook_frames_.end() && seen->second == frame) continue;  // still the same frame
+        flipbook_frames_[e.value] = frame;
+        if (frame >= 0 && fb->frames[static_cast<u32>(frame)].event[0]) scripts_.send(e, fb->frames[static_cast<u32>(frame)].event, {});
+    }
 }
 
 // ---- Multiplayer ----

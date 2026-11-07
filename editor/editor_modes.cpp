@@ -1,4 +1,5 @@
 #include "editor_modes.h"
+#include "paper2d_core.h"
 #include "landscape_paint.h"
 #include "tips.h"
 
@@ -673,6 +674,18 @@ void draw_2d(EditorState& s) {
     const f32 col = static_cast<f32>(g_tile % map->tileset_columns), row = static_cast<f32>(g_tile / map->tileset_columns);
     dl->AddRect(ImVec2(at.x + cw * col, at.y + ch * row), ImVec2(at.x + cw * (col + 1.0f), at.y + ch * (row + 1.0f)), IM_COL32(255, 230, 30, 255), 0.0f, 0, 2.0f);
     hint("LMB paints the chosen tile on the map in the viewport, Shift+LMB erases. Use the 2D View.");
+    // The chosen tile's collision (Paper2D's per-tile collision), kept on the map for every painted copy.
+    static const char* const kShapes[] = {"Full", "None", "Top Half", "Bottom Half", "Slope Up", "Slope Down"};
+    int shape = static_cast<int>(tile_shape(*map, static_cast<i32>(g_tile) + 1));
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("Tile Collision", &shape, kShapes, 6)) {
+        while (map->tile_shapes.count <= g_tile && map->tile_shapes.count < map->tile_shapes.capacity()) map->tile_shapes.push_back({});
+        if (g_tile < map->tile_shapes.count) {
+            map->tile_shapes[g_tile].shape = static_cast<u32>(shape);
+            mark_edited(s, "Tile Collision");
+        }
+    }
+    ImGui::SetItemTooltip("How the chosen tile blocks in Play: Full, None (decoration), Top / Bottom Half, or a Slope rising to the right (Up) or left (Down)");
 }
 
 // The viewport brush in 2D: the tile under the mouse on the painted map's plane.

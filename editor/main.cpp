@@ -313,6 +313,39 @@ struct Caster {
     lsd::rhi::ShadowCutout cutout;
 };
 
+// The clock sprites animate by: game time while playing (so Flipbook events land on the frame you see), else the editor's.
+lsd::f32 g_sprite_seconds = 0.0f;
+const lsd::asset::AssetRegistry* g_registry = nullptr;  // Flipbook assets for the sprites
+
+// Lit Sprites and Tile Maps in a shadow pass: their cut-out shapes (Paper2D's Cast Shadow).
+void add_flat_casters(lsd::world::World& world, lsd::editor::MeshCache& meshes, bool skip_hidden, std::vector<Caster>& casters) {
+    auto add = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, lsd::f32 cutoff, lsd::f32 alpha) {
+        if (!mesh || (skip_hidden && world.hidden_in_hierarchy(e))) return;
+        Caster caster{mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, world.world_matrix(e), false, {}};
+        if (texture[0] && g_materials) {
+            caster.cutout.texture = g_materials->textures().get(texture, true);
+            caster.cutout.cutoff = cutoff > 0.0f ? cutoff : 0.5f;  // translucent sprites: their visible part
+            caster.cutout.alpha = alpha;
+            caster.masked = caster.cutout.texture.valid();
+        }
+        casters.push_back(caster);
+    };
+    const lsd::reflect::TypeInfo& sprite_type = lsd::reflect::type_of<lsd::world::Sprite>();
+    for (lsd::u32 i = 0; i < world.count(sprite_type); ++i) {
+        const auto* sprite = static_cast<const lsd::world::Sprite*>(world.at(sprite_type, i));
+        if (!sprite->lit || !sprite->cast_shadows) continue;
+        const lsd::u32 cell = lsd::editor::sprite_cell(*sprite, g_sprite_seconds, lsd::editor::find_flipbook(g_registry, sprite->flipbook));
+        add(world.owner(sprite_type, i), lsd::editor::sprite_mesh(meshes, *sprite, cell), sprite->texture, sprite->alpha_cutoff, sprite->tint.a);
+    }
+    const lsd::reflect::TypeInfo& map_type = lsd::reflect::type_of<lsd::world::TileMap>();
+    for (lsd::u32 i = 0; i < world.count(map_type); ++i) {
+        const auto* map = static_cast<const lsd::world::TileMap*>(world.at(map_type, i));
+        if (!map->lit || !map->cast_shadows) continue;
+        const lsd::world::Entity e = world.owner(map_type, i);
+        add(e, lsd::editor::tile_map_mesh(meshes, *map, e.value), map->tileset, 0.5f, map->tint.a);
+    }
+}
+
 void draw_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, std::vector<Caster>& casters) {
     std::sort(casters.begin(), casters.end(), [](const Caster& a, const Caster& b) {
         return a.vertices.value != b.vertices.value ? a.vertices.value < b.vertices.value : a.indices.value < b.indices.value;
@@ -452,6 +485,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
             casters.push_back(caster);
         }
+        add_flat_casters(world, meshes, skip_hidden, casters);
         draw_casters(device, vp, casters);
         draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
         draw_instanced_casters(device, vp, world, meshes, skip_hidden);
@@ -494,6 +528,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
                 casters.push_back(caster);
             }
+            add_flat_casters(world, meshes, skip_hidden, casters);
             draw_casters(device, vp, casters);
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
             draw_instanced_casters(device, vp, world, meshes, skip_hidden);
@@ -717,11 +752,13 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         stats.stat_triangles += draw.index_count / 3;
     }
     draw_batches(device, batch, view_proj, stats);
-    // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask.
-    // shortcut: they cast no shadows; add them to the shadow passes when lit 2D scenes need it.
+    // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask
+    // (lit ones cast shadows: add_flat_casters). Translucent sprites wait with the translucent meshes,
+    // ordered by Sort Order first, then far to near.
     {
         const bool editor_view = !stats.playing || stats.ejected;
-        auto draw_flat = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, const lsd::LinearColor& tint, bool pixel_art, bool lit, lsd::f32 cutoff) {
+        auto draw_flat = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, const lsd::LinearColor& tint, bool pixel_art, bool lit, lsd::f32 cutoff,
+                             bool blended = false, lsd::i32 sort_order = 0) {
             if (!mesh || (editor_view && world.hidden_in_hierarchy(e))) return;
             const lsd::Mat4 m = world.world_matrix(e);
             const lsd::Mat4 mvp = view_proj * m;
@@ -753,16 +790,23 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.unlit = !lit || (editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision));
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
             if (editor_view && stats.is_selected(e)) g_outline.push_back(draw);
+            if (blended && !draw.wireframe) {
+                draw.blend = 1;
+                draw.alpha_cutoff = 0.0f;
+                const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
+                translucent.emplace_back(lsd::length(centre - eye) - static_cast<lsd::f32>(sort_order) * 1.0e5f, draw);  // drawn largest first
+                return;
+            }
             device.draw_mesh(draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
-        const lsd::f32 seconds = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // flipbooks play in the editor too
         const lsd::reflect::TypeInfo& sprite_type = lsd::reflect::type_of<lsd::world::Sprite>();
         for (lsd::u32 i = 0; i < world.count(sprite_type); ++i) {
             const auto* sprite = static_cast<const lsd::world::Sprite*>(world.at(sprite_type, i));
-            const lsd::editor::CachedMesh* mesh = lsd::editor::sprite_mesh(meshes, *sprite, lsd::editor::sprite_cell(*sprite, seconds));
-            draw_flat(world.owner(sprite_type, i), mesh, sprite->texture, sprite->tint, sprite->pixel_art, sprite->lit, sprite->alpha_cutoff);
+            const lsd::u32 cell = lsd::editor::sprite_cell(*sprite, g_sprite_seconds, lsd::editor::find_flipbook(stats.registry, sprite->flipbook));
+            const lsd::editor::CachedMesh* mesh = lsd::editor::sprite_mesh(meshes, *sprite, cell);
+            draw_flat(world.owner(sprite_type, i), mesh, sprite->texture, sprite->tint, sprite->pixel_art, sprite->lit, sprite->alpha_cutoff, sprite->translucent, sprite->sort_order);
         }
         const lsd::reflect::TypeInfo& map_type = lsd::reflect::type_of<lsd::world::TileMap>();
         for (lsd::u32 i = 0; i < world.count(map_type); ++i) {
@@ -1817,6 +1861,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::ScriptNode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Timeline>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Flipbook>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
@@ -2601,6 +2646,8 @@ int main(int argc, char** argv) {
         const lsd::f32 clear_color[4] = {bg.r, bg.g, bg.b, 1.0f};
         thumbnails.release_temporaries();
         decal_atlas->update(world);  // before the frame: the atlas may be rebuilt
+        g_sprite_seconds = state.playing ? static_cast<lsd::f32>(play.clock()) : static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
+        g_registry = state.registry;
         device->begin_frame(clear_color);
         state.stat_wait_ms = timer.lap();  // the GPU (and vsync) holding the CPU back: not part of render
         device->gpu_timestamp(0);  // GPU timings (stat dump): 0 start, 1 sun shadows, 2 scene, 3 post, 4 UI

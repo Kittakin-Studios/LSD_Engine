@@ -15,6 +15,7 @@
 #include "sound_cue.h"
 #include "transactions.h"
 #include "template_levels.h"
+#include "paper2d_core.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -496,7 +497,45 @@ static void test_templates() {
     CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
 }
 
+// 2D: a Tile Map's collision from its tile shapes, and Flipbook timing.
+static void test_paper2d() {
+    world::TileMap map;
+    map.width = 6;
+    map.height = 1;
+    map.tile_size = 1.0f;
+    for (u32 i = 0; i < 6; ++i) map.tiles.push_back(0);
+    map.tiles[0] = map.tiles[1] = 1;  // two Full tiles: one box
+    map.tiles[2] = 2;                 // tile 2: a slope
+    map.tiles[3] = 3;                 // tile 3: decoration
+    map.tiles[4] = map.tiles[5] = 4;  // tile 4: top halves, one box
+    for (u32 i = 0; i < 4; ++i) map.tile_shapes.push_back({});
+    map.tile_shapes[1].shape = editor::kTileSlopeUp;
+    map.tile_shapes[2].shape = editor::kTileNone;
+    map.tile_shapes[3].shape = editor::kTileTopHalf;
+    editor::TileRun runs[8];
+    const u32 n = editor::tile_runs(map, runs, 8);
+    CHECK(n == 3);
+    CHECK(n == 3 && runs[0].kind == 0 && runs[0].lo.x == 0.0f && runs[0].hi.x == 2.0f && runs[0].hi.z == 1.0f);
+    CHECK(n == 3 && runs[1].kind == 1 && runs[1].lo.x == 2.0f && runs[1].hi.x == 3.0f);
+    CHECK(n == 3 && runs[2].kind == 0 && runs[2].lo.x == 4.0f && runs[2].hi.x == 6.0f && runs[2].lo.z == 0.5f);
+    CHECK(editor::tile_shape(map, 0) == editor::kTileNone && editor::tile_shape(map, 9) == editor::kTileFull);
+
+    world::Flipbook fb;
+    CHECK(editor::flipbook_frame(fb, 1.0f) == -1);
+    for (u32 i = 0; i < 3; ++i) fb.frames.push_back({});
+    fb.frames[0].duration = 0.1f;
+    fb.frames[1].duration = 0.3f;  // a held frame
+    fb.frames[2].duration = 0.1f;
+    CHECK(editor::flipbook_frame(fb, 0.05f) == 0);
+    CHECK(editor::flipbook_frame(fb, 0.2f) == 1 && editor::flipbook_frame(fb, 0.39f) == 1);
+    CHECK(editor::flipbook_frame(fb, 0.45f) == 2);
+    CHECK(editor::flipbook_frame(fb, 0.55f) == 0);  // looped
+    fb.loop = false;
+    CHECK(editor::flipbook_frame(fb, 5.0f) == 2);   // held on the last frame
+}
+
 int main() {
+    test_paper2d();
     test_templates();
     test_keymap();
     test_landscape_paint();
