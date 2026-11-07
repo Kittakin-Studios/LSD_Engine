@@ -1407,6 +1407,17 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("no mesh with that name (asset.List)");
     }, &s, "asset.ImportMaterials <mesh>: Import Materials and Textures for a mesh (as its Content Browser menu)");
+    console::add_command("asset.CreatePrefabFromParts", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (lsd::usize i = 0; i < st.registry->count(); ++i) {
+            const lsd::asset::AssetRecord r = st.registry->get(i);
+            if (r.type != lsd::asset::AssetType::Mesh || std::strcmp(r.name, args) != 0) continue;
+            lsd::editor::create_parts_prefab(st, r);
+            lsd::editor::remote::print(st.status);
+            return;
+        }
+        lsd::editor::remote::print("no mesh with that name (asset.List)");
+    }, &s, "asset.CreatePrefabFromParts <mesh>: Create Prefab from Parts (as its Content Browser menu)");
     console::add_command("mode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         auto same = [](const char* a, const char* b) {

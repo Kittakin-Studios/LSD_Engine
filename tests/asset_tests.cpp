@@ -199,8 +199,8 @@ static void test_gltf_axes(const fs::path& root) {
     // materials; each part imports alone, in its node's space, with the node's transform beside it.
     const char parts_gltf[] = R"({
   "asset": {"version": "2.0"},
-  "scene": 0, "scenes": [{"nodes": [0, 1]}],
-  "nodes": [{"name": "Base", "mesh": 0}, {"name": "Top", "mesh": 1, "translation": [0, 5, 0]}],
+  "scene": 0, "scenes": [{"nodes": [0, 2]}],
+  "nodes": [{"name": "Base", "mesh": 0}, {"name": "Top", "mesh": 1, "translation": [0, 5, 0]}, {"name": "Group", "children": [1]}],
   "materials": [{"name": "Red", "pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1], "metallicFactor": 0, "roughnessFactor": 0.25}},
                 {"name": "Gold", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 1, "metallicRoughnessTexture": {"index": 1}},
                  "normalTexture": {"index": 2}}],
@@ -223,6 +223,7 @@ static void test_gltf_axes(const fs::path& root) {
         CHECK(std::strcmp(parts[1].name, "Top_Red") == 0 && parts[1].base_color[1] == 0.0f && parts[1].roughness == 0.25f);
         CHECK(std::strcmp(parts[2].name, "Top_Gold") == 0 && parts[2].metallic == 1.0f && std::strcmp(parts[2].texture, "Gold_Base.png") == 0);
         CHECK(std::strcmp(parts[2].orm_texture, "Gold_MR.png") == 0 && std::strcmp(parts[2].normal_texture, "Gold_N.png") == 0);
+        CHECK(std::strcmp(parts[0].node_path, "Base") == 0 && std::strcmp(parts[1].node_path, "Group/Top") == 0 && std::strcmp(parts[2].node_path, "Group/Top") == 0);  // the node tree
     }
     CHECK(asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 2) && mesh.vertex_count == 3);
     CHECK(std::fabs(asset::compute_bounds(mesh).min[2]) < 1e-5f && std::fabs(asset::compute_bounds(mesh).max[2] - 1.0f) < 1e-5f);  // its node's space...

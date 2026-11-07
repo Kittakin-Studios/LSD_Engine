@@ -27,6 +27,7 @@ struct MeshPart {
     char orm_texture[128] = "";  // glTF's metallic-roughness map (G roughness, B metallic, as our ORM)
     // The node's place in engine space (before the import scale: multiply `position` by it).
     Vec3 position, rotation, scale = {1, 1, 1};  // rotation: Euler degrees, as Transform
+    char node_path[192] = "";  // the node and its parents' names from the top, "/" between ("House/Door/Leaf")
 };
 
 // Reads a source file, converts to engine space (Z up, right-handed, metres), applies `scale`,

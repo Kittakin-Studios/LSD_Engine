@@ -73,6 +73,22 @@ ufbx_matrix to_ufbx(const Mat4& m) {
 }
 
 // "Node" or, when the node has several parts, "Node_Material"; `fallback` when the node has no name.
+// "Top/Middle/Node": the names from the scene's top node down to this one (unnamed ones as "Node").
+template <typename NameOf, typename ParentOf, typename Node>
+void node_path(char* out, usize capacity, const Node* node, NameOf name_of, ParentOf parent_of) {
+    const Node* chain[32];
+    u32 n = 0;
+    for (const Node* at = node; at && n < 32; at = parent_of(at)) chain[n++] = at;
+    usize len = 0;
+    out[0] = '\0';
+    while (n-- > 0) {
+        const char* name = name_of(chain[n]);
+        const int wrote = std::snprintf(out + len, capacity - len, "%s%s", len ? "/" : "", name && name[0] ? name : "Node");
+        if (wrote < 0 || static_cast<usize>(wrote) >= capacity - len) return;
+        len += static_cast<usize>(wrote);
+    }
+}
+
 void part_name(MeshPart& part, const char* node, const char* fallback, bool several) {
     const char* base = node && node[0] ? node : fallback;
     if (several && part.material[0]) std::snprintf(part.name, sizeof part.name, "%s_%s", base, part.material);
@@ -141,6 +157,8 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
                     texture_file(mat->pbr.normal_map.texture, info.normal_texture, sizeof info.normal_texture);
                 }
                 part_name(info, node->name.data, mesh->name.data, used_parts > 1);
+                node_path(info.node_path, sizeof info.node_path, node, [](const ufbx_node* x) { return x->name.data; },
+                          [](const ufbx_node* x) -> const ufbx_node* { return x->parent && !x->parent->is_root ? x->parent : nullptr; });
                 info.position = placed.position;
                 info.rotation = placed.rotation;
                 info.scale = placed.scale;
@@ -229,6 +247,8 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
                     texture_file(pbr.metallic_roughness_texture.texture, info.orm_texture, sizeof info.orm_texture);
                 }
                 part_name(info, node.name ? node.name : node.mesh->name, "Part", used_parts > 1);
+                node_path(info.node_path, sizeof info.node_path, &node, [](const cgltf_node* x) { return x->name; },
+                          [](const cgltf_node* x) { return x->parent; });
                 info.position = placed.position;
                 info.rotation = placed.rotation;
                 info.scale = placed.scale;

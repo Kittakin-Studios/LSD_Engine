@@ -3306,8 +3306,10 @@ void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
 // per mesh node and material of the file ("<guid>#<k>" meshes in their node's space, placed by the
 // node's transform: pivots stay where the artist put them), and a Material per material of the file
 // (Import Materials and Textures: its maps found and copied into Content).
-// shortcut: flat (every part a child of the root); keep the file's node hierarchy if artists need it
-void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
+// The file's node tree is kept: a part sits under the part of its parent node (a door leaf under its frame keeps its
+// pivot); nodes without a mesh become empty groups.
+// shortcut: a group without a mesh sits at its parent's pivot (its own is not read); read it when artists need group pivots
+void make_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     char source[300], error[256];
     s.registry->source_path(mesh, source, sizeof source);
     Array<asset::MeshPart> parts(default_allocator());
@@ -3325,14 +3327,47 @@ void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     const std::vector<std::pair<std::string, std::string>>& materials = report.materials;  // file material name -> our Material's GUID
     world::World w(default_allocator());
     const Entity root = w.create(mesh.name);
-    for (usize k = 0; k < parts.size(); ++k) {
+    // Parents first (shorter paths), so a node's own part exists before its children look for it.
+    std::vector<usize> order(parts.size());
+    for (usize k = 0; k < order.size(); ++k) order[k] = k;
+    std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) {
+        return std::count(parts[a].node_path, parts[a].node_path + std::strlen(parts[a].node_path), '/') <
+               std::count(parts[b].node_path, parts[b].node_path + std::strlen(parts[b].node_path), '/');
+    });
+    std::vector<std::pair<std::string, Entity>> nodes;  // node path -> its object (a part, or an empty group)
+    auto node_of = [&](const std::string& path) -> Entity {
+        Entity parent = root;
+        usize from = 0;
+        while (from < path.size()) {
+            const usize slash = path.find('/', from);
+            const std::string prefix = path.substr(0, slash == std::string::npos ? path.size() : slash);
+            Entity found;
+            for (const auto& [p, e] : nodes) found = p == prefix ? e : found;
+            if (!found.valid()) {  // a group with no mesh of its own
+                found = w.create(prefix.substr(prefix.rfind('/') == std::string::npos ? 0 : prefix.rfind('/') + 1).c_str());
+                w.set_parent(found, parent, false);
+                nodes.emplace_back(prefix, found);
+            }
+            parent = found;
+            from = slash == std::string::npos ? path.size() : slash + 1;
+        }
+        return parent;
+    };
+    for (const usize k : order) {
         const asset::MeshPart& p = parts[k];
+        const std::string path = p.node_path;
+        const usize slash = path.rfind('/');
+        const Entity parent = slash == std::string::npos ? root : node_of(path.substr(0, slash));
         const Entity child = w.create(p.name);
         w.set_parent(child, root, false);
         auto* transform = w.get<world::Transform>(child);
         transform->position = p.position * meta.import_scale;  // the part's mesh is scaled by it too
         transform->rotation = p.rotation;
         transform->scale = p.scale;
+        if (parent != root) w.set_parent(child, parent, true);  // under its parent node, where it stands
+        bool known = path.empty();
+        for (const auto& n : nodes) known = known || n.first == path;
+        if (!known) nodes.emplace_back(path, child);  // the node's first part stands for the node
         auto* sm = w.add<world::StaticMesh>(child);
         std::snprintf(sm->mesh, sizeof sm->mesh, "%s#%zu", guid, k);
         sm->color = LinearColor::hex(0xFFFFFF);  // the material's own colour
@@ -4727,7 +4762,7 @@ void draw_asset_grid(EditorState& s) {
             if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
             if (asset_matches(r, "Timeline") && with_tip(ImGui::MenuItem("Edit Timeline"), "Opens the Timeline editor (tracks and keys)")) open_timeline_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Open Mesh Editor")) open_mesh_editor(s, r);
-            if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) create_parts_prefab(s, r);
+            if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) make_parts_prefab(s, r);
             if (r.type == asset::AssetType::Mesh) ImGui::SetItemTooltip("One object per mesh and material in the file, with Materials made from the file's (Unreal: Combine Meshes off)");
             if (r.type == asset::AssetType::Mesh &&
                 with_tip(ImGui::MenuItem("Import Materials and Textures"),
@@ -6103,5 +6138,7 @@ void apply_layout_file(const char* path, char* status, usize status_capacity) {
     }
     std::snprintf(status, status_capacity, "Loaded layout %s", std::filesystem::path(path).stem().string().c_str());
 }
+
+void create_parts_prefab(EditorState& state, const asset::AssetRecord& mesh) { make_parts_prefab(state, mesh); }
 
 } // namespace lsd::editor

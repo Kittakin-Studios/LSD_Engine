@@ -459,8 +459,11 @@ object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 file as one mesh. Right-click it > **Create Prefab from Parts** makes `BP_<name>`: one child object
 per mesh and material in the file (named `Node` or `Node_Material`), each with its node's pivot,
 position, rotation and scale from the DCC (a door turns about its hinge), plus an `M_<material>`
-Material for each material in the file, made by Import Materials and Textures (below). Drag the
-prefab into the level and move, hide or re-material its parts like any objects.
+Material for each material in the file, made by Import Materials and Textures (below). The file's
+node tree is kept: a part sits under its parent node's part (a door leaf under its frame moves with
+it), and a node without a mesh becomes an empty group object at its parent's pivot. Drag the prefab
+into the level and move, hide or re-material its parts like any objects. Console:
+`asset.CreatePrefabFromParts <mesh>`.
 
 **Import Materials and Textures** (Unreal's FBX import with Import Materials / Import Textures on):
 importing an FBX, glTF or GLB does it by itself when the file's textures can be found; for a mesh
