@@ -361,6 +361,10 @@ struct Flipbook {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "The frames in order") List<FlipbookFrame, 256> frames;
     LSD_PROPERTY(Edit, Tooltip = "Starts over when it ends; off: stops on the last frame") bool loop = true;
+    // The Flipbook window's preview only (sprites playing it use their own sheet).
+    LSD_PROPERTY(Edit, Category = "Preview", Widget = "Asset:Texture", Tooltip = "The sprite sheet the Flipbook window shows the cells from") char preview_texture[33] = "";
+    LSD_PROPERTY(Edit, Category = "Preview", Min = 1, Max = 64, Tooltip = "Cells across the preview sheet") u32 preview_columns = 4;
+    LSD_PROPERTY(Edit, Category = "Preview", Min = 1, Max = 64, Tooltip = "Cells down the preview sheet") u32 preview_rows = 1;
 };
 
 LSD_STRUCT(Component, Category = "2D", Tooltip = "A flat image for 2D games, with sprite-sheet frames and flipbook animation")

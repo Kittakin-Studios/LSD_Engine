@@ -783,6 +783,14 @@ the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z pl
   **Event**. A Sprite's **Flipbook** plays it instead of Frame / Frame Count / FPS (held on the last
   frame when Loop is off). In Play, when a frame with an Event starts, the sprite's scripts run that
   function: an Event `step` calls `function step(self)` (footsteps, a sword swing's hit frame).
+  **Double-click a Flipbook** for its window (Unreal's Flipbook Editor). Pick the **Sheet** and its
+  Columns / Rows at the top. The animation plays in the corner, with the current frame's event.
+  Click a cell of the sheet to add it as the next frame. Each frame in the list has its cell,
+  duration and event, arrows to move it and X to delete it; **Set All Durations** gives an even
+  pace. **Save**: sprites using the flipbook play the new frames at once.
+
+  ![The Flipbook window](images/win_flipbook.jpg)
+  *The Flipbook window: the playing preview with the frame's event, the sheet to click frames from, the frame list.*
 - **Tile collision shapes**: in the 2D mode, pick a tile in the palette and set **Tile Collision**:
   Full, None (decoration only), Top Half, Bottom Half, Slope Up (a ramp rising to the right) or
   Slope Down, or **One Way** (a jump-through platform: the player jumps up through it and lands on
