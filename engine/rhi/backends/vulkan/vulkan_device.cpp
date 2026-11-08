@@ -1271,6 +1271,7 @@ public:
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
         size(p.scene, k);
+        k[2] = lookup_texture(p.normals) ? 1.0f : 0.0f;  // SSR / AO: normals from the normals pass (t1)
         end_pass();  // the scene's colour (and depth below) become readable
         if ((ao || dof || taa || ssr || motion) && !scene->depth_readable) {
             const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
@@ -1280,14 +1281,14 @@ public:
         }
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
-            post_pass(kSsr, c.ssr, nullptr, p.scene, {}, p.scene, k);
+            post_pass(kSsr, c.ssr, nullptr, p.scene, p.normals, p.scene, k);
             src = c.ssr;
         }
         if (ao) {
             f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
             std::memcpy(ka, k, sizeof ka);
             std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
-            post_pass(kAo, c.ao, nullptr, {}, {}, p.scene, ka);
+            post_pass(kAo, c.ao, nullptr, {}, p.normals, p.scene, ka);
             post_pass(kAoApply, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }

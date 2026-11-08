@@ -257,9 +257,12 @@ struct LightSetup {
     f32 light_functions[kMaxLights * 2][4] = {};
     // Per light: x = its shadow mask channel + 1 in the lightmap (Stationary lights; 0: none).
     f32 light_extra[kMaxLights][4] = {};
+    // The normals pass (SSR / AO read it): rows 0-2 the view's rotation; row 3 x = 1 while it draws, when the lit shader
+    // writes each pixel's view-space normal (smooth, as shaded) * 0.5 + 0.5 instead of its colour.
+    f32 normal_view[4][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32 + kMaxLights * 16,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32 + kMaxLights * 16 + 64,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
@@ -302,6 +305,9 @@ struct PostDraw {
     PostShaderHandle post_shader;
     f32 post_time = 0.0f;
     f32 post_params[3] = {};
+    // The normals pass's target (LightSetup::normal_view): SSR and AO take their normals from it instead of from the
+    // depth (which only knows flat triangles: a low-poly mesh shaded smooth would show its facets). Invalid: from depth.
+    TextureHandle normals;
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
     f32 proj[4] = {};               // projection [0][0], [1][1], [2][2], [2][3]: view distance = proj[3] / (depth + proj[2])
     f32 ao_intensity = 0.0f;        // screen-space ambient occlusion; 0 = off

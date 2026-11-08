@@ -741,6 +741,34 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
     return h;
 }
 
+// The normals pass (SSR / AO read it): while `on`, the view's opaque mesh draws are kept as they are submitted (their
+// arrays copied: some are reused by the next draw), then drawn again into a normals target (LightSetup::normal_view).
+struct NormalRecorder {
+    bool on = false;
+    struct Kept {
+        lsd::rhi::MeshDraw draw;
+        std::vector<lsd::f32> joints, instances, params;
+    };
+    std::vector<Kept> draws;
+    lsd::usize used = 0;
+} g_normals;
+
+void submit_mesh(lsd::rhi::Device& device, const lsd::rhi::MeshDraw& draw) {
+    device.draw_mesh(draw);
+    if (!g_normals.on || draw.blend != 0 || draw.wireframe || draw.unlit || draw.debug_view != 0) return;
+    if (g_normals.used == g_normals.draws.size()) g_normals.draws.emplace_back();
+    NormalRecorder::Kept& k = g_normals.draws[g_normals.used++];  // reused frame to frame: no allocation once grown
+    k.draw = draw;
+    auto keep = [](std::vector<lsd::f32>& to, const lsd::f32*& from, lsd::usize count) {
+        if (!from) return;
+        to.assign(from, from + count);
+        from = to.data();
+    };
+    keep(k.joints, k.draw.joint_rows, static_cast<lsd::usize>(draw.joint_count) * 12);
+    keep(k.instances, k.draw.instance_rows, static_cast<lsd::usize>(draw.instance_count) * 12);
+    keep(k.params, k.draw.material_params, static_cast<lsd::usize>(draw.material_param_count) * 4);
+}
+
 void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const lsd::Mat4& view_proj, EditorState& stats) {
     std::sort(items.begin(), items.end(), [](const BatchItem& a, const BatchItem& b) { return a.key < b.key; });
     static std::vector<lsd::f32> rows;
@@ -749,7 +777,7 @@ void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const
         while (end < items.size() && items[end].key == items[i].key) ++end;
         lsd::rhi::MeshDraw draw = items[i].draw;
         if (end - i == 1) {
-            device.draw_mesh(draw);  // alone: its own mvp / normals, as before
+            submit_mesh(device, draw);  // alone: its own mvp / normals, as before
         } else {
             rows.clear();
             for (size_t k = i; k < end; ++k) {
@@ -760,7 +788,7 @@ void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const
             std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
             draw.instance_rows = rows.data();
             draw.instance_count = static_cast<lsd::u32>(end - i);
-            device.draw_mesh(draw);
+            submit_mesh(device, draw);
         }
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3 * static_cast<lsd::u32>(end - i);
@@ -919,7 +947,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 batch.push_back({batch_key(draw), draw, pm});
                 return;
             }
-            device.draw_mesh(draw);
+            submit_mesh(device, draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
@@ -983,7 +1011,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 translucent.emplace_back(lsd::length(centre - eye) - static_cast<lsd::f32>(sort_order) * 1.0e5f, draw);  // drawn largest first
                 return;
             }
-            device.draw_mesh(draw);
+            submit_mesh(device, draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
@@ -1063,7 +1091,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 draw.gpu_cull = g_gpu_culling && copies >= 32 && device.supports_gpu_culling();
                 std::memcpy(draw.local_bounds_min, &mesh->bounds_min, sizeof draw.local_bounds_min);
                 std::memcpy(draw.local_bounds_max, &mesh->bounds_max, sizeof draw.local_bounds_max);
-                device.draw_mesh(draw);
+                submit_mesh(device, draw);
                 ++stats.stat_draws;
             } else {
                 for (const lsd::Mat4& m : matrices) {  // Material Graphs have no instanced variant
@@ -1077,7 +1105,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                     for (int r = 0; r < 3; ++r) {
                         for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
                     }
-                    device.draw_mesh(draw);
+                    submit_mesh(device, draw);
                     ++stats.stat_draws;
                 }
             }
@@ -1149,7 +1177,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 section.color[2] = 0.25f;
             }
             if (blend_view(stats, section, lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, eye, translucent)) continue;
-            device.draw_mesh(section);
+            submit_mesh(device, section);
             ++stats.stat_draws;
             stats.stat_triangles += section.index_count / 3;
         }
@@ -1157,7 +1185,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     // Translucent and additive meshes last, far to near, over everything opaque (they do not write depth).
     std::sort(translucent.begin(), translucent.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     for (const auto& [distance, draw] : translucent) {
-        device.draw_mesh(draw);
+        submit_mesh(device, draw);
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3;
     }
@@ -2340,7 +2368,7 @@ int main(int argc, char** argv) {
             }
             return target[v];
         }
-    } scene_targets;
+    } scene_targets, normal_targets;  // normal_targets: the normals pass's, when SSR or AO is on
     struct TaaHistory {  // per viewport: last frame's view-projection (TAA reprojects into it)
         lsd::Mat4 view_proj;
         lsd::u32 frame = 0;
@@ -3289,7 +3317,12 @@ int main(int argc, char** argv) {
                 const lsd::f32 lin = srgb <= 0.04045f ? srgb / 12.92f : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
                 scene_clear[c] = std::sqrt(lin / (1.0f + lin));
             }
+            // SSR / AO want the meshes' own normals: keep this view's opaque draws for the normals pass below.
+            const bool normals_pass = scene.valid() && use_post && post.proj[0] != 0.0f && (post.ssr_intensity > 0.0f || post.ao_intensity > 0.0f);
+            g_normals.on = normals_pass;
+            g_normals.used = 0;
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
+            g_normals.on = false;
             if (state.show_grid && !state.game_view && !state.playing) {
                 // Side views see the floor edge-on, so they get the grid stood up on their own plane (XZ / YZ).
                 const lsd::Mat4 grid_proj = lens.view == lsd::editor::ViewType::Front ? view_proj * lsd::rotation_x(lsd::radians(90.0f))
@@ -3302,6 +3335,20 @@ int main(int argc, char** argv) {
             }
             effects->set_fog(g_view_fog, g_view_fog + 4);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
+            if (normals_pass) {  // the kept draws again, each pixel's view-space normal into its own target
+                const lsd::rhi::TextureHandle normals = normal_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
+                const lsd::f32 facing[4] = {0.5f, 0.5f, 1.0f, 1.0f};
+                device->set_render_target(normals, facing);
+                lsd::rhi::LightSetup flagged = g_view_lights;
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) flagged.normal_view[r][c] = view.at(r, c);
+                }
+                flagged.normal_view[3][0] = 1.0f;
+                device->set_lights(flagged);
+                for (lsd::usize i = 0; i < g_normals.used; ++i) device->draw_mesh(g_normals.draws[i].draw);
+                device->set_lights(g_view_lights);
+                post.normals = normals;
+            }
             if (scene.valid()) {
                 post.scene = scene;
                 for (int c = 0; c < 4; ++c) post.viewport[c] = pixels[c];

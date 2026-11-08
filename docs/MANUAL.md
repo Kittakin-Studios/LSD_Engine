@@ -630,7 +630,10 @@ Atmosphere:
   **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
   buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
   transition, max blur in pixels; focal distance 0 = off; out-of-focus lights open into soft bokeh discs;
-  needs Post Processing quality High or Epic).
+  needs Post Processing quality High or Epic). Reflections and Ambient Occlusion take each pixel's normal from a
+  normals pass (the opaque meshes drawn once more, their smooth normals into a texture, like Unreal's GBuffer World
+  Normal), so a low-poly mesh shaded smooth reflects and darkens smoothly instead of triangle by triangle. It runs
+  only while one of them is on.
   **Color Grading LUT** (Unreal's): a 256 x 16 texture strip (16 tiles of 16 x 16; red across, green
   down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
   paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip

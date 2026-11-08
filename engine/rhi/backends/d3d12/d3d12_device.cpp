@@ -1259,19 +1259,20 @@ public:
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
         size(p.scene, k);
+        k[2] = lookup(p.normals) ? 1.0f : 0.0f;  // SSR / AO: normals from the normals pass (t1)
         // The scene's depth is read by the passes below: a shader resource until they are done.
         const bool read_depth = ao || dof || taa || ssr || motion;
         if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
-            post_pass(post_ssr_.Get(), c.ssr, nullptr, p.scene, {}, p.scene, k);
+            post_pass(post_ssr_.Get(), c.ssr, nullptr, p.scene, p.normals, p.scene, k);
             src = c.ssr;
         }
         if (ao) {
             f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
             std::memcpy(ka, k, sizeof ka);
             std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
-            post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, ka);
+            post_pass(post_ao_.Get(), c.ao, nullptr, {}, p.normals, p.scene, ka);
             post_pass(post_ao_apply_.Get(), c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }

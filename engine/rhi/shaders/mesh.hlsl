@@ -41,6 +41,7 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 light_profiles[64];   // IES: 16 samples of 1 - profile per light (rhi::LightSetup)
     float4 light_functions[32];  // per light: its image in the decal atlas, then scroll, repeats, on
     float4 light_extra[16];      // per light: x = its shadow mask channel + 1
+    float4 normal_view[4];       // the normals pass: the view's rotation (rows 0-2), [3].x = 1 while it draws
 };
 // A light's IES profile at the angle from its axis whose cosine is c (1 without one; asset::light_profile_at).
 float light_profile(uint li, float c) {
@@ -458,6 +459,8 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float ao = orm.r;
     const float3 emissive = float3(mat0.zw, mat1.x) * emissive_tex.Sample(samp, i.uv).rgb;
 #endif
+    if (normal_view[3].x > 0.5)  // the normals pass (SSR / AO): the normal as shaded, in view space
+        return float4(normalize(float3(dot(normal_view[0].xyz, n), dot(normal_view[1].xyz, n), dot(normal_view[2].xyz, n))) * 0.5 + 0.5, 1.0);
     if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
     base.rgb = apply_decals(base.rgb, i.wpos, n);
     if (n0.w > 2.5) base.rgb = float3(0.5, 0.5, 0.5);  // Lighting Only view mode: every surface a neutral grey

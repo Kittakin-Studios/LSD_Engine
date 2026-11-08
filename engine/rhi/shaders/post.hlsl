@@ -57,6 +57,7 @@ float4 ps_ao(VsOut i) : SV_Target {
     const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
     float3 n = normalize(cross(dx, dy));
     if (dot(n, p) > 0.0) n = -n;  // facing the camera
+    if (texel.z > 0.5) n = normalize(t1.SampleLevel(clamp_linear, i.uv, 0).xyz * 2.0 - 1.0);  // the normals pass's (smooth, as shaded)
     const float radius = ao_p.x;
     const float2 scale = float2(proj.x, proj.y) * 0.5 * radius / -p.z;
     // A 4 x 4 Bayer pattern: the 4 x 4 blur in ps_ao_apply sees every rotation once, so the noise averages out exactly.
@@ -179,6 +180,7 @@ float4 ps_ssr(VsOut i) : SV_Target {
     const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
     float3 n = normalize(cross(dx, dy));
     if (dot(n, p) > 0.0) n = -n;
+    if (texel.z > 0.5) n = normalize(t1.SampleLevel(clamp_linear, i.uv, 0).xyz * 2.0 - 1.0);  // the normals pass's (smooth, as shaded)
     const float3 ray = reflect(normalize(p), n);
     if (ray.z > 0.4) return float4(encode(c), 1.0);  // back towards the camera: nothing on screen to show
     const float reach = ao_p.w;

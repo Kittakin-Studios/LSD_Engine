@@ -127,6 +127,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 light_profiles[64];
     vec4 light_functions[32];
     vec4 light_extra[16];
+    vec4 normal_view[4];
 };
 float light_profile(uint li, float c) {  // mesh.hlsl's
     float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;
@@ -469,6 +470,10 @@ void main() {
     float ao = orm.r;
     vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, v_uv).rgb;
 #endif
+    if (normal_view[3].x > 0.5) {  // the normals pass (mesh.hlsl)
+        o_color = vec4(normalize(vec3(dot(normal_view[0].xyz, n), dot(normal_view[1].xyz, n), dot(normal_view[2].xyz, n))) * 0.5 + 0.5, 1.0);
+        return;
+    }
     if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
     base.rgb = apply_decals(base.rgb, v_wpos, n);
     if (u_flags.x > 2.5) base.rgb = vec3(0.5);  // Lighting Only view mode: every surface a neutral grey
@@ -865,6 +870,7 @@ void main() {
     vec3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
     vec3 n = normalize(cross(dx, dy));
     if (dot(n, p) > 0.0) n = -n;
+    if (texel.z > 0.5) n = normalize(textureLod(t1, v_uv, 0.0).xyz * 2.0 - 1.0);  // the normals pass's (smooth, as shaded)
     vec3 ray = reflect(normalize(p), n);
     if (ray.z > 0.4) { o_color = vec4(encode(c), 1.0); return; }
     float reach = ao_p.w;
@@ -908,6 +914,7 @@ void main() {
     vec3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
     vec3 n = normalize(cross(dx, dy));
     if (dot(n, p) > 0.0) n = -n;  // facing the camera
+    if (texel.z > 0.5) n = normalize(textureLod(t1, v_uv, 0.0).xyz * 2.0 - 1.0);  // the normals pass's (smooth, as shaded)
     float radius = ao_p.x;
     vec2 scale = vec2(u_post[4].x, u_post[4].y) * 0.5 * radius / -p.z;
     // A 4 x 4 Bayer pattern (as the HLSL): the 4 x 4 blur sees every rotation once.
@@ -1982,16 +1989,17 @@ public:
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
         size(p.scene, k);
+        k[2] = lookup(p.normals) ? 1.0f : 0.0f;  // SSR / AO: normals from the normals pass (t1)
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
-            post_pass(9, c.ssr, nullptr, p.scene, {}, p.scene, k);
+            post_pass(9, c.ssr, nullptr, p.scene, p.normals, p.scene, k);
             src = c.ssr;
         }
         if (ao) {
             f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
             std::memcpy(ka, k, sizeof ka);
             std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
-            post_pass(5, c.ao, nullptr, {}, {}, p.scene, ka);
+            post_pass(5, c.ao, nullptr, {}, p.normals, p.scene, ka);
             post_pass(6, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
