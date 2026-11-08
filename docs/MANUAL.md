@@ -609,8 +609,10 @@ Atmosphere:
 
   ![Volumetric fog](images/volumetric_fog.jpg)
   *The same view without (top) and with Volumetric: sunlit fog glows, shadowed fog stays dark.*
-- **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in
-  wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
+- **Post Process Volume**: unbound (everywhere) or a box. Volumes blend as in Unreal: each the camera
+  reaches is mixed in by its **Blend Weight**, lowest **Priority** first (higher ones on top), and a box's
+  look fades in over its **Blend Radius** as the camera nears it (0 = a hard edge); switches such as the
+  tonemapper and the LUT come from a volume once it is at least half in. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
   **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA, or
   **Temporal AA**: smoother and steadier, a little softer, can ghost on fast motion).
   **Reflections** (screen-space: smooth surfaces mirror what is on screen; intensity, distance),

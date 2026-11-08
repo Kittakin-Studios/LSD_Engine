@@ -779,6 +779,27 @@ static void test_paper2d() {
     CHECK(editor::flipbook_frame(fb, 5.0f) == 2);   // held on the last frame
 }
 
+void test_post_blend() {
+    world::World w(default_allocator());
+    world::PostProcessVolume out;
+    CHECK(!editor::blend_post_volumes(w, {0, 0, 0}, false, out) && out.saturation == 1.0f);  // none: the defaults
+    const world::Entity global = w.create("Global");
+    w.add<world::PostProcessVolume>(global)->saturation = 0.0f;  // unbound, weight 1: black and white everywhere
+    const world::Entity box = w.create("Box");
+    auto* local = w.add<world::PostProcessVolume>(box);
+    local->unbound = false;
+    local->priority = 1;
+    local->saturation = 2.0f;
+    local->blend_radius = 2.0f;
+    local->filmic_tonemapper = false;
+    w.get<world::Transform>(box)->scale = {2, 2, 2};  // x, y -1..1, z 0..2
+    CHECK(editor::blend_post_volumes(w, {0, 0, 1}, false, out) && std::fabs(out.saturation - 2.0f) < 1e-5f && !out.filmic_tonemapper);  // inside: on top
+    CHECK(editor::blend_post_volumes(w, {2, 0, 1}, false, out) && std::fabs(out.saturation - 1.0f) < 1e-5f && !out.filmic_tonemapper);  // 1 m out of 2: half
+    CHECK(editor::blend_post_volumes(w, {4, 0, 1}, false, out) && std::fabs(out.saturation) < 1e-5f && out.filmic_tonemapper);  // beyond the radius: the global one
+    local->blend_weight = 0.25f;
+    CHECK(editor::blend_post_volumes(w, {0, 0, 1}, false, out) && std::fabs(out.saturation - 0.5f) < 1e-5f && out.filmic_tonemapper);  // a quarter in: switches stay
+}
+
 void test_particle_light() {
     rhi::LightSetup s;
     s.exposure = 2.0f;
@@ -820,6 +841,7 @@ int main() {
     test_rml_edit();
     test_sound_cue();
     test_particle_light();
+    test_post_blend();
     if (g_failures == 0) std::printf("All editor tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

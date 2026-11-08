@@ -915,7 +915,10 @@ LSD_STRUCT(Component, Category = "Environment", Tooltip = "The look inside its b
 struct PostProcessVolume {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Everywhere, not just inside the box") bool unbound = true;
-    LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the higher priority wins") i32 priority = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the higher priority is applied last (on top)") i32 priority = 0;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 100, Tooltip = "Blend Radius: outside the box its look fades out over this distance (Unreal's); 0 = a hard edge")
+    f32 blend_radius = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Blend Weight: how much of its look applies (1 = all of it, 0 = none)") f32 blend_weight = 1.0f;
     LSD_PROPERTY(Edit, Units = "EV", Min = -10, Max = 10, Tooltip = "Brighter (+) or darker (-) on top of World Settings exposure") f32 exposure_compensation = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Filmic (ACES) curve: soft highlights instead of clipping") bool filmic_tonemapper = true;
     LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "0 = black and white") f32 saturation = 1.0f;

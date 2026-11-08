@@ -42,9 +42,13 @@ void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 co
 void set_shadow_quality(u32 quality);
 // Post Processing quality (0 Low .. 3 Epic): world_post trims its result to it (limit_post).
 void set_post_quality(u32 quality);
-// The post-process pass the camera gets from the level's Post Process Volume (bloom, tonemap,
-// grading, FXAA); the default volume's values where none applies. Always true for now.
-// `chosen`: the volume that applies (nullptr when none does: the defaults), for its Color Grading LUT.
+// The look at `eye` (Unreal's volume blending): from the defaults, every Post Process Volume that reaches it, lowest
+// priority first, each mixed in by its Blend Weight (fading out over its Blend Radius outside its box). Numbers and
+// colours are blended; switches and the LUT come from a volume once it is at least half in. False when none reaches.
+bool blend_post_volumes(const world::World& world, Vec3 eye, bool skip_hidden, world::PostProcessVolume& out);
+// The post-process pass the camera gets from the level's Post Process Volumes (bloom, tonemap,
+// grading, FXAA), blended by blend_post_volumes; the default volume's values where none applies. Always true for now.
+// `chosen`: the blended look (nullptr when no volume applies: the defaults), for its Color Grading LUT; valid until the next call.
 // out.contact_shadow comes back in world space (toward the first sun with a Contact Shadow Length).
 bool world_post(const world::World& world, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen = nullptr);
 // The level's Sky, if it has one (sun disc from the first Directional Light).

@@ -126,19 +126,9 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
         }
         break;
     }
-    const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
-    const world::PostProcessVolume* best = nullptr;
-    for (u32 i = 0; i < w.count(post_type); ++i) {
-        const world::Entity e = w.owner(post_type, i);
-        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
-        const auto* v = static_cast<const world::PostProcessVolume*>(w.at(post_type, i));
-        if (!v->unbound) {
-            const Vec3 p = transform_point(affine_inverse(w.world_matrix(e)), eye);  // the unit volume: x, y in -0.5..0.5, z in 0..1
-            if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;
-        }
-        if (!best || v->priority > best->priority) best = v;
-    }
-    if (!best) return;
+    world::PostProcessVolume blended;
+    if (!blend_post_volumes(w, eye, skip_hidden, blended)) return;
+    const world::PostProcessVolume* best = &blended;
     s.exposure *= std::pow(2.0f, best->exposure_compensation);
     s.post[0] = best->saturation;
     s.post[1] = best->contrast;
@@ -223,23 +213,65 @@ rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool 
     return s;
 }
 
-bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen) {
+bool blend_post_volumes(const world::World& w, Vec3 eye, bool skip_hidden, world::PostProcessVolume& out) {
     const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
-    const world::PostProcessVolume* best = nullptr;
-    for (u32 i = 0; i < w.count(post_type); ++i) {
+    struct Reach {
+        const world::PostProcessVolume* volume;
+        f32 weight;
+    };
+    Reach reach[32];
+    u32 n = 0;
+    for (u32 i = 0; i < w.count(post_type) && n < 32; ++i) {  // shortcut: the first 32 volumes reaching the eye; plenty for a level
         const world::Entity e = w.owner(post_type, i);
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
         const auto* v = static_cast<const world::PostProcessVolume*>(w.at(post_type, i));
-        if (!v->unbound) {
-            const Vec3 p = transform_point(affine_inverse(w.world_matrix(e)), eye);
-            if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;
+        f32 weight = std::clamp(v->blend_weight, 0.0f, 1.0f);
+        if (!v->unbound) {  // the unit volume: x, y in -0.5..0.5, z in 0..1; outside, the world distance to it
+            const Mat4 m = w.world_matrix(e);
+            const Vec3 p = transform_point(affine_inverse(m), eye);
+            const Vec3 nearest{std::clamp(p.x, -0.5f, 0.5f), std::clamp(p.y, -0.5f, 0.5f), std::clamp(p.z, 0.0f, 1.0f)};
+            const f32 outside = length(transform_point(m, nearest) - eye);
+            if (outside > 0.0f) weight *= v->blend_radius > 0.0f ? std::clamp(1.0f - outside / v->blend_radius, 0.0f, 1.0f) : 0.0f;
         }
-        if (!best || v->priority > best->priority) best = v;
+        if (weight > 0.0f) reach[n++] = {v, weight};
     }
+    std::stable_sort(reach, reach + n, [](const Reach& a, const Reach& b) { return a.volume->priority < b.volume->priority; });
     // Without a volume the level still gets the default look (as in Unreal: filmic tonemapper, bloom,
     // AO, reflections, anti-aliasing): the values a new Post Process Volume starts with.
-    static const world::PostProcessVolume defaults;
-    if (!best) best = &defaults;
+    out = world::PostProcessVolume{};
+    const reflect::TypeInfo& type = reflect::type_of<world::PostProcessVolume>();
+    for (u32 k = 0; k < n; ++k) {
+        const f32 t = reach[k].weight;
+        auto* to = reinterpret_cast<u8*>(&out);
+        const auto* from = reinterpret_cast<const u8*>(reach[k].volume);
+        for (u32 p = 0; p < type.property_count; ++p) {
+            const reflect::Property& prop = type.properties[p];
+            if (prop.type == reflect::FieldType::F32) {
+                f32 a, b;
+                std::memcpy(&a, to + prop.offset, 4);
+                std::memcpy(&b, from + prop.offset, 4);
+                a += (b - a) * t;
+                std::memcpy(to + prop.offset, &a, 4);
+            } else if (prop.type == reflect::FieldType::Struct && prop.size == sizeof(LinearColor)) {  // the tint: four floats
+                for (u32 c = 0; c < 4; ++c) {
+                    f32 a, b;
+                    std::memcpy(&a, to + prop.offset + c * 4, 4);
+                    std::memcpy(&b, from + prop.offset + c * 4, 4);
+                    a += (b - a) * t;
+                    std::memcpy(to + prop.offset + c * 4, &a, 4);
+                }
+            } else if (t >= 0.5f) {  // switches, choices, the LUT: the volume's once it is at least half in
+                std::memcpy(to + prop.offset, from + prop.offset, prop.size);
+            }
+        }
+    }
+    return n > 0;
+}
+
+bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen) {
+    static world::PostProcessVolume blended;  // what *chosen points at (main thread, one view at a time)
+    const bool any = blend_post_volumes(w, eye, skip_hidden, blended);
+    const world::PostProcessVolume* best = &blended;
     out.bloom_intensity = best->bloom_intensity;
     out.bloom_threshold = best->bloom_threshold;
     out.tint[0] = best->tint.r;
@@ -251,7 +283,7 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.vignette = best->vignette;
     out.motion_blur = best->motion_blur_amount;
     out.motion_blur_max = best->motion_blur_max * 0.01f;
-    if (chosen) *chosen = best;
+    if (chosen) *chosen = any ? best : nullptr;
     const reflect::TypeInfo& sun_type = reflect::type_of<world::DirectionalLight>();
     for (u32 i = 0; i < w.count(sun_type); ++i) {
         const auto* sun = static_cast<const world::DirectionalLight*>(w.at(sun_type, i));
