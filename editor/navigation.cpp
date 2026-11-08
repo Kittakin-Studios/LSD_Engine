@@ -11,6 +11,25 @@ namespace {
 
 constexpr Vec3 kUnitLo{-0.5f, -0.5f, 0.0f}, kUnitHi{0.5f, 0.5f, 1.0f};  // volumes (see components.h)
 
+// A mesh's own triangles under a world matrix (Collision Shape: Mesh, as physics uses them).
+void add_triangles(std::vector<f32>& v, std::vector<u32>& idx, const Mat4& m, const MeshCache::Triangles& t, Vec3& world_lo, Vec3& world_hi) {
+    const u32 base = static_cast<u32>(v.size() / 3);
+    for (const Vec3& local : t.points) {
+        const Vec3 p = transform_point(m, local);
+        v.push_back(p.x);
+        v.push_back(p.y);
+        v.push_back(p.z);
+        world_lo = vmin(world_lo, p);
+        world_hi = vmax(world_hi, p);
+    }
+    const bool mirrored = dot(cross(transform_vector(m, {1, 0, 0}), transform_vector(m, {0, 1, 0})), transform_vector(m, {0, 0, 1})) < 0.0f;
+    for (usize i = 0; i + 2 < t.indices.size(); i += 3) {
+        idx.push_back(base + t.indices[i]);
+        idx.push_back(base + t.indices[mirrored ? i + 2 : i + 1]);
+        idx.push_back(base + t.indices[mirrored ? i + 1 : i + 2]);
+    }
+}
+
 // A box (local bounds under a world matrix) as 8 corners and 12 outward triangles.
 void add_box(std::vector<f32>& v, std::vector<u32>& idx, const Mat4& m, Vec3 lo, Vec3 hi, Vec3& world_lo, Vec3& world_hi) {
     const u32 base = static_cast<u32>(v.size() / 3);
@@ -52,7 +71,7 @@ namespace {
 // out null: only the inputs' hash into *input_hash.
 bool gather_and_build(const world::World& world, MeshCache& meshes, ai::NavMesh* out_mesh, u64* input_hash, bool* reused, const std::vector<world::Entity>* skip) {
     if (reused) *reused = false;
-    // shortcut: collision boxes (what physics uses), not the meshes' triangles; switch both together.
+    // What physics collides with: each mesh's box, or its triangles when its Collision Shape is Mesh.
     std::vector<f32> verts;
     std::vector<u32> idx;
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
@@ -63,7 +82,9 @@ bool gather_and_build(const world::World& world, MeshCache& meshes, ai::NavMesh*
             continue;  // moving things are not floors
         const Mat4 m = world.world_matrix(e);
         if (const auto* mesh = world.get<world::StaticMesh>(e); mesh && mesh->collision) {
-            if (const CachedMesh* cached = meshes.get(mesh->mesh)) add_box(verts, idx, m, cached->bounds_min, cached->bounds_max, lo, hi);
+            const MeshCache::Triangles* exact = mesh->collision_shape == 1 ? meshes.triangles(mesh->mesh) : nullptr;  // arches, ramps, stairs
+            if (exact) add_triangles(verts, idx, m, *exact, lo, hi);
+            else if (const CachedMesh* cached = meshes.get(mesh->mesh)) add_box(verts, idx, m, cached->bounds_min, cached->bounds_max, lo, hi);
         }
         if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) add_box(verts, idx, m, kUnitLo, kUnitHi, lo, hi);
     }

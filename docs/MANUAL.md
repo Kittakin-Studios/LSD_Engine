@@ -1687,7 +1687,8 @@ the editor).
 1. Place a **Nav Mesh Bounds** volume around the walkable area (optional: without one the whole
    level is used). Press **P** to see the navmesh in green (walls and objects hide the parts behind them; in Play too, or
    `show.Navigation 1`). World Settings > Navigation sets agent
-   radius / height, step height, slope and cell size. A **Nav Modifier Volume** cuts its box out of the
+   radius / height, step height, slope and cell size. The navmesh lies on what blocks in Play: a mesh's
+   box, or its own triangles when its **Collision Shape** is **Mesh** (arches, ramps, stairs). A **Nav Modifier Volume** cuts its box out of the
    navmesh (Unreal's Nav Modifier with the Null area): AI paths round it though nothing blocks there.
    A **Nav Link** (Place > Nav Link; Unreal's Nav Link Proxy) joins two places the navmesh does not: a
    gap to jump, a ledge to drop off, a ladder. It runs from the object to its **End** (in the object's
