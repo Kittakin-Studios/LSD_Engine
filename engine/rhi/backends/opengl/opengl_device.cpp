@@ -187,7 +187,8 @@ float sun_visibility(vec3 p, vec3 cam) {  // one tap of the sun's shadow in the 
     vec2 uv = s.xy * 0.5 + 0.5;
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0) return 1.0;
     vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
-    return texture(shadow_tex, vec3(origin + uv * shadow_tile[c].z, s.z));
+    float last = shadow_split[count - 1];  // faded to lit over the last fifth: no hard edge where the shadows end
+    return mix(texture(shadow_tex, vec3(origin + uv * shadow_tile[c].z, s.z)), 1.0, clamp((dist - last * 0.8) / (last * 0.2), 0.0, 1.0));
 }
 // Area lights (see the HLSL's area_point): the direction to the light shape's point nearest the reflection.
 void area_point(Light L, vec3 wpos, vec3 rv, float roughness, inout vec3 ls, inout float sa2, inout float norm) {
@@ -527,7 +528,8 @@ void main() {
         float s = dot(d, u_sky[3].xyz);
         c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0) + 0.06 * pow(clamp(s, 0.0, 1.0), 6.0));
     }
-    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy, vec3(1.0)), 1.0);
+    vec3 far_point = u_sky[5].xyz + d * 5000.0;  // volumetric fog marches its View Distance even with nothing behind it
+    o_color = vec4(scene_out(c, far_point, u_sky[5].xyz, gl_FragCoord.xy, fog.w > 0.0 ? fog_light(far_point, u_sky[5].xyz) : vec3(1.0)), 1.0);
 }
 #endif
 )";
@@ -1737,7 +1739,9 @@ public:
                                 sky.ground[0], sky.ground[1], sky.ground[2], sky.ground[3], sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2],
                                 sky.sun_direction[3], sky.sun_color[0], sky.sun_color[1], sky.sun_color[2], sky.sun_color[3], sky.camera[0], sky.camera[1], sky.camera[2], 0.0f};
         gl_.glUniform4fv(sky_values_, 6, values);
-        gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);  // an HDRI's tile
+        gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);  // the environment's tile
+        gl_.glBindTextureUnit(3, shadow_texture_);  // volumetric fog's shafts
+        gl_.glBindTextureUnit(4, local_shadow_texture_);
         gl_.glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glDepthMask(GL_TRUE);

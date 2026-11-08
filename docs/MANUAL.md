@@ -613,7 +613,7 @@ Atmosphere:
   falloff, colour, start distance, max opacity. Particles fade into it like meshes (smoke takes on the
   fog's colour, additive sparks and glows fade out). **Volumetric** (Unreal's Volumetric Fog): the sun
   lights the fog and its shadows cut through it, so fog glows in sunlight, stays dark behind walls
-  and columns, and makes light shafts (for that it needs a Directional Light that casts shadows). Point
+  and columns, and makes light shafts, against the sky too (for that it needs a Directional Light that casts shadows). Point
   and Spot Lights light it too: a lamp gets a glowing halo, a spot a visible cone (without their shadows).
   **Scattering** is how strong the effect is, **Anisotropy** how much brighter it glows looking toward
   the sun, **View Distance** how far it is traced, **Steps** its quality (16 is a good start).

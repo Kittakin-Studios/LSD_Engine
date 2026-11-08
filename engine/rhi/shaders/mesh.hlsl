@@ -101,7 +101,8 @@ float sun_visibility(float3 p, float3 cam) {
     const float4 s = mul(shadow_vp[c], float4(p, 1.0));
     float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
     if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0) return 1.0;
-    return shadow_tex.SampleCmpLevelZero(shadow_samp, shadow_tile[c].xy + uv * shadow_tile[c].z, s.z);
+    const float last = shadow_split[(uint)shadow_info.x - 1];  // faded to lit over the last fifth: no hard edge where the shadows end
+    return lerp(shadow_tex.SampleCmpLevelZero(shadow_samp, shadow_tile[c].xy + uv * shadow_tile[c].z, s.z), 1.0, saturate((dist - last * 0.8) / (last * 0.2)));
 }
 // Volumetric fog: how lit the fog toward wpos is (1 = plain height fog). The sun's light reaching
 // points along the view ray (its shadow sampled at each step), shaped by a Henyey-Greenstein phase.
@@ -521,5 +522,6 @@ float4 ps_sky(SkyOut i) : SV_Target {
         const float s = dot(d, w0.xyz);
         c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));  // disc + glow + the wide haze around the sun (Mie)
     }
-    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy, float3(1.0, 1.0, 1.0)), 1.0);
+    const float3 far_point = mat1.yzw + d * 5000.0;  // volumetric fog marches its View Distance even with nothing behind it
+    return float4(scene_out(c, far_point, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(far_point, mat1.yzw) : float3(1.0, 1.0, 1.0)), 1.0);
 }
