@@ -89,6 +89,9 @@ constexpr u32 kMaxAdapters = 16;
 constexpr u32 kMaxSwapchainImages = 8;
 constexpr u32 kMaxBuffers = 4096;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+// Render targets (scene, post chain, previews) are half float (as D3D12's): only what draws to the window uses the
+// swapchain's format.
+constexpr VkFormat kTargetFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr u32 kMaxMaterialShaders = 256;
 constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 floats, as D3D12's root constants)
 constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
@@ -205,6 +208,8 @@ public:
             vkDestroyPipeline(device_, sky_pipeline_, nullptr);
             for (VkPipeline shadow : shadow_pipelines_) vkDestroyPipeline(device_, shadow, nullptr);
             vkDestroyPipeline(device_, ui_pipeline_, nullptr);
+            vkDestroyPipeline(device_, ui_target_pipeline_, nullptr);
+            for (VkPipeline w : post_window_) vkDestroyPipeline(device_, w, nullptr);
             vkDestroyPipeline(device_, particle_pipelines_[0], nullptr);
             vkDestroyPipeline(device_, particle_pipelines_[1], nullptr);
             vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
@@ -212,6 +217,7 @@ public:
             for (VkPipeline post : post_pipelines_) vkDestroyPipeline(device_, post, nullptr);
             for (const PostShader& post : post_shaders_) {
                 if (post.pipeline) vkDestroyPipeline(device_, post.pipeline, nullptr);
+                if (post.pipeline_window) vkDestroyPipeline(device_, post.pipeline_window, nullptr);
             }
             vkDestroyPipelineLayout(device_, post_layout_, nullptr);
             for (Frame& f : frames_) {
@@ -364,6 +370,7 @@ public:
 
     // The window pass (colour + depth). clear_color null: carries on after a shadow pass (load what is there).
     void begin_main_pass(const f32* clear_color) {
+        in_target_ = false;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         color.imageView = views_[image_];
@@ -405,6 +412,7 @@ public:
 
     // Draws into a render target: cleared to clear_color (null: carries on with what it holds).
     void begin_target_pass(Texture& t, const f32* clear_color) {
+        in_target_ = true;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
         const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
         transition(cmd, t.image, clear_color ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -523,7 +531,7 @@ public:
             return {};
         }
         Texture& t = textures_[slot];
-        bool ok = make_image(width, height, format_.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        bool ok = make_image(width, height, kTargetFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                              VK_IMAGE_ASPECT_COLOR_BIT, t.image, t.memory, t.view) &&
                   make_image(width, height, kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
                              t.depth_image, t.depth_memory, t.depth_view);
@@ -1228,7 +1236,7 @@ public:
             const VkRect2D scissor{{x, y}, {static_cast<u32>(std::max(0, d.scissor[2])), static_cast<u32>(std::max(0, d.scissor[3]))}};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         }
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, in_target_ ? ui_target_pipeline_ : ui_pipeline_);
         vkCmdPushConstants(cmd, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kUiPushBytes, push);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_layout_, 0, 1, &t->set, 0, nullptr);
         vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &vat);
@@ -1364,11 +1372,13 @@ public:
             g[16] = p.post_time;
             for (int n = 0; n < 3; ++n) g[17 + n] = p.post_params[n];
         }
-        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g, custom ? custom->pipeline : VK_NULL_HANDLE);
+        const bool to_window = !fxaa && !lookup_texture(p.output);
+        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g,
+                  custom ? (to_window ? custom->pipeline_window : custom->pipeline) : to_window ? post_window_[0] : VK_NULL_HANDLE);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
-            post_pass(kFxaa, p.output, p.viewport, c.ldr, {}, {}, f);
+            post_pass(kFxaa, p.output, p.viewport, c.ldr, {}, {}, f, lookup_texture(p.output) ? VK_NULL_HANDLE : post_window_[1]);
         }
         set_render_target({}, nullptr);
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
@@ -1540,9 +1550,14 @@ public:
             {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv}, {kPostVelocitySpirv, sizeof kPostVelocitySpirv},
         };
         for (u32 i = 0; i < kPostPasses; ++i) {  // the outline is painted over the image; the rest replace it
-            if (!make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, post_pipelines_[i], false, false, false,
-                               i == kOutline ? Blend::Alpha : Blend::Opaque)) return false;
+            auto make = [&](VkPipeline& out) {
+                return make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, out, false, false, false,
+                                     i == kOutline ? Blend::Alpha : Blend::Opaque);
+            };
+            // The outline paints over the window; composite and FXAA write into a target or to the window: one of each.
+            if (i == kOutline ? !window_pipeline([&] { return make(post_pipelines_[i]); }) : !make(post_pipelines_[i])) return false;
+            if ((i == kComposite || i == kFxaa) && !window_pipeline([&] { return make(post_window_[i == kComposite ? 0 : 1]); })) return false;
         }
 #endif
         return true;
@@ -1551,7 +1566,7 @@ public:
         Texture* t = lookup_texture(handle);
         if (!t || !t->depth_image || !rgba) return false;
         vkDeviceWaitIdle(device_);
-        const VkDeviceSize bytes = static_cast<VkDeviceSize>(t->width) * t->height * 4;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(t->width) * t->height * 8;  // half floats
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = bytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -1582,13 +1597,13 @@ public:
         }
         void* mapped = nullptr;
         if (ok && check(vkMapMemory(device_, memory, 0, bytes, 0, &mapped), "vkMapMemory (readback)")) {
-            const u8* src = static_cast<const u8*>(mapped);
-            const bool bgra = format_.format == VK_FORMAT_B8G8R8A8_UNORM || format_.format == VK_FORMAT_B8G8R8A8_SRGB;
-            for (VkDeviceSize i = 0; i < bytes; i += 4) {  // rows top to bottom, as the target holds them; RGBA
-                rgba[i] = src[i + (bgra ? 2 : 0)];
-                rgba[i + 1] = src[i + 1];
-                rgba[i + 2] = src[i + (bgra ? 0 : 2)];
-                rgba[i + 3] = src[i + 3];
+            const u16* src = static_cast<const u16*>(mapped);
+            for (VkDeviceSize i = 0; i < bytes / 2; ++i) {  // rows top to bottom, as the target holds them; RGBA, 0..1 to bytes
+                const u16 h = src[i];
+                const u32 exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu;
+                const f32 v = (h & 0x8000u) ? 0.0f : exponent == 0 ? std::ldexp(static_cast<f32>(mantissa) / 1024.0f, -14)
+                            : exponent == 31 ? 1.0f : std::ldexp(1.0f + static_cast<f32>(mantissa) / 1024.0f, static_cast<int>(exponent) - 15);
+                rgba[i] = static_cast<u8>(std::lround(std::fmin(v, 1.0f) * 255.0f));
             }
             vkUnmapMemory(device_, memory);
         } else {
@@ -1707,7 +1722,7 @@ public:
 
     static constexpr u32 kMaxPostShaders = 16;
     struct PostShader {
-        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE, pipeline_window = VK_NULL_HANDLE;  // into a target, to the window
         u32 generation = 0;
     };
     PostShaderHandle create_post_shader(const char* code) override {
@@ -1720,9 +1735,13 @@ public:
         std::vector<u32> vs, ps;
         if (!compile_spirv(source, "vs", nullptr, vs, "vs_full", true) || !compile_spirv(source, "ps", nullptr, ps, "ps_composite", true)) return {};
         PostShader& s = post_shaders_[slot];
-        if (!make_pipeline(vs.data(), vs.size() * 4, ps.data(), ps.size() * 4, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, s.pipeline, false, false, false, Blend::Opaque)) {
-            s.pipeline = VK_NULL_HANDLE;
+        auto make = [&](VkPipeline& out) {
+            return make_pipeline(vs.data(), vs.size() * 4, ps.data(), ps.size() * 4, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, out, false, false, false, Blend::Opaque);
+        };
+        if (!make(s.pipeline) || !window_pipeline([&] { return make(s.pipeline_window); })) {
+            if (s.pipeline) vkDestroyPipeline(device_, s.pipeline, nullptr);
+            s.pipeline = s.pipeline_window = VK_NULL_HANDLE;
             return {};
         }
         return PostShaderHandle::make(slot, s.generation & PostShaderHandle::kGenerationMask);
@@ -1737,7 +1756,8 @@ public:
         if (!s) return;
         vkDeviceWaitIdle(device_);  // shortcut: stalls; fine for edits in the editor
         vkDestroyPipeline(device_, s->pipeline, nullptr);
-        s->pipeline = VK_NULL_HANDLE;
+        vkDestroyPipeline(device_, s->pipeline_window, nullptr);
+        s->pipeline = s->pipeline_window = VK_NULL_HANDLE;
         ++s->generation;
     }
 
@@ -2730,7 +2750,7 @@ private:
         dynamic.pDynamicStates = dynamic_states;
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = shadow ? 0 : 1;
-        rendering.pColorAttachmentFormats = &format_.format;
+        rendering.pColorAttachmentFormats = &pipeline_format_;  // render targets, unless a window pipeline is being made
         rendering.depthAttachmentFormat = kDepthFormat;
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         create.pNext = &rendering;
@@ -2908,7 +2928,11 @@ private:
                make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, kShadowPsSpirv, sizeof kShadowPsSpirv, shadow_attributes, 2, sizeof(MeshVertex), triangles,
                              kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[3], false, true, true) &&
                make_pipeline(kUiVsSpirv, sizeof kUiVsSpirv, kUiPsSpirv, sizeof kUiPsSpirv, ui_attributes, 3, sizeof(UiVertex), triangles, kUiPushBytes, stages,
-                             ui_layout_, ui_pipeline_, true, false, false, Blend::Premultiplied) &&
+                             ui_layout_, ui_target_pipeline_, true, false, false, Blend::Premultiplied) &&
+               window_pipeline([&] {
+                   return make_pipeline(kUiVsSpirv, sizeof kUiVsSpirv, kUiPsSpirv, sizeof kUiPsSpirv, ui_attributes, 3, sizeof(UiVertex), triangles, kUiPushBytes, stages,
+                                        ui_layout_, ui_pipeline_, true, false, false, Blend::Premultiplied);
+               }) &&
                make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
                              triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[0], true, true, false, Blend::Alpha) &&
                make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
@@ -2998,6 +3022,16 @@ private:
     f32 viewport_[4] = {};  // the last set_viewport (draw_ui puts it back)
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE, particle_layout_ = VK_NULL_HANDLE;
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE, particle_pipelines_[2] = {};  // alpha, additive
+    VkPipeline ui_target_pipeline_ = VK_NULL_HANDLE, post_window_[2] = {};  // the UI into a target; composite and FXAA to the window
+    VkFormat pipeline_format_ = kTargetFormat;  // what make_pipeline builds for (window_pipeline: the swapchain's)
+    bool in_target_ = false;                    // a render target is bound (not the window)
+    template <class Make>
+    bool window_pipeline(Make make) {  // `make` builds for the window's format
+        pipeline_format_ = format_.format;
+        const bool ok = make();
+        pipeline_format_ = kTargetFormat;
+        return ok;
+    }
     bool warned_stream_ = false;
     bool in_pass_ = false;               // between vkCmdBeginRendering and vkCmdEndRendering
     Texture* target_ = nullptr;          // the render target being drawn into (null: the window or a shadow map)

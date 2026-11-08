@@ -112,7 +112,10 @@ float4 ps_ao_apply(VsOut i) : SV_Target {
     return float4(encode(tap(t0, i.uv) * ao), 1.0);
 }
 // The velocity target's movement in uv (LightSetup::velocity_view's encoding), and back.
-float2 velocity_at(Texture2D t, float2 uv) { const float4 e = t.SampleLevel(clamp_linear, uv, 0) * 255.0; return (float2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0; }
+float2 velocity_at(Texture2D t, float2 uv) {
+    const float4 e = round(t.SampleLevel(clamp_linear, uv, 0) * 255.0);  // half-float targets: the bytes, exactly
+    return (float2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0;
+}
 float4 velocity_out(float2 move) { const float2 q = round(saturate(move * 0.25 + 0.5) * 65535.0); const float2 hi = floor(q / 256.0); return float4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0) / 255.0; }
 // The velocity pass's movement (t1) where a mesh was drawn; elsewhere (sky, particles) the camera's, from the depth.
 float4 ps_velocity(VsOut i) : SV_Target {

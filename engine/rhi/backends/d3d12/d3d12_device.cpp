@@ -27,6 +27,9 @@ namespace {
 constexpr u32 kBackBufferCount = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+// Render targets (scene, post chain, previews) are half float: the scene's range-compressed colour keeps 10 bits of
+// mantissa instead of 8 (no banding in dark gradients). Only what draws to the window uses kBackBufferFormat.
+constexpr DXGI_FORMAT kTargetFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr u32 kDebugUiDescriptors = 4096;  // ImGui font atlas, render targets and textures (the meshes sample them too)
 constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
 constexpr u32 kMaxTargets = 256;
@@ -512,7 +515,7 @@ public:
         desc.Height = height;
         desc.DepthOrArraySize = 1;
         desc.MipLevels = 1;
-        desc.Format = kBackBufferFormat;
+        desc.Format = kTargetFormat;
         desc.SampleDesc.Count = 1;
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
         // No optimized clear colour: targets are cleared to varying colours (theme background).
@@ -763,7 +766,7 @@ public:
 
     static constexpr u32 kMaxPostShaders = 16;
     struct PostShader {
-        ComPtr<ID3D12PipelineState> pso;
+        ComPtr<ID3D12PipelineState> pso, pso_window;  // into a target, to the window
         u32 generation = 0;
     };
     PostShaderHandle create_post_shader(const char* code) override {
@@ -775,7 +778,7 @@ public:
         PostShader& s = post_shaders_[slot];
         ComPtr<ID3DBlob> vs, ps;
         if (!compile(source.c_str(), source.size(), "vs_full", "vs_5_0", vs) || !compile(source.c_str(), source.size(), "ps_composite", "ps_5_0", ps) ||
-            !make_post_pso(vs.Get(), ps.Get(), false, s.pso)) {
+            !make_post_pso(vs.Get(), ps.Get(), false, s.pso) || !make_post_pso(vs.Get(), ps.Get(), false, s.pso_window, kBackBufferFormat)) {
             s.pso.Reset();
             return {};
         }
@@ -791,6 +794,7 @@ public:
         if (!s) return;
         wait_for_gpu();  // shortcut: stalls; fine for edits in the editor
         s->pso.Reset();
+        s->pso_window.Reset();
         ++s->generation;
     }
 
@@ -1074,7 +1078,7 @@ public:
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 4, constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (t ? t : &textures_[white_])->srv_gpu);
-        list_->SetPipelineState(ui_pipeline_.Get());
+        list_->SetPipelineState(current_target_ >= 0 ? ui_target_pipeline_.Get() : ui_pipeline_.Get());
         const D3D12_VIEWPORT viewport{d.viewport[0], d.viewport[1], d.viewport[2], d.viewport[3], 0.0f, 1.0f};
         list_->RSSetViewports(1, &viewport);
         D3D12_RECT scissor{static_cast<LONG>(d.viewport[0]), static_cast<LONG>(d.viewport[1]), static_cast<LONG>(d.viewport[0] + d.viewport[2]),
@@ -1170,6 +1174,13 @@ public:
         list_->DrawInstanced(3, 1, 0, 0);
     }
 
+    static u8 half_to_byte(u16 h) {  // 0..1 (clamped) to 0..255
+        const u32 exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu;
+        if (h & 0x8000u) return 0;
+        const f32 v = exponent == 0 ? std::ldexp(static_cast<f32>(mantissa) / 1024.0f, -14) : exponent == 31 ? 1.0f : std::ldexp(1.0f + static_cast<f32>(mantissa) / 1024.0f, static_cast<int>(exponent) - 15);
+        return static_cast<u8>(std::lround(std::fmin(v, 1.0f) * 255.0f));
+    }
+
     bool read_render_target(TextureHandle handle, u8* rgba) override {
         Target* t = lookup(handle);
         if (!t) return false;
@@ -1221,7 +1232,11 @@ public:
         wait_for_gpu();
         u8* mapped = nullptr;
         if (FAILED(readback->Map(0, nullptr, reinterpret_cast<void**>(&mapped)))) return false;
-        for (u32 y = 0; y < t->height; ++y) std::memcpy(rgba + static_cast<usize>(y) * t->width * 4, mapped + footprint.Offset + y * footprint.Footprint.RowPitch, t->width * 4);
+        for (u32 y = 0; y < t->height; ++y) {  // half floats to bytes
+            const u16* row = reinterpret_cast<const u16*>(mapped + footprint.Offset + y * footprint.Footprint.RowPitch);
+            u8* out = rgba + static_cast<usize>(y) * t->width * 4;
+            for (u32 i = 0; i < t->width * 4; ++i) out[i] = half_to_byte(row[i]);
+        }
         const D3D12_RANGE nothing{0, 0};
         readback->Unmap(0, &nothing);
         return true;
@@ -1349,11 +1364,13 @@ public:
             g[16] = p.post_time;
             for (int n = 0; n < 3; ++n) g[17 + n] = p.post_params[n];
         }
-        post_pass(custom ? custom->pso.Get() : post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        const bool to_window = !fxaa && !lookup(p.output);
+        post_pass(custom ? (to_window ? custom->pso_window : custom->pso).Get() : (to_window ? post_composite_window_ : post_composite_).Get(), fxaa ? c.ldr : p.output,
+                  p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
-            post_pass(post_fxaa_.Get(), p.output, p.viewport, c.ldr, {}, {}, f);
+            post_pass((lookup(p.output) ? post_fxaa_ : post_fxaa_window_).Get(), p.output, p.viewport, c.ldr, {}, {}, f);
         }
         set_render_target({}, nullptr);  // the last pass's target back to a shader resource before the depth moves
         if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
@@ -1825,7 +1842,10 @@ private:
                 }
             }
         }
-        return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
+        pso_format_ = kBackBufferFormat;  // the test triangle draws to the window; everything else into targets
+        const bool triangle = create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_);
+        pso_format_ = kTargetFormat;
+        return triangle &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_pipeline_, false, kInstancedDefines) &&
@@ -1843,7 +1863,7 @@ private:
     }
 
     // A post pass's pipeline: a full-screen triangle into the colour target; `over` blends it onto what is there.
-    bool make_post_pso(ID3DBlob* vs, ID3DBlob* ps, bool over, ComPtr<ID3D12PipelineState>& out) {
+    bool make_post_pso(ID3DBlob* vs, ID3DBlob* ps, bool over, ComPtr<ID3D12PipelineState>& out, DXGI_FORMAT format = kTargetFormat) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
         pso.pRootSignature = root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
@@ -1866,7 +1886,7 @@ private:
         pso.DSVFormat = kDepthFormat;
         pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pso.NumRenderTargets = 1;
-        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.RTVFormats[0] = format;
         pso.SampleDesc.Count = 1;
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(out.GetAddressOf())), "CreateGraphicsPipelineState (post)");
     }
@@ -1884,7 +1904,11 @@ private:
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
-            if (!make_post_pso(vs.Get(), ps.Get(), std::strcmp(e.name, "ps_outline") == 0, *e.out)) return false;
+            const bool outline = std::strcmp(e.name, "ps_outline") == 0;  // painted over the window
+            if (!make_post_pso(vs.Get(), ps.Get(), outline, *e.out, outline ? kBackBufferFormat : kTargetFormat)) return false;
+            // The last passes write into a target or straight to the window: one of each.
+            if (std::strcmp(e.name, "ps_composite") == 0 && !make_post_pso(vs.Get(), ps.Get(), false, post_composite_window_, kBackBufferFormat)) return false;
+            if (std::strcmp(e.name, "ps_fxaa") == 0 && !make_post_pso(vs.Get(), ps.Get(), false, post_fxaa_window_, kBackBufferFormat)) return false;
         }
         return true;
     }
@@ -1921,7 +1945,9 @@ private:
         pso.NumRenderTargets = 1;
         pso.RTVFormats[0] = kBackBufferFormat;
         pso.SampleDesc.Count = 1;
-        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&ui_pipeline_)), "CreateGraphicsPipelineState (ui)");
+        if (!check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&ui_pipeline_)), "CreateGraphicsPipelineState (ui)")) return false;
+        pso.RTVFormats[0] = kTargetFormat;  // into a render target (the UI window's preview)
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&ui_target_pipeline_)), "CreateGraphicsPipelineState (ui, target)");
     }
 
     bool create_sky_pipeline() {
@@ -1939,7 +1965,7 @@ private:
         pso.DSVFormat = kDepthFormat;
         pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pso.NumRenderTargets = 1;
-        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.RTVFormats[0] = kTargetFormat;
         pso.SampleDesc.Count = 1;
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&sky_pipeline_)), "CreateGraphicsPipelineState (sky)");
     }
@@ -1978,7 +2004,7 @@ private:
         pso.DSVFormat = kDepthFormat;
         pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pso.NumRenderTargets = 1;
-        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.RTVFormats[0] = kTargetFormat;
         pso.SampleDesc.Count = 1;
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState (particles)");
     }
@@ -2016,7 +2042,7 @@ private:
         pso.DSVFormat = kDepthFormat;
         pso.PrimitiveTopologyType = topology;
         pso.NumRenderTargets = 1;
-        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.RTVFormats[0] = pso_format_;
         pso.SampleDesc.Count = 1;
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState");
     }
@@ -2246,6 +2272,8 @@ private:
     ComPtr<ID3D12PipelineState> ui_pipeline_;
     PostShader post_shaders_[kMaxPostShaders];
     ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_, post_velocity_;
+    ComPtr<ID3D12PipelineState> post_composite_window_, post_fxaa_window_, ui_target_pipeline_;  // the window's format (kBackBufferFormat)
+    DXGI_FORMAT pso_format_ = kTargetFormat;  // what create_pipeline builds for
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

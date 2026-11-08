@@ -776,7 +776,7 @@ vec3 box4(sampler2D t, vec2 uv, vec2 px) {
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 // The velocity target's movement in uv (LightSetup::velocity_view's encoding), and back.
-vec2 velocity_at(sampler2D t, vec2 uv) { vec4 e = textureLod(t, uv, 0.0) * 255.0; return (vec2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0; }
+vec2 velocity_at(sampler2D t, vec2 uv) { vec4 e = round(textureLod(t, uv, 0.0) * 255.0); return (vec2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0; }
 vec4 velocity_out(vec2 move) { vec2 q = round(clamp(move * 0.25 + 0.5, 0.0, 1.0) * 65535.0); vec2 hi = floor(q / 256.0); return vec4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0) / 255.0; }
 vec2 to_ndc(vec2 uv) { return uv * 2.0 - 1.0; }
 vec2 to_uv(vec2 ndc) { return ndc * 0.5 + 0.5; }
@@ -1415,7 +1415,7 @@ public:
         }
         Target& t = targets_[slot];
         gl_.glCreateTextures(GL_TEXTURE_2D, 1, &t.color);
-        gl_.glTextureStorage2D(t.color, 1, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        gl_.glTextureStorage2D(t.color, 1, GL_RGBA16F, static_cast<GLsizei>(width), static_cast<GLsizei>(height));  // half float, as D3D12 / Vulkan (readback converts)
         gl_.glTextureParameteri(t.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         gl_.glTextureParameteri(t.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         gl_.glTextureParameteri(t.color, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);  // post-process taps stay inside

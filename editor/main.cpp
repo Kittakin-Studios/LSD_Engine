@@ -3313,7 +3313,14 @@ int main(int argc, char** argv) {
                 device->set_render_target({}, nullptr);
                 device->set_viewport(pixels[0], pixels[1], pixels[2], pixels[3]);
             }
-            const lsd::rhi::TextureHandle scene = use_post ? scene_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3])) : lsd::rhi::TextureHandle{};
+            // Always through a scene target (render targets are half float; only the post pass writes the window): without
+            // post-processing (Unlit, Wireframe) a plain one, no tonemap, grading or anti-aliasing.
+            if (!use_post) {
+                post = lsd::rhi::PostDraw{};
+                post.tonemap = false;
+                post.fxaa = false;
+            }
+            const lsd::rhi::TextureHandle scene = scene_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
             lsd::f32 scene_clear[4] = {0, 0, 0, 1};
             for (int c = 0; c < 3; ++c) {  // the background, as the scene target stores colour (linear, range-compressed)
                 const lsd::f32 srgb = clear_color[c];
