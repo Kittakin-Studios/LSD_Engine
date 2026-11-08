@@ -2035,6 +2035,9 @@ in the project folder, the splash too).
   It then listens on every network instead of this PC only. In the window, type that PC's address
   (192.168.x.x) as **Host** and the **Password**, then Connect. A wrong password closes the connection;
   five in a row close the remote console until the game restarts. Shipping packages ignore `-remote`.
+  **Push Changes** (once connected): every Content file you save in the editor from then on is sent to
+  the game, which hot-reloads it as if edited there: tweak a script, a material, a UI document or a level and
+  see it on the test PC without packaging again. Live values go through the console too (`lua`, cvars).
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).

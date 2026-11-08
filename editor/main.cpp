@@ -2267,6 +2267,7 @@ int main(int argc, char** argv) {
     effects->set_meshes(&meshes);  // the Mesh renderer
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
+    lsd::editor::remote::register_content_commands();  // a game with -remote takes files the editor pushes
     if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg), remote_password && remote_password[0] ? remote_password : nullptr);
 
     lsd::audio::AudioSystem audio;
@@ -2391,6 +2392,7 @@ int main(int argc, char** argv) {
             }
         }
         lsd::editor::remote::poll();
+        lsd::editor::remote::push_changes();  // Remote Console > Push Changes
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A

@@ -847,6 +847,16 @@ void test_bake_texture_albedo() {  // Build Lighting: a triangle's albedo takes 
     fs::remove_all(dir, error);
 }
 
+void test_push_helpers() {  // Remote Console > Push Changes: what may be written, and the bytes back
+    std::string path, bytes;
+    CHECK(editor::assistant::safe_content_path("Scripts\\Door.lua", path) && path == "Scripts/Door.lua");
+    CHECK(!editor::assistant::safe_content_path("../Config/x", path) && !editor::assistant::safe_content_path("/etc/passwd", path) && !editor::assistant::safe_content_path("C:/x", path) &&
+          !editor::assistant::safe_content_path("a//b", path) && !editor::assistant::safe_content_path("a/./b", path) && !editor::assistant::safe_content_path("", path));
+    const u8 data[5] = {0, 255, 'h', 'i', '!'};
+    CHECK(editor::assistant::base64_decode(editor::assistant::base64(data, 5).c_str(), bytes) && bytes.size() == 5 && std::memcmp(bytes.data(), data, 5) == 0);
+    CHECK(!editor::assistant::base64_decode("ab$c", bytes));
+}
+
 void test_shadow_cells() {  // Shadow Resolution: aligned squares in the 8 x 8 cell atlas
     editor::ShadowCells cells;
     f32 x = -1, y = -1;
@@ -927,6 +937,7 @@ int main() {
     test_sound_cue();
     test_particle_light();
     test_shadow_cells();
+    test_push_helpers();
     test_bake_texture_albedo();
     test_post_blend();
     if (g_failures == 0) std::printf("All editor tests passed.\n");

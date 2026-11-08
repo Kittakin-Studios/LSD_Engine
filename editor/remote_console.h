@@ -26,7 +26,13 @@ void print(const char* text);
 // Runs one console line and returns what it logged (the remote client and LSD Assistant's tools use it).
 std::string run_captured(const char* line);
 
-// Editor side.
+// Game side: content.Put <path> <offset> <base64> / content.Commit <path> write a file the editor pushed into
+// Content/ (a .lsdpart first, renamed when complete, left alone when unchanged); hot reload takes it from there.
+void register_content_commands();
+
+// Editor side. Push Changes (in the window): while connected, Content files saved in the editor are sent to the
+// game (Unreal's live coding for content): it hot-reloads them as if edited there.
 void draw_window(bool* open);
+void push_changes();  // once a frame; does nothing unless connected with Push Changes on
 
 } // namespace lsd::editor::remote

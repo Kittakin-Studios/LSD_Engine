@@ -195,6 +195,43 @@ std::string base64(const u8* data, usize size) {
     return out;
 }
 
+bool base64_decode(const char* text, std::string& out) {
+    out.clear();
+    u32 bits = 0, count = 0;
+    for (const char* c = text; *c && *c != '='; ++c) {
+        if (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') continue;
+        u32 v;
+        if (*c >= 'A' && *c <= 'Z') v = static_cast<u32>(*c - 'A');
+        else if (*c >= 'a' && *c <= 'z') v = static_cast<u32>(*c - 'a') + 26;
+        else if (*c >= '0' && *c <= '9') v = static_cast<u32>(*c - '0') + 52;
+        else if (*c == '+') v = 62;
+        else if (*c == '/') v = 63;
+        else return false;
+        bits = bits << 6 | v;
+        count += 6;
+        if (count >= 8) {
+            count -= 8;
+            out += static_cast<char>((bits >> count) & 0xFF);
+        }
+    }
+    return true;
+}
+
+bool safe_content_path(const char* path, std::string& out) {
+    out = path ? path : "";
+    for (char& c : out) c = c == '\\' ? '/' : c;
+    if (out.empty() || out[0] == '/' || out.find(':') != std::string::npos) return false;  // absolute, a drive, a stream
+    usize from = 0;
+    while (from <= out.size()) {  // every part: not "", ".", or ".."
+        const usize slash = out.find('/', from);
+        const std::string part = out.substr(from, slash == std::string::npos ? std::string::npos : slash - from);
+        if (part.empty() || part == "." || part == "..") return false;
+        if (slash == std::string::npos) break;
+        from = slash + 1;
+    }
+    return true;
+}
+
 std::string request_url(const Settings& st) {
     std::string base = st.endpoint.empty() ? (st.provider == kAnthropic ? "https://api.anthropic.com" : "https://api.openai.com/v1") : st.endpoint;
     while (!base.empty() && base.back() == '/') base.pop_back();

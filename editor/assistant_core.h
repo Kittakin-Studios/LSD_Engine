@@ -49,6 +49,11 @@ struct Turn {
 };
 
 std::string base64(const u8* data, usize size);
+// The bytes back; false on a character that is not base64 (whitespace is skipped).
+bool base64_decode(const char* text, std::string& out);
+// A path safe to write under Content/ from outside (the remote console's content.Put): relative, no "..",
+// no drive or root; `out` is it with forward slashes. False otherwise.
+bool safe_content_path(const char* path, std::string& out);
 std::string request_url(const Settings& settings);
 std::vector<std::string> request_headers(const Settings& settings);  // "Name: value" lines
 // `tools`: offer the tools (the editor's setting allows them).

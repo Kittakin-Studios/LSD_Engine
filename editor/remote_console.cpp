@@ -1,4 +1,5 @@
 #include "remote_console.h"
+#include "assistant_core.h"
 #include "tips.h"
 
 #include "lsd/core/console.h"
@@ -9,7 +10,11 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <unordered_map>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -118,8 +123,77 @@ char g_line[256] = "";
 int g_port = kDefaultPort;
 char g_host[64] = "127.0.0.1";
 char g_pass[64] = "";
+bool g_push = false;  // Push Changes
+std::unordered_map<std::string, std::filesystem::file_time_type> g_pushed;  // Content file -> its time when last seen
+u64 g_push_scan = 0;
 
 } // namespace
+
+void register_content_commands() {
+    namespace fs = std::filesystem;
+    console::add_command("content.Put", [](void*, const char* args) {
+        char path[512] = "";
+        unsigned long long offset = 0;
+        int used = 0;
+        if (std::sscanf(args, "%511s %llu %n", path, &offset, &used) < 2) return print("content.Put <path> <offset> <base64>");
+        std::string rel, bytes;
+        if (!assistant::safe_content_path(path, rel) || !assistant::base64_decode(args + used, bytes)) return print("content.Put: not a Content path, or not base64");
+        const fs::path part = fs::path("Content") / (rel + ".lsdpart");
+        std::error_code error;
+        fs::create_directories(part.parent_path(), error);
+        std::ofstream file(part, offset ? std::ios::binary | std::ios::app : std::ios::binary | std::ios::trunc);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!file) print("content.Put: could not write");
+    }, nullptr, "content.Put <path> <offset> <base64>: part of a file the editor pushes into Content (Remote Console > Push Changes)");
+    console::add_command("content.Commit", [](void*, const char* args) {
+        std::string rel;
+        if (!assistant::safe_content_path(args, rel)) return print("content.Commit: not a Content path");
+        const fs::path target = fs::path("Content") / rel, part = fs::path("Content") / (rel + ".lsdpart");
+        std::ifstream a(part, std::ios::binary), b(target, std::ios::binary);
+        if (!a) return print("content.Commit: nothing was put for that path (content.Put first)");
+        const std::string fresh((std::istreambuf_iterator<char>(a)), std::istreambuf_iterator<char>());
+        const std::string old = b ? std::string((std::istreambuf_iterator<char>(b)), std::istreambuf_iterator<char>()) : std::string();
+        a.close();
+        b.close();
+        std::error_code error;
+        if (b && fresh == old) {  // the same (a game running from the editor's own folder): no reload, no echo
+            fs::remove(part, error);
+            return;
+        }
+        fs::rename(part, target, error);
+        if (error) return print("content.Commit: could not replace the file (open elsewhere?)");
+        LSD_LOG_INFO("remote", "Pushed from the editor: %s", rel.c_str());
+    }, nullptr, "content.Commit <path>: puts a pushed file in place (it hot-reloads)");
+}
+
+void push_changes() {
+    namespace fs = std::filesystem;
+    if (g_server == kNoSocket || !g_push) return;
+    const u64 now = static_cast<u64>(ImGui::GetTime() * 1000.0);
+    if (now - g_push_scan < 1000) return;  // about once a second
+    g_push_scan = now;
+    std::error_code error;
+    const bool first = g_pushed.empty();
+    for (fs::recursive_directory_iterator it("Content", error), end; !error && it != end; it.increment(error)) {
+        if (!it->is_regular_file(error)) continue;
+        const std::string rel = fs::relative(it->path(), "Content", error).generic_string();
+        const auto time = it->last_write_time(error);
+        auto found = g_pushed.find(rel);
+        if (found != g_pushed.end() && found->second == time) continue;
+        g_pushed[rel] = time;
+        if (first) continue;  // what is there when Push Changes is switched on is the game's already
+        std::ifstream file(it->path(), std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        constexpr usize kChunk = 9000;  // 12000 base64 characters: under the console's 16 KB line
+        for (usize at = 0; at == 0 || at < bytes.size(); at += kChunk) {
+            const usize n = std::min(kChunk, bytes.size() - at);
+            send_all(g_server, "content.Put " + rel + " " + std::to_string(at) + " " + assistant::base64(reinterpret_cast<const u8*>(bytes.data()) + at, n) + "\n");
+            if (bytes.empty()) break;
+        }
+        send_all(g_server, "content.Commit " + rel + "\n");
+        g_out += "Pushed " + rel + "\n";
+    }
+}
 
 bool listen(u16 port, const char* password) {
     if (!start_sockets()) return false;
@@ -277,6 +351,9 @@ void draw_window(bool* open) {
             g_reply.erase(0, end + 3);
         }
         ImGui::TextUnformatted("Connected");
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Push Changes", &g_push)) g_pushed.clear();  // starts from what is there now
+        ImGui::SetItemTooltip("Content files you save here go to the game, which hot-reloads them (scripts, materials, UI, levels, textures...); files with a space in their path are not sent");
         ImGui::SameLine();
         if (with_tip(ImGui::Button("Disconnect"), "Ends the connection (the game keeps running)")) {
             LSD_CLOSE_SOCKET(g_server);
