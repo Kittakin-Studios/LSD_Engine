@@ -461,7 +461,7 @@ SkyColors gradient_colors(const world::World& w, const world::Sky& sky, bool ski
 // With an HDRI: its averages instead of the gradient's colours (the sun stays the light's); the sky pass draws the image.
 SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
     SkyColors c = gradient_colors(w, sky, skip_hidden);
-    if (g_hdri_on && sky.hdri[0]) {
+    if (g_hdri_on && (sky.hdri[0] || sky.atmosphere)) {
         c.zenith = g_hdri_averages[0];
         c.horizon = g_hdri_averages[1];
         c.ground = g_hdri_averages[2];
@@ -693,6 +693,13 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
 }
 
 } // namespace
+
+bool sky_atmosphere(const world::World& w, bool skip_hidden, Vec3& sun) {
+    const world::Sky* sky = find_sky(w, skip_hidden);
+    if (!sky || !sky->atmosphere) return false;
+    sun = gradient_colors(w, *sky, skip_hidden).sun_direction;
+    return true;
+}
 
 const char* sky_hdri(const world::World& w, bool skip_hidden, f32& brightness) {
     const world::Sky* sky = find_sky(w, skip_hidden);

@@ -2418,7 +2418,12 @@ int main(int argc, char** argv) {
     lsd::u32 reflection_capture_count = 0;  // captures rendered this frame, read back after it
     std::string hdri_guid;                   // the Sky's HDRI the atlas was built with, and its brightness
     lsd::f32 hdri_brightness = 1.0f;
-    bool hdri_pending = false;               // the atlas gets the HDRI's tile after this frame
+    bool env_pending = false;                // the atlas gets the environment's tile (the HDRI's or the atmosphere's) after this frame
+    bool env_refresh = false;                // only the atmosphere's tile again (its sun moved)
+    bool atmosphere_on = false;              // the Sky's atmosphere is the environment, its sun toward atmosphere_sun
+    lsd::Vec3 atmosphere_sun{0.0f, 0.0f, 1.0f};
+    lsd::u32 env_tile = 0;                   // the environment's tile in the atlas (after the captures')
+    std::vector<lsd::u8> atlas_pixels;       // the reflection atlas as last uploaded (the captures stay when only the sky changes)
     lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
@@ -3071,21 +3076,28 @@ int main(int argc, char** argv) {
         lsd::editor::render_mesh_editor(*device, clear_color);
         lsd::editor::render_prefab_editor(*device, clear_color);
         // Reflection captures: six faces from each capture's place, rendered now, read back after the frame.
-        {  // the Sky's HDRI picked, cleared or brighter: the atlas again, with its tile
+        {  // the Sky's HDRI or atmosphere picked, cleared or brighter: the atlas again, with its tile; the sun moved: its tile
+            const bool skip_hidden = !state.playing || state.ejected;
             lsd::f32 brightness = 1.0f;
-            const char* guid = lsd::editor::sky_hdri(world, !state.playing || state.ejected, brightness);
-            if (hdri_guid != guid || (guid[0] && hdri_brightness != brightness)) state.capture_reflections = true;
+            const char* guid = lsd::editor::sky_hdri(world, skip_hidden, brightness);
+            lsd::Vec3 sun{0.0f, 0.0f, 1.0f};
+            const bool atmosphere = !guid[0] && lsd::editor::sky_atmosphere(world, skip_hidden, sun);
+            if (hdri_guid != guid || atmosphere != atmosphere_on || ((guid[0] || atmosphere) && hdri_brightness != brightness)) state.capture_reflections = true;
+            else if (atmosphere && lsd::dot(sun, atmosphere_sun) < 0.99999f && frame % 6 == 0) env_refresh = true;  // ~10 a second while it turns
+            // shortcut: captures keep the sky they saw; Build > Build Reflection Captures again after a big change of time of day
+            if (state.capture_reflections || env_refresh) atmosphere_sun = sun;
             hdri_guid = guid;
             hdri_brightness = brightness;
+            atmosphere_on = atmosphere;
         }
         if (state.capture_reflections && reflection_capture_count == 0) {
             state.capture_reflections = false;
-            hdri_pending = !hdri_guid.empty();
+            env_pending = !hdri_guid.empty() || atmosphere_on;
             const lsd::reflect::TypeInfo& rtype = lsd::reflect::type_of<lsd::world::ReflectionCapture>();
             const lsd::Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
             const lsd::f32 face[4] = {0.0f, 0.0f, static_cast<lsd::f32>(lsd::render::kReflectionFace), static_cast<lsd::f32>(lsd::render::kReflectionFace)};
             const lsd::f32 black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-            const lsd::u32 capture_limit = lsd::render::kMaxReflections - (hdri_pending ? 1u : 0u);  // the HDRI takes the last tile
+            const lsd::u32 capture_limit = lsd::render::kMaxReflections - (env_pending ? 1u : 0u);  // the environment takes the last tile
             for (lsd::u32 i = 0; i < world.count(rtype) && reflection_capture_count < capture_limit; ++i) {
                 const lsd::world::Entity e = world.owner(rtype, i);
                 if ((!state.playing || state.ejected) && world.hidden_in_hierarchy(e)) continue;
@@ -3111,7 +3123,7 @@ int main(int argc, char** argv) {
                 }
             }
             device->set_render_target({}, nullptr);
-            if (reflection_capture_count == 0 && !hdri_pending) {  // none in the level: nothing to reflect but the sky
+            if (reflection_capture_count == 0 && !env_pending) {  // none in the level: nothing to reflect but the sky
                 lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, 0);
                 lsd::editor::set_sky_hdri(false, 0, nullptr);
                 device->set_reflection_atlas({});
@@ -3275,9 +3287,13 @@ int main(int argc, char** argv) {
         }
         device->end_frame();
         ++frame;
-        if (reflection_capture_count || hdri_pending) {  // the captures' faces: read back, unwrapped into the atlas, uploaded
-            static std::vector<lsd::u8> atlas_pixels, face_pixels[6];
-            atlas_pixels.assign(static_cast<size_t>(lsd::render::kReflectionAtlas) * lsd::render::kReflectionAtlas * 4, 0);
+        const bool capture_pass = reflection_capture_count || env_pending;
+        if (capture_pass || env_refresh) {  // the captures' faces: read back, unwrapped into the atlas; the environment's tile; uploaded
+            static std::vector<lsd::u8> face_pixels[6];
+            if (capture_pass || atlas_pixels.empty()) {
+                atlas_pixels.assign(static_cast<size_t>(lsd::render::kReflectionAtlas) * lsd::render::kReflectionAtlas * 4, 0);
+                env_tile = reflection_capture_count;
+            }
             lsd::Mat4 views[6];
             lsd::render::reflection_views({0.0f, 0.0f, 0.0f}, views);
             for (lsd::u32 k = 0; k < reflection_capture_count; ++k) {
@@ -3290,24 +3306,27 @@ int main(int argc, char** argv) {
                 }
                 if (read) lsd::render::unwrap_reflection(faces, views, k, atlas_pixels.data());
             }
-            bool hdri_on = false;
+            bool env_on = false;
             lsd::Vec3 averages[3] = {};
-            if (hdri_pending) {  // the Sky's HDRI: resampled into the tile after the captures'
+            if (env_pending && !hdri_guid.empty()) {  // the Sky's HDRI: resampled into the tile after the captures'
                 lsd::asset::Guid id;
                 const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(hdri_guid.c_str(), id) && state.registry ? state.registry->find(id) : nullptr;
                 char path[512] = "";
                 if (r) state.registry->source_path(*r, path, sizeof path);
                 lsd::asset::TextureData image(allocator);
-                hdri_on = path[0] && lsd::asset::load_texture(path, false, 1024, image, true) && image.encoding == lsd::asset::TextureEncoding::RGBA16F;
-                if (hdri_on) {
-                    lsd::render::hdri_to_tile(reinterpret_cast<const lsd::u16*>(image.mip(0)), image.width, image.height, hdri_brightness, reflection_capture_count,
+                env_on = path[0] && lsd::asset::load_texture(path, false, 1024, image, true) && image.encoding == lsd::asset::TextureEncoding::RGBA16F;
+                if (env_on) {
+                    lsd::render::hdri_to_tile(reinterpret_cast<const lsd::u16*>(image.mip(0)), image.width, image.height, hdri_brightness, env_tile,
                                               atlas_pixels.data(), averages);
                 } else {
                     LSD_LOG_WARN("editor", "Sky HDRI: needs an .hdr or .exr image (%s)", path[0] ? path : hdri_guid.c_str());
                 }
-                hdri_pending = false;
+            } else if ((env_pending || env_refresh) && atmosphere_on) {  // the atmosphere's sky for its sun now
+                lsd::render::atmosphere_to_tile(atmosphere_sun, hdri_brightness, env_tile, atlas_pixels.data(), averages);
+                env_on = true;
             }
-            lsd::editor::set_sky_hdri(hdri_on, reflection_capture_count, averages);
+            env_pending = env_refresh = false;
+            lsd::editor::set_sky_hdri(env_on, env_tile, averages);
             for (lsd::u32 i = 0; i < reflection_capture_count * 6; ++i) device->destroy_texture(reflection_faces[i]);
             std::vector<std::vector<lsd::u8>> levels;
             lsd::render::reflection_mips(atlas_pixels.data(), levels);
@@ -3318,8 +3337,10 @@ int main(int argc, char** argv) {
             device->set_reflection_atlas(atlas);
             if (reflection_atlas.valid()) device->destroy_texture(reflection_atlas);  // shortcut: freed at once; defer a frame if a backend complains
             reflection_atlas = atlas;
-            lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, reflection_capture_count);
-            LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
+            if (capture_pass) {
+                lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, reflection_capture_count);
+                LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
+            }
             reflection_capture_count = 0;
         }
         if (shot_target.valid()) {  // HighResShot: read back, save, free

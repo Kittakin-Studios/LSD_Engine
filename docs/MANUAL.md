@@ -586,7 +586,11 @@ Atmosphere:
 - **Sky**: a gradient (zenith, horizon, ground) with a sun disc where the first Directional Light
   comes from. Without one the viewport stays its plain dark colour. **Atmosphere** (on by default,
   Unreal's Sky Atmosphere): the colours follow the sun's height, so turning the Directional Light
-  sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night.
+  sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night. The
+  sky is computed from how air, haze and ozone scatter sunlight (single scattering), redrawn as the sun
+  turns; shiny surfaces outside Reflection Captures reflect it and the ambient takes its colours.
+  Reflection Captures keep the sky they saw: Build > Build Reflection Captures again after changing the
+  time of day a lot.
   The sun's light takes the same colour, and a **Sky Light** with **Capture Sky** (default) lights
   the level with the sky's colours. Untick Atmosphere to pick the colours yourself.
   **HDRI** (Unreal's Sky Light cubemap): pick a latitude-longitude `.hdr` or `.exr` image. Shiny surfaces

@@ -28,6 +28,11 @@ void unwrap_reflection(const u8* const faces[6], const Mat4 views[6], u32 index,
 // `averages` gets its colour overhead (within 30 degrees of straight up), at the horizon (the 15 degrees above it) and
 // below the horizon, unscaled.
 void hdri_to_tile(const u16* half_rgba, u32 width, u32 height, f32 scale, u32 index, u8* atlas, Vec3 averages[3]);
+// The sky of an Earth-like atmosphere (Unreal's Sky Atmosphere): single scattering of Rayleigh, Mie and ozone, seen
+// from the ground, for a sun toward `sun` (unit) of illuminance 1, through a sky-view table (elevation by azimuth from
+// the sun) precomputed from a transmittance table, times kSkyScale and `scale`, into tile `index` like hdri_to_tile
+// (the ground below the horizon lit with a dark 0.08 albedo; a faint night sky stays when the sun is down). `averages` as there.
+void atmosphere_to_tile(Vec3 sun, f32 scale, u32 index, u8* atlas, Vec3 averages[3]);
 // Levels 1.. of the atlas's mip chain (each half the last), averaged in decoded colour.
 void reflection_mips(const u8* atlas, std::vector<std::vector<u8>>& levels);
 

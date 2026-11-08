@@ -182,6 +182,23 @@ static void test_reflection() {
         CHECK(atlas[0] == 0);                                         // tile 0 untouched
         CHECK(std::fabs(averages[0].x - 1.0f) < 1e-3f && std::fabs(averages[1].y - 1.0f) < 1e-3f && std::fabs(averages[2].z - 0.25f) < 1e-3f);
     }
+    {  // the atmosphere: a blue noon overhead, a sunset redder toward the sun than away from it, a dark night
+        Vec3 noon[3], sunset[3], night[3];
+        render::atmosphere_to_tile({0.0f, 0.0f, 1.0f}, 1.0f, 0, atlas.data(), noon);
+        auto lum = [](Vec3 c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; };
+        CHECK(noon[0].z > noon[0].y && noon[0].y > noon[0].x);
+        CHECK(lum(noon[0]) > 0.08f && lum(noon[0]) < 0.32f);  // about the old fitted zenith (0.16)
+        CHECK(lum(noon[1]) > lum(noon[0]));                    // a paler, brighter horizon
+        render::atmosphere_to_tile({1.0f, 0.0f, 0.03f}, 1.0f, 1, atlas.data(), sunset);
+        auto tile1 = [&](f32 u, f32 v, int c) {  // column 1, row 0
+            const u32 x = render::kReflectionTileW + static_cast<u32>(u * render::kReflectionTileW), y = static_cast<u32>(v * render::kReflectionTileH);
+            return atlas[(static_cast<usize>(y) * render::kReflectionAtlas + x) * 4 + static_cast<usize>(c)];
+        };
+        CHECK(tile1(0.5f, 0.47f, 0) > tile1(0.5f, 0.47f, 2));  // toward the sun (+X), just above the horizon: red over blue
+        CHECK(tile1(0.5f, 0.47f, 0) > tile1(0.0f, 0.47f, 0));  // brighter red than away from it
+        render::atmosphere_to_tile({0.0f, 0.0f, -1.0f}, 1.0f, 2, atlas.data(), night);
+        CHECK(lum(night[0]) < 0.02f);
+    }
 }
 
 int main() {
