@@ -259,6 +259,7 @@ layout(binding = 2) uniform sampler2D orm_tex;
 layout(binding = 5) uniform sampler2D decal_tex;
 layout(binding = 6) uniform sampler2D reflection_tex;  // reflection captures (lat-long tiles, mipmapped)
 layout(binding = 7) uniform sampler2D lightmap_tex;    // the level's lightmaps (Build Lighting)
+layout(binding = 8) uniform sampler2D emissive_tex;    // the emissive map (white without one)
 vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
     uint count = uint(decal_info.x);
     for (uint d = 0u; d < count; ++d) {
@@ -407,7 +408,7 @@ void main() {
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
-    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x);
+    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, v_uv).rgb;
 #endif
     if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
     base.rgb = apply_decals(base.rgb, v_wpos, n);
@@ -1457,6 +1458,8 @@ public:
         gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
+        const Texture* emissive = lookup_texture(draw.emissive_texture);
+        gl_.glBindTextureUnit(8, emissive ? emissive->id : textures_[white_].id);
         gl_.glBindTextureUnit(3, shadow_texture_);
         gl_.glBindTextureUnit(4, local_shadow_texture_);
         gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);

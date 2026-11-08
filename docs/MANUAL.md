@@ -474,12 +474,14 @@ already in Content, right-click it > **Import Materials and Textures** (or the c
    next to the file, in its `<name>.fbm` folder, then any texture in Content with the same file name.
    Images embedded in the file (FBX *Embed Textures*, GLB) are written out. Maps the file does not
    connect are found by the texture set's naming next to the colour map: `Hat_Diffuse.png` brings
-   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`
+   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`,
+   `Hat_Emissive`
    (FBX has no metallic / roughness slot, so Blender's never arrive connected).
 2. They are copied into `<mesh folder>/Textures/`, packed into the engine's slots: metallic,
    roughness and occlusion into one `T_<material>_ORM` (R occlusion, G roughness, B metallic, as
    Unreal's ORM), an opacity map into the colour's alpha (`T_<material>_BaseColor`, and the material
-   becomes **Masked**: eyelashes, hair cards, lace).
+   becomes **Masked**: eyelashes, hair cards, lace); an emissive map becomes the Material's Emissive
+   Texture, with the file's emissive colour and strength (white when the file gives none).
 3. A Material `M_<material>` is made in `<mesh folder>/Materials/` (one that exists is kept, with your
    edits) and set on the mesh's **Material Slots**.
 
@@ -881,10 +883,13 @@ dark contact under the statue's feet come from the lightmap.*
 ### Simple Materials
 
 ![A Material asset is edited in Details](images/det_material.jpg)
-*A Material asset is edited in Details: base colour (or texture), metallic, roughness, normal / ORM textures, emissive, blend mode, opacity.*
+*A Material asset is edited in Details: base colour (or texture), metallic, roughness, normal / ORM textures, emissive (+ texture), blend mode, opacity.*
 
 **New Material** creates a physically based material: base colour (+ texture), metallic, roughness,
-normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive. Drop it on an
+normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive (+ **Emissive
+Texture**: where it glows, multiplying Emissive; set Emissive to white for the map's own colours.
+Lighting is in physical units, so a glow you see in daylight needs an Emissive Strength in the
+thousands, as in Unreal). Drop it on an
 object or pick it in the object's Static Mesh > Material. Edits show immediately. **Blend Mode**:
 Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip: leaves, fences; their
 shadows have the same holes, on static and skeletal meshes, for every light);

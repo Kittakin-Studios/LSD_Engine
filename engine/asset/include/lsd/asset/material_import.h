@@ -24,12 +24,14 @@ struct ImportedMaterial {
     f32 metallic = 0.0f;
     f32 roughness = 0.5f;
     f32 opacity = 1.0f;
+    f32 emissive[3] = {0, 0, 0};  // linear, times its strength / factor
     ImportedMap base_color_map;
     ImportedMap normal_map;
     ImportedMap metallic_map;
     ImportedMap roughness_map;
     ImportedMap occlusion_map;
     ImportedMap opacity_map;
+    ImportedMap emissive_map;
     bool roughness_is_glossiness = false;  // the map / value is smoothness (1 = mirror): inverted when packed
 };
 

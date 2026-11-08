@@ -858,7 +858,7 @@ public:
         c[48] = draw.emissive[2];
         std::memcpy(c + 49, draw.camera_position, sizeof draw.camera_position);
         const VkDescriptorSet sets[2] = {material_set(f, view_of(draw.base_color_texture, white_), normal ? normal->view : view_of({}, flat_normal_),
-                                                      view_of(draw.orm_texture, white_)),
+                                                      view_of(draw.orm_texture, white_), view_of(draw.emissive_texture, white_)),
                                          view_set(f)};
         if (!sets[0] || !sets[1]) return;
         const VkCommandBuffer cmd = f.cmd;
@@ -1058,16 +1058,24 @@ public:
         return t ? t->view : VK_NULL_HANDLE;
     }
 
-    // Set 0: a material's base colour, normal and ORM textures; the frame's last few kept (draws repeat them).
-    VkDescriptorSet material_set(Frame& f, VkImageView base, VkImageView normal, VkImageView orm) {
-        if (!base || !normal || !orm) return VK_NULL_HANDLE;
+    // Set 0: a material's base colour, normal, ORM and emissive textures; the frame's last few kept (draws repeat them).
+    VkDescriptorSet material_set(Frame& f, VkImageView base, VkImageView normal, VkImageView orm, VkImageView emissive) {
+        if (!base || !normal || !orm || !emissive) return VK_NULL_HANDLE;
         for (u32 i = 0; i < std::min(f.memo_count, kMaterialMemo); ++i) {
             const MaterialMemo& m = f.memo[i];
-            if (m.views[0] == base && m.views[1] == normal && m.views[2] == orm) return m.set;
+            if (m.views[0] == base && m.views[1] == normal && m.views[2] == orm && m.views[3] == emissive) return m.set;
         }
-        const VkImageView views[3] = {base, normal, orm};
+        const VkImageView views[4] = {base, normal, orm, emissive};
         const VkDescriptorSet set = allocate_set(f, material_set_layout_, views, 3);
-        if (set) {
+        if (set) {  // emissive at binding 4 (3 is the sampler)
+            const VkDescriptorImageInfo image{VK_NULL_HANDLE, emissive, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = set;
+            write.dstBinding = 4;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            write.pImageInfo = &image;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
             MaterialMemo& m = f.memo[f.memo_count++ % kMaterialMemo];
             std::memcpy(m.views, views, sizeof views);
             m.set = set;
@@ -2018,7 +2026,7 @@ private:
 
     static constexpr u32 kMaterialMemo = 64;  // material sets a frame remembers (draws repeat them)
     struct MaterialMemo {
-        VkImageView views[3] = {};
+        VkImageView views[4] = {};
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
     struct Frame {
@@ -2609,15 +2617,16 @@ private:
         return ok;
     }
 
-    // The lit meshes' descriptor set layouts (mesh.hlsl's VK_BIND): 0 the material (t0-t2, s0), 1 the
+    // The lit meshes' descriptor set layouts (mesh.hlsl's VK_BIND): 0 the material (t0-t2, s0, t8), 1 the
     // view (t3-t7, s1 compare, s2 clamped), 2 the Lights / rows / material parameter blocks (dynamic
     // uniform buffers over the frame's ring); a descriptor pool per frame and each frame's set 2.
     bool create_mesh_layouts() {
         const VkShaderStageFlags fragment = VK_SHADER_STAGE_FRAGMENT_BIT, both = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        const VkDescriptorSetLayoutBinding material[4] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+        const VkDescriptorSetLayoutBinding material[5] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                           {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                           {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
-                                                          {3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &sampler_}};
+                                                          {3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &sampler_},
+                                                          {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr}};  // t8 emissive
         const VkDescriptorSetLayoutBinding view[7] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
@@ -2632,7 +2641,7 @@ private:
             const VkDescriptorSetLayoutBinding* bindings;
             u32 count;
             VkDescriptorSetLayout* out;
-        } layouts[3] = {{material, 4, &material_set_layout_}, {view, 7, &view_set_layout_}, {buffers, 3, &buffers_set_layout_}};
+        } layouts[3] = {{material, 5, &material_set_layout_}, {view, 7, &view_set_layout_}, {buffers, 3, &buffers_set_layout_}};
         for (const auto& l : layouts) {
             VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             info.bindingCount = l.count;

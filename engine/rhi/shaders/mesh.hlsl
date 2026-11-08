@@ -172,6 +172,7 @@ float local_shadow(Light L, float3 wpos, float3 n) {
 VK_BIND(0, 0) Texture2D base_tex : register(t0);
 VK_BIND(1, 0) Texture2D normal_tex : register(t1);
 VK_BIND(2, 0) Texture2D orm_tex : register(t2);
+VK_BIND(4, 0) Texture2D emissive_tex : register(t8);  // the emissive map (white without one)
 // Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
 // not face along the box's +Z and towards its top and bottom.
 VK_BIND(2, 1) Texture2D decal_tex : register(t5);
@@ -388,7 +389,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float metallic = saturate(mat0.x * orm.b);
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
     const float ao = orm.r;
-    const float3 emissive = float3(mat0.zw, mat1.x);
+    const float3 emissive = float3(mat0.zw, mat1.x) * emissive_tex.Sample(samp, i.uv).rgb;
 #endif
     if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
     base.rgb = apply_decals(base.rgb, i.wpos, n);

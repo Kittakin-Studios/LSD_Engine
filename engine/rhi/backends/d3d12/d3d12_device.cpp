@@ -652,6 +652,7 @@ public:
         const MaterialShader* material = draw.wireframe ? nullptr : lookup_material(draw.material_shader);
         const Texture* base = lookup_texture(draw.base_color_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
+        const Texture* emissive = lookup_texture(draw.emissive_texture);
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
@@ -660,9 +661,9 @@ public:
         list_->SetGraphicsRootDescriptorTable(2, (normal ? normal : &textures_[flat_normal_])->srv_gpu);
         list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
-        list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
-        list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
-        list_->SetGraphicsRootDescriptorTable(9, scene_gpu_);  // the decal atlas and the reflection captures
+        if (scene_dirty_) write_scene_table();
+        list_->SetGraphicsRootDescriptorTable(5, scene_table_);  // shadows, decals, reflection captures, lightmaps
+        list_->SetGraphicsRootDescriptorTable(6, (emissive ? emissive : &textures_[white_])->srv_gpu);
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1..3: a blended variant
@@ -893,26 +894,46 @@ public:
         set_render_target({}, nullptr);  // back to the window
     }
 
-    // t5 / t6 share one table: two neighbouring descriptors, rewritten when either texture changes.
-    // Rewritten only when the texture changes: a frame still on the GPU may be reading them.
-    void set_scene_texture(u32 which, TextureHandle atlas) {
-        const Texture* t = lookup_texture(atlas);
-        ID3D12Resource* resource = (t ? t : &textures_[white_])->resource.Get();
+    // t3..t7 share one table of five neighbouring descriptors. A change writes the five into the ring's next
+    // entry (never one a frame still on the GPU may read), at the next mesh draw.
+    // shortcut: kSceneRing entries; over ~20 shadow / atlas changes a frame (views) would reuse one in flight, more entries then
+    void set_scene_resource(u32 which, ID3D12Resource* resource, bool shadow) {
         if (scene_resources_[which] == resource) return;
         scene_resources_[which] = resource;
-        D3D12_CPU_DESCRIPTOR_HANDLE at = scene_cpu_;
-        at.ptr += static_cast<SIZE_T>(which) * srv_size_;
-        device_->CreateShaderResourceView(resource, nullptr, at);
+        if (which < 2) scene_shadow_[which] = shadow;
+        scene_dirty_ = true;
     }
-    void set_decal_atlas(TextureHandle atlas) override { set_scene_texture(0, atlas); }
-    void set_reflection_atlas(TextureHandle atlas) override { set_scene_texture(1, atlas); }
-    void set_lightmap_atlas(TextureHandle atlas) override { set_scene_texture(2, atlas); }
+    void set_scene_texture(u32 which, TextureHandle atlas) {
+        const Texture* t = lookup_texture(atlas);
+        set_scene_resource(which, t ? t->resource.Get() : nullptr, false);
+    }
+    void write_scene_table() {
+        scene_at_ = (scene_at_ + 1) % kSceneRing;
+        D3D12_CPU_DESCRIPTOR_HANDLE at = scene_cpu_;
+        at.ptr += static_cast<SIZE_T>(scene_at_) * 5 * srv_size_;
+        scene_table_ = scene_gpu_;
+        scene_table_.ptr += static_cast<UINT64>(scene_at_) * 5 * srv_size_;
+        for (u32 k = 0; k < 5; ++k, at.ptr += srv_size_) {
+            ID3D12Resource* resource = scene_resources_[k];
+            D3D12_SHADER_RESOURCE_VIEW_DESC depth{};  // shadow atlases: their depth as R32_FLOAT
+            depth.Format = DXGI_FORMAT_R32_FLOAT;
+            depth.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            depth.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            depth.Texture2D.MipLevels = 1;
+            const bool shadow = resource && k < 2 && scene_shadow_[k];
+            device_->CreateShaderResourceView(resource ? resource : textures_[white_].resource.Get(), shadow ? &depth : nullptr, at);
+        }
+        scene_dirty_ = false;
+    }
+    void set_decal_atlas(TextureHandle atlas) override { set_scene_texture(2, atlas); }
+    void set_reflection_atlas(TextureHandle atlas) override { set_scene_texture(3, atlas); }
+    void set_lightmap_atlas(TextureHandle atlas) override { set_scene_texture(4, atlas); }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
-        const ShadowMap* s = lookup_shadow(sun);
+        const ShadowMap* s = lookup_shadow(sun);  // white without one: the shader only samples them when a light says so
         const ShadowMap* l = lookup_shadow(local);
-        shadow_srv_ = s ? s->srv_gpu : textures_[white_].srv_gpu;  // the shader only samples them when a light says so
-        local_shadow_srv_ = l ? l->srv_gpu : textures_[white_].srv_gpu;
+        set_scene_resource(0, s ? s->resource.Get() : nullptr, s != nullptr);
+        set_scene_resource(1, l ? l->resource.Get() : nullptr, l != nullptr);
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -1363,17 +1384,22 @@ public:
         const void* white_mip[1] = {&white};
         const void* flat_mip[1] = {&flat};
         white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
-        {  // the decal / reflection table's two neighbouring descriptors, white until set
+        {  // the t3..t7 ring: kSceneRing x 5 neighbouring descriptors, white until set
+            constexpr u32 n = kSceneRing * 5;
             u32 slot = 0;
-            while (slot + 2 < kDebugUiDescriptors && (srv_used_[slot] || srv_used_[slot + 1] || srv_used_[slot + 2])) ++slot;
-            srv_used_[slot] = srv_used_[slot + 1] = srv_used_[slot + 2] = true;
+            auto free_run = [&](u32 at) {
+                for (u32 k = 0; k < n; ++k) {
+                    if (srv_used_[at + k]) return false;
+                }
+                return true;
+            };
+            while (slot + n < kDebugUiDescriptors && !free_run(slot)) ++slot;
+            for (u32 k = 0; k < n; ++k) srv_used_[slot + k] = true;
             scene_cpu_ = srv_heap_->GetCPUDescriptorHandleForHeapStart();
             scene_gpu_ = srv_heap_->GetGPUDescriptorHandleForHeapStart();
             scene_cpu_.ptr += static_cast<SIZE_T>(slot) * srv_size_;
             scene_gpu_.ptr += static_cast<UINT64>(slot) * srv_size_;
-            set_decal_atlas({});
-            set_reflection_atlas({});
-            set_lightmap_atlas({});
+            scene_dirty_ = true;
         }
         flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
         return debug_ui_;
@@ -1606,31 +1632,30 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[10]{};
-        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas, t6: the reflection captures, t7: the lightmaps (one table: 64 of 64 DWORDs)
-        decal_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        decal_range.NumDescriptors = 3;
-        decal_range.BaseShaderRegister = 5;
-        params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[9].DescriptorTable.NumDescriptorRanges = 1;
-        params[9].DescriptorTable.pDescriptorRanges = &decal_range;
-        params[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // 63 of 64 DWORDs: 52 constants, 4 tables, 3 root CBVs (2 each).
+        D3D12_ROOT_PARAMETER params[9]{};
+        D3D12_DESCRIPTOR_RANGE scene_range{};  // t3 / t4: the sun's and the local lights' shadow atlases, t5 decals, t6 reflection captures, t7 lightmaps
+        scene_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        scene_range.NumDescriptors = 5;
+        scene_range.BaseShaderRegister = 3;
+        params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[5].DescriptorTable.NumDescriptorRanges = 1;
+        params[5].DescriptorTable.pDescriptorRanges = &scene_range;
+        params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_DESCRIPTOR_RANGE emissive_range{};  // t8: the emissive map
+        emissive_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        emissive_range.NumDescriptors = 1;
+        emissive_range.BaseShaderRegister = 8;
+        params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[6].DescriptorTable.NumDescriptorRanges = 1;
+        params[6].DescriptorTable.pDescriptorRanges = &emissive_range;
+        params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b3: material graph parameters (63 of 64 DWORDs)
         params[8].Descriptor.ShaderRegister = 3;
         params[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b2: skinning matrices
         params[7].Descriptor.ShaderRegister = 2;
         params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
-        D3D12_DESCRIPTOR_RANGE shadow_ranges[2]{};
-        for (UINT k = 0; k < 2; ++k) {  // t3: the sun's shadow atlas, t4: the local lights' atlas
-            shadow_ranges[k].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-            shadow_ranges[k].NumDescriptors = 1;
-            shadow_ranges[k].BaseShaderRegister = 3 + k;
-            params[5 + k].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-            params[5 + k].DescriptorTable.NumDescriptorRanges = 1;
-            params[5 + k].DescriptorTable.pDescriptorRanges = &shadow_ranges[k];
-            params[5 + k].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        }
         params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b1: lights
         params[4].Descriptor.ShaderRegister = 1;
         params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1666,7 +1691,7 @@ private:
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 10;
+        rs_desc.NumParameters = 9;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 3;
         rs_desc.pStaticSamplers = samplers;
@@ -2104,9 +2129,14 @@ private:
     ComPtr<ID3D12PipelineState> blend_pipelines_[3][3];  // [static, skinned, instanced][translucent, additive, overdraw]
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
-    D3D12_CPU_DESCRIPTOR_HANDLE scene_cpu_{};  // three neighbouring descriptors: t5 decal atlas, t6 reflection captures, t7 lightmaps
+    static constexpr u32 kSceneRing = 64;
+    D3D12_CPU_DESCRIPTOR_HANDLE scene_cpu_{};  // the ring's start: entries of five (t3 / t4 shadows, t5 decals, t6 reflections, t7 lightmaps)
     D3D12_GPU_DESCRIPTOR_HANDLE scene_gpu_{};
-    ID3D12Resource* scene_resources_[3] = {};
+    D3D12_GPU_DESCRIPTOR_HANDLE scene_table_{};  // the entry in use
+    ID3D12Resource* scene_resources_[5] = {};    // null: white
+    bool scene_shadow_[2] = {};
+    bool scene_dirty_ = true;
+    u32 scene_at_ = 0;
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
     ComPtr<ID3D12PipelineState> cutout_shadow_pipeline_, skinned_cutout_shadow_pipeline_;  // Masked casters
@@ -2136,8 +2166,6 @@ private:
     ShadowMap shadow_maps_[kMaxShadowMaps];
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
     i32 shadow_pass_ = -1;
-    D3D12_GPU_DESCRIPTOR_HANDLE shadow_srv_{};
-    D3D12_GPU_DESCRIPTOR_HANDLE local_shadow_srv_{};
     Buffer buffers_[kMaxBuffers];
     ComPtr<ID3D12DescriptorHeap> target_rtv_heap_;
     ComPtr<ID3D12DescriptorHeap> target_dsv_heap_;

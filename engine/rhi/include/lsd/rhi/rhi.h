@@ -119,6 +119,7 @@ struct MeshDraw {
     TextureHandle base_color_texture;
     TextureHandle normal_texture;
     TextureHandle orm_texture;
+    TextureHandle emissive_texture;  // multiplies `emissive` (white when invalid)
     bool unlit = false;      // colour only, no lighting (Unlit view mode)
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
     u32 debug_view = 0;      // 2 = world normals as colour, 3 = lighting only (grey surfaces), 4 = overdraw; 0 = lit

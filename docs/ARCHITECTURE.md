@@ -155,8 +155,10 @@ the GPU (`r.GPUCulling`).
 **Reflection captures** (no cubemaps in the RHI): each Reflection Capture renders six 128 x 128 faces
 with `draw_world` into render targets, read back after the frame and unwrapped by
 `render::unwrap_reflection` into a 256 x 128 latitude-longitude tile of one 512 x 512 atlas with a
-decoded-average mip chain. The atlas sits beside the decal atlas in one D3D12 descriptor table (t5,
-t6; the root signature is full) and the captures' positions and radii in the light constants; the lit
+decoded-average mip chain. The atlas sits in one D3D12 descriptor table with the shadow atlases, the
+decal atlas and the lightmaps (t3..t7: five neighbouring descriptors, written into the next entry of a
+64-entry ring whenever one changes, so no frame still on the GPU reads a rewritten one; this freed the
+root signature's DWORD for t8, the emissive map: 63 of 64) and the captures' positions and radii in the light constants; the lit
 shader samples the tile of the capture a pixel is most inside, at a mip by roughness.
 
 **Post pass additions**: the composite pass's third input takes an ordinary texture, the Color

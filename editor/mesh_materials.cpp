@@ -34,7 +34,7 @@ struct Plan {
     const asset::ImportedMaterial* source = nullptr;
     std::string material_path;  // Content/<folder>/Materials/M_<name>.lsdasset
     bool exists = false;        // kept as it is
-    std::string base_color, normal, orm;
+    std::string base_color, normal, orm, emissive;
     bool masked = false;
     bool metal_map = false, rough_map = false;  // packed into the ORM: the values become 1 (they multiply the map)
 };
@@ -215,7 +215,7 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
     if (only_with_textures) {  // automatic import: only files that bring textures (not animation-only files)
         bool any = false;
         for (const asset::ImportedMaterial& m : file.materials) {
-            for (const asset::ImportedMap* map : {&m.base_color_map, &m.normal_map, &m.metallic_map, &m.roughness_map, &m.occlusion_map, &m.opacity_map}) {
+            for (const asset::ImportedMap* map : {&m.base_color_map, &m.normal_map, &m.metallic_map, &m.roughness_map, &m.occlusion_map, &m.opacity_map, &m.emissive_map}) {
                 any = any || (map->exists() && !in.locate(*map, true).empty());
                 if (any) break;
             }
@@ -255,6 +255,7 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
                 plan.base_color = in.into_content(base);
             }
             plan.normal = in.into_content(find(m.normal_map, {"Normal", "Normals", "Nrm", "N"}));
+            plan.emissive = in.into_content(find(m.emissive_map, {"Emissive", "Emission", "Glow"}));
             const std::string metal = find(m.metallic_map, {"Metallic", "Metalness", "Metal"});
             const std::string occlusion = find(m.occlusion_map, {"AO", "AmbientOcclusion", "Occlusion"});
             std::string rough = find(m.roughness_map, {"Roughness", "Rough"});
@@ -298,6 +299,14 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
         std::snprintf(material.base_color_texture, sizeof material.base_color_texture, "%s", in.guid_at(plan.base_color).c_str());
         std::snprintf(material.normal_texture, sizeof material.normal_texture, "%s", in.guid_at(plan.normal).c_str());
         std::snprintf(material.orm_texture, sizeof material.orm_texture, "%s", in.guid_at(plan.orm).c_str());
+        std::snprintf(material.emissive_texture, sizeof material.emissive_texture, "%s", in.guid_at(plan.emissive).c_str());
+        const f32 glow = std::max(m.emissive[0], std::max(m.emissive[1], m.emissive[2]));
+        const f32 scale = glow > 1.0f ? 1.0f / glow : 1.0f;  // brighter than 1: the colour normalised, the rest as Emissive Strength
+        material.emissive.r = m.emissive[0] * scale;
+        material.emissive.g = m.emissive[1] * scale;
+        material.emissive.b = m.emissive[2] * scale;
+        if (glow > 1.0f) material.emissive_strength = glow;
+        if (!plan.emissive.empty() && glow <= 0.0f) material.emissive = LinearColor::hex(0xFFFFFF);  // a map with no colour: its own colours
         if (plan.masked) material.blend_mode = 1;
         else if (m.opacity < 0.999f) {
             material.blend_mode = 2;  // Translucent

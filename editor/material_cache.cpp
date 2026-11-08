@@ -342,6 +342,7 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
     draw.base_color_texture = textures_.get(m.base_color_texture, true);
     draw.normal_texture = textures_.get(m.normal_texture, false, true);
     draw.orm_texture = textures_.get(m.orm_texture, false);
+    draw.emissive_texture = textures_.get(m.emissive_texture, true);
     // Blend Mode: Opaque, Masked (cut-outs), Translucent, Additive; Opacity scales the alpha.
     if (m.blend_mode != 0) draw.color[3] *= m.opacity;
     draw.blend = m.blend_mode == 2 ? 1u : m.blend_mode == 3 ? 2u : 0u;

@@ -614,7 +614,7 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
     };
     mix(&d.vertices.value, 4), mix(&d.indices.value, 4), mix(&d.index_count, 4), mix(d.color, sizeof d.color);
     mix(&d.metallic, 4), mix(&d.roughness, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
-    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.alpha_cutoff, 4);
+    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4);
     const lsd::u32 flags = (d.unlit ? 1u : 0u) | (d.pixel_art ? 2u : 0u) | (d.debug_view << 2);
     mix(&flags, 4);
     return h;

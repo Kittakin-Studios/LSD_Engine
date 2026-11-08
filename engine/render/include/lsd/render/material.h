@@ -18,6 +18,8 @@ struct Material {
     char orm_texture[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Glow colour (not lit by anything)") LinearColor emissive = LinearColor::hex(0x000000);
     LSD_PROPERTY(Edit, Min = 0, Max = 100, Tooltip = "How bright the glow is (above 1 blooms)") f32 emissive_strength = 1.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Where it glows: multiplies Emissive (set Emissive to white to use the map's own colours)")
+    char emissive_texture[33] = "";
     LSD_PROPERTY(Edit, Category = "Blending", Widget = "Choice:Opaque,Masked,Translucent,Additive",
                  Tooltip = "Masked: cut-outs from the base colour alpha (leaves, fences). Translucent: see-through (glass, water). Additive: adds light (fire, glows)")
     u32 blend_mode = 0;
