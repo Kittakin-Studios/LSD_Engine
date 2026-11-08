@@ -191,7 +191,10 @@ State Machine window for AnimGraphs (`editor/anim_graph_editor.*`, double-click 
 Rigged glTF / GLB (`import_skinned_gltf` / `import_clips_gltf` in `engine/animation/src/animation.cpp`, cgltf) and take trims (.meta `clip_ranges`, `anim::ClipTrim`; Mesh Editor > Animations: preview, scrub, Trim). SkeletalMesh::root_motion (`AnimationPlayer::step_root_motion`, `Pose::strip_root` from `SkinnedModel::motion_root`), animation curves (.meta `curve_keys`, `asset::curve_value`, `lsd.anim_curve`).
 Post: Color Grading LUT, camera motion blur, contact shadows (Directional Light). Reflection Captures (`engine/render/reflection.*`, Build >
 Build Reflection Captures). Masked materials cast cut-out shadows (`rhi::ShadowCutout`). CPU occlusion culling (`engine/render/occlusion.*`,
-`r.OcclusionCulling`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.
+`r.OcclusionCulling`). Also skeletal meshes and each ISM copy. Texture compression: colour maps BC1 / BC3, normal maps BC5 (Z rebuilt
+in the shader), once into DerivedData/Textures (`asset::load_texture_cached`). Material > Emissive Texture (t8; D3D12's t3..t7 are one
+table written into a 64-entry descriptor ring). Local-light shadow caching (`r.ShadowCaching`, tiles kept while their casters hash the same).
+Motion Matching pose-search debugger (Details > Pose search candidates, `anim::motion_candidates`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.
 The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).
 Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become
 `M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
