@@ -1,6 +1,7 @@
 #include "editor_modes.h"
 #include "paper2d_core.h"
 #include "landscape_core.h"
+#include "lsd/world/spline.h"
 #include "mesh_edit.h"
 #include "landscape_paint.h"
 #include "tips.h"
@@ -860,6 +861,7 @@ u64 pcg_hash(const world::World& w, Entity e) {
     rules.output[0] = '\0';
     const Mat4 m = w.world_matrix(e);
     u64 h = fnv(m.m, sizeof m.m, fnv(&rules, sizeof rules));
+    if (const auto* spline = w.get<world::Spline>(e)) h = fnv(spline, sizeof *spline, h);  // editing the curve scatters again
     const reflect::TypeInfo& type = reflect::type_of<world::PcgVolume>();
     for (u32 i = 0; i < w.count(type); ++i) {  // moving an exclusion box rebuilds the volumes around it
         const Entity other = w.owner(type, i);
@@ -1636,7 +1638,15 @@ void generate_pcg(EditorState& s, Entity volume) {
     auto* ism = w.get<world::InstancedStaticMesh>(out);
     const Mat4 m = w.world_matrix(volume), to_out = affine_inverse(w.world_matrix(out));
     const f32 area = length(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}) * length(Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)});
-    const u32 count = static_cast<u32>(std::fmin(static_cast<f32>(ism->instances.capacity()), rules.density * area / 100.0f));
+    // A Spline on the volume (PCG's spline input): copies every Spacing metres along it, in a strip Width wide,
+    // dropped onto what is below; otherwise in the box, by Density.
+    Vec3 curve[32], curve_tangents[32];
+    bool closed = false;
+    const u32 curve_points = world::spline_world_curve(w, volume, curve, curve_tangents, closed);
+    const f32 curve_length = curve_points >= 2 ? world::spline_length(curve, curve_points, closed, curve_tangents) : 0.0f;
+    const f32 spacing = rules.spline_spacing > 0.1f ? rules.spline_spacing : 0.1f;
+    const u32 count = curve_length > 0.0f ? static_cast<u32>(std::fmin(static_cast<f32>(ism->instances.capacity()), std::floor(curve_length / spacing) + 1.0f))
+                                          : static_cast<u32>(std::fmin(static_cast<f32>(ism->instances.capacity()), rules.density * area / 100.0f));
     std::mt19937 rng(rules.seed);
     std::uniform_real_distribution<f32> unit(0.0f, 1.0f);
     auto hit_below = [&](Vec3 top, Vec3 down, f32 reach, Vec3& at) {
@@ -1647,7 +1657,16 @@ void generate_pcg(EditorState& s, Entity volume) {
     };
     for (u32 i = 0; i < count; ++i) {
         const f32 u = unit(rng) - 0.5f, vv = unit(rng) - 0.5f, yaw = unit(rng) * 360.0f, k = unit(rng);  // drawn every time: same seed, same layout
-        const Vec3 top = transform_point(m, {u, vv, 1.0f}), bottom = transform_point(m, {u, vv, 0.0f});
+        Vec3 top = transform_point(m, {u, vv, 1.0f}), bottom = transform_point(m, {u, vv, 0.0f});
+        if (curve_length > 0.0f) {  // on the curve, sideways within the strip, from 20 m above to 20 m below it
+            Vec3 along;
+            const Vec3 at = world::spline_at_distance(curve, curve_points, closed, static_cast<f32>(i) * spacing, &along, curve_tangents);
+            Vec3 side{-along.y, along.x, 0.0f};
+            side = length(side) > 1e-5f ? normalize(side) : Vec3{0, 1, 0};
+            const Vec3 p = at + side * (u * rules.spline_width);
+            top = p + Vec3{0, 0, 20.0f};
+            bottom = p - Vec3{0, 0, 20.0f};
+        }
         const f32 reach = length(bottom - top);
         if (reach < 1e-4f) continue;
         const Vec3 down = (bottom - top) * (1.0f / reach);

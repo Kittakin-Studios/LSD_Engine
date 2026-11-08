@@ -550,6 +550,10 @@ struct PcgVolume {
     LSD_PROPERTY(Edit, Tooltip = "Colour of the scattered meshes (without a material)") LinearColor color = LinearColor::hex(0x4F8A3C);
     LSD_PROPERTY(Edit, Min = 0, Tooltip = "Copies per 100 square metres of the box's floor (at most 1024)") f32 density = 20.0f;
     LSD_PROPERTY(Edit, Tooltip = "Same seed, same layout; change it for another") u32 seed = 1;
+    LSD_PROPERTY(Edit, Category = "Spline", Units = "m", Min = 0.1,
+                 Tooltip = "With a Spline on this object: copies along the curve instead of in the box (fences, trees by a road, rocks on a path), this far apart")
+    f32 spline_spacing = 2.0f;
+    LSD_PROPERTY(Edit, Category = "Spline", Units = "m", Min = 0, Tooltip = "With a Spline: how wide a strip along it they scatter in (0 = on the line)") f32 spline_width = 0.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 90, Tooltip = "No copies on surfaces steeper than this") f32 max_slope = 35.0f;
     LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Smallest random size of a scattered mesh") f32 scale_min = 0.8f;
     LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Largest random size of a scattered mesh") f32 scale_max = 1.2f;
