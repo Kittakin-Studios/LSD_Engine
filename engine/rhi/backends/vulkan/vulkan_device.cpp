@@ -1196,8 +1196,11 @@ public:
         std::memcpy(c + 32, sky.sun_color, 16);
         std::memcpy(c + 49, sky.camera, 12);
         const u32 offsets[3] = {lights_at_, lights_at_, lights_at_};
+        const VkDescriptorSet view = view_set(f);  // the reflection atlas: an HDRI's tile
+        if (!view) return;
         const VkCommandBuffer cmd = f.cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_pipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1, &view, 0, nullptr);
         vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
         vkCmdDraw(cmd, 3, 1, 0, 0);

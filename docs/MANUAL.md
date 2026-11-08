@@ -590,9 +590,8 @@ Atmosphere:
   The sun's light takes the same colour, and a **Sky Light** with **Capture Sky** (default) lights
   the level with the sky's colours. Untick Atmosphere to pick the colours yourself.
   **HDRI** (Unreal's Sky Light cubemap): pick a latitude-longitude `.hdr` or `.exr` image. Shiny surfaces
-  outside every Reflection Capture reflect it (blurrier on rougher ones), and the sky's colours and the
-  ambient light take its averages overhead, at the horizon and below it, times **Brightness**. The
-  backdrop itself stays the gradient of those averages, not the picture. It uses one of the 8 reflection
+  outside every Reflection Capture reflect it (blurrier on rougher ones), the backdrop shows it, and the
+  ambient light takes its averages overhead, at the horizon and below it, times **Brightness**. It uses one of the 8 reflection
   tiles, so a level with an HDRI has room for 7 captures.
 - **Reflection Capture** (Unreal's Sphere Reflection Capture; Place tab): metal and other shiny
   surfaces within its **Radius** reflect what is around it (the room, the props, the characters)

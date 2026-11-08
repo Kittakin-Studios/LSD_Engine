@@ -1011,9 +1011,13 @@ public:
         std::memcpy(constants + 28, sky.sun_direction, 16);
         std::memcpy(constants + 32, sky.sun_color, 16);
         std::memcpy(constants + 49, sky.camera, 12);
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, kRootConstants, constants, 0);
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
+        if (scene_dirty_) write_scene_table();
+        list_->SetGraphicsRootDescriptorTable(5, scene_table_);  // the reflection atlas: an HDRI's tile
         list_->SetPipelineState(sky_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);

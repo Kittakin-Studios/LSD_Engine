@@ -458,8 +458,7 @@ SkyColors gradient_colors(const world::World& w, const world::Sky& sky, bool ski
     return c;
 }
 
-// With an HDRI: its averages instead of the gradient's colours (the sun stays the light's).
-// shortcut: the drawn backdrop is the gradient of those averages, not the image; draw the tile in the sky pass for that
+// With an HDRI: its averages instead of the gradient's colours (the sun stays the light's); the sky pass draws the image.
 SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
     SkyColors c = gradient_colors(w, sky, skip_hidden);
     if (g_hdri_on && sky.hdri[0]) {

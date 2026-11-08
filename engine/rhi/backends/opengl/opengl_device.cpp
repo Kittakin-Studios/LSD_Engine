@@ -522,6 +522,7 @@ in vec3 v_dir;
 void main() {
     vec3 d = normalize(v_dir);
     vec3 c = d.z >= 0.0 ? mix(u_sky[1].rgb, u_sky[0].rgb, pow(clamp(d.z, 0.0, 1.0), 0.6)) : mix(u_sky[1].rgb, u_sky[2].rgb, clamp(-d.z * 4.0, 0.0, 1.0));
+    if (reflection_info.y > 0.5) c = capture_sample(uint(reflection_info.z), d, 0.0, u_sky[5].xyz) * exposure;  // the Sky's HDRI
     if (u_sky[4].w > 0.0) {
         float s = dot(d, u_sky[3].xyz);
         c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0) + 0.06 * pow(clamp(s, 0.0, 1.0), 6.0));
@@ -1736,6 +1737,7 @@ public:
                                 sky.ground[0], sky.ground[1], sky.ground[2], sky.ground[3], sky.sun_direction[0], sky.sun_direction[1], sky.sun_direction[2],
                                 sky.sun_direction[3], sky.sun_color[0], sky.sun_color[1], sky.sun_color[2], sky.sun_color[3], sky.camera[0], sky.camera[1], sky.camera[2], 0.0f};
         gl_.glUniform4fv(sky_values_, 6, values);
+        gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);  // an HDRI's tile
         gl_.glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glDepthMask(GL_TRUE);
