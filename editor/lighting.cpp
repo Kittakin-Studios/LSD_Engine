@@ -666,8 +666,18 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         } else if (candidates[k].type == &rect_type) {  // an area light, one-sided: lumens over pi give its candela straight ahead
             const auto* light = static_cast<const world::RectLight*>(w.at(rect_type, candidates[k].index));
             const bool disc = light->shape == 1;
-            put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, forward_of(m), light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
+            const Vec3 dir = forward_of(m);
+            put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
                 light->attenuation_radius, disc ? light->source_width * 0.5f : light->source_width, light->source_height);
+            s.lights[s.count - 1].source_radius = std::max(light->source_width, disc ? 0.0f : light->source_height) * 0.5f;  // softens its shadow only
+            const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
+            if (side) {  // shortcut: one 150 degree view, so light leaving almost sideways is unshadowed; a cube's 5 faces for that
+                rhi::GpuLight& l = s.lights[s.count - 1];
+                const f32 fov = radians(150.0f);
+                l.shadow_tile = static_cast<f32>(tiles_used);
+                l.shadow_offset = 2.0f * std::tan(fov * 0.5f) / (cell_texels * static_cast<f32>(side)) * 1.5f;
+                add_tile(position, dir, std::fabs(dir.z) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 0, 1}, fov, light->attenuation_radius);
+            }
         } else {
             const auto* light = static_cast<const world::SpotLight*>(w.at(spot_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);

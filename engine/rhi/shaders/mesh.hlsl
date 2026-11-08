@@ -197,9 +197,11 @@ float local_shadow(Light L, float3 wpos, float3 n) {
     uv = local_tile[tile].xy + uv * local_tile[tile].z;
     const float texel = hdr_out.y > 0.0 ? hdr_out.y : 1.0 / 4096.0;  // the atlas's texel (its size follows video memory)
     const float2 lo = local_tile[tile].xy + texel, hi = local_tile[tile].xy + local_tile[tile].z - texel;
+    // Area lights (spot.w: a sphere's radius, a panel's half size): a wider filter, up to 4 texels apart (no blocker search)
+    const float spread = clamp(L.spot.w * 0.15 / max(L.spot.z / 1.5 * length(d), 1e-5), 1.0, 4.0) * texel;
     float lit = 0.0;
     [unroll] for (int y = -1; y <= 1; ++y)
-        [unroll] for (int x = -1; x <= 1; ++x) lit += local_shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * texel, lo, hi), s.z);
+        [unroll] for (int x = -1; x <= 1; ++x) lit += local_shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * spread, lo, hi), s.z);
     return lit / 9.0;
 }
 VK_BIND(0, 0) Texture2D base_tex : register(t0);

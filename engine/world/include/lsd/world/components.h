@@ -878,6 +878,11 @@ struct RectLight {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 8.0f;
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2700 K warm panel, 6500 K daylight window") f32 temperature = 6500.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles (a 150 degree view from its front), softer the bigger the panel; the lights nearest the camera get them first")
+    bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
+                 Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
+    u32 shadow_resolution = 1;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).

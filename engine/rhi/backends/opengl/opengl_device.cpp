@@ -276,9 +276,10 @@ float local_shadow(Light L, vec3 wpos, vec3 n) {
     uv = origin + uv * local_tile[tile].z;
     float texel = hdr_out.y > 0.0 ? hdr_out.y : 1.0 / 4096.0;
     vec2 lo = origin + texel, hi = origin + local_tile[tile].z - texel;
+    float spread = clamp(L.spot.w * 0.15 / max(L.spot.z / 1.5 * length(d), 1e-5), 1.0, 4.0) * texel;  // area lights: wider (mesh.hlsl)
     float lit = 0.0;
     for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x) lit += texture(local_shadow_tex, vec3(clamp(uv + vec2(x, y) * texel, lo, hi), s.z));
+        for (int x = -1; x <= 1; ++x) lit += texture(local_shadow_tex, vec3(clamp(uv + vec2(x, y) * spread, lo, hi), s.z));
     return lit / 9.0;
 }
 layout(binding = 0) uniform sampler2D base_tex;
