@@ -1697,8 +1697,9 @@ the editor).
    navmesh is built again about a second after something solid stops moving (a door that opened, a
    bridge that fell, a crate pushed aside); agents keep walking to where they were going. Things that
    never stop moving (a platform a script swings) are left out after three seconds (the Output Log says
-   which). Scripts can ask for it at once: `lsd.rebuild_navmesh()`. Each rebuild takes as long as the
-   one when Play starts (`Navmesh built (... ms)` in the log), so keep the navmesh bounds tight.
+   which). Scripts can ask for it at once: `lsd.rebuild_navmesh()`. The navmesh is built in tiles (about
+   10 m across), and a rebuild redoes only the tiles where something changed (`Navmesh rebuilt (n tiles
+   changed, ... ms)` in the log), so a door in a big level costs little.
 2. Give an enemy a **Nav Agent** (speed, radius, height): it can walk with `lsd.move_to` or the AI
    Move To node, steering round other agents.
 3. Give it an **AI Controller** with a **Behavior Tree** (New Behavior Tree; Unreal's Behavior Tree

@@ -42,9 +42,12 @@ public:
     NavMesh& operator=(const NavMesh&) = delete;
 
     // Builds from world-space triangles (xyz per vertex, three indices per triangle) inside the box,
-    // minus the cutouts. Replaces the previous mesh and its agents. False (and empty) if nothing is walkable.
+    // minus the cutouts. Replaces the previous mesh's agents. False (and empty) if nothing is walkable.
+    // Tiled (64 x 64 cells a tile): with the same box and settings as the last build, only the tiles whose triangles,
+    // cutouts or links changed are rebuilt (a door that opened, a crate pushed), the rest kept.
     bool build(const f32* vertices, u32 vertex_count, const u32* indices, u32 triangle_count, Vec3 bounds_min, Vec3 bounds_max,
                const NavSettings& settings, const NavCutout* cutouts = nullptr, u32 cutout_count = 0, const NavLink* links = nullptr, u32 link_count = 0);
+    u32 last_rebuilt_tiles() const;  // how many tiles the last build made (all of them, or the changed ones)
     bool valid() const;
     void clear();
     void clear_agents();  // every crowd agent goes; the mesh stays (reused by the next Play when nothing changed)

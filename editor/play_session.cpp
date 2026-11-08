@@ -398,7 +398,7 @@ bool PlaySession::rebuild_navmesh() {
         agents_[agent_count_ - 1].has_target = true;
         agents_[agent_count_ - 1].target = kept[i].target;
     }
-    LSD_LOG_INFO("play", "Navmesh rebuilt (%.0f ms)", static_cast<f64>(SDL_GetTicksNS() - start) * 1e-6);
+    LSD_LOG_INFO("play", "Navmesh rebuilt (%u tiles changed, %.0f ms)", nav_.last_rebuilt_tiles(), static_cast<f64>(SDL_GetTicksNS() - start) * 1e-6);
     return true;
 }
 

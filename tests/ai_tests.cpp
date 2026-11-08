@@ -229,8 +229,30 @@ static void nav_link_tests() {
     CHECK(link_drawn);
 }
 
+// Tiled rebuilds: building the same level again rebuilds nothing; a crate added in one corner rebuilds only the
+// few tiles under it, and paths still cross the whole floor.
+static void nav_tile_tests() {
+    std::vector<f32> verts;
+    std::vector<u32> idx;
+    add_box(verts, idx, {-20, -20, -0.2f}, {20, 20, 0});  // 40 m: 5 x 5 tiles of 64 cells at 0.15 m
+    ai::NavMesh nav;
+    auto build = [&] { return nav.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), {-21, -21, -1}, {21, 21, 4}, {}); };
+    CHECK(build());
+    const u32 all = nav.last_rebuilt_tiles();
+    CHECK(all >= 25);
+    CHECK(build() && nav.last_rebuilt_tiles() == 0);  // nothing changed
+    add_box(verts, idx, {15, 15, 0}, {16, 16, 1});       // a crate in one corner
+    CHECK(build() && nav.last_rebuilt_tiles() > 0 && nav.last_rebuilt_tiles() <= 4);
+    Vec3 path[64];
+    const u32 n = nav.find_path({-18, -18, 0}, {18, 12, 0}, path, 64);
+    CHECK(n >= 2 && std::fabs(path[n - 1].x - 18) < 0.3f && std::fabs(path[n - 1].y - 12) < 0.3f);  // across tiles
+    Vec3 p;
+    CHECK(nav.nearest_point({15.5f, 15.5f, 0.0f}, p) && std::fabs(p.x - 15.5f) + std::fabs(p.y - 15.5f) > 0.4f);  // not under the crate
+}
+
 int main() {
     bt_tests();
+    nav_tile_tests();
     blackboard_schema_tests();
     nav_link_tests();
     std::vector<f32> verts;
