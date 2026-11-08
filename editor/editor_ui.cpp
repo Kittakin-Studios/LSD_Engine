@@ -2310,12 +2310,6 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
     if (!s.game_view) draw_icons(s, dl, view_proj, pos, size);
     if (debug_draw::count()) debug_draw::draw(dl, s.drawn_view_proj[index], pos, size);  // scripts' debug shapes, also in Play
-    if (s.show_navigation && !s.game_view) {  // the navmesh's polygons, like Unreal's P
-        for (u32 i = 0; i + 1 < s.nav_line_count; i += 2) {
-            ImVec2 a, b;
-            if (project(view_proj, s.nav_lines[i], pos, size, a) && project(view_proj, s.nav_lines[i + 1], pos, size, b)) dl->AddLine(a, b, IM_COL32(60, 230, 90, 200), 1.5f);
-        }
-    }
     const bool show_collision = s.show_collision || s.view_mode == ViewMode::Collision;
     if ((s.show_bounds || show_collision) && !s.game_view) {  // Unreal's Show > Bounds / Collision
         // A box through `m`: its 8 corners projected, 12 edges drawn when all are in front of the camera.

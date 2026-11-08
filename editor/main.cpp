@@ -227,6 +227,8 @@ const lsd::editor::CachedMesh* lightmapped_mesh(lsd::editor::MeshCache& meshes, 
 bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false);  // below
 lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fog, fog_color), for the particles
 lsd::rhi::LightSetup g_view_lights;  // the last drawn view's lights, for Lit particles
+lsd::rhi::BufferHandle g_nav_buffer;  // the navmesh overlay's lines (P)
+lsd::u32 g_nav_vertex_count = 0;
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
 
@@ -2437,6 +2439,29 @@ int main(int argc, char** argv) {
             const lsd::ai::NavMesh& nav = state.playing ? play.navmesh() : preview;
             state.nav_line_count = nav.debug_lines(state.nav_lines, sizeof state.nav_lines / sizeof state.nav_lines[0]);
             last_nav = SDL_GetTicks();
+            // As 3D lines (depth-tested, so walls hide what is behind them), rebuilt only when they change (a new buffer stalls the GPU).
+            lsd::u64 hash = 1469598103934665603ull;
+            for (lsd::u32 i = 0; i < state.nav_line_count; ++i) {
+                for (lsd::f32 c : {state.nav_lines[i].x, state.nav_lines[i].y, state.nav_lines[i].z}) {
+                    lsd::u32 bits;
+                    std::memcpy(&bits, &c, 4);
+                    hash = (hash ^ bits) * 1099511628211ull;
+                }
+            }
+            static lsd::u64 nav_hash = 0;
+            if (hash != nav_hash || !g_nav_buffer.valid()) {
+                nav_hash = hash;
+                if (g_nav_buffer.valid()) device->destroy_buffer(g_nav_buffer);
+                g_nav_buffer = {};
+                g_nav_vertex_count = state.nav_line_count & ~1u;
+                if (g_nav_vertex_count) {
+                    std::vector<lsd::rhi::LineVertex> v(g_nav_vertex_count);
+                    for (lsd::u32 i = 0; i < g_nav_vertex_count; ++i) {
+                        v[i] = {{state.nav_lines[i].x, state.nav_lines[i].y, state.nav_lines[i].z + 0.05f}, {0.24f, 0.9f, 0.35f, 1.0f}};  // a little above the floor it lies on
+                    }
+                    g_nav_buffer = device->create_buffer(lsd::rhi::BufferUsage::Vertex, v.data(), v.size() * sizeof v[0]);
+                }
+            }
         }
         was_showing = state.show_navigation;
 
@@ -3080,6 +3105,9 @@ int main(int argc, char** argv) {
                                           : lens.view == lsd::editor::ViewType::Right ? view_proj * lsd::rotation_y(lsd::radians(90.0f))
                                                                                        : view_proj;
                 device->draw_lines(grid.vertices, grid.vertex_count, grid_proj.m);
+            }
+            if (state.show_navigation && (state.playing || !state.game_view) && g_nav_buffer.valid()) {  // the navmesh (P), Unreal's show Navigation, in Play too
+                device->draw_lines(g_nav_buffer, g_nav_vertex_count, view_proj.m);
             }
             effects->set_fog(g_view_fog, g_view_fog + 4);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
