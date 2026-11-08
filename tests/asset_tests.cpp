@@ -280,6 +280,21 @@ static void test_texture(const fs::path& root) {
     CHECK(loaded.width == 2 && loaded.height == 2 && loaded.mip_count == 2);
     CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 0 && loaded.mip(0)[5] == 255 && loaded.mip(0)[10] == 255);  // red, green, blue
     CHECK(!asset::load_texture((root / "missing.png").string().c_str(), true, 4096, loaded));
+    // BC compression: an opaque 8x8 becomes BC1 (8 bytes a 4x4 block, every mip at least one block); with alpha, BC3.
+    {
+        std::vector<u8> rgba(8 * 8 * 4, 255);
+        for (usize i = 0; i < rgba.size(); i += 4) rgba[i] = static_cast<u8>(i);  // a ramp in red
+        asset::TextureData bc(default_allocator());
+        CHECK(asset::build_texture(rgba.data(), 8, 8, true, 4096, bc) && bc.mip_count == 4);
+        CHECK(asset::compress_texture(bc) && bc.encoding == asset::TextureEncoding::BC1);
+        CHECK(bc.mip_offset[1] == 4 * 8 && bc.mip_offset[2] == 5 * 8 && bc.mip_offset[3] == 6 * 8 && bc.pixels.size() == 7 * 8);  // 2x2 + 1 + 1 + 1 blocks
+        CHECK(!asset::compress_texture(bc));  // already compressed
+        rgba[3] = 0;  // one see-through pixel
+        asset::TextureData a(default_allocator());
+        CHECK(asset::build_texture(rgba.data(), 8, 8, true, 4096, a) && asset::compress_texture(a) && a.encoding == asset::TextureEncoding::BC3 && a.mip_offset[1] == 4 * 16);
+        asset::TextureData odd(default_allocator());
+        CHECK(asset::build_texture(rgba.data(), 6, 6, true, 4096, odd) && !asset::compress_texture(odd) && odd.encoding == asset::TextureEncoding::RGBA8);  // not a multiple of 4
+    }
     Array<u8> png(default_allocator());  // a picture for the assistant: PNG bytes in memory, halved to fit
     CHECK(asset::encode_png(tga.string().c_str(), 1, png) && png.size() > 8 && png[0] == 0x89 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G');
     CHECK(!asset::encode_png((root / "missing.png").string().c_str(), 64, png));

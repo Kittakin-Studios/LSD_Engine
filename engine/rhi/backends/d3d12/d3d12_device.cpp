@@ -386,6 +386,7 @@ public:
         ++b->generation;
     }
 
+    bool supports_bc() const override { return true; }  // every D3D12 device
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
         if (!srv_heap_) {
             LSD_LOG_ERROR("d3d12", "create_texture needs init_debug_ui() first (its view lives in the UI heap).");
@@ -406,7 +407,18 @@ public:
         desc.Height = height;
         desc.DepthOrArraySize = 1;
         desc.MipLevels = static_cast<UINT16>(mip_count);
-        desc.Format = format == TextureFormat::RGBA8_sRGB ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+        switch (format) {
+            case TextureFormat::RGBA8_sRGB: desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
+            case TextureFormat::BC1: desc.Format = DXGI_FORMAT_BC1_UNORM; break;
+            case TextureFormat::BC1_sRGB: desc.Format = DXGI_FORMAT_BC1_UNORM_SRGB; break;
+            case TextureFormat::BC3: desc.Format = DXGI_FORMAT_BC3_UNORM; break;
+            case TextureFormat::BC3_sRGB: desc.Format = DXGI_FORMAT_BC3_UNORM_SRGB; break;
+            default: desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+        }
+        if (is_block_compressed(format) && (width % 4 || height % 4)) {
+            LSD_LOG_ERROR("d3d12", "create_texture: a BC texture must be a multiple of 4 wide and high (%u x %u)", width, height);
+            return {};
+        }
         desc.SampleDesc.Count = 1;
         if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                     IID_PPV_ARGS(&t.resource)), "CreateCommittedResource (texture)")) return {};

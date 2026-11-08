@@ -33,7 +33,8 @@ bool path_of(const asset::AssetRegistry& registry, const char* guid_text, char* 
 
 } // namespace
 
-TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& registry) : device_(device), registry_(registry) {
+TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& registry)
+    : compress_(device.supports_bc()), device_(device), registry_(registry) {
     worker_ = std::thread([this] {  // decodes queued files, one at a time
         for (;;) {
             Job job;
@@ -48,6 +49,8 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
             if (!asset::load_texture(job.path, job.srgb, job.max_size, *data)) {
                 delete data;
                 data = nullptr;
+            } else if (job.srgb && compress_) {
+                asset::compress_texture(*data);  // colour maps only: BC1 / BC3 cost normal and data maps too much
             }
             std::lock_guard<std::mutex> lock(mutex_);
             finished_.push_back({job.entry, data});
@@ -83,7 +86,10 @@ bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) 
 void TextureCache::upload(Entry& e, const asset::TextureData& data) {
     const void* mips[asset::kMaxTextureMips];
     for (u32 m = 0; m < data.mip_count; ++m) mips[m] = data.mip(m);
-    const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, data.mip_count, e.srgb ? rhi::TextureFormat::RGBA8_sRGB : rhi::TextureFormat::RGBA8, mips);
+    rhi::TextureFormat format = e.srgb ? rhi::TextureFormat::RGBA8_sRGB : rhi::TextureFormat::RGBA8;
+    if (data.encoding == asset::TextureEncoding::BC1) format = e.srgb ? rhi::TextureFormat::BC1_sRGB : rhi::TextureFormat::BC1;
+    if (data.encoding == asset::TextureEncoding::BC3) format = e.srgb ? rhi::TextureFormat::BC3_sRGB : rhi::TextureFormat::BC3;
+    const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, data.mip_count, format, mips);
     if (!texture.valid()) return;  // keeps the old one, if any
     if (e.texture.valid()) device_.destroy_texture(e.texture);
     e.texture = texture;
@@ -102,6 +108,7 @@ bool TextureCache::load(Entry& e) {
         e.failed = !e.texture.valid();
         return false;
     }
+    if (e.srgb && compress_) asset::compress_texture(data);
     upload(e, data);
     return e.texture.valid();
 }

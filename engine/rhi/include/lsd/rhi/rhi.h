@@ -42,7 +42,15 @@ struct MaterialShaderTag {};
 using MaterialShaderHandle = Handle<MaterialShaderTag>;
 enum class BufferUsage : u8 { Vertex, Index };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
-enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB };
+// BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
+enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB };
+inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1; }
+inline bool is_srgb(TextureFormat f) { return f == TextureFormat::RGBA8_sRGB || f == TextureFormat::BC1_sRGB || f == TextureFormat::BC3_sRGB; }
+// The bytes of one mip `w` x `h` (blocks round up: a 2x2 mip is one block).
+inline u64 texture_bytes(TextureFormat f, u32 w, u32 h) {
+    if (!is_block_compressed(f)) return static_cast<u64>(w) * h * 4;
+    return static_cast<u64>((w + 3) / 4) * ((h + 3) / 4) * (f == TextureFormat::BC1 || f == TextureFormat::BC1_sRGB ? 8 : 16);
+}
 constexpr u32 kMaxMips = 16;
 
 // Vertex formats of the built-in pipelines.
@@ -425,6 +433,8 @@ public:
     virtual u64 debug_ui_texture(TextureHandle texture) = 0;
     // True when render targets come out upside down in ImGui (OpenGL): flip the UVs.
     virtual bool render_targets_flipped() const { return false; }
+    // BC1 / BC3 textures can be created (D3D12 always; Vulkan with textureCompressionBC; OpenGL with S3TC).
+    virtual bool supports_bc() const { return false; }
     // MeshDraw::gpu_cull works (compute shaders and indirect draws); else such draws draw every instance.
     virtual bool supports_gpu_culling() const { return false; }
 };

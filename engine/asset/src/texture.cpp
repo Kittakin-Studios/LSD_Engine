@@ -4,6 +4,7 @@
 
 #include <stb_image.h>
 #include <stb_image_write.h>
+#include <stb_dxt.h>
 #include <tinyexr.h>
 
 #include <cctype>
@@ -177,6 +178,41 @@ bool encode_png(const char* path, u32 max_side, Array<u8>& png) {
         std::memcpy(out.data() + at, data, static_cast<usize>(size));
     };
     return stbi_write_png_to_func(append, &png, static_cast<int>(image.width), static_cast<int>(image.height), 4, image.mip(0), static_cast<int>(image.width * 4)) != 0;
+}
+
+bool compress_texture(TextureData& data) {
+    if (data.encoding != TextureEncoding::RGBA8 || !data.mip_count || data.width % 4 || data.height % 4) return false;
+    bool opaque = true;
+    for (usize i = 3; i < static_cast<usize>(data.width) * data.height * 4 && opaque; i += 4) opaque = data.mip(0)[i] == 255;
+    const usize block_bytes = opaque ? 8 : 16;
+    Array<u8> blocks(data.pixels.allocator());
+    usize offsets[kMaxTextureMips] = {};
+    u32 w = data.width, h = data.height;
+    for (u32 m = 0; m < data.mip_count; ++m) {
+        const u32 bw = (w + 3) / 4, bh = (h + 3) / 4;
+        offsets[m] = blocks.size();
+        blocks.resize(blocks.size() + static_cast<usize>(bw) * bh * block_bytes);
+        const u8* src = data.mip(m);
+        for (u32 by = 0; by < bh; ++by) {
+            for (u32 bx = 0; bx < bw; ++bx) {
+                u8 block[64];  // 4x4 RGBA, edges repeated for mips smaller than a block
+                for (u32 y = 0; y < 4; ++y) {
+                    for (u32 x = 0; x < 4; ++x) {
+                        const u32 sx = std::min(bx * 4 + x, w - 1), sy = std::min(by * 4 + y, h - 1);
+                        std::memcpy(block + (y * 4 + x) * 4, src + (static_cast<usize>(sy) * w + sx) * 4, 4);
+                    }
+                }
+                stb_compress_dxt_block(blocks.data() + offsets[m] + (static_cast<usize>(by) * bw + bx) * block_bytes, block, opaque ? 0 : 1, STB_DXT_HIGHQUAL);
+            }
+        }
+        w = w > 1 ? w / 2 : 1;
+        h = h > 1 ? h / 2 : 1;
+    }
+    data.pixels.resize(blocks.size());
+    std::memcpy(data.pixels.data(), blocks.data(), blocks.size());
+    for (u32 m = 0; m < data.mip_count; ++m) data.mip_offset[m] = offsets[m];
+    data.encoding = opaque ? TextureEncoding::BC1 : TextureEncoding::BC3;
+    return true;
 }
 
 bool write_png(const char* path, u32 width, u32 height, const u8* rgba) {

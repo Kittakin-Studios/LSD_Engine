@@ -42,6 +42,7 @@ public:
     void set_size_cap(u32 size) { size_cap_ = size; }
 
 private:
+    const bool compress_;  // colour textures as BC1 / BC3 (the device takes them): 4 to 8 times less video memory
     struct Entry {
         char guid[33];
         bool srgb;

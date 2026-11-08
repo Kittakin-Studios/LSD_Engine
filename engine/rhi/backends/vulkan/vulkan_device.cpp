@@ -553,6 +553,7 @@ public:
         t.depth_readable = true;
         return TextureHandle::make(slot, t.generation);
     }
+    bool supports_bc() const override { return bc_; }
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
         if (!texture_set_layout_ || width == 0 || height == 0 || mip_count == 0 || !mips) return {};
         u32 slot = 0;
@@ -565,7 +566,15 @@ public:
         Texture& t = textures_[slot];
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = VK_IMAGE_TYPE_2D;
-        image.format = format == TextureFormat::RGBA8_sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        switch (format) {
+            case TextureFormat::RGBA8_sRGB: image.format = VK_FORMAT_R8G8B8A8_SRGB; break;
+            case TextureFormat::BC1: image.format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; break;
+            case TextureFormat::BC1_sRGB: image.format = VK_FORMAT_BC1_RGBA_SRGB_BLOCK; break;
+            case TextureFormat::BC3: image.format = VK_FORMAT_BC3_UNORM_BLOCK; break;
+            case TextureFormat::BC3_sRGB: image.format = VK_FORMAT_BC3_SRGB_BLOCK; break;
+            default: image.format = VK_FORMAT_R8G8B8A8_UNORM; break;
+        }
+        if (is_block_compressed(format) && !bc_) return {};
         image.extent = {width, height, 1};
         image.mipLevels = mip_count;
         image.arrayLayers = 1;
@@ -585,7 +594,7 @@ public:
         }
         // The mips through a staging buffer, one copy each (shortcut: waits for the upload; batch them on a transfer queue when loading many)
         VkDeviceSize total = 0;
-        for (u32 m = 0; m < mip_count; ++m) total += static_cast<VkDeviceSize>(std::max(1u, width >> m)) * std::max(1u, height >> m) * 4;
+        for (u32 m = 0; m < mip_count; ++m) total += texture_bytes(format, std::max(1u, width >> m), std::max(1u, height >> m));
         VkBufferCreateInfo staging_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         staging_info.size = total;
         staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
@@ -608,7 +617,7 @@ public:
             VkDeviceSize at = 0;
             for (u32 m = 0; m < mip_count; ++m) {
                 const u32 w = std::max(1u, width >> m), h = std::max(1u, height >> m);
-                const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 4;
+                const VkDeviceSize bytes = texture_bytes(format, w, h);
                 if (mips[m]) std::memcpy(static_cast<u8*>(mapped) + at, mips[m], bytes);
                 regions[m].bufferOffset = at;
                 regions[m].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 1};
@@ -2300,6 +2309,8 @@ private:
         features.features.depthClamp = supported.depthClamp;
         fill_non_solid_ = supported.fillModeNonSolid == VK_TRUE;  // the Wireframe view mode's line fill
         features.features.fillModeNonSolid = supported.fillModeNonSolid;
+        bc_ = supported.textureCompressionBC == VK_TRUE;  // BC1 / BC3 textures (every desktop GPU)
+        features.features.textureCompressionBC = supported.textureCompressionBC;
 
         const char* extensions[2] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME};
         VkDeviceCreateInfo create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -2805,6 +2816,7 @@ private:
     u32 lights_at_ = 0;
     TextureHandle local_shadow_, decal_atlas_, reflection_atlas_, lightmap_atlas_, flat_normal_;
     bool fill_non_solid_ = false;
+    bool bc_ = false;  // textureCompressionBC: BC1 / BC3 textures
     bool warned_sets_ = false;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     u32 spirv_jobs_ = 0;

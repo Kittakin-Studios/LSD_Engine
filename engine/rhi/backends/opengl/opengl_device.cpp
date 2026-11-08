@@ -990,6 +990,7 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                  \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)          \
     X(PFNGLTEXTURESUBIMAGE2DPROC, glTextureSubImage2D)              \
+    X(PFNGLCOMPRESSEDTEXTURESUBIMAGE2DPROC, glCompressedTextureSubImage2D) \
     X(PFNGLBINDTEXTUREUNITPROC, glBindTextureUnit)                  \
     X(PFNGLUNIFORM2FPROC, glUniform2f)                              \
     X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)              \
@@ -1143,6 +1144,8 @@ public:
             const char* ext = reinterpret_cast<const char*>(gl_.glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i)));
             if (std::strcmp(ext, "GL_NVX_gpu_memory_info") == 0) has_nvx_memory_info_ = true;
             if (std::strcmp(ext, "GL_ATI_meminfo") == 0) has_ati_meminfo_ = true;
+            if (std::strcmp(ext, "GL_EXT_texture_compression_s3tc") == 0) has_s3tc_ = true;
+            if (std::strcmp(ext, "GL_EXT_texture_sRGB") == 0 || std::strcmp(ext, "GL_EXT_texture_sRGB_S3TC") == 0) has_srgb_s3tc_ = true;
             if (std::strcmp(ext, "GL_NV_mesh_shader") == 0 || std::strcmp(ext, "GL_EXT_mesh_shader") == 0) info_.supports_mesh_shaders = true;
         }
         // VRAM size for preset selection. AMD only reports free memory, which at startup is close to the total.
@@ -1208,7 +1211,9 @@ public:
         set_shadow_map({}, {});
     }
 
+    bool supports_bc() const override { return has_s3tc_ && has_srgb_s3tc_; }
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
+        if (is_block_compressed(format) && !supports_bc()) return {};
         u32 slot = 0;
         while (slot < kMaxTextures && textures_[slot].id) ++slot;
         if (slot == kMaxTextures || width == 0 || height == 0 || mip_count == 0 || mip_count > kMaxMips) {
@@ -1217,12 +1222,25 @@ public:
         }
         Texture& t = textures_[slot];
         gl_.glCreateTextures(GL_TEXTURE_2D, 1, &t.id);
-        gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), format == TextureFormat::RGBA8_sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8,
-                               static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        // S3TC (EXT_texture_compression_s3tc / EXT_texture_sRGB): BC1 = RGBA DXT1, BC3 = DXT5.
+        GLenum internal = format == TextureFormat::RGBA8_sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+        switch (format) {
+            case TextureFormat::BC1: internal = 0x83F1; break;       // GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+            case TextureFormat::BC1_sRGB: internal = 0x8C4D; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+            case TextureFormat::BC3: internal = 0x83F3; break;       // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+            case TextureFormat::BC3_sRGB: internal = 0x8C4F; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+            default: break;
+        }
+        gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), internal, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         for (u32 m = 0; m < mip_count; ++m) {
             const u32 w = width >> m ? width >> m : 1, h = height >> m ? height >> m : 1;
-            gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA, GL_UNSIGNED_BYTE, mips[m]);
+            if (is_block_compressed(format)) {
+                gl_.glCompressedTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), internal,
+                                                  static_cast<GLsizei>(texture_bytes(format, w, h)), mips[m]);
+            } else {
+                gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA, GL_UNSIGNED_BYTE, mips[m]);
+            }
         }
         gl_.glTextureParameteri(t.id, GL_TEXTURE_MIN_FILTER, mip_count > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         gl_.glTextureParameteri(t.id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -2319,6 +2337,7 @@ private:
     bool validation_ = false;
     bool has_nvx_memory_info_ = false;
     bool has_ati_meminfo_ = false;
+    bool has_s3tc_ = false, has_srgb_s3tc_ = false;  // BC1 / BC3 textures
     bool debug_ui_ = false;
 };
 

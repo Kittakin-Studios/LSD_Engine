@@ -10,9 +10,13 @@ namespace lsd::asset {
 
 constexpr u32 kMaxTextureMips = 16;
 
+// How a TextureData's mips are stored: RGBA8 pixels, or BC1 / BC3 blocks (compress_texture).
+enum class TextureEncoding : u8 { RGBA8, BC1, BC3 };
+
 struct TextureData {
     explicit TextureData(Allocator& allocator) : pixels(allocator) {}
     u32 width = 0, height = 0, mip_count = 0;
+    TextureEncoding encoding = TextureEncoding::RGBA8;
     Array<u8> pixels;                 // every mip, RGBA8, rows tightly packed
     usize mip_offset[kMaxTextureMips] = {};
     const u8* mip(u32 level) const { return pixels.data() + mip_offset[level]; }
@@ -21,6 +25,9 @@ struct TextureData {
 // Reads an image, halves it until it fits `max_size`, and builds mips down to 1x1 (averaged in
 // linear light when `srgb`). False if the file is missing or not an image.
 bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out);
+// Block-compresses the mips in place (stb_dxt, high quality): BC1 when every pixel is opaque, BC3 when any is not
+// (4 / 8 bits a pixel instead of 32). False, and nothing changes, when the size is not a multiple of 4 or it is already.
+bool compress_texture(TextureData& data);
 // The image's size from its header only (no decoding); false if it is not a readable image.
 bool texture_size(const char* path, u32& width, u32& height);
 // An image's grey (its first channel) at 16 bits, rows top to bottom (16-bit PNGs keep theirs; 8-bit ones are
