@@ -746,6 +746,23 @@ void draw_landscape(EditorState& s) {
         s.world->get<world::Landscape>(e)->size = g_new_size;
     }
     ImGui::SetItemTooltip("A flat square of terrain where the viewport looks, %u x %u heights", kGrid, kGrid);
+    if (!all.empty()) {  // a bigger world: another landscape beside one, its edge joined (Unreal's Add Landscape Component)
+        const Entity from = s.world->alive(s.selected) && s.world->get<world::Landscape>(s.selected) ? s.selected : all[0];
+        ImGui::TextUnformatted("Add Tile");
+        const struct {
+            const char* label;
+            i32 dx, dy;
+        } sides[4] = {{"+X", 1, 0}, {"-X", -1, 0}, {"+Y", 0, 1}, {"-Y", 0, -1}};
+        for (const auto& side : sides) {
+            ImGui::SameLine();
+            if (with_tip(ImGui::SmallButton(side.label), "A new landscape tile beside the selected one (or the first), its shared edge joined so you can sculpt across it")) {
+                const world::Landscape source = *s.world->get<world::Landscape>(from);
+                const Vec3 at = s.world->get<world::Transform>(from)->position;  // shortcut: unrotated, unscaled landscapes line up; turn the tile by hand otherwise
+                const Entity e = place_object(s, "Landscape", nullptr, "Landscape", {at.x + static_cast<f32>(side.dx) * source.size, at.y + static_cast<f32>(side.dy) * source.size, at.z});
+                extend_tile(source, side.dx, side.dy, *s.world->get<world::Landscape>(e));
+            }
+        }
+    }
     ImGui::SeparatorText("Sculpt");
     if (all.empty()) {
         hint("Create a landscape first.");

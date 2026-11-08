@@ -398,11 +398,11 @@ bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::Mesh
     return true;
 }
 
-u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out) {
+u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out, bool lock_border) {
     const usize target = static_cast<usize>(static_cast<f32>(mesh.index_count) * ratio) / 3 * 3;
     constexpr f32 kMaxError = 0.05f;  // of the mesh's size: a distant LOD may drift this far
     return static_cast<u32>(meshopt_simplify(out, mesh.indices, mesh.index_count, mesh.vertices[0].position, mesh.vertex_count,
-                                             sizeof(rhi::MeshVertex), target, kMaxError, 0, nullptr));
+                                             sizeof(rhi::MeshVertex), target, kMaxError, lock_border ? meshopt_SimplifyLockBorder : 0u, nullptr));
 }
 
 MeshBounds compute_bounds(const render::MeshData& mesh) {

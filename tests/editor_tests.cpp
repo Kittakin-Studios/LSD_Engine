@@ -857,6 +857,20 @@ void test_push_helpers() {  // Remote Console > Push Changes: what may be writte
     CHECK(!editor::assistant::base64_decode("ab$c", bytes));
 }
 
+void test_landscape_tiles() {  // Add Tile: the new tile's shared edge is its neighbour's, continued across
+    constexpr u32 n = world::Landscape::kResolution;
+    static world::Landscape from, to;
+    from.size = 32.0f;
+    from.heights.count = n * n;
+    for (u32 j = 0; j < n; ++j)
+        for (u32 i = 0; i < n; ++i) from.heights[j * n + i] = static_cast<f32>(i) * 0.1f + static_cast<f32>(j);
+    editor::extend_tile(from, 1, 0, to);  // to +X: its first column is from's last
+    CHECK(to.size == 32.0f && to.heights.count == n * n);
+    CHECK(to.heights[5 * n + 0] == from.heights[5 * n + n - 1] && to.heights[5 * n + 30] == from.heights[5 * n + n - 1]);
+    editor::extend_tile(from, 0, -1, to);  // to -Y: its last row is from's first
+    CHECK(to.heights[(n - 1) * n + 7] == from.heights[7] && to.heights[3 * n + 7] == from.heights[7]);
+}
+
 void test_shadow_cells() {  // Shadow Resolution: aligned squares in the 8 x 8 cell atlas
     editor::ShadowCells cells;
     f32 x = -1, y = -1;
@@ -937,6 +951,7 @@ int main() {
     test_sound_cue();
     test_particle_light();
     test_shadow_cells();
+    test_landscape_tiles();
     test_push_helpers();
     test_bake_texture_albedo();
     test_post_blend();

@@ -7,6 +7,10 @@
 
 namespace lsd::editor {
 
+// Landscape tiles (a bigger world from several landscapes side by side): `to` becomes the tile beside `from`
+// (dx / dy: -1, 0 or 1, one of them 0) with the same size, texture tiling and layers; its shared edge has `from`'s
+// heights and every row across it continues them, so the seam is closed and the brushes sculpt both together.
+void extend_tile(const world::Landscape& from, i32 dx, i32 dy, world::Landscape& to);
 // A greyscale heightmap (RGBA8, its red channel: black 0, white max_height metres) sampled
 // bilinearly onto the landscape's grid (heights resized to the full grid).
 void heights_from_image(world::Landscape& landscape, const u8* rgba, u32 width, u32 height, f32 max_height);

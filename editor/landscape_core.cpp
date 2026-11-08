@@ -106,4 +106,20 @@ bool quad_open(const world::Landscape& l, u32 i, u32 j) {
     return !is_hole(l, i, j) && !is_hole(l, i + 1, j) && !is_hole(l, i, j + 1) && !is_hole(l, i + 1, j + 1);
 }
 
+void extend_tile(const world::Landscape& from, i32 dx, i32 dy, world::Landscape& to) {
+    constexpr u32 n = world::Landscape::kResolution;
+    to.size = from.size;
+    to.uv_tile = from.uv_tile;
+    to.layers = from.layers;
+    to.heights.count = n * n;
+    auto height = [&](u32 i, u32 j) { return from.heights.count == n * n ? from.heights[j * n + i] : 0.0f; };
+    for (u32 j = 0; j < n; ++j) {
+        for (u32 i = 0; i < n; ++i) {
+            // The shared edge of `from`: its last column for a tile to +X, first for -X, likewise rows for Y.
+            const u32 ei = dx > 0 ? n - 1 : dx < 0 ? 0 : i, ej = dy > 0 ? n - 1 : dy < 0 ? 0 : j;
+            to.heights[j * n + i] = height(ei, ej);
+        }
+    }
+}
+
 } // namespace lsd::editor

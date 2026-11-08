@@ -54,7 +54,7 @@ u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const {
 namespace {
 
 // Simpler LODs for meshes with enough triangles to gain from them.
-void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m) {
+void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false) {
     m.lod_count = 1;
     constexpr u32 kMinTriangles = 512;
     if (data.index_count / 3 < kMinTriangles) return;
@@ -62,7 +62,7 @@ void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshDat
     u32 previous = data.index_count;
     f32 ratio = 0.5f;
     for (u32 lod = 1; lod < CachedMesh::kMaxLods; ++lod, ratio *= 0.5f) {
-        const u32 count = asset::simplify_mesh(data, ratio, indices);
+        const u32 count = asset::simplify_mesh(data, ratio, indices, lock_border);
         if (count == 0 || count > previous * 3 / 4) break;  // the shape will not get simpler: stop
         m.lod_indices[lod] = device.create_buffer(rhi::BufferUsage::Index, indices, sizeof(u32) * count);
         m.lod_index_count[lod] = count;
@@ -214,6 +214,13 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     entry->gpu = render::upload_mesh(device_, data);
     entry->lod_count = 1;
     entry->lod_screen_size[0] = 1e30f;
+    if (std::strncmp(key, "Landscape:", 10) == 0) {  // terrain LODs (Unreal's landscape LODs); edges locked so neighbouring tiles meet
+        const asset::AssetMeta defaults;
+        entry->lod_screen_size[1] = defaults.lod1_screen_size;
+        entry->lod_screen_size[2] = defaults.lod2_screen_size;
+        entry->lod_screen_size[3] = defaults.lod3_screen_size;
+        build_lods(device_, allocator_, data, *entry, true);
+    }
     const asset::MeshBounds bounds = asset::compute_bounds(data);
     entry->bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry->bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
