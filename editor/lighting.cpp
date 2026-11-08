@@ -3,7 +3,13 @@
 
 #include "light_bake.h"
 
+#include "lsd/asset/asset_registry.h"
+#include "lsd/asset/light_profile.h"
+
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <cmath>
 
 namespace lsd::editor {
@@ -213,10 +219,55 @@ namespace {
 f32 g_reflection_probes[rhi::kMaxReflectionProbes][4] = {};
 f32 g_reflection_boxes[rhi::kMaxReflectionProbes][4] = {};
 u32 g_reflection_count = 0;
+const asset::AssetRegistry* g_profile_registry = nullptr;
+struct LoadedProfile {
+    char guid[33];
+    bool ok;
+    f32 samples[asset::kLightProfileSamples];
+};
+LoadedProfile g_profiles[64];
+u32 g_profile_count = 0;
+
+// A light's IES profile by GUID, read and parsed the first time (nullptr: none, or not readable).
+// shortcut: read once per editor run, so an edited .ies needs a restart; watch the file time if that matters
+const f32* light_profile(const char* guid) {
+    if (!guid[0] || !g_profile_registry) return nullptr;
+    for (u32 i = 0; i < g_profile_count; ++i) {
+        if (std::strcmp(g_profiles[i].guid, guid) == 0) return g_profiles[i].ok ? g_profiles[i].samples : nullptr;
+    }
+    if (g_profile_count == 64) return nullptr;
+    LoadedProfile& p = g_profiles[g_profile_count++];
+    std::snprintf(p.guid, sizeof p.guid, "%s", guid);
+    p.ok = false;
+    asset::Guid id;
+    const asset::AssetRecord* r = asset::parse_guid(guid, id) ? g_profile_registry->find(id) : nullptr;
+    if (!r) return nullptr;
+    char path[512];
+    g_profile_registry->source_path(*r, path, sizeof path);
+    std::ifstream file(path, std::ios::binary);
+    std::stringstream text;
+    text << file.rdbuf();
+    p.ok = asset::parse_ies(text.str().c_str(), p.samples);
+    if (!p.ok) LSD_LOG_WARN("editor", "Not an IES light profile: %s", path);
+    return p.ok ? p.samples : nullptr;
+}
+
+// Writes `profile` (when there is one) into light `index`'s rows, inverted (zero is none), its axis along `axis`.
+void put_profile(rhi::LightSetup& s, u32 index, const char* guid, Vec3 axis) {
+    const f32* profile = light_profile(guid);
+    if (!profile) return;
+    for (u32 k = 0; k < asset::kLightProfileSamples; ++k) s.light_profiles[index * 4 + k / 4][k % 4] = 1.0f - profile[k];
+    s.lights[index].direction[0] = axis.x;
+    s.lights[index].direction[1] = axis.y;
+    s.lights[index].direction[2] = axis.z;
+}
+
 bool g_hdri_on = false;
 u32 g_hdri_tile = 0;
 Vec3 g_hdri_averages[3] = {};
 } // namespace
+
+void set_light_profile_registry(const asset::AssetRegistry* registry) { g_profile_registry = registry; }
 
 void set_sky_hdri(bool on, u32 tile, const Vec3 averages[3]) {
     g_hdri_on = on;
@@ -604,6 +655,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
             if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
             s.lights[s.count - 1].source_radius = light->source_radius;
+            put_profile(s, s.count - 1, light->ies, forward_of(m));  // a point light's profile hangs off its forward axis
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(6, side_of(light->shadow_resolution)) : 0u;
             if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
@@ -626,6 +678,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
             if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
             s.lights[s.count - 1].source_radius = light->source_radius;
+            put_profile(s, s.count - 1, light->ies, dir);
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
             if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];

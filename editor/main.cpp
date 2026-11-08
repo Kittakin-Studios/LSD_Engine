@@ -2188,6 +2188,7 @@ int main(int argc, char** argv) {
     }
     LSD_LOG_INFO("editor", "%zu assets in %s/", registry.count(), kContentDir);
     state.registry = &registry;
+    lsd::editor::set_light_profile_registry(&registry);
 
     lsd::world::World world(allocator);
     lsd::editor::Transactions history(allocator);

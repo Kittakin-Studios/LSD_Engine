@@ -38,7 +38,14 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 lightmap_info;
     float4 volumetric;
     float4 reflection_boxes[8];  // box captures: half size, w = fade-in distance (0: a sphere)
+    float4 light_profiles[64];   // IES: 16 samples of 1 - profile per light (rhi::LightSetup)
 };
+// A light's IES profile at the angle from its axis whose cosine is c (1 without one; asset::light_profile_at).
+float light_profile(uint li, float c) {
+    const float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;
+    const uint i0 = min((uint)x, 14u), i1 = i0 + 1;
+    return 1.0 - lerp(light_profiles[li * 4 + i0 / 4][i0 % 4], light_profiles[li * 4 + i1 / 4][i1 % 4], x - (float)i0);
+}
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
 float3 probe_light(uint index, float3 n) {
@@ -167,6 +174,7 @@ float3 fog_light(float3 wpos, float3 cam) {
             float atten = window * window / dist2;
             const float3 l = d * rsqrt(dist2);
             if (L.pos_type.w > 1.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
+            atten *= light_profile(li, dot(-l, L.dir_range.xyz));
             const float cosv = dot(dir, -l);
             local += L.color_inner.xyz * atten * (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
         }
@@ -457,6 +465,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
             atten = window * window / dist2;
             if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
             if (L.pos_type.w > 2.5) atten *= saturate(dot(-l, L.dir_range.xyz));  // rect / disc: lights only in front
+            else atten *= light_profile(li, dot(-l, L.dir_range.xyz));
         }
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;

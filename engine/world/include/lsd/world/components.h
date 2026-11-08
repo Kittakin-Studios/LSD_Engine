@@ -836,6 +836,9 @@ struct PointLight {
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
     u32 shadow_resolution = 1;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the bulb's size; bigger gives softer, wider highlights (a sphere light)") f32 source_radius = 0.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:LightProfile",
+                 Tooltip = "IES Profile (Unreal's IES Texture): a photometric .ies file shapes the light by angle from its forward axis (a real fixture's pattern of rings and falloff)")
+    char ies[33] = "";
 };
 
 // A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
@@ -857,6 +860,9 @@ struct SpotLight {
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
     u32 shadow_resolution = 1;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the lamp's size; bigger gives softer, wider highlights") f32 source_radius = 0.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:LightProfile",
+                 Tooltip = "IES Profile (Unreal's IES Texture): a photometric .ies file shapes the light by angle from its forward axis (a real fixture's pattern of rings and falloff)")
+    char ies[33] = "";
 };
 
 // An area light (Unreal's Rect Light): a glowing panel or disc lighting what is in front of it (+X), with soft

@@ -246,9 +246,12 @@ struct LightSetup {
     // Box reflection captures (in reflections' order): half size xyz (world axes), w = the fade-in distance;
     // w = 0: a sphere capture.
     f32 reflection_boxes[kMaxReflectionProbes][4] = {};
+    // IES profiles (asset::light_profile.h): per light, 16 samples (4 rows) of 1 - its profile from its axis (dir_range)
+    // to straight behind; all zero (the default) is no profile.
+    f32 light_profiles[kMaxLights * 4][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with

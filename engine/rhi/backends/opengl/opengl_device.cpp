@@ -124,7 +124,13 @@ layout(std140, binding = 1) uniform Lights {
     vec4 lightmap_info;
     vec4 volumetric;
     vec4 reflection_boxes[8];
+    vec4 light_profiles[64];
 };
+float light_profile(uint li, float c) {  // mesh.hlsl's
+    float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;
+    uint i0 = min(uint(x), 14u), i1 = i0 + 1u;
+    return 1.0 - mix(light_profiles[li * 4u + i0 / 4u][i0 % 4u], light_profiles[li * 4u + i1 / 4u][i1 % 4u], x - float(i0));
+}
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
 vec3 probe_light(uint index, vec3 n) {
@@ -247,6 +253,7 @@ vec3 fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the f
             float atten = window * window / dist2;
             vec3 l = d * inversesqrt(dist2);
             if (L.pos_type.w > 1.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+            atten *= light_profile(li, dot(-l, L.dir_range.xyz));
             float cosv = dot(dir, -l);
             local += L.color_inner.xyz * atten * (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
         }
@@ -474,6 +481,7 @@ void main() {
             atten = window * window / dist2;
             if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
             if (L.pos_type.w > 2.5) atten *= clamp(dot(-l, L.dir_range.xyz), 0.0, 1.0);  // rect / disc: lights only in front
+            else atten *= light_profile(li, dot(-l, L.dir_range.xyz));
         }
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;

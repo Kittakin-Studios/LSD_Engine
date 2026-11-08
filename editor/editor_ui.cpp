@@ -2818,6 +2818,8 @@ void toggle_preview(EditorState& s, const asset::AssetRecord& r);
 bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
+    if (std::strcmp(type, "Texture") == 0) return r.type == asset::AssetType::Texture;
+    if (std::strcmp(type, "LightProfile") == 0) return r.type == asset::AssetType::LightProfile;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     if (std::strcmp(type, "BehaviorTree") == 0) return r.type == asset::AssetType::BehaviorTree;
     if (std::strcmp(type, "UI") == 0) return r.type == asset::AssetType::UiDocument;

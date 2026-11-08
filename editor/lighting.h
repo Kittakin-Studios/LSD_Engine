@@ -6,6 +6,8 @@
 #include "lsd/rhi/rhi.h"
 #include "lsd/world/world.h"
 
+namespace lsd::asset { class AssetRegistry; }
+
 namespace lsd::editor {
 
 struct BakedLighting;
@@ -44,6 +46,8 @@ struct ShadowCells {
 // shortcut: no shadows or baked probes; per vertex on the CPU, fine for hundreds of sprites, a GPU path for thousands
 // `sun_visible`: how much of the shadowed sun (LightSetup::shadow_info[1]) reaches it, 0..1 (lit particles in Play ray-test it).
 Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal, f32 sun_visible = 1.0f);
+// Where Point / Spot Lights' IES profiles are looked up (their .ies files, read once each).
+void set_light_profile_registry(const asset::AssetRegistry* registry);
 // The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
 void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count);  // boxes: half size, fade (w 0 = sphere)
 // The Sky's HDRI as the environment (`on` false: none): its tile in the reflection atlas, which reflections outside

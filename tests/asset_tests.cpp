@@ -2,6 +2,7 @@
 // import it into Content/, find it by search, compile it and load the result.
 #include "lsd/asset/asset_meta.h"
 #include "lsd/asset/localization.h"
+#include "lsd/asset/light_profile.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
 #include "lsd/asset/material_import.h"
@@ -538,7 +539,24 @@ static void test_material_import(const fs::path& root) {
     }
 }
 
+// IES: candela averaged around the axis, normalised, resampled every 12 degrees; nothing outside the file's angles.
+static void test_ies() {
+    using namespace lsd;
+    const char* ies = "IESNA:LM-63-2002\n[TEST] spot\nTILT=NONE\n1 1000 1 4 2 1 2 0.1 0.1 0\n1.0 1.0 50\n0 30 60 90\n0 90\n"
+                      "1000 800 200 0\n1000, 600, 200, 0\n";
+    f32 p[asset::kLightProfileSamples];
+    CHECK(asset::parse_ies(ies, p));
+    CHECK(std::fabs(p[0] - 1.0f) < 1e-4f);
+    CHECK(std::fabs(p[1] - 0.88f) < 1e-4f);   // 12 degrees: 1000 -> 700 over 30
+    CHECK(std::fabs(p[5] - 0.2f) < 1e-4f);    // 60 degrees
+    CHECK(p[15] == 0.0f);                     // straight behind: outside 0..90
+    CHECK(std::fabs(asset::light_profile_at(p, 1.0f) - 1.0f) < 1e-4f);
+    CHECK(std::fabs(asset::light_profile_at(p, std::cos(6.0f * 3.14159265f / 180.0f)) - 0.94f) < 1e-3f);
+    CHECK(!asset::parse_ies("not a profile", p));
+}
+
 int main() {
+    test_ies();
     test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();
     test_anim_curves();
