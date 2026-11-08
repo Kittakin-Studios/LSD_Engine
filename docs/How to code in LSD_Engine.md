@@ -3,22 +3,24 @@
 Step by step: where to click to write game code, attach it to an object, run it and debug it.
 For complete first systems to copy (health and stamina bars, sprinting, a hurt zone, a door), see
 [Examples for first timers](Examples/Examples.md).
-There are three ways to script, and you can mix them in one level:
+There are four ways to script, and you can mix them in one level:
 
 | Way | Unreal equivalent | Where |
 | --- | --- | --- |
 | **Lua script** (`.lua`) | A Blueprint event graph written as text | Sections 1-6, 8 |
 | **Visual Script** (`.lsdgraph`) | The Blueprint event graph | Section 7 |
 | **C / C++ script** (`Source/*.cpp` / `*.c` -> `Game.dll`) | A C++ Actor Component class | Section 11 |
+| **JavaScript script** (`.js`) | A Blueprint event graph written as text (Puerts / UnrealJS style) | Section 12 |
 
 They get the same events (start, update, hit, overlap...), use commands with the same names
-(`lsd.find` in Lua, `find` in C++, `lsd_find` in C) and can send each other events.
+(`lsd.find` in Lua and JavaScript, `find` in C++, `lsd_find` in C) and can send each other events.
 
 Contents: [1. One-time setup](#1-one-time-setup) · [2. Make a script](#2-make-a-script) ·
 [3. Write the code](#3-write-the-code) · [4. Put it on an object](#4-put-it-on-an-object) ·
 [5. Run it](#5-run-it) · [6. Debug it](#6-debug-it) · [7. Visual scripts instead of code](#7-visual-scripts-instead-of-code) ·
 [8. Recipes](#8-recipes) · [9. When something goes wrong](#9-when-something-goes-wrong) ·
-[10. Code with Claude Code](#10-code-with-claude-code) · [11. C / C++ instead of Lua](#11-c--c-instead-of-lua)
+[10. Code with Claude Code](#10-code-with-claude-code) · [11. C / C++ instead of Lua](#11-c--c-instead-of-lua) ·
+[12. JavaScript instead of Lua](#12-javascript-instead-of-lua)
 
 ---
 
@@ -312,7 +314,9 @@ Still stuck: take a screenshot of the Output Log and the debugger.
 ## 10. Code with Claude Code
 
 Claude Code can write the scripts for you and test them in the running editor, through the
-**Claude MCP** plugin.
+**Claude MCP** plugin. (Inside the editor, **Tools > LSD Assistant** does the same with your own model:
+it writes code, presses Play and reads the log itself, and its **Lessons** tab teaches worked examples
+such as a gun on a hand socket; see [MANUAL.md](MANUAL.md#lsd-assistant-an-ai-coder-in-the-editor).)
 
 **Turn it on (once):**
 
@@ -418,3 +422,58 @@ Object nodes reach the script's `on_event(self, name, other)`.
 
 **Claude Code** can do all of this through the Claude MCP plugin (section 10): it writes
 `Source/*.cpp` / `*.c` and runs `game.Compile`, `game.NewScript <Name> [c]` and `game.Scripts` as console commands.
+
+## 12. JavaScript instead of Lua
+
+The same scripts in JavaScript (Unreal: Puerts / UnrealJS). It is the Lua workflow from sections
+2-6 with a `.js` file: same Script component, same events, same `lsd.` commands, same reload on save.
+Full reference: [MANUAL.md](MANUAL.md#javascript-scripts).
+
+**One-time:** do section 1 for `.js` files too (Open with > Visual Studio Code, Always use this app),
+so double-clicking a tile opens VS Code and not Windows' script host.
+
+**Make a script:** Content Browser > right-click empty space > **New JavaScript Script**, type a name,
+**Enter**. The tile reads **.JS**.
+
+**Put it on an object:** exactly as section 4: **Details > Add Component > Script**, pick the `.js`
+file (or drag its tile onto the field).
+
+**Write the code** (the door from section 8 in JavaScript):
+
+```js
+var properties = { open_angle: 90 };   // Details, per object
+
+function on_overlap_begin(self, other) {
+  if (other === lsd.player()) {
+    const [x, y, z] = lsd.rotation(self.entity);
+    lsd.set_rotation(self.entity, x, y, z + self.open_angle);
+    lsd.play_sound("S_DoorOpen");
+  }
+}
+```
+
+| Lua | JavaScript |
+| --- | --- |
+| `function on_start(self) ... end` | `function on_start(self) { ... }` |
+| `properties = { speed = 2 }` | `var properties = { speed: 2 };` |
+| `local x, y, z = lsd.position(e)` | `const [x, y, z] = lsd.position(e);` (several results come back as an array) |
+| `lsd.log("hi", n)` | `console.log("hi", n)` or `lsd.log("hi", n)` |
+| `lsd.after(2, function() ... end)` | `lsd.after(2, () => { ... })` |
+| `-- comment` | `// comment` |
+
+Two things to watch:
+
+- Events must be **top-level `function` declarations**. `const on_start = () => {}` is not seen.
+- Tables you get back (`lsd.get`, `lsd.game_instance()`) are **copies**: change them, then hand them
+  back with `lsd.set` / `lsd.save_game`.
+
+**Run it:** Play (section 5). Save while playing and it reloads with `self` kept. Errors show in the
+Output Log with the file, line and column.
+
+**Debug:** **Tools > Lua Debugger** lists `.js` scripts too: breakpoints, Continue, Step Over / Into /
+Out and the call stack work as in section 6. **Locals** shows only `self` and its fields, so put a
+value on `self` or `console.log` it. Breakpoints work in Play from the editor only, not in a packaged game.
+
+**Mixing:** `lsd.call(e, "unlock")` from JavaScript reaches a Lua `function unlock(self, other)`, a
+visual script's Custom Event `unlock` or a C / C++ script's `on_event`, and back. A `.js` file can also
+offer its functions as visual-script nodes ([MANUAL.md](MANUAL.md#10-visual-scripting), "Nodes from JavaScript").

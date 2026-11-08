@@ -69,6 +69,23 @@ struct Blackboard {
     bool is_set(const char* name) const;  // present and not 0
 };
 
+// A Blackboard asset's keys (Unreal's Blackboard Data): each named key has a type and a default.
+enum class BbType : u8 { Bool, Float, Int, Vector, Object };
+struct BbKey {
+    char name[32] = "";
+    BbType type = BbType::Float;
+    f32 value[3] = {};  // the default (Object: none, it starts unset)
+};
+struct BlackboardSchema {
+    BbKey keys[kMaxBlackboardKeys];
+    u32 count = 0;  // 0: untyped, any key goes
+    const BbKey* find(const char* name) const;
+};
+void apply_defaults(const BlackboardSchema& schema, Blackboard& board);  // every key but Objects gets its default
+// A script's write checked against the schema, the value made to fit (Int rounded, Bool 0 / 1). nullptr when written,
+// else why not ("not a key of the Blackboard", "wants a location", "wants a number or object").
+const char* typed_set(const BlackboardSchema& schema, Blackboard& board, const char* name, const f32* value, bool vector);
+
 // What the game does for the tree's tasks.
 struct BtHost {
     void* user = nullptr;

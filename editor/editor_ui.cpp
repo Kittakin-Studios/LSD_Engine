@@ -1,4 +1,6 @@
+#include "loc_gather.h"
 #include "editor_ui.h"
+#include "templates.h"
 #include "tips.h"
 #include "graph_editor.h"
 #include "lighting.h"
@@ -7,10 +9,14 @@
 #include "skinned_cache.h"
 #include "sound_player.h"
 #include "table_editor.h"
+#include "anim_graph_editor.h"
+#include "flipbook_editor.h"
 #include "particle_editor.h"
 #include "ui_editor.h"
 #include "packaging.h"
 
+#include "lsd/net/join_code.h"
+#include "lsd/net/net.h"
 #include "lsd/script/material_graph.h"
 
 #include "mesh_cache.h"
@@ -18,6 +24,7 @@
 #include "references.h"
 #include "remote_console.h"
 #include "game_module.h"
+#include "keymap.h"
 #include "editor_modes.h"
 #include "paper2d.h"
 #include "workspaces.h"
@@ -87,7 +94,14 @@ std::vector<std::pair<std::string, std::string>> script_property_defaults(const 
     const size_t end = at == std::string::npos ? at : text.find('}', at);
     if (end == std::string::npos) return out;
     size_t i = at + 1;
-    auto skip = [&] { while (i < end && (std::isspace(static_cast<unsigned char>(text[i])) || text[i] == ',' || text[i] == ';')) ++i; };
+    auto skip = [&] {  // spaces, separators and comments (Lua `--`, JavaScript `//`) to the end of their line
+        for (;;) {
+            while (i < end && (std::isspace(static_cast<unsigned char>(text[i])) || text[i] == ',' || text[i] == ';')) ++i;
+            if (i + 1 >= end || !((text[i] == '-' && text[i + 1] == '-') || (text[i] == '/' && text[i + 1] == '/'))) return;
+            const size_t eol = text.find('\n', i);
+            i = eol == std::string::npos || eol > end ? end : eol;
+        }
+    };
     for (skip(); i < end; skip()) {
         size_t name_end = i;
         while (name_end < end && (std::isalnum(static_cast<unsigned char>(text[name_end])) || text[name_end] == '_')) ++name_end;
@@ -273,8 +287,8 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
-    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
-    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
+    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Nav Link", nullptr, "NavLink"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
+    {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Rect Light", nullptr, "RectLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Reflection Capture", nullptr, "ReflectionCapture"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
     // Movement prefabs, cubes as placeholders: swap the mesh in Details.
     {"Sub Level", nullptr, "SubLevel"}, {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
 };
@@ -979,6 +993,7 @@ struct WorkspaceDef {
     const char* hint;  // shown in the empty editor area
     bool lua_debugger;
     ImGuiID (*build)(ImGuiID root);
+    bool multiplayer = false;  // shows the Multiplayer panel
 };
 
 ImGuiID dock_panels(ImGuiID right, f32 outliner_share, ImGuiID content) {
@@ -1034,6 +1049,27 @@ ImGuiID build_scripting_workspace(ImGuiID root) {  // Blender's Scripting: a big
     return area;
 }
 
+ImGuiID build_particles_workspace(ImGuiID root) {  // Niagara's layout: a big Particle Editor, a smaller viewport beside it
+    ImGuiID right = 0, left = 0, content = 0, rest = 0, area = 0, viewport = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.22f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.24f, &content, &rest);
+    ImGui::DockBuilderSplitNode(rest, ImGuiDir_Left, 0.64f, &area, &viewport);
+    dock_panels(right, 0.35f, content);
+    return area;
+}
+
+constexpr char kMultiplayerWindow[] = "Multiplayer###MultiplayerPanel";
+
+ImGuiID build_multiplayer_workspace(ImGuiID root) {  // the viewport, the Multiplayer panel under it beside the Content Browser
+    ImGuiID right = 0, left = 0, bottom = 0, viewport = 0, content = 0, panel = 0;
+    ImGui::DockBuilderSplitNode(root, ImGuiDir_Right, 0.20f, &right, &left);
+    ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.40f, &bottom, &viewport);
+    ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.30f, &content, &panel);
+    dock_panels(right, 0.40f, content);
+    ImGui::DockBuilderDockWindow(kMultiplayerWindow, panel);
+    return 0;
+}
+
 constexpr WorkspaceDef kWorkspaces[] = {
     {"Layout", "The level: viewport, Outliner, Details, Content Browser", nullptr, false, build_layout_workspace},
     {"Modeling", "Meshes and prefabs: their editors beside the viewport", "Double-click a mesh or a prefab in the Content Browser to edit it here.", false, build_side_editor_workspace},
@@ -1042,6 +1078,8 @@ constexpr WorkspaceDef kWorkspaces[] = {
     {"Scripting", "Visual scripts, the Lua Debugger and a small viewport", "Double-click a visual script to edit it here (Lua opens in your code editor).", true, build_scripting_workspace},
     {"UI", "Game UI documents (HTML / CSS) along the bottom", "Double-click a UI document (.rml) to edit it here.", false, build_bottom_editor_workspace},
     {"Effects", "Particle systems (Niagara) and sound cues beside the viewport", "Double-click a particle system or a sound cue to edit it here.", false, build_side_editor_workspace},
+    {"Particles", "The Particle Editor (Niagara) big, with its preview and Emitter Stack, beside a small viewport", "Double-click a Particle System to edit it here (it opens this workspace by itself).", false, build_particles_workspace},
+    {"Multiplayer", "Host, join and playtest multiplayer: settings, join codes, LAN games, players and traffic", nullptr, false, build_multiplayer_workspace, true},
 };
 
 const WorkspaceDef* find_workspace_def(const EditorSettings& set, const char* name) {
@@ -1072,6 +1110,7 @@ void switch_workspace(EditorState& s, const char* name, ImGuiID dockspace, ImVec
     std::snprintf(s.settings.workspace, sizeof s.settings.workspace, "%s", name);
     const WorkspaceDef* def = find_workspace_def(s.settings, name);
     s.show_debugger = def && def->lua_debugger;
+    s.show_multiplayer = def && def->multiplayer;
     const std::string file = workspace_file(name);
     if (std::filesystem::exists(file, ec)) apply_layout_file(file.c_str(), s.status, sizeof s.status);
     else if (def) build_workspace(*def, dockspace, size);
@@ -1145,6 +1184,132 @@ void draw_workspace_tabs(EditorState& s) {
     }
     ImGui::End();
     ImGui::PopStyleVar();
+}
+
+// The Multiplayer workspace's panel (Unreal: the multiplayer options of Play, Session Frontend's
+// players and traffic): the project's multiplayer settings, Play as host or join a code, the host's
+// join codes and the session while playing.
+void draw_multiplayer_panel(EditorState& s) {
+    if (!s.show_multiplayer) return;
+    if (!ImGui::Begin(kMultiplayerWindow, &s.show_multiplayer)) {
+        ImGui::End();
+        return;
+    }
+    ProjectSettings& pr = s.project;
+    const EditorState::NetView& v = s.net;
+    if (ImGui::BeginTable("##mp", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable)) {
+        ImGui::TableNextColumn();  // ---- settings
+        ImGui::SeparatorText("Project (Config/project.json)");
+        with_tip(ImGui::Checkbox("Multiplayer", &pr.multiplayer), "Off: a single-player game, nothing networked runs");
+        ImGui::BeginDisabled(!pr.multiplayer || s.playing);
+        int players = static_cast<int>(pr.play_players), port = static_cast<int>(pr.port), max_players = static_cast<int>(pr.max_players);
+        ImGui::SetNextItemWidth(120.0f);
+        if (with_tip(ImGui::SliderInt("Players in Play", &players, 1, 8), "Play hosts here and opens a game window for each other player")) pr.play_players = static_cast<u32>(players);
+        ImGui::SetNextItemWidth(120.0f);
+        if (with_tip(ImGui::InputInt("Port", &port, 0), "The UDP port the server listens on (testers' routers forward this one)")) pr.port = static_cast<u32>(std::clamp(port, 1024, 65535));
+        ImGui::SetNextItemWidth(120.0f);
+        if (with_tip(ImGui::SliderInt("Max Players", &max_players, 2, 64), "How many players one server takes, the host included")) pr.max_players = static_cast<u32>(max_players);
+        ImGui::EndDisabled();
+        if (with_tip(ImGui::Button("Save"), "Writes the Project Settings (everyone on the team gets them)"))
+            std::snprintf(s.status, sizeof s.status, reflect::save_file(pr, "Config/project.json") ? "Saved %s" : "Could not save %s", "Config/project.json");
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("All Settings..."), "Project Settings > Multiplayer, Chat and Voice")) s.show_project_settings = true;
+
+        ImGui::TableNextColumn();  // ---- play / join
+        ImGui::SeparatorText(s.playing ? "Session" : "Play");
+        if (!pr.multiplayer) {
+            ImGui::TextWrapped("Tick Multiplayer to host and join.");
+        } else if (!s.playing) {
+            if (with_tip(ImGui::Button("Play as Host"), "Play hosts the game here (Alt+P); the other Players in Play join it")) s.play_requested = true;
+            static char code[64] = "";
+            static char why[96] = "";
+            ImGui::SetNextItemWidth(160.0f);
+            const bool enter = ImGui::InputTextWithHint("##code", "join code or address", code, sizeof code, ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (with_tip(ImGui::Button("Play and Join"), "Play as a client of that game (a tester's or another PC's)") || enter) {
+                char address[64];
+                if (net::parse_join_code(code, static_cast<u16>(pr.port), address, sizeof address)) {
+                    std::snprintf(s.net_join, sizeof s.net_join, "%s", address);
+                    s.play_requested = true;
+                    why[0] = '\0';
+                } else {
+                    std::snprintf(why, sizeof why, "Not a join code (10 letters and digits) or an address");
+                }
+            }
+            if (why[0]) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", why);
+            static net::LanGame games[16];
+            static u32 game_count = 0;
+            static bool searched = false;
+            if (with_tip(ImGui::Button("Find LAN Games"), "Games hosting on this network (half a second)")) {
+                game_count = net::NetSession::find_lan_games(static_cast<u16>(pr.port), 0.5f, games, 16);
+                searched = true;
+            }
+            for (u32 k = 0; k < game_count; ++k) {
+                ImGui::PushID(static_cast<int>(k));
+                ImGui::Text("%s  %s  %u/%u", games[k].name, games[k].address, games[k].players, games[k].max_players);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Join")) {
+                    std::snprintf(s.net_join, sizeof s.net_join, "%s", games[k].address);
+                    s.play_requested = true;
+                }
+                ImGui::PopID();
+            }
+            if (searched && !game_count) ImGui::TextDisabled("No games on this network");
+        } else {
+            static const char* const modes[] = {"Single player", "Server (host)", "Client"};
+            ImGui::Text("%s, player %u%s", modes[v.mode], v.player, v.mode == 2 && !v.connected ? " (connecting)" : "");
+            if (v.mode != 0) {
+                ImGui::Text("Players %u   Replicated %u", v.players, v.replicated);
+                ImGui::Text("Ping %.0f ms   In %.1f KB/s   Out %.1f KB/s", v.ping_ms, v.in_kbs, v.out_kbs);
+            }
+        }
+
+        ImGui::TableNextColumn();  // ---- join codes
+        ImGui::SeparatorText("Join Codes");
+        if (!s.playing || v.mode != 1) {
+            ImGui::TextWrapped("Play as Host, then give testers a code. They paste it into Join (this panel, or the game's Multiplayer menu: Content/Multiplayer).");
+        } else {
+            if (with_tip(ImGui::Button(v.codes[0] ? "Refresh" : "Show Join Codes"), "Lists this PC's codes; the first time it asks the router to forward the port (UPnP)")) s.net_codes_wanted = true;
+            for (const char* line = v.codes; *line;) {  // "upnp|state|message|code" then "lan|address|code"
+                const char* end = std::strchr(line, '\n');
+                const std::string row(line, end ? static_cast<usize>(end - line) : std::strlen(line));
+                line = end ? end + 1 : line + row.size();
+                const usize a = row.find('|'), b = row.find('|', a + 1), c = row.find('|', b + 1);
+                if (a == std::string::npos || b == std::string::npos) continue;
+                const std::string kind = row.substr(0, a);
+                std::string label, code;
+                if (kind == "upnp" && c != std::string::npos) {
+                    const std::string st = row.substr(a + 1, b - a - 1);
+                    code = row.substr(c + 1);
+                    label = "Internet";
+                    if (code.empty()) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.3f, 1.0f));
+                        ImGui::TextWrapped("Internet: %s", st == "working" ? "asking the router..." : st == "failed" ? row.substr(b + 1, c - b - 1).c_str() : "-");
+                        ImGui::PopStyleColor();
+                        continue;
+                    }
+                } else if (kind == "lan") {
+                    const std::string address = row.substr(a + 1, b - a - 1);
+                    code = row.substr(b + 1);
+                    unsigned x = 0, y = 0;
+                    const bool tailscale = std::sscanf(address.c_str(), "%u.%u", &x, &y) == 2 && x == 100 && (y & 0xC0u) == 64u;
+                    label = (tailscale ? "Tailscale " : "LAN ") + address;
+                } else {
+                    continue;
+                }
+                ImGui::PushID(label.c_str());
+                ImGui::Text("%s:", label.c_str());
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "%s", code.c_str());
+                ImGui::SameLine();
+                if (with_tip(ImGui::SmallButton("Copy"), "Copies the code to send to testers")) ImGui::SetClipboardText(code.c_str());
+                ImGui::PopID();
+            }
+        }
+        ImGui::TextDisabled("Guide: docs/Multiplayer.md");
+        ImGui::EndTable();
+    }
+    ImGui::End();
 }
 
 // A workspace's editor area while no asset editor is open in it (Blender shows an empty editor too).
@@ -1663,7 +1828,7 @@ bool draw_gizmo(EditorState& s, const Mat4& camera_view_matrix, const Mat4& proj
 // A small glyph telling what an object without a mesh is (Unreal's sprite icons), centred on `at`.
 void draw_type_icon(const world::World& w, Entity e, ImDrawList* dl, ImVec2 at, ImU32 color) {
     const f32 x = at.x, y = at.y;
-    if (w.get<world::PointLight>(e) || w.get<world::SpotLight>(e) || w.get<world::DirectionalLight>(e) || w.get<world::SkyLight>(e)) {
+    if (w.get<world::PointLight>(e) || w.get<world::SpotLight>(e) || w.get<world::RectLight>(e) || w.get<world::DirectionalLight>(e) || w.get<world::SkyLight>(e)) {
         dl->AddCircleFilled(at, 4.0f, color);  // a sun: disc and rays
         for (int k = 0; k < 8; ++k) {
             const f32 a = static_cast<f32>(k) * 0.785398f;
@@ -1754,6 +1919,30 @@ void draw_icons(EditorState& s, ImDrawList* dl, const Mat4& view_proj, ImVec2 po
                 }
             }
         }
+    }
+    // Rect Lights: their panel (or disc) outlined, with a short line out of the lit side.
+    const reflect::TypeInfo& rect_type = reflect::type_of<world::RectLight>();
+    for (u32 i = 0; i < s.world->count(rect_type); ++i) {
+        const Entity e = s.world->owner(rect_type, i);
+        if (s.world->hidden_in_hierarchy(e)) continue;
+        const auto* light = static_cast<const world::RectLight*>(s.world->at(rect_type, i));
+        const Mat4 m = s.world->world_matrix(e);
+        const ImU32 color = s.is_selected(e) ? u32_color(t.details_tab_active) : IM_COL32(255, 220, 90, 230);
+        const f32 hw = light->source_width * 0.5f, hh = (light->shape == 1 ? light->source_width : light->source_height) * 0.5f;
+        constexpr int kSides = 24;
+        const int sides = light->shape == 1 ? kSides : 4;
+        ImVec2 ring[kSides + 1];
+        bool ok = true;
+        for (int k = 0; k <= sides && ok; ++k) {
+            const f32 a = static_cast<f32>(k) / static_cast<f32>(sides) * 6.2831853f + (sides == 4 ? 0.785398f : 0.0f);
+            const f32 u = sides == 4 ? (std::cos(a) > 0 ? hw : -hw) : std::cos(a) * hw, v = sides == 4 ? (std::sin(a) > 0 ? hh : -hh) : std::sin(a) * hh;
+            ok = project(view_proj, transform_point(without_scale(m), {0, u, v}), pos, size, ring[k]);
+        }
+        if (!ok) continue;
+        for (int k = 0; k < sides; ++k) dl->AddLine(ring[k], ring[k + 1], color, 1.5f);
+        ImVec2 a, b;
+        if (project(view_proj, transform_point(without_scale(m), {0, 0, 0}), pos, size, a) && project(view_proj, transform_point(without_scale(m), {0.6f, 0, 0}), pos, size, b))
+            dl->AddLine(a, b, color, 2.0f);
     }
     // A selected AI Controller's perception (Unreal's AI debugger view): the sight cone flat at the
     // object's height out to sight range, and the hearing range as a ring.
@@ -1908,6 +2097,49 @@ void set_panes(EditorState& s, u32 panes) {
     }
     s.panes = panes;
 }
+
+} // namespace
+
+void set_viewport_kinds(EditorState& s, u32 kinds) {
+    kinds &= kViewport2D | kViewport2_5D | kViewport3D;
+    if (!kinds) kinds = kViewport3D;
+    const Vec3 pivot = s.camera.position + camera_forward(s.camera) * s.camera.pivot_distance;
+    EditorCamera cams[4];
+    u32 n = 0;
+    if (kinds & kViewport2D) {  // side-on, no perspective
+        EditorCamera& c = cams[n++];
+        c.view = ViewType::Front;
+        c.position = {pivot.x, pivot.y - 30.0f, pivot.z};
+        c.ortho_height = 14.0f;
+    }
+    if (kinds & kViewport2_5D) {  // side-on with a long lens: depth reads as layers
+        EditorCamera& c = cams[n++];
+        c.position = {pivot.x, pivot.y - 24.0f, pivot.z + 3.0f};
+        c.yaw = 1.5707963f;
+        c.pitch = -0.12f;
+        c.fov_y = 0.6f;
+        c.pivot_distance = 24.0f;
+    }
+    if (kinds & kViewport3D) {
+        EditorCamera& c = cams[n++];
+        c.position = pivot + Vec3{-9.0f, -9.0f, 6.0f};
+        c.yaw = 0.7853982f;
+        c.pitch = -0.4f;
+        c.pivot_distance = 13.0f;
+    }
+    if (n == 3) {  // the fourth pane looks down
+        cams[3].view = ViewType::Top;
+        cams[3].position = pivot;
+        cams[3].ortho_height = 24.0f;
+    }
+    for (u32 i = 0; i < 4; ++i) s.views[i] = cams[i < n || n == 3 ? i : 0];
+    s.camera = s.views[0];
+    s.active_view = 0;
+    s.panes = n == 1 ? 1u : n == 2 ? 2u : 4u;
+    s.settings.viewport_kinds = kinds;
+}
+
+namespace {
 
 void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     if (size.x < 8 || size.y < 8) return;
@@ -2078,12 +2310,6 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
     if (!s.game_view) draw_icons(s, dl, view_proj, pos, size);
     if (debug_draw::count()) debug_draw::draw(dl, s.drawn_view_proj[index], pos, size);  // scripts' debug shapes, also in Play
-    if (s.show_navigation && !s.game_view) {  // the navmesh's polygons, like Unreal's P
-        for (u32 i = 0; i + 1 < s.nav_line_count; i += 2) {
-            ImVec2 a, b;
-            if (project(view_proj, s.nav_lines[i], pos, size, a) && project(view_proj, s.nav_lines[i + 1], pos, size, b)) dl->AddLine(a, b, IM_COL32(60, 230, 90, 200), 1.5f);
-        }
-    }
     const bool show_collision = s.show_collision || s.view_mode == ViewMode::Collision;
     if ((s.show_bounds || show_collision) && !s.game_view) {  // Unreal's Show > Bounds / Collision
         // A box through `m`: its 8 corners projected, 12 edges drawn when all are in front of the camera.
@@ -2139,8 +2365,8 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     if (ImGui::Begin(window_name, nullptr, overlay)) {
         static const char* const kViews[] = {"Perspective", "Top", "Front", "Right"};
         static const char* const kViewKeys[] = {"Alt+G", "Alt+J", "Alt+H", "Alt+K"};
-        static const char* const kModes[] = {"Lit", "Unlit", "Wireframe", "Normals", "Lighting Only", "Collision", "Overdraw"};
-        static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2", "", "Alt+6", "Alt+C", "Alt+0"};
+        static const char* const kModes[] = {"Lit", "Unlit", "Wireframe", "Normals", "Lighting Only", "Collision", "Overdraw", "Lightmap Density"};
+        static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2", "", "Alt+6", "Alt+C", "Alt+0", ""};
         if (with_tip(ImGui::Button(kViews[static_cast<int>(s.camera.view)]), "Camera view: Perspective, or flat Top / Front / Right views (keys in the menu)")) ImGui::OpenPopup("ViewMenu");
         if (ImGui::BeginPopup("ViewMenu")) {
             for (int v = 0; v < 4; ++v) {
@@ -2149,9 +2375,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (with_tip(ImGui::Button(kModes[static_cast<int>(s.view_mode)]), "View mode: Lit, Unlit, Wireframe, Normals, Lighting Only, Collision shapes, Overdraw (how often each pixel is drawn)")) ImGui::OpenPopup("ModeMenu");
+        if (with_tip(ImGui::Button(kModes[static_cast<int>(s.view_mode)]), "View mode: Lit, Unlit, Wireframe, Normals, Lighting Only, Collision shapes, Overdraw (how often each pixel is drawn), Lightmap Density (the baked lightmap's texels)")) ImGui::OpenPopup("ModeMenu");
         if (ImGui::BeginPopup("ModeMenu")) {
-            for (int m = 0; m < 7; ++m) {
+            for (int m = 0; m < 8; ++m) {
                 if (ImGui::MenuItem(kModes[m], kModeKeys[m], static_cast<int>(s.view_mode) == m)) s.view_mode = static_cast<ViewMode>(m);
             }
             ImGui::EndPopup();
@@ -2442,8 +2668,8 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
         }
         if (ImGui::BeginPopupContextItem("row_menu")) {
             if (!s.is_selected(e)) select(s, e);
-            if (ImGui::MenuItem("Focus", "F")) focus_selected(s);
-            if (s.playing && ImGui::MenuItem("Keep Simulation Changes", "K")) keep_simulation_changes(s);
+            if (ImGui::MenuItem("Focus", command_text(Command::Focus))) focus_selected(s);
+            if (s.playing && ImGui::MenuItem("Keep Simulation Changes", command_text(Command::KeepSimulation))) keep_simulation_changes(s);
             if (s.playing) ImGui::SetItemTooltip("When Play stops, the selected objects keep what they have now (where physics left them...)");
             asset::Guid used;  // the object's mesh (or script, sound) asset
             i32 part = -1;  // a part of a mesh file finds the file
@@ -2451,13 +2677,13 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
             if (const auto* m = s.world->get<world::SkeletalMesh>(e); m && !used.valid()) asset::parse_guid(m->mesh, used);
             if (const auto* m = s.world->get<world::Script>(e); m && !used.valid()) asset::parse_guid(m->script, used);
             if (const auto* m = s.world->get<world::SoundEmitter>(e); m && !used.valid()) asset::parse_guid(m->sound, used);
-            if (with_tip(ImGui::MenuItem("Find in Content Browser", "Ctrl+B", false, used.valid()), "Shows the asset this object uses in the Content Browser")) find_in_content_browser(s, used);
-            if (with_tip(ImGui::MenuItem("Duplicate", "Ctrl+D"), "Copies the selection in place")) duplicate_selected(s);
+            if (with_tip(ImGui::MenuItem("Find in Content Browser", command_text(Command::FindInContentBrowser), false, used.valid()), "Shows the asset this object uses in the Content Browser")) find_in_content_browser(s, used);
+            if (with_tip(ImGui::MenuItem("Duplicate", command_text(Command::Duplicate)), "Copies the selection in place")) duplicate_selected(s);
             if (with_tip(ImGui::MenuItem("Detach", nullptr, false, s.world->parent(e).valid()), "Unparents it: it stays where it is but no longer moves with its parent")) {
                 s.world->set_parent(e, {});
                 edited(s, "Detach");
             }
-            if (with_tip(ImGui::MenuItem("Delete", "Delete"), "Removes the selection from the level (undoable)")) delete_selected(s);
+            if (with_tip(ImGui::MenuItem("Delete", command_text(Command::Delete)), "Removes the selection from the level (undoable)")) delete_selected(s);
             if (with_tip(ImGui::BeginMenu("Move to Folder", !s.playing), "Puts the selection in an Outliner folder (folders only organise; they do not move objects)")) {
                 std::set<std::string> folders;
                 for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
@@ -2982,6 +3208,8 @@ void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type) 
     return g_data_type == &type && g_data_guid == guid ? g_data : nullptr;
 }
 
+void mark_data_asset_edited() { g_data_dirty = true; }
+
 namespace {
 
 void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
@@ -3072,8 +3300,10 @@ void create_data_asset(EditorState& s, const reflect::TypeInfo& type) {
 // per mesh node and material of the file ("<guid>#<k>" meshes in their node's space, placed by the
 // node's transform: pivots stay where the artist put them), and a Material per material of the file
 // (Import Materials and Textures: its maps found and copied into Content).
-// shortcut: flat (every part a child of the root); keep the file's node hierarchy if artists need it
-void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
+// The file's node tree is kept: a part sits under the part of its parent node (a door leaf under its frame keeps its
+// pivot); nodes without a mesh become empty groups.
+// shortcut: a group without a mesh sits at its parent's pivot (its own is not read); read it when artists need group pivots
+void make_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     char source[300], error[256];
     s.registry->source_path(mesh, source, sizeof source);
     Array<asset::MeshPart> parts(default_allocator());
@@ -3091,14 +3321,47 @@ void create_parts_prefab(EditorState& s, const asset::AssetRecord& mesh) {
     const std::vector<std::pair<std::string, std::string>>& materials = report.materials;  // file material name -> our Material's GUID
     world::World w(default_allocator());
     const Entity root = w.create(mesh.name);
-    for (usize k = 0; k < parts.size(); ++k) {
+    // Parents first (shorter paths), so a node's own part exists before its children look for it.
+    std::vector<usize> order(parts.size());
+    for (usize k = 0; k < order.size(); ++k) order[k] = k;
+    std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) {
+        return std::count(parts[a].node_path, parts[a].node_path + std::strlen(parts[a].node_path), '/') <
+               std::count(parts[b].node_path, parts[b].node_path + std::strlen(parts[b].node_path), '/');
+    });
+    std::vector<std::pair<std::string, Entity>> nodes;  // node path -> its object (a part, or an empty group)
+    auto node_of = [&](const std::string& path) -> Entity {
+        Entity parent = root;
+        usize from = 0;
+        while (from < path.size()) {
+            const usize slash = path.find('/', from);
+            const std::string prefix = path.substr(0, slash == std::string::npos ? path.size() : slash);
+            Entity found;
+            for (const auto& [p, e] : nodes) found = p == prefix ? e : found;
+            if (!found.valid()) {  // a group with no mesh of its own
+                found = w.create(prefix.substr(prefix.rfind('/') == std::string::npos ? 0 : prefix.rfind('/') + 1).c_str());
+                w.set_parent(found, parent, false);
+                nodes.emplace_back(prefix, found);
+            }
+            parent = found;
+            from = slash == std::string::npos ? path.size() : slash + 1;
+        }
+        return parent;
+    };
+    for (const usize k : order) {
         const asset::MeshPart& p = parts[k];
+        const std::string path = p.node_path;
+        const usize slash = path.rfind('/');
+        const Entity parent = slash == std::string::npos ? root : node_of(path.substr(0, slash));
         const Entity child = w.create(p.name);
         w.set_parent(child, root, false);
         auto* transform = w.get<world::Transform>(child);
         transform->position = p.position * meta.import_scale;  // the part's mesh is scaled by it too
         transform->rotation = p.rotation;
         transform->scale = p.scale;
+        if (parent != root) w.set_parent(child, parent, true);  // under its parent node, where it stands
+        bool known = path.empty();
+        for (const auto& n : nodes) known = known || n.first == path;
+        if (!known) nodes.emplace_back(path, child);  // the node's first part stands for the node
         auto* sm = w.add<world::StaticMesh>(child);
         std::snprintf(sm->mesh, sizeof sm->mesh, "%s#%zu", guid, k);
         sm->color = LinearColor::hex(0xFFFFFF);  // the material's own colour
@@ -3316,6 +3579,14 @@ void draw_skeletal_readout(EditorState& s, Entity e, world::SkeletalMesh& mesh) 
     char motion[160];
     if (s.animations && s.animations->motion_readout(e, motion, sizeof motion)) {  // the Character's Motion Matching picks the clips
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Motion Matching: %s", motion);
+        // The pose-search debugger: what else was near, and why (pose vs path cost). Lower wins.
+        if (ImGui::TreeNode("Pose search candidates")) {
+            char lines[6][96];
+            const u32 n = s.animations->motion_candidates(e, lines, 6);
+            for (u32 k = 0; k < n; ++k) ImGui::Text("%u. %s", k + 1, lines[k]);
+            if (!n) ImGui::TextDisabled("(none yet)");
+            ImGui::TreePop();
+        }
         return;
     }
     if (mesh.anim_graph[0] && s.animations) {
@@ -3637,6 +3908,8 @@ bool open_record(EditorState& s, const asset::AssetRecord& r) {
         request_open(s, path);
     } else if (r.type == asset::AssetType::Script) {
         open_external(s, r);
+    } else if (r.type == asset::AssetType::MaterialGraph && std::filesystem::path(r.path).extension() == script::kShaderExtension) {
+        open_external(s, r);  // a shader asset: code, in the code editor (saving it recompiles)
     } else if (r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree) {
         open_graph(s, r);
     } else if (r.type == asset::AssetType::Table) {
@@ -3647,6 +3920,10 @@ bool open_record(EditorState& s, const asset::AssetRecord& r) {
         s.particle_editor->open(s, r);
     } else if (asset_matches(r, "Timeline")) {
         open_timeline_editor(s, r);
+    } else if (asset_matches(r, "AnimGraph")) {
+        open_anim_graph_editor(s, r);
+    } else if (asset_matches(r, "Flipbook")) {
+        open_flipbook_editor(s, r);
     } else if (r.type == asset::AssetType::Mesh) {
         open_mesh_editor(s, r);
     } else if (r.type == asset::AssetType::Prefab) {
@@ -3686,6 +3963,61 @@ void request_save(EditorState& s, bool save_as) {
     }
     std::snprintf(g_save_as_name, sizeof g_save_as_name, "%s", s.level_path[0] ? std::filesystem::path(s.level_path).stem().string().c_str() : "NewLevel");
     g_open_save_as = true;
+}
+
+// Window > Audio Mixer (Unreal's submix graph with meters): every Sound Class from Master down, the
+// Submix effects it runs through on the way to its parent, and how loud it is right now.
+void draw_audio_mixer(EditorState& s) {
+    if (!s.show_audio_mixer) return;
+    ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Audio Mixer", &s.show_audio_mixer)) {
+        ImGui::End();
+        return;
+    }
+    audio::AudioSystem* a = s.sounds ? s.sounds->audio() : nullptr;
+    if (!a || !a->class_count()) {
+        ImGui::TextDisabled("No audio (started with -nosound, or no device).");
+        ImGui::End();
+        return;
+    }
+    static f32 shown[audio::AudioSystem::kMaxClasses] = {};  // the meters fall back slowly, like a VU's
+    static const char* const kEffects[] = {"Reverb", "Low Pass", "High Pass", "EQ Band", "Echo", "Compressor"};
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Each Sound Class, the Submix effects it goes through, and its level (after its volume, before its effects).");
+    ImGui::PopStyleColor();
+    const u32 count = a->class_count();
+    auto row = [&](auto&& self, u32 c, int depth) -> void {
+        const f32 peak = a->take_class_peak(c);
+        shown[c] = std::fmax(peak, shown[c] * 0.9f);
+        ImGui::Indent(static_cast<f32>(depth) * 16.0f);
+        ImGui::TextUnformatted(a->class_name(c));
+        ImGui::SameLine(200.0f);
+        const f32 db = 20.0f * std::log10(std::fmax(shown[c], 1e-4f));
+        const f32 fill = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);  // -60 dB .. 0 dB
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, db > -1.0f ? ImVec4(0.9f, 0.25f, 0.2f, 1) : db > -12.0f ? ImVec4(0.95f, 0.8f, 0.2f, 1) : ImVec4(0.35f, 0.85f, 0.35f, 1));
+        char label[32];
+        std::snprintf(label, sizeof label, shown[c] > 1e-4f ? "%.0f dB" : "-inf", static_cast<f64>(db));
+        ImGui::ProgressBar(fill, ImVec2(160.0f, 0.0f), label);
+        ImGui::PopStyleColor();
+        ImGui::SetItemTooltip("Peak level of %s: green is comfortable, yellow loud, red at or over full scale (clipping)", a->class_name(c));
+        if (const u32 effects = a->class_effect_count(c)) {
+            std::string chain = "-> ";
+            for (u32 k = 0; k < effects; ++k) {
+                const u32 type = a->class_effect_type(c, k);
+                chain += type < 6 ? kEffects[type] : "?";
+                chain += " -> ";
+            }
+            chain += a->class_name(a->class_parent(c));
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", chain.c_str());
+        }
+        ImGui::Unindent(static_cast<f32>(depth) * 16.0f);
+        for (u32 k = 1; k < count; ++k) {
+            if (k != c && a->class_parent(k) == c) self(self, k, depth + 1);
+        }
+    };
+    row(row, 0, 0);
+    ImGui::End();
 }
 
 // Window > Memory (Unreal's memreport / stat memory): every allocator, the process and the GPU.
@@ -4245,6 +4577,42 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A material built from nodes (textures, maths, Time, Fresnel...) like Unreal's Material Editor. Double-click to edit; drag onto an object");
+        if (with_tip(ImGui::MenuItem("New Shader"), "Makes a material written in HLSL code (Unreal's Custom node, as a whole material) here")) {
+            namespace fs = std::filesystem;
+            const fs::path dir = fs::path(kContentDir) / s.content_folder;
+            fs::path file = dir / "SH_New.hlsl";
+            for (int n = 2; fs::exists(file) && n < 100; ++n) file = dir / ("SH_New" + std::to_string(n) + ".hlsl");
+            static const char kStarter[] =
+                "// A shader asset: a material written in code (the function a Material Graph compiles to).\n"
+                "// Declare textures and parameters on lines like these (they become lsd_tex0.. and lsd_params[0..]):\n"
+                "// param: Tint 1, 0.45, 0.2\n"
+                "// param: Pulse 2\n"
+                "// (textures: // texture: T_Rock color   - color, normal or data; blend: // blend: translucent)\n"
+                "Surface material_main(MaterialIn mi) {\n"
+                "    Surface s;\n"
+                "    float glow = 0.5 + 0.5 * sin(mi.time * lsd_params[1].x);\n"
+                "    s.base_color = lsd_params[0].xyz;\n"
+                "    s.metallic = 0.0;\n"
+                "    s.roughness = 0.4;\n"
+                "    s.emissive = lsd_params[0].xyz * glow;\n"
+                "    s.normal = float3(0.0, 0.0, 1.0);\n"
+                "    s.ao = 1.0;\n"
+                "    s.opacity = 1.0;\n"
+                "    return s;\n"
+                "}\n";
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (FILE* f = std::fopen(file.string().c_str(), "wb")) {
+                std::fwrite(kStarter, 1, sizeof kStarter - 1, f);
+                std::fclose(f);
+            }
+            s.registry->scan();
+            if (const asset::AssetRecord* r = record_at(s, file.generic_string())) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
         if (with_tip(ImGui::MenuItem("New UI Document"), "Makes an HTML / CSS game UI document (Unreal's Widget Blueprint) here")) {
             const std::string path = create_ui_document((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "UI_New");
             s.registry->scan();
@@ -4451,13 +4819,12 @@ void draw_asset_grid(EditorState& s) {
             if (!asset_selected(s, r.guid)) select_asset(s, r, false);  // right-click acts on what is selected
             if (asset_matches(r, "Timeline") && with_tip(ImGui::MenuItem("Edit Timeline"), "Opens the Timeline editor (tracks and keys)")) open_timeline_editor(s, r);
             if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Open Mesh Editor")) open_mesh_editor(s, r);
-            if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) create_parts_prefab(s, r);
+            if (r.type == asset::AssetType::Mesh && ImGui::MenuItem("Create Prefab from Parts")) make_parts_prefab(s, r);
             if (r.type == asset::AssetType::Mesh) ImGui::SetItemTooltip("One object per mesh and material in the file, with Materials made from the file's (Unreal: Combine Meshes off)");
             if (r.type == asset::AssetType::Mesh &&
                 with_tip(ImGui::MenuItem("Import Materials and Textures"),
                          "A Material per material of the file, with its texture maps copied into Textures/ (metallic / roughness packed into ORM, opacity into the colour's alpha), set on the mesh's Material Slots (Unreal's Import Materials / Import Textures)")) {
-                MaterialImportReport report;
-                import_mesh_materials(*s.registry, r, "", false, report, s.status, sizeof s.status);
+                queue_mesh_materials(r, "", false);  // stepped by the frame loop, with a progress bar
             }
             if (r.type == asset::AssetType::Prefab && with_tip(ImGui::MenuItem("Edit Prefab"), "Opens the Prefab Editor")) open_prefab_editor(s, r);
             if (with_tip(ImGui::MenuItem("Reference Viewer..."), "Shows what this asset uses and what uses it")) open_reference_viewer(s, r.guid);
@@ -4553,6 +4920,17 @@ void draw_asset_grid(EditorState& s) {
             const char text[2] = {code, 0};
             const ImVec2 size = ImGui::CalcTextSize(text);
             dl->AddText(ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), IM_COL32(0, 0, 0, 255), text);
+        }
+        bool lock_mine = false;
+        if (const std::string owner = source_control::locked_by(r.path, lock_mine); !owner.empty()) {  // Git LFS lock: green yours, red a teammate's
+            const ImVec2 c(lo.x + 9, lo.y + 9);
+            dl->AddCircleFilled(c, 8.0f, lock_mine ? IM_COL32(155, 225, 31, 255) : IM_COL32(220, 60, 50, 255));
+            const ImVec2 size = ImGui::CalcTextSize("L");
+            dl->AddText(ImVec2(c.x - size.x * 0.5f, c.y - size.y * 0.5f), IM_COL32(0, 0, 0, 255), "L");
+            if (ImGui::IsMouseHoveringRect(ImVec2(c.x - 8, c.y - 8), ImVec2(c.x + 8, c.y + 8))) {
+                if (lock_mine) ImGui::SetTooltip("Locked by you (Git LFS)");
+                else ImGui::SetTooltip("Locked by %s (Git LFS)", owner.c_str());
+            }
         }
         dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
         dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), r.name);
@@ -4854,7 +5232,11 @@ void draw_menu_bar(EditorState& s) {
     note_recent_level(s);
     if (!ImGui::BeginMainMenuBar()) return;
     if (with_tip(ImGui::BeginMenu("File"), "Levels: new, open, save; validating and packaging")) {
-        if (with_tip(ImGui::MenuItem("New Level", "Ctrl+N", false, !s.playing), "Starts an empty level")) request_new(s);
+        if (with_tip(ImGui::MenuItem("New Level", command_text(Command::NewLevel), false, !s.playing), "Starts an empty level")) request_new(s);
+        if (with_tip(ImGui::MenuItem("New from Template...", nullptr, false, !s.playing),
+                     "First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D or Empty: a ready level to start from (Unreal's New Project templates)")) {
+            s.show_template_picker = true;
+        }
         if (with_tip(ImGui::BeginMenu("Open Level", !s.playing), "Opens one of the project's levels")) {
             bool any = false;
             for (usize i = 0; i < s.registry->count(); ++i) {
@@ -4883,8 +5265,8 @@ void draw_menu_bar(EditorState& s) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (with_tip(ImGui::MenuItem("Save Level", "Ctrl+S", false, !s.playing), "Writes the level to disk")) request_save(s, false);
-        if (with_tip(ImGui::MenuItem("Save Level As...", "Ctrl+Shift+S", false, !s.playing), "Writes the level under a new name")) request_save(s, true);
+        if (with_tip(ImGui::MenuItem("Save Level", command_text(Command::Save), false, !s.playing), "Writes the level to disk")) request_save(s, false);
+        if (with_tip(ImGui::MenuItem("Save Level As...", command_text(Command::SaveAs), false, !s.playing), "Writes the level under a new name")) request_save(s, true);
         ImGui::Separator();
         if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems (missing files, broken references) and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);
@@ -4899,24 +5281,24 @@ void draw_menu_bar(EditorState& s) {
         ImGui::EndMenu();
     }
     if (with_tip(ImGui::BeginMenu("Edit"), "Undo, copy and paste, grouping; Editor Preferences and Project Settings")) {
-        if (with_tip(ImGui::MenuItem("Undo", "Ctrl+Z", false, s.history->can_undo() && !s.playing), "Takes back the last change")) s.history->undo(*s.world);
-        if (with_tip(ImGui::MenuItem("Redo", "Ctrl+Y", false, s.history->can_redo() && !s.playing), "Does again what Undo took back")) s.history->redo(*s.world);
+        if (with_tip(ImGui::MenuItem("Undo", command_text(Command::Undo), false, s.history->can_undo() && !s.playing), "Takes back the last change")) s.history->undo(*s.world);
+        if (with_tip(ImGui::MenuItem("Redo", command_text(Command::Redo), false, s.history->can_redo() && !s.playing), "Does again what Undo took back")) s.history->redo(*s.world);
         ImGui::Separator();
         const bool has = s.world->alive(s.selected) && !s.playing;
-        if (with_tip(ImGui::MenuItem("Duplicate", "Ctrl+D", false, has), "Copies the selection in place")) duplicate_selected(s);
-        if (with_tip(ImGui::MenuItem("Group", "Ctrl+G", false, has), "Puts the selection under a new parent object so they move together")) group_selection(s);
-        if (with_tip(ImGui::MenuItem("Ungroup", "Shift+G", false, has), "Takes the selection out of its group")) ungroup_selection(s);
-        if (with_tip(ImGui::MenuItem("Select All", "Ctrl+A", false, !s.playing), "Selects every object in the level")) {
+        if (with_tip(ImGui::MenuItem("Duplicate", command_text(Command::Duplicate), false, has), "Copies the selection in place")) duplicate_selected(s);
+        if (with_tip(ImGui::MenuItem("Group", command_text(Command::Group), false, has), "Puts the selection under a new parent object so they move together")) group_selection(s);
+        if (with_tip(ImGui::MenuItem("Ungroup", command_text(Command::Ungroup), false, has), "Takes the selection out of its group")) ungroup_selection(s);
+        if (with_tip(ImGui::MenuItem("Select All", command_text(Command::SelectAll), false, !s.playing), "Selects every object in the level")) {
             for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
         }
-        if (with_tip(ImGui::MenuItem("Cut", "Ctrl+X", false, has), "Copies the selection and removes it")) {
+        if (with_tip(ImGui::MenuItem("Cut", command_text(Command::Cut), false, has), "Copies the selection and removes it")) {
             copy_selection(s);
             delete_selected(s);
         }
-        if (with_tip(ImGui::MenuItem("Copy", "Ctrl+C", false, has), "Copies the selection (paste it in this or another level)")) copy_selection(s);
-        if (with_tip(ImGui::MenuItem("Paste", "Ctrl+V", false, !s.playing), "Puts copied objects into the level")) paste(s);
-        if (with_tip(ImGui::MenuItem("Delete", "Delete", false, has), "Removes the selection")) delete_selected(s);
-        if (with_tip(ImGui::MenuItem("Drop to Floor", "End", false, has), "Moves the selection down until it rests on what is below")) drop_to_floor(s);
+        if (with_tip(ImGui::MenuItem("Copy", command_text(Command::Copy), false, has), "Copies the selection (paste it in this or another level)")) copy_selection(s);
+        if (with_tip(ImGui::MenuItem("Paste", command_text(Command::Paste), false, !s.playing), "Puts copied objects into the level")) paste(s);
+        if (with_tip(ImGui::MenuItem("Delete", command_text(Command::Delete), false, has), "Removes the selection")) delete_selected(s);
+        if (with_tip(ImGui::MenuItem("Drop to Floor", command_text(Command::DropToFloor), false, has), "Moves the selection down until it rests on what is below")) drop_to_floor(s);
         ImGui::Separator();
         with_tip(ImGui::MenuItem("Editor Preferences", nullptr, &s.show_preferences), "Your own editor settings: camera speed, snapping, autosave, theme, plugins");
         with_tip(ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings), "The game's settings, shared with the team: maps, multiplayer, languages, platform");
@@ -4927,8 +5309,14 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Plays this level for 5 seconds and reports any errors it logs (Unreal's automation smoke test)");
         if (ImGui::MenuItem("Run Unit Tests")) s.run_unit_tests = true;
         ImGui::SetItemTooltip("Runs the engine's tests (ctest) in the background; the result goes to the Output Log");
+        if (with_tip(ImGui::MenuItem("Source Control Changes"), "Every changed asset (Git): tick and submit them together, or revert one (Unreal's View Changelists)")) source_control::open_changes();
+        if (with_tip(ImGui::MenuItem("Gather Text"), "Localization (Unreal's Gather Text): adds every key the project shows (lsd.text in scripts, Localized Text nodes, UI document texts) that the string table lacks")) {
+            bool changed = false;
+            gather_project_text(s.project, *s.registry, s.status, sizeof s.status, changed);
+            if (changed) reflect::save_file(s.project, "Config/project.json");  // the new string table
+        }
         ImGui::Separator();
-        if (ImGui::MenuItem("Compile Game Code", "Ctrl+Alt+F11", false, !game_module::compiling())) game_module::compile();
+        if (ImGui::MenuItem("Compile Game Code", command_text(Command::CompileGameCode), false, !game_module::compiling())) game_module::compile();
         ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
         if (with_tip(ImGui::MenuItem("New C / C++ Script..."), "Makes a C or C++ script or component in Source/ and opens it in VS Code")) s.new_script_popup = true;
         if (with_tip(ImGui::MenuItem("Set Up Debugging (VS Code)"), "Writes VS Code launch settings so F5 debugs the game code")) {
@@ -4950,8 +5338,13 @@ void draw_menu_bar(EditorState& s) {
     }
     if (ImGui::BeginMenu("Build")) {
         if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
+        if (with_tip(ImGui::MenuItem("Build Reflection Captures"), "Captures what each Reflection Capture sees again (after moving things)")) s.capture_reflections = true;
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
-        if (ImGui::MenuItem("Build Navigation", "P")) s.show_navigation = true;  // the navmesh rebuilds while it is shown
+        if (ImGui::MenuItem("Build Navigation", command_text(Command::ToggleNavigation))) s.show_navigation = true;  // the navmesh rebuilds while it is shown
+        if (with_tip(ImGui::MenuItem("Build Release Engine"), "Builds the Release engine Package Project copies (it runs on PCs without Visual Studio), from the engine's source with CMake; the menu bar shows its progress")) {
+            start_release_build(s.status, sizeof s.status);
+            LSD_LOG_INFO("editor", "%s", s.status);
+        }
         ImGui::SetItemTooltip("Builds and shows the navmesh (it keeps rebuilding while shown)");
         if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);
@@ -4964,10 +5357,38 @@ void draw_menu_bar(EditorState& s) {
     if (s.user_settings && with_tip(ImGui::BeginMenu("Settings"), "Graphics quality (Low to Epic)")) {  // Unreal's toolbar Settings > Engine Scalability
         static const char* kQuality[] = {"Low", "Medium", "High", "Epic"};
         ImGui::TextDisabled("Engine Scalability");
+        if (with_tip(ImGui::MenuItem("Auto-detect"), "Picks the quality for this PC again: the recommendation for its graphics card, then the project's Device Profiles"))
+            s.auto_detect_quality = true;
         for (u32 q = 0; q < 4; ++q) {
             if (ImGui::MenuItem(kQuality[q], nullptr, s.user_settings->quality == q)) {
                 s.user_settings->quality = q;
                 s.user_settings_changed = true;
+            }
+        }
+        ImGui::Separator();
+        struct Group {
+            const char* name;
+            u32* value;
+            const char* tip;
+        } groups[] = {{"Shadows", &s.user_settings->shadow_quality, "Low none, Medium the sun's only and nearer, High as set, Epic further"},
+                      {"Post Processing", &s.user_settings->post_quality, "Low: bloom, tonemap, grading, FXAA. Medium: + ambient occlusion. High / Epic: everything the volume sets"},
+                      {"View Distance", &s.user_settings->view_distance_quality, "Draw and cull distances (and LOD switches) times 0.5, 0.75, 1 or 1.5"},
+                      {"Effects", &s.user_settings->effects_quality, "Particles spawned times 0.25, 0.5 or 1"}};
+        for (const Group& g : groups) {
+            char label[64];
+            std::snprintf(label, sizeof label, "%s: %s###%s", g.name, *g.value ? kQuality[*g.value - 1 < 3 ? *g.value - 1 : 3] : "Overall", g.name);
+            if (with_tip(ImGui::BeginMenu(label), g.tip)) {
+                if (ImGui::MenuItem("Overall", nullptr, *g.value == 0)) {
+                    *g.value = 0;
+                    s.user_settings_changed = true;
+                }
+                for (u32 q = 0; q < 4; ++q) {
+                    if (ImGui::MenuItem(kQuality[q], nullptr, *g.value == q + 1)) {
+                        *g.value = q + 1;
+                        s.user_settings_changed = true;
+                    }
+                }
+                ImGui::EndMenu();
             }
         }
         ImGui::EndMenu();
@@ -4977,6 +5398,22 @@ void draw_menu_bar(EditorState& s) {
         with_tip(ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings), "This level's settings: gravity, Kill Z, Game Mode, Level Script, navigation");
         with_tip(ImGui::MenuItem("Message Log", nullptr, &s.show_message_log), "Warnings and errors from imports, validation and packaging");
         with_tip(ImGui::MenuItem("Memory", nullptr, &s.show_memory), "Memory used: RAM, video memory and each allocator");
+        with_tip(ImGui::MenuItem("Audio Mixer", nullptr, &s.show_audio_mixer), "The Sound Classes with their Submix effects and live level meters (Unreal's submix graph)");
+        if (with_tip(ImGui::BeginMenu("Viewports"), "2D, 2.5D and 3D views of the level, side by side (a 2D game previewed in 3D)")) {
+            const u32 kinds = s.settings.viewport_kinds ? s.settings.viewport_kinds : kViewport3D;
+            const struct {
+                const char* name;
+                u32 bit;
+                const char* tip;
+            } items[] = {{"2D Viewport", kViewport2D, "Orthographic, looking along +Y: how a side-on 2D game is seen"},
+                         {"2.5D Viewport", kViewport2_5D, "Perspective from the side with a long lens: 3D layers played on a 2D plane"},
+                         {"3D Viewport", kViewport3D, "The free perspective view: walk around a 2D or 2.5D level to check its depth"}};
+            for (const auto& item : items) {
+                bool on = (kinds & item.bit) != 0;
+                if (with_tip(ImGui::MenuItem(item.name, nullptr, &on), item.tip)) set_viewport_kinds(s, on ? kinds | item.bit : kinds & ~item.bit);
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (with_tip(ImGui::BeginMenu("Layout"), "Save and load panel arrangements")) {  // Unreal's Window > Load Layout / Save Layout
             static char name[64] = "My Layout";
@@ -5005,11 +5442,11 @@ void draw_menu_bar(EditorState& s) {
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() * 0.5f - 40.0f);
     if (!s.playing) {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_y));
-        if (ImGui::MenuItem("Play", "Alt+P")) s.play_requested = true;
-        if (ImGui::MenuItem("Simulate", "Alt+S")) s.play_requested = s.simulate_requested = true;
+        if (ImGui::MenuItem("Play", command_text(Command::Play))) s.play_requested = true;
+        if (ImGui::MenuItem("Simulate", command_text(Command::Simulate))) s.play_requested = s.simulate_requested = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Runs the level with the editor camera: physics, scripts and AI, nobody possessed (F8 possesses)");
         if (!s.play_window_open) {
-            if (ImGui::MenuItem("New Window", "Alt+N")) s.play_window_requested = true;
+            if (ImGui::MenuItem("New Window", command_text(Command::PlayWindow))) s.play_window_requested = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays the level as it is now in a window of its own, as the packaged game would (Unreal's New Editor Window); the editor stays free");
         } else if (with_tip(ImGui::MenuItem("Close Window"), "Closes the game window that Play opened")) {
             s.close_play_window = true;
@@ -5017,11 +5454,11 @@ void draw_menu_bar(EditorState& s) {
         ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_x));
-        if (with_tip(ImGui::MenuItem("Stop", "Esc"), "Stops playing (Esc)")) s.stop_requested = true;
+        if (with_tip(ImGui::MenuItem("Stop", command_text(Command::StopPlay)), "Stops playing (Esc)")) s.stop_requested = true;
         ImGui::PopStyleColor();
-        if (ImGui::MenuItem(s.paused ? "Resume" : "Pause", "Pause")) s.paused = !s.paused;
-        if (s.paused && with_tip(ImGui::MenuItem("Step", "]"), "Advances the paused game one frame")) s.step_requested = true;
-        if (ImGui::MenuItem(s.ejected ? "Possess" : "Eject", "F8")) {
+        if (ImGui::MenuItem(s.paused ? "Resume" : "Pause", command_text(Command::Pause))) s.paused = !s.paused;
+        if (s.paused && with_tip(ImGui::MenuItem("Step", command_text(Command::StepFrame)), "Advances the paused game one frame")) s.step_requested = true;
+        if (ImGui::MenuItem(s.ejected ? "Possess" : "Eject", command_text(Command::Eject))) {
             s.ejected = !s.ejected;
             s.mouse_captured = !s.ejected;
         }
@@ -5033,6 +5470,12 @@ void draw_menu_bar(EditorState& s) {
         ImGui::PushStyleColor(ImGuiCol_Text, g_unread_errors ? ImVec4(1.0f, 0.42f, 0.38f, 1) : ImVec4(1.0f, 0.82f, 0.35f, 1));
         if (ImGui::MenuItem(badge)) s.show_message_log = true;
         ImGui::PopStyleColor();
+    }
+    const f32 progress = s.material_import_progress >= 0.0f ? s.material_import_progress : s.build_lighting_progress;
+    if (progress >= 0.0f) {  // long jobs: Import Materials and Textures, Build Lighting
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::ProgressBar(progress, ImVec2(260.0f, 0.0f), s.material_import_progress >= 0.0f ? s.material_import_label : "Building lighting");
+        if (s.material_import_progress >= 0.0f) ImGui::SetItemTooltip("%s", s.material_import_label);
     }
     const char* level = s.level_path[0] ? s.level_path : "Untitled level";
     char right[320];
@@ -5331,71 +5774,67 @@ void draw_preferences_window(EditorState& s) {
             }
             if (draw_details(reflect::type_of<EditorTheme>(), &t, &style)) apply_theme(t);
         }
+        if (ImGui::CollapsingHeader("Keyboard Shortcuts")) draw_keymap(s.settings);
         if (ImGui::CollapsingHeader("Plugins", ImGuiTreeNodeFlags_DefaultOpen)) draw_plugins(s);
     }
     ImGui::End();
 }
 
 void handle_shortcuts(EditorState& s) {
+    if (keymap_capturing()) return;  // Preferences is reading a new key
     ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_F11, false)) game_module::compile();  // also while playing
+    using C = Command;
+    if (command_pressed(C::CompileGameCode)) game_module::compile();  // also while playing
     if (s.playing) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) s.stop_requested = true;
-        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F1)) s.mouse_captured = false;
-        if (ImGui::IsKeyPressed(ImGuiKey_Pause)) s.paused = !s.paused;
-        if (s.paused && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) s.step_requested = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_F8)) {
+        if (command_pressed(C::StopPlay)) s.stop_requested = true;
+        if (command_pressed(C::ReleaseMouse)) s.mouse_captured = false;
+        if (command_pressed(C::Pause)) s.paused = !s.paused;
+        if (s.paused && command_pressed(C::StepFrame, true)) s.step_requested = true;
+        if (command_pressed(C::Eject)) {
             s.ejected = !s.ejected;
             s.mouse_captured = !s.ejected;
         }
         if (!s.ejected) return;
-        if (!io.WantTextInput && s.world->alive(s.selected) && ImGui::IsKeyPressed(ImGuiKey_F)) focus_selected(s);
+        if (!io.WantTextInput && s.world->alive(s.selected) && command_pressed(C::Focus)) focus_selected(s);
+        if (!io.WantTextInput && s.world->alive(s.selected) && command_pressed(C::KeepSimulation)) keep_simulation_changes(s);
         return;
     }
     // Asset editor windows have their own Ctrl+S and Delete: level shortcuts stay out of them.
-    if (const ImGuiWindow* focused = GImGui->NavWindow; focused && focused->RootWindow &&
-        (std::strstr(focused->RootWindow->Name, "###VisualScript") || std::strstr(focused->RootWindow->Name, "###DataTable"))) {
-        return;
+    if (const ImGuiWindow* focused = GImGui->NavWindow; focused && focused->RootWindow) {
+        for (const char* id : {"###VisualScript", "###DataTable", "###UiEditor", "###Timeline", "###StateMachine", "###MeshEditor", "###ParticleEditor", "###PrefabEditor"}) {
+            if (std::strstr(focused->RootWindow->Name, id)) return;
+        }
     }
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P)) s.play_requested = true;
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N) && !s.playing && !s.play_window_open) s.play_window_requested = true;
-    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) s.play_requested = s.simulate_requested = true;
-    if (!io.KeyAlt && !io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_P, false)) s.show_navigation = !s.show_navigation;
-    if (io.KeyAlt && !io.WantTextInput) {  // Unreal's viewport keys
-        if (ImGui::IsKeyPressed(ImGuiKey_G)) set_view(s, ViewType::Perspective);
-        if (ImGui::IsKeyPressed(ImGuiKey_J)) set_view(s, ViewType::Top);
-        if (ImGui::IsKeyPressed(ImGuiKey_H)) set_view(s, ViewType::Front);
-        if (ImGui::IsKeyPressed(ImGuiKey_K)) set_view(s, ViewType::Right);
-        if (ImGui::IsKeyPressed(ImGuiKey_4)) s.view_mode = ViewMode::Lit;
-        if (ImGui::IsKeyPressed(ImGuiKey_3)) s.view_mode = ViewMode::Unlit;
-        if (ImGui::IsKeyPressed(ImGuiKey_2)) s.view_mode = ViewMode::Wireframe;
-        if (ImGui::IsKeyPressed(ImGuiKey_6)) s.view_mode = ViewMode::LightingOnly;
-        if (ImGui::IsKeyPressed(ImGuiKey_0)) s.view_mode = ViewMode::Overdraw;
-        if (ImGui::IsKeyPressed(ImGuiKey_C)) s.view_mode = s.view_mode == ViewMode::Collision ? ViewMode::Lit : ViewMode::Collision;
-        if (ImGui::IsKeyPressed(ImGuiKey_V, false)) s.pivot_edit = !s.pivot_edit;  // Alt+V: move the gizmo's pivot
-        return;
-    }
+    if (command_pressed(C::Play)) s.play_requested = true;
+    if (command_pressed(C::PlayWindow) && !s.play_window_open) s.play_window_requested = true;
+    if (command_pressed(C::Simulate)) s.play_requested = s.simulate_requested = true;
     if (io.WantTextInput) return;
-    const bool ctrl = io.KeyCtrl;
-    const bool flying = ImGui::IsMouseDown(ImGuiMouseButton_Right);  // WASD/QE move the camera then
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        if (io.KeyShift) s.history->redo(*s.world);
-        else s.history->undo(*s.world);
-    }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) s.history->redo(*s.world);
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) request_save(s, io.KeyShift);
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N)) request_new(s);
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_GraveAccent)) s.gizmo_local = !s.gizmo_local;
+    if (command_pressed(C::ViewPerspective)) set_view(s, ViewType::Perspective);  // Unreal's viewport keys
+    if (command_pressed(C::ViewTop)) set_view(s, ViewType::Top);
+    if (command_pressed(C::ViewFront)) set_view(s, ViewType::Front);
+    if (command_pressed(C::ViewRight)) set_view(s, ViewType::Right);
+    if (command_pressed(C::Lit)) s.view_mode = ViewMode::Lit;
+    if (command_pressed(C::Unlit)) s.view_mode = ViewMode::Unlit;
+    if (command_pressed(C::Wireframe)) s.view_mode = ViewMode::Wireframe;
+    if (command_pressed(C::LightingOnly)) s.view_mode = ViewMode::LightingOnly;
+    if (command_pressed(C::Overdraw)) s.view_mode = ViewMode::Overdraw;
+    if (command_pressed(C::Collision)) s.view_mode = s.view_mode == ViewMode::Collision ? ViewMode::Lit : ViewMode::Collision;
+    if (command_pressed(C::PivotEdit)) s.pivot_edit = !s.pivot_edit;
+    if (command_pressed(C::Undo, true)) s.history->undo(*s.world);
+    if (command_pressed(C::Redo, true) || command_pressed(C::RedoAlt, true)) s.history->redo(*s.world);
+    if (command_pressed(C::Save)) request_save(s, false);
+    if (command_pressed(C::SaveAs)) request_save(s, true);
+    if (command_pressed(C::NewLevel)) request_new(s);
+    if (command_pressed(C::LocalGizmo)) s.gizmo_local = !s.gizmo_local;
     const bool has = s.world->alive(s.selected);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_C)) copy_selection(s);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_X)) {
+    if (has && command_pressed(C::Copy)) copy_selection(s);
+    if (has && command_pressed(C::Cut)) {
         copy_selection(s);
         delete_selected(s);
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) paste(s);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_D)) duplicate_selected(s);
-    if (!ctrl && s.playing && s.ejected && has && ImGui::IsKeyPressed(ImGuiKey_K)) keep_simulation_changes(s);
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_B)) {  // Find in Content Browser: the selected object's asset
+    if (command_pressed(C::Paste)) paste(s);
+    if (has && command_pressed(C::Duplicate)) duplicate_selected(s);
+    if (has && command_pressed(C::FindInContentBrowser)) {  // the selected object's asset
         asset::Guid used;
         i32 part = -1;
         if (const auto* m = s.world->get<world::StaticMesh>(s.selected)) asset::parse_mesh_key(m->mesh, used, part);
@@ -5403,17 +5842,16 @@ void handle_shortcuts(EditorState& s) {
         if (const auto* m = s.world->get<world::Script>(s.selected); m && !used.valid()) asset::parse_guid(m->script, used);
         if (used.valid()) find_in_content_browser(s, used);
     }
-    if (ctrl && has && ImGui::IsKeyPressed(ImGuiKey_G)) group_selection(s);
-    if (!ctrl && io.KeyShift && has && ImGui::IsKeyPressed(ImGuiKey_G)) {
-        ungroup_selection(s);
-        return;  // not also the G (game view) key below
-    }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
+    if (has && command_pressed(C::Group)) group_selection(s);
+    if (has && command_pressed(C::Ungroup)) ungroup_selection(s);
+    if (command_pressed(C::SelectAll)) {
         for (u32 slot = 0; slot < s.world->slot_count(); ++slot) add_to_selection(s, s.world->entity_at_slot(slot), false);
     }
-    for (int n = 0; n < 10; ++n) {  // camera bookmarks
-        if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_0 + n)) || flying) continue;
-        if (ctrl) {
+    const bool flying = ImGui::IsMouseDown(ImGuiMouseButton_Right);  // WASD/QE move the camera then
+    if (flying) return;
+    for (int n = 0; n < 10; ++n) {  // camera bookmarks: Ctrl+0-9 sets, 0-9 jumps
+        if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_0 + n)) || io.KeyAlt || io.KeyShift) continue;
+        if (io.KeyCtrl) {
             s.bookmarks[n] = s.camera;
             s.bookmark_set[n] = true;
             std::snprintf(s.status, sizeof s.status, "Camera bookmark %d set", n);
@@ -5421,15 +5859,15 @@ void handle_shortcuts(EditorState& s) {
             s.camera = s.bookmarks[n];
         }
     }
-    if (ctrl || flying) return;
-    if (ImGui::IsKeyPressed(ImGuiKey_W)) s.gizmo = GizmoMode::Translate;
-    if (ImGui::IsKeyPressed(ImGuiKey_E)) s.gizmo = GizmoMode::Rotate;
-    if (ImGui::IsKeyPressed(ImGuiKey_R)) s.gizmo = GizmoMode::Scale;
-    if (ImGui::IsKeyPressed(ImGuiKey_G)) s.game_view = !s.game_view;
-    if (has && ImGui::IsKeyPressed(ImGuiKey_F)) focus_selected(s);
-    if (has && ImGui::IsKeyPressed(ImGuiKey_End)) drop_to_floor(s);
-    if (has && ImGui::IsKeyPressed(ImGuiKey_Delete)) delete_selected(s);
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) select(s, {});
+    if (command_pressed(C::ToggleNavigation)) s.show_navigation = !s.show_navigation;
+    if (command_pressed(C::Translate)) s.gizmo = GizmoMode::Translate;
+    if (command_pressed(C::Rotate)) s.gizmo = GizmoMode::Rotate;
+    if (command_pressed(C::Scale)) s.gizmo = GizmoMode::Scale;
+    if (command_pressed(C::GameView)) s.game_view = !s.game_view;
+    if (has && command_pressed(C::Focus)) focus_selected(s);
+    if (has && command_pressed(C::DropToFloor)) drop_to_floor(s);
+    if (has && command_pressed(C::Delete)) delete_selected(s);
+    if (command_pressed(C::Deselect)) select(s, {});
 }
 
 } // namespace
@@ -5548,6 +5986,7 @@ void draw_editor(EditorState& s) {
     draw_world_settings_window(s);
     draw_message_log(s);
     draw_project_settings(s);
+    draw_multiplayer_panel(s);
     draw_level_dialogs(s);
     draw_graph_editor(s);
     draw_table_editor(s);
@@ -5590,12 +6029,16 @@ void draw_editor(EditorState& s) {
         ImGui::EndPopup();
     }
     draw_reference_viewer(s);
+    draw_template_picker(s);
     draw_timeline_editor(s);
+    draw_anim_graph_editor(s);
+    draw_flipbook_editor(s);
     draw_mesh_editor(s);
     draw_prefab_editor(s);
     debugger::draw_window(s, &s.show_debugger);
     assistant::draw_window(s, &s.show_assistant);
     draw_memory_window(s);
+    draw_audio_mixer(s);
     draw_ui_editor(s);
     took(4);
     handle_shortcuts(s);
@@ -5682,6 +6125,7 @@ void make_default_level(world::World& w) {
 }
 
 bool open_asset(EditorState& s, const asset::AssetRecord& record) { return open_record(s, record); }
+DetailsStyle editor_details_style(EditorState& s) { return {{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}, nullptr, details_widget, &s}; }
 
 bool surface_ray(EditorState& s, Vec3 origin, Vec3 dir, f32& t) {
     Entity hit;
@@ -5762,5 +6206,7 @@ void apply_layout_file(const char* path, char* status, usize status_capacity) {
     }
     std::snprintf(status, status_capacity, "Loaded layout %s", std::filesystem::path(path).stem().string().c_str());
 }
+
+void create_parts_prefab(EditorState& state, const asset::AssetRecord& mesh) { make_parts_prefab(state, mesh); }
 
 } // namespace lsd::editor

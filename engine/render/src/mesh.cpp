@@ -89,6 +89,17 @@ MeshData make_plane(Allocator& allocator) {
     return mesh;
 }
 
+void box_project_uv(MeshData& mesh, f32 sx, f32 sy, f32 sz) {
+    for (u32 i = 0; i < mesh.vertex_count; ++i) {
+        rhi::MeshVertex& v = mesh.vertices[i];
+        const f32 x = v.position[0] * sx, y = v.position[1] * sy, z = v.position[2] * sz;
+        const f32 ax = std::fabs(v.normal[0]), ay = std::fabs(v.normal[1]), az = std::fabs(v.normal[2]);
+        const bool side_x = ax >= ay && ax >= az, side_y = !side_x && ay >= az;
+        v.uv[0] = side_x ? (v.normal[0] > 0.0f ? y : -y) : side_y ? (v.normal[1] > 0.0f ? -x : x) : x;
+        v.uv[1] = side_x || side_y ? -z : (v.normal[2] > 0.0f ? -y : y);
+    }
+}
+
 GpuMesh upload_mesh(rhi::Device& device, const MeshData& mesh) {
     GpuMesh gpu;
     gpu.vertices = device.create_buffer(rhi::BufferUsage::Vertex, mesh.vertices, sizeof(rhi::MeshVertex) * mesh.vertex_count);

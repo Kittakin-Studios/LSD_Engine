@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,32 @@ static f32 worst_error(const char* path, const anim::SkinnedModel& model, const 
 }
 
 // The graph's state machine and blend space, without any real animation data.
+static void graph_editing_tests() {  // the State Machine window's edits keep transitions in step
+    anim::AnimGraph g;
+    for (const char* name : {"Idle", "Walk", "Jump"}) {
+        anim::AnimState st;
+        std::snprintf(st.name, sizeof st.name, "%s", name);
+        g.states.push_back(st);
+    }
+    auto link = [&](const char* from, const char* to) {
+        anim::AnimTransition t;
+        std::snprintf(t.from, sizeof t.from, "%s", from);
+        std::snprintf(t.to, sizeof t.to, "%s", to);
+        g.transitions.push_back(t);
+    };
+    link("Idle", "Walk");
+    link("Walk", "Idle");
+    link("", "Jump");  // from any state
+    std::snprintf(g.entry_state, sizeof g.entry_state, "Idle");
+    std::snprintf(g.states[0].name, sizeof g.states[0].name, "Stand");  // renamed in its Details, then:
+    anim::rename_state(g, "Idle", g.states[0].name);
+    CHECK(std::strcmp(g.transitions[0].from, "Stand") == 0 && std::strcmp(g.transitions[1].to, "Stand") == 0 && std::strcmp(g.entry_state, "Stand") == 0);
+    anim::remove_state(g, 1);  // Walk: both transitions with it go, the any-state one stays
+    CHECK(g.states.count == 2 && g.transitions.count == 1 && std::strcmp(g.transitions[0].to, "Jump") == 0);
+    anim::remove_state(g, 0);  // the entry state
+    CHECK(g.entry_state[0] == '\0' && g.states.count == 1);
+}
+
 static void graph_tests() {
     anim::Clip clips[3];
     clips[0].duration = 2.0f;  // idle
@@ -95,6 +122,16 @@ static void graph_tests() {
 
     anim::GraphState gs;
     anim::BlendInput in[anim::kMaxBlendInputs];
+    {  // a clip table (clips from several files): entries are pointers, a missing one plays nothing
+        const anim::Clip* table[2] = {&clips[2], nullptr};
+        anim::AnimGraph one;
+        one.states.push_back(anim::AnimState{});
+        anim::GraphState os;
+        CHECK(anim::step_graph(one, table, 2, os, 0.1f, in) == 1 && in[0].clip == &clips[2]);
+        one.states[0].clip = 1;
+        anim::GraphState os2;
+        CHECK(anim::step_graph(one, table, 2, os2, 0.1f, in) == 1 && in[0].clip == nullptr);
+    }
     u32 n = anim::step_graph(g, clips, 3, gs, 0.5f, in);
     CHECK(n == 1 && in[0].clip == &clips[0] && std::strcmp(anim::state_name(g, gs), "Idle") == 0);
     CHECK(std::fabs(gs.phase - 0.25f) < 1e-4f);  // 0.5 s of a 2 s clip
@@ -218,6 +255,49 @@ static void morph_tests(const std::string& data) {
     }
     CHECK(found > 0);
 
+    // Skinned LODs: fewer triangles, every index one of the mesh's own vertices (skinning and morphs unchanged).
+    {
+        anim::SkinnedModel big(default_allocator());
+        char err[256] = "";
+        CHECK(anim::import_skinned((data + "/blender_293_barbarian_7400_binary.fbx").c_str(), 1.0f, big, err, sizeof err));
+        std::vector<u32> lod(big.indices.size());
+        const u32 n = anim::simplify_skinned(big, big.indices.data(), static_cast<u32>(big.indices.size()), 0.25f, lod.data());
+        std::printf("  skinned LOD: %zu -> %u indices\n", big.indices.size(), n);
+        CHECK(n > 0 && n % 3 == 0 && n < big.indices.size() / 2);
+        bool inside = true;
+        for (u32 i = 0; i < n; ++i) inside = inside && lod[i] < big.vertices.size();
+        CHECK(inside);
+    }
+
+    // Curves from the file: an FBX user-defined number property animated in the take, matching ufbx's own value.
+    {
+        anim::SkinnedModel host(default_allocator());
+        char err[256] = "";
+        CHECK(anim::import_skinned((data + "/blender_293_half_skinned_7400_binary.fbx").c_str(), 1.0f, host, err, sizeof err));
+        const std::string props = data + "/maya_user_props_7700_ascii.fbx";
+        anim::Clip takes[2];
+        const u32 n = anim::import_clips(props.c_str(), host, takes, 2);
+        ufbx_scene* scene = ufbx_load_file(props.c_str(), nullptr, nullptr);
+        CHECK(n == 1 && scene != nullptr);
+        bool compared = false;
+        if (n == 1 && scene) {
+            const ufbx_node* cube = ufbx_find_node(scene, "pCube1");
+            const ufbx_anim_stack* stack = scene->anim_stacks.count ? scene->anim_stacks.data[0] : nullptr;
+            for (const char* prop : {"User_Int_Unbounded", "User_Int_Upper", "User_Number", "User_Float"}) {
+                f32 ours = 0.0f;
+                if (!cube || !stack || !takes[0].curve_value(prop, 0.5f, ours)) continue;
+                const f64 at = stack->time_begin + (stack->time_end - stack->time_begin) * 0.5;
+                const f32 theirs = static_cast<f32>(ufbx_evaluate_prop(stack->anim, &cube->element, prop, at).value_real);
+                CHECK(std::fabs(ours - theirs) < 0.05f * (1.0f + std::fabs(theirs)));
+                compared = true;
+            }
+            f32 none = 0.0f;
+            CHECK(!takes[0].curve_value("No_Such_Curve", 0.5f, none));
+        }
+        CHECK(compared);  // at least one animated user property was read
+        if (scene) ufbx_free_scene(scene);
+    }
+
     // Animated shape-key weights: a take's curve matches ufbx's own evaluation half-way through.
     anim::SkinnedModel rig(default_allocator());
     char error[256] = "";
@@ -301,6 +381,44 @@ static void motion_matching_tests(const std::string& data) {
         const u32 found = anim::search_motion(db, &db.features[k * anim::kMotionFeatures], &cost);
         CHECK(cost < 1e-6f && (found == k || cost == 0.0f));
     }
+    // The chunked search finds what looking at every frame finds (queries between frames, not only on them).
+    for (u32 k = 0; k + 1 < db.frames.size(); k += 7) {
+        f32 q[anim::kMotionFeatures];
+        for (u32 d = 0; d < anim::kMotionFeatures; ++d) q[d] = (db.features[k * anim::kMotionFeatures + d] + db.features[(k + 1) * anim::kMotionFeatures + d]) * 0.5f + 0.3f;
+        f32 brute = 1e30f, fast = 0.0f;
+        for (u32 i = 0; i < db.frames.size(); ++i) {
+            f32 d2 = 0.0f;
+            for (u32 d = 0; d < anim::kMotionFeatures; ++d) d2 += (db.features[i * anim::kMotionFeatures + d] - q[d]) * (db.features[i * anim::kMotionFeatures + d] - q[d]);
+            brute = std::fmin(brute, d2);
+        }
+        anim::search_motion(db, q, &fast);
+        CHECK(std::fabs(fast - brute) < 1e-4f);
+    }
+    CHECK(!db.chunks.empty() && db.chunks.size() == db.chunk_box.size() / (2 * anim::kMotionFeatures));
+    {  // the debugger's candidates: nearest first, the first the search's pick, costs split into pose and path
+        anim::MotionCandidate near[5];
+        const f32* q = &db.features[5 * anim::kMotionFeatures];
+        const u32 n = anim::motion_candidates(db, q, nullptr, near, 5);
+        f32 cost = 0.0f;
+        const u32 pick = anim::search_motion(db, q, &cost);
+        CHECK(n == 5 && std::fabs(near[0].pose_cost + near[0].path_cost - cost) < 1e-5f && (near[0].frame == pick || cost == 0.0f));
+        for (u32 k = 1; k < n; ++k) CHECK(near[k - 1].pose_cost + near[k - 1].path_cost <= near[k].pose_cost + near[k].path_cost);
+    }
+    // Tags: the same take twice, the second tagged "crouch": asked for crouch it is picked, else the untagged one.
+    {
+        const anim::Clip* twice[2] = {&clips[0], &clips[0]};
+        const bool loop2[2] = {true, true};
+        anim::MotionDatabase tagged = settings;
+        tagged.clips.count = 2;
+        std::snprintf(tagged.clips[1].tags, sizeof tagged.clips[1].tags, "%s", "Crouch, slow");
+        anim::MotionData db2(default_allocator());
+        CHECK(db2.build(model, twice, loop2, 2, tagged, 0.0f));
+        const f32* q = &db2.features[3 * anim::kMotionFeatures];
+        CHECK(db2.frames[anim::search_motion(db2, q, nullptr, "crouch")].clip == 1);
+        CHECK(db2.frames[anim::search_motion(db2, q, nullptr, "")].clip == 0);
+        CHECK(db2.frames[anim::search_motion(db2, q, nullptr, "swim")].clip == 0);  // no clip has it: the untagged ones
+        CHECK(anim::has_motion_tag("crouch, Slow", "slow") && !anim::has_motion_tag("crouching", "crouch"));
+    }
     anim::MotionState state;
     anim::BlendInput inputs[2];
     for (int i = 0; i < 90; ++i) {
@@ -310,11 +428,214 @@ static void motion_matching_tests(const std::string& data) {
         for (u32 k = 0; k < n; ++k) total += inputs[k].weight;
         CHECK(std::fabs(total - 1.0f) < 1e-4f);
     }
+    CHECK(settings.blend_mode == 1);  // inertial by default: one input, never a crossfade
+
+    // Leader pose: clothes skinned to the same skeleton copy the body's pose bone by bone, so they skin identically.
+    anim::Pose body, shirt;
+    body.sample(model, &clips[0], clips[0].duration * 0.5f, true);
+    CHECK(shirt.follow(model, model, body) && shirt.joint_count() == body.joint_count());
+    f32 worst = 0.0f;
+    for (u32 i = 0; i < body.joint_count() * 12; ++i) worst = std::fmax(worst, std::fabs(body.joint_rows()[i] - shirt.joint_rows()[i]));
+    CHECK(worst < 1e-4f);
+    anim::Pose alone;  // no leader joints yet: nothing to follow
+    CHECK(!alone.follow(model, model, anim::Pose{}));
+    for (int i = 0; i < 30; ++i) CHECK(anim::step_motion(db, settings, walking, state, 1.0f / 30.0f, inputs) == 1);
+
+    // Inertialization: right after a jump the pose is still the old one (no pop); a few half-lives
+    // later it is the new one.
+    const anim::Clip* other = count > 1 ? &clips[1] : &clips[0];
+    const anim::BlendInput from{&clips[0], 0.25f, 1.0f}, to{other, 0.75f, 1.0f};
+    anim::Pose a, b, eased;
+    a.sample_blend(model, &from, 1);
+    b.sample_blend(model, &to, 1);
+    eased.sample_blend(model, &from, 1);
+    CHECK(eased.inertialize(model, false, 0.0f, 0.05f));  // remembers the pose it showed
+    eased.sample_blend(model, &to, 1);
+    CHECK(eased.inertialize(model, true, 0.0f, 0.05f));
+    auto distance = [&](const anim::Pose& p, const anim::Pose& q) {
+        f32 worst = 0.0f;
+        for (u32 k = 0; k < p.joint_count() * 12; ++k) worst = std::fmax(worst, std::fabs(p.joint_rows()[k] - q.joint_rows()[k]));
+        return worst;
+    };
+    const f32 apart = distance(a, b);
+    std::printf("  inertial: poses %.3f apart, %.4f from the old one at the jump\n", static_cast<double>(apart), static_cast<double>(distance(eased, a)));
+    CHECK(apart > 1e-3f && distance(eased, a) < apart * 0.02f);
+    for (int i = 0; i < 30; ++i) {  // 0.5 s: ten half-lives
+        eased.sample_blend(model, &to, 1);
+        eased.inertialize(model, false, 1.0f / 60.0f, 0.05f);
+    }
+    CHECK(distance(eased, b) < apart * 0.01f);
+
+    // Mirroring: the mirrored rows are the originals with sideways values negated and the feet
+    // swapped; a pose mirrored twice is itself; the mirrored left foot is where the right one was,
+    // reflected (the bind pose is the symmetric reference, this rig's rest pose is mid-stride).
+    anim::MotionDatabase mirrored_settings;
+    mirrored_settings.mirror = true;
+    anim::MotionData mdb(default_allocator());
+    CHECK(mdb.build(model, list, loops, count, mirrored_settings, 0.0f) && mdb.clip_count == db.clip_count * 2 && mdb.mirrored[1] && !mdb.mirrored[0]);
+    if (mdb.clip_count >= 2) {
+        const f32* f = &mdb.features[static_cast<usize>(mdb.clip_first[0] + 3) * anim::kMotionFeatures];
+        const f32* g = &mdb.features[static_cast<usize>(mdb.clip_first[1] + 3) * anim::kMotionFeatures];
+        CHECK(std::fabs(g[1] + f[4]) < 1e-4f && std::fabs(g[0] - f[3]) < 1e-4f && std::fabs(g[16] + f[16]) < 1e-4f && std::fabs(g[22] + f[22]) < 1e-4f);
+    }
+    const anim::BlendInput still{nullptr, 0.0f, 1.0f};
+    anim::Pose rest, rest_mirrored, walk, twice;
+    rest.sample_blend(model, &still, 1);
+    rest_mirrored.sample_blend(model, &still, 1);
+    CHECK(rest_mirrored.mirror(model, 0.0f) && rest_mirrored.mirror(model, 0.0f));
+    walk.sample_blend(model, &from, 1);
+    twice.sample_blend(model, &from, 1);
+    CHECK(twice.mirror(model, 0.0f) && twice.mirror(model, 0.0f));
+    const i32 lf = model.find_joint("LeftFoot"), rf = model.find_joint("RightFoot");
+    anim::Pose once;
+    once.sample_blend(model, &from, 1);
+    f32 foot_error = 1e9f;
+    if (lf >= 0 && rf >= 0) {
+        // Which way the feet sit apart in the bind pose: the sideways axis (this rig faces along Y).
+        const Mat4 bl = affine_inverse(model.inverse_bind[static_cast<u32>(lf)]), br = affine_inverse(model.inverse_bind[static_cast<u32>(rf)]);
+        const bool sideways_x = std::fabs(bl.at(0, 3) - br.at(0, 3)) > std::fabs(bl.at(1, 3) - br.at(1, 3));
+        once.mirror(model, sideways_x ? 1.5707963f : 0.0f);
+        const Mat4 l = once.joint_model(static_cast<u32>(lf)), r = walk.joint_model(static_cast<u32>(rf));
+        foot_error = sideways_x ? std::fabs(l.at(0, 3) + r.at(0, 3)) + std::fabs(l.at(1, 3) - r.at(1, 3)) + std::fabs(l.at(2, 3) - r.at(2, 3))
+                                : std::fabs(l.at(0, 3) - r.at(0, 3)) + std::fabs(l.at(1, 3) + r.at(1, 3)) + std::fabs(l.at(2, 3) - r.at(2, 3));
+    }
+    std::printf("  mirror: rest twice %.5f, twice %.5f, foot %.4f\n", static_cast<double>(distance(rest, rest_mirrored)), static_cast<double>(distance(walk, twice)), static_cast<double>(foot_error));
+    CHECK(distance(rest, rest_mirrored) < 1e-3f && distance(walk, twice) < 1e-3f && foot_error < 0.05f);
+}
+
+// A rigged glTF written here: hip (1 m up) -> arm (1 m above it), a triangle on the arm, a take moving the hip 1 m
+// along the file's X. Y-up in the file, Z-up in the engine; the bind matrices come from the skin.
+static void gltf_skin_tests() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "lsd_gltf_skin_test";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::vector<u8> bin;
+    auto put = [&](const void* p, usize n) { bin.insert(bin.end(), static_cast<const u8*>(p), static_cast<const u8*>(p) + n); };
+    const f32 positions[9] = {0, 2, 0, 1, 2, 0, 0, 2, 1};
+    const u8 joints[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    const f32 weights[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    f32 ibm[32] = {};
+    for (int m = 0; m < 2; ++m) {
+        for (int i = 0; i < 4; ++i) ibm[m * 16 + i * 5] = 1.0f;
+        ibm[m * 16 + 13] = -static_cast<f32>(m + 1);  // inverse of the joint's rest: 1 m and 2 m up
+    }
+    const f32 times[2] = {0, 1};
+    const f32 moves[6] = {0, 1, 0, 1, 1, 0};
+    const f32 smile[9] = {0, 0, 0, 0, 0.5f, 0, 0, 0, 0};  // the second corner moves 0.5 m up (file Y) at full weight
+    const f32 smile_weights[2] = {0, 1};
+    put(positions, sizeof positions);  // 0
+    put(joints, sizeof joints);        // 36
+    put(weights, sizeof weights);      // 48
+    put(ibm, sizeof ibm);              // 96
+    put(times, sizeof times);          // 224
+    put(moves, sizeof moves);          // 232
+    put(smile, sizeof smile);          // 256
+    put(smile_weights, sizeof smile_weights);  // 292, 300 in all
+    if (FILE* f = std::fopen((dir / "rig.bin").string().c_str(), "wb")) {
+        std::fwrite(bin.data(), 1, bin.size(), f);
+        std::fclose(f);
+    }
+    const char* json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,2]}],
+"nodes":[{"name":"hip","translation":[0,1,0],"children":[1]},{"name":"arm","translation":[0,1,0]},{"name":"body","mesh":0,"skin":0}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2},"targets":[{"POSITION":6}]}],"weights":[0],"extras":{"targetNames":["Smile"]}}],
+"skins":[{"joints":[0,1],"inverseBindMatrices":3}],
+"animations":[{"name":"Slide","samplers":[{"input":4,"output":5},{"input":4,"output":7}],"channels":[{"sampler":0,"target":{"node":0,"path":"translation"}},{"sampler":1,"target":{"node":2,"path":"weights"}}]}],
+"buffers":[{"uri":"rig.bin","byteLength":300}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":12},{"buffer":0,"byteOffset":48,"byteLength":48},
+{"buffer":0,"byteOffset":96,"byteLength":128},{"buffer":0,"byteOffset":224,"byteLength":8},{"buffer":0,"byteOffset":232,"byteLength":24},
+{"buffer":0,"byteOffset":256,"byteLength":36},{"buffer":0,"byteOffset":292,"byteLength":8}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,2,0],"max":[1,2,1]},{"bufferView":1,"componentType":5121,"count":3,"type":"VEC4"},
+{"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},{"bufferView":3,"componentType":5126,"count":2,"type":"MAT4"},
+{"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},{"bufferView":5,"componentType":5126,"count":2,"type":"VEC3"},
+{"bufferView":6,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":7,"componentType":5126,"count":2,"type":"SCALAR"}]})";
+    const std::string path = (dir / "rig.gltf").string();
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(json, 1, std::strlen(json), f);
+        std::fclose(f);
+    }
+    auto near = [](Vec3 a, Vec3 b) { return std::fabs(a.x - b.x) < 1e-3f && std::fabs(a.y - b.y) < 1e-3f && std::fabs(a.z - b.z) < 1e-3f; };
+    char error[256] = "";
+    {  // morphs without a skeleton: the same triangle and "Smile" on a plain node 1 m up imports with a Root-only skeleton
+        const char* face = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+"nodes":[{"name":"face","mesh":0,"translation":[0,1,0]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0},"targets":[{"POSITION":1}]}],"weights":[0],"extras":{"targetNames":["Smile"]}}],
+"buffers":[{"uri":"rig.bin","byteLength":300}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":256,"byteLength":36}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,2,0],"max":[1,2,1]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}]})";
+        const std::string face_path = (dir / "face.gltf").string();
+        if (FILE* f = std::fopen(face_path.c_str(), "wb")) {
+            std::fwrite(face, 1, std::strlen(face), f);
+            std::fclose(f);
+        }
+        anim::SkinnedModel rigid(default_allocator());
+        CHECK(anim::import_skinned(face_path.c_str(), 1.0f, rigid, error, sizeof error) && rigid.joint_count() == 1 && rigid.morphs.size() == 1);
+        if (rigid.vertices.size() == 3) {
+            CHECK(near({rigid.vertices[0].position[0], rigid.vertices[0].position[1], rigid.vertices[0].position[2]}, {0, 0, 3}));  // 2 m + the node's 1 m
+            anim::Pose still;
+            still.sample(rigid, nullptr, 0.0f, false);
+            CHECK(near(skin(still, rigid.vertices[0]), {0, 0, 3}));  // on the Root: stays put
+        }
+    }
+    anim::SkinnedModel model(default_allocator());
+    CHECK(anim::import_skinned(path.c_str(), 1.0f, model, error, sizeof error));
+    CHECK(model.joint_count() == 3 && model.find_joint("Root") >= 0 && model.find_joint("hip") >= 0 && model.find_joint("arm") >= 0);
+    CHECK(model.vertices.size() == 3 && model.indices.size() == 3 && model.sections.size() == 1);
+    if (model.vertices.size() != 3) return;
+    CHECK(near({model.vertices[0].position[0], model.vertices[0].position[1], model.vertices[0].position[2]}, {0, 0, 2}));  // Y-up 2 m -> Z-up
+    CHECK(near({model.vertices[2].position[0], model.vertices[2].position[1], model.vertices[2].position[2]}, {0, -1, 2}));  // file +Z -> engine -Y
+    CHECK(model.vertices[0].joints[0] == static_cast<u8>(model.find_joint("arm")) && model.vertices[0].weights[0] == 255);
+    anim::Pose pose;
+    pose.sample(model, nullptr, 0.0f, false);
+    CHECK(near(skin(pose, model.vertices[0]), {0, 0, 2}));  // the rest pose leaves it where it is
+    anim::Clip clips[2];
+    CHECK(anim::import_clips(path.c_str(), model, clips, 2) == 1);
+    CHECK(std::strcmp(clips[0].name, "Slide") == 0 && std::fabs(clips[0].duration - 1.0f) < 1e-4f);
+    // Morph targets: "Smile" moves the second corner 0.5 m up (Z in the engine); the take raises its weight 0 to 1.
+    // Its normals turn too: all three corners of the tilted triangle get a normal offset.
+    CHECK(model.morphs.size() == 1 && std::strcmp(model.morphs[0].name, "Smile") == 0 && model.morphs[0].count == 3);
+    bool moved = false;
+    for (u32 i = model.morphs[0].first; model.morphs.size() == 1 && i < model.morphs[0].first + model.morphs[0].count; ++i) {
+        const anim::MorphDelta& d = model.morph_deltas[i];
+        if (d.vertex == 1) moved = std::fabs(d.offset[2] - 0.5f) < 1e-5f && std::fabs(d.offset[1]) < 1e-5f;
+        else CHECK(d.offset[0] == 0.0f && d.offset[1] == 0.0f && d.offset[2] == 0.0f);
+    }
+    CHECK(moved);
+    {  // at full weight every corner's normal is the morphed triangle's
+        std::vector<rhi::SkinnedVertex> shaped(model.vertices.size());
+        anim::apply_morphs(model, [](const char*) { return 1.0f; }, shaped.data());
+        const Vec3 a{shaped[0].position[0], shaped[0].position[1], shaped[0].position[2]}, b{shaped[1].position[0], shaped[1].position[1], shaped[1].position[2]},
+            c{shaped[2].position[0], shaped[2].position[1], shaped[2].position[2]};
+        Vec3 face = normalize(cross(b - a, c - a));
+        const Vec3 n{shaped[0].normal[0], shaped[0].normal[1], shaped[0].normal[2]};
+        if (dot(face, n) < 0.0f) face = face * -1.0f;
+        CHECK(dot(face, n) > 0.999f && std::fabs(length(n) - 1.0f) < 1e-4f);
+    }
+    f32 smile_now = -1.0f;
+    CHECK(clips[0].morph_weight("Smile", 0.5f, smile_now) && std::fabs(smile_now - 0.5f) < 0.02f);
+    pose.sample(model, &clips[0], 1.0f, false);
+    CHECK(near(skin(pose, model.vertices[0]), {1, 0, 2}));  // the hip slid 1 m, the arm and its triangle with it
+    pose.sample(model, &clips[0], 0.5f, false);
+    CHECK(near(skin(pose, model.vertices[1]), {1.5f, 0, 2}));
+    CHECK(model.motion_root() == model.find_joint("hip"));  // root motion: the hip's slide comes out, the mesh stays put
+    pose.sample(model, &clips[0], 1.0f, false);
+    CHECK(near(pose.strip_root(model), {1, 0, 0}) && near(skin(pose, model.vertices[0]), {0, 0, 2}));
+    const anim::ClipTrim trim{0, 0.5f, 0.0f};  // keep the second half: it starts where the hip is half-way
+    CHECK(anim::import_clips(path.c_str(), model, clips, 2, &trim, 1) == 1 && std::fabs(clips[0].duration - 0.5f) < 1e-4f);
+    pose.sample(model, &clips[0], 0.0f, false);
+    CHECK(near(skin(pose, model.vertices[0]), {0.5f, 0, 2}));
+    anim::SkinnedModel twice(default_allocator());
+    CHECK(anim::import_skinned(path.c_str(), 2.0f, twice, error, sizeof error));
+    pose.sample(twice, nullptr, 0.0f, false);
+    if (twice.vertices.size() == 3) CHECK(near(skin(pose, twice.vertices[0]), {0, 0, 4}) && twice.bounds_max.z > 3.99f);  // the import scale
+    fs::remove_all(dir, ec);
 }
 
 int main() {
     rig_tests();
+    gltf_skin_tests();
     graph_tests();
+    graph_editing_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
     motion_matching_tests(data);
     morph_tests(data);
@@ -364,6 +685,34 @@ int main() {
             const f32 moving = worst_error(path.c_str(), model, &clips[0], t);
             std::printf("    clip '%s' %.2f s, error at %.2f s: %.5f\n", clips[0].name, static_cast<double>(clips[0].duration), t, static_cast<double>(moving));
             CHECK(moving < size * 0.01f);
+            // Montage layering: the clip laid fully over the rest pose is the clip; from the last joint only, the root stays at rest.
+            anim::Pose full, layered, part;
+            full.sample(model, &clips[0], clips[0].duration * 0.5f, false);
+            layered.sample(model, nullptr, 0.0f, false);
+            part.sample(model, nullptr, 0.0f, false);
+            const Mat4 root_rest = part.joint_model(0);
+            CHECK(layered.layer(model, &clips[0], 0.5f, 1.0f, -1));
+            for (u32 j = 0; j < model.joint_count(); ++j) {
+                const Mat4 a = full.joint_model(j), b = layered.joint_model(j);
+                CHECK(length(Vec3{a.at(0, 3) - b.at(0, 3), a.at(1, 3) - b.at(1, 3), a.at(2, 3) - b.at(2, 3)}) < size * 1e-3f);
+            }
+            const i32 last = static_cast<i32>(model.joint_count()) - 1;
+            CHECK(part.layer(model, &clips[0], 0.5f, 1.0f, last));
+            const Mat4 root_now = part.joint_model(0);
+            CHECK(last == 0 || length(Vec3{root_now.at(0, 3) - root_rest.at(0, 3), root_now.at(1, 3) - root_rest.at(1, 3), root_now.at(2, 3) - root_rest.at(2, 3)}) < 1e-5f);
+            CHECK(!part.layer(model, &clips[0], 0.5f, 0.0f, -1));  // weight 0 does nothing
+            // Root motion: what strip_root returns is the root's sideways move from rest, and the root is back at rest sideways.
+            const u32 mr = static_cast<u32>(model.motion_root());
+            CHECK(mr > 0);  // never the import's own Root
+            anim::Pose at_rest;
+            at_rest.sample(model, nullptr, 0.0f, false);
+            const Mat4 root_rest_mr = at_rest.joint_model(mr);
+            const Mat4 root_before = full.joint_model(mr);
+            const Vec3 moved = full.strip_root(model);
+            const Mat4 root_after = full.joint_model(mr);
+            CHECK(std::fabs(moved.x - (root_before.at(0, 3) - root_rest_mr.at(0, 3))) < size * 1e-3f && std::fabs(moved.y - (root_before.at(1, 3) - root_rest_mr.at(1, 3))) < size * 1e-3f);
+            CHECK(std::fabs(root_after.at(0, 3) - root_rest_mr.at(0, 3)) < size * 1e-3f && std::fabs(root_after.at(1, 3) - root_rest_mr.at(1, 3)) < size * 1e-3f);
+            CHECK(std::fabs(root_after.at(2, 3) - root_before.at(2, 3)) < 1e-5f);  // height is the animation's
             ++tested_animation;
         }
     }

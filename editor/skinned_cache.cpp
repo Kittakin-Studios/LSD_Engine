@@ -3,9 +3,12 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <vector>
 
 namespace lsd::editor {
 
@@ -29,9 +32,14 @@ static void destroy_buffers(rhi::Device& device, SkinnedEntry& e) {
     if (e.indices.valid()) device.destroy_buffer(e.indices);
     for (u32 s = 0; s < e.section_count; ++s) {
         if (e.sections[s].indices.valid()) device.destroy_buffer(e.sections[s].indices);
+        for (rhi::BufferHandle& lod : e.sections[s].lod_indices) {
+            if (lod.valid()) device.destroy_buffer(lod);
+            lod = {};
+        }
     }
     e.vertices = e.indices = {};
     e.section_count = 0;
+    e.lod_count = 1;
 }
 
 SkinnedCache::~SkinnedCache() {
@@ -88,6 +96,33 @@ bool SkinnedCache::load(SkinnedEntry& e) {
         s.indices = device_.create_buffer(rhi::BufferUsage::Index, e.model->indices.data() + section.first_index, section.index_count * sizeof(u32));
         s.index_count = section.index_count;
     }
+    // Auto LODs (as static meshes): halving the triangles each step while it still gets simpler; sections too small keep theirs.
+    if (e.index_count / 3 >= 512) {
+        e.lod_screen_size[1] = meta.lod1_screen_size;
+        e.lod_screen_size[2] = meta.lod2_screen_size;
+        e.lod_screen_size[3] = meta.lod3_screen_size;
+        std::vector<u32> lod(e.model->indices.size());
+        u32 k = 0;
+        for (const anim::MeshSection& section : e.model->sections) {
+            if (k == e.section_count) break;
+            if (!section.index_count) continue;
+            SkinnedEntry::Section& s = e.sections[k++];
+            u32 previous = section.index_count;
+            f32 ratio = 0.5f;
+            for (u32 l = 1; l < SkinnedEntry::kMaxLods; ++l, ratio *= 0.5f) {
+                const u32 count = section.index_count / 3 >= 128 ? anim::simplify_skinned(*e.model, e.model->indices.data() + section.first_index, section.index_count, ratio, lod.data()) : 0;
+                if (count == 0 || count > previous * 3 / 4) {  // will not get simpler: the last LOD again
+                    s.lod_indices[l] = {};
+                    s.lod_index_count[l] = 0;
+                    continue;
+                }
+                s.lod_indices[l] = device_.create_buffer(rhi::BufferUsage::Index, lod.data(), count * sizeof(u32));
+                s.lod_index_count[l] = count;
+                previous = count;
+                e.lod_count = std::max(e.lod_count, l + 1);
+            }
+        }
+    }
     if (e.model->sections.size() > asset::kMaxMaterialSlots) LSD_LOG_WARN("anim", "%s: %zu materials, only the first %u are drawn", path, e.model->sections.size(), asset::kMaxMaterialSlots);
     load_slots(e);
     return !e.failed;
@@ -143,6 +178,16 @@ f32 facing_yaw(const world::SkeletalMesh& mesh, const SkinnedEntry* model) {
     }
 }
 
+Mat4 without_scale(Mat4 m) {
+    for (int c = 0; c < 3; ++c) {
+        const f32 length = std::sqrt(m.at(0, c) * m.at(0, c) + m.at(1, c) * m.at(1, c) + m.at(2, c) * m.at(2, c));
+        if (length > 1e-8f) {
+            for (int r = 0; r < 3; ++r) m.at(r, c) /= length;
+        }
+    }
+    return m;
+}
+
 Mat4 skeletal_matrix(const world::World& world, world::Entity e, const world::SkeletalMesh& mesh, const SkinnedEntry* model) {
     const f32 yaw = facing_yaw(mesh, model);
     return yaw == 0.0f ? world.world_matrix(e) : world.world_matrix(e) * rotation_z(radians(yaw));
@@ -167,9 +212,18 @@ void SkinnedCache::load(ClipSet& set, const SkinnedEntry& model) {
     char path[300];
     registry_.source_path(*r, path, sizeof path);
     set.modified = file_time(path);
-    set.count = anim::import_clips(path, *model.model, set.clips, 16);
     set.meta = asset::AssetMeta{};
     registry_.load_meta(*r, set.meta);
+    anim::ClipTrim trims[16];
+    for (u32 i = 0; i < set.meta.clip_ranges.count; ++i) trims[i] = {set.meta.clip_ranges[i].clip, set.meta.clip_ranges[i].start, set.meta.clip_ranges[i].end};
+    set.count = anim::import_clips(path, *model.model, set.clips, 16, trims, set.meta.clip_ranges.count);
+}
+
+const ClipSet* SkinnedCache::set_of(const anim::Clip* clip) const {
+    for (u32 i = 0; i < set_count_; ++i) {
+        if (clip >= sets_[i]->clips && clip < sets_[i]->clips + sets_[i]->count) return sets_[i];
+    }
+    return nullptr;
 }
 
 const ClipSet* SkinnedCache::clips(const char* mesh_guid, const char* anim_guid) {
@@ -211,8 +265,18 @@ void SkinnedCache::check_files() {
         if (!r || !model) continue;
         char path[300];
         registry_.source_path(*r, path, sizeof path);
-        if (file_time(path) != set.modified) load(set, *model);
-        else registry_.load_meta(*r, set.meta);  // notifies edited in Details
+        if (file_time(path) != set.modified) {
+            load(set, *model);
+            continue;
+        }
+        const asset::AssetMeta before = set.meta;
+        registry_.load_meta(*r, set.meta);  // notifies edited in Details
+        bool trimmed = before.clip_ranges.count != set.meta.clip_ranges.count;
+        for (u32 k = 0; k < set.meta.clip_ranges.count && !trimmed; ++k) {
+            const asset::ClipRange &a = before.clip_ranges[k], &b = set.meta.clip_ranges[k];
+            trimmed = a.clip != b.clip || a.start != b.start || a.end != b.end;
+        }
+        if (trimmed) load(set, *model);  // its takes are cut again
     }
     for (u32 i = 0; i < graph_count_; ++i) {  // graphs edited in Details save to disk: picked up here
         const asset::AssetRecord* r = record_of(registry_, graphs_[i]->guid);

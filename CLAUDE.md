@@ -4,7 +4,7 @@ Read this first. It is the short, current summary of how LSD_Engine is built and
 The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to use the engine),
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
 examples), [Examples/Examples.md](docs/Examples/Examples.md) (first-timer tutorial: input actions, health / stamina HUD,
-interact; its scripts were run for real), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
+interact; its scripts were run for real), [Multiplayer.md](docs/Multiplayer.md) (playtests: join codes, Tailscale), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
 `docs/` is also the developer's Obsidian vault (settings in the gitignored `docs/.obsidian/`): keep links as
 relative Markdown links, not `[[wikilinks]]`. Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
 the `screenshot` console command and `ui.Click`, in the default layout); retake one when its panel changes.
@@ -55,13 +55,13 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 
 **Automated runs must be silent**: always pass `-nosound` (test audio once reached her speakers).
 Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
-(quit after n frames), `-screenshot=<n>` (OpenGL: Saved/screenshot.bmp; does not quit by itself),
+(quit after n frames), `-screenshot=<n>` (OpenGL or Vulkan: Saved/screenshot.bmp; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
 `-connect=<host[:port]>` (multiplayer, when Project Settings > Multiplayer is on).
-`input.Hold <key> <seconds>` takes names with spaces ("Left Shift") and drives the game even when the window has no focus.
-Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
+`input.Hold <key> <seconds>` takes names with spaces ("Left Shift", "Right Mouse Button") and drives the game even when the window has no focus.
+Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `template.New <name>` (a template level), `assistant.Ask <message>` / `assistant.Lesson <n>` (LSD Assistant), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
@@ -74,13 +74,13 @@ before linking `lsd_editor.exe` (the exe is locked while it runs; the root copy 
 | Area | Decision |
 | --- | --- |
 | Language | C++20 engine and editor. Gameplay: LuaJIT, visual scripts (compiled to Lua) and C / C++ scripts (a `Game.dll` from `Source/` over the C API `lsd_game.h` + `lsd/game.hpp`, Native Script component, reloaded on rebuild) and JavaScript scripts (`.js` on the Script component, QuickJS-ng, sharing the Lua `lsd` API). UI: HTML / CSS (RmlUi) + each document's `.js` |
-| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (UI only until the Vulkan SDK is installed). Built-in shaders are HLSL + a GLSL mirror kept in step |
+| Graphics | One RHI, three backends: **D3D12** (default), **OpenGL 4.6** (fallback, screenshots), **Vulkan 1.3** (lit textured, skinned and instanced meshes, D3D12's own lit / sky and post shaders (`engine/rhi/shaders/mesh.hlsl`, `post.hlsl`, compiled to SPIR-V), shadows, particles, game UI, render targets, Material Graphs (through the Vulkan SDK's DXC when installed), GPU culling and GPU timings: at parity with D3D12; needs the Vulkan SDK for its DXC). Built-in shaders are HLSL (the lit / sky and post ones shared by D3D12 and Vulkan in `engine/rhi/shaders/`) + a GLSL mirror kept in step |
 | Architecture | Data-oriented: entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets, hot reload everywhere |
 | Reflection | `LSD_STRUCT` / `LSD_PROPERTY` / `LSD_GENERATED()` + a code generator: Details panel, JSON save/load, undo, Lua access and Play copies come free. No inheritance; fixed `char name[N]` strings; `List<T, N>` for lists |
 | World | Z-up, right-handed (like Blender), metres; rotations are Euler degrees X then Y then Z |
 | Assets | GUIDs in `.meta` sidecars, `AssetRegistry` scans Content/; files stay in their source format and compile on demand into DerivedData/ |
 | UI | RmlUi (HTML / CSS) drawn by `rhi::Device::draw_ui`; fonts from Content/Fonts + the system UI font as `sans`; designer canvas in the UI window (`rml_edit.h` writes into the text); a document's own `.js` runs on QuickJS-ng (`engine/ui/src/ui_script.*`) |
-| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, Opus, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
+| Libraries | SDL3, Dear ImGui (editor), ImGuizmo, Jolt Physics, ENet, miniupnpc, xatlas, Opus, LuaJIT, ozz-animation, miniaudio, Recast & Detour, ufbx, cgltf, meshoptimizer, stb, FreeType, RmlUi, QuickJS-ng, Tracy (optional) |
 
 ## Editor look
 
@@ -159,10 +159,18 @@ Unreal-style panel tabs under the menu bar (Level + each open asset editor; the 
 Foliage, Landscape, Animation Sequence, PCG, VFX, 2D in `editor/editor_modes.*`), and under them, on the Level tab,
 Blender-style workspace tabs (Layout = the original arrangement; `editor/workspaces.h`).
 Vehicles / Transports / Movers (Place tab, cube placeholders; nodes in the Vehicles and Movers menus).
+Project templates (`editor/templates.*`, levels in `editor/template_levels.*`): the New Project picker on first launch (no saved level) and
+File > New from Template: Third Person, First Person, Side Scroller, Platformer, Orthographic, 2D (generated art, scripts and HUD in
+Content/Templates/2D), 2.5D, Character Customization / Character Selection (scripts and UI in `editor/template_files/`, embedded at build
+time, written to Content/Templates/Character; clothes in Content/Characters/Clothes/<area>, presets in Content/Characters/Presets), Empty;
+`template.New <name>`. Outfit component (body areas, UE5 bones) + Skeletal Mesh > Leader Pose (`Pose::follow`, `AnimationPlayer::update_outfits`). Window > Viewports: 2D / 2.5D / 3D side by side (`set_viewport_kinds`).
 Multiplayer (`engine/net` on ENet, one Project Settings checkbox): Net Replicated objects, avatars,
-script events, text and voice chat (Opus); Play opens a game window per extra player.
-2D (Paper2D, `editor/paper2d.*`, the Level tab's 2D mode): Sprite (sheets + flipbooks), Tile Map
-(palette painting), Lock 2D physics, side-scroller Character, orthographic Camera.
+script events, text and voice chat (Opus); Play opens a game window per extra player; playtests by join code
+(`net/join_code.*`, UPnP via miniupnpc), `lsd.net_host` / `net_join` / `net_leave`, the Host / Join menu in `Content/Multiplayer`, the Multiplayer workspace tab (its panel:
+settings, Play as Host / Join, session, join codes).
+2D (Paper2D, `editor/paper2d.*`, pure logic in `editor/paper2d_core.*`, the Level tab's 2D mode): Sprite (sheets, Flipbook assets
+with per-frame durations and script events, translucent with Sort Order, lit ones cast shadows), Tile Map (palette painting,
+per-tile collision shapes incl. ramps), Lock 2D physics, side-scroller Character (idle / walk / jump cells or flipbooks), orthographic Camera.
 Graphics: sky reflections without cubemaps, auto exposure, a default look without a volume, sky
 atmosphere from the sun's height.
 Post pass (draw_post, a volume's values or the defaults): SSAO, TAA, depth of field, bloom, ACES,
@@ -175,11 +183,24 @@ Look / Orbit Bone / Ride Bone, Follow Bone), Unreal rigs (UE4 / UE5 detection, r
 live editing in Play (`PlaySession::apply_live_edits`: Character, bodies, gravity, input assets) and self-saving data assets,
 crash reports for abort / std::terminate with a symbolised stack in the log, Mouse 4 / 5 back and forward.
 LSD Assistant (`editor/assistant.*` UI + curl worker, `editor/assistant_core.*` requests / replies, tested in editor_tests):
-Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), studio roles, project context, writes into Content/ / Source/.
+Tools > LSD Assistant, the user's own model (Anthropic or OpenAI-compatible), streamed replies with Stop, code-only roles (Cube / Sphere placeholders,
+never art), tools (console, lua, objects, assets, log, read / write code files; Off / Ask / Allowed), Lessons (`editor/assistant_lessons.*`:
+Gun on a hand socket), project context, `assistant.Ask` / `assistant.Lesson`.
 Motion Matching (`engine/animation/motion_matching.*`): Character > Motion Matching; databases built in `AnimationPlayer::motion_for`.
+State Machine window for AnimGraphs (`editor/anim_graph_editor.*`, double-click the asset). Montages and root motion (`lsd.play_montage`, Play / Stop Montage nodes, `Pose::layer` / `strip_root`, `on_montage_ended`), `lsd.camera_forward`.
+Rigged glTF / GLB (`import_skinned_gltf` / `import_clips_gltf` in `engine/animation/src/animation.cpp`, cgltf) and take trims (.meta `clip_ranges`, `anim::ClipTrim`; Mesh Editor > Animations: preview, scrub, Trim). SkeletalMesh::root_motion (`AnimationPlayer::step_root_motion`, `Pose::strip_root` from `SkinnedModel::motion_root`), animation curves (.meta `curve_keys`, `asset::curve_value`, `lsd.anim_curve`).
+Post: Color Grading LUT, camera motion blur, contact shadows (Directional Light). Reflection Captures (`engine/render/reflection.*`, Build >
+Build Reflection Captures). Masked materials cast cut-out shadows (`rhi::ShadowCutout`). CPU occlusion culling (`engine/render/occlusion.*`,
+`r.OcclusionCulling`). Also skeletal meshes and each ISM copy. Texture compression: colour maps BC1 / BC3, normal maps BC5 (Z rebuilt
+in the shader), once into DerivedData/Textures (`asset::load_texture_cached`). Material > Emissive Texture (t8; D3D12's t3..t7 are one
+table written into a 64-entry descriptor ring). Local-light shadow caching (`r.ShadowCaching`, tiles kept while their casters hash the same).
+Motion Matching pose-search debugger (Details > Pose search candidates, `anim::motion_candidates`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.
 The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).
 Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become
 `M_<mat>` with their maps copied / packed (ORM, opacity in alpha) into `<mesh>/Textures`, set on the mesh's Material Slots
 (.meta `material_slots`); Skeletal Meshes draw per section with per-object `material_overrides`.
-Later (see BACKLOG, partial items): lightmap textures, remote console to other machines, Perforce /
-LFS locking, UI resize handles and data bindings, per-mesh LOD screen sizes.
+Lightmaps: Build Lighting charts every static mesh into one atlas (xatlas, World Settings > Lightmap Resolution) and bakes the sky,
+one bounce and the sun's visibility per texel; each lightmapped object is drawn from a copy of its mesh (MeshVertex::lightmap_uv,
+"Lightmap:<n>" in the mesh cache), the lit shader reads t7 / unit 7 (LightSetup::lightmap_info).
+Later (see BACKLOG, partial items): remote console to other machines, Perforce /
+LFS locking, per-mesh LOD screen sizes.

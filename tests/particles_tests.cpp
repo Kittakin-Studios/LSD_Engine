@@ -90,10 +90,60 @@ static void test_ribbon(Allocator& heap) {
     CHECK(vertices[0].position[0] < vertices[2].position[0]);  // oldest (smaller X) first
 }
 
+// Module toggles (Niagara's checkboxes): a switched-off module runs as if it were not there; its settings stay.
+static void test_modules(Allocator& heap) {
+    particles::ParticleSystem system;
+    system.emitters.count = 1;
+    particles::ParticleEmitter& e = system.emitters[0];
+    e.burst = 1;
+    e.spawn_rate = 0.0f;
+    e.lifetime_min = e.lifetime_max = 100.0f;
+    e.speed_min = e.speed_max = 0.0f;
+    e.gravity_scale = 1.0f;
+    e.color_start = {1, 0, 0, 1};
+    e.color_end = {0, 0, 1, 0};
+    e.disabled_modules = particles::kModuleForces | particles::kModuleColor;
+    particles::ParticleInstance fx(heap);
+    for (int i = 0; i < 60; ++i) fx.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, i == 0);
+    CHECK(fx.count(0) == 1 && std::fabs(fx.particles(0)[0].position.z - 2.0f) < 1e-4f);  // no gravity
+    const LinearColor c = particles::color_at(particles::active_modules(e), 0.9f);
+    CHECK(c.r == 1.0f && c.b == 0.0f && c.a == 1.0f);  // the start colour all its life
+    CHECK(e.gravity_scale == 1.0f && e.color_end.b == 1.0f);  // the settings are kept
+    e.disabled_modules = 0;
+    for (int i = 0; i < 60; ++i) fx.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, false);
+    CHECK(fx.particles(0)[0].position.z < 1.0f);  // back on: it falls
+    Vec3 lo, hi;
+    CHECK(fx.bounds(lo, hi) && lo.z == hi.z && lo.z < 1.0f);  // one particle: a point box
+    // Scalability: an emitter asking for Epic spawns nothing at High.
+    e.min_quality = 3;
+    particles::set_effects_quality(2);
+    particles::ParticleInstance scaled(heap);
+    for (int i = 0; i < 10; ++i) scaled.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, i == 0);
+    CHECK(scaled.count(0) == 0 && !scaled.bounds(lo, hi));
+    particles::set_effects_quality(3);
+    particles::ParticleInstance epic(heap);
+    epic.update(system, translation({0, 0, 2}), 1.0f / 60.0f, 9.81f, true);
+    CHECK(epic.count(0) == 1);
+}
+
+// Height fog on particles: none up close, more with distance, thinner higher up, capped by max opacity.
+static void test_fog() {
+    const f32 fog[4] = {0.05f, 0.2f, 0.0f, 0.9f};
+    const Vec3 eye{0, 0, 1};
+    const f32 near = particles::fog_amount(fog, 0.0f, eye, {2, 0, 1}), far = particles::fog_amount(fog, 0.0f, eye, {100, 0, 1});
+    CHECK(near > 0.0f && near < 0.2f && far > near && far <= 0.9f + 1e-6f);
+    CHECK(particles::fog_amount(fog, 0.0f, eye, {50, 0, 30}) < particles::fog_amount(fog, 0.0f, eye, {50, 0, 1}));  // up in thinner air
+    CHECK(particles::fog_amount(fog, 10.0f, eye, {5, 0, 1}) == 0.0f);  // nearer than the start distance
+    const f32 none[4] = {0.05f, 0.2f, 0.0f, 0.0f};
+    CHECK(particles::fog_amount(none, 0.0f, eye, {100, 0, 1}) == 0.0f);  // no fog in the level
+}
+
 int main() {
     Allocator& heap = default_allocator();
     test_collision(heap);
     test_ribbon(heap);
+    test_modules(heap);
+    test_fog();
     particles::ParticleSystem system;
     system.emitters.count = 1;
     particles::ParticleEmitter& e = system.emitters[0];

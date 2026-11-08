@@ -27,6 +27,7 @@ struct MeshPart {
     char orm_texture[128] = "";  // glTF's metallic-roughness map (G roughness, B metallic, as our ORM)
     // The node's place in engine space (before the import scale: multiply `position` by it).
     Vec3 position, rotation, scale = {1, 1, 1};  // rotation: Euler degrees, as Transform
+    char node_path[192] = "";  // the node and its parents' names from the top, "/" between ("House/Door/Leaf")
 };
 
 // Reads a source file, converts to engine space (Z up, right-handed, metres), applies `scale`,
@@ -62,7 +63,7 @@ MeshBounds compute_bounds(const render::MeshData& mesh);
 // A simpler version of the mesh for distant LODs (Unreal's auto LOD reduction): about `ratio` of the
 // triangles, sharing the mesh's vertices. Writes into `out` (room for mesh.index_count) and returns
 // its index count; UV seams and borders are kept where they are.
-u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out);
+u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out, bool lock_border = false);  // lock_border: the open edges stay (tiles meet)
 
 // Compiled mesh (.lsdmesh): header + vertices + indices, loaded straight into GPU buffers.
 // The header records what it was built from so stale files are rebuilt automatically.

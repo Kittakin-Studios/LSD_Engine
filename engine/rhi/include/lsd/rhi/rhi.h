@@ -42,7 +42,16 @@ struct MaterialShaderTag {};
 using MaterialShaderHandle = Handle<MaterialShaderTag>;
 enum class BufferUsage : u8 { Vertex, Index };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
-enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB };
+// BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
+// BC5: two channels (a normal map's X and Y; it reads back Z = 0 and the shader rebuilds it), 16 bytes a block.
+enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB, BC5 };
+inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1; }
+inline bool is_srgb(TextureFormat f) { return f == TextureFormat::RGBA8_sRGB || f == TextureFormat::BC1_sRGB || f == TextureFormat::BC3_sRGB; }
+// The bytes of one mip `w` x `h` (blocks round up: a 2x2 mip is one block).
+inline u64 texture_bytes(TextureFormat f, u32 w, u32 h) {
+    if (!is_block_compressed(f)) return static_cast<u64>(w) * h * 4;
+    return static_cast<u64>((w + 3) / 4) * ((h + 3) / 4) * (f == TextureFormat::BC1 || f == TextureFormat::BC1_sRGB ? 8 : 16);
+}
 constexpr u32 kMaxMips = 16;
 
 // Vertex formats of the built-in pipelines.
@@ -50,6 +59,9 @@ struct MeshVertex {
     f32 position[3];
     f32 normal[3];
     f32 uv[2];
+    // The lightmap's UV, already in the level's lightmap atlas (Build Lighting writes a copy of each
+    // lightmapped object's mesh with it); (0, 0) everywhere = no lightmap.
+    f32 lightmap_uv[2] = {};
 };
 // Skinned meshes: up to 4 joints per vertex, weights as bytes summing to 255.
 struct SkinnedVertex {
@@ -107,9 +119,10 @@ struct MeshDraw {
     TextureHandle base_color_texture;
     TextureHandle normal_texture;
     TextureHandle orm_texture;
+    TextureHandle emissive_texture;  // multiplies `emissive` (white when invalid)
     bool unlit = false;      // colour only, no lighting (Unlit view mode)
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
-    u32 debug_view = 0;      // 2 = world normals as colour, 3 = lighting only (grey surfaces), 4 = overdraw; 0 = lit
+    u32 debug_view = 0;      // 2 = world normals as colour, 3 = lighting only (grey surfaces), 4 = overdraw, 5 = lightmap density; 0 = lit
     // 0 opaque; 1 translucent (alpha blended, no depth write: draw after opaque, far to near); 2 additive
     // (glows, fire); 3 overdraw (additive, no depth test: the Overdraw view mode).
     u32 blend = 0;
@@ -120,8 +133,8 @@ struct MeshDraw {
     const f32* joint_rows = nullptr;
     u32 joint_count = 0;
     // Material Graph: when valid, its code shades the surface (colour is a tint on its base colour;
-    // metallic / roughness / emissive above are unused) and base_color / normal / orm_texture are its
-    // textures 0 / 1 / 2. `time` feeds its Time node.
+    // metallic / roughness / emissive above are unused) and base_color / normal / orm / emissive_texture are its
+    // textures 0 / 1 / 2 / 3. `time` feeds its Time node.
     MaterialShaderHandle material_shader;
     f32 time = 0.0f;
     const f32* material_params = nullptr;  // its parameters, 4 floats each (copied; unset ones are 0)
@@ -152,7 +165,8 @@ constexpr u32 kMaxMaterialParams = 16;
 // Lights for the lit-mesh pipeline, in physical units already converted to radiance by the caller:
 // colour = linear colour x intensity (lux for directional; candela, i.e. lumens / 4 pi, for point
 // and spot). The shader multiplies everything by `exposure` and encodes to sRGB.
-enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2 };
+// Rect / Disc: area lights facing `direction` (rect: spot_inner_cos x spot_outer_cos metres; disc: radius spot_inner_cos).
+enum class LightType : u32 { Directional = 0, Point = 1, Spot = 2, Rect = 3, Disc = 4 };
 constexpr u32 kMaxLights = 16;
 constexpr u32 kMaxShadowTiles = 16;
 constexpr u32 kMaxProbes = 512;  // baked light probes (Build Lighting) in one grid
@@ -167,8 +181,10 @@ struct GpuLight {
     f32 spot_outer_cos;
     f32 shadow_tile;     // first tile in the local shadow atlas (point lights use 6: +X -X +Y -Y +Z -Z), -1 = none
     f32 shadow_offset;   // normal offset per metre of distance (texel size grows with distance)
-    f32 pad;
+    f32 source_radius;   // point / spot: a sphere light's radius (soft, wide highlights); 0 = a point
 };
+constexpr u32 kMaxReflectionProbes = 8;  // reflection captures in the atlas (render::kMaxReflections)
+
 struct LightSetup {
     f32 exposure = 1.0f;
     u32 count = 0;
@@ -213,14 +229,36 @@ struct LightSetup {
     // tint (rgb, a = opacity).
     f32 decal_info[4] = {};
     f32 decals[kMaxDecals * 5][4] = {};
+    // Reflection captures (set_reflection_atlas): reflection_info.x = how many; each capture's
+    // position (xyz) and radius (w), in atlas tile order. A pixel inside one reflects its tile.
+    f32 reflection_info[4] = {};
+    f32 reflections[kMaxReflectionProbes][4] = {};
+    // Lightmaps (set_lightmap_atlas): x = how bright a stored 1 is (texels hold c / (1 + c), c in units
+    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker).
+    // Its RGB replaces the ambient light, A is the sun's baked visibility.
+    f32 lightmap_info[4] = {};
+    // Volumetric fog (Height Fog > Volumetric): x = strength (0: off), y = anisotropy (-0.9..0.9, how
+    // much light scatters forward), z = how far the march reaches (m), w = steps. The fog is marched
+    // toward each surface through the sun's shadow: lit where the sun reaches it, dark in shadow.
+    f32 volumetric[4] = {};
+    // Box reflection captures (in reflections' order): half size xyz (world axes), w = the fade-in distance;
+    // w = 0: a sphere capture.
+    f32 reflection_boxes[kMaxReflectionProbes][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
 // LightSetup.output on, adds bloom, tonemaps and grades, smooths edges (FXAA), and writes the
 // result into `viewport` of the window.
+// A Masked material in the shadow passes (draw_shadow_caster): leaves and fences cast their cut-out shape.
+struct ShadowCutout {
+    TextureHandle texture;  // the base colour texture (its alpha)
+    f32 cutoff = 0.5f;
+    f32 alpha = 1.0f;       // the tint's alpha
+};
+
 struct PostDraw {
     TextureHandle scene;
     f32 viewport[4] = {};          // window pixels
@@ -231,6 +269,19 @@ struct PostDraw {
     f32 saturation = 1.0f;
     f32 contrast = 1.0f;
     f32 vignette = 0.0f;
+    // Color Grading LUT (256 x 16, Unreal's layout), applied last in display colours; invalid = none.
+    // A data texture (not sRGB): its values are the display colours themselves.
+    TextureHandle color_lut;
+    f32 lut_intensity = 0.0f;
+    // Motion blur from the camera's movement (needs `reproject` and a perspective view): each pixel is
+    // smeared along where it moved on screen since the last frame, times `motion_blur` (0 = off), at most
+    // `motion_blur_max` of the screen's width. shortcut: the camera's motion only; objects moving by
+    // themselves need motion vectors (also wanted by TAA).
+    f32 motion_blur = 0.0f;
+    f32 motion_blur_max = 0.05f;
+    // Contact shadows: xyz toward the sun in view space (normalised), w = ray length in metres (0 = off).
+    // Marched through the scene's depth with the AO pass and multiplied into its result.
+    f32 contact_shadow[4] = {};
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
@@ -323,9 +374,12 @@ public:
     // to the window. set_shadow_map binds the sun's and the local lights' atlases for the following
     // draw_mesh calls (the lights say which tiles they use); begin_frame unbinds them.
     virtual TextureHandle create_shadow_map(u32 size) = 0;
-    virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
+    // `clear` false keeps what the atlas holds (cached tiles); clear_shadow_viewport then clears just the tile redrawn.
+    virtual void begin_shadow_pass(TextureHandle shadow_map, bool clear = true) = 0;
+    virtual void clear_shadow_viewport() = 0;  // depth back to far inside the current viewport (in a shadow pass)
+    // `cutout`: a Masked material's shadow, its base colour texture's alpha (times `alpha`) below `cutoff` casts none.
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
-                                    const f32* joint_rows = nullptr, u32 joint_count = 0) = 0;  // joints: a skinned caster
+                                    const f32* joint_rows = nullptr, u32 joint_count = 0, const struct ShadowCutout* cutout = nullptr) = 0;  // joints: a skinned caster
     // Many copies of one caster in one call: `rows` holds each copy's world matrix as 3 rows (12 floats);
     // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it.
     virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) = 0;
@@ -333,6 +387,10 @@ public:
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     // The decal atlas the LightSetup's decal rectangles point into (an sRGB texture); for draw_mesh.
     virtual void set_decal_atlas(TextureHandle atlas) = 0;
+    // The reflection captures' atlas (render/reflection.h: lat-long tiles, mipmapped); invalid = none.
+    virtual void set_reflection_atlas(TextureHandle atlas) = 0;
+    // The level's lightmap atlas (Build Lighting; RGBA8, see LightSetup::lightmap_info); invalid = none.
+    virtual void set_lightmap_atlas(TextureHandle atlas) = 0;
     virtual void draw_mesh(const MeshDraw& draw) = 0;
     // Material Graph code (lsd/script/material_graph.h: `Surface material_main(MaterialIn mi)`) built
     // into the lit-mesh pipelines, static and skinned. Invalid if it does not compile (the shader
@@ -357,7 +415,11 @@ public:
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
     // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
     // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.
-    virtual void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) = 0;
+    // `soft` (Niagara's soft particles; null = off): x the fade distance in metres, y / z the projection's [2][2] / [2][3],
+    // w 1 when orthographic. Sprites fade out as they near what is behind them, while drawing into a render target
+    // (its depth is read: the scene target); elsewhere they draw hard as before.
+    virtual void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive,
+                                const f32* soft = nullptr) = 0;
     virtual void draw_test_triangle(f32 scale, f32 rotation_radians) = 0;
     virtual void end_frame() = 0;  // presents
     // GPU timings (stat dump): a timestamp at `slot` in this frame's GPU work; gpu_timings gives the
@@ -380,6 +442,8 @@ public:
     virtual u64 debug_ui_texture(TextureHandle texture) = 0;
     // True when render targets come out upside down in ImGui (OpenGL): flip the UVs.
     virtual bool render_targets_flipped() const { return false; }
+    // BC1 / BC3 textures can be created (D3D12 always; Vulkan with textureCompressionBC; OpenGL with S3TC).
+    virtual bool supports_bc() const { return false; }
     // MeshDraw::gpu_cull works (compute shaders and indirect draws); else such draws draw every instance.
     virtual bool supports_gpu_culling() const { return false; }
 };

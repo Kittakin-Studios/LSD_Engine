@@ -6,6 +6,13 @@
 
 namespace lsd::particles {
 
+namespace {
+f32 g_spawn_scale = 1.0f;
+}
+void set_spawn_scale(f32 scale) { g_spawn_scale = scale > 0.0f ? scale : 0.0f; }
+u32 g_effects_quality = 3;
+void set_effects_quality(u32 quality) { g_effects_quality = quality; }
+
 ParticleInstance::~ParticleInstance() {
     for (Emitter& e : emitters_) {
         if (e.particles) allocator_.deallocate(e.particles);
@@ -70,12 +77,12 @@ void ParticleInstance::spawn(const ParticleEmitter& e, Emitter& s, const Mat4& w
 void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f32 dt, f32 gravity, bool emitting, ParticleCollider* collider) {
     for (u32 i = 0; i < kMaxEmitters; ++i) {
         Emitter& s = emitters_[i];
-        if (i >= system.emitters.count || !system.emitters[i].enabled) {
+        if (i >= system.emitters.count || !system.emitters[i].enabled || system.emitters[i].min_quality > g_effects_quality) {
             s.count = 0;
             s.done = true;
             continue;
         }
-        const ParticleEmitter& e = system.emitters[i];
+        const ParticleEmitter e = active_modules(system.emitters[i]);
         const u32 wanted = e.max_particles < 1 ? 1 : e.max_particles > kMaxParticles ? kMaxParticles : e.max_particles;
         if (s.capacity != wanted) {  // first use, or Max Particles edited: keep what fits
             auto* fresh = static_cast<Particle*>(allocator_.allocate(sizeof(Particle) * wanted, alignof(Particle)));
@@ -130,10 +137,11 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
         // Spawn: the burst at each start, then the rate.
         if (!emitting || s.done) continue;
         if (!s.burst_done) {
-            for (u32 b = 0; b < e.burst; ++b) spawn(e, s, world);
+            const u32 burst = e.burst ? static_cast<u32>(std::lround(static_cast<f32>(e.burst) * g_spawn_scale)) : 0u;
+            for (u32 b = 0; b < (e.burst && !burst ? 1u : burst); ++b) spawn(e, s, world);  // a burst keeps at least one
             s.burst_done = true;
         }
-        s.spawn_carry += e.spawn_rate * dt;
+        s.spawn_carry += e.spawn_rate * g_spawn_scale * dt;
         while (s.spawn_carry >= 1.0f) {
             spawn(e, s, world);
             s.spawn_carry -= 1.0f;
@@ -168,6 +176,50 @@ void bracket(const List<Key, N>& keys, f32 t, u32& a, u32& b, f32& blend) {
 
 } // namespace
 
+f32 fog_amount(const f32 fog[4], f32 start, Vec3 eye, Vec3 p) {
+    if (fog[3] <= 0.0f) return 0.0f;
+    const f32 d = std::fmax(length(p - eye) - start, 0.0f);
+    const f32 h0 = eye.z - fog[2], h1 = p.z - fog[2], dh = h1 - h0;
+    const f32 ray = std::fabs(dh * fog[1]) > 1e-4f ? (std::exp(-fog[1] * h0) - std::exp(-fog[1] * h1)) / (fog[1] * dh) : std::exp(-fog[1] * h0);
+    return std::fmin(1.0f - std::exp(-fog[0] * d * ray), fog[3]);
+}
+
+bool ParticleInstance::bounds(Vec3& lo, Vec3& hi) const {
+    bool any = false;
+    for (u32 i = 0; i < kMaxEmitters; ++i) {
+        for (u32 k = 0; k < emitters_[i].count; ++k) {
+            const Vec3 p = emitters_[i].particles[k].position;
+            lo = any ? vmin(lo, p) : p;
+            hi = any ? vmax(hi, p) : p;
+            any = true;
+        }
+    }
+    return any;
+}
+
+ParticleEmitter active_modules(const ParticleEmitter& in) {
+    ParticleEmitter e = in;
+    const u32 off = in.disabled_modules;
+    if (off & kModuleShape) e.shape = 0;
+    if (off & kModuleVelocity) e.speed_min = e.speed_max = 0.0f;
+    if (off & kModuleForces) {
+        e.gravity_scale = e.drag = 0.0f;
+        e.acceleration = {};
+    }
+    if (off & kModuleColor) {
+        e.color_end = e.color_start;
+        e.color_over_life.count = 0;
+    }
+    if (off & kModuleSize) {
+        e.size_end = e.size_start;
+        e.size_over_life.count = 0;
+    }
+    if (off & kModuleRotation) e.spin = 0.0f;
+    if (off & kModuleOverLife) e.size_over_life.count = e.color_over_life.count = 0;
+    if (off & kModuleCollision) e.collision = 0;
+    return e;
+}
+
 f32 size_at(const ParticleEmitter& e, f32 t) {
     if (e.size_over_life.count == 0) return e.size_start + (e.size_end - e.size_start) * t;
     u32 a, b;
@@ -191,7 +243,7 @@ LinearColor color_at(const ParticleEmitter& e, f32 t) {
 u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, Vec3 right, Vec3 up,
                                     rhi::ParticleVertex* out, u32 capacity) const {
     if (emitter >= system.emitters.count || emitter >= kMaxEmitters) return 0;
-    const ParticleEmitter& e = system.emitters[emitter];
+    const ParticleEmitter e = active_modules(system.emitters[emitter]);
     const Emitter& s = emitters_[emitter];
     u32 n = s.count < capacity / 6 ? s.count : capacity / 6;
     if (!n) return 0;
@@ -231,7 +283,7 @@ u32 ParticleInstance::build_sprites(const ParticleSystem& system, u32 emitter, c
 
 u32 ParticleInstance::build_ribbon(const ParticleSystem& system, u32 emitter, const Mat4& world, Vec3 eye, rhi::ParticleVertex* out, u32 capacity) const {
     if (emitter >= system.emitters.count || emitter >= kMaxEmitters) return 0;
-    const ParticleEmitter& e = system.emitters[emitter];
+    const ParticleEmitter e = active_modules(system.emitters[emitter]);
     const Emitter& s = emitters_[emitter];
     if (s.count < 2) return 0;
     // Oldest first: the trail runs from where it was to where it is now.

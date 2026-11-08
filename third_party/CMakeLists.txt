@@ -223,6 +223,17 @@ FetchContent_Declare(stb
 FetchContent_MakeAvailable(stb)
 set(LSD_STB_DIR ${stb_SOURCE_DIR} PARENT_SCOPE)
 
+# tinyexr (BSD-3): OpenEXR decoding for texture import, inflating through stb's zlib (no miniz).
+# Fetch only: engine/asset compiles the implementation next to stb's.
+FetchContent_Declare(tinyexr
+  GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
+  GIT_TAG v1.0.12
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(tinyexr)
+set(LSD_TINYEXR_DIR ${tinyexr_SOURCE_DIR} PARENT_SCOPE)
+
 # ozz-animation (MIT): skeletons, compressed animations, sampling / blending / IK jobs. Runtime +
 # offline builder libraries only; our importer feeds the offline builders from ufbx.
 set(ozz_build_tools OFF CACHE BOOL "" FORCE)
@@ -343,6 +354,56 @@ if(MSVC)
   target_compile_options(enet PRIVATE /w)
 else()
   target_compile_options(enet PRIVATE -w)
+endif()
+
+# miniupnpc (BSD-3-Clause): asks the router to open the game's port (UPnP) and reads the public
+# address, so playtesters can host without port forwarding (engine/net). Built from its C sources.
+FetchContent_Declare(miniupnpc
+  GIT_REPOSITORY https://github.com/miniupnp/miniupnp.git
+  GIT_TAG miniupnpc_2_2_8
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(miniupnpc)
+set(MINIUPNPC_DIR ${miniupnpc_SOURCE_DIR}/miniupnpc)
+set(LSD_SAVED_PROJECT_VERSION "${PROJECT_VERSION}")  # the template reads PROJECT_VERSION
+set(PROJECT_VERSION 2.2.8)
+configure_file(${MINIUPNPC_DIR}/miniupnpcstrings.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc/miniupnpcstrings.h)
+set(PROJECT_VERSION "${LSD_SAVED_PROJECT_VERSION}")
+add_library(miniupnpc STATIC
+  ${MINIUPNPC_DIR}/src/igd_desc_parse.c ${MINIUPNPC_DIR}/src/miniupnpc.c ${MINIUPNPC_DIR}/src/minixml.c ${MINIUPNPC_DIR}/src/minisoap.c
+  ${MINIUPNPC_DIR}/src/minissdpc.c ${MINIUPNPC_DIR}/src/miniwget.c ${MINIUPNPC_DIR}/src/upnpcommands.c ${MINIUPNPC_DIR}/src/upnpdev.c
+  ${MINIUPNPC_DIR}/src/upnpreplyparse.c ${MINIUPNPC_DIR}/src/upnperrors.c ${MINIUPNPC_DIR}/src/connecthostport.c
+  ${MINIUPNPC_DIR}/src/portlistingparse.c ${MINIUPNPC_DIR}/src/receivedata.c ${MINIUPNPC_DIR}/src/addr_is_reserved.c)
+target_include_directories(miniupnpc SYSTEM PUBLIC ${MINIUPNPC_DIR}/include)
+target_include_directories(miniupnpc PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc)
+target_compile_definitions(miniupnpc PUBLIC MINIUPNP_STATICLIB)
+if(WIN32)
+  target_compile_definitions(miniupnpc PRIVATE _CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS _WIN32_WINNT=0x0601)
+  target_link_libraries(miniupnpc PUBLIC ws2_32 iphlpapi)
+else()
+  target_compile_definitions(miniupnpc PRIVATE MINIUPNPC_SET_SOCKET_TIMEOUT MINIUPNPC_GET_SRC_ADDR _BSD_SOURCE _DEFAULT_SOURCE)
+endif()
+if(MSVC)
+  target_compile_options(miniupnpc PRIVATE /w)
+else()
+  target_compile_options(miniupnpc PRIVATE -w)
+endif()
+
+# xatlas (MIT): lightmap UVs for Build Lighting (charts every lightmapped object and packs them into
+# one atlas). One .cpp, built here; pinned to a commit (the repository has no release tags).
+FetchContent_Declare(xatlas
+  GIT_REPOSITORY https://github.com/jpcy/xatlas.git
+  GIT_TAG f700c7790aaa030e794b52ba7791a05c085faf0c
+  SOURCE_SUBDIR do-not-configure
+)
+FetchContent_MakeAvailable(xatlas)
+add_library(xatlas STATIC ${xatlas_SOURCE_DIR}/source/xatlas/xatlas.cpp)
+target_include_directories(xatlas SYSTEM PUBLIC ${xatlas_SOURCE_DIR}/source/xatlas)
+if(MSVC)
+  target_compile_options(xatlas PRIVATE /w)
+else()
+  target_compile_options(xatlas PRIVATE -w)
 endif()
 
 # Opus (BSD-3-Clause): the voice chat codec (engine/net/voice). Its own CMake, library only.

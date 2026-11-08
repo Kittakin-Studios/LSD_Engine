@@ -1057,6 +1057,55 @@ static void test_material_graph() {
     Graph s(default_allocator());
     const u32 dt = s.add("OnUpdate", 0, 0)->id, pos = s.add("SetPosition", 200, 0)->id;
     CHECK(!s.connect(dt, 1, pos, 1));
+
+    // Material Functions: a graph ending in a Function Output, called by name and compiled in place.
+    Graph fn(default_allocator());
+    GraphNode* in_a = fn.add("MatFunctionInput", 0, 0);
+    std::snprintf(in_a->values[0], sizeof in_a->values[0], "A");
+    const u32 in_a_id = in_a->id;
+    const u32 twice = fn.add("MatMultiply", 200, 0)->id;
+    GraphNode* fn_out = fn.add("MatFunctionOutput", 400, 0);
+    const u32 fn_out_id = fn_out->id;
+    CHECK(fn.connect(in_a_id, 0, twice, 0) && fn.connect(twice, 0, fn_out_id, 0));
+    std::snprintf(fn.find(twice)->values[1], sizeof fn.find(twice)->values[1], "2,2,2");
+    CHECK(compile_material_graph(fn, code, error, sizeof error) && std::strstr(code.code.data(), "s.base_color"));  // a function previews alone
+    static std::string fn_path;
+    fn_path = (std::filesystem::temp_directory_path() / "MF_Double.lsdmatgraph").string();
+    CHECK(save_graph_file(fn, fn_path.c_str()));
+    Graph user(default_allocator());
+    const u32 user_out = user.add("MatOutput", 400, 0)->id;
+    GraphNode* call = user.add("MatFunctionCall", 200, 0);
+    std::snprintf(call->values[0], sizeof call->values[0], "MF_Double");
+    std::snprintf(call->values[1], sizeof call->values[1], "0.25,0.5,0.125");
+    const u32 call_id = call->id;
+    CHECK(user.connect(call_id, 0, user_out, 0));
+    CHECK(!compile_material_graph(user, code, error, sizeof error) && std::strstr(error, "Material Function"));  // nothing finds it yet
+    set_material_function_resolver([](void*, const char* name, char* path, usize capacity) {
+        if (std::strcmp(name, "MF_Double") != 0) return false;
+        std::snprintf(path, capacity, "%s", fn_path.c_str());
+        return true;
+    }, nullptr);
+    CHECK(compile_material_graph(user, code, error, sizeof error));
+    CHECK(std::strstr(code.code.data(), "float3(0.25, 0.5, 0.125)") && std::strstr(code.code.data(), "float3(2.0, 2.0, 2.0)"));
+    char base[64];
+    std::snprintf(base, sizeof base, "s.base_color = v%u_0;", call_id);
+    CHECK(std::strstr(code.code.data(), base));
+    set_material_function_resolver(nullptr, nullptr);
+    std::filesystem::remove(fn_path);
+
+    // Shader assets: the code as written, its texture / parameter / blend lines read.
+    const char shader[] = "// texture: T_Rock color\n// texture: T_Rock_N normal\n// param: Tint 1, 0.5, 0.25\n// param: Speed 2\n// blend: translucent\n"
+                          "Surface material_main(MaterialIn mi) { Surface s; return s; }\n";
+    CHECK(parse_shader_source(shader, code, error, sizeof error));
+    CHECK(code.texture_count == 2 && code.textures[0].srgb && !code.textures[1].srgb && std::strcmp(code.textures[1].name, "T_Rock_N") == 0);
+    CHECK(code.param_count == 2 && code.params[0].vector && code.params[0].value[2] == 0.25f && !code.params[1].vector && code.params[1].value[1] == 2.0f);
+    CHECK(code.blend_mode == 2 && std::strcmp(code.code.data(), shader) == 0);
+    CHECK(!parse_shader_source("float4 main() { return 1; }", code, error, sizeof error) && std::strstr(error, "material_main"));
+    // Four textures fit (the fourth in the emissive slot); a fifth does not.
+    CHECK(parse_shader_source("// texture: A color\n// texture: B normal\n// texture: C data\n// texture: D color\nSurface material_main(MaterialIn mi) { Surface s; return s; }\n",
+                              code, error, sizeof error) && code.texture_count == 4);
+    CHECK(!parse_shader_source("// texture: A color\n// texture: B color\n// texture: C color\n// texture: D color\n// texture: E color\nSurface material_main(MaterialIn mi) { Surface s; return s; }\n",
+                               code, error, sizeof error) && std::strstr(error, "More than 4"));
 }
 
 static void test_data_table() {
@@ -1135,6 +1184,16 @@ assert(s.score == 1250.5 and s.name == "Ana \"Q\"\nline" and s.alive == true)
 assert(#s.items == 3 and s.items[1] == "sword" and s.items[3] == 3 and s.pos.y == -2)
 assert(not pcall(lsd.save_game, "Slot2", {f = print}))
 assert(lsd.delete_save("Slot1") and not lsd.has_save("Slot1"))
+-- Versions (the game's save format): given or 1; old saves upgrade by it. Background saves land before a load.
+assert(lsd.save_game("Slot3", {coins = 5}, 3))
+local d, v = lsd.load_game("Slot3")
+assert(d.coins == 5 and v == 3, tostring(v))
+assert(lsd.save_game("Slot3", {coins = 6}))
+assert(select(2, lsd.load_game("Slot3")) == 1)
+for i = 1, 20 do assert(lsd.save_game_async("Slot3", {coins = i, big = string.rep("x", 20000)}, 2)) end
+d, v = lsd.load_game("Slot3")
+assert(d.coins == 20 and v == 2, tostring(d.coins))
+assert(lsd.delete_save("Slot3"))
 )"));
         // Whole objects: Transform and a chosen component back on the objects by name; extra rides along.
         const world::Entity crate = w.create("Crate");
@@ -1383,6 +1442,16 @@ id = lsd.every(0.1, function() many = many + 1; if many == 3 then lsd.cancel(id)
         scripts.send(mover, "on_overlap_begin", target);
         scripts.send(mover, "on_not_defined", target);  // fine: scripts need not handle every event
         CHECK(scripts.run("assert(hit == 'Target', hit)") && w.get<Transform>(mover)->position.x == 0.0f);
+        // Damage (Unreal's Apply Damage / Event AnyDamage): on_damage(self, amount, instigator).
+        write(kMover, "function on_damage(self, amount, by) _G.hurt = amount; _G.by = by and lsd.name(by) end\n");
+        std::filesystem::last_write_time(kMover, std::filesystem::last_write_time(kMover) + std::chrono::seconds(12));
+        scripts.update(0.5f);
+        CHECK(scripts.run("lsd.apply_damage(lsd.find('Mover'), 25, lsd.find('Target')) assert(hurt == 25 and by == 'Target', tostring(by))"));
+        CHECK(scripts.run("lsd.apply_damage(lsd.find('Mover'), 5) assert(hurt == 5 and by == nil)"));  // no instigator
+        // Engine-wide UI actions (lsd.on_ui): called once, whatever scripts exist; the built-in menu's handlers are there.
+        CHECK(scripts.run("ui_hits = 0; lsd.on_ui('test_ui_action', function(id) ui_hits = ui_hits + 1; ui_id = id end)"));
+        CHECK(scripts.broadcast("test_ui_action", "play_button") >= 1);
+        CHECK(scripts.run("assert(ui_hits == 1 and ui_id == 'play_button', ui_hits) assert(lsd._ui_actions.__lsd_quality and type(lsd.settings_menu) == 'function')"));
 
         // Spawning: the new object's script starts (its on_overlap_begin is defined, on_start is not: fine).
         write(kMover, "function on_start(self) _G.started = self.name end\n");

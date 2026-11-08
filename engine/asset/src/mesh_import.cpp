@@ -19,7 +19,7 @@ namespace lsd::asset {
 namespace {
 
 constexpr char kMagic[4] = {'L', 'S', 'D', 'M'};
-constexpr u32 kVersion = 1;
+constexpr u32 kVersion = 2;  // 2: MeshVertex gained lightmap_uv
 
 struct CompiledHeader {
     char magic[4];
@@ -73,6 +73,22 @@ ufbx_matrix to_ufbx(const Mat4& m) {
 }
 
 // "Node" or, when the node has several parts, "Node_Material"; `fallback` when the node has no name.
+// "Top/Middle/Node": the names from the scene's top node down to this one (unnamed ones as "Node").
+template <typename NameOf, typename ParentOf, typename Node>
+void node_path(char* out, usize capacity, const Node* node, NameOf name_of, ParentOf parent_of) {
+    const Node* chain[32];
+    u32 n = 0;
+    for (const Node* at = node; at && n < 32; at = parent_of(at)) chain[n++] = at;
+    usize len = 0;
+    out[0] = '\0';
+    while (n-- > 0) {
+        const char* name = name_of(chain[n]);
+        const int wrote = std::snprintf(out + len, capacity - len, "%s%s", len ? "/" : "", name && name[0] ? name : "Node");
+        if (wrote < 0 || static_cast<usize>(wrote) >= capacity - len) return;
+        len += static_cast<usize>(wrote);
+    }
+}
+
 void part_name(MeshPart& part, const char* node, const char* fallback, bool several) {
     const char* base = node && node[0] ? node : fallback;
     if (several && part.material[0]) std::snprintf(part.name, sizeof part.name, "%s_%s", base, part.material);
@@ -96,6 +112,8 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
     opts.target_axes = ufbx_axes_right_handed_z_up;
     opts.target_unit_meters = 1.0f;
     opts.generate_missing_normals = true;
+    opts.obj_axes = ufbx_axes_right_handed_y_up;  // OBJ has no axis info: Y-up in metres, as Blender and Maya write it
+    opts.obj_unit_meters = 1.0f;
     ufbx_error ufbx_err{};
     ufbx_scene* scene = ufbx_load_file(path, &opts, &ufbx_err);
     if (!scene) {
@@ -139,6 +157,8 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
                     texture_file(mat->pbr.normal_map.texture, info.normal_texture, sizeof info.normal_texture);
                 }
                 part_name(info, node->name.data, mesh->name.data, used_parts > 1);
+                node_path(info.node_path, sizeof info.node_path, node, [](const ufbx_node* x) { return x->name.data; },
+                          [](const ufbx_node* x) -> const ufbx_node* { return x->parent && !x->parent->is_root ? x->parent : nullptr; });
                 info.position = placed.position;
                 info.rotation = placed.rotation;
                 info.scale = placed.scale;
@@ -227,6 +247,8 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
                     texture_file(pbr.metallic_roughness_texture.texture, info.orm_texture, sizeof info.orm_texture);
                 }
                 part_name(info, node.name ? node.name : node.mesh->name, "Part", used_parts > 1);
+                node_path(info.node_path, sizeof info.node_path, &node, [](const cgltf_node* x) { return x->name; },
+                          [](const cgltf_node* x) { return x->parent; });
                 info.position = placed.position;
                 info.rotation = placed.rotation;
                 info.scale = placed.scale;
@@ -269,7 +291,7 @@ namespace {
 bool load_source(const char* path, f32 scale, i32 part, Allocator& allocator, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error,
                  usize error_capacity) {
     error[0] = '\0';
-    if (has_extension(path, ".fbx")) return load_fbx(path, scale, part, allocator, soup, parts, error, error_capacity);
+    if (has_extension(path, ".fbx") || has_extension(path, ".obj")) return load_fbx(path, scale, part, allocator, soup, parts, error, error_capacity);  // ufbx reads OBJ too
     if (has_extension(path, ".gltf") || has_extension(path, ".glb")) return load_gltf(path, scale, part, soup, parts, error, error_capacity);
     std::snprintf(error, error_capacity, "Unsupported file type: %s", path);
     return false;
@@ -376,11 +398,11 @@ bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::Mesh
     return true;
 }
 
-u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out) {
+u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out, bool lock_border) {
     const usize target = static_cast<usize>(static_cast<f32>(mesh.index_count) * ratio) / 3 * 3;
     constexpr f32 kMaxError = 0.05f;  // of the mesh's size: a distant LOD may drift this far
     return static_cast<u32>(meshopt_simplify(out, mesh.indices, mesh.index_count, mesh.vertices[0].position, mesh.vertex_count,
-                                             sizeof(rhi::MeshVertex), target, kMaxError, 0, nullptr));
+                                             sizeof(rhi::MeshVertex), target, kMaxError, lock_border ? meshopt_SimplifyLockBorder : 0u, nullptr));
 }
 
 MeshBounds compute_bounds(const render::MeshData& mesh) {

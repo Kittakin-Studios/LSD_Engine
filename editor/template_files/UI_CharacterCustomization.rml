@@ -1,0 +1,79 @@
+<rml>
+<head>
+<title>Character Customization</title>
+<style>
+body { font-family: sans; width: 100%; height: 100%; color: #FFFFFF; }
+div { display: block; }
+#panel { position: absolute; left: 30px; top: 30px; bottom: 30px; width: 560px; padding: 18px 22px;
+         background-color: rgba(13, 4, 4, 215); border: 2px #F3C312; border-radius: 10px; }
+#title { font-size: 34px; font-weight: bold; color: #FFE51A; }
+#hint { font-size: 16px; color: #BBBBBB; margin-bottom: 10px; }
+.tab { display: inline-block; padding: 5px 10px; margin: 0 4px 6px 0; background-color: #3C3838; border-radius: 5px;
+       font-size: 18px; nav: auto; tab-index: auto; focus: auto; }
+.tab:hover, .tab:focus { background-color: #025291; }
+.tab.active { background-color: #F3C312; color: #141414; }
+#tab_title { font-size: 28px; font-weight: bold; color: #EEA70E; margin: 10px 0 8px 0; }
+#content { position: absolute; left: 22px; right: 22px; top: 128px; bottom: 76px; overflow-y: auto; }
+scrollbarvertical { width: 10px; }
+scrollbarvertical sliderbar { background-color: #FFE51A; border-radius: 4px; }
+.row { height: 32px; font-size: 19px; white-space: nowrap; }
+.folder { font-size: 16px; color: #BBBBBB; margin-bottom: 6px; }
+.label { display: inline-block; width: 230px; }
+input.range { display: inline-block; width: 270px; height: 18px; vertical-align: middle; nav: auto; tab-index: auto; focus: auto; }
+input.range slidertrack { height: 6px; margin-top: 6px; background-color: #3C3838; border-radius: 3px; }
+input.range sliderbar { width: 16px; height: 18px; background-color: #F3C312; border-radius: 4px; }
+input.range sliderbar:hover, input.range:focus sliderbar { background-color: #FFE51A; }
+input.range sliderarrowdec, input.range sliderarrowinc { width: 0px; height: 0px; }
+.arrow { display: inline-block; width: 30px; padding: 2px 0; text-align: center; background-color: #025291; border-radius: 4px;
+         nav: auto; tab-index: auto; focus: auto; }
+.arrow:hover, .arrow:focus { background-color: #EEA70E; }
+.slot { display: inline-block; width: 110px; color: #9BE11F; }
+.piece { display: inline-block; width: 300px; padding-left: 10px; overflow: hidden; }
+#empty { font-size: 18px; color: #BBBBBB; }
+#buttons { position: absolute; left: 22px; right: 22px; bottom: 18px; }
+.button { display: inline-block; padding: 8px 16px; margin-right: 8px; background-color: #025291; border-radius: 6px;
+          font-size: 20px; nav: auto; tab-index: auto; focus: auto; }
+.button:hover, .button:focus { background-color: #EEA70E; }
+#status { display: inline-block; color: #9BE11F; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="panel">
+<div id="title">Character</div>
+<div id="hint">Q / E: previous / next tab. Drag the sliders; arrows change clothes.</div>
+<div id="tabs"><button class="tab" id="tab1" onclick="select_tab">Body</button><button class="tab" id="tab2" onclick="select_tab">Head</button><button class="tab" id="tab3" onclick="select_tab">Face</button><button class="tab" id="tab4" onclick="select_tab">Eyes</button><button class="tab" id="tab5" onclick="select_tab">Nose</button><button class="tab" id="tab6" onclick="select_tab">Mouth</button><button class="tab" id="tab7" onclick="select_tab">Ears</button><button class="tab" id="tab8" onclick="select_tab">Clothes</button></div>
+<div id="content">
+<div id="tab_title">Body</div>
+<div id="sliders">
+<div class="row" id="row1"><span class="label" id="label1">-</span><input type="range" id="slider1" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row2"><span class="label" id="label2">-</span><input type="range" id="slider2" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row3"><span class="label" id="label3">-</span><input type="range" id="slider3" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row4"><span class="label" id="label4">-</span><input type="range" id="slider4" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row5"><span class="label" id="label5">-</span><input type="range" id="slider5" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row6"><span class="label" id="label6">-</span><input type="range" id="slider6" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row7"><span class="label" id="label7">-</span><input type="range" id="slider7" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row8"><span class="label" id="label8">-</span><input type="range" id="slider8" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row9"><span class="label" id="label9">-</span><input type="range" id="slider9" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row10"><span class="label" id="label10">-</span><input type="range" id="slider10" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row11"><span class="label" id="label11">-</span><input type="range" id="slider11" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div class="row" id="row12"><span class="label" id="label12">-</span><input type="range" id="slider12" min="0" max="1" step="0.01" value="0" onchange="slider_changed"/></div>
+<div id="empty">No morph targets for this tab. Name the mesh's shape keys after the area (Nose_Width, Eye_Size, Jaw_Wide...).</div>
+</div>
+<div id="clothes" style="display: none;">
+<div class="folder" id="clothes_folder">Clothes come from Content/Characters/Clothes/&lt;area&gt;</div>
+<div class="row"><span class="slot">Hair</span><button class="arrow" id="cprev1" onclick="cloth_prev">&lt;</button><span class="piece" id="cname1">None</span><button class="arrow" id="cnext1" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Hat</span><button class="arrow" id="cprev2" onclick="cloth_prev">&lt;</button><span class="piece" id="cname2">None</span><button class="arrow" id="cnext2" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Glasses</span><button class="arrow" id="cprev3" onclick="cloth_prev">&lt;</button><span class="piece" id="cname3">None</span><button class="arrow" id="cnext3" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Shirt</span><button class="arrow" id="cprev4" onclick="cloth_prev">&lt;</button><span class="piece" id="cname4">None</span><button class="arrow" id="cnext4" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Jacket</span><button class="arrow" id="cprev5" onclick="cloth_prev">&lt;</button><span class="piece" id="cname5">None</span><button class="arrow" id="cnext5" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Gloves</span><button class="arrow" id="cprev6" onclick="cloth_prev">&lt;</button><span class="piece" id="cname6">None</span><button class="arrow" id="cnext6" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Pants</span><button class="arrow" id="cprev7" onclick="cloth_prev">&lt;</button><span class="piece" id="cname7">None</span><button class="arrow" id="cnext7" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Belt</span><button class="arrow" id="cprev8" onclick="cloth_prev">&lt;</button><span class="piece" id="cname8">None</span><button class="arrow" id="cnext8" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Shoes</span><button class="arrow" id="cprev9" onclick="cloth_prev">&lt;</button><span class="piece" id="cname9">None</span><button class="arrow" id="cnext9" onclick="cloth_next">&gt;</button></div>
+<div class="row"><span class="slot">Backpack</span><button class="arrow" id="cprev10" onclick="cloth_prev">&lt;</button><span class="piece" id="cname10">None</span><button class="arrow" id="cnext10" onclick="cloth_next">&gt;</button></div>
+</div>
+</div>
+<div id="buttons"><button class="button" id="back" onclick="prev_tab">Back</button><button class="button" id="next" onclick="next_tab">Next</button><button class="button" id="reset" onclick="reset_appearance">Reset</button><button class="button" id="save" onclick="save_appearance">Save</button><span id="status"></span></div>
+</div>
+</body>
+</rml>

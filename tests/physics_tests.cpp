@@ -240,7 +240,35 @@ static void test_vehicle() {
     w.step(1.0f / 60.0f);
 }
 
+// A one-way platform: the character jumps up through it from below and then stands on its top.
+static void test_one_way() {
+    PhysicsWorld world;
+    world.add_body(box({0, 0, -0.5f}, {20, 20, 0.5f}, Motion::Static));  // floor, top at z = 0
+    BodyDesc slab = box({0, 0, 1.6f}, {3, 3, 0.1f}, Motion::Static);      // a thin platform, top at z = 1.7
+    slab.one_way = true;
+    world.add_body(slab);
+    CharacterDesc desc;
+    desc.feet = {0, 0, 0.05f};
+    world.create_character(desc);
+    for (int i = 0; i < 30; ++i) {
+        world.move_character({}, false, 8.0f, 1.0f / 60.0f);
+        world.step(1.0f / 60.0f);
+    }
+    CHECK(world.character_feet().z < 0.2f);  // stands on the floor, under the platform
+    world.move_character({}, true, 8.0f, 1.0f / 60.0f);  // a jump that clears 1.7 m
+    world.step(1.0f / 60.0f);
+    f32 highest = 0.0f;
+    for (int i = 0; i < 150; ++i) {
+        world.move_character({}, false, 8.0f, 1.0f / 60.0f);
+        world.step(1.0f / 60.0f);
+        highest = world.character_feet().z > highest ? world.character_feet().z : highest;
+    }
+    CHECK(highest > 1.8f);                             // went up through it
+    CHECK(std::fabs(world.character_feet().z - 1.7f) < 0.1f && world.character_on_ground());  // and landed on top
+}
+
 int main() {
+    test_one_way();
     test_vehicle();
     PhysicsWorld world;
     world.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));        // floor, top at z = 0

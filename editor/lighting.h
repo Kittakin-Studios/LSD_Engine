@@ -30,12 +30,34 @@ void set_baked_lighting(const BakedLighting* lighting);
 rhi::LightSetup level_lights(const world::World& world, const LightView& view);
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
+// The local shadow atlas as 8 x 8 cells for Shadow Resolution: a tile is an aligned square 1 (Low), 2 (Medium,
+// the old fixed quarter) or 4 (High) cells across. take() finds a free one (x, y in 0..1); give() frees it.
+struct ShadowCells {
+    bool used[8][8] = {};
+    bool take(u32 side, f32& x, f32& y);
+    void give(f32 x, f32 y, u32 side);
+};
+// Lit particles (Niagara's lit sprite material): what multiplies a particle's colour at `position` whose sprite faces
+// `normal` (towards the camera): the sky / ground ambient plus each light's diffuse, wrapped so light from behind still
+// shows through smoke, times exposure (the same scale the lit meshes write).
+// shortcut: no shadows or baked probes; per vertex on the CPU, fine for hundreds of sprites, a GPU path for thousands
+Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal);
+// The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
+void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count);  // boxes: half size, fade (w 0 = sphere)
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
 // casts them further.
 void set_shadow_quality(u32 quality);
-// The post-process pass the camera gets from the level's Post Process Volume (bloom, tonemap,
-// grading, FXAA); the default volume's values where none applies. Always true for now.
-bool world_post(const world::World& world, Vec3 eye, bool skip_hidden, rhi::PostDraw& out);
+// Post Processing quality (0 Low .. 3 Epic): world_post trims its result to it (limit_post).
+void set_post_quality(u32 quality);
+// The look at `eye` (Unreal's volume blending): from the defaults, every Post Process Volume that reaches it, lowest
+// priority first, each mixed in by its Blend Weight (fading out over its Blend Radius outside its box). Numbers and
+// colours are blended; switches and the LUT come from a volume once it is at least half in. False when none reaches.
+bool blend_post_volumes(const world::World& world, Vec3 eye, bool skip_hidden, world::PostProcessVolume& out);
+// The post-process pass the camera gets from the level's Post Process Volumes (bloom, tonemap,
+// grading, FXAA), blended by blend_post_volumes; the default volume's values where none applies. Always true for now.
+// `chosen`: the blended look (nullptr when no volume applies: the defaults), for its Color Grading LUT; valid until the next call.
+// out.contact_shadow comes back in world space (toward the first sun with a Contact Shadow Length).
+bool world_post(const world::World& world, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen = nullptr);
 // The level's Sky, if it has one (sun disc from the first Directional Light).
 bool world_sky(const world::World& world, const Mat4& view_proj, Vec3 eye, bool skip_hidden, rhi::SkyDraw& out);
 

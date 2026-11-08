@@ -4,38 +4,78 @@
 // show up live.
 #include "key_index.h"
 #include "lsd/asset/asset_registry.h"
+#include "lsd/asset/texture.h"
 #include "lsd/render/material.h"
 #include "lsd/rhi/rhi.h"
+
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace lsd::editor {
 
 // The GUID of the texture asset named `name` (an exact name wins over a partial match); false if none.
 bool find_texture_guid(const asset::AssetRegistry& registry, const char* name, char out[33]);
 
+// Texture streaming (Unreal's, its loading part): a texture asked for the first time is read and
+// decoded on a worker thread while drawing goes on without it (its material's plain values), and
+// update() puts a few finished ones on the GPU each frame, so opening a level never waits for images.
 class TextureCache {
 public:
-    TextureCache(rhi::Device& device, const asset::AssetRegistry& registry) : device_(device), registry_(registry) {}
+    TextureCache(rhi::Device& device, const asset::AssetRegistry& registry);
     ~TextureCache();
     TextureCache(const TextureCache&) = delete;
     TextureCache& operator=(const TextureCache&) = delete;
 
     // `srgb` is how the use wants it (colour vs data); the same file may be loaded both ways.
-    // Invalid if the asset is missing or not an image.
-    rhi::TextureHandle get(const char* guid, bool srgb);
+    // Invalid if the asset is missing or not an image, and while it is still streaming in.
+    // `normal_map`: a normal map (linear), compressed to BC5 when compressing.
+    rhi::TextureHandle get(const char* guid, bool srgb, bool normal_map = false);
     void check_files();
+    // Once a frame: uploads up to `budget` textures the worker finished.
+    void update(u32 budget = 4);
+    u32 streaming() const;  // textures still on their way
+    // Off (r.TextureStreaming 0): get() loads at once, as before (screenshots of the first frames).
+    bool stream = true;
     rhi::Device& device() { return device_; }
     // The largest side any texture loads at (0: as each asset says); video memory sets it.
     void set_size_cap(u32 size) { size_cap_ = size; }
 
 private:
+    const bool compress_;  // colour textures as BC1 / BC3, normal maps as BC5 (the device takes them): 4 to 8 times less video memory
     struct Entry {
         char guid[33];
         bool srgb;
+        bool normal_map;
         rhi::TextureHandle texture;
         i64 modified;
         bool failed;
+        bool pending;  // queued or decoding on the worker
     };
     bool load(Entry& entry);
+    // Path, time and size for loading `e` (main thread: the registry is not shared with the worker); false if it has no file.
+    bool prepare(Entry& e, char* path, usize capacity, u32& max_size);
+    void queue(u32 entry);
+    void upload(Entry& e, const asset::TextureData& data);
+
+    struct Job {
+        u32 entry;
+        char path[300];
+        bool srgb;
+        u32 max_size;
+        bool normal_map;
+    };
+    struct Finished {
+        u32 entry;
+        asset::TextureData* data;  // null: the file could not be read
+    };
+    std::thread worker_;
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    std::vector<Job> jobs_;
+    std::vector<Finished> finished_;
+    bool quit_ = false;
 
     rhi::Device& device_;
     const asset::AssetRegistry& registry_;
@@ -65,9 +105,9 @@ private:
         i64 parent_modified;
         bool failed;
         rhi::MaterialShaderHandle shader;  // Material Graphs
-        char textures[3][64];              // their texture asset names, and the GUIDs found for them
-        char texture_guids[3][33];
-        bool texture_srgb[3];
+        char textures[4][64];              // their texture asset names, and the GUIDs found for them
+        char texture_guids[4][33];
+        bool texture_srgb[4];
         u32 texture_count;
         u32 blend_mode;  // a graph's Material Output Blend Mode
         // Graphs: their parameters' defaults; instances of a graph: those with the instance's values.

@@ -9,7 +9,22 @@
   "lod2_screen_size": 0.0599999987,
   "lod3_screen_size": 0.0299999993,
   "notifies": [],
-  "sockets": [],
+  "sockets": [
+    {
+      "name": "weapon_r",
+      "bone": "hand_r",
+      "position": {
+        "x": -0.119999997,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 180
+      }
+    }
+  ],
   "material_slots": [
     {
       "name": "Buttons_001",

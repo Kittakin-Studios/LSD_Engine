@@ -74,6 +74,78 @@ void ReferenceIndex::build(const asset::AssetRegistry& registry) {
     }
 }
 
+std::vector<std::string> cook_set(const asset::AssetRegistry& registry, const std::string& root_text) {
+    // Lookups by name and by path (relative to Content/, with and without the extension).
+    std::unordered_map<std::string, std::vector<usize>> by_name, by_path;
+    std::unordered_map<std::string, usize> by_guid;
+    for (usize i = 0; i < registry.count(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        char g[33];
+        asset::to_string(r.guid, g);
+        by_guid[g] = i;
+        by_name[r.name].push_back(i);
+        const std::string path = r.path;
+        by_path[path].push_back(i);
+        const usize dot = path.rfind('.');
+        if (dot != std::string::npos) by_path[path.substr(0, dot)].push_back(i);
+    }
+    std::vector<std::string> out;
+    std::vector<usize> queue;
+    std::vector<bool> taken(registry.count(), false);
+    auto take = [&](usize i) {
+        if (taken[i]) return;
+        taken[i] = true;
+        queue.push_back(i);
+    };
+    auto scan = [&](const std::string& text, bool strings) {
+        for (const std::string& g : find_guids(text)) {
+            const auto found = by_guid.find(g);
+            if (found != by_guid.end()) take(found->second);
+        }
+        if (!strings) return;
+        for (usize at = 0; at < text.size(); ++at) {  // every "quoted" or 'quoted' run up to 200 characters
+            const char q = text[at];
+            if (q != '"' && q != '\'') continue;
+            const usize end = text.find(q, at + 1);
+            if (end == std::string::npos) break;
+            if (end - at - 1 <= 200 && end > at + 1) {
+                std::string s = text.substr(at + 1, end - at - 1);
+                for (char& c : s) c = c == '\\' ? '/' : c;
+                if (s.rfind("Content/", 0) == 0) s.erase(0, 8);
+                const auto p = by_path.find(s);
+                if (p != by_path.end()) for (const usize i : p->second) take(i);
+                const usize slash = s.rfind('/');
+                const std::string leaf = slash == std::string::npos ? s : s.substr(slash + 1);
+                const usize dot = leaf.rfind('.');
+                const auto n = by_name.find(dot == std::string::npos ? leaf : leaf.substr(0, dot));
+                if (n != by_name.end()) for (const usize i : n->second) take(i);
+            }
+            if (q == '"') at = end;  // apostrophes inside "..." are not openings
+        }
+    };
+    scan(root_text, true);
+    for (usize next = 0; next < queue.size(); ++next) {
+        const asset::AssetRecord& r = registry.get(queue[next]);
+        char self[33];
+        asset::to_string(r.guid, self);
+        out.emplace_back(self);
+        char source[300];
+        registry.source_path(r, source, sizeof source);
+        std::string text;
+        if (read(std::string(source) + ".meta", text)) scan(text, false);
+        const bool scripted = r.type == asset::AssetType::Script || r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle ||
+                              r.type == asset::AssetType::Table;
+        if ((is_text(r.type) || scripted) && read(source, text)) scan(text, true);
+        if (r.type == asset::AssetType::UiDocument) {  // its own .js beside it (Menu.rml + Menu.js)
+            std::string js = r.path;
+            js = js.substr(0, js.rfind('.')) + ".js";
+            const auto p = by_path.find(js);
+            if (p != by_path.end()) for (const usize i : p->second) take(i);
+        }
+    }
+    return out;
+}
+
 const std::vector<std::string>& ReferenceIndex::uses(const std::string& guid) const {
     static const std::vector<std::string> none;
     const auto found = uses_.find(guid);

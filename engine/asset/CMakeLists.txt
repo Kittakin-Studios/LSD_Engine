@@ -1,6 +1,6 @@
 # stb_image's implementation: third-party C, without our warning flags.
-add_library(lsd_stb STATIC src/stb_impl.c)
-target_include_directories(lsd_stb SYSTEM PUBLIC ${LSD_STB_DIR})
+add_library(lsd_stb STATIC src/stb_impl.c src/tinyexr_impl.cpp)
+target_include_directories(lsd_stb SYSTEM PUBLIC ${LSD_STB_DIR} ${LSD_TINYEXR_DIR})
 if(MSVC)
   target_compile_options(lsd_stb PRIVATE /w)
 else()

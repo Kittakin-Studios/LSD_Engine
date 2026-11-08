@@ -1,5 +1,6 @@
 #pragma once
 // Per-user editor settings, saved to Saved/editor_settings.json (like Unreal's EditorPerProjectUserSettings).
+#include "lsd/reflect/color.h"
 #include "lsd/reflect/reflect.h"
 
 namespace lsd::editor {
@@ -34,6 +35,30 @@ struct CustomWorkspace {
     LSD_PROPERTY(Edit, Tooltip = "The built-in workspace it was made from (decides where asset editors open)") char base[32] = "";  // the built-in workspace it was made from (its editor area)
 };
 
+// One Foliage mode type (Unreal's Foliage Type): a mesh and how it is scattered by the brush.
+LSD_STRUCT()
+struct FoliageType {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Painted with the others when ticked") bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "The mesh it scatters") char mesh[40] = "Sphere";
+    LSD_PROPERTY(Edit, Tooltip = "Colour of its copies") LinearColor color = LinearColor::hex(0x4F8A3C);
+    LSD_PROPERTY(Edit, Min = 0.01, Max = 20, Tooltip = "Copies per square metre a stroke puts down") f32 density = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0.05, Max = 10, Tooltip = "Smallest random size") f32 scale_min = 0.8f;
+    LSD_PROPERTY(Edit, Min = 0.05, Max = 10, Tooltip = "Largest random size") f32 scale_max = 1.2f;
+    LSD_PROPERTY(Edit, Tooltip = "A random turn around Z for each copy") bool random_yaw = true;
+    LSD_PROPERTY(Edit, Tooltip = "Tilt each copy to the surface it lands on (grass on slopes); off: always upright (trees)") bool align_to_normal = false;
+    LSD_PROPERTY(Edit, Tooltip = "Its copies block in Play (trees, rocks); off for grass and flowers") bool collision = false;
+    LSD_PROPERTY(Save, Tooltip = "The Foliage Type asset it came from (Save to Asset writes it back): shared with the team") char asset[33] = "";
+};
+
+// A keyboard shortcut the user changed (Editor Preferences > Keyboard Shortcuts); keys "" = none.
+LSD_STRUCT()
+struct ShortcutOverride {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The editor command (keymap.h)") char command[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Its keys, e.g. Ctrl+Shift+S") char keys[32] = "";
+};
+
 LSD_STRUCT()
 struct EditorSettings {
     LSD_GENERATED()
@@ -65,9 +90,13 @@ struct EditorSettings {
     LSD_PROPERTY(Save) char assistant_key[256] = "";
     LSD_PROPERTY(Save) u32 assistant_effort = 1;  // Claude: 0 low, 1 medium, 2 high
     LSD_PROPERTY(Save) u32 assistant_role = 0;    // which studio role answers (assistant.cpp's list)
+    LSD_PROPERTY(Save) u32 assistant_tools = 1;   // 0 off, 1 ask before each tool call, 2 allowed
     // Workspace tabs under the menu bar (Blender's Layout / Modeling / Shading...).
     LSD_PROPERTY(Save) char workspace[32] = "Layout";
     LSD_PROPERTY(Save) List<CustomWorkspace, 8> workspaces;
+    LSD_PROPERTY(Save) List<ShortcutOverride, 64> shortcuts;  // Editor Preferences > Keyboard Shortcuts
+    LSD_PROPERTY(Save) u32 viewport_kinds = 0;  // Window > Viewports (2D 1, 2.5D 2, 3D 4); 0 = the usual single 3D view
+    LSD_PROPERTY(Save) List<FoliageType, 8> foliage_types;    // Foliage mode's list (none: one Sphere type)
 };
 
 // A key the player rebound: in every mapping of `action` (an Input Action by asset name; Move, Look and
@@ -80,6 +109,23 @@ struct KeyBinding {
     LSD_PROPERTY(Edit, Tooltip = "The key the player chose instead") char to[32] = "";
 };
 
+// Device Profile (Unreal's Device Profiles): a project rule for some PCs, applied over the recommended quality the
+// first time the game runs there (and by Settings > Auto-detect). New Data Asset > DeviceProfile; profiles are
+// tried by name, the first that matches wins.
+LSD_STRUCT(Category = "Project", Tooltip = "Graphics quality for some PCs (a GPU, an amount of video memory, a platform)")
+struct DeviceProfile {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Category = "Match", Tooltip = "The graphics card's name contains this (\"Steam Deck\", \"RTX 40\", \"Intel\"); empty = any card") char gpu_contains[64] = "";
+    LSD_PROPERTY(Edit, Category = "Match", Units = "MB", Tooltip = "At least this much video memory (0 = any)") u32 min_video_memory_mb = 0;
+    LSD_PROPERTY(Edit, Category = "Match", Units = "MB", Tooltip = "At most this much video memory (0 = any)") u32 max_video_memory_mb = 0;
+    LSD_PROPERTY(Edit, Category = "Match", Widget = "Choice:Any,Windows,Linux", Tooltip = "Only on this platform") u32 platform = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "The overall quality it starts with") u32 quality = 2;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Shadows (Overall: follows the quality)") u32 shadow_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Post Processing") u32 post_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "View Distance") u32 view_distance_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Quality", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Effects") u32 effects_quality = 0;
+};
+
 // The player's own settings (Unreal's Game User Settings), saved to Saved/GameUserSettings.json and
 // applied at once when changed: the game's options menu edits them from Lua (lsd.get_settings /
 // lsd.set_settings). The first run picks the quality the graphics card suits.
@@ -87,8 +133,17 @@ LSD_STRUCT()
 struct GameUserSettings {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Category = "Graphics", Tooltip = "The game fills the screen (off: a window)") bool fullscreen = false;
-    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "Shadows: Low none, Medium sun only and nearer, High as set, Epic further")
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Low,Medium,High,Epic", Tooltip = "Overall quality (Unreal's Engine Scalability): every group below that is on Overall follows it")
     u32 quality = 2;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Shadows: Low none, Medium the sun's only and nearer, High as set, Epic further")
+    u32 shadow_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic",
+                 Tooltip = "Post Processing: Low bloom, tonemap, grading and FXAA only; Medium adds ambient occlusion; High and Epic everything the volume sets (reflections, depth of field, motion blur, contact shadows, TAA)")
+    u32 post_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "View Distance: draw and cull distances (and where LODs switch) times 0.5, 0.75, 1 or 1.5")
+    u32 view_distance_quality = 0;
+    LSD_PROPERTY(Edit, Category = "Graphics", Widget = "Choice:Overall,Low,Medium,High,Epic", Tooltip = "Effects: particles spawned times 0.25 (Low), 0.5 (Medium) or 1")
+    u32 effects_quality = 0;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "Loudness of everything the game plays (0 = silent)") f32 master_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named Music") f32 music_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named SFX") f32 effects_volume = 1.0f;
@@ -114,12 +169,24 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Description", Tooltip = "Who makes it (shown in the packaged game's file details)") char company[64] = "Kittakin Studios";
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the packaged game opens first (Content/Levels/...)") char game_default_level[260] = "";
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the editor opens when there is no last level") char editor_startup_level[260] = "";
-    LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "The game window's icon (a square PNG, 256 x 256 is plenty)") char icon[33] = "";
+    LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "The game's icon: the window, the taskbar and the packaged .exe in Explorer (a square PNG, 256 x 256 is plenty)") char icon[33] = "";
+    LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "Splash screen: shown while the packaged game starts (loading the level), centred, at its own size up to 1280 px. Empty: none")
+    char splash[33] = "";
+    LSD_PROPERTY(Edit, Category = "Platform", Units = "s", Min = 0, Max = 10, Tooltip = "The splash stays at least this long, then goes once the game is playing") f32 splash_seconds = 2.0f;
     LSD_PROPERTY(Edit, Category = "Platform", Tooltip = "Steam: written to steam_appid.txt next to the packaged exe (0 = not on Steam)") u32 steam_app_id = 0;
+    LSD_PROPERTY(Edit, Category = "Packaging",
+                 Tooltip = "Cook (Unreal's): the package gets only the assets the game uses, found from these settings (Game Default Level, Game Mode...) through references and through names in scripts and UI, with their compiled data so nothing compiles on first run. What was left out is listed in cook_report.txt. Off: all of Content/")
+    bool cook_used_only = false;
+    LSD_PROPERTY(Edit, Category = "Packaging", Widget = "Choice:Development,Shipping",
+                 Tooltip = "Development: the package takes -remote (the editor's Remote Console), -exec and test commands, for testing on other PCs. Shipping: what players get; those are ignored (logs and crash reports stay)")
+    u32 build_configuration = 0;
     LSD_PROPERTY(Edit, Category = "Localization", Widget = "Asset:Table", Tooltip = "String table: a Data Table with Key, then one column per language (en, fr...)") char string_table[33] = "";
     LSD_PROPERTY(Edit, Category = "Localization", Tooltip = "The language the game starts in (a column of the string table)") char default_language[16] = "en";
     LSD_PROPERTY(Edit, Category = "Audio", Widget = "Asset:SoundMix", Tooltip = "Pushed when the game starts and never popped (Unreal's Base Sound Mix): the project's overall balance")
     char base_sound_mix[33] = "";
+    LSD_PROPERTY(Edit, Category = "User Interface", Units = "%", Min = 0, Max = 20,
+                 Tooltip = "Safe zone (Unreal's Display Safe Zone): the game UI is laid out this far in from every edge of the view, so TVs that crop the picture keep it whole (5 is usual for TVs, 0 for monitors)")
+    f32 ui_safe_zone = 0.0f;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Validate Assets also checks name prefixes (SM_, T_, M_, MI_, BT_, UI_...)") bool check_naming = false;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Textures larger than this on a side are reported") u32 max_texture_size = 4096;
     LSD_PROPERTY(Edit, Category = "Multiplayer", Tooltip = "Tick for an online / LAN game. Off: a single-player game and nothing networked runs") bool multiplayer = false;

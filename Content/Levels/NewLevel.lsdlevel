@@ -169,7 +169,8 @@
       "use_temperature": false,
       "temperature": 6500,
       "cast_shadows": true,
-      "shadow_distance": 375.401001
+      "shadow_distance": 375.401001,
+      "contact_shadow_length": 0
     },
      "SkyLight": {
       "sky_color": {
@@ -243,6 +244,10 @@
         "a": 1
       },
       "vignette": 0.412,
+      "color_grading_lut": "",
+      "motion_blur_amount": 0,
+      "motion_blur_max": 5,
+      "lut_intensity": 1,
       "bloom_intensity": 0,
       "bloom_threshold": 3.25600004,
       "anti_aliasing": true,
@@ -716,6 +721,10 @@
       "crouch_speed": 2.5,
       "swim_speed": 3
     },
+     "Script": {
+      "script": "b2833a8b0692d10c6e372949de6dd82d",
+      "properties": []
+    },
      "NativeScript": {
       "script": "",
       "properties": []
@@ -724,7 +733,7 @@
       "left_foot": "foot_l",
       "right_foot": "foot_r",
       "max_step": 0.5,
-      "foot_height": 0.140000001
+      "foot_height": 0.231999993
     }},
     {"id": 13, "name": "Water Volume", "parent": -1,
      "Transform": {

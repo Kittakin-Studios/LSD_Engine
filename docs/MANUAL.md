@@ -79,6 +79,96 @@ editor reopens the last level you had open. The project lives next to the execut
 | `Saved/` | Logs, autosaves, crash reports, the player's settings and save games | Saved |
 | `DerivedData/` | Compiled assets (made automatically, safe to delete) | DerivedDataCache |
 
+### Project templates
+
+![The template picker](images/template_picker.jpg)
+*The first time the editor opens (no level saved yet) it asks which template to start from.*
+
+The first time the editor opens, with no saved level to go back to, it shows **New Project**
+(Unreal's New Project templates). Pick one and **Create** (or double-click it): the editor builds
+the level, saves it as `Content/Levels/<name>.lsdlevel` (the name you typed, else the template's)
+and opens it. Next time the editor opens that level straight away; the picker does not come back.
+**File > New from Template...** opens it again whenever you want another starter level. Every
+template plays at once (Play): the player uses the built-in WASD / mouse / Space controls until
+you give it an Input Mapping Context.
+
+The picker lists the five game perspectives first, then the rest:
+
+| Template | What you get | Viewports |
+| --- | --- | --- |
+| **Third Person** | A walled blockout arena (ramp, stairs, ledge, columns, crates to push), the player's body in view on a spring arm over the shoulder | 3D |
+| **First Person** | The same arena seen from the player's eyes | 3D |
+| **Side Scroller** | A 3D level run along X (pits, platforms, a lift, a goal) with a side-on follow camera | 2.5D + 3D |
+| **Platformer** | Floating platforms, a lift, a spinning bar and a slider (Movers), a goal at the top; falling below Kill Z respawns you | 3D |
+| **Orthographic** | Top-down / isometric: the arena through an orthographic camera 45 degrees above and behind the player, riding along (W walks up the screen) | 2D + 3D |
+| **2D** | Paper2D: a painted Tile Map level, an animated player Sprite (idle, walk, jump), coins to collect with a HUD counter, crates (2D physics), a backdrop, an orthographic follow camera; the Level tab opens in 2D mode | 2D |
+| **2.5D** | 3D models in depth layers (mountains, trees, rocks) around a 2D play plane, seen through a side-on perspective camera | 2.5D |
+| **Character Customization** | A character creator (below): the body on a stage, tabbed morph sliders, clothes per body area, sounds, saved to the character | 3D |
+| **Character Selection** | Pick a ready-made character from the presets you bring (below) | 3D |
+| **Empty** | A sun and a sky, nothing else: start from scratch | 3D |
+
+The **2D** template also writes its starter files into `Content/Templates/2D/` (kept if you change
+them): `T_Tiles` (the tileset: grass, dirt, bricks, planks and colour tiles to paint with), `T_Hero`
+(the player's sprite sheet), `T_Coin` (a spinning flipbook), `T_Backdrop`, `Coin.lua` (collects a coin
+the player touches), `Player2D.lua` (counts them) and `UI_HUD2D` (the counter). The console runs a
+template too: `template.New 2D`.
+
+![The 2D template](images/template_2d.jpg)
+*The 2D template in the editor: the 2D viewport, the Level tab's 2D mode with the tile palette.*
+
+![The 2D template playing](images/template_2d_play.jpg)
+*Playing it: the player walks with A / D, jumps with Space, and the coin counter goes up.*
+
+![The Orthographic template playing](images/template_orthographic.jpg)
+*The Orthographic template in Play: an isometric orthographic view that follows the player.*
+
+#### Character Customization and Character Selection
+
+Two ready-made levels for character creators (Unreal's MetaHuman-style creator screens and the
+character select of a menu). Both put a **Character** on a lit stage with a camera on it. The
+Character is a Skeletal Mesh using the project's **UE5-skeleton** body: the template looks for a
+rigged mesh with UE5 Manny bones (a UE4 Mannequin, then any rig, if there is none; names such as
+Manny, Quinn, SKM or Char are tried first). With no rigged mesh in Content, a grey stand-in shows
+until you set **Skeletal Mesh > Mesh**. Their scripts, UI documents and sounds go into
+`Content/Templates/Character/` (kept if you change them), and the folders for your own art are
+made in `Content/Characters/`.
+
+![Character Customization](images/template_character_customization.jpg)
+*Character Customization in Play: tabs along the top, a slider per morph target, Back / Next / Reset / Save.*
+
+**Character Customization** (`CharacterCustomization.lua`, `UI_CharacterCustomization`):
+
+- **Tabs**: Body, Head, Face, Eyes, Nose, Mouth, Ears, Clothes. Click one, use **Back / Next**, or
+  press **Q / E** (gamepad shoulders).
+- **Sliders**: each morph target of the body (Unreal's Morph Targets: export them with the FBX) gets
+  a slider (0..1) on the tab whose word its name contains: `Nose_Width` goes to Nose, `Eye_Size` to
+  Eyes, `Jaw_Wide` to Face, `Lip_Full` and the visemes (`V_Open`...) to Mouth, `Ear_Point` to Ears.
+  Everything else goes to Body (anatomy: `Chest`, `Belly`, `Arm_Muscle`...). Up to 12 per tab.
+- **Clothes**: one row per body area (Hair, Hat, Glasses, Shirt, Jacket, Gloves, Pants, Belt, Shoes,
+  Backpack). **<** and **>** step through the meshes in `Content/Characters/Clothes/<area>/` (and None).
+  Clothes skinned to the same UE5 skeleton follow the body's animation bone by bone. Rigid pieces
+  (a hat, glasses, a watch) stick to that area's bone: head, spine_03 (chest), spine_05, hand_r,
+  pelvis, foot_r. A rigid pair adds its left piece from a mesh named `<name>_L` (`Boot_Leather` +
+  `Boot_Leather_L`).
+- **Sounds**: `SFX_UI_Click` on every button, tab and clothes step, `SFX_UI_Slide` while a slider moves
+  (swap them with the script's `click_sound` / `slide_sound` properties in Details).
+- **Save** writes the look (morph weights and the clothes per area) to the save game
+  `appearance_<character>`. The character is the one picked in Character Selection, else the
+  object's name. The next time the level plays, the look is back. **Reset** clears it.
+
+Put `CharacterAppearance.lua` on the object with the Skeletal Mesh in your game level (a Character's
+body) and the chosen body and saved look are applied there when Play starts.
+
+![Character Selection](images/template_character_selection.jpg)
+*Character Selection: < and > (A / D, the arrows, the gamepad shoulders) browse, Select picks.*
+
+**Character Selection** (`CharacterSelection.lua`, `UI_CharacterSelection`) shows the rigged
+characters in `Content/Characters/Presets/` one at a time on the stage. Drop in your own FBX / glTF
+characters; each needs a skeleton. **Select** (Enter, gamepad A) saves the choice as
+`selected_character`. Character Customization then edits that character, and `CharacterAppearance.lua`
+puts it in your levels. Set the script's `next_level` property in Details to open the game level after
+Select. `presets_folder` changes where the presets come from.
+
 ---
 
 ## 2. The editor
@@ -93,8 +183,8 @@ editor reopens the last level you had open. The project lives next to the execut
 | ![File menu](images/menu_file.jpg) | **File**: new / open / save levels, recent levels, Validate Assets, Import, Package Project. |
 | ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
 | ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console. |
-| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Validate Assets, Package Project. |
-| ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic). |
+| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Build Release Engine, Validate Assets, Package Project. |
+| ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic), and per group: Shadows, Post Processing, View Distance, Effects. |
 | ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
 
 | Panel | Where | Unreal equivalent |
@@ -123,6 +213,9 @@ saves the panel arrangement under a name (Unreal's Save Layout As), loads one ba
 ![3D Modeling mode](images/mode_modeling.jpg)
 *3D Modeling mode: place blockout shapes (Cube, Sphere, Plane) with Box UV and collision.*
 
+![Editing a mesh in 3D Modeling mode](images/mode_modeling_edit.jpg)
+*An Editable Mesh: the top face bevelled, then extruded; the picked face is outlined in yellow.*
+
 ![PCG mode](images/mode_pcg.jpg)
 *PCG mode: add a PCG Volume; it scatters a mesh on the surfaces inside its box.*
 
@@ -133,12 +226,33 @@ The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel
 
 | Mode | What it does (Unreal) |
 | --- | --- |
-| **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m (Modeling Mode basics; no extrude / bevel yet) |
-| **Foliage** | Pick a mesh, brush size, density (copies per m2), scale range; **LMB drag** paints copies onto surfaces, **Shift+LMB** erases. Copies go to *Foliage* objects (Instanced Static Meshes, 1024 each) |
-| **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks, then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All. It collides in Play; its material is on its Static Mesh |
+| **3D Modeling** | Place Cube / Sphere / Plane blockout shapes (Box UV on by default), size the selected one in metres, snap its size to 0.5 m. A selected Cube shows a white **handle on each face** (Unreal's box handles): drag one to move that side only while the opposite side stays put (one undo step per drag). **Convert to Editable Mesh** on a Cube makes it editable face by face (Unreal's PolyEdit): click a face in the viewport (it turns yellow), then **Extrude** (out along its normal, with walls), **Inset** (a smaller face inside it), **Bevel** (inset, then extrude: a chamfered step), **Push / Pull** (moves the face, its neighbours stretch), **Flip**, **Delete Face**; click near a corner instead to pick that **point** (yellow dot; the nearest one is ringed as you hover): **Position** moves it, the faces using it follow, and **Delete Point** removes those faces; click near an **edge** to pick it (yellow line): **Move** drags both its points, **Delete Edge** removes the faces on both sides. **UV Offset** and **UV Rotation** slide and turn the texture (UV tools). **Boolean** (Unreal's Modeling Boolean): pick another Editable Mesh or Cube in **With**, where it stands in the level, then **Union** (join them), **Subtract** (cut it out: doors, windows, holes) or **Intersect** (keep the overlap); the other object is hidden afterwards (undo brings it back); every step undoes with Ctrl+Z. **Save as Mesh Asset** writes it as `Content/Meshes/SM_<name>.obj`, a mesh you can place again or open in Blender |
+| **Foliage** | A list of **Foliage Types** (Unreal's Foliage Types, up to 8, kept in your editor settings; **Save as Asset** writes one as a Foliage Type asset in Content/Foliage and **Add from Asset** brings one in, so the team paints with the same types; **Save to Asset** writes your edits back): **+ Type**, Remove, a tick to paint each; the selected one's mesh, tint, density (copies per m2), scale range, random turn, **Align to Normal** (tilted to the slope: grass, rocks; off: upright trees) and
+**Collision** (each copy blocks in Play with a box around it: trees, rocks; off for grass). **LMB drag** paints every ticked type at once, each spaced by its own density; **Shift+LMB** erases the ticked types. Copies go to *Foliage* objects (Instanced Static Meshes, one per mesh, 1024 each) |
+| **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks; **Add Tile** (+X / -X / +Y / -Y) puts another beside the selected one with the shared edge joined, for bigger worlds (the brushes sculpt across tiles; far tiles draw simpler LODs that still meet at the seams). Then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All; **Paint** layers (below); **Holes** (Unreal's Visibility tool: LMB cuts the terrain for caves and tunnels, Shift fills; no drawing or collision there); **Heightmap**: Import sets the selected landscape's heights from a greyscale image (black 0, white Max Height; a 16-bit PNG keeps its 65 536 steps) or Unreal's RAW `.r16` (square, 16-bit), Export writes them as a 65 x 65 `.r16` (16-bit, for World Machine, Gaea or Unreal) or PNG (8-bit) by the file name's extension. It collides in Play; without layers its material is on its Static Mesh |
 | **Animation Sequence** | Your Timelines (double-click to edit), New Timeline, a button to the Animation workspace (Sequencer) |
-| **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output* |
+| **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output*. **More Meshes** scatters several kinds at once (each point picks one by **Weight**; their copies are in the output's *Variant N* children). Tick **Exclude** on a volume to make it a clearing: it scatters nothing and the others leave its box empty (paths, buildings). Add a **Spline** to a PCG Volume and it scatters along the curve instead (PCG's spline input): one copy every **Spline Spacing** metres, in a strip **Spline Width** wide, dropped onto what is below (fence posts, trees by a road) |
 | **VFX** | Your particle systems (double-click to edit, **Place** puts one where the view looks), New Particle System, a button to the Effects workspace (Niagara) |
+
+**Landscape paint layers** (Unreal's Landscape Paint with Layer Infos):
+
+![Painting a landscape layer](images/landscape_paint.jpg)
+*Landscape mode > Paint: the Cloth layer painted over Grass on sculpted hills.*
+
+1. Select the landscape. In Details > Landscape > **Layers**, add 2 to 4 layers: a **Name**
+   (Grass, Rock, Sand...), a **Texture** (or none: the tint alone), a **Tint** and **Tile** (metres
+   per texture tile). The first layer covers the whole terrain to start with.
+2. Landscape mode > **Paint**, pick the layer in the **Layers** list, and LMB-drag on the terrain
+   (Shift+LMB removes it). Brush Size and Strength work as for sculpting; every stroke is undoable.
+3. The layers are blended into one colour texture for the whole landscape (a few times a second
+   while you paint) and used instead of the Static Mesh's material and colour; it is saved with the
+   level (the weights) and rebuilt in the game.
+
+Detail is limited by that texture (1024 x 1024 over the landscape: about 16 texels a metre on a 64 m
+one), so keep Tile at a few metres and use textures that read well from a distance.
+
+![Foliage Types](images/mode_foliage_types.jpg)
+*Foliage mode with two types, Sphere and Cube (Align to Normal), painted in one stroke on hills.*
 
 In Foliage and Landscape a ring shows the brush; clicks paint instead of selecting (Alt, RMB and MMB
 still move the camera). Every stroke is one undo step.
@@ -153,6 +267,8 @@ still move the camera). Every stroke is one undo step.
 | *Animation: timelines and animation graphs.* | *Scripting: the Lua Debugger and visual scripts beside a small viewport.* |
 | ![UI workspace](images/ws_ui.jpg) | ![Effects workspace](images/ws_effects.jpg) |
 | *UI: UI documents and their designer.* | *Effects: particle systems and sound cues.* |
+| ![Multiplayer workspace](images/mp_workspace.jpg) | ![Particles workspace](images/ws_particles.jpg) |
+| *Multiplayer: settings, Play as Host / Join, the session, join codes.* | *Particles: the Particle Editor (preview and Emitter Stack) big, a small viewport beside it.* |
 
 **Panel tabs** (the top row, like Unreal's tabs across the top of the editor): the first tab is
 **Level** (the viewport, Outliner, Details, Content Browser). An editor you open from Layout (double-click
@@ -173,6 +289,8 @@ unchanged.
 | **Scripting** | Small viewport, big editor area with the **Lua Debugger** | Visual scripts |
 | **UI** | Viewport, editor along the bottom | UI documents (UMG) |
 | **Effects** | Viewport with an editor beside it | Particle systems (Niagara), Sound Cues |
+| **Particles** | A big editor area beside a smaller viewport; double-clicking a Particle System switches here (Unreal opens Niagara in its own window) | The Particle Editor |
+| **Multiplayer** | Viewport, the **Multiplayer** panel under it: project settings, Play as Host, Play and Join (a code or address), Find LAN Games, the session (players, ping, traffic), join codes with Copy | none |
 
 Each workspace remembers how you resize and rearrange it (in `Saved/Layouts/Workspaces/`).
 Right-click a tab > **Reset to Default** to rebuild it. **+** saves the current arrangement as a new
@@ -188,11 +306,20 @@ Unreal's controls: hold the **right mouse button** and use **W A S D Q E** to fl
 look; **middle mouse** pans; **Alt + left mouse** orbits; **F** frames the selection; the mouse wheel
 during a fly changes speed. **Alt+G / J / H / K**: perspective / top / front / right view. The layout
 button on the viewport toolbar cycles **1x1 → 1x2** (perspective beside top) **→ 2x2** (perspective, top,
-front, right); each pane keeps its own camera. Console: `layout 1|2|4`. **Show** on the toolbar turns on
+front, right); each pane keeps its own camera. Console: `layout 1|2|4`.
+**Window > Viewports** picks the views by kind, side by side: **2D Viewport** (orthographic, looking
+along +Y: how a side-on 2D game is seen), **2.5D Viewport** (perspective from the side with a long
+lens: 3D layers on a 2D plane) and **3D Viewport** (the free perspective view), so a 2D or 2.5D level
+can be previewed in 3D next to its game view. The choice is remembered.
+
+![2.5D and 3D viewports](images/viewports_2_5d_3d.jpg)
+*Window > Viewports with 2.5D and 3D on (the Side Scrolling template).* **Show** on the toolbar turns on
 the grid, axis gizmo, navigation (P), **Bounds** (yellow mesh boxes) and **Collision** (cyan: what blocks in Play).
 **Alt+4 / 3 / 2**: Lit / Unlit / Wireframe; the view mode button also has **Normals**, **Lighting Only**
 (Alt+6: every surface grey), **Collision** (Alt+C: what blocks in Play) and **Overdraw** (Alt+0: bright where
-many surfaces stack). **G**: game view (hides editor icons).
+many surfaces stack) and **Lightmap Density** (after Build Lighting: a checker of the lightmap's texels on
+lightmapped surfaces, grey on the rest; bigger squares, blurrier baked shadows; console `viewmode lightmapdensity`).
+**G**: game view (hides editor icons).
 
 ### Selecting and transforming
 
@@ -277,7 +404,7 @@ like Unreal's asset metadata): the Content Browser search box matches tags as we
 | You drop / create | It becomes | Opens in | Unreal |
 | --- | --- | --- | --- |
 | `.fbx`, `.gltf`, `.glb` | Mesh (a skinned mesh if it has bones) | Details (import scale) | Static / Skeletal Mesh |
-| `.png .jpg .tga .bmp .psd` | Texture | Details (max size) | Texture |
+| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept linear in data slots and sRGB-encoded in colour slots, values above 1 clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal maps become BC5 (their X and Y; the shader rebuilds Z, as Unreal's TC_Normalmap), masks (ORM) stay uncompressed | Details (max size) | Texture |
 | `.wav .ogg .flac .mp3` | Sound | Details (volume, class...); double-click plays | Sound Wave |
 | `.csv` | Data Table | Data Table window | Data Table |
 | `.lua` | Lua Script | your text editor | — |
@@ -334,8 +461,11 @@ object > **Find in Content Browser** (or Ctrl+B) shows its mesh or script.
 file as one mesh. Right-click it > **Create Prefab from Parts** makes `BP_<name>`: one child object
 per mesh and material in the file (named `Node` or `Node_Material`), each with its node's pivot,
 position, rotation and scale from the DCC (a door turns about its hinge), plus an `M_<material>`
-Material for each material in the file, made by Import Materials and Textures (below). Drag the
-prefab into the level and move, hide or re-material its parts like any objects.
+Material for each material in the file, made by Import Materials and Textures (below). The file's
+node tree is kept: a part sits under its parent node's part (a door leaf under its frame moves with
+it), and a node without a mesh becomes an empty group object at its parent's pivot. Drag the prefab
+into the level and move, hide or re-material its parts like any objects. Console:
+`asset.CreatePrefabFromParts <mesh>`.
 
 **Import Materials and Textures** (Unreal's FBX import with Import Materials / Import Textures on):
 importing an FBX, glTF or GLB does it by itself when the file's textures can be found; for a mesh
@@ -346,19 +476,25 @@ already in Content, right-click it > **Import Materials and Textures** (or the c
    next to the file, in its `<name>.fbm` folder, then any texture in Content with the same file name.
    Images embedded in the file (FBX *Embed Textures*, GLB) are written out. Maps the file does not
    connect are found by the texture set's naming next to the colour map: `Hat_Diffuse.png` brings
-   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`
+   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`,
+   `Hat_Emissive`
    (FBX has no metallic / roughness slot, so Blender's never arrive connected).
 2. They are copied into `<mesh folder>/Textures/`, packed into the engine's slots: metallic,
    roughness and occlusion into one `T_<material>_ORM` (R occlusion, G roughness, B metallic, as
    Unreal's ORM), an opacity map into the colour's alpha (`T_<material>_BaseColor`, and the material
-   becomes **Masked**: eyelashes, hair cards, lace).
+   becomes **Masked**: eyelashes, hair cards, lace); an emissive map becomes the Material's Emissive
+   Texture, with the file's emissive colour and strength (white when the file gives none).
 3. A Material `M_<material>` is made in `<mesh folder>/Materials/` (one that exists is kept, with your
    edits) and set on the mesh's **Material Slots**.
 
 The mesh asset's Details > **Materials** lists its slots (one per material of the file, like a
-Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. Textures
+Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. A Static
+Mesh of the whole file uses them too while its own **Material** is empty (each part draws with its
+slot); set a Material on the object to paint all of it with one. Textures
 use the mesh's own UVs, so each part looks as it did in Blender, Maya or Substance. Missing textures
-are listed in the Output Log; put them next to the file and run the menu again.
+are listed in the Output Log; put them next to the file and run the menu again. It works one material
+at a time while the editor keeps running: a progress bar in the menu bar names the material it is on
+(Build Lighting shows its progress there too).
 
 **References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
 (click to follow, double-click to find in the Content Browser). Deleting warns about anything that
@@ -371,6 +507,19 @@ asset tiles get a badge: yellow **M** changed, green **A** new, blue **R** renam
 counts too). Right-click an asset > **Source Control**: **History** (its last 50 commits), **Diff
 Against Last Commit**, **Submit...** (commits the asset and its `.meta` with your description; push
 from your Git tool to share it), **Refresh Status**. Status is re-read every few seconds.
+
+**Locking** (Unreal's Check Out / Check In, with Git LFS: `git lfs install`, and a remote that supports
+locks, such as GitHub or GitLab): **Lock (Check Out)** tells the team you are changing an asset (levels,
+meshes and other files that cannot be merged), **Unlock (Check In)** releases it after you push. A locked
+tile gets an **L** badge in its top-left corner: green when it is yours, red when a teammate holds it
+(hover it for who). **Break Lock** removes a teammate's lock when they cannot. Locks are re-read
+every 20 seconds.
+
+**Revert...** (Source Control menu) throws away your changes to an asset and its `.meta`, back to the
+last commit. It asks first, because the changes cannot be brought back. **View Changes...** (also
+**Tools > Source Control Changes**; Unreal's View Changelists) lists every changed asset with its
+badge: tick the ones that belong together, write a description and **Submit Selected** commits them
+in one go, or **Revert** a single row. New assets have nothing to revert to.
 
 **File > Validate Assets** reports references to missing assets, oversize textures and (optional,
 Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `UI_`.
@@ -424,8 +573,9 @@ Lights use physical units, like Unreal:
 | Component | Units / notes |
 | --- | --- |
 | Directional Light | lux; its +X axis is the light's direction; Cast Shadows, Shadow Distance (cascaded shadows) |
-| Point Light | lumens, attenuation radius, shadows |
-| Spot Light | lumens, inner / outer cone, shadows |
+| Point Light | lumens, attenuation radius, shadows; **Source Radius** makes it a sphere light (softer, wider highlights) |
+| Spot Light | lumens, inner / outer cone, shadows, Source Radius |
+| Rect Light | lumens from its front (+X); **Shape** Rect (Source Width across Y x Height along Z) or Disc (Width across): windows, screens, softboxes, ceiling panels. Unreal's Rect Light; no shadows yet |
 | Sky Light | ambient from above and below |
 
 Colour can be set by temperature (Kelvin). **World Settings > Exposure (EV100)** sets the camera
@@ -439,16 +589,51 @@ Atmosphere:
   sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night.
   The sun's light takes the same colour, and a **Sky Light** with **Capture Sky** (default) lights
   the level with the sky's colours. Untick Atmosphere to pick the colours yourself.
+- **Reflection Capture** (Unreal's Sphere Reflection Capture; Place tab): metal and other shiny
+  surfaces within its **Radius** reflect what is around it (the room, the props, the characters)
+  instead of only the sky, sharp on smooth surfaces and blurrier on rough ones. It captures when the
+  level opens; after moving things, **Build > Build Reflection Captures** (console `BuildReflections`).
+  Up to 8 in a level; where two overlap, a surface blends them by how far inside each it is (no seam where one room meets the next). Put one in the
+  middle of each room. **Shape: Box** (Unreal's Box Reflection Capture) fits a room: set **Box Size**
+  to the room (world axes, centred on the capture) and surfaces inside reflect it bent to where each
+  ray meets the walls, so a shiny floor shows the walls where they really are; it fades in over
+  **Box Transition** inside the walls.
+
+  ![A mirror sphere without and with a Reflection Capture](images/reflection_capture.jpg)
+  *A mirror sphere: the sky gradient only (left), and with a Reflection Capture (right): the floor, the characters and the real sky.*
 - **Height Fog**: exponential fog, thickest at the object's height and thinning upwards; density,
-  falloff, colour, start distance, max opacity.
-- **Post Process Volume**: unbound (everywhere) or a box; the highest priority one the camera is in
-  wins. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
+  falloff, colour, start distance, max opacity. Particles fade into it like meshes (smoke takes on the
+  fog's colour, additive sparks and glows fade out). **Volumetric** (Unreal's Volumetric Fog): the sun
+  lights the fog and its shadows cut through it, so fog glows in sunlight, stays dark behind walls
+  and columns, and makes light shafts. It needs a Directional Light that casts shadows.
+  **Scattering** is how strong the effect is, **Anisotropy** how much brighter it glows looking toward
+  the sun, **View Distance** how far it is traced, **Steps** its quality (16 is a good start).
+
+  ![Volumetric fog](images/volumetric_fog.jpg)
+  *The same view without (top) and with Volumetric: sunlit fog glows, shadowed fog stays dark.*
+- **Post Process Volume**: unbound (everywhere) or a box. Volumes blend as in Unreal: each the camera
+  reaches is mixed in by its **Blend Weight**, lowest **Priority** first (higher ones on top), and a box's
+  look fades in over its **Blend Radius** as the camera nears it (0 = a hard edge); switches such as the
+  tonemapper and the LUT come from a volume once it is at least half in. Exposure compensation, filmic (ACES) tonemapper, saturation, contrast, tint, vignette,
   **bloom** (intensity, threshold: bright and emissive parts glow) and **anti-aliasing** (FXAA, or
   **Temporal AA**: smoother and steadier, a little softer, can ghost on fast motion).
   **Reflections** (screen-space: smooth surfaces mirror what is on screen; intensity, distance),
   **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
   buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
-  transition, max blur in pixels; focal distance 0 = off).
+  transition, max blur in pixels; focal distance 0 = off; out-of-focus lights open into soft bokeh discs;
+  needs Post Processing quality High or Epic).
+  **Color Grading LUT** (Unreal's): a 256 x 16 texture strip (16 tiles of 16 x 16; red across, green
+  down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
+  paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip
+  out and import it as a texture.
+  **Motion Blur** (Amount 0 = off, Max as % of the screen's width): turning or moving the camera
+  smears the picture along the movement, found the way TAA finds last frame's pixels. Only the
+  camera's own movement for now: an object moving by itself in front of a still camera stays sharp.
+- **Contact shadows** (Unreal's Contact Shadow Length): **Directional Light > Contact Shadow Length**
+  (metres, 0 = off) sends a short ray toward the sun through the depth buffer from every surface that
+  faces it, for the small shadows the shadow map misses (feet on the floor, props on a table). It runs
+  with the post pass (a volume's look or the default one). For now it darkens the shaded colour, so it
+  also deepens a little what the shadow map already shades.
   **Exposure** (Unreal's Auto Exposure / eye adaptation, on by default): the image is metered every
   frame and eased toward mid grey, so dark interiors brighten and sunlit views darken over a moment;
   Min / Max EV limit how far it moves from World Settings exposure, Speed Up / Down how fast,
@@ -566,6 +751,42 @@ game is single player and nothing networked runs. On:
   (they reconnect on their own); on a client it is refused (only the server changes the level).
 - **LAN browser**: `lsd.net_find_games(seconds)` lists games hosting on the local network
   (`{address, name, players, max_players}`) for a join menu; the server answers on its port + 1.
+- **Host / Join from a menu** (Unreal's Create / Find / Join Session): `lsd.net_host([level])`,
+  `lsd.net_join(code)` and `lsd.net_leave([level])` switch a running game between server, client and
+  single player (Play restarts on the level in that mode). A player who joins follows the server to
+  its level. `lsd.net_join_code()` gives the host's **join codes**: 10 letters and digits such as
+  `60N00-0A7K1` holding the address and port (any case, dashes optional, typos are caught). Join also
+  takes a plain address (`1.2.3.4` or `1.2.3.4:7777`).
+- **The ready-made menu**: `Content/Multiplayer/Multiplayer.lua` with `WBP_Multiplayer`. Put the script
+  on any object in the level the game starts on (Project Settings > Multiplayer on). It has Host,
+  Show join codes, a code box with Join, Find LAN games and Leave; **M** opens and closes it
+  (`toggle_key` in Details), and `open_at_start` shows it when the game starts. In the editor it
+  shows only in the Multiplayer workspace (`lsd.editor_workspace()`); a packaged game always has it.
+
+#### Playtesting over the internet
+
+Step by step with pictures: [Multiplayer.md](Multiplayer.md). The host clicks
+**Show join codes** (the game's menu, or the Multiplayer workspace's panel). There are three ways in,
+best first:
+
+1. **Internet code** (no setup). The first Show join codes asks the router to forward the game's
+   UDP port to this PC (UPnP, a couple of seconds) and reads the public address. When it works, the
+   menu shows `Internet: <code>`: send it to the testers, they paste it into Join. The forward is
+   removed when Play stops. It fails when UPnP is off in the router, or when the internet provider
+   shares one address between customers (CGNAT, common on mobile and some fibre): the menu then says
+   why. Kittakin's own connection is behind CGNAT (100.x.x.x), so use 2 there.
+2. **Virtual LAN** (works behind any router; best for a closed test). Everyone installs
+   [Tailscale](https://tailscale.com) (free for small groups) and joins the host's tailnet: the host
+   invites testers by email from the Tailscale admin page, or shares the PC with them. The host's
+   menu then shows a `Tailscale: <code>` line (its 100.x address): testers join with that. ZeroTier
+   works the same way (create a network, testers join its ID, the host approves them; its address is
+   one of the `LAN / virtual LAN` lines). Find LAN games does not cross Tailscale; use the code.
+3. **Port forwarding by hand**: forward UDP 7777 (Project Settings > Multiplayer > Port) to the host
+   PC in the router, then give testers your public address (any "what is my IP" page) as
+   `1.2.3.4:7777`. Not possible behind CGNAT.
+
+Everyone needs the same build (File > Package Project, then send the Build folder). If the
+host's firewall asks, allow the game on private and public networks.
 
 ### 2D games (Paper2D)
 
@@ -585,9 +806,42 @@ the viewport), the way a side-on 2D game is seen; 2D content lives in the X-Z pl
   Columns / Rows, the map's Width / Height and Tile Size in Details. The panel shows the tileset:
   click a tile, then **LMB paints** it on the map in the viewport and **Shift+LMB erases** (each
   stroke is one undo). Painted tiles block in Play (rows of tiles become boxes).
+  **Layers** (Unreal's Tile Map layers): the panel's **Layer** list picks what the brush paints:
+  **Main** (the map's own tiles) or one of up to 3 more (**+** adds one, **-** removes the chosen one).
+  Each layer has **Visible**, **Depth** (negative in front of the main tiles, such as foreground
+  grass; positive behind, such as walls and windows) and, in Details, **Collision**. All layers use the map's tileset.
 - **2D physics**: RigidBody > **Lock 2D** keeps a body in its X-Z plane, turning only around Y.
 - **Side-scroller player**: Character > **Side Scroller**: Move's left / right walks along X,
-  Jump jumps, and the player's Sprite faces the way it walks.
+  Jump jumps, and the player's Sprite faces the way it walks. Its animations (Unreal's Paper2D
+  Character flipbooks) are on the Sprite: **Frame / Frame Count** is idle, **Character Animation >
+  Walk Frame / Walk Count** plays while walking and **Jump Frame / Jump Count** in the air (a Count of
+  0 keeps the idle one). The 2D template's player has them set up. **Walk Flipbook / Jump Flipbook**
+  take Flipbook assets instead of cell ranges.
+- **Flipbook assets** (Unreal's Paper2D Flipbook): Content Browser > New Data Asset > **Flipbook**:
+  a list of frames, each a **Cell** of the sprite's sheet with its own **Duration** and an optional
+  **Event**. A Sprite's **Flipbook** plays it instead of Frame / Frame Count / FPS (held on the last
+  frame when Loop is off). In Play, when a frame with an Event starts, the sprite's scripts run that
+  function: an Event `step` calls `function step(self)` (footsteps, a sword swing's hit frame).
+  **Double-click a Flipbook** for its window (Unreal's Flipbook Editor). Pick the **Sheet** and its
+  Columns / Rows at the top. The animation plays in the corner, with the current frame's event.
+  Click a cell of the sheet to add it as the next frame. Each frame in the list has its cell,
+  duration and event, arrows to move it and X to delete it; **Set All Durations** gives an even
+  pace. **Save**: sprites using the flipbook play the new frames at once.
+
+  ![The Flipbook window](images/win_flipbook.jpg)
+  *The Flipbook window: the playing preview with the frame's event, the sheet to click frames from, the frame list.*
+- **Tile collision shapes**: in the 2D mode, pick a tile in the palette and set **Tile Collision**:
+  Full, None (decoration only), Top Half, Bottom Half, Slope Up (a ramp rising to the right) or
+  Slope Down, or **One Way** (a jump-through platform: the player jumps up through it and lands on
+  top). It applies to every painted copy of that tile (the map's Collision > Tile Shapes list).
+  Static Meshes and Sprites have **One Way** too (with Collision on), for 3D or sprite platforms.
+  A second Tile Map with Collision off is a decoration layer in front of or behind the play layer.
+- **Translucent sprites**: Sprite > **Translucent** blends soft edges and see-through colours (glass,
+  smoke, glows) over what is behind instead of cutting them out; they draw after the solid ones, far
+  to near, and **Sort Order** decides which is on top at the same depth (higher wins, Unreal's
+  Translucency Sort Priority).
+- **Shadows**: a **Lit** Sprite or Tile Map casts its cut-out shadow from the level's lights (Cast
+  Shadows, on by default), for 2D scenes lit by a sun or lamps.
 - **2D camera**: a Camera with **Orthographic** (and Ortho Height, metres of world on screen) and
   Auto Activate; make it a child of the player, about 10 m back on -Y turned to look along +Y
   (rotation Z 90), so it follows.
@@ -608,7 +862,29 @@ fixes that:
 Each probe records the sky it can see and the light bounced once off the surfaces around it (from
 the sun, local lights and sky; colours from the object's Color and its Material's base colour).
 Static and moving objects use it for their ambient light: rooms get darker, colours bleed onto
-neighbours. Direct light and shadows stay real-time. Rebuild after moving walls or lights.
+neighbours. Rebuild after moving walls or lights.
+
+**Lightmaps** (Unreal's lightmaps from Lightmass): static meshes also get a lightmap texture,
+detailed per surface where the probes are coarse:
+
+![Lighting Only view after Build Lighting](images/lightmap_lighting_only.jpg)
+*Lighting Only view (Alt+6) after Build Lighting: the sky light, the blue floor's bounce, and the
+dark contact under the statue's feet come from the lightmap.*
+
+- **World Settings > Lightmap Resolution** (Off, 256 ... 4096, default 1024): the size of the
+  level's lightmap atlas. Every lightmapped object shares it, at one texel density (the bake log
+  says how many texels per metre it got): raise it for sharper baked light, lower it to bake faster.
+- Each texel stores the light from the sky and three bounces reaching that spot (it replaces the
+  probes there: corners, contact under objects, colour from neighbours; a red carpet bounces red, its
+  material's texture taken into account) and how much of the **sun**
+  reaches it: the sun's shadows are baked too, so they stay beyond the real-time Shadow Distance.
+- **Static Mesh > Static Lighting** (on by default, Unreal's Mobility: Static): untick it for
+  objects that move; objects with a Rigid Body, Mover, Vehicle or Transport never get a lightmap.
+  Moving objects, skeletal meshes and Instanced Static Meshes use the probes.
+- The lightmap UVs are made for you (xatlas charts every object); no second UV channel is needed
+  in the FBX.
+- An object moved, renamed or given another mesh after the bake goes back to the probes until the
+  next Build Lighting. Real-time shadows inside the Shadow Distance stay as they were.
 
 ---
 
@@ -617,14 +893,21 @@ neighbours. Direct light and shadows stay real-time. Rebuild after moving walls 
 ### Simple Materials
 
 ![A Material asset is edited in Details](images/det_material.jpg)
-*A Material asset is edited in Details: base colour (or texture), metallic, roughness, normal / ORM textures, emissive, blend mode, opacity.*
+*A Material asset is edited in Details: base colour (or texture), metallic, roughness, normal / ORM textures, emissive (+ texture), blend mode, opacity.*
 
 **New Material** creates a physically based material: base colour (+ texture), metallic, roughness,
-normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive. Drop it on an
+normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive (+ **Emissive
+Texture**: where it glows, multiplying Emissive; set Emissive to white for the map's own colours.
+Lighting is in physical units, so a glow you see in daylight needs an Emissive Strength in the
+thousands, as in Unreal). Drop it on an
 object or pick it in the object's Static Mesh > Material. Edits show immediately. **Blend Mode**:
-Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip: leaves, fences);
+Opaque; **Masked** (cut-outs from the base colour alpha below Opacity Mask Clip: leaves, fences; their
+shadows have the same holes, on static and skeletal meshes, for every light);
 **Translucent** (glass, water; Opacity sets how see-through; drawn after opaque objects, far to near);
 **Additive** (adds light: fire, glows).
+
+![A Masked material's shadow](images/shadow_masked.jpg)
+*The same panel with an Opaque material (left: a solid shadow) and a Masked one (right: the checker's holes in the shadow too).*
 
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 
@@ -645,10 +928,40 @@ from a pin to wire. The preview on the right (sphere or cube) updates 0.3 s afte
 | Coordinates | Texture Coordinate (tiling), Panner, World Position, Vertex Normal, Camera Vector, Fresnel |
 | Math | Add, Subtract, Multiply, Divide, Lerp, One Minus, Power, Clamp, Dot, Normalize, Sine, Abs, Frac |
 | Utility | Break Vector, Make Vector |
+| Functions | Material Function (calls another graph by name, with A / B / C inputs), Function Input, Function Output |
 
-Numbers and colours connect freely (a number becomes a grey colour). Up to 3 textures and 16
+Numbers and colours connect freely (a number becomes a grey colour). Up to 4 textures and 16
 parameters per material. **Save** to update the level. A Material Instance whose parent is a graph
 lists the graph's parameters (button **Add the graph's parameters**) to set per instance.
+
+**Shader assets** (a material written as code, like a whole-material version of Unreal's Custom
+node): Content Browser right-click > **New Shader** makes `SH_New.hlsl`; double-click opens it in your
+code editor, and saving recompiles it. It writes the function a Material Graph compiles to:
+
+```hlsl
+// texture: T_Rock color        (color, normal or data: lsd_tex0 .. lsd_tex3 in this order)
+// param: Tint 1, 0.45, 0.2     (lsd_params[0]; Material Instances change it by name)
+// param: Pulse 2               (lsd_params[1].x)
+// blend: translucent           (optional: masked, translucent, additive)
+Surface material_main(MaterialIn mi) {   // mi.uv, mi.wpos, mi.normal, mi.view, mi.time
+    Surface s;
+    s.base_color = lsd_tex0(mi.uv).rgb * lsd_params[0].xyz;
+    s.metallic = 0.0; s.roughness = 0.5; s.emissive = lsd_v3(0.0);
+    s.normal = float3(0.0, 0.0, 1.0); s.ao = 1.0; s.opacity = 1.0;
+    return s;
+}
+```
+
+Use it like a Material Graph: drag it onto an object, put it in a Material Slot, or make a Material
+Instance of it. The same code runs on D3D12, Vulkan and OpenGL (keep to `float3`, `lerp`, `frac`,
+`saturate` and the usual maths: OpenGL translates those).
+
+**Material Functions** (Unreal's): make a Material Graph, say `MF_Tint`, that ends in a **Function
+Output** instead of a Material Output, and reads its inputs through **Function Input** nodes (Input A,
+B or C; Preview is the value used while you look at the function on its own, where it shows as the
+base colour). In any other material, a **Material Function** node with Function `MF_Tint` runs it
+there, its A / B / C pins feeding the inputs and Result giving the output. Functions can call other
+functions, up to 4 deep. Their textures and parameters count toward the material's 3 and 16.
 
 ---
 
@@ -668,7 +981,23 @@ while you keep the editor camera and selection (F8 possesses the player). **New 
 plays the level as it is now, unsaved edits included, in a window of its own, the way the packaged
 game runs (Unreal's New Editor Window PIE); the editor stays free to edit, and the button becomes
 **Close Window**. The menu bar's **Settings >
-Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings.
+Engine Scalability** sets the graphics quality (Low to Epic), saved with the player's settings. The
+first run picks one for the PC (from its graphics card and memory); **Auto-detect** picks again.
+**Device Profiles** (Unreal's) let the project decide for some PCs: New Data Asset > **DeviceProfile**,
+then a GPU name to look for ("Van Gogh" for the Steam Deck, "Intel", "RTX 40"), a video memory range,
+a platform, and the quality and group levels to use there. Profiles are tried by name and the first
+that matches wins, over the recommendation.
+Under it each group (Unreal's Scalability groups) can follow that or take its own level:
+
+| Group | Low | Medium | High | Epic |
+| --- | --- | --- | --- | --- |
+| Shadows | none | the sun's only, nearer | as set | further |
+| Post Processing | bloom, tonemap, grading, FXAA | + ambient occlusion | everything the volume sets (reflections, depth of field, motion blur, contact shadows, TAA) | the same |
+| View Distance | draw / cull distances and LOD switches x 0.5 | x 0.75 | x 1 | x 1.5 |
+| Effects | particles x 0.25 | x 0.5 | x 1 | x 1 |
+
+A game's options menu sets them from Lua too: `lsd.set_settings({quality = 1, post_quality = 4})`
+(groups: 0 = Overall, 1 Low .. 4 Epic).
 
 The player is the first object with a **Character** component; without one, a default walker
 appears at the Player Start (or the camera). A Character walks, jumps, climbs steps and slopes, and
@@ -853,15 +1182,22 @@ sends each tool call to the editor as a console line over 127.0.0.1, the same ch
 Console. Only programs on this PC can connect; untick the plugin when you are not using it. It is
 editor-only: packaged games never listen.
 
-### LSD Assistant (an AI game studio in the editor)
+### LSD Assistant (an AI coder in the editor)
 
-**Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to do
-something, plan a feature, or have it write a script and apply it. It answers as one of a studio's
-roles, picked at the top of the window: **Engine Expert**, **Gameplay Programmer**, **Technical
-Artist**, **Level Designer**, **Game Designer**, **Producer**, **QA Tester**. Every message carries
+**Tools > LSD Assistant** opens a chat with your own AI model that knows LSD_Engine: ask how to code
+something, or have it write a script and apply it. It writes **code only** (Lua, JavaScript, C / C++,
+UI documents): no meshes, textures, materials or other art. When code needs something visible (a gun,
+a pickup, a target) it uses a Cube or Sphere placed and sized from code, for you to swap for real art
+later; its Create button only writes code files. It answers as one of four roles, picked at the top of
+the Chat tab: **Gameplay Programmer**, **Engine Expert**, **UI Programmer**, **Code Reviewer**. Every message carries
 the open level, the selected object (its components and values) and the asset list, so answers fit
 your project (untick **Project context** to leave it out). It knows the engine's Lua API from the
 engine's own documentation and maps Unreal features you name onto LSD_Engine's.
+
+**Pictures**: **Screenshot** attaches the editor as it looks now (OpenGL or Vulkan) to your next
+message, or type an image's path in the box under it (PNG, JPG, BMP...): "why is this wall black?",
+"make the HUD look like this". It is halved until its longer side is at most 1568 px and sent once,
+with that message. Needs a model that sees images (Claude; GPT-4o and others on OpenAI-compatible servers).
 
 Set it up once in **Edit > Editor Preferences > Plugins > LSD Assistant**:
 
@@ -876,8 +1212,38 @@ PC only (`Saved/editor_settings.json`, never in the project or Git).
 When a reply contains a file (a code block headed like ```` ```lua Content/Script/Door.lua ````),
 the block has **Copy**, **Create** (or **Overwrite**, which asks twice) and, for scripts, **Attach to
 Selected** (a Script component running it, undoable). It may only write inside `Content/` and
-`Source/`. **Ctrl+Enter** sends; **New Chat** starts over. Requests go from this PC straight to the
+`Source/`. **Ctrl+Enter** sends; **Stop** ends a reply early (what it wrote stays); **New Chat** starts over. Replies appear as they are written
+(streamed); a file block gets its buttons once the reply is done. Requests go from this PC straight to the
 endpoint (through the system's `curl`); a failed one puts your message back in the box.
+
+**Tools** (Unreal: an agent with editor access, like the Claude MCP plugin below): it can act in the editor
+by itself with the same tools as the MCP bridge: console commands (play, stop, save, open...), Lua in the
+running game, the object and asset lists, the Output Log, reading files and writing code files (Content/
+and Source/ only). It reads, writes, presses Play, reads the log for errors and fixes them. **Editor
+Preferences > Plugins > LSD Assistant > Tools**: **Off**, **Ask before each tool call** (the default: the
+calls show in the chat with **Allow**, **Allow All** for this chat, **Deny**) or **Allowed**. Each call and
+its folded result show in the chat; it stops after 12 tool rounds per message. `debug.*` commands are
+refused. Console: `assistant.Ask <message>` sends a message as if typed.
+
+**Lessons** (the second tab) teach how a feature is coded, step by step with the Unreal equivalent,
+and set it up in one click: select a rigged character, pick a lesson, **Apply to Selected Character**.
+Existing files are kept, so your edits survive a second Apply. The console does the same:
+`assistant.Lesson <n>`.
+
+- **Gun on a hand socket (soldier)**: a Cube gun in the right hand through a `weapon_r` socket on
+  `hand_r` (RightHand / mixamorig:RightHand on other rigs), 10/10 ammo, **RMB** aims (the spring arm
+  eases in over the right shoulder, the dot turns red, and IK raises the hand along the view so the gun points at
+  the crosshair: Hand Bone, Shoulder Bone, Aim Reach), **LMB** shoots (a ray from the camera through
+  the crosshair, a tracer from the gun, `on_damage(self, amount, shooter)` on what it hits), **R**
+  reloads (Reload Time, "Reloading..." on the HUD, Reload Montage on the upper body; each shot plays Shoot Montage). It is one component, a Script running
+  `Content/Weapon/Weapon.lua`; its Details show socket, ammo, max ammo, range, damage, reload time,
+  aim distance and shoulder, and the crosshair's size, colours and visibility. Apply also makes
+  `WBP_Crosshair.rml`, `IA_Aim`, `IA_Fire`, `IA_Reload` and maps RMB / LMB / R in the character's
+  Mapping Context. To hold the gun differently, edit the `weapon_r` socket in the Mesh Editor.
+  Step by step with pictures: [EXAMPLES.md](EXAMPLES.md#7b-a-gun-in-the-hand-lsd-assistant-lesson).
+
+  ![The Lessons tab](images/lesson_gun_apply.jpg)
+  *The Lessons tab: pick a lesson, Apply to Selected Character, read how each part is coded.*
 
 ### C and C++ scripts
 
@@ -1029,7 +1395,10 @@ default (averaged across faces by topology, so UV seams do not show); **Solid (F
 faceted faces, **Import** keeps the file's normals, **Auto Smooth** keeps edges sharper than
 **Smoothing Angle** hard. Meshes of 512+ triangles get
 up to three simpler LODs; **LOD 1 / 2 / 3 Screen Size** (Unreal's LOD Screen Size) set how small the
-mesh must look before each takes over (larger = sooner). Shadows use the LOD the camera sees. A
+mesh must look before each takes over (larger = sooner). Shadows use the LOD the camera sees.
+Rigged (skeletal) meshes get them too, per material section, with the same settings: the simpler
+triangles reuse the mesh's own vertices, so skinning, morph targets and clothes following the body
+behave as at full detail; their shadows use the LOD the camera sees too. A
 Static Mesh's **Max Draw Distance** hides it (and its shadow) beyond that distance; a **Cull Distance
 Volume** (Place tab) does it for every static mesh inside by size (Size / Distance rules: pebbles
 vanish sooner than houses). For rigged meshes: the bone
@@ -1058,11 +1427,21 @@ Blueprint turns the mesh -90). **Auto** turns recognised Unreal rigs to face the
 (+X: where a Character walks and its camera looks); pick +X / +Y / -X / -Y for other files whose
 front points elsewhere. Sockets, IK and picking follow the turn.
 
-Drop a rigged FBX into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
-same FBX, or another one with the same bone names: the Mixamo workflow) and the **Clip** (Details
+Drop a rigged FBX, glTF or GLB into the viewport to get a **Skeletal Mesh**. Pick the **Animation** file (the
+same file, or another one with the same bone names: the Mixamo workflow; FBX and glTF mix) and the **Clip** (Details
 lists the file's clips by name and length). With an Animation Graph, Details shows the state it is
 in while it plays. Animations
-play in the editor too.
+play in the editor too. A rigged glTF uses its first skin; its animations become clips, and its morph
+targets (shape keys, by their target names) and animated weights work as an FBX's do (retargeting between
+Unreal rigs is FBX-only for now).
+
+**Preview and trim a take** (Unreal's Animation Sequence preview and Crop): double-click the rigged
+mesh; the Mesh Editor's **Animations** list plays any take of the file in the preview (Pause, and the
+slider scrubs frame by frame). **Trim...** keeps only part of the take: drag **Start** / **End** (seconds
+of the take as the file has it; End 0 = to its end) or scrub and click **Start Here** / **End Here**,
+then **Save**. The take is cut wherever it plays (Skeletal Mesh, Animation Graphs, montages); **No Trim**
+brings the whole take back. Notify times count from the new start. The trims are the file's
+**Clip Ranges** in its .meta, also in its Details.
 
 **Materials on a Skeletal Mesh** (Unreal's Material Slots and Override Materials): the mesh is drawn
 per material of its file, each with its slot's material (see Import Materials and Textures in
@@ -1073,6 +1452,21 @@ row to change that slot on this object only; the **<** button goes back to the m
 **Notifies** (Unreal's AnimNotify): in the animation file's Details, add a time and a sound; it plays
 at the object when the clip passes that time in Play.
 
+**Root Motion** (Unreal's Root Motion from Everything): tick Skeletal Mesh > **Root Motion** for clips made
+with travel (a walk that moves forward, a lunge, a dodge). In Play the root's sideways travel moves the
+object instead of sliding the mesh away: a Character goes through its capsule (so walls stop it), any other
+object moves itself. The editor shows the clip in place. The travel comes from Unreal's `root` bone, or the
+top bone of other rigs (Mixamo's Hips). Montages started with Root Motion work the same way.
+
+**Curves** (Unreal's Anim Curves): named values keyed along a take, read by scripts while it plays:
+`lsd.anim_curve(self, "Footstep")` (visual scripts: **Get Curve Value**). In the Mesh Editor's Animations,
+scrub to a time, type the curve's name and value, **Key Curve Here**, then **Save**. Values run straight
+between keys and hold past the ends; a blend mixes the clips' values like the pose (a clip without the
+curve counts as 0). The keys are the file's **Curve Keys** in its Details too. Curves made in the DCC
+come in by themselves: a user-defined number property animated in an FBX take (a Maya / Blender custom
+attribute on any node, a locator or the root as often as a bone) is a curve of the same name (Unreal's
+imported curves); keys in the Mesh Editor with that name win.
+
 **Animation Graph** (New Data Asset > Animation Graph; Unreal's Anim Blueprint state machine):
 
 - **States**: a clip, or a 1D **blend space** (clips placed along a parameter such as Speed), or a
@@ -1081,14 +1475,41 @@ at the object when the clip passes that time in Play.
   samples it mixes the three around the value; outside them, the nearest edge.
 - **Transitions**: from a state (or any) to another when a parameter is greater / less / true /
   false, or the clip finished, with a crossfade time.
-- **Clips come from one file**: the graph's **Animation** (empty = the mesh's). Every state's and
-  sample's clip number is a clip in that FBX, so put the idle, walk, run... takes in one FBX (one
-  export with several actions from Blender / Maya). Separate files per animation work on a Skeletal
-  Mesh without a graph, not yet inside one graph.
+- **Where clips come from**: the graph's **Animation** (empty = the mesh's) is the default file, and a
+  state's or sample's **Clip** number picks a take in it. A state or sample can also name its own
+  **Animation** file, for one take per file as Mixamo and Unreal export them (`Anim_Idle.fbx`,
+  `Anim_Walk.fbx`...); its Clip then counts in that file (usually 0). Animation notifies (sounds) fire
+  for clips from the graph's own file.
+- **The State Machine window** (Unreal's Anim Blueprint state machine): double-click an AnimGraph in the
+  Content Browser. States are boxes (name, what they play), transitions arrows with a dot (two between
+  the same states lean apart), **Entry** points at the start state and **Any State** holds transitions
+  taken from whatever plays. Click a box or a dot to edit it on the right (renaming a state renames it
+  in its transitions); drag boxes to arrange them, middle-drag to pan; right-click the canvas for **Add
+  State**, a state for **Add Transition To**, **Add Transition From Any State**, **Set as Entry**,
+  **Delete State** (or the Delete key). **Save** writes it; meshes using it pick it up at once. In Play the
+  state the first object using the graph is in is outlined green.
+
+  ![The State Machine window](images/ed_state_machine.jpg)
+  *The State Machine window: Entry, the Idle and Walk states and their transitions; Walk selected, its fields on the right.*
 - Pick the graph in the Skeletal Mesh's **Anim Graph**. A Character feeds **Speed**,
   **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the
   Set Anim Parameter node.
+
+**Montages** (Unreal's Play Montage with a slot and Layered Blend per Bone): `lsd.play_montage(e,
+"Anim_Reload", 1, "spine_01")` (or the **Play Montage** node) plays an animation file once on top of
+whatever the object plays (a clip, an Anim Graph or Motion Matching), from that bone down: `spine_01`
+reloads with the upper body while the legs keep walking; leave the bone empty for the whole body. It
+blends in and out (Blend, seconds); `on_montage_ended(self)` runs when it ends; **Stop Montage**
+blends it out early. **Slots** (Unreal's montage slots): the seventh argument (or the node's **Slot**
+pin, `Default` when empty) names a slot. A new montage replaces only the one in its slot, and
+montages in different slots play together, for example `lsd.play_montage(e, "Anim_Stab", 1,
+"spine_01", 0.2, false, "UpperBody")` while a `Face` slot blinks. `lsd.stop_montage(e, blend, slot)`
+and `lsd.montage_playing(e, slot)` take a slot too; without one they cover every slot. IK (lsd.ik_reach) still applies on top.
+**Root motion** (Unreal's Root Motion from Montages Only): the sixth argument (`true`, or the node's
+**Root Motion** pin) lets a whole-body montage move the player's Character by the clip's own root
+travel (dodges, lunges, attacks that step) instead of the input; the mesh stays on its capsule. The
+root is the skeleton's first joint (`root` on Unreal rigs, `Hips` on Mixamo); in-place clips do not move.
 
 **Motion Matching** (built-in locomotion, the technique behind Unreal's Motion Matching and its Game
 Animation Sample): tick **Character > Animation > Motion Matching** and the character's Skeletal Mesh
@@ -1102,17 +1523,46 @@ animates itself, with no Anim Graph to build. Leave it off to use your own Anima
 - **How it picks**: every frame of those clips is described by where the feet are and how they and
   the hips move, and where the character goes over the next second and which way it faces. Every
   0.1 s (Search Interval) the frame nearest to the current pose plus the path your input asks for is
-  found, and it crossfades there (Blend Time). The capsule still moves the character; the animation
+  found, and it moves there. **Blend Mode** says how: **Inertial** (the default, Unreal's
+  Inertialization) jumps to the new frame at once and eases out the difference from the old pose
+  over Blend Time, so it reacts sooner and never mixes two clips (no foot sliding from blends);
+  **Crossfade** blends the two clips over Blend Time. **Mirror** (Unreal's Mirror Data Table, Inertial
+  only) also uses every clip mirrored, so a left turn serves as a right turn and a left-foot start as a
+  right-foot one: half the clips for the same coverage. Bones are paired by name (`_l` / `_r`,
+  `Left` / `Right`, `l_` / `r_`) and reflected across the character's forward axis (the Skeletal Mesh's
+  Facing); the skinning pose is the reference, so it must be symmetric (T or A pose). The capsule still moves the character; the animation
   follows it. Clips made in place get their movement from the planted foot; root-motion clips use
   their root (Unreal rigs' `root`) or travelling hips.
+- **Tags** (Unreal's Pose Search databases per stance): give clips **Tags** in the Motion Database
+  ("crouch", "swim", "air" or your own, comma-separated). A tagged clip is picked only while its tag is
+  asked for, the untagged ones otherwise: the Character asks for **crouch** while crouched, **swim** in
+  water and **air** off the ground by itself, and `lsd.set_motion_tag(self, "injured")` (or the **Set
+  Motion Tag** node) asks for your own ("" goes back to automatic). With no clip carrying the tag asked
+  for, the untagged ones play, so adding tags never leaves it without a pose. The Character's Details
+  show what it plays, the match cost and the tag (the debugger line); under it, **Pose search
+  candidates** (Unreal's Rewind Debugger pose search view) lists the six nearest frames to the last
+  search, nearest first, each cost split into pose and path, so you see why one clip beat another.
+- **Big databases**: the search groups frames 16 at a time and skips whole groups that cannot beat the
+  best match so far (the same answer as checking every frame), so minutes of motion stay cheap.
 - **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more
   closely, or stay smoother), Same Clip Window, and the foot / hips bones if their names are unusual
   (found by name otherwise: foot_l / LeftFoot / CC_Base_L_Foot, pelvis / Hips). Set the Character's
   Walk Speed near your walk clip's speed (about 1.5 m/s for a walk, 3.5 for a jog) for the best
   matches. Details > Skeletal Mesh shows what plays: "Motion Matching: Anim_Walk at 0.78 s".
 
+**Outfit** (Unreal's modular characters with a Leader Pose Component): add it to the object with the
+body's Skeletal Mesh. It lists body areas (empty: Hair, Hat, Glasses, Shirt, Jacket, Gloves / Glove L,
+Pants, Belt, Shoes / Shoe L, Backpack with their UE5 bones). Each area takes a **Mesh** and a **Bone**.
+The Outfit makes a child per worn piece. A mesh skinned to the same skeleton gets a Skeletal Mesh
+with **Leader Pose** set to the body, so it copies the body's pose bone by bone (by bone name) and
+plays no animation of its own. A rigid mesh is attached to the area's bone. Scripts change it with
+`lsd.set_outfit(e, "Shirt", "SK_Shirt_Blue")` (a mesh name or GUID, "" takes it off). **Skeletal Mesh >
+Leader Pose** works on its own too: name the body object and the mesh follows it.
+
 **Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them
-with the rigged FBX. The Mesh Editor lists them under **Morph Targets**: click one to preview it
+with the rigged FBX or glTF. A mesh with shape keys and no armature works too: it imports as a
+Skeletal Mesh with a single Root bone (drop it in and its Morphs play), each part where the file puts it. The shading follows the shape: each target's normals are worked out at
+import the way the mesh's are (its Normals setting), so a puffed cheek or a raised brow lights correctly. The Mesh Editor lists them under **Morph Targets**: click one to preview it
 (the slider sets the preview weight) and its name is copied. On the Skeletal Mesh, add rows to
 **Morphs** (name + weight 0..1), or from a script `lsd.set_morph(e, "Smile", 0.7)` / the **Set Morph
 Target** node (on a Character it finds the mesh below it). Shape keys animated in the FBX takes
@@ -1140,6 +1590,9 @@ Stream and Looping in their import settings.
   the class and its children, for pause menus and underwater), **Attenuation**, **Concurrency**.
   **Project Settings > Audio > Base Sound Mix** is pushed whenever the game starts (Unreal's Base
   Sound Mix).
+- **Window > Audio Mixer** (Unreal's submix graph with meters; `show.AudioMixer 1`): every Sound Class
+  under Master, the Submix effects it runs through on the way to its parent, and a live peak meter in
+  dB (green, yellow when loud, red at full scale: clipping). Leave it open while playing to balance the mix.
 - **Audio Volume**: reverb while the listener is inside; sounds through its walls are muffled.
   Where volumes overlap, the higher **Priority** wins (a small room inside a big cave).
 - **Occlusion** (Sound Attenuation > Occlusion, Unreal's Enable Occlusion): a sound with it on is
@@ -1191,6 +1644,16 @@ it has played out (**Auto Destroy** on the Particle Effect, for non-looping syst
 For a trail, give a Ribbon emitter a steady spawn rate, speed 0 and world space, and move the object:
 the particles stay where they were born and the ribbon joins them.
 
+**Lit** (Renderer, Alpha sprites and ribbons; Niagara's lit sprite material): the particles take the
+level's light instead of showing their colour as it is: the sky and ground ambient, the sun and the
+Point / Spot Lights near them, soft enough that light from behind still shows through. Use it for
+smoke, dust and snow; leave fire and sparks unlit and Additive. Lit particles do not catch shadows yet.
+
+**Soft Distance** (Renderer; Niagara's soft particles / Unreal's DepthFade): sprites fade out over this many
+metres where they meet a surface, instead of showing a hard line where they cut through the floor or a
+wall (ground fog, smoke, dust). 0 = off. It needs the post-process path (on by default in the viewport
+and in the game).
+
 **Collision** (Niagara's Collision module), world-space emitters only: **Floor** bounces off a flat
 floor at **Floor Height** (also in the editor); **World** hits whatever physics collides with (in
 Play; up to 1024 rays a frame for all effects together). **Bounce** is the speed kept off the
@@ -1198,9 +1661,23 @@ surface, **Friction** the speed lost along it, **Kill On Hit** removes the parti
 (rain, bullets).
 
 Double-click it to open the **Particle Editor**: a preview (orbit with the mouse), play / pause /
-restart, speed, a timeline to scrub and per-emitter particle counts. Edit in Details; the preview
-follows unsaved changes. Drag the system into the viewport to place a **Particle Effect**
-(Active, Time Scale, Preview in the editor).
+restart, speed, a timeline to scrub and per-emitter particle counts, and the **Emitter Stack**
+(Niagara's stack): a tab per emitter (**+** adds one) and its modules in the order a particle meets
+them, under coloured stages: **Emitter** (name, on / off, local space), **Emitter Update** (Spawn),
+**Particle Spawn** (Initialize Particle, Shape, Velocity), **Particle Update** (Forces, Color, Size,
+Rotation, Over Life, Collision) and **Render** (Renderer). Shape, Velocity, Forces, Color, Size,
+Rotation, Over Life and Collision each have a **Use** box (Niagara's module checkboxes): untick one to
+see the effect without it; its settings stay for when you tick it again. **Bounds** draws the box the
+live particles fill (and its size), to see how far an effect reaches. **Min Quality** on an emitter
+(Niagara's emitter scalability) leaves it out below that Effects Quality: extra embers or mist only
+on stronger PCs. Each stage folds away; **Remove Emitter**
+takes the shown one out. In a wide window the stack sits beside the preview. Edits save by themselves
+a moment later (like Details, which shows the same modules as categories), and the preview follows
+them. Drag the system into the viewport to place a **Particle Effect** (Active, Time Scale, Preview in
+the editor).
+
+![The Emitter Stack](images/ed_particles_stack.jpg)
+*The Particle Editor with its Emitter Stack: Flames and Sparks tabs, the stages and their modules.*
 
 ---
 
@@ -1210,9 +1687,22 @@ follows unsaved changes. Drag the system into the viewport to place a **Particle
 *The Behavior Tree editor: Palette on the left (Tree, Composites, Tasks, Conditions, Decorators, Services), Root > Sequence > Random Location / Move To / Wait on the canvas.*
 
 1. Place a **Nav Mesh Bounds** volume around the walkable area (optional: without one the whole
-   level is used). Press **P** to see the navmesh in green. World Settings > Navigation sets agent
-   radius / height, step height, slope and cell size. A **Nav Modifier Volume** cuts its box out of the
+   level is used). Press **P** to see the navmesh in green (walls and objects hide the parts behind them; in Play too, or
+   `show.Navigation 1`). World Settings > Navigation sets agent
+   radius / height, step height, slope and cell size. The navmesh lies on what blocks in Play: a mesh's
+   box, or its own triangles when its **Collision Shape** is **Mesh** (arches, ramps, stairs). A **Nav Modifier Volume** cuts its box out of the
    navmesh (Unreal's Nav Modifier with the Null area): AI paths round it though nothing blocks there.
+   A **Nav Link** (Place > Nav Link; Unreal's Nav Link Proxy) joins two places the navmesh does not: a
+   gap to jump, a ledge to drop off, a ladder. It runs from the object to its **End** (in the object's
+   space); untick **Both Ways** for a one-way drop. Agents cross it in a straight line. Show Navigation
+   draws it as a line between the two ends.
+   **World Settings > Navigation > Runtime Rebuild** (Unreal's Runtime Generation: Dynamic): in Play the
+   navmesh is built again about a second after something solid stops moving (a door that opened, a
+   bridge that fell, a crate pushed aside); agents keep walking to where they were going. Things that
+   never stop moving (a platform a script swings) are left out after three seconds (the Output Log says
+   which). Scripts can ask for it at once: `lsd.rebuild_navmesh()`. The navmesh is built in tiles (about
+   10 m across), and a rebuild redoes only the tiles where something changed (`Navmesh rebuilt (n tiles
+   changed, ... ms)` in the log), so a door in a big level costs little.
 2. Give an enemy a **Nav Agent** (speed, radius, height): it can walk with `lsd.move_to` or the AI
    Move To node, steering round other agents.
 3. Give it an **AI Controller** with a **Behavior Tree** (New Behavior Tree; Unreal's Behavior Tree
@@ -1226,6 +1716,7 @@ follows unsaved changes. Drag the system into the viewport to place a **Particle
 | Move To | walks to a location in a blackboard key; follows it if it moves |
 | Wait, Random Location, Set Key, Clear Key | waiting, patrols, blackboard edits |
 | Run Script | calls a function of the agent's Lua script (return true / false / nothing = running) |
+| Run Behavior | runs another Behavior Tree here, by name (Unreal's Run Behavior): share a patrol or a search between enemies |
 | Is Set, Compare | conditions on blackboard keys |
 | Blackboard Condition | decorator: runs its one child only while Key <Op> Value holds (or is set / not set), stopping it the moment it does not |
 | Loop, Cooldown, Time Limit, Force Success | decorators: repeat the child, rest after it, give up after a time, ignore its failure |
@@ -1235,8 +1726,26 @@ Unreal attaches decorators and services to a node; here they are nodes with one 
 
 Perception fills the blackboard: **CanSeePlayer** (1 while in sight range, field of view and line
 of sight), **PlayerLocation** (last seen), **NoiseLocation** / **HeardNoise** (from
-`lsd.report_noise`). While playing, the open tree's running branch glows green. Select an object
+`lsd.report_noise`), **Damaged** / **DamageAmount** / **Attacker** / **AttackerLocation** (when a script hurts it
+with `lsd.apply_damage(target, amount, instigator)` or the **Apply Damage** node; Unreal's damage sense),
+**TouchedPlayer** (the player bumps into it, seen or not; Unreal's touch sense). What it saw or heard fades: PlayerLocation, EnemyLocation and NoiseLocation /
+HeardNoise are cleared **Memory Seconds** (10) after the last sighting or noise (0 keeps them), so a
+"search where it was last seen" branch ends by itself. **Team** (Unreal's affiliation): agents on
+different teams (not 0) see each other as enemies, **CanSeeEnemy** / **EnemyLocation** (the nearest
+one in view). An agent on the **Player Team** is friendly and never sets CanSeePlayer. While playing,
+the open tree's running branch glows green (a Run Behavior node glows while its tree runs). Select an object
 with an AI Controller to see its sight cone (green) and hearing range (blue) in the viewport.
+
+**Blackboard asset** (Unreal's Blackboard Data): New Data Asset > **BlackboardData** lists the keys a tree
+uses, each with a **Type** (Bool, Float, Int, Vector, Object), a starting value and a note. Pick it in the
+AI Controller's **Blackboard**: every key but Objects starts at its value when Play begins, an Int is
+rounded and a Bool is 0 or 1 when a script writes it, and `lsd.set_blackboard` with a key the asset lacks
+(a typo) or the wrong kind of value (a location for a number) is refused with a warning in the Output Log,
+once per key. Perception's keys (CanSeePlayer, PlayerLocation...) need not be listed. Without an asset any
+key goes, as before.
+
+**Edit trees while playing**: save the behaviour tree and, within a second, every agent running it starts
+again from the new tree's root (what it was doing is stopped first). A save that does not load keeps the old tree.
 
 ---
 
@@ -1255,8 +1764,17 @@ The preview is also the **designer canvas** (UMG's Designer tab):
 - **Click** an element in the preview to select it (it needs an `id`; clicking text inside a panel
   picks the nearest element with one). **Drag** it to move it (Ctrl: 10 px steps); an element in
   the normal flow becomes `position: relative`. **Delete** removes it.
+- The selection has three gold **resize handles** (UMG's): the right edge sets `width`, the bottom
+  edge `height`, the corner both (Ctrl: 10 px steps).
+- The **Hierarchy** tab (UMG's Hierarchy panel) lists every element nested as in the text; click one
+  to select it. Elements without an `id` are greyed out (give one an id to select it).
 - The **Details** tab shows the selection's text, **On Click** (the Lua function it calls) and common
   style properties. Empty fields come from the style sheet.
+- **Anchor** (in Details; UMG's Anchors), for elements with `position: absolute` straight under `body`: nine
+  points (corners, edge middles, centre). The element keeps its distance to that point when the screen is
+  another size: a health bar anchored bottom left stays in the corner on any monitor. Picking one keeps the
+  element where it is (it writes `right` / `bottom`, or `left: 50%` with a margin for the middle); dragging
+  keeps the anchor.
 - Everything you do there is written into the code as the element's inline `style` and attributes,
   so the code and the canvas always agree; edit either.
 
@@ -1283,6 +1801,44 @@ button:focus, button:hover { background-color: #EEA70E; }
 - Change it: `lsd.ui_set_text(doc, "score", 1250)`, `lsd.ui_set(doc, "bar", "style", "width: 40%")`
   (nodes **Set UI Text** and **Set UI Attribute**). A worked health and stamina HUD is in
   [Examples for first timers](Examples/Examples.md).
+- **Data bindings** (UMG's property bindings): instead of setting elements one by one, give the
+  document's body `data-model="game"` and name values in it; `lsd.ui_data(name, value)` (a number,
+  text or boolean) updates every open document that uses them. Names not set yet read as 0.
+
+  ```html
+  <body data-model="game">
+  <div id="bar"><div id="fill" data-style-width="game.health + '%'"></div></div>
+  <div>{{game.name}}: {{game.health}} HP</div>
+  <div data-if="game.health < 25">Low health!</div>
+  </body>
+  ```
+
+  ```lua
+  lsd.ui_data("name", "Soldier")
+  lsd.ui_data("health", self.health)   -- the bar, the label and the warning follow
+  ```
+
+  **Lists** (UMG's List View fed by an array): pass a table, and `data-for` repeats an element per
+  item; `{{item.field}}` reads a row's field, the second name is its index (from 0), and
+  `{{game.<name>.size}}` counts it. For `data-for` the `data-model` must be on an element inside the
+  body, not on `<body>` itself (RmlUi reads the repeated markup while the document loads):
+
+  ```html
+  <body><div data-model="game">
+  <div>Items: {{game.inventory.size}}</div>
+  <div data-for="item, i : game.inventory">{{i + 1}}. {{item.name}} x{{item.count}}</div>
+  </div></body>
+  ```
+
+  ```lua
+  lsd.ui_data("inventory", {{name = "Sword", count = 1}, {name = "Potion", count = 3}})
+  ```
+
+  ![A health bar by data binding](images/ui_data_binding.jpg)
+  *The bar's width, the label and the warning above, after `lsd.ui_data("health", 18)`.*
+
+  `data-class-low="game.health < 25"` (a class while true) and `data-attr-src="game.icon"` work the
+  same way. Lists (`data-for`) are not offered yet: one value per name.
 - **Events**: `onclick="start_game"` calls `start_game(self, element_id)` in every script that has it.
 - **The document's own script** (a Widget Blueprint's event graph, in JavaScript): put `Menu.js` next
   to `Menu.rml`. It runs when the document opens; its functions answer the document's events before
@@ -1303,8 +1859,31 @@ button:focus, button:hover { background-color: #EEA70E; }
 - **Menus**: `lsd.ui_show_cursor(true)` frees the mouse for the UI. Arrow keys / D-pad move the
   focus between elements with `nav: auto`; Enter / Space / gamepad A press it.
 - **Over objects**: `lsd.ui_follow(doc, "tag", enemy, 2.2)` keeps an element above an object.
+- **Ready-made HUD widgets** (no document to make; also the UI nodes Health Bar, Remove Health Bar,
+  Damage Number, Show Prompt):
+  - `lsd.health_bar(enemy, hp / max_hp)` puts a bar over an object that goes from green to red as it
+    empties. Call it again to update it; `lsd.remove_health_bar(enemy)` takes it away.
+  - `lsd.damage_number(enemy, 25)` shows a number that rises from the object and fades within a second.
+  - `lsd.prompt("Press E to open")` shows a prompt at the bottom of the screen, `lsd.prompt(nil)` hides it.
+    `lsd.prompt("Pick up", item)` floats over an object instead.
+
+  Widgets of destroyed objects go by themselves.
+
+![HUD widgets](images/hud_widgets.jpg)
+*A health bar and a damage number over the player, and a prompt.*
+- **A ready-made settings menu**: `lsd.settings_menu()` opens (or closes) an options menu over the game:
+  Quality (Low to Epic), Fullscreen, Master / Music / Effects volume, Mouse sensitivity and Invert look,
+  saved with the player's settings as they change, with the mouse cursor shown while it is open. Bind it
+  to Esc or a Pause button; for your own look, copy its idea into a `.rml` with `lsd.get_settings` /
+  `lsd.set_settings`. UI actions that should run once whatever scripts exist go to `lsd.on_ui(action,
+  function(element_id) end)` (the menu's buttons use it).
+- **Safe zone** (Unreal's Display Safe Zone): **Project Settings > User Interface > UI Safe Zone** (%)
+  lays the game UI out that far in from every edge of the view, so a TV that crops the picture keeps
+  the HUD whole (5 % is usual for TVs, 0 for monitors). World-anchored elements still sit over their objects.
 - Fonts: `font-family: sans` is always there; add your own `.ttf` / `.otf` to `Content/Fonts` and use
-  their family name. Every element starts inline: give blocks `display: block`.
+  their family name. Fonts in `Content/Fonts/Fallback` (Unreal's composite font fallbacks) fill in the
+  glyphs the others lack: drop Noto Sans JP / SC / KR / Arabic there and Japanese, Chinese, Korean or Arabic
+  text shows in every font-family. Every element starts inline: give blocks `display: block`.
 
 ---
 
@@ -1324,6 +1903,18 @@ local save = lsd.load_game("Slot1")   -- nil if there is none
 ```
 
 Files go to `Saved/SaveGames/<slot>.json`. Visual scripts: Save Value / Load Value.
+
+**Versions** (Unreal's custom save versions): pass your save format's number when it changes, and
+upgrade older saves when they load; saves written without one are version 1.
+
+```lua
+lsd.save_game("Slot1", {level = 3, gold = 250}, 2)      -- version 2: "coins" became "gold"
+local save, version = lsd.load_game("Slot1")
+if save and version < 2 then save.gold, save.coins = save.coins, nil end
+```
+
+**In the background** (Unreal's Async Save Game to Slot): `lsd.save_game_async(slot, value [, version])`
+writes the file off the frame (no hitch for big saves); loading, checking or deleting that slot waits for it.
 
 Whole objects (the components you name, Transform when you name none) by object name, so a load
 into a freshly opened level puts them back:
@@ -1356,10 +1947,20 @@ MENU_QUIT,Quit,Quitter
 UI text that is exactly a key is translated (`<button>MENU_PLAY</button>`); in Lua use
 `lsd.text("MENU_PLAY")`. `lsd.set_language("fr")` switches and reloads open UI documents.
 
+**Tools > Gather Text** (Unreal's Localization Dashboard > Gather Text; console `loc.Gather`) fills
+the table for you. It finds every `lsd.text("KEY")` in Lua and JavaScript scripts, every Localized
+Text / Format Text node's key, and every text shown in a UI document (`<button>Start Game</button>`
+adds the key `Start Game`, which translates because the whole text is a key). Keys the table lacks
+are added at the end; UI texts get their first-language cell filled with the text itself. Then
+translate the other columns. Without a table it makes `Content/Localization/ST_Game.csv` and sets it
+in Project Settings. Texts built at run time (`lsd.text("LEVEL_" .. n)`) are not found: add those by hand.
+
 **Arguments and plurals** (Unreal's Format Text): write `{0}`, `{1}`... in the text and pass the
 values after the key: `lsd.text("SCORE", score)` (or the **Format Text** node). For words that
 change with a number, `{0}|plural(one=apple,other=apples)` picks by the language's rule (French
-counts 0 as one); add `zero=` for a special empty case:
+counts 0 as one); add `zero=` for a special empty case. Languages with more forms use CLDR's names:
+`two`, `few` and `many` too (Russian and Ukrainian 2-4 few, 5-20 many; Polish 22-24 few; Czech 2-4 few;
+Arabic zero, one, two, few, many; Japanese, Chinese and Korean only `other`). A form the text lacks uses `other`:
 
 ```text
 Key,en,fr
@@ -1370,15 +1971,47 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 
 ## 17. Packaging and shipping
 
-1. **Edit > Project Settings**: project name, **Game Default Level**, icon, Steam App ID.
+1. **Edit > Project Settings**: project name, company, **Game Default Level**, icon, splash, Steam App ID.
 2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release` (it also
    refreshes `lsd_editor.exe` in the project folder).
-3. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
+3. **Build > Build Release Engine** first if the editor says so (the package copies the Release engine, which
+   runs without Visual Studio): it builds it from the engine's source with CMake in the background, the
+   status bar shows the progress, `Saved/Logs/ReleaseBuild.log` the whole output. Close any running copy of
+   the root `lsd_editor.exe` first (the build replaces it).
+4. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
-4. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
+5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
 
-`lsd_editor.exe -game` runs the current project the same way without packaging.
+**Cooking** (Unreal's cook): tick **Project Settings > Packaging > Cook Used Assets Only** and the
+package gets only the assets the game uses: found from the Project Settings (Game Default Level, Game
+Mode, input, sound mixes...) through references, and through names and paths in scripts, graphs and UI
+(`lsd.play_sound("Door")`, `lsd.open_level("Level2")`, a stylesheet's href), each with its compiled
+data so nothing compiles on the first run. `cook_report.txt` in the package lists what was left out:
+check it, since an asset only named in a string built at run time (`"Level" .. n`) is not found.
+
+**Editor-only data** (Unreal's Developers folder and editor-only actors): folders named `Developers` or
+`EditorOnly` in Content never ship, and an object with an **Editor Only** component (Add Component >
+Editor > Editor Only, with a **Note** for the team) and everything under it is left out of Play and
+stripped from the packaged levels: reference meshes, notes, scale figures, test helpers.
+
+**Build Configuration** (Project Settings > Packaging; Unreal's Development / Shipping): a Development
+package still takes `-remote` (Tools > Remote Console from the editor), `-exec` lines and smoke tests,
+for testing on other PCs; a Shipping package, the one players get, ignores them (its log and crash
+reports stay, for bug reports).
+
+**Platform** (Project Settings > Platform; Unreal's Windows platform settings):
+
+- **Icon**: a square PNG, 256 x 256 is plenty. It is the game window's icon and, on Windows,
+  it is written into the packaged exe, so Explorer, the taskbar and shortcuts show it.
+- **File details**: the exe's Properties > Details carry the project name, the **Company** and version 1.0.
+- **Splash**: an image (up to 1280 px) shown centred over everything while the packaged game starts,
+  for at least **Splash Seconds** and until the level is playing. It is copied into the package as
+  `splash.<ext>`. Empty: no splash.
+- **Steam App ID** goes into `steam_appid.txt` next to the exe.
+
+`lsd_editor.exe -game` runs the current project the same way without packaging (with a `splash.png`
+in the project folder, the splash too).
 
 ---
 
@@ -1397,15 +2030,42 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
   On a build server: `lsd_editor.exe -nosound -level=Content/Levels/Main.lsdlevel -smoketest=10`
   exits with 0 (clean) or 1 (errors).
 - **Remote Console** (Tools menu): start the packaged game with `-remote`, click Connect, and type
-  console commands into it while it runs; each one's log lines come back to the window.
+  console commands into it while it runs; each one's log lines come back to the window. On another
+  PC (a test machine on the network, a handheld) start it with `-remote -remotepassword=<a password>`.
+  It then listens on every network instead of this PC only. In the window, type that PC's address
+  (192.168.x.x) as **Host** and the **Password**, then Connect. A wrong password closes the connection;
+  five in a row close the remote console until the game restarts. Shipping packages ignore `-remote`.
+  **Push Changes** (once connected): every Content file you save in the editor from then on is sent to
+  the game, which hot-reloads it as if edited there: tweak a script, a material, a UI document or a level and
+  see it on the test PC without packaging again. Live values go through the console too (`lua`, cvars).
 - **Tools > Run Unit Tests**: runs the engine's test suites in the background.
 - **HighResShot 2** (console): saves the main view at twice its size as a PNG in
   `Saved/Screenshots/` (up to 8×, post-processing included; works on D3D12 and OpenGL).
-- **Window > Memory** / **memreport** (console): memory per allocator, the process's RAM and the video memory budget.
+- **Window > Memory** / **memreport** (console): memory per system (Unreal's stat memory): the engine's own heap, **Physics (Jolt)**, **Audio (miniaudio**: decoded sounds and streams), **Scripts (Lua)** and any arenas, with peaks; the process's RAM and the video memory budget.
+- **Texture streaming** (Unreal's, on by default; `r.TextureStreaming 0` turns it off): a texture is
+  read and decoded on a worker thread the first time something needs it, and a few finished ones go
+  onto the GPU each frame. Levels open without waiting for their images: a material draws in its
+  plain colour for a moment, then its textures appear. Changed texture files reload the same way.
+- **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static and skeletal meshes, and each copy of an Instanced Static Mesh, hidden
+  behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
+  shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`
+  shows how many it skipped (culled ... (occluded n)). Masked and translucent meshes do not hide anything.
+- **Shadow caching** (Unreal's cached shadow maps, on by default; `r.ShadowCaching 0` turns it off):
+  a Point or Spot Light's shadow is drawn once and kept while nothing it shows moves, so a room of
+  static lights costs nothing per frame. Moving a mesh, the light or an Instanced Static Mesh redraws
+  it the next frame; a Skeletal Mesh within the light's reach redraws it every frame. The sun's cascades
+  are kept the same way while the camera stands still (or moves less than a shadow texel) and nothing
+  in them moves. Local light
+  shadows need Shadows quality High or Epic. `stat dump` shows how many tiles were kept.
+- **Shadow Resolution** (Point / Spot Light; Unreal's Shadow Resolution Scale): **Medium** is the usual
+  tile, **High** four times the texels (a hero light's crisp shadow), **Low** a quarter (fill lights; more
+  of them fit). A light whose tiles do not fit gets the next size down; a High point light (six views)
+  usually ends up Medium.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
 - **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU
-  time per stage (shadows, scene, post, UI; timestamp queries on D3D12 and OpenGL), draws and the
+  time per stage (shadows, scene, post, UI; timestamp queries on D3D12 and OpenGL), draws, objects
+  culled, shadow casters skipped (skinned meshes and instanced copies outside a shadow view) and the
   editor UI's time per panel (Unreal's `stat gpu` + `stat unit` in one line).
 - **Tracy** (Unreal Insights): configure with `-DLSD_TRACY=ON`, build, run, and connect the Tracy
   profiler v0.11.1 to see every frame's timeline.
@@ -1425,7 +2085,7 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 | Animation | Skeletal Mesh (**Morphs**: morph target weights) |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
-| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()` (nodes Set Camera View, Is Third Person, Get Camera Location) |
+| Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()`, `lsd.camera_forward()` (where the view looks: shoot along it for a crosshair) (nodes Set Camera View, Is Third Person, Get Camera Location) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
 | Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view, `r.GPUCulling 0` to compare) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |
@@ -1478,7 +2138,17 @@ Audio and animation
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
 | `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | |
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
+| `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
+| `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
+| `lsd.settings_menu([open])` | the built-in options menu (quality, fullscreen, volumes, mouse); no argument toggles it |
+| `lsd.on_ui(action, fn)` | a UI action (onclick / onchange name) handled once, engine-wide, before scripts' functions |
+| `lsd.rebuild_navmesh()` | builds the navmesh again now (after moving walls or doors); agents keep walking |
+| `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
+| `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
+| `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
+| `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |
+| `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"...) under a Content/ folder, by name |
 
 AI
 
@@ -1496,9 +2166,13 @@ UI, saving, settings, languages
 | `lsd.ui_open(name)` | document handle |
 | `lsd.ui_close(doc)`, `lsd.ui_set_text(doc, id, text)`, `lsd.ui_set(doc, id, attr, value)` | |
 | `lsd.ui_value(doc, id)` | a text field's text |
+| `lsd.ui_data(name, value)` | a data binding: `{{game.name}}` in documents with `data-model="game"`; a table is a list for `data-for` |
 | `lsd.ui_show_cursor(on)` | menus: free the mouse |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
-| `lsd.save_game(slot, v)`, `lsd.load_game(slot)`, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
+| `lsd.ui_style(doc, id, property, value)`, `lsd.ui_rml(doc, id, markup)` | one style property; an element's contents as markup |
+| `lsd.health_bar(e, fraction [, height, color])`, `lsd.remove_health_bar(e)` | a health bar over e |
+| `lsd.damage_number(e, amount [, color])`, `lsd.prompt(text [, e])` | a rising damage number; a prompt (nil hides) |
+| `lsd.save_game(slot, v [, version])`, `lsd.save_game_async(slot, v [, version])`, `lsd.load_game(slot)` -> value, version, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
 | `lsd.save_objects(slot, objects, [components], [extra])`, `lsd.load_objects(slot)` | whole objects' components by name |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |
 | `lsd.text(key)`, `lsd.set_language(code)`, `lsd.languages()` | localisation |
@@ -1524,11 +2198,27 @@ behaviour tree tasks `name(self, dt)`.
 | Alt+G / J / H / K, Alt+4 / 3 / 2, G, P | views, view modes, game view, navmesh |
 | Alt+P, Alt+S, Esc, Pause, ], F8, Shift+F1 | play, simulate, stop, pause, step, eject, free mouse |
 
+These are the defaults. **Edit > Editor Preferences > Keyboard Shortcuts** (Unreal's Keyboard
+Shortcuts) changes them: click a command's keys, then press the new ones (hold Ctrl / Shift / Alt
+with them; Esc cancels). **x** leaves a command without keys, **Reset** / **Reset All** bring the
+defaults back, the search box finds a command or a key, and a red **also ...** shows another command
+on the same keys. The menus show the keys you chose. Your changes are saved in
+`Saved/editor_settings.json` (per user, not in Git). Camera bookmarks (Ctrl+0-9 / 0-9) and flying
+stay fixed.
+
+Save, Undo, Redo, Copy, Cut, Paste, Duplicate and Delete are shared with the asset editor windows
+(Visual Script / material / sound cue / behaviour tree graphs, Data Tables, the UI window, Timelines,
+the State Machine), like Unreal's generic commands: rebind one and it changes everywhere. While an
+asset editor has focus, the level's shortcuts stay out of it (Delete there never deletes the selected
+level object). **Debugging** holds the Lua Debugger's Continue / Step Over / Step Into / Step Out
+(F5 / F10 / F11 / Shift+F11; its buttons show the keys you chose), and **Toggle Breakpoint** (F9) works
+on a graph node and a debugger line.
+
 ### Command line
 
 | Flag | Meaning |
 | --- | --- |
-| `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, D3D12 debug layer |
+| `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, debug layer (D3D12; Vulkan with the Vulkan SDK). Vulkan draws everything D3D12 does: lit, textured, animated and instanced meshes, the same lit look as D3D12 (one shared shader: specular, normal / ORM maps, fog, probes, decals, reflections, lightmaps), shadows, particles, game UI and post-processing, and Material Graph materials when the Vulkan SDK is installed (its DXC compiles them; without it they draw with the built-in material) (install the [Vulkan SDK](https://vulkan.lunarg.com) to build it: `winget install KhronosGroup.VulkanSDK`) |
 | `-level=<path>`, `-play`, `-game` | open a level, start Play, run as the game |
 | `-nosound` | no audio device |
 | `-exec="<console line>"` | run a console command on the first frame, after `-play` has started (repeatable) |

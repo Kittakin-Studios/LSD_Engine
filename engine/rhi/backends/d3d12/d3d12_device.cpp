@@ -60,345 +60,43 @@ float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 // Lit mesh, physically based (metal / roughness, GGX): one sun plus sky / ground ambient. Constants
 // match rhi::MeshDraw; n0.w carries the unlit flag, n1.w "has a normal map". Output is encoded to
 // sRGB by hand (the swapchain is UNORM so the UI keeps its exact colours).
-constexpr char kMeshHlsl[] = R"(
-cbuffer Draw : register(b0) {
-    float4x4 mvp; float4 n0; float4 n1; float4 n2; float4 w0; float4 w1; float4 w2;
-    float4 color; float4 mat0; float4 mat1;  // mat0: metallic, roughness, emissive.rg; mat1: emissive.b, camera.xyz
-};
-struct Light { float4 pos_type; float4 dir_range; float4 color_inner; float4 spot; };
-cbuffer Lights : register(b1) {
-    float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16];
-    float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
-    float4x4 local_vp[16]; float4 local_tile[16];
-    float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px; float4 hdr_out;
-    float4 probe_origin; float4 probe_cell; uint4 probe_dims; float4 probes[1536];
-    float4 decal_info; float4 decals[80];
-};
-// The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
-// light over a cell outside the grid), or the sky / ground colours.
-float3 probe_light(uint index, float3 n) {
-    const float4 basis = float4(0.886227, 1.023328 * n);  // L1 irradiance
-    return max(float3(dot(probes[index * 3], basis), dot(probes[index * 3 + 1], basis), dot(probes[index * 3 + 2], basis)), 0.0) * 0.318310;
-}
-float3 ambient_light(float3 wpos, float3 n) {
-    const float3 sky = lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5);
-    if (probe_origin.w < 0.5) return sky;
-    const float3 last = float3(probe_dims.xyz) - 1.0;
-    float3 g = (wpos - probe_origin.xyz) / probe_cell.xyz;
-    const float3 outside = max(max(-g, g - last), 0.0);
-    const float fade = saturate(1.0 - max(outside.x, max(outside.y, outside.z)));
-    g = clamp(g, 0.0, last);
-    const uint3 c = min(uint3(g), probe_dims.xyz - 2);
-    const float3 f = g - float3(c);
-    float3 baked = 0;
-    for (uint k = 0; k < 8; ++k) {
-        const uint3 o = uint3(k & 1, (k >> 1) & 1, k >> 2);
-        const float3 w3 = lerp(1.0 - f, f, float3(o));
-        const uint3 p = c + o;
-        baked += probe_light(p.x + p.y * probe_dims.x + p.z * probe_dims.x * probe_dims.y, n) * (w3.x * w3.y * w3.z);
-    }
-    return lerp(sky, baked, fade);
-}
+#include "mesh_hlsl.h"  // kMeshHlsl: engine/rhi/shaders/mesh.hlsl
 
-Texture2D<float> shadow_tex : register(t3);
-Texture2D<float> local_shadow_tex : register(t4);
-SamplerComparisonState shadow_samp : register(s1);
-// Sun shadow: the cascade by distance from the camera, pushed out along the normal against acne,
-// 3x3 hardware-filtered taps (soft edges).
-float sun_shadow(float3 wpos, float3 n, float3 cam) {
-    const float dist = length(wpos - cam);
-    uint c = 0;
-    while (c + 1 < (uint)shadow_info.x && dist > shadow_split[c]) ++c;
-    if (dist > shadow_split[(uint)shadow_info.x - 1]) return 1.0;
-    const float4 s = mul(shadow_vp[c], float4(wpos + n * shadow_info.w * (1.0 + c), 1.0));
-    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
-    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0) return 1.0;
-    uv = shadow_tile[c].xy + uv * shadow_tile[c].z;
-    const float2 lo = shadow_tile[c].xy + shadow_info.z, hi = shadow_tile[c].xy + shadow_tile[c].z - shadow_info.z;
-    float lit = 0.0;
-    [unroll] for (int y = -1; y <= 1; ++y)
-        [unroll] for (int x = -1; x <= 1; ++x) lit += shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * shadow_info.z, lo, hi), s.z);
-    return lit / 9.0;
-}
-// Spot / point light shadow: the light's tile (a point light's cube face by the major axis).
-float local_shadow(Light L, float3 wpos, float3 n) {
-    uint tile = (uint)L.spot.y;
-    const float3 d = wpos - L.pos_type.xyz;
-    if (L.pos_type.w < 1.5) {
-        const float3 a = abs(d);
-        tile += a.x >= a.y && a.x >= a.z ? (d.x > 0 ? 0 : 1) : a.y >= a.z ? (d.y > 0 ? 2 : 3) : (d.z > 0 ? 4 : 5);
-    }
-    float4 s = mul(local_vp[tile], float4(wpos + n * (L.spot.z * length(d)), 1.0));
-    s.xyz /= s.w;
-    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
-    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0 || s.z < 0.0) return 1.0;
-    uv = local_tile[tile].xy + uv * local_tile[tile].z;
-    const float texel = hdr_out.y > 0.0 ? hdr_out.y : 1.0 / 4096.0;  // the atlas's texel (its size follows video memory)
-    const float2 lo = local_tile[tile].xy + texel, hi = local_tile[tile].xy + local_tile[tile].z - texel;
-    float lit = 0.0;
-    [unroll] for (int y = -1; y <= 1; ++y)
-        [unroll] for (int x = -1; x <= 1; ++x) lit += local_shadow_tex.SampleCmpLevelZero(shadow_samp, clamp(uv + float2(x, y) * texel, lo, hi), s.z);
-    return lit / 9.0;
-}
-Texture2D base_tex : register(t0);
-Texture2D normal_tex : register(t1);
-Texture2D orm_tex : register(t2);
-// Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
-// not face along the box's +Z and towards its top and bottom.
-Texture2D decal_tex : register(t5);
-SamplerState decal_samp : register(s2);
-float3 apply_decals(float3 c, float3 wpos, float3 n) {
-    const uint count = (uint)decal_info.x;
-    for (uint d = 0; d < count; ++d) {
-        const float4 p = float4(wpos, 1.0);
-        const float3 l = float3(dot(decals[d * 5], p), dot(decals[d * 5 + 1], p), dot(decals[d * 5 + 2], p));
-        if (any(abs(l) > 0.5)) continue;
-        const float facing = dot(n, normalize(decals[d * 5 + 2].xyz));
-        const float fade = saturate((facing - 0.1) * 4.0) * saturate((0.5 - abs(l.z)) * 8.0);
-        const float4 rect = decals[d * 5 + 3], tint = decals[d * 5 + 4];
-        const float2 uv = rect.xy + clamp(float2(l.x + 0.5, 0.5 - l.y), 0.004, 0.996) * rect.zw;
-        const float4 t = decal_tex.SampleLevel(decal_samp, uv, 0);
-        c = lerp(c, t.rgb * tint.rgb, saturate(t.a * tint.a * fade));
-    }
-    return c;
-}
-
-SamplerState samp : register(s0);
-struct VsIn {
-    float3 pos : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD0;
-#ifdef SKINNED
-    uint4 joints : BLENDINDICES; float4 weights : BLENDWEIGHT;
-#endif
-#ifdef INSTANCED
-    uint instance : SV_InstanceID;
-#endif
-};
-struct VsOut { float4 pos : SV_Position; float3 normal : NORMAL; float3 wpos : TEXCOORD1; float2 uv : TEXCOORD0; };
-#ifdef SKINNED
-cbuffer Joints : register(b2) { float4 joint_rows[768]; };  // 3 rows per joint
-#endif
-#ifdef INSTANCED
-cbuffer Instances : register(b2) { float4 instance_rows[768]; };  // 3 rows per instance: its world matrix
-#endif
-VsOut vs_main(VsIn i) {
-    VsOut o;
-    float3 position = i.pos, normal = i.normal;
-#ifdef INSTANCED
-    const float4 r0 = instance_rows[i.instance * 3], r1 = instance_rows[i.instance * 3 + 1], r2 = instance_rows[i.instance * 3 + 2];
-    const float4 local = float4(position, 1);
-    const float3 world_pos = float3(dot(r0, local), dot(r1, local), dot(r2, local));
-    o.pos = mul(mvp, float4(world_pos, 1));  // mvp is the view-projection here
-    // Normals by the cofactor matrix (det * inverse transpose): right under any scale, uniform or not.
-    const float3 c0 = float3(r0.x, r1.x, r2.x), c1 = float3(r0.y, r1.y, r2.y), c2 = float3(r0.z, r1.z, r2.z);
-    o.normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;
-    o.wpos = world_pos;
-    o.uv = i.uv;
-    return o;
-#endif
-#ifdef SKINNED
-    float4 r0 = 0, r1 = 0, r2 = 0;
-    [unroll] for (int k = 0; k < 4; ++k) {
-        r0 += joint_rows[i.joints[k] * 3] * i.weights[k];
-        r1 += joint_rows[i.joints[k] * 3 + 1] * i.weights[k];
-        r2 += joint_rows[i.joints[k] * 3 + 2] * i.weights[k];
-    }
-    position = float3(dot(r0, float4(position, 1)), dot(r1, float4(position, 1)), dot(r2, float4(position, 1)));
-    normal = float3(dot(r0.xyz, normal), dot(r1.xyz, normal), dot(r2.xyz, normal));
-#endif
-    o.pos = mul(mvp, float4(position, 1));
-    o.normal = n0.xyz * normal.x + n1.xyz * normal.y + n2.xyz * normal.z;
-    const float4 p = float4(position, 1);
-    o.wpos = float3(dot(w0, p), dot(w1, p), dot(w2, p));
-    o.uv = i.uv;
-    return o;
-}
-//@MATERIAL
-static const float PI = 3.14159265;
-// Image-based lighting without cubemaps (Unreal's Sky Light reflections): the sky / ground gradient
-// seen along a direction, brighter toward the horizon like the drawn sky.
-float3 sky_radiance(float3 d) {
-    const float h = 1.0 - abs(d.z);
-    return lerp(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
-}
-// The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
-float2 env_brdf(float ndv, float roughness) {
-    const float4 r = roughness * float4(-1.0, -0.0275, -0.572, 0.022) + float4(1.0, 0.0425, 1.04, -0.04);
-    const float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
-    return float2(-1.04, 1.04) * a004 + r.zw;
-}
-float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
-// Fog and post-processing on an exposed colour (see rhi::LightSetup): tint, filmic tonemap, height
-// fog, saturation, contrast, vignette. `pixel` is SV_Position.xy.
-float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
-float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel) {
-    c *= tint.rgb;
-    if (post.w > 0.5) c = aces(c);
-    if (fog.w > 0.0) {  // exponential height fog: density falls off with height, integrated along the view ray
-        const float d = max(length(wpos - cam) - fog_color.w, 0.0);
-        const float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
-        const float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-        c = lerp(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
-    }
-    const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
-    c = max(lerp(luma.xxx, c, post.x), 0.0);
-    c = max((c - 0.18) * post.y + 0.18, 0.0);
-    if (post.z > 0.0 && viewport_px.z > 0.0) {
-        const float2 uv = (pixel - viewport_px.xy) / viewport_px.zw - 0.5;
-        c *= 1.0 - post.z * smoothstep(0.1, 0.5, dot(uv, uv));
-    }
-    return c;
-}
-// Scene targets for the post pass (LightSetup.output): exposed colour, fog applied, range-compressed.
-float3 hdr_encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel) {
-    if (hdr_out.x > 0.5) {
-        if (fog.w > 0.0) {
-            const float d = max(length(wpos - cam) - fog_color.w, 0.0);
-            const float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
-            const float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-            c = lerp(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
-        }
-        return hdr_encode(c);
-    }
-    return to_srgb(finish(c, wpos, cam, pixel));
-}
-
-// Normal map without stored tangents: a tangent frame from screen derivatives.
-float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
-    const float3 dp1 = ddx(wpos), dp2 = ddy(wpos);
-    const float2 duv1 = ddx(uv), duv2 = ddy(uv);
-    const float3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
-    const float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
-    const float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
-    const float inv = rsqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
-    return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
-}
-float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
-    float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
-    const float3 geometric_n = n;  // before the normal map: reflections never point into the surface
-    if (n0.w > 3.5) return float4(0.06, 0.025, 0.01, 1.0);  // Overdraw view mode: each layer drawn adds a little
-    // n1.w packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
-    const bool has_normal_map = fmod(n1.w, 2.0) > 0.5;
-    const bool blended = fmod(floor(n1.w * 0.5), 2.0) > 0.5;
-    const float cutoff = fmod(floor(n1.w * 0.25), 256.0) / 255.0;
-    const bool pixel_art = n1.w > 1023.5;  // 1024: whole texels of the base colour texture
-#ifdef LSD_MATERIAL
-    MaterialIn mi;
-    mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
-    const Surface surf = material_main(mi);
-    float4 base = float4(surf.base_color * color.rgb, color.a * surf.opacity);
-    if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
-    if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
-    n = perturb_normal(n, i.wpos, i.uv, surf.normal);
-    const float metallic = saturate(surf.metallic);
-    const float roughness = clamp(surf.roughness, 0.04, 1.0);
-    const float ao = saturate(surf.ao);
-    const float3 emissive = surf.emissive;
-#else
-    float2 texel_size;
-    base_tex.GetDimensions(texel_size.x, texel_size.y);
-    float4 base = color * (pixel_art ? base_tex.SampleLevel(samp, (floor(i.uv * texel_size) + 0.5) / texel_size, 0) : base_tex.Sample(samp, i.uv));
-    if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
-    if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
-    if (has_normal_map) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
-    const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
-    const float metallic = saturate(mat0.x * orm.b);
-    const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
-    const float ao = orm.r;
-    const float3 emissive = float3(mat0.zw, mat1.x);
-#endif
-    if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
-    base.rgb = apply_decals(base.rgb, i.wpos, n);
-    if (n0.w > 2.5) base.rgb = float3(0.5, 0.5, 0.5);  // Lighting Only view mode: every surface a neutral grey
-    const float3 v = normalize(mat1.yzw - i.wpos);
-    const float ndv = max(dot(n, v), 1e-4);
-    const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
-    const float a2 = roughness * roughness * roughness * roughness;
-    const float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    float3 lit = 0;
-    for (uint li = 0; li < light_count; ++li) {
-        const Light L = lights[li];
-        float3 l;
-        float atten = 1.0;
-        if (L.pos_type.w < 0.5) {
-            l = -L.dir_range.xyz;
-        } else {
-            const float3 to = L.pos_type.xyz - i.wpos;
-            const float dist2 = max(dot(to, to), 1e-4);
-            l = to * rsqrt(dist2);
-            const float r = dist2 / (L.dir_range.w * L.dir_range.w);  // smooth window to zero at the range (Karis)
-            const float window = saturate(1.0 - r * r);
-            atten = window * window / dist2;
-            if (L.pos_type.w > 1.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
-        }
-        const float ndl = saturate(dot(n, l));
-        if (ndl <= 0.0 || atten <= 0.0) continue;
-        if ((float)li == shadow_info.y) atten *= sun_shadow(i.wpos, n, mat1.yzw);
-        else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
-        const float3 h = normalize(v + l);
-        const float ndh = saturate(dot(n, h)), vdh = saturate(dot(v, h));
-        const float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
-        const float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
-        const float3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-        const float3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
-        const float3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
-        lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
-    }
-    // Ambient: diffuse from the sky / baked probes; specular from the sky along the reflection,
-    // blurred toward the diffuse light as roughness grows, darkened where the probes are darker than
-    // the sky (indoors), by AO (specular occlusion) and below the geometric horizon.
-    const float3 sky = ambient_light(i.wpos, n);
-    const float3 r = reflect(-v, n);
-    const float3 lum = float3(0.2126, 0.7152, 0.0722);
-    const float open_sky = saturate(dot(sky, lum) / max(dot(lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4));
-    const float3 reflected = lerp(sky_radiance(r) * open_sky, sky, roughness * roughness);
-    const float2 ab = env_brdf(ndv, roughness);
-    const float3 env_spec = f0 * ab.x + ab.y;
-    const float spec_ao = saturate(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
-    const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
-    lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
-    lit += emissive;
-    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
-}
-
-// The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
-// horizon, n2 ground, w0 sun direction + size, w1 sun colour, mat1.yzw camera).
-struct SkyOut { float4 pos : SV_Position; float3 dir : TEXCOORD0; };
-SkyOut vs_sky(uint id : SV_VertexID) {
-    SkyOut o;
-    const float2 p = float2((id << 1) & 2, id & 2) * 2.0 - 1.0;  // one triangle over the screen
-    o.pos = float4(p, 1.0, 1.0);
-    const float4 w = mul(mvp, float4(p, 1.0, 1.0));
-    o.dir = w.xyz / w.w - mat1.yzw;
-    return o;
-}
-float4 ps_sky(SkyOut i) : SV_Target {
-    const float3 d = normalize(i.dir);
-    float3 c = d.z >= 0.0 ? lerp(n1.rgb, n0.rgb, pow(saturate(d.z), 0.6)) : lerp(n1.rgb, n2.rgb, saturate(-d.z * 4.0));
-    if (w1.w > 0.0) {
-        const float s = dot(d, w0.xyz);
-        c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));  // disc + glow + the wide haze around the sun (Mie)
-    }
-    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy), 1.0);
-}
-)";
-
-// Material Graph code goes in at //@MATERIAL with these definitions (see lsd/script/material_graph.h).
-constexpr char kMaterialPreludeHlsl[] = R"(
-#define LSD_MATERIAL 1
-struct MaterialIn { float3 uv; float3 wpos; float3 normal; float3 view; float time; };
-struct Surface { float3 base_color; float metallic; float roughness; float3 emissive; float3 normal; float ao; float opacity; };
-float3 lsd_v3(float x) { return float3(x, x, x); }
-float4 lsd_tex0(float3 uv) { return base_tex.Sample(samp, uv.xy); }
-float4 lsd_tex1(float3 uv) { return normal_tex.Sample(samp, uv.xy); }
-float4 lsd_tex2(float3 uv) { return orm_tex.Sample(samp, uv.xy); }
-cbuffer MaterialParams : register(b3) { float4 lsd_params[16]; };
-)";
+#include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl: engine/rhi/shaders/material_prelude.hlsl
+#include "cull_hlsl.h"  // kCullHlsl: engine/rhi/shaders/cull.hlsl
 
 // Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 mvp; };
+cbuffer Draw : register(b0) { float4x4 mvp; float4 cut; };  // cut (Masked casters): x the alpha cutoff, y the tint's alpha
+#ifdef CUTOUT
+Texture2D base_tex : register(t0);
+SamplerState samp : register(s0);
+struct ShadowOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 #ifdef SKINNED
+cbuffer Joints : register(b2) { float4 joint_rows[768]; };
+ShadowOut vs_main(float3 pos : POSITION, float2 uv : TEXCOORD0, uint4 joints : BLENDINDICES, float4 weights : BLENDWEIGHT) {
+    float4 r0 = 0, r1 = 0, r2 = 0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        r0 += joint_rows[joints[k] * 3] * weights[k];
+        r1 += joint_rows[joints[k] * 3 + 1] * weights[k];
+        r2 += joint_rows[joints[k] * 3 + 2] * weights[k];
+    }
+    const float4 p = float4(pos, 1);
+    ShadowOut o;
+    o.pos = mul(mvp, float4(dot(r0, p), dot(r1, p), dot(r2, p), 1));
+    o.uv = uv;
+    return o;
+}
+#else
+ShadowOut vs_main(float3 pos : POSITION, float2 uv : TEXCOORD0) {
+    ShadowOut o;
+    o.pos = mul(mvp, float4(pos, 1));
+    o.uv = uv;
+    return o;
+}
+#endif
+void ps_cutout(ShadowOut i) { if (base_tex.Sample(samp, i.uv).a * cut.y < cut.x) discard; }
+#elif defined(SKINNED)
 cbuffer Joints : register(b2) { float4 joint_rows[768]; };
 float4 vs_main(float3 pos : POSITION, uint4 joints : BLENDINDICES, float4 weights : BLENDWEIGHT) : SV_Position {
     float4 r0 = 0, r1 = 0, r2 = 0;
@@ -431,8 +129,10 @@ float4 ps_main(VsOut i) : SV_Target { return i.color; }
 )";
 
 constexpr char kParticleHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 view_proj; float4 mode; };  // mode.x = 1: into a scene target (post pass)
+cbuffer Draw : register(b0) { float4x4 view_proj; float4 mode; float4 soft; };  // mode.x = 1: into a scene target (post pass); soft: see draw_particles
 Texture2D sprite : register(t0);
+Texture2D<float> scene_depth : register(t1);  // the target's depth (soft particles)
+float view_distance(float d) { return soft.w > 0.5 ? (soft.z - d) / soft.y : soft.z / (d + soft.y); }
 SamplerState linear_wrap : register(s0);
 struct VsIn { float3 pos : POSITION; float4 color : COLOR; float2 uv : TEXCOORD; };
 struct VsOut { float4 pos : SV_Position; float4 color : COLOR; float2 uv : TEXCOORD; };
@@ -440,6 +140,7 @@ VsOut vs_main(VsIn i) { VsOut o; o.pos = mul(view_proj, float4(i.pos, 1)); o.col
 float3 to_srgb(float3 c) { c = saturate(c); return lerp(c * 12.92, 1.055 * pow(c, 1.0 / 2.4) - 0.055, step(0.0031308, c)); }
 float4 ps_main(VsOut i) : SV_Target {
     float4 c = i.color * sprite.Sample(linear_wrap, i.uv);
+    if (soft.x > 0.0) c.a *= saturate((view_distance(scene_depth.Load(int3(i.pos.xy, 0))) - view_distance(i.pos.z)) / soft.x);  // fades into surfaces
     const float3 lin = max(c.rgb, 0.0);
     return float4(mode.x > 0.5 ? sqrt(lin / (1.0 + lin)) : to_srgb(c.rgb), saturate(c.a));
 }
@@ -449,6 +150,7 @@ const D3D12_INPUT_ELEMENT_DESC kMeshLayout[] = {
     {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},  // the lightmap UV
 };
 const D3D12_INPUT_ELEMENT_DESC kSkinnedLayout[] = {
     {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -459,6 +161,8 @@ const D3D12_INPUT_ELEMENT_DESC kSkinnedLayout[] = {
 };
 const D3D_SHADER_MACRO kSkinnedDefines[] = {{"SKINNED", "1"}, {nullptr, nullptr}};
 const D3D_SHADER_MACRO kInstancedDefines[] = {{"INSTANCED", "1"}, {nullptr, nullptr}};
+const D3D_SHADER_MACRO kCutoutDefines[] = {{"CUTOUT", "1"}, {nullptr, nullptr}};
+const D3D_SHADER_MACRO kSkinnedCutoutDefines[] = {{"CUTOUT", "1"}, {"SKINNED", "1"}, {nullptr, nullptr}};
 
 constexpr char kUiHlsl[] = R"(
 cbuffer Draw : register(b0) { float2 translation; float2 to_clip; };  // to_clip = 2 / viewport size
@@ -477,245 +181,7 @@ VsOut vs_main(VsIn i) {
 float4 ps_main(VsOut i) : SV_Target { return i.color * tex.Sample(samp, i.uv); }
 )";
 
-constexpr char kPostHlsl[] = R"(
-// Post-process passes over a full-screen triangle. Scene colours arrive range-compressed:
-// e = sqrt(c / (1 + c)), so c = e^2 / (1 - e^2).
-cbuffer Post : register(b0) { float4 texel; float4 bloom; float4 tint_tm; float4 grade; float4 proj; float4 ao_p; float4 dof; float4 taa; float4 reproject[4]; };
-Texture2D t0 : register(t0);
-Texture2D t1 : register(t1);
-Texture2D t2 : register(t2);  // the scene's depth
-SamplerState clamp_linear : register(s2);
-struct VsOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
-VsOut vs_full(uint id : SV_VertexID) {
-    VsOut o;
-    const float2 p = float2((id << 1) & 2, id & 2) * 2.0 - 1.0;
-    o.pos = float4(p, 0.0, 1.0);
-    o.uv = float2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
-    return o;
-}
-float3 decode(float3 e) { e = min(e, 0.999); const float3 s = e * e; return s / (1.0 - s); }
-float3 encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-float3 tap(Texture2D t, float2 uv) { return decode(t.SampleLevel(clamp_linear, uv, 0).rgb); }
-float3 box4(Texture2D t, float2 uv, float2 px) {  // 4 bilinear taps: a 4x4 texel average
-    return 0.25 * (tap(t, uv + px * float2(-1, -1)) + tap(t, uv + px * float2(1, -1)) + tap(t, uv + px * float2(-1, 1)) + tap(t, uv + px * float2(1, 1)));
-}
-float2 to_ndc(float2 uv) { return float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0); }
-float2 to_uv(float2 ndc) { return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5); }
-float depth_at(float2 uv) { return t2.SampleLevel(clamp_linear, uv, 0).r; }
-float view_distance(float d) { return proj.w / (d + proj.z); }
-float3 view_pos(float2 uv) {
-    const float z = view_distance(depth_at(uv));
-    const float2 ndc = to_ndc(uv);
-    return float3(ndc.x * z / proj.x, ndc.y * z / proj.y, -z);
-}
-float coc(float z) { return saturate((abs(z - dof.x) - dof.y) / max(dof.w, 1e-3)) * dof.z; }  // blur radius in pixels
-// Scalable ambient obscurance from depth alone; the normal from the nearer neighbour on each axis.
-float4 ps_ao(VsOut i) : SV_Target {
-    if (depth_at(i.uv) >= 0.99999) return 1.0;
-    const float3 p = view_pos(i.uv);
-    const float2 px = texel.xy;
-    const float3 l = view_pos(i.uv - float2(px.x, 0)), r = view_pos(i.uv + float2(px.x, 0));
-    const float3 b = view_pos(i.uv - float2(0, px.y)), t = view_pos(i.uv + float2(0, px.y));
-    const float3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l;
-    const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
-    float3 n = normalize(cross(dx, dy));
-    if (dot(n, p) > 0.0) n = -n;  // facing the camera
-    const float radius = ao_p.x;
-    const float2 scale = float2(proj.x, proj.y) * 0.5 * radius / -p.z;
-    // A 4 x 4 Bayer pattern: the 4 x 4 blur in ps_ao_apply sees every rotation once, so the noise averages out exactly.
-    const uint2 q = uint2(i.pos.xy) & 3u;
-    const uint xy = q.x ^ q.y;
-    const float noise = (float(((xy & 1u) << 3) | ((q.y & 1u) << 2) | (((xy >> 1) & 1u) << 1) | (q.y >> 1)) + 0.5) / 16.0;
-    float sum = 0.0;
-    for (int k = 0; k < 12; ++k) {
-        const float a = (k + noise) * 2.39996323;
-        const float2 offset = float2(cos(a), sin(a)) * sqrt((k + 0.5) / 12.0) * scale;
-        const float3 v = view_pos(i.uv + offset) - p;
-        const float vv = dot(v, v);
-        const float f = max(radius * radius - vv, 0.0);
-        sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
-    }
-    const float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
-    return float4(ao, ao, ao, 1.0);
-}
-// The occlusion blurred over 4 x 4 pixels at a similar depth (hides its noise), times the scene.
-float4 ps_ao_apply(VsOut i) : SV_Target {
-    const float z = view_distance(depth_at(i.uv));
-    float total = 0.0, weight = 0.0;
-    for (int y = -2; y <= 1; ++y) {
-        for (int x = -2; x <= 1; ++x) {
-            const float2 uv = i.uv + float2(x, y) * texel.xy;
-            const float w = abs(view_distance(depth_at(uv)) - z) < 0.05 * z ? 1.0 : 0.0;
-            total += t1.SampleLevel(clamp_linear, uv, 0).r * w;
-            weight += w;
-        }
-    }
-    const float ao = weight > 0.0 ? total / weight : 1.0;
-    return float4(encode(tap(t0, i.uv) * ao), 1.0);
-}
-// This frame blended into the last one where this pixel was, clamped to this frame's neighbours.
-float4 ps_taa(VsOut i) : SV_Target {
-    const float3 cur = t0.SampleLevel(clamp_linear, i.uv, 0).rgb;
-    float3 lo = cur, hi = cur;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            const float3 s = t0.SampleLevel(clamp_linear, i.uv + float2(x, y) * texel.xy, 0).rgb;
-            lo = min(lo, s);
-            hi = max(hi, s);
-        }
-    }
-    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
-    const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
-    const float2 prev_uv = to_uv(prev.xy / prev.w);
-    const bool outside = taa.y > 0.5 || prev.w <= 0.0 || any(prev_uv < 0.0) || any(prev_uv > 1.0);
-    const float3 history = clamp(t1.SampleLevel(clamp_linear, prev_uv, 0).rgb, lo, hi);
-    return float4(outside ? cur : lerp(history, cur, taa.x), 1.0);
-}
-// Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
-// (a sharp object in front does not smear into the background behind it).
-float4 ps_dof(VsOut i) : SV_Target {
-    const float radius = coc(view_distance(depth_at(i.uv)));
-    float3 sum = tap(t0, i.uv);
-    float weight = 1.0;
-    if (radius > 0.5) {
-        for (int k = 0; k < 24; ++k) {
-            const float a = k * 2.39996323;
-            const float r = sqrt((k + 0.5) / 24.0) * radius;
-            const float2 uv = i.uv + float2(cos(a), sin(a)) * r * texel.xy;
-            const float w = saturate(coc(view_distance(depth_at(uv))) - r + 1.0);
-            sum += tap(t0, uv) * w;
-            weight += w;
-        }
-    }
-    return float4(encode(sum / weight), 1.0);
-}
-// Screen-space reflections: the view ray mirrored about the surface, marched through the depth buffer;
-// where it passes just behind a surface, that pixel's colour is reflected. The mesh pass wrote how
-// mirror-like each pixel is into alpha (smooth = 1).
-float4 ps_ssr(VsOut i) : SV_Target {
-    const float4 scene = t0.SampleLevel(clamp_linear, i.uv, 0);
-    float3 c = decode(scene.rgb);
-    if (scene.a < 0.02 || depth_at(i.uv) >= 0.99999) return float4(encode(c), 1.0);
-    const float3 p = view_pos(i.uv);
-    const float2 px = texel.xy;
-    const float3 l = view_pos(i.uv - float2(px.x, 0)), r = view_pos(i.uv + float2(px.x, 0));
-    const float3 b = view_pos(i.uv - float2(0, px.y)), t = view_pos(i.uv + float2(0, px.y));
-    const float3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l;
-    const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
-    float3 n = normalize(cross(dx, dy));
-    if (dot(n, p) > 0.0) n = -n;
-    const float3 ray = reflect(normalize(p), n);
-    if (ray.z > 0.4) return float4(encode(c), 1.0);  // back towards the camera: nothing on screen to show
-    const float reach = ao_p.w;
-    const float noise = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));  // hides the steps (TAA smooths it)
-    float before = 0.0, was_behind = -1.0;
-    for (int k = 1; k <= 32; ++k) {
-        const float f = (k - 1 + noise) / 32.0;
-        const float along = reach * f * f + 0.05;
-        const float3 q = p + ray * along;
-        if (q.z > -0.05) break;
-        const float2 uv = to_uv(float2(q.x * proj.x / -q.z, q.y * proj.y / -q.z));
-        if (any(uv < 0.0) || any(uv > 1.0)) break;
-        const float behind = -q.z - view_distance(depth_at(uv));
-        if (behind > 0.02 && was_behind <= 0.02 && behind < 1.0 + along * 0.15) {  // crossed into a surface: refine
-            float lo = before, hi = along;  // bisect to the surface
-            float2 hit = uv;
-            for (int s = 0; s < 4; ++s) {
-                const float mid = (lo + hi) * 0.5;
-                const float3 m = p + ray * mid;
-                const float2 muv = to_uv(float2(m.x * proj.x / -m.z, m.y * proj.y / -m.z));
-                if (-m.z - view_distance(depth_at(muv)) > 0.0) { hi = mid; hit = muv; } else { lo = mid; }
-            }
-            const float2 edge = min(hit, 1.0 - hit);
-            const float fade = saturate(min(edge.x, edge.y) * 10.0) * (1.0 - f) * saturate((0.4 - ray.z) * 2.5);
-            c = lerp(c, tap(t0, hit), saturate(scene.a * ao_p.z * fade));
-            break;
-        }
-        before = along;
-        was_behind = behind;
-    }
-    return float4(encode(c), 1.0);
-}
-float4 ps_prefilter(VsOut i) : SV_Target {  // bright parts only, with a soft knee
-    const float3 c = box4(t0, i.uv, texel.xy);
-    const float brightness = max(c.r, max(c.g, c.b));
-    const float knee = bloom.x * 0.5;
-    float soft = clamp(brightness - bloom.x + knee, 0.0, 2.0 * knee);
-    soft = soft * soft / (4.0 * knee + 1e-5);
-    const float keep = max(soft, brightness - bloom.x) / max(brightness, 1e-5);
-    return float4(encode(c * keep), 1.0);
-}
-float4 ps_down(VsOut i) : SV_Target { return float4(encode(box4(t0, i.uv, texel.xy)), 1.0); }
-float4 ps_up(VsOut i) : SV_Target {  // this level plus the blurred (tent) level below it
-    const float2 px = texel.zw;
-    float3 c = tap(t1, i.uv) * 4.0;
-    c += (tap(t1, i.uv + float2(-px.x, 0)) + tap(t1, i.uv + float2(px.x, 0)) + tap(t1, i.uv + float2(0, -px.y)) + tap(t1, i.uv + float2(0, px.y))) * 2.0;
-    c += tap(t1, i.uv + px * float2(-1, -1)) + tap(t1, i.uv + px * float2(1, -1)) + tap(t1, i.uv + px * float2(-1, 1)) + tap(t1, i.uv + px * float2(1, 1));
-    return float4(encode(tap(t0, i.uv) + c / 16.0), 1.0);
-}
-float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
-float3 to_srgb(float3 c) { c = saturate(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
-// Eye adaptation (see the GLSL): metered log average -> eased exposure in 16 bits (r high, g low).
-float4 ps_meter(VsOut i) : SV_Target {
-    float sum = 0.0, weights = 0.0;
-    [loop] for (int y = 0; y < 32; ++y) {
-        [loop] for (int x = 0; x < 32; ++x) {
-            const float2 uv = (float2(x, y) + 0.5) / 32.0;
-            const float w = 1.0 - 0.75 * min(length(uv - 0.5) * 1.4142, 1.0);
-            sum += log2(max(dot(tap(t0, uv), float3(0.2126, 0.7152, 0.0722)), 1e-4)) * w;
-            weights += w;
-        }
-    }
-    const float target = clamp(log2(0.18) - sum / weights + bloom.z, bloom.x, bloom.y);
-    const float4 prev = t1.SampleLevel(clamp_linear, float2(0.5, 0.5), 0);
-    const float last = (prev.r + prev.g / 255.0) * 32.0 - 16.0;
-    const float ev = bloom.w > 0.5 ? target : lerp(last, target, 1.0 - exp(-(target > last ? tint_tm.x : tint_tm.y)));
-    const float stored = saturate((ev + 16.0) / 32.0);
-    const float high = floor(stored * 255.0) / 255.0;
-    return float4(high, (stored - high) * 255.0, 0.0, 1.0);
-}
-float4 ps_expose(VsOut i) : SV_Target {
-    const float4 e = t1.SampleLevel(clamp_linear, float2(0.5, 0.5), 0);
-    return float4(encode(tap(t0, i.uv) * exp2((e.r + e.g / 255.0) * 32.0 - 16.0)), 1.0);
-}
-// The selection outline (see the GLSL): empty here in the mask, something within 2 pixels; tint_tm = colour.
-float4 ps_outline(VsOut i) : SV_Target {
-    const float here = t0.SampleLevel(clamp_linear, i.uv, 0).r;
-    float around = 0.0;
-    [unroll] for (int y = -2; y <= 2; ++y) {
-        [unroll] for (int x = -2; x <= 2; ++x) around = max(around, t0.SampleLevel(clamp_linear, i.uv + float2(x, y) * texel.xy, 0).r);
-    }
-    return float4(tint_tm.rgb, saturate(around * 4.0) * (1.0 - saturate(here * 4.0)) * tint_tm.a);
-}
-float4 ps_composite(VsOut i) : SV_Target {
-    float3 c = tap(t0, i.uv);
-    if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
-    c *= tint_tm.rgb;
-    if (tint_tm.w > 0.5) c = aces(c);
-    const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
-    c = max(lerp(luma.xxx, c, grade.x), 0.0);
-    c = max((c - 0.18) * grade.y + 0.18, 0.0);
-    const float2 v = i.uv - 0.5;
-    c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
-    const float3 s = to_srgb(c);
-    return float4(s, dot(s, float3(0.299, 0.587, 0.114)));  // luma in alpha for FXAA
-}
-float4 ps_fxaa(VsOut i) : SV_Target {  // FXAA: blur only across edges, along their direction
-    const float2 px = texel.xy;
-    const float3 m = t0.SampleLevel(clamp_linear, i.uv, 0).rgb;
-    const float l_nw = t0.SampleLevel(clamp_linear, i.uv + px * float2(-1, -1), 0).a, l_ne = t0.SampleLevel(clamp_linear, i.uv + px * float2(1, -1), 0).a;
-    const float l_sw = t0.SampleLevel(clamp_linear, i.uv + px * float2(-1, 1), 0).a, l_se = t0.SampleLevel(clamp_linear, i.uv + px * float2(1, 1), 0).a;
-    const float l_m = t0.SampleLevel(clamp_linear, i.uv, 0).a;
-    const float l_min = min(l_m, min(min(l_nw, l_ne), min(l_sw, l_se))), l_max = max(l_m, max(max(l_nw, l_ne), max(l_sw, l_se)));
-    float2 dir = float2(-((l_nw + l_ne) - (l_sw + l_se)), (l_nw + l_sw) - (l_ne + l_se));
-    const float reduce = max((l_nw + l_ne + l_sw + l_se) * 0.03125, 1.0 / 128.0);
-    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * px;
-    const float3 a = 0.5 * (t0.SampleLevel(clamp_linear, i.uv + dir * (1.0 / 3.0 - 0.5), 0).rgb + t0.SampleLevel(clamp_linear, i.uv + dir * (2.0 / 3.0 - 0.5), 0).rgb);
-    const float3 b = a * 0.5 + 0.25 * (t0.SampleLevel(clamp_linear, i.uv - dir * 0.5, 0).rgb + t0.SampleLevel(clamp_linear, i.uv + dir * 0.5, 0).rgb);
-    const float l_b = dot(b, float3(0.299, 0.587, 0.114));
-    return float4((l_b < l_min || l_b > l_max) ? a : b, 1.0);
-}
-)";
+#include "post_hlsl.h"  // kPostHlsl: engine/rhi/shaders/post.hlsl
 
 bool check(HRESULT hr, const char* what) {
     if (SUCCEEDED(hr)) return true;
@@ -825,8 +291,9 @@ public:
         heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         heap_desc.NumDescriptors = 1;
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&dsv_heap_)), "CreateDescriptorHeap (DSV)")) return false;
-        heap_desc.NumDescriptors = kMaxTargets;
+        heap_desc.NumDescriptors = kMaxTargets * 2;  // each target's DSV, then its read-only one (soft particles)
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_dsv_heap_)), "CreateDescriptorHeap (target DSV)")) return false;
+        heap_desc.NumDescriptors = kMaxTargets;
         heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_rtv_heap_)), "CreateDescriptorHeap (target RTV)")) return false;
         dsv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
@@ -923,6 +390,7 @@ public:
         ++b->generation;
     }
 
+    bool supports_bc() const override { return true; }  // every D3D12 device
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
         if (!srv_heap_) {
             LSD_LOG_ERROR("d3d12", "create_texture needs init_debug_ui() first (its view lives in the UI heap).");
@@ -943,7 +411,19 @@ public:
         desc.Height = height;
         desc.DepthOrArraySize = 1;
         desc.MipLevels = static_cast<UINT16>(mip_count);
-        desc.Format = format == TextureFormat::RGBA8_sRGB ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+        switch (format) {
+            case TextureFormat::RGBA8_sRGB: desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
+            case TextureFormat::BC1: desc.Format = DXGI_FORMAT_BC1_UNORM; break;
+            case TextureFormat::BC1_sRGB: desc.Format = DXGI_FORMAT_BC1_UNORM_SRGB; break;
+            case TextureFormat::BC3: desc.Format = DXGI_FORMAT_BC3_UNORM; break;
+            case TextureFormat::BC3_sRGB: desc.Format = DXGI_FORMAT_BC3_UNORM_SRGB; break;
+            case TextureFormat::BC5: desc.Format = DXGI_FORMAT_BC5_UNORM; break;
+            default: desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+        }
+        if (is_block_compressed(format) && (width % 4 || height % 4)) {
+            LSD_LOG_ERROR("d3d12", "create_texture: a BC texture must be a multiple of 4 wide and high (%u x %u)", width, height);
+            return {};
+        }
         desc.SampleDesc.Count = 1;
         if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                     IID_PPV_ARGS(&t.resource)), "CreateCommittedResource (texture)")) return {};
@@ -1052,6 +532,8 @@ public:
         dsv_desc.Format = kDepthFormat;
         dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
         device_->CreateDepthStencilView(t.depth.Get(), &dsv_desc, target_dsv(slot));
+        dsv_desc.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+        device_->CreateDepthStencilView(t.depth.Get(), &dsv_desc, target_dsv(slot + kMaxTargets));
         alloc_srv(t.srv_cpu, t.srv_gpu);
         device_->CreateShaderResourceView(t.color.Get(), nullptr, t.srv_cpu);
         alloc_srv(t.depth_srv_cpu, t.depth_srv_gpu);
@@ -1176,6 +658,7 @@ public:
         const MaterialShader* material = draw.wireframe ? nullptr : lookup_material(draw.material_shader);
         const Texture* base = lookup_texture(draw.base_color_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
+        const Texture* emissive = lookup_texture(draw.emissive_texture);
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
@@ -1184,9 +667,9 @@ public:
         list_->SetGraphicsRootDescriptorTable(2, (normal ? normal : &textures_[flat_normal_])->srv_gpu);
         list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
-        list_->SetGraphicsRootDescriptorTable(5, shadow_srv_);
-        list_->SetGraphicsRootDescriptorTable(6, local_shadow_srv_);
-        list_->SetGraphicsRootDescriptorTable(9, decal_srv_.ptr ? decal_srv_ : textures_[white_].srv_gpu);
+        if (scene_dirty_) write_scene_table();
+        list_->SetGraphicsRootDescriptorTable(5, scene_table_);  // shadows, decals, reflection captures, lightmaps
+        list_->SetGraphicsRootDescriptorTable(6, (emissive ? emissive : &textures_[white_])->srv_gpu);
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1..3: a blended variant
@@ -1260,10 +743,10 @@ public:
         std::string source = kMeshHlsl;
         source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
         MaterialShader& m = material_shaders_[slot];
-        bool ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) &&
+        bool ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) &&
                   create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.skinned, false, kSkinnedDefines);
         for (u32 b = 0; b < 2 && ok; ++b) {  // translucent and additive variants
-            ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[0][b], false, nullptr, b + 1) &&
+            ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[0][b], false, nullptr, b + 1) &&
                  create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[1][b], false, kSkinnedDefines, b + 1);
         }
         if (!ok) {
@@ -1347,31 +830,47 @@ public:
         return TextureHandle::make(kMaxTargets + kMaxTextures + slot, m.generation);
     }
 
-    void begin_shadow_pass(TextureHandle handle) override {
+    void begin_shadow_pass(TextureHandle handle, bool clear) override {
         ShadowMap* m = lookup_shadow(handle);
         if (!m) return;
         if (current_target_ >= 0) set_render_target({}, nullptr);
         transition(m->resource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-        list_->ClearDepthStencilView(m->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        if (clear) list_->ClearDepthStencilView(m->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
         list_->OMSetRenderTargets(0, nullptr, FALSE, &m->dsv);
         set_viewport(0.0f, 0.0f, static_cast<f32>(m->size), static_cast<f32>(m->size));
         shadow_pass_ = static_cast<i32>(handle.index() - kMaxTargets - kMaxTextures);
     }
 
+    void clear_shadow_viewport() override {
+        if (shadow_pass_ < 0) return;
+        const D3D12_RECT rect{static_cast<LONG>(viewport_[0]), static_cast<LONG>(viewport_[1]), static_cast<LONG>(viewport_[0] + viewport_[2]),
+                              static_cast<LONG>(viewport_[1] + viewport_[3])};
+        list_->ClearDepthStencilView(shadow_maps_[shadow_pass_].dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &rect);
+    }
+
     void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,
-                            u32 joint_count) override {
+                            u32 joint_count, const ShadowCutout* cutout) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || shadow_pass_ < 0) return;
         const bool skinned = joint_rows && joint_count;
+        const Texture* cut_tex = cutout ? lookup_texture(cutout->texture) : nullptr;
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 16, light_mvp, 0);
+        if (cut_tex) {  // Masked: the texture's alpha decides which pixels cast
+            const f32 cut[4] = {cutout->cutoff, cutout->alpha, 0.0f, 0.0f};
+            list_->SetGraphicsRoot32BitConstants(0, 4, cut, 16);
+            ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+            list_->SetDescriptorHeaps(1, heaps);
+            list_->SetGraphicsRootDescriptorTable(1, cut_tex->srv_gpu);
+        }
         if (skinned) {
             const D3D12_GPU_VIRTUAL_ADDRESS joints = upload_joints(joint_rows, joint_count);
             if (!joints) return;
             list_->SetGraphicsRootConstantBufferView(7, joints);
         }
-        list_->SetPipelineState(skinned ? skinned_shadow_pipeline_.Get() : shadow_pipeline_.Get());
+        list_->SetPipelineState(cut_tex ? (skinned ? skinned_cutout_shadow_pipeline_.Get() : cutout_shadow_pipeline_.Get())
+                                        : skinned ? skinned_shadow_pipeline_.Get() : shadow_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VERTEX_BUFFER_VIEW vbv{vb->resource->GetGPUVirtualAddress(), static_cast<UINT>(vb->size), skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex)};
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
@@ -1408,16 +907,46 @@ public:
         set_render_target({}, nullptr);  // back to the window
     }
 
-    void set_decal_atlas(TextureHandle atlas) override {
-        const Texture* t = lookup_texture(atlas);
-        decal_srv_ = t ? t->srv_gpu : textures_[white_].srv_gpu;
+    // t3..t7 share one table of five neighbouring descriptors. A change writes the five into the ring's next
+    // entry (never one a frame still on the GPU may read), at the next mesh draw.
+    // shortcut: kSceneRing entries; over ~20 shadow / atlas changes a frame (views) would reuse one in flight, more entries then
+    void set_scene_resource(u32 which, ID3D12Resource* resource, bool shadow) {
+        if (scene_resources_[which] == resource) return;
+        scene_resources_[which] = resource;
+        if (which < 2) scene_shadow_[which] = shadow;
+        scene_dirty_ = true;
     }
+    void set_scene_texture(u32 which, TextureHandle atlas) {
+        const Texture* t = lookup_texture(atlas);
+        set_scene_resource(which, t ? t->resource.Get() : nullptr, false);
+    }
+    void write_scene_table() {
+        scene_at_ = (scene_at_ + 1) % kSceneRing;
+        D3D12_CPU_DESCRIPTOR_HANDLE at = scene_cpu_;
+        at.ptr += static_cast<SIZE_T>(scene_at_) * 5 * srv_size_;
+        scene_table_ = scene_gpu_;
+        scene_table_.ptr += static_cast<UINT64>(scene_at_) * 5 * srv_size_;
+        for (u32 k = 0; k < 5; ++k, at.ptr += srv_size_) {
+            ID3D12Resource* resource = scene_resources_[k];
+            D3D12_SHADER_RESOURCE_VIEW_DESC depth{};  // shadow atlases: their depth as R32_FLOAT
+            depth.Format = DXGI_FORMAT_R32_FLOAT;
+            depth.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            depth.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            depth.Texture2D.MipLevels = 1;
+            const bool shadow = resource && k < 2 && scene_shadow_[k];
+            device_->CreateShaderResourceView(resource ? resource : textures_[white_].resource.Get(), shadow ? &depth : nullptr, at);
+        }
+        scene_dirty_ = false;
+    }
+    void set_decal_atlas(TextureHandle atlas) override { set_scene_texture(2, atlas); }
+    void set_reflection_atlas(TextureHandle atlas) override { set_scene_texture(3, atlas); }
+    void set_lightmap_atlas(TextureHandle atlas) override { set_scene_texture(4, atlas); }
 
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
-        const ShadowMap* s = lookup_shadow(sun);
+        const ShadowMap* s = lookup_shadow(sun);  // white without one: the shader only samples them when a light says so
         const ShadowMap* l = lookup_shadow(local);
-        shadow_srv_ = s ? s->srv_gpu : textures_[white_].srv_gpu;  // the shader only samples them when a light says so
-        local_shadow_srv_ = l ? l->srv_gpu : textures_[white_].srv_gpu;
+        set_scene_resource(0, s ? s->resource.Get() : nullptr, s != nullptr);
+        set_scene_resource(1, l ? l->resource.Get() : nullptr, l != nullptr);
     }
 
     void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) override {
@@ -1432,7 +961,7 @@ public:
         list_->DrawInstanced(vertex_count, 1, 0, 0);
     }
 
-    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
         const u32 bytes = vertex_count * static_cast<u32>(sizeof(ParticleVertex));
         if (!vertex_count || particle_offset_ + bytes > kParticleRingBytes) {
             if (vertex_count) LSD_LOG_WARN("d3d12", "Too many particles this frame: some are skipped");
@@ -1445,15 +974,31 @@ public:
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
-        f32 particle_constants[20] = {};
+        f32 particle_constants[24] = {};
         std::memcpy(particle_constants, view_proj, 16 * sizeof(f32));
         particle_constants[16] = hdr_output_ ? 1.0f : 0.0f;
-        list_->SetGraphicsRoot32BitConstants(0, 20, particle_constants, 0);
+        const Target* target = current_target_ >= 0 ? &targets_[current_target_] : nullptr;
+        const bool soft_fade = soft && soft[0] > 0.0f && target;
+        if (soft_fade) std::memcpy(particle_constants + 20, soft, 4 * sizeof(f32));
+        list_->SetGraphicsRoot32BitConstants(0, 24, particle_constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (t ? t : &textures_[white_])->srv_gpu);
+        list_->SetGraphicsRootDescriptorTable(2, soft_fade ? target->depth_srv_gpu : textures_[white_].srv_gpu);
+        if (soft_fade) {  // the depth read by the shader and tested read-only at once
+            transition(target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(static_cast<u32>(current_target_));
+            const D3D12_CPU_DESCRIPTOR_HANDLE dsv = target_dsv(static_cast<u32>(current_target_) + kMaxTargets);
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        }
         list_->SetPipelineState(additive ? particle_add_pipeline_.Get() : particle_alpha_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->DrawInstanced(vertex_count, 1, 0, 0);
+        if (soft_fade) {
+            transition(target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(static_cast<u32>(current_target_));
+            const D3D12_CPU_DESCRIPTOR_HANDLE dsv = target_dsv(static_cast<u32>(current_target_));
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        }
     }
 
     void draw_sky(const SkyDraw& sky) override {
@@ -1514,7 +1059,7 @@ public:
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        TextureHandle ao, lit, dof, motion, taa[2];  // occlusion, scene with it, depth of field, motion blur, TAA output / history
         TextureHandle ssr;                   // the scene with reflections
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
@@ -1533,6 +1078,7 @@ public:
         destroy_texture(c.ao);
         destroy_texture(c.lit);
         destroy_texture(c.dof);
+        destroy_texture(c.motion);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
@@ -1549,6 +1095,7 @@ public:
         c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
+        c.motion = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1576,7 +1123,8 @@ public:
         list_->SetGraphicsRoot32BitConstants(0, 48, constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (a ? a->srv_gpu : textures_[white_].srv_gpu));
         list_->SetGraphicsRootDescriptorTable(2, (b ? b->srv_gpu : textures_[white_].srv_gpu));
-        list_->SetGraphicsRootDescriptorTable(3, (d ? d->depth_srv_gpu : textures_[white_].srv_gpu));
+        const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
+        list_->SetGraphicsRootDescriptorTable(3, (d ? d->depth_srv_gpu : plain ? plain->srv_gpu : textures_[white_].srv_gpu));
         list_->SetPipelineState(pso);
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);
@@ -1649,8 +1197,9 @@ public:
             out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
         };
         const bool depth_effects = p.proj[0] != 0.0f;
-        const bool ao = depth_effects && p.ao_intensity > 0.0f;
+        const bool ao = depth_effects && (p.ao_intensity > 0.0f || p.contact_shadow[3] > 0.0f);
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
         const bool taa = depth_effects && p.taa;
         const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
         if (!taa) c.history_valid = false;
@@ -1666,12 +1215,14 @@ public:
         k[27] = p.dof_transition;
         k[28] = 0.1f;  // TAA: how much of this frame goes in
         k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        k[30] = p.motion_blur;
+        k[31] = p.motion_blur_max;
         for (int r = 0; r < 4; ++r) {
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
         size(p.scene, k);
         // The scene's depth is read by the passes below: a shader resource until they are done.
-        const bool read_depth = ao || dof || taa || ssr;
+        const bool read_depth = ao || dof || taa || ssr || motion;
         if (read_depth) transition(scene->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
@@ -1679,7 +1230,10 @@ public:
             src = c.ssr;
         }
         if (ao) {
-            post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, k);
+            f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
+            std::memcpy(ka, k, sizeof ka);
+            std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
+            post_pass(post_ao_.Get(), c.ao, nullptr, {}, {}, p.scene, ka);
             post_pass(post_ao_apply_.Get(), c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
@@ -1693,6 +1247,10 @@ public:
         if (dof) {
             post_pass(post_dof_.Get(), c.dof, nullptr, src, {}, p.scene, k);
             src = c.dof;
+        }
+        if (motion) {
+            post_pass(post_motion_.Get(), c.motion, nullptr, src, {}, p.scene, k);
+            src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
             f32 e[48] = {};
@@ -1736,8 +1294,9 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
+        g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, {}, g);
+        post_pass(post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
@@ -1854,6 +1413,23 @@ public:
         const void* white_mip[1] = {&white};
         const void* flat_mip[1] = {&flat};
         white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, white_mip).index() - kMaxTargets;
+        {  // the t3..t7 ring: kSceneRing x 5 neighbouring descriptors, white until set
+            constexpr u32 n = kSceneRing * 5;
+            u32 slot = 0;
+            auto free_run = [&](u32 at) {
+                for (u32 k = 0; k < n; ++k) {
+                    if (srv_used_[at + k]) return false;
+                }
+                return true;
+            };
+            while (slot + n < kDebugUiDescriptors && !free_run(slot)) ++slot;
+            for (u32 k = 0; k < n; ++k) srv_used_[slot + k] = true;
+            scene_cpu_ = srv_heap_->GetCPUDescriptorHandleForHeapStart();
+            scene_gpu_ = srv_heap_->GetGPUDescriptorHandleForHeapStart();
+            scene_cpu_.ptr += static_cast<SIZE_T>(slot) * srv_size_;
+            scene_gpu_.ptr += static_cast<UINT64>(slot) * srv_size_;
+            scene_dirty_ = true;
+        }
         flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, flat_mip).index() - kMaxTargets;
         return debug_ui_;
     }
@@ -2085,31 +1661,30 @@ private:
 
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
-        D3D12_ROOT_PARAMETER params[10]{};
-        D3D12_DESCRIPTOR_RANGE decal_range{};  // t5: the decal atlas (64 of 64 DWORDs)
-        decal_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        decal_range.NumDescriptors = 1;
-        decal_range.BaseShaderRegister = 5;
-        params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        params[9].DescriptorTable.NumDescriptorRanges = 1;
-        params[9].DescriptorTable.pDescriptorRanges = &decal_range;
-        params[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // 63 of 64 DWORDs: 52 constants, 4 tables, 3 root CBVs (2 each).
+        D3D12_ROOT_PARAMETER params[9]{};
+        D3D12_DESCRIPTOR_RANGE scene_range{};  // t3 / t4: the sun's and the local lights' shadow atlases, t5 decals, t6 reflection captures, t7 lightmaps
+        scene_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        scene_range.NumDescriptors = 5;
+        scene_range.BaseShaderRegister = 3;
+        params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[5].DescriptorTable.NumDescriptorRanges = 1;
+        params[5].DescriptorTable.pDescriptorRanges = &scene_range;
+        params[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_DESCRIPTOR_RANGE emissive_range{};  // t8: the emissive map
+        emissive_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        emissive_range.NumDescriptors = 1;
+        emissive_range.BaseShaderRegister = 8;
+        params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[6].DescriptorTable.NumDescriptorRanges = 1;
+        params[6].DescriptorTable.pDescriptorRanges = &emissive_range;
+        params[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b3: material graph parameters (63 of 64 DWORDs)
         params[8].Descriptor.ShaderRegister = 3;
         params[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b2: skinning matrices
         params[7].Descriptor.ShaderRegister = 2;
         params[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
-        D3D12_DESCRIPTOR_RANGE shadow_ranges[2]{};
-        for (UINT k = 0; k < 2; ++k) {  // t3: the sun's shadow atlas, t4: the local lights' atlas
-            shadow_ranges[k].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-            shadow_ranges[k].NumDescriptors = 1;
-            shadow_ranges[k].BaseShaderRegister = 3 + k;
-            params[5 + k].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-            params[5 + k].DescriptorTable.NumDescriptorRanges = 1;
-            params[5 + k].DescriptorTable.pDescriptorRanges = &shadow_ranges[k];
-            params[5 + k].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        }
         params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;  // b1: lights
         params[4].Descriptor.ShaderRegister = 1;
         params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -2145,7 +1720,7 @@ private:
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 10;
+        rs_desc.NumParameters = 9;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 3;
         rs_desc.pStaticSamplers = samplers;
@@ -2187,7 +1762,7 @@ private:
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
         // Blended variants: [static, skinned, instanced] x [translucent, additive, overdraw].
-        const D3D12_INPUT_LAYOUT_DESC blend_layouts[3] = {{mesh_layout, 3}, {skinned_layout, 5}, {mesh_layout, 3}};
+        const D3D12_INPUT_LAYOUT_DESC blend_layouts[3] = {{mesh_layout, 4}, {skinned_layout, 5}, {mesh_layout, 4}};
         const D3D_SHADER_MACRO* blend_defines[3] = {nullptr, skinned_defines, kInstancedDefines};
         for (u32 kind = 0; kind < 3; ++kind) {
             for (u32 b = 0; b < 3; ++b) {
@@ -2198,16 +1773,18 @@ private:
             }
         }
         return create_pipeline(kTriangleHlsl, sizeof kTriangleHlsl, {nullptr, 0}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, triangle_pipeline_) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_pipeline_, false, kInstancedDefines) &&
-               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 3}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_wire_pipeline_, true, kInstancedDefines) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_pipeline_) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, mesh_wire_pipeline_, true) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_pipeline_, false, kInstancedDefines) &&
+               create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {mesh_layout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, instanced_wire_pipeline_, true, kInstancedDefines) &&
                create_pipeline(kLinesHlsl, sizeof kLinesHlsl, {line_layout, 2}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE, true, line_pipeline_) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_pipeline_, false, skinned_defines) &&
                create_pipeline(kMeshHlsl, sizeof kMeshHlsl, {skinned_layout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, skinned_wire_pipeline_, true, skinned_defines) &&
-               create_shadow_pipeline({mesh_layout, 3}, nullptr, shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 4}, nullptr, shadow_pipeline_) &&
                create_shadow_pipeline({skinned_layout, 5}, skinned_defines, skinned_shadow_pipeline_) &&
-               create_shadow_pipeline({mesh_layout, 3}, kInstancedDefines, instanced_shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 4}, kInstancedDefines, instanced_shadow_pipeline_) &&
+               create_shadow_pipeline({mesh_layout, 4}, kCutoutDefines, cutout_shadow_pipeline_, true) &&
+               create_shadow_pipeline({skinned_layout, 5}, kSkinnedCutoutDefines, skinned_cutout_shadow_pipeline_, true) &&
                create_particle_pipeline(false, particle_alpha_pipeline_) && create_particle_pipeline(true, particle_add_pipeline_) && create_sky_pipeline() &&
                create_ui_pipeline() && create_post_pipelines();
     }
@@ -2220,7 +1797,7 @@ private:
             ComPtr<ID3D12PipelineState>* out;
         };
         const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
-                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_},
+                                 {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}, {"ps_motion", &post_motion_},
                                  {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}, {"ps_outline", &post_outline_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
@@ -2386,12 +1963,14 @@ private:
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)), "CreateGraphicsPipelineState");
     }
 
-    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout, const D3D_SHADER_MACRO* defines, ComPtr<ID3D12PipelineState>& out) {
-        ComPtr<ID3DBlob> vs;
+    bool create_shadow_pipeline(D3D12_INPUT_LAYOUT_DESC layout, const D3D_SHADER_MACRO* defines, ComPtr<ID3D12PipelineState>& out, bool cutout = false) {
+        ComPtr<ID3DBlob> vs, ps;
         if (!compile(kShadowHlsl, sizeof kShadowHlsl - 1, "vs_main", "vs_5_0", vs, defines)) return false;
+        if (cutout && !compile(kShadowHlsl, sizeof kShadowHlsl - 1, "ps_cutout", "ps_5_0", ps, defines)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
         pso.pRootSignature = root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        if (cutout) pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
         pso.InputLayout = layout;
         pso.SampleMask = UINT_MAX;
         pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -2413,39 +1992,6 @@ private:
     // per batch of 256 (the instanced shader's constant buffer holds 256). Optional: if it fails to
     // build, gpu_cull draws simply draw every instance.
     bool create_culling() {
-        static const char kCull[] = R"(
-cbuffer Cull : register(b0) { float4 planes[6]; float4 box_min; float4 box_max; uint4 info; };  // info: count, index count, batches
-ByteAddressBuffer rows_in : register(t0);
-RWByteAddressBuffer rows_out : register(u0);
-RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 5 uints per batch
-[numthreads(1, 1, 1)] void cull_reset() { args.Store(0, 0); }
-[numthreads(64, 1, 1)] void cull_main(uint3 id : SV_DispatchThreadID) {
-    uint i = id.x;
-    if (i >= info.x) return;
-    float4 r0 = asfloat(rows_in.Load4(i * 48)), r1 = asfloat(rows_in.Load4(i * 48 + 16)), r2 = asfloat(rows_in.Load4(i * 48 + 32));
-    float3 c = (box_min.xyz + box_max.xyz) * 0.5, e = (box_max.xyz - box_min.xyz) * 0.5;
-    float3 wc = float3(dot(r0.xyz, c) + r0.w, dot(r1.xyz, c) + r1.w, dot(r2.xyz, c) + r2.w);
-    float3 we = float3(dot(abs(r0.xyz), e), dot(abs(r1.xyz), e), dot(abs(r2.xyz), e));
-    [unroll] for (int p = 0; p < 6; ++p) {
-        if (dot(planes[p].xyz, wc) + planes[p].w < -dot(abs(planes[p].xyz), we)) return;
-    }
-    uint slot;
-    args.InterlockedAdd(0, 1, slot);
-    rows_out.Store4(slot * 48, asuint(r0));
-    rows_out.Store4(slot * 48 + 16, asuint(r1));
-    rows_out.Store4(slot * 48 + 32, asuint(r2));
-}
-[numthreads(64, 1, 1)] void cull_args(uint3 id : SV_DispatchThreadID) {
-    uint b = id.x;
-    if (b >= info.z) return;
-    int n = clamp(int(args.Load(0)) - int(b * 256), 0, 256);
-    args.Store(16 + b * 20, info.y);
-    args.Store(20 + b * 20, uint(n));
-    args.Store(24 + b * 20, 0);
-    args.Store(28 + b * 20, 0);
-    args.Store(32 + b * 20, 0);
-}
-)";
         D3D12_ROOT_PARAMETER params[4]{};
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
@@ -2462,7 +2008,7 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
         const char* entries[3] = {"cull_reset", "cull_main", "cull_args"};
         for (u32 k = 0; k < 3; ++k) {
             ComPtr<ID3DBlob> cs;
-            if (!compile(kCull, sizeof kCull - 1, entries[k], "cs_5_0", cs)) return false;
+            if (!compile(kCullHlsl, sizeof kCullHlsl - 1, entries[k], "cs_5_0", cs)) return false;
             D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature = cull_root_.Get();
             pso.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
@@ -2612,9 +2158,17 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     ComPtr<ID3D12PipelineState> blend_pipelines_[3][3];  // [static, skinned, instanced][translucent, additive, overdraw]
     ComPtr<ID3D12PipelineState> mesh_wire_pipeline_;
     ComPtr<ID3D12PipelineState> instanced_pipeline_, instanced_wire_pipeline_;
-    D3D12_GPU_DESCRIPTOR_HANDLE decal_srv_{};
+    static constexpr u32 kSceneRing = 64;
+    D3D12_CPU_DESCRIPTOR_HANDLE scene_cpu_{};  // the ring's start: entries of five (t3 / t4 shadows, t5 decals, t6 reflections, t7 lightmaps)
+    D3D12_GPU_DESCRIPTOR_HANDLE scene_gpu_{};
+    D3D12_GPU_DESCRIPTOR_HANDLE scene_table_{};  // the entry in use
+    ID3D12Resource* scene_resources_[5] = {};    // null: white
+    bool scene_shadow_[2] = {};
+    bool scene_dirty_ = true;
+    u32 scene_at_ = 0;
     ComPtr<ID3D12PipelineState> line_pipeline_;
     ComPtr<ID3D12PipelineState> shadow_pipeline_;
+    ComPtr<ID3D12PipelineState> cutout_shadow_pipeline_, skinned_cutout_shadow_pipeline_;  // Masked casters
     ComPtr<ID3D12PipelineState> skinned_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_wire_pipeline_;
     ComPtr<ID3D12PipelineState> skinned_shadow_pipeline_;
@@ -2632,7 +2186,7 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
-    ComPtr<ID3D12PipelineState> post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
+    ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
@@ -2641,8 +2195,6 @@ RWByteAddressBuffer args : register(u1);  // visible count, 12 bytes free, then 
     ShadowMap shadow_maps_[kMaxShadowMaps];
     ComPtr<ID3D12DescriptorHeap> shadow_dsv_heap_;
     i32 shadow_pass_ = -1;
-    D3D12_GPU_DESCRIPTOR_HANDLE shadow_srv_{};
-    D3D12_GPU_DESCRIPTOR_HANDLE local_shadow_srv_{};
     Buffer buffers_[kMaxBuffers];
     ComPtr<ID3D12DescriptorHeap> target_rtv_heap_;
     ComPtr<ID3D12DescriptorHeap> target_dsv_heap_;

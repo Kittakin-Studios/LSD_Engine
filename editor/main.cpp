@@ -1,11 +1,18 @@
 // LSD_Engine editor entry point: level editor (Viewport, Outliner, Details, Content Browser, Play).
 #include "editor_ui.h"
+#include "keymap.h"
+#include "assistant.h"
+#include "assistant_lessons.h"
+#include "templates.h"
 #include "editor_modes.h"
 #include "paper2d.h"
 #include "graph_editor.h"
 #include "table_editor.h"
 #include "mesh_cache.h"
 #include "lighting.h"
+#include "lsd/script/material_graph.h"
+#include "scalability.h"
+#include "loc_gather.h"
 #include "material_cache.h"
 #include "animation_player.h"
 #include "particle_editor.h"
@@ -50,12 +57,15 @@
 #include "lsd/foundation/system_info.h"
 #include "lsd/render/grid.h"
 #include "lsd/render/mesh.h"
+#include "lsd/render/occlusion.h"
+#include "lsd/render/reflection.h"
 #include "lsd/rhi/rhi.h"
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 
+#include <unordered_map>
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
@@ -71,9 +81,13 @@
 #include <filesystem>
 #include <new>
 #include <cctype>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 bool g_gpu_culling = true;  // r.GPUCulling
+bool g_occlusion_culling = true;  // r.OcclusionCulling
+bool g_texture_streaming = true;  // r.TextureStreaming
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
 std::vector<lsd::rhi::MeshDraw> g_outline;
@@ -81,6 +95,7 @@ constexpr lsd::f32 kOutlineColor[4] = {1.0f, 0.55f, 0.08f, 1.0f};
 
 // input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
 lsd::u64 g_held_until[SDL_SCANCODE_COUNT] = {};
+lsd::u64 g_mouse_held_until[3] = {};  // input.Hold on Left / Middle / Right Mouse Button
 
 namespace {
 
@@ -120,6 +135,22 @@ lsd::render::GridColors grid_colors(const lsd::editor::EditorTheme& t) {
 // Every StaticMesh in the world, selection tinted (not while playing). Counts draws and triangles for `stat fps`.
 // Skinned meshes for drawing and shadows: their model and current pose (set up by main()).
 lsd::editor::SkinnedCache* g_skinned = nullptr;
+lsd::editor::MaterialCache* g_materials = nullptr;  // the shadow passes ask it for Masked materials
+
+// A Masked material's cut-out for the shadow passes (its base colour texture and cutoff); false when it
+// casts a solid shadow (opaque, a material graph, translucent).
+bool shadow_cutout(const char* material, const lsd::LinearColor& tint, lsd::rhi::ShadowCutout& out) {
+    if (!g_materials || !material || !material[0]) return false;
+    lsd::rhi::MeshDraw look{};
+    look.color[0] = look.color[1] = look.color[2] = 1.0f;
+    look.color[3] = tint.a;
+    g_materials->apply(material, look);
+    if (look.alpha_cutoff <= 0.0f || look.blend != 0 || !look.base_color_texture.valid()) return false;
+    out.texture = look.base_color_texture;
+    out.cutoff = look.alpha_cutoff;
+    out.alpha = look.color[3];
+    return true;
+}
 lsd::editor::DecalAtlas* g_decals = nullptr;  // decal textures for draw_world
 lsd::editor::AnimationPlayer* g_animations = nullptr;
 lsd::editor::BakedLighting g_level_lighting;  // the open level's Build Lighting result
@@ -137,15 +168,82 @@ struct LightingBuild {
 };
 LightingBuild* g_lighting_build = nullptr;
 
+bool g_lightmaps_changed = true;  // the GPU's lightmap atlas and lightmapped meshes need (re)making
+lsd::rhi::TextureHandle g_lightmap_atlas;
+std::unordered_map<std::string, std::vector<lsd::i32>> g_lightmap_names;  // object name -> its lightmap objects
+
 // The level's baked lighting from its _BuiltData file (none: the Sky Light's flat ambient).
 void load_level_lighting(const char* level_path) {
     const bool found = level_path && level_path[0] && lsd::editor::load_baked_lighting(lsd::editor::baked_lighting_path(level_path).c_str(), g_level_lighting);
     if (!found) g_level_lighting = {};
     lsd::editor::set_baked_lighting(found ? &g_level_lighting : nullptr);
+    g_lightmaps_changed = true;
+}
+
+// The lightmap atlas on the GPU and each lightmapped object's mesh as "Lightmap:<n>" in the cache.
+void upload_lightmaps(lsd::rhi::Device& device, lsd::editor::MeshCache& meshes) {
+    g_lightmaps_changed = false;
+    device.set_lightmap_atlas({});
+    if (g_lightmap_atlas.valid()) device.destroy_texture(g_lightmap_atlas);
+    g_lightmap_atlas = {};
+    g_lightmap_names.clear();
+    const lsd::editor::BakedLighting& l = g_level_lighting;
+    if (!l.has_lightmap()) return;
+    const void* mips[1] = {l.lightmap.data()};
+    g_lightmap_atlas = device.create_texture(l.lightmap_size, l.lightmap_size, 1, lsd::rhi::TextureFormat::RGBA8, mips);
+    device.set_lightmap_atlas(g_lightmap_atlas);
+    for (lsd::usize k = 0; k < l.objects.size(); ++k) {
+        const lsd::editor::LightmapObject& o = l.objects[k];
+        lsd::render::MeshData data;
+        data.vertices = const_cast<lsd::rhi::MeshVertex*>(o.vertices.data());  // set_generated only reads
+        data.indices = const_cast<lsd::u32*>(o.indices.data());
+        data.vertex_count = static_cast<lsd::u32>(o.vertices.size());
+        data.index_count = static_cast<lsd::u32>(o.indices.size());
+        char key[32];
+        std::snprintf(key, sizeof key, "Lightmap:%u", static_cast<unsigned>(k));
+        meshes.set_generated(key, data);
+        g_lightmap_names[o.name].push_back(static_cast<lsd::i32>(k));
+    }
+}
+
+// The baked copy of this object's mesh to draw (Build Lighting), or null: same name and mesh, where it was baked.
+const lsd::editor::CachedMesh* lightmapped_mesh(lsd::editor::MeshCache& meshes, const char* name, const char* mesh, const lsd::Mat4& m) {
+    if (g_lightmap_names.empty()) return nullptr;
+    const auto it = g_lightmap_names.find(name);
+    if (it == g_lightmap_names.end()) return nullptr;
+    const lsd::Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    for (const lsd::i32 k : it->second) {
+        const lsd::editor::LightmapObject& o = g_level_lighting.objects[static_cast<lsd::usize>(k)];
+        const lsd::Vec3 d = at - lsd::Vec3{o.position[0], o.position[1], o.position[2]};
+        if (std::strcmp(o.mesh, mesh) != 0 || lsd::dot(d, d) > 1e-4f) continue;
+        char key[32];
+        std::snprintf(key, sizeof key, "Lightmap:%d", k);
+        return meshes.get(key);
+    }
+    return nullptr;
 }
 
 // Skinned shadow casters (within `range` of `light` when range > 0).
-void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range) {
+bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false);  // below
+lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fog, fog_color), for the particles
+lsd::rhi::LightSetup g_view_lights;  // the last drawn view's lights, for Lit particles
+lsd::rhi::BufferHandle g_nav_buffer;  // the navmesh overlay's lines (P)
+lsd::u32 g_nav_vertex_count = 0;
+lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
+lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
+
+extern lsd::f32 g_view_distance_scale;  // below (Engine Scalability > View Distance)
+// The LOD a skeletal mesh is drawn at seen from `eye`: by how big it looks (its bind bounds, grown by half for the pose).
+lsd::u32 skinned_lod(const lsd::editor::SkinnedEntry& model, const lsd::Mat4& m, lsd::Vec3 eye) {
+    if (model.lod_count <= 1) return 0;
+    const lsd::Vec3 centre = lsd::transform_point(m, (model.model->bounds_min + model.model->bounds_max) * 0.5f);
+    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
+    const lsd::f32 scale = lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+    return model.pick_lod(lsd::length((model.model->bounds_max - model.model->bounds_min) * 0.5f) * scale / distance);
+}
+
+// `eye`: the camera, so shadows use the LOD it sees (as static meshes' do).
+void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range, lsd::Vec3 eye) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const lsd::world::Entity e = world.owner(type, i);
@@ -161,7 +259,27 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
             if (lsd::length(centre - *light) > range + lsd::length(extent) * 2.0f) continue;  // generous: the pose may reach out
         }
         const lsd::Mat4 mvp = vp * m;
-        device.draw_shadow_caster(g_animations->vertices(e, model->vertices), model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
+        const lsd::Vec3 half = (model->model->bounds_max - model->model->bounds_min) * 0.5f;  // generous: the pose may reach out of the bind bounds
+        if (!in_view(mvp, model->model->bounds_min - half, model->model->bounds_max + half, true)) {  // beside this view: its shadow falls elsewhere
+            ++g_casters_culled;
+            continue;
+        }
+        const lsd::rhi::BufferHandle vertices = g_animations->vertices(e, model->vertices);
+        // Sections with a Masked material cast their cut-out: then each section is its own draw.
+        lsd::rhi::ShadowCutout cut[lsd::asset::kMaxMaterialSlots];
+        bool masked[lsd::asset::kMaxMaterialSlots] = {}, any = false;
+        for (lsd::u32 k = 0; k < model->section_count; ++k) any |= masked[k] = shadow_cutout(lsd::editor::section_material(*component, *model, k), component->color, cut[k]);
+        const lsd::u32 lod = skinned_lod(*model, m, eye);
+        if (!any && lod == 0) {  // full detail, nothing cut out: one draw
+            device.draw_shadow_caster(vertices, model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
+            continue;
+        }
+        for (lsd::u32 k = 0; k < model->section_count; ++k) {
+            lsd::rhi::BufferHandle indices;
+            lsd::u32 count = 0;
+            model->section_at(k, lod, indices, count);
+            device.draw_shadow_caster(vertices, indices, count, mvp.m, pose->joint_rows(), pose->joint_count(), masked[k] ? &cut[k] : nullptr);
+        }
     }
 }
 
@@ -194,7 +312,16 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
         const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
         if (!mesh) continue;
         instance_rows(world, e, *ism, rows, &matrices);
-        device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), ism->instances.count);
+        lsd::u32 kept = 0;  // only the copies whose bounds reach this view (a forest's far side casts into another cascade)
+        for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
+            if (!in_view(vp * matrices[k], mesh->bounds_min, mesh->bounds_max, true)) {
+                ++g_casters_culled;
+                continue;
+            }
+            if (kept != k) std::memcpy(&rows[static_cast<lsd::usize>(kept) * 12], &rows[static_cast<lsd::usize>(k) * 12], 12 * sizeof(lsd::f32));
+            ++kept;
+        }
+        if (kept) device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), kept);
     }
 }
 
@@ -223,7 +350,43 @@ struct Caster {
     lsd::rhi::BufferHandle vertices, indices;
     lsd::u32 count;
     lsd::Mat4 world;
+    bool masked = false;  // a Masked material: drawn on its own with `cutout`
+    lsd::rhi::ShadowCutout cutout;
 };
+
+// The clock sprites animate by: game time while playing (so Flipbook events land on the frame you see), else the editor's.
+lsd::f32 g_sprite_seconds = 0.0f;
+lsd::f32 g_view_distance_scale = 1.0f;  // Engine Scalability > View Distance
+const lsd::asset::AssetRegistry* g_registry = nullptr;  // Flipbook assets for the sprites
+
+// Lit Sprites and Tile Maps in a shadow pass: their cut-out shapes (Paper2D's Cast Shadow).
+void add_flat_casters(lsd::world::World& world, lsd::editor::MeshCache& meshes, bool skip_hidden, std::vector<Caster>& casters) {
+    auto add = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, lsd::f32 cutoff, lsd::f32 alpha) {
+        if (!mesh || (skip_hidden && world.hidden_in_hierarchy(e))) return;
+        Caster caster{mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, world.world_matrix(e), false, {}};
+        if (texture[0] && g_materials) {
+            caster.cutout.texture = g_materials->textures().get(texture, true);
+            caster.cutout.cutoff = cutoff > 0.0f ? cutoff : 0.5f;  // translucent sprites: their visible part
+            caster.cutout.alpha = alpha;
+            caster.masked = caster.cutout.texture.valid();
+        }
+        casters.push_back(caster);
+    };
+    const lsd::reflect::TypeInfo& sprite_type = lsd::reflect::type_of<lsd::world::Sprite>();
+    for (lsd::u32 i = 0; i < world.count(sprite_type); ++i) {
+        const auto* sprite = static_cast<const lsd::world::Sprite*>(world.at(sprite_type, i));
+        if (!sprite->lit || !sprite->cast_shadows) continue;
+        const lsd::u32 cell = lsd::editor::sprite_cell(*sprite, g_sprite_seconds, lsd::editor::find_flipbook(g_registry, sprite->flipbook));
+        add(world.owner(sprite_type, i), lsd::editor::sprite_mesh(meshes, *sprite, cell), sprite->texture, sprite->alpha_cutoff, sprite->tint.a);
+    }
+    const lsd::reflect::TypeInfo& map_type = lsd::reflect::type_of<lsd::world::TileMap>();
+    for (lsd::u32 i = 0; i < world.count(map_type); ++i) {
+        const auto* map = static_cast<const lsd::world::TileMap*>(world.at(map_type, i));
+        if (!map->lit || !map->cast_shadows) continue;
+        const lsd::world::Entity e = world.owner(map_type, i);
+        add(e, lsd::editor::tile_map_mesh(meshes, *map, e.value), map->tileset, 0.5f, map->tint.a);
+    }
+}
 
 void draw_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, std::vector<Caster>& casters) {
     std::sort(casters.begin(), casters.end(), [](const Caster& a, const Caster& b) {
@@ -231,8 +394,14 @@ void draw_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, std::vector<Cas
     });
     static std::vector<lsd::f32> rows;
     for (size_t i = 0; i < casters.size();) {
+        if (casters[i].masked) {  // cut-out shadows are not instanced
+            const lsd::Mat4 mvp = vp * casters[i].world;
+            device.draw_shadow_caster(casters[i].vertices, casters[i].indices, casters[i].count, mvp.m, nullptr, 0, &casters[i].cutout);
+            ++i;
+            continue;
+        }
         size_t end = i + 1;
-        while (end < casters.size() && casters[end].vertices.value == casters[i].vertices.value && casters[end].indices.value == casters[i].indices.value) ++end;
+        while (end < casters.size() && !casters[end].masked && casters[end].vertices.value == casters[i].vertices.value && casters[end].indices.value == casters[i].indices.value) ++end;
         const Caster& c = casters[i];
         if (end - i == 1) {
             const lsd::Mat4 mvp = vp * c.world;
@@ -290,7 +459,8 @@ lsd::f32 volume_cull_distance(lsd::Vec3 centre, lsd::f32 size) {
 bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::StaticMesh& component, const lsd::Mat4& m, lsd::Vec3 eye, lsd::i32 force_lod,
                      lsd::rhi::BufferHandle& indices, lsd::u32& count) {
     const lsd::Vec3 centre = lsd::transform_point(m, (mesh.bounds_min + mesh.bounds_max) * 0.5f);
-    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f);
+    // Shorter (or longer) view distance: everything is treated as further away (or nearer).
+    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
     if (component.max_draw_distance > 0.0f && distance > component.max_draw_distance) return false;
     const lsd::Vec3 half = (mesh.bounds_max - mesh.bounds_min) * 0.5f;
     const lsd::f32 scale = std::fmax(lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}),
@@ -312,7 +482,7 @@ bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::Stat
 
 // Frustum culling: false when the box (local bounds under `mvp`) is wholly outside one clip plane.
 // `sides_only`: just the four side planes (shadow casters in front of a pancaked cascade still cast).
-bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false) {
+bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only) {
     int outside[6] = {};
     for (int c = 0; c < 8; ++c) {
         const lsd::Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
@@ -333,14 +503,96 @@ bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only =
     return true;
 }
 
+// Shadow caching (Unreal's cached shadow maps): a local light's tile, or a sun cascade, is kept from the
+// last frame while what it would draw is the same (its matrix, the atlas, every caster's mesh, LOD,
+// matrix and cut-out, the Instanced Static Meshes); a skeletal mesh in it redraws it every frame.
+bool g_shadow_caching = true;
+lsd::u32 g_shadow_tiles_cached = 0, g_shadow_tiles_cached_frame = 0;  // this frame's / the last frame's (stat dump)
+
+lsd::u64 hash_bytes(lsd::u64 h, const void* p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const lsd::u8*>(p)[i]) * 1099511628211ull;
+    return h;
+}
+
+lsd::u64 hash_casters(lsd::u64 h, const std::vector<Caster>& casters) {
+    for (const Caster& c : casters) {
+        h = hash_bytes(h, &c.vertices.value, 4);
+        h = hash_bytes(h, &c.indices.value, 4);
+        h = hash_bytes(h, &c.count, 4);
+        h = hash_bytes(h, c.world.m, sizeof c.world.m);
+        if (c.masked) {
+            h = hash_bytes(h, &c.cutout.texture.value, 4);
+            h = hash_bytes(h, &c.cutout.cutoff, 4);
+            h = hash_bytes(h, &c.cutout.alpha, 4);
+        }
+    }
+    return h;
+}
+
+// The Instanced Static Meshes' copies and transforms (they are drawn into every tile).
+lsd::u64 hash_instanced(lsd::world::World& world, bool skip_hidden) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::InstancedStaticMesh>();
+    lsd::u64 h = 1469598103934665603ull;
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        const auto* ism = static_cast<const lsd::world::InstancedStaticMesh*>(world.at(type, i));
+        if (!ism->cast_shadows || (skip_hidden && world.hidden_in_hierarchy(e))) continue;
+        const lsd::Mat4 m = world.world_matrix(e);
+        h = hash_bytes(h, m.m, sizeof m.m);
+        h = hash_bytes(h, ism->mesh, std::strlen(ism->mesh));
+        for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
+            const lsd::world::MeshInstance& in = ism->instances[k];
+            h = hash_bytes(h, &in.position, sizeof in.position);
+            h = hash_bytes(h, &in.rotation, sizeof in.rotation);
+            h = hash_bytes(h, &in.scale, sizeof in.scale);
+        }
+    }
+    return h;
+}
+
+// True when a posed skeletal mesh reaches the light (it moves: the tile is never cached).
+bool skinned_in_range(lsd::world::World& world, bool skip_hidden, lsd::Vec3 light, lsd::f32 range) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i));
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
+        if (!model || !g_animations->pose(e)) continue;
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
+        const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
+        const lsd::Vec3 extent = lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f);
+        if (lsd::length(centre - light) <= range + lsd::length(extent) * 2.0f) return true;  // as draw_skinned_casters
+    }
+    return false;
+}
+
+// True when a posed skeletal mesh may cast into this shadow view (as draw_skinned_casters culls them): it moves.
+bool skinned_in_view(lsd::world::World& world, bool skip_hidden, const lsd::Mat4& vp) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i));
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
+        if (!model || !g_animations->pose(e)) continue;
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
+        const lsd::Vec3 half = (model->model->bounds_max - model->model->bounds_min) * 0.5f;
+        if (in_view(vp * m, model->model->bounds_min - half, model->model->bounds_max + half, true)) return true;
+    }
+    return false;
+}
+
 // Shadow casters use the LOD the camera sees (a far tree casts its simple shape), not the light's view.
 void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                   lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
-    device.begin_shadow_pass(atlas);
+    static lsd::u64 cascade_keys[4] = {};  // what each cascade's tile holds (shadow caching; 0: unknown)
+    device.begin_shadow_pass(atlas, !g_shadow_caching);
+    const lsd::u64 instanced = g_shadow_caching ? hash_instanced(world, skip_hidden) : 0;
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     static std::vector<Caster> casters;
-    for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]); ++c) {
+    for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]) && c < 4; ++c) {
         device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
         lsd::Mat4 vp;
         std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
@@ -354,10 +606,25 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             const lsd::Mat4 mvp = vp * m;
             if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
             if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-            casters.push_back({mesh->gpu.vertices, indices, count, m});
+            Caster caster{mesh->gpu.vertices, indices, count, m, false, {}};
+            caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
+            casters.push_back(caster);
+        }
+        add_flat_casters(world, meshes, skip_hidden, casters);
+        if (g_shadow_caching) {  // kept while the camera has not moved it and nothing in it moved (a still view, a far cascade)
+            lsd::u64 key = hash_casters(hash_bytes(hash_bytes(instanced, &atlas.value, 4), vp.m, sizeof vp.m), casters);
+            key = hash_bytes(key, lights.shadow_tiles[c], 3 * sizeof(lsd::f32));
+            if (skinned_in_view(world, skip_hidden, vp)) key = 0;
+            if (key && key == cascade_keys[c]) {
+                casters.clear();
+                ++g_shadow_tiles_cached;
+                continue;
+            }
+            cascade_keys[c] = key;
+            device.clear_shadow_viewport();
         }
         draw_casters(device, vp, casters);
-        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
+        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f, eye);
         draw_instanced_casters(device, vp, world, meshes, skip_hidden);
     }
     device.end_shadow_pass();
@@ -367,7 +634,9 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
 void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                         lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
-    device.begin_shadow_pass(atlas);
+    static lsd::u64 tile_keys[lsd::rhi::kMaxShadowTiles] = {};  // what each tile of the atlas holds (0: unknown)
+    device.begin_shadow_pass(atlas, !g_shadow_caching);
+    const lsd::u64 instanced = g_shadow_caching ? hash_instanced(world, skip_hidden) : 0;
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     static std::vector<Caster> casters;
     for (lsd::u32 li = 0; li < lights.count; ++li) {
@@ -376,6 +645,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
         const lsd::u32 first = static_cast<lsd::u32>(light.shadow_tile);
         const lsd::u32 tiles = light.type == static_cast<lsd::f32>(lsd::rhi::LightType::Point) ? 6u : 1u;
         const lsd::Vec3 at{light.position[0], light.position[1], light.position[2]};
+        const bool moving = g_shadow_caching && skinned_in_range(world, skip_hidden, at, light.range);
         for (lsd::u32 t = first; t < first + tiles; ++t) {
             device.set_viewport(lights.local_tiles[t][0] * size, lights.local_tiles[t][1] * size, lights.local_tiles[t][2] * size, lights.local_tiles[t][2] * size);
             lsd::Mat4 vp;
@@ -394,10 +664,26 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 lsd::rhi::BufferHandle indices;
                 lsd::u32 count = 0;
                 if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-                casters.push_back({mesh->gpu.vertices, indices, count, m});
+                Caster caster{mesh->gpu.vertices, indices, count, m, false, {}};
+                caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
+                casters.push_back(caster);
+            }
+            add_flat_casters(world, meshes, skip_hidden, casters);
+            if (g_shadow_caching) {
+                lsd::u64 key = hash_bytes(instanced, &atlas.value, 4);
+                key = hash_casters(hash_bytes(key, lights.local_matrices[t], sizeof lights.local_matrices[t]), casters);
+                key = hash_bytes(key, lights.local_tiles[t], 3 * sizeof(lsd::f32));
+                if (moving) key = 0;
+                if (key && key == tile_keys[t]) {  // the same as last drawn: kept
+                    casters.clear();
+                    ++g_shadow_tiles_cached;
+                    continue;
+                }
+                tile_keys[t] = key;
+                device.clear_shadow_viewport();
             }
             draw_casters(device, vp, casters);
-            draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
+            draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range, eye);
             draw_instanced_casters(device, vp, world, meshes, skip_hidden);
         }
     }
@@ -441,7 +727,7 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
     };
     mix(&d.vertices.value, 4), mix(&d.indices.value, 4), mix(&d.index_count, 4), mix(d.color, sizeof d.color);
     mix(&d.metallic, 4), mix(&d.roughness, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
-    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.alpha_cutoff, 4);
+    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4);
     const lsd::u32 flags = (d.unlit ? 1u : 0u) | (d.pixel_art ? 2u : 0u) | (d.debug_view << 2);
     mix(&flags, 4);
     return h;
@@ -514,11 +800,52 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     }
     device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
     device.set_lights(lights);
+    std::memcpy(g_view_fog, lights.fog, sizeof lights.fog);
+    g_view_lights = lights;
+    std::memcpy(g_view_fog + 4, lights.fog_color, sizeof lights.fog_color);
     lsd::rhi::SkyDraw sky;
     if (!stats.view_mode_unlit_or_wire() && lsd::editor::world_sky(world, view_proj, eye, skip_hidden, sky)) device.draw_sky(sky);  // behind everything
     stats.stat_draws = 0;
     stats.stat_triangles = 0;
     stats.stat_culled = 0;
+    stats.stat_occluded = 0;
+    // Occlusion culling: the nearest big opaque meshes in view go into a small CPU depth buffer (their
+    // real triangles, up to 4096 each), then every static mesh's box is tested against it below.
+    static lsd::render::OcclusionBuffer occlusion;  // 128 KB: kept, not on the stack
+    occlusion.clear();
+    if (g_occlusion_culling && !stats.view_mode_unlit_or_wire()) {
+        struct Candidate {
+            lsd::f32 size;
+            lsd::u32 index;
+        };
+        static std::vector<Candidate> candidates;
+        candidates.clear();
+        for (lsd::u32 i = 0; i < world.count(type); ++i) {
+            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
+            const lsd::world::Entity e = world.owner(type, i);
+            if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+            const lsd::editor::CachedMesh* mesh = meshes.get(component->mesh);
+            if (!mesh) continue;
+            const lsd::Mat4 m = world.world_matrix(e);
+            if (!in_view(view_proj * m, mesh->bounds_min, mesh->bounds_max)) continue;
+            const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
+            const lsd::f32 radius = lsd::length(lsd::transform_vector(m, (mesh->bounds_max - mesh->bounds_min) * 0.5f));
+            const lsd::f32 size = radius / std::max(lsd::length(centre - eye), 0.1f);  // how big it looks
+            if (size > 0.1f) candidates.push_back({size, i});
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.size > b.size; });
+        for (lsd::usize k = 0; k < candidates.size() && k < 16; ++k) {
+            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, candidates[k].index));
+            lsd::rhi::MeshDraw look{};
+            to_rgba(component->color, look.color);
+            materials.apply(component->material, look);
+            if (look.blend != 0 || look.alpha_cutoff > 0.0f || look.color[3] < 0.999f) continue;  // see-through: hides nothing
+            const lsd::editor::MeshCache::Triangles* tris = meshes.triangles(component->mesh);
+            if (!tris || tris->indices.empty() || tris->indices.size() > 3 * 4096) continue;  // heavy meshes are not worth it on the CPU
+            const lsd::world::Entity e = world.owner(type, candidates[k].index);
+            occlusion.add_occluder(view_proj * world.world_matrix(e), tris->points.data(), tris->indices.data(), static_cast<lsd::u32>(tris->indices.size()));
+        }
+    }
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::world::Entity e = world.owner(type, i);
@@ -526,11 +853,17 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Mat4 m = i < g_frame_meshes.world.size() && g_frame_meshes.mesh[i] ? g_frame_meshes.world[i] : world.world_matrix(e);
         const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
                                     lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
-        const lsd::editor::CachedMesh* mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
+        const lsd::editor::CachedMesh* mesh = lightmapped_mesh(meshes, world.name(e), component->mesh, m);
+        if (!mesh) mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
         if (!mesh) continue;
         const lsd::Mat4 mvp = view_proj * m;
         if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
             ++stats.stat_culled;
+            continue;
+        }
+        if (!occlusion.box_visible(mvp, mesh->bounds_min, mesh->bounds_max)) {  // behind the occluders
+            ++stats.stat_culled;
+            ++stats.stat_occluded;
             continue;
         }
         lsd::rhi::MeshDraw draw{};
@@ -538,42 +871,68 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             ++stats.stat_culled;
             continue;
         }
-        const lsd::Mat4 inv = lsd::affine_inverse(m);  // normals use the inverse transpose (correct under non-uniform scale)
-        draw.vertices = mesh->gpu.vertices;
-        std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
-        for (int c = 0; c < 3; ++c) {
-            for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
-            draw.normal_matrix[c * 4 + 3] = 0.0f;
-        }
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
-        }
-        draw.camera_position[0] = eye.x;
-        draw.camera_position[1] = eye.y;
-        draw.camera_position[2] = eye.z;
-        to_rgba(component->color, draw.color);
-        draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
-        materials.apply(component->material, draw);  // base colour x tint, textures, metallic / roughness, emissive
-        const bool editor_view = !stats.playing || stats.ejected;
-        draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
-        draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
-        if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
-        if (blend_view(stats, draw, lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f), eye, translucent)) continue;
-        if (can_batch(draw, m)) {  // drawn below with the others like it
-            batch.push_back({batch_key(draw), draw, m});
+        // One draw of `part_mesh` at `pm` with `material` (the whole mesh, or one part of it with its Material Slot).
+        auto submit = [&](lsd::rhi::MeshDraw draw, const lsd::editor::CachedMesh& part_mesh, const lsd::Mat4& pm, const char* material) {
+            const lsd::Mat4 pmvp = view_proj * pm;
+            const lsd::Mat4 inv = lsd::affine_inverse(pm);  // normals use the inverse transpose (correct under non-uniform scale)
+            draw.vertices = part_mesh.gpu.vertices;
+            std::memcpy(draw.mvp, pmvp.m, sizeof draw.mvp);
+            for (int c = 0; c < 3; ++c) {
+                for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
+                draw.normal_matrix[c * 4 + 3] = 0.0f;
+            }
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = pm.at(r, c);
+            }
+            draw.camera_position[0] = eye.x;
+            draw.camera_position[1] = eye.y;
+            draw.camera_position[2] = eye.z;
+            to_rgba(component->color, draw.color);
+            draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
+            materials.apply(material, draw);  // base colour x tint, textures, metallic / roughness, emissive
+            if (std::strncmp(component->mesh, "Landscape:", 10) == 0) {  // painted layers, blended
+                if (const lsd::rhi::TextureHandle t = lsd::editor::landscape_texture(component->mesh); t.valid()) {
+                    draw.base_color_texture = t;
+                    draw.color[0] = draw.color[1] = draw.color[2] = 1.0f;  // the layers carry their own tints
+                }
+            }
+            const bool editor_view = !stats.playing || stats.ejected;
+            draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+            draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
+                         : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
+            draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+            if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
+            if (blend_view(stats, draw, lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f), eye, translucent)) return;
+            if (can_batch(draw, pm)) {  // drawn below with the others like it
+                batch.push_back({batch_key(draw), draw, pm});
+                return;
+            }
+            device.draw_mesh(draw);
+            ++stats.stat_draws;
+            stats.stat_triangles += draw.index_count / 3;
+        };
+        const auto* slot_parts = component->material[0] ? nullptr : meshes.slot_parts(component->mesh);
+        if (!slot_parts) {  // one Material for all (the object's, or none): the whole mesh at its LOD
+            submit(draw, *mesh, m, component->material);
             continue;
         }
-        device.draw_mesh(draw);
-        ++stats.stat_draws;
-        stats.stat_triangles += draw.index_count / 3;
+        for (const lsd::editor::MeshCache::SlotPart& part : *slot_parts) {  // each part with its Material Slot, at its own LOD
+            const lsd::editor::CachedMesh* part_mesh = meshes.get(part.key);
+            if (!part_mesh) continue;
+            const lsd::Mat4 pm = m * part.local;
+            lsd::rhi::MeshDraw part_draw{};
+            if (!pick_static_lod(*part_mesh, *component, pm, eye, stats.force_lod, part_draw.indices, part_draw.index_count)) continue;
+            submit(part_draw, *part_mesh, pm, part.material);
+        }
     }
     draw_batches(device, batch, view_proj, stats);
-    // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask.
-    // shortcut: they cast no shadows; add them to the shadow passes when lit 2D scenes need it.
+    // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask
+    // (lit ones cast shadows: add_flat_casters). Translucent sprites wait with the translucent meshes,
+    // ordered by Sort Order first, then far to near.
     {
         const bool editor_view = !stats.playing || stats.ejected;
-        auto draw_flat = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, const lsd::LinearColor& tint, bool pixel_art, bool lit, lsd::f32 cutoff) {
+        auto draw_flat = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, const lsd::LinearColor& tint, bool pixel_art, bool lit, lsd::f32 cutoff,
+                             bool blended = false, lsd::i32 sort_order = 0) {
             if (!mesh || (editor_view && world.hidden_in_hierarchy(e))) return;
             const lsd::Mat4 m = world.world_matrix(e);
             const lsd::Mat4 mvp = view_proj * m;
@@ -605,16 +964,23 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.unlit = !lit || (editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision));
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
             if (editor_view && stats.is_selected(e)) g_outline.push_back(draw);
+            if (blended && !draw.wireframe) {
+                draw.blend = 1;
+                draw.alpha_cutoff = 0.0f;
+                const lsd::Vec3 centre = lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f);
+                translucent.emplace_back(lsd::length(centre - eye) - static_cast<lsd::f32>(sort_order) * 1.0e5f, draw);  // drawn largest first
+                return;
+            }
             device.draw_mesh(draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
-        const lsd::f32 seconds = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // flipbooks play in the editor too
         const lsd::reflect::TypeInfo& sprite_type = lsd::reflect::type_of<lsd::world::Sprite>();
         for (lsd::u32 i = 0; i < world.count(sprite_type); ++i) {
             const auto* sprite = static_cast<const lsd::world::Sprite*>(world.at(sprite_type, i));
-            const lsd::editor::CachedMesh* mesh = lsd::editor::sprite_mesh(meshes, *sprite, lsd::editor::sprite_cell(*sprite, seconds));
-            draw_flat(world.owner(sprite_type, i), mesh, sprite->texture, sprite->tint, sprite->pixel_art, sprite->lit, sprite->alpha_cutoff);
+            const lsd::u32 cell = lsd::editor::sprite_cell(*sprite, g_sprite_seconds, lsd::editor::find_flipbook(stats.registry, sprite->flipbook));
+            const lsd::editor::CachedMesh* mesh = lsd::editor::sprite_mesh(meshes, *sprite, cell);
+            draw_flat(world.owner(sprite_type, i), mesh, sprite->texture, sprite->tint, sprite->pixel_art, sprite->lit, sprite->alpha_cutoff, sprite->translucent, sprite->sort_order);
         }
         const lsd::reflect::TypeInfo& map_type = lsd::reflect::type_of<lsd::world::TileMap>();
         for (lsd::u32 i = 0; i < world.count(map_type); ++i) {
@@ -635,6 +1001,24 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
             if (!mesh) continue;
             instance_rows(world, e, *ism, rows, &matrices);
+            if (occlusion.occluder_triangles()) {  // copies hidden behind the occluders (trees behind a hill) are left out
+                lsd::u32 kept = 0;
+                for (lsd::u32 k = 0; k < matrices.size(); ++k) {
+                    if (!occlusion.box_visible(view_proj * matrices[k], mesh->bounds_min, mesh->bounds_max)) {
+                        ++stats.stat_occluded;
+                        continue;
+                    }
+                    if (kept != k) {
+                        std::memcpy(&rows[static_cast<lsd::usize>(kept) * 12], &rows[static_cast<lsd::usize>(k) * 12], 12 * sizeof(lsd::f32));
+                        matrices[kept] = matrices[k];
+                    }
+                    ++kept;
+                }
+                rows.resize(static_cast<lsd::usize>(kept) * 12);
+                matrices.resize(kept);
+                if (!kept) continue;
+            }
+            const lsd::u32 copies = static_cast<lsd::u32>(matrices.size());
             lsd::rhi::MeshDraw draw{};
             draw.vertices = mesh->gpu.vertices;
             draw.indices = mesh->gpu.indices;
@@ -647,7 +1031,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             materials.apply(ism->material, draw);
             const bool editor_view = !stats.playing || stats.ejected;
             draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
+                         : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
             if (editor_view && stats.is_selected(e)) {
                 draw.color[0] = 1.0f;
@@ -661,9 +1046,9 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             if (!draw.material_shader.valid() || draw.wireframe) {
                 std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
                 draw.instance_rows = rows.data();
-                draw.instance_count = ism->instances.count;
+                draw.instance_count = copies;
                 // Many copies (foliage, crowds of props): the GPU drops those outside the view.
-                draw.gpu_cull = g_gpu_culling && ism->instances.count >= 32 && device.supports_gpu_culling();
+                draw.gpu_cull = g_gpu_culling && copies >= 32 && device.supports_gpu_culling();
                 std::memcpy(draw.local_bounds_min, &mesh->bounds_min, sizeof draw.local_bounds_min);
                 std::memcpy(draw.local_bounds_max, &mesh->bounds_max, sizeof draw.local_bounds_max);
                 device.draw_mesh(draw);
@@ -684,7 +1069,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                     ++stats.stat_draws;
                 }
             }
-            stats.stat_triangles += mesh->gpu.index_count / 3 * ism->instances.count;
+            stats.stat_triangles += mesh->gpu.index_count / 3 * copies;
         }
     }
     // Skeletal meshes: same material path, skinned on the GPU with their current pose.
@@ -702,6 +1087,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Vec3 grow = (model->model->bounds_max - model->model->bounds_min) * 0.5f;
         if (!in_view(mvp, model->model->bounds_min - grow, model->model->bounds_max + grow)) {
             ++stats.stat_culled;
+            continue;
+        }
+        if (!occlusion.box_visible(mvp, model->model->bounds_min - grow, model->model->bounds_max + grow)) {  // behind the occluders (with the pose's margin)
+            ++stats.stat_culled;
+            ++stats.stat_occluded;
             continue;
         }
         const lsd::Mat4 inv = lsd::affine_inverse(m);
@@ -725,13 +1115,14 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
+                         : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+        const lsd::u32 lod = skinned_lod(*model, m, eye);  // auto LODs, as static meshes
         // One draw per material slot (Unreal's mesh sections), each with its slot's material.
         for (lsd::u32 s = 0; s < model->section_count; ++s) {
             lsd::rhi::MeshDraw section = draw;
-            section.indices = model->sections[s].indices;
-            section.index_count = model->sections[s].index_count;
+            model->section_at(s, lod, section.indices, section.index_count);
             const char* material = lsd::editor::section_material(*component, *model, s);
             if (material[0]) section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;  // the material's own colours
             else to_rgba(component->color, section.color);
@@ -761,9 +1152,13 @@ void register_console(EditorState& s) {
     namespace console = lsd::console;
     console::add_variable("r.Grid", &s.show_grid, "Draw the floor grid");
     console::add_variable("show.Navigation", &s.show_navigation, "Draw the navmesh (P)");
+    console::add_variable("show.AudioMixer", &s.show_audio_mixer, "Window > Audio Mixer: Sound Classes, their Submix effects and live meters");
     console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
+    console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
+    console::add_variable("r.ShadowCaching", &g_shadow_caching, "Spot / point light shadow tiles are kept while nothing they show moves (a skeletal mesh in range redraws them each frame)");
+    console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
@@ -782,9 +1177,10 @@ void register_console(EditorState& s) {
         if (std::strcmp(args, "fps") == 0 || std::strcmp(args, "unit") == 0) st.show_stats = !st.show_stats;
         else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
         else if (std::strcmp(args, "dump") == 0) {  // the numbers as text (remote console, the MCP bridge, tests)
-            char line[200];
-            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u", st.stat_game_ms,
-                          st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled);
+            char line[256];
+            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u (occluded %u), shadow casters culled %u, shadow tiles cached %u",
+                          st.stat_game_ms, st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled, st.stat_occluded, g_casters_culled_frame,
+                          g_shadow_tiles_cached_frame);
             lsd::editor::remote::print(line);
             LSD_LOG_INFO("stat", "%s", line);
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
@@ -875,15 +1271,15 @@ void register_console(EditorState& s) {
                          "Build > Build Lighting: bake the level's light probes");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        static const char* const names[] = {"lit", "unlit", "wireframe", "normals", "lightingonly", "collision", "overdraw"};
-        for (int m = 0; m < 7; ++m) {
+        static const char* const names[] = {"lit", "unlit", "wireframe", "normals", "lightingonly", "collision", "overdraw", "lightmapdensity"};
+        for (int m = 0; m < 8; ++m) {
             if (std::strcmp(args, names[m]) == 0) {
                 st.view_mode = static_cast<lsd::editor::ViewMode>(m);
                 return;
             }
         }
-        LSD_LOG_WARN("console", "viewmode: lit, unlit, wireframe, normals, lightingonly, collision or overdraw");
-    }, &s, "viewmode lit|unlit|wireframe|normals|lightingonly|collision|overdraw");
+        LSD_LOG_WARN("console", "viewmode: lit, unlit, wireframe, normals, lightingonly, collision, overdraw or lightmapdensity");
+    }, &s, "viewmode lit|unlit|wireframe|normals|lightingonly|collision|overdraw|lightmapdensity");
     console::add_command("HighResShot", [](void* user, const char* args) {
         const int n = std::atoi(args);
         static_cast<EditorState*>(user)->high_res_shot = static_cast<lsd::u32>(n >= 1 && n <= 8 ? n : 2);
@@ -899,6 +1295,11 @@ void register_console(EditorState& s) {
         const lsd::u32 n = lsd::editor::validate_assets(st.project, *st.registry);
         std::snprintf(st.status, sizeof st.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
     }, &s, "Validate Assets: missing references, oversize textures, naming");
+    console::add_command("BuildRelease", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::editor::start_release_build(st.status, sizeof st.status);
+        lsd::editor::remote::print(st.status);
+    }, &s, "Build > Build Release Engine: the Release build Package Project copies, with CMake in the background");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
     console::add_command("debug.Crash", [](void*, const char* args) {  // tests the crash reporter
@@ -951,13 +1352,19 @@ void register_console(EditorState& s) {
         std::snprintf(name, sizeof name, "%s", args);
         if (char* last = std::strrchr(name, ' '); last && std::sscanf(last + 1, "%f", &seconds) == 1) *last = '\0';
         if (!name[0]) return;
+        const char* const mouse[3] = {"Left Mouse Button", "Middle Mouse Button", "Right Mouse Button"};
+        for (int b = 0; b < 3; ++b) {
+            if (std::strcmp(name, mouse[b]) != 0) continue;
+            g_mouse_held_until[b] = SDL_GetTicks() + static_cast<lsd::u64>(seconds * 1000.0f);
+            return;
+        }
         const SDL_Scancode k = SDL_GetScancodeFromName(name);
         if (k == SDL_SCANCODE_UNKNOWN) {
             LSD_LOG_WARN("input", "input.Hold: no key named %s (W, Space, E...)", name);
             return;
         }
         g_held_until[k] = SDL_GetTicks() + static_cast<lsd::u64>(seconds * 1000.0f);
-    }, nullptr, "input.Hold <key> <seconds>: hold a key for the game (tests), e.g. input.Hold W 2");
+    }, nullptr, "input.Hold <key> <seconds>: hold a key or mouse button for the game (tests), e.g. input.Hold W 2, input.Hold Right Mouse Button 1");
     console::add_command("ui.Keys", [](void*, const char* args) {  // tests: "down down enter", 0.8 s later
         static char keys[128];
         std::snprintf(keys, sizeof keys, "%s", args);
@@ -966,7 +1373,7 @@ void register_console(EditorState& s) {
             std::snprintf(copy, sizeof copy, "%s", keys);
             for (char* word = std::strtok(copy, " "); word; word = std::strtok(nullptr, " ")) {
                 const SDL_Keycode k = std::strcmp(word, "down") == 0 ? SDLK_DOWN : std::strcmp(word, "up") == 0 ? SDLK_UP : std::strcmp(word, "enter") == 0 ? SDLK_RETURN
-                                    : std::strcmp(word, "f5") == 0 ? SDLK_F5 : std::strcmp(word, "f10") == 0 ? SDLK_F10 : SDLK_UNKNOWN;
+                                    : SDL_GetKeyFromName(word);  // any SDL key name: f5, delete, a...
                 int window_count = 0;
                 SDL_Window** windows = SDL_GetWindows(&window_count);
                 const SDL_WindowID window = windows && window_count > 0 ? SDL_GetWindowID(windows[0]) : 0;  // ImGui ignores keys for no window
@@ -983,7 +1390,7 @@ void register_console(EditorState& s) {
             }
             return 0;
         }, nullptr);
-    }, &s, "ui.Keys <down|up|enter ...>: keys for the game UI, 0.8 s later (tests)");
+    }, &s, "ui.Keys <down|up|enter|SDL key name ...>: keys for the UI, 0.8 s later (tests)");
     console::add_command("ui.Drag", [](void*, const char* args) {  // tests: a real LMB drag through SDL's queue
         struct Drag {
             float x0, y0, x1, y1;
@@ -1023,25 +1430,27 @@ void register_console(EditorState& s) {
                 e.motion.y = y;
                 SDL_PushEvent(&e);
             };
-            auto button = [&](bool down) {
+            auto button = [&](bool down, float x, float y) {  // where the mouse is, like real button events (the game UI reads it)
                 SDL_Event e{};
                 e.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
                 e.button.windowID = window;
                 e.button.button = SDL_BUTTON_LEFT;
                 e.button.down = down;
+                e.button.x = x;
+                e.button.y = y;
                 SDL_PushEvent(&e);
             };
             move(d.x0, d.y0);
             SDL_Delay(150);
             key(true);
             SDL_Delay(50);
-            button(true);
+            button(true, d.x0, d.y0);
             for (int i = 1; i <= 20; ++i) {  // a steady hand: 20 steps over about a second
                 SDL_Delay(50);
                 move(d.x0 + (d.x1 - d.x0) * static_cast<float>(i) / 20.0f, d.y0 + (d.y1 - d.y0) * static_cast<float>(i) / 20.0f);
             }
             SDL_Delay(150);
-            button(false);
+            button(false, d.x1, d.y1);
             SDL_Delay(50);
             key(false);
             return 0;
@@ -1143,8 +1552,19 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
+    console::add_command("BuildReflections", [](void* user, const char*) { static_cast<EditorState*>(user)->capture_reflections = true; }, &s,
+                         "BuildReflections: capture every Reflection Capture again (Build > Build Reflection Captures)");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
-                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL: -rhi=opengl)");
+                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL or Vulkan)");
+    console::add_command("assistant.Ask", [](void* user, const char* args) {
+        lsd::editor::assistant::ask(*static_cast<EditorState*>(user), args);
+    }, &s, "assistant.Ask <message>: send a message to LSD Assistant, as if typed in its chat");
+    console::add_command("assistant.Lesson", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        std::string report;
+        lsd::editor::assistant::apply_lesson(st, static_cast<lsd::u32>(std::atoi(args)), report);
+        lsd::editor::remote::print(report.c_str());
+    }, &s, "assistant.Lesson <n>: apply LSD Assistant lesson n (0: gun on a hand socket) to the selected character");
     console::add_command("asset.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
@@ -1160,13 +1580,23 @@ void register_console(EditorState& s) {
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
             const lsd::asset::AssetRecord r = st.registry->get(i);
             if (r.type != lsd::asset::AssetType::Mesh || std::strcmp(r.name, args) != 0) continue;
-            lsd::editor::MaterialImportReport report;
-            lsd::editor::import_mesh_materials(*st.registry, r, "", false, report, st.status, sizeof st.status);
-            lsd::editor::remote::print(st.status);
+            lsd::editor::queue_mesh_materials(r, "", false);  // the frame loop steps it (progress bar); the result goes to the status line
+            lsd::editor::remote::print("Importing materials and textures (see the status line / Output Log)");
             return;
         }
         lsd::editor::remote::print("no mesh with that name (asset.List)");
     }, &s, "asset.ImportMaterials <mesh>: Import Materials and Textures for a mesh (as its Content Browser menu)");
+    console::add_command("asset.CreatePrefabFromParts", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (lsd::usize i = 0; i < st.registry->count(); ++i) {
+            const lsd::asset::AssetRecord r = st.registry->get(i);
+            if (r.type != lsd::asset::AssetType::Mesh || std::strcmp(r.name, args) != 0) continue;
+            lsd::editor::create_parts_prefab(st, r);
+            lsd::editor::remote::print(st.status);
+            return;
+        }
+        lsd::editor::remote::print("no mesh with that name (asset.List)");
+    }, &s, "asset.CreatePrefabFromParts <mesh>: Create Prefab from Parts (as its Content Browser menu)");
     console::add_command("mode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         auto same = [](const char* a, const char* b) {
@@ -1185,6 +1615,29 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("Modes: Select, Modeling, Foliage, Landscape, Animation, PCG, VFX, 2D");
     }, &s, "mode <name>: the Level tab's mode (Select, Modeling, Foliage, Landscape, Animation, PCG, VFX)");
+    console::add_command("loc.Gather", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        bool changed = false;
+        lsd::editor::gather_project_text(st.project, *st.registry, st.status, sizeof st.status, changed);
+        if (changed) lsd::reflect::save_file(st.project, "Config/project.json");  // the new string table
+        lsd::editor::remote::print(st.status);
+    }, &s, "Gather Text: adds the keys the project shows to its string table");
+    console::add_command("template.New", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (int t = 0; t < static_cast<int>(lsd::editor::Template::Count); ++t) {
+            const auto kind = static_cast<lsd::editor::Template>(t);
+            const char* name = lsd::editor::template_name(kind);
+            bool same = std::strlen(name) == std::strlen(args);
+            for (lsd::usize i = 0; same && name[i]; ++i) same = std::tolower(static_cast<unsigned char>(name[i])) == std::tolower(static_cast<unsigned char>(args[i]));
+            if (same) {
+                st.show_template_picker = false;
+                return lsd::editor::build_template(st, kind, nullptr);
+            }
+        }
+        std::string names = "Templates:";
+        for (int t = 0; t < static_cast<int>(lsd::editor::Template::Count); ++t) names += std::string(t ? ", " : " ") + lsd::editor::template_name(static_cast<lsd::editor::Template>(t));
+        lsd::editor::remote::print(names.c_str());
+    }, &s, "template.New <name>: a new level from a template (Empty, First Person, Third Person, Platformer, Side Scrolling, 2D, 2.5D)");
     console::add_command("workspace", [](void* user, const char* args) {
         std::snprintf(static_cast<EditorState*>(user)->workspace_request, sizeof EditorState::workspace_request, "%s", args);
     }, &s, "workspace <name>: switch workspace tab (Layout, Modeling, Shading, Animation, Scripting, UI, Effects...)");
@@ -1221,15 +1674,12 @@ std::vector<std::pair<std::string, std::string>> g_pending_material_imports;
 
 // After the registry scan that follows an import: each new mesh's materials and textures (only when
 // its textures are found, so animation-only files bring nothing).
-void import_pending_materials(lsd::asset::AssetRegistry& registry, char* status, lsd::usize capacity) {
+void import_pending_materials(lsd::asset::AssetRegistry& registry) {
     for (const auto& [path, from] : g_pending_material_imports) {
         const std::string relative = fs::relative(path, kContentDir).generic_string();
         for (lsd::usize i = 0; i < registry.count(); ++i) {
             if (relative != registry.get(i).path) continue;
-            const lsd::asset::AssetRecord mesh = registry.get(i);
-            lsd::editor::MaterialImportReport report;
-            char message[256];
-            if (lsd::editor::import_mesh_materials(registry, mesh, from.c_str(), true, report, message, sizeof message)) std::snprintf(status, capacity, "%s", message);
+            lsd::editor::queue_mesh_materials(registry.get(i), from.c_str(), true);  // stepped by the frame loop, with a progress bar
             break;
         }
     }
@@ -1260,7 +1710,7 @@ bool import_file(const char* source, const char* content_folder, char* status, l
         return imported > 0;
     }
     if (lsd::asset::type_from_extension(src.extension().string().c_str()) == lsd::asset::AssetType::Unknown) {
-        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .csv, .wav, .ogg, .flac, .mp3)", src.filename().string().c_str());
+        std::snprintf(status, capacity, "Cannot import %s (supported: .fbx, .gltf, .glb, .obj, .png, .jpg, .tga, .bmp, .psd, .hdr, .exr, .csv, .wav, .ogg, .flac, .mp3)", src.filename().string().c_str());
         return false;
     }
     std::error_code error;
@@ -1464,6 +1914,7 @@ void new_level(EditorState& s) {
 }
 
 bool open_level(EditorState& s, const char* path) {
+    s.capture_reflections = true;  // the new level's captures
     if (!lsd::world::load_level_file(*s.world, path)) {
         std::snprintf(s.status, sizeof s.status, "Could not open %s", path);
         lsd::world::World& w = *s.world;
@@ -1511,9 +1962,11 @@ int main(int argc, char** argv) {
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* connect_arg = nullptr; // -connect=<host[:port]>: multiplayer, join that server
+    const char* net_level_arg = nullptr; // -netlevel=<name>: the level's name for multiplayer (Play's extra windows play a copy)
     bool dedicated_arg = false;        // -dedicated: host without a player of its own
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
+    const char* remote_password = nullptr;  // -remotepassword=<text>: other PCs too, after "auth <text>"
     float smoke_arg = 0.0f;            // -smoketest=<seconds>: play the level that long, exit 0 if no errors (CI)
     long vram_arg = 0;                 // -vram=<MB>: pretend the card has that much video memory (tests the scaling)
     const char* exec_args[8] = {};     // -exec="<console line>": run after startup (repeatable)
@@ -1533,11 +1986,13 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
         else if (std::strncmp(argv[i], "-connect=", 9) == 0) connect_arg = argv[i] + 9;
+        else if (std::strncmp(argv[i], "-netlevel=", 10) == 0) net_level_arg = argv[i] + 10;
         else if (std::strcmp(argv[i], "-server") == 0) {}  // multiplayer host (a listen server): already the default without -connect
         else if (std::strcmp(argv[i], "-dedicated") == 0) dedicated_arg = true;
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
         else if (std::strcmp(argv[i], "-remote") == 0) remote_arg = lsd::editor::remote::kDefaultPort;
         else if (std::strncmp(argv[i], "-remote=", 8) == 0) remote_arg = std::atoi(argv[i] + 8);
+        else if (std::strncmp(argv[i], "-remotepassword=", 16) == 0) remote_password = argv[i] + 16;
         else if (std::strncmp(argv[i], "-smoketest=", 11) == 0) smoke_arg = static_cast<float>(std::atof(argv[i] + 11));
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
@@ -1550,6 +2005,15 @@ int main(int argc, char** argv) {
         std::error_code cwd_error;
         fs::current_path(base, cwd_error);
         game_mode = true;
+        // Shipping (Project Settings > Packaging): what players get takes no remote console, no -exec
+        // lines and no smoke tests, so nobody drives the game from outside.
+        std::ifstream marker(lsd::editor::kGameMarker);
+        const std::string text((std::istreambuf_iterator<char>(marker)), std::istreambuf_iterator<char>());
+        if (text.find("\"shipping\": true") != std::string::npos) {
+            remote_arg = 0;
+            exec_count = 0;
+            smoke_arg = 0.0f;
+        }
     }
     // The log on disk and crash reports (Saved/Logs, Saved/Crashes), like Unreal's Saved folder.
     std::error_code log_error;
@@ -1572,6 +2036,7 @@ int main(int argc, char** argv) {
     fs::create_directories("Config", ignored);
     fs::create_directories(kContentDir, ignored);  // the project's assets, like Unreal's Content/
 
+    SDL_Window* splash = game_mode ? lsd::editor::open_splash() : nullptr;  // the packaged game's splash, up while it loads
     lsd::rhi::Device* device = lsd::rhi::create_device(desc, allocator);
     if (!device) {
         LSD_LOG_ERROR("editor", "Could not start the graphics device.");
@@ -1608,6 +2073,7 @@ int main(int argc, char** argv) {
     lsd::editor::load_theme(state.theme);
     lsd::editor::apply_theme(state.theme);
     lsd::reflect::load_file(state.settings, kSettingsPath);
+    lsd::editor::load_keymap(state.settings);
     lsd::reflect::load_file(state.project, "Config/project.json");
     state.game_mode = game_mode;
     if (game_mode) SDL_SetWindowTitle(window, state.project.project_name);
@@ -1616,6 +2082,9 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputAction>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::BlackboardData>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::editor::DeviceProfile>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::editor::FoliageType>());  // Foliage Type assets, shared by the team
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::PhysicalMaterial>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Curve>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::CurveVector>());
@@ -1624,6 +2093,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::ScriptNode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Timeline>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Flipbook>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundClass>());
@@ -1646,8 +2116,20 @@ int main(int argc, char** argv) {
     }, &registry);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
-    import_pending_materials(registry, state.status, sizeof state.status);
+    import_pending_materials(registry);
     register_script_nodes(registry);
+    // Material Function nodes find their graph by name (a Material Graph asset).
+    lsd::script::set_material_function_resolver([](void* user, const char* name, char* out, lsd::usize capacity) {
+        const auto& reg = *static_cast<const lsd::asset::AssetRegistry*>(user);
+        lsd::usize hits[16];
+        const lsd::usize n = reg.search(name, lsd::asset::AssetType::MaterialGraph, nullptr, hits, 16);
+        for (lsd::usize i = 0; i < n; ++i) {
+            if (std::strcmp(reg.get(hits[i]).name, name) != 0) continue;
+            reg.source_path(reg.get(hits[i]), out, capacity);
+            return true;
+        }
+        return false;
+    }, &registry);
     // The window icon (Project Settings > Platform), editor and game alike.
     lsd::asset::Guid icon_guid;
     if (const lsd::asset::AssetRecord* icon = state.project.icon[0] && lsd::asset::parse_guid(state.project.icon, icon_guid) ? registry.find(icon_guid) : nullptr) {
@@ -1689,7 +2171,9 @@ int main(int argc, char** argv) {
     auto* skinned_cache = new lsd::editor::SkinnedCache(*device, registry);  // deleted before the device
     auto* animations = new lsd::editor::AnimationPlayer(*device);  // deleted before the device (morphed vertex buffers)
     auto* effects = new lsd::editor::ParticlePlayer(*device, allocator, registry, *texture_cache);  // deleted before the textures
+    effects->set_lights(&g_view_lights);
     g_skinned = skinned_cache;
+    g_materials = &materials;
     auto* decal_atlas = new lsd::editor::DecalAtlas(*device, allocator, registry);  // deleted before the device
     g_decals = decal_atlas;
     g_animations = animations;
@@ -1713,7 +2197,12 @@ int main(int argc, char** argv) {
                                                          : state.project.editor_startup_level;
     // Game code first: its own components must be known before a level that uses them is read.
     lsd::editor::game_module::load();  // the project's C / C++ scripts and components (Binaries/Game.dll), if any
-    if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) new_level(state);
+    if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) {
+        new_level(state);
+        // Nothing saved to come back to (first launch): pick a template. A saved project opens as it was.
+        state.show_template_picker = !game_mode && !level_arg;
+    }
+    if (state.settings.viewport_kinds) lsd::editor::set_viewport_kinds(state, state.settings.viewport_kinds);  // the views the project was left with
 
     // Crash recovery: a lock file left behind means the last session did not exit cleanly.
     if (!game_mode && fs::exists(kLockPath)) {
@@ -1778,7 +2267,8 @@ int main(int argc, char** argv) {
     effects->set_meshes(&meshes);  // the Mesh renderer
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
-    if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg));
+    lsd::editor::remote::register_content_commands();  // a game with -remote takes files the editor pushes
+    if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg), remote_password && remote_password[0] ? remote_password : nullptr);
 
     lsd::audio::AudioSystem audio;
     audio.init(!no_sound);
@@ -1791,12 +2281,46 @@ int main(int argc, char** argv) {
     play.set_ui(game_ui);
     // The player's settings: loaded (the first time: the quality this graphics card suits) and applied.
     lsd::editor::GameUserSettings user_settings;
-    if (!lsd::reflect::load_file(user_settings, kUserSettingsPath)) {
+    // The quality for this PC: the graphics card's recommendation, then the first of the project's Device Profiles
+    // (by name) that matches it (Unreal's Device Profiles).
+    auto detect_quality = [&] {
         user_settings.quality = static_cast<lsd::u32>(lsd::rhi::recommend_preset(device->adapter(), info.total_ram_bytes));
-        LSD_LOG_INFO("editor", "Graphics quality: %s (recommended for this PC)", lsd::rhi::to_string(static_cast<lsd::rhi::QualityPreset>(user_settings.quality)));
-    }
+        user_settings.shadow_quality = user_settings.post_quality = user_settings.view_distance_quality = user_settings.effects_quality = 0;
+        const char* why = "recommended for this PC";
+        std::vector<const lsd::asset::AssetRecord*> profiles;
+        for (lsd::usize i = 0; i < registry.count(); ++i) {
+            const lsd::asset::AssetRecord& r = registry.get(i);
+            if (r.type == lsd::asset::AssetType::Data && std::strcmp(r.data_type, "DeviceProfile") == 0) profiles.push_back(&r);
+        }
+        std::sort(profiles.begin(), profiles.end(), [](const lsd::asset::AssetRecord* a, const lsd::asset::AssetRecord* b) { return std::strcmp(a->name, b->name) < 0; });
+#ifdef _WIN32
+        const lsd::u32 platform = 1;
+#else
+        const lsd::u32 platform = 2;
+#endif
+        const lsd::rhi::AdapterInfo& gpu = device->adapter();
+        const lsd::u64 vram = gpu.dedicated_vram_bytes ? gpu.dedicated_vram_bytes : gpu.shared_memory_bytes;
+        static char matched[96];
+        for (const lsd::asset::AssetRecord* r : profiles) {
+            char path[300];
+            registry.source_path(*r, path, sizeof path);
+            lsd::editor::DeviceProfile profile;
+            if (!lsd::asset::load_data_asset(path, profile) || !lsd::editor::profile_matches(profile, gpu.name, vram, platform)) continue;
+            lsd::editor::apply_profile(profile, user_settings);
+            std::snprintf(matched, sizeof matched, "Device Profile %s", r->name);
+            why = matched;
+            break;
+        }
+        LSD_LOG_INFO("editor", "Graphics quality: %s (%s)", lsd::rhi::to_string(static_cast<lsd::rhi::QualityPreset>(user_settings.quality)), why);
+    };
+    if (!lsd::reflect::load_file(user_settings, kUserSettingsPath)) detect_quality();
     auto apply_user_settings = [&] {
-        lsd::editor::set_shadow_quality(user_settings.quality);
+        const lsd::editor::Scalability scalability = lsd::editor::resolve_scalability(user_settings);
+        lsd::editor::set_shadow_quality(scalability.shadows);
+        lsd::editor::set_post_quality(scalability.post);
+        g_view_distance_scale = lsd::editor::view_distance_scale(scalability.view_distance);
+        lsd::particles::set_spawn_scale(lsd::editor::effects_scale(scalability.effects));
+        lsd::particles::set_effects_quality(scalability.effects);
         sounds.set_class_volume("Master", user_settings.master_volume);
         sounds.set_class_volume("Music", user_settings.music_volume, false);  // projects without these classes: nothing to set
         sounds.set_class_volume("SFX", user_settings.effects_volume, false);
@@ -1835,6 +2359,7 @@ int main(int argc, char** argv) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(code.c_str())) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
+    bool travelled = false;  // lsd.open_level went to another level during this Play
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
     SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player
     char title[400] = "";
@@ -1842,11 +2367,19 @@ int main(int argc, char** argv) {
     bool running = true;
     bool minimized = false;
     lsd::rhi::TextureHandle shot_target, shot_scene;  // HighResShot, read back after the frame
+    lsd::rhi::TextureHandle reflection_faces[lsd::render::kMaxReflections * 6], reflection_atlas;  // reflection captures
+    lsd::f32 reflection_probes[lsd::render::kMaxReflections][4] = {};
+    lsd::f32 reflection_boxes[lsd::render::kMaxReflections][4] = {};  // box captures: half size, fade-in (w 0 = sphere)
+    lsd::u32 reflection_capture_count = 0;  // captures rendered this frame, read back after it
     lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
     lsd::u32 mcp_tried_port = 0;  // Claude MCP plugin: the port last tried, so a busy one is not retried every frame
     for (long frame = 0; running && frame != max_frames;) {
+        g_casters_culled_frame = g_casters_culled;
+        g_casters_culled = 0;
+        g_shadow_tiles_cached_frame = g_shadow_tiles_cached;
+        g_shadow_tiles_cached = 0;
         SDL_Event event;
         if (!game_mode && remote_arg == 0) {  // -remote keeps its own listener
             const lsd::u32 port = state.settings.mcp_port;
@@ -1860,6 +2393,7 @@ int main(int argc, char** argv) {
             }
         }
         lsd::editor::remote::poll();
+        lsd::editor::remote::push_changes();  // Remote Console > Push Changes
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A
@@ -1905,7 +2439,7 @@ int main(int argc, char** argv) {
                 case SDL_EVENT_DROP_FILE:
                     if (import_file(event.drop.data, state.content_folder, state.status, sizeof state.status)) {
                         registry.scan();
-                        import_pending_materials(registry, state.status, sizeof state.status);
+                        import_pending_materials(registry);
                     }
                     break;
                 default: break;
@@ -1922,7 +2456,7 @@ int main(int argc, char** argv) {
             if (!game_mode) lsd::editor::live_link_sync(state.settings.live_link_folder, kContentDir, state.status, sizeof state.status);  // copied files show up in this scan
             if (registry.scan_async()) register_script_nodes(registry);
             meshes.hot_reload();
-            texture_cache->check_files();
+            texture_cache->check_files();  // (update() below puts finished ones on the GPU every frame)
             skinned_cache->check_files();
             effects->check_files();
             materials.check_files();
@@ -1944,12 +2478,39 @@ int main(int argc, char** argv) {
             const lsd::ai::NavMesh& nav = state.playing ? play.navmesh() : preview;
             state.nav_line_count = nav.debug_lines(state.nav_lines, sizeof state.nav_lines / sizeof state.nav_lines[0]);
             last_nav = SDL_GetTicks();
+            // As 3D lines (depth-tested, so walls hide what is behind them), rebuilt only when they change (a new buffer stalls the GPU).
+            lsd::u64 hash = 1469598103934665603ull;
+            for (lsd::u32 i = 0; i < state.nav_line_count; ++i) {
+                for (lsd::f32 c : {state.nav_lines[i].x, state.nav_lines[i].y, state.nav_lines[i].z}) {
+                    lsd::u32 bits;
+                    std::memcpy(&bits, &c, 4);
+                    hash = (hash ^ bits) * 1099511628211ull;
+                }
+            }
+            static lsd::u64 nav_hash = 0;
+            if (hash != nav_hash || !g_nav_buffer.valid()) {
+                nav_hash = hash;
+                if (g_nav_buffer.valid()) device->destroy_buffer(g_nav_buffer);
+                g_nav_buffer = {};
+                g_nav_vertex_count = state.nav_line_count & ~1u;
+                if (g_nav_vertex_count) {
+                    std::vector<lsd::rhi::LineVertex> v(g_nav_vertex_count);
+                    for (lsd::u32 i = 0; i < g_nav_vertex_count; ++i) {
+                        v[i] = {{state.nav_lines[i].x, state.nav_lines[i].y, state.nav_lines[i].z + 0.05f}, {0.24f, 0.9f, 0.35f, 1.0f}};  // a little above the floor it lies on
+                    }
+                    g_nav_buffer = device->create_buffer(lsd::rhi::BufferUsage::Vertex, v.data(), v.size() * sizeof v[0]);
+                }
+            }
         }
         was_showing = state.show_navigation;
 
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
+        texture_cache->stream = g_texture_streaming;
+        texture_cache->update();  // streamed textures the worker finished go on the GPU
         lsd::editor::update_landscapes(world, meshes);  // landscape meshes follow their heights (rebuilt on change)
         if (state.world != &world) lsd::editor::update_landscapes(*state.world, meshes);  // Play's copy
+        lsd::editor::update_editable_meshes(world, meshes);
+        if (state.world != &world) lsd::editor::update_editable_meshes(*state.world, meshes);
         FrameTimer timer;
         if (state.load_layout[0]) lsd::editor::apply_layout_file(state.load_layout, state.status, sizeof state.status);
         state.load_layout[0] = '\0';
@@ -1994,13 +2555,27 @@ int main(int argc, char** argv) {
             if (chosen.size() > 1) std::snprintf(state.status, sizeof state.status, "Imported %u of %zu files", imported, chosen.size());
             if (imported) {
                 registry.scan();
-                import_pending_materials(registry, state.status, sizeof state.status);
+                import_pending_materials(registry);
             }
         }
         if (state.package_requested) {
             state.package_requested = false;
             lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
         }
+        {  // Build > Build Release Engine: its latest output line in the status bar while it runs, the result once
+            char line[200];
+            bool finished = false, ok = false;
+            if (lsd::editor::release_build_running(line, sizeof line, finished, ok)) {
+                std::snprintf(state.status, sizeof state.status, "Building Release: %s", line);
+            } else if (finished) {
+                std::snprintf(state.status, sizeof state.status, ok ? "Release engine built: Package Project uses it" : "The Release build failed: see Saved/Logs/ReleaseBuild.log");
+                if (ok) LSD_LOG_INFO("editor", "%s", state.status);
+                else LSD_LOG_ERROR("editor", "%s", state.status);
+            }
+        }
+        // Import Materials and Textures: one material's textures a frame, so the editor keeps drawing (progress in the menu bar).
+        lsd::editor::update_mesh_materials(registry, state.status, sizeof state.status, state.material_import_progress, state.material_import_label,
+                                           sizeof state.material_import_label);
         if (state.build_lighting_requested) {  // Build > Build Lighting: gather here, trace on a thread
             state.build_lighting_requested = false;
             if (!state.level_path[0]) {
@@ -2023,6 +2598,8 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (g_lightmaps_changed) upload_lightmaps(*device, meshes);
+        play.set_workspace(game_mode ? "" : state.settings.workspace);  // lsd.editor_workspace
         if (g_lighting_build) {
             LightingBuild& build = *g_lighting_build;
             const lsd::u32 total = build.total.load() ? build.total.load() : 1u;
@@ -2032,9 +2609,10 @@ int main(int argc, char** argv) {
                 build.thread.join();
                 g_level_lighting = std::move(build.result);
                 lsd::editor::set_baked_lighting(&g_level_lighting);
+                g_lightmaps_changed = true;
                 const bool saved = lsd::editor::save_baked_lighting(build.path, g_level_lighting);
-                std::snprintf(state.status, sizeof state.status, saved ? "Lighting built: %u probes in %.1f s (%s)" : "Lighting built (%u probes, %.1f s) but %s could not be written",
-                              g_level_lighting.probe_count(), static_cast<double>(SDL_GetTicks() - build.started) / 1000.0, build.path);
+                std::snprintf(state.status, sizeof state.status, saved ? "Lighting built: %u probes, %u lightmapped objects in %.1f s (%s)" : "Lighting built (%u probes, %u lightmapped objects, %.1f s) but %s could not be written",
+                              g_level_lighting.probe_count(), static_cast<unsigned>(g_level_lighting.objects.size()), static_cast<double>(SDL_GetTicks() - build.started) / 1000.0, build.path);
                 LSD_LOG_INFO("lighting", "%s", state.status);
                 delete g_lighting_build;
                 g_lighting_build = nullptr;
@@ -2118,15 +2696,21 @@ int main(int argc, char** argv) {
 
         // lsd.open_level: another level inside the same Play (Unreal's Open Level). Stop still reverts to the
         // level being edited (play_snapshot); game_instance / player_state travel with the scripts.
-        // shortcut: the new level's baked lighting (BuiltData) is not loaded; load it here when travel matters for looks.
+        // The new level brings its baked lighting (BuiltData) and its reflection captures, as opening it would.
         if (char travel_to[300]; state.playing && play.take_level_request(travel_to, sizeof travel_to)) {
             play.stop();
             state.kept_count = 0;  // Keep Simulation Changes names objects of the old level
-            if (lsd::world::load_level_file(world, travel_to)) {
+            // "*": the level Play started on again (lsd.net_host / net_join / net_leave restart in their mode)
+            const bool again = std::strcmp(travel_to, "*") == 0;
+            if (again ? lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size()) : lsd::world::load_level_file(world, travel_to)) {
                 play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch, true);
                 animations->reset();
                 effects->reset();
-                LSD_LOG_INFO("editor", "Opened %s (open_level)", travel_to);
+                load_level_lighting(again ? state.level_path : travel_to);
+                state.capture_reflections = true;
+                travelled = !again || travelled;
+                if (again) LSD_LOG_INFO("editor", "Restarted the level (multiplayer host / join / leave)");
+                else LSD_LOG_INFO("editor", "Opened %s (open_level)", travel_to);
             } else {
                 LSD_LOG_ERROR("editor", "open_level: could not read %s", travel_to);
                 state.stop_requested = true;
@@ -2148,6 +2732,27 @@ int main(int argc, char** argv) {
             else LSD_LOG_ERROR("editor", "Could not open the play window: %s", SDL_GetError());
         }
         if (std::exchange(state.close_play_window, false)) close_play_window();
+        if (state.show_multiplayer) {  // the Multiplayer panel's view of the session (about 4 times a second)
+            static lsd::u64 next_refresh = 0;
+            if (SDL_GetTicks() >= next_refresh || state.net_codes_wanted) {
+                next_refresh = SDL_GetTicks() + 250;
+                auto& v = state.net;
+                const lsd::net::NetSession& net = play.network();
+                const lsd::net::NetStats st = net.stats();
+                v.mode = !state.playing ? 0 : net.mode() == lsd::net::Mode::Server ? 1 : net.mode() == lsd::net::Mode::Client ? 2 : 0;
+                v.player = net.active() ? net.player_id() : 0;
+                v.connected = net.active() && net.connected();
+                v.players = st.players;
+                v.replicated = st.replicated;
+                v.ping_ms = st.ping_ms;
+                v.in_kbs = st.bytes_in_per_second / 1024.0f;
+                v.out_kbs = st.bytes_out_per_second / 1024.0f;
+                if (v.mode == 1 && state.net_codes_wanted) play.join_codes(v.codes, sizeof v.codes, true);
+                else if (v.mode == 1 && v.codes[0]) play.join_codes(v.codes, sizeof v.codes, false);  // UPnP finishing
+                else if (v.mode != 1) v.codes[0] = '\0';
+                state.net_codes_wanted = false;
+            }
+        }
         if (g_play_window && g_play_window_deadline && SDL_GetTicks() > g_play_window_deadline) close_play_window(true);  // did not close when asked
         if (g_play_window && SDL_WaitProcess(g_play_window, false, nullptr)) {  // its window was closed (Esc in the game)
             SDL_DestroyProcess(g_play_window);
@@ -2165,9 +2770,14 @@ int main(int argc, char** argv) {
             lsd::editor::NetPlay net_play;
             const lsd::editor::ProjectSettings& pr = state.project;
             net_play.enabled = pr.multiplayer;
-            net_play.host = connect_arg == nullptr;
+            net_play.allowed = pr.multiplayer;
+            net_play.host = connect_arg == nullptr && !state.net_join[0];
             net_play.dedicated = dedicated_arg;
             if (connect_arg) std::snprintf(net_play.address, sizeof net_play.address, "%s", connect_arg);
+            if (state.net_join[0]) {  // the Multiplayer panel's Join: this Play is a client
+                std::snprintf(net_play.address, sizeof net_play.address, "%s", state.net_join);
+                state.net_join[0] = '\0';
+            }
             net_play.settings.port = static_cast<lsd::u16>(pr.port);
             net_play.settings.max_players = pr.max_players;
             net_play.settings.tick_rate = pr.tick_rate;
@@ -2187,17 +2797,27 @@ int main(int argc, char** argv) {
             std::snprintf(net_play.push_to_talk_key, sizeof net_play.push_to_talk_key, "%s", pr.push_to_talk_key);
             std::snprintf(net_play.talk_to_all_key, sizeof net_play.talk_to_all_key, "%s", pr.talk_to_all_key);
             play.set_network(net_play);
-            if (pr.multiplayer && !game_mode && pr.play_players > 1) {
+            {  // the level's asset name: players joining later follow the server to it
+                std::string name = net_level_arg ? net_level_arg : state.level_path;
+                name = name.substr(name.find_last_of("/\\") == std::string::npos ? 0 : name.find_last_of("/\\") + 1);
+                if (!net_level_arg && name.find('.') != std::string::npos) name.resize(name.rfind('.'));
+                play.set_level_name(name.c_str());
+            }
+            if (pr.multiplayer && !game_mode && pr.play_players > 1 && net_play.host) {  // a joining Play opens no windows of its own
                 const std::string level = "Saved/MultiplayerPlay" + std::string(lsd::world::kLevelExtension);
                 if (FILE* f = std::fopen(level.c_str(), "wb")) {
                     std::fwrite(play_snapshot.data(), 1, play_snapshot.size(), f);
                     std::fclose(f);
                 }
-                char connect[96], level_flag[300];
+                char connect[96], level_flag[300], level_name_flag[96];
+                std::string level_name = state.level_path;  // the windows play a copy of this level: the same one by name
+                level_name = level_name.substr(level_name.find_last_of("/\\") == std::string::npos ? 0 : level_name.find_last_of("/\\") + 1);
+                if (level_name.find('.') != std::string::npos) level_name.resize(level_name.rfind('.'));
+                std::snprintf(level_name_flag, sizeof level_name_flag, "-netlevel=%s", level_name.c_str());
                 std::snprintf(connect, sizeof connect, "-connect=127.0.0.1:%u", pr.port);
                 std::snprintf(level_flag, sizeof level_flag, "-level=%s", level.c_str());
                 for (lsd::u32 k = 1; k < pr.play_players; ++k) {
-                    const char* args[] = {argv[0], "-game", level_flag, connect, no_sound ? "-nosound" : nullptr, nullptr};
+                    const char* args[] = {argv[0], "-game", level_flag, connect, level_name_flag, no_sound ? "-nosound" : nullptr, nullptr};
                     if (SDL_Process* p = SDL_CreateProcess(args, false)) g_play_clients.push_back(p);
                     else LSD_LOG_ERROR("net", "Could not open player %u's window: %s", k + 1, SDL_GetError());
                 }
@@ -2241,7 +2861,12 @@ int main(int argc, char** argv) {
                 kept.push_back(std::move(item));
             }
             state.kept_count = 0;
+            play.close_port();
             lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size());  // Play changes revert, like Unreal's PIE
+            if (std::exchange(travelled, false)) {  // back from another level: the edited one's lighting and captures
+                load_level_lighting(state.level_path);
+                state.capture_reflections = true;
+            }
             lsd::u32 applied = 0;
             for (const Kept& item : kept) {  // levels reload objects at their saved ids: the same handle is the same object
                 if (!world.alive(item.entity) || item.name != world.name(item.entity)) continue;  // spawned in Play: not in the level
@@ -2264,8 +2889,17 @@ int main(int argc, char** argv) {
             LSD_LOG_INFO("editor", "Stop");
         }
         if (game_mode && !state.playing && !state.play_requested) running = false;
+        if (splash && state.playing && SDL_GetTicks() >= static_cast<lsd::u64>(state.project.splash_seconds * 1000.0f)) {
+            lsd::editor::close_splash(splash);  // the game is up and the splash had its time
+            splash = nullptr;
+        }
         state.stop_requested = false;
         if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
+        if (state.auto_detect_quality) {  // Settings > Auto-detect
+            state.auto_detect_quality = false;
+            detect_quality();
+            state.user_settings_changed = true;
+        }
         if (play.take_settings_changed() || state.user_settings_changed) {  // an options menu, or Settings > Engine Scalability
             state.user_settings_changed = false;
             apply_user_settings();
@@ -2279,6 +2913,7 @@ int main(int argc, char** argv) {
             static bool keys[SDL_SCANCODE_COUNT];
             bool scripted_keys = false;  // input.Hold (tests, the MCP bridge) drives the game even without the mouse
             for (int k = 0; k < SDL_SCANCODE_COUNT && !scripted_keys; ++k) scripted_keys = g_held_until[k] > SDL_GetTicks();
+            for (int b = 0; b < 3 && !scripted_keys; ++b) scripted_keys = g_mouse_held_until[b] > SDL_GetTicks();
             if ((state.mouse_captured && !state.ejected) || scripted_keys) {
                 int count = 0;
                 const bool* real = SDL_GetKeyboardState(&count);
@@ -2290,6 +2925,7 @@ int main(int argc, char** argv) {
                 devices.mouse_dy = mouse_dy;
                 const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
                 devices.mouse_buttons = ((buttons & SDL_BUTTON_LMASK) ? 1u : 0u) | ((buttons & SDL_BUTTON_MMASK) ? 2u : 0u) | ((buttons & SDL_BUTTON_RMASK) ? 4u : 0u);
+                for (int b = 0; b < 3; ++b) devices.mouse_buttons |= g_mouse_held_until[b] > ticks ? 1u << b : 0u;
                 if (gamepad) {
                     const SDL_GamepadAxis axes[6] = {SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY,
                                                      SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER};
@@ -2316,6 +2952,7 @@ int main(int argc, char** argv) {
             if (shown) lsd::asset::to_string(tree, guid);
             lsd::editor::set_graph_active_nodes(active, shown ? play.active_bt_nodes(guid, active, 64) : 0);
         }
+        animations->update_outfits(world, *skinned_cache);  // clothes follow their Outfit slots
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
                            state.playing && !state.paused ? &sounds : nullptr);
@@ -2354,6 +2991,8 @@ int main(int argc, char** argv) {
         const lsd::f32 clear_color[4] = {bg.r, bg.g, bg.b, 1.0f};
         thumbnails.release_temporaries();
         decal_atlas->update(world);  // before the frame: the atlas may be rebuilt
+        g_sprite_seconds = state.playing ? static_cast<lsd::f32>(play.clock()) : static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
+        g_registry = state.registry;
         device->begin_frame(clear_color);
         state.stat_wait_ms = timer.lap();  // the GPU (and vsync) holding the CPU back: not part of render
         device->gpu_timestamp(0);  // GPU timings (stat dump): 0 start, 1 sun shadows, 2 scene, 3 post, 4 UI
@@ -2364,6 +3003,43 @@ int main(int argc, char** argv) {
         lsd::editor::render_ui_editor(*device, clear_color);
         lsd::editor::render_mesh_editor(*device, clear_color);
         lsd::editor::render_prefab_editor(*device, clear_color);
+        // Reflection captures: six faces from each capture's place, rendered now, read back after the frame.
+        if (state.capture_reflections && reflection_capture_count == 0) {
+            state.capture_reflections = false;
+            const lsd::reflect::TypeInfo& rtype = lsd::reflect::type_of<lsd::world::ReflectionCapture>();
+            const lsd::Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            const lsd::f32 face[4] = {0.0f, 0.0f, static_cast<lsd::f32>(lsd::render::kReflectionFace), static_cast<lsd::f32>(lsd::render::kReflectionFace)};
+            const lsd::f32 black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            for (lsd::u32 i = 0; i < world.count(rtype) && reflection_capture_count < lsd::render::kMaxReflections; ++i) {
+                const lsd::world::Entity e = world.owner(rtype, i);
+                if ((!state.playing || state.ejected) && world.hidden_in_hierarchy(e)) continue;
+                const lsd::Mat4 m = world.world_matrix(e);
+                const lsd::Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+                lsd::Mat4 views[6];
+                lsd::render::reflection_views(at, views);
+                const lsd::u32 k = reflection_capture_count++;
+                reflection_probes[k][0] = at.x;
+                reflection_probes[k][1] = at.y;
+                reflection_probes[k][2] = at.z;
+                const auto* capture = static_cast<const lsd::world::ReflectionCapture*>(world.at(rtype, i));
+                reflection_probes[k][3] = capture->radius;
+                const bool box = capture->shape == 1;
+                reflection_boxes[k][0] = box ? std::fabs(capture->box_size.x) * 0.5f : 0.0f;
+                reflection_boxes[k][1] = box ? std::fabs(capture->box_size.y) * 0.5f : 0.0f;
+                reflection_boxes[k][2] = box ? std::fabs(capture->box_size.z) * 0.5f : 0.0f;
+                reflection_boxes[k][3] = box ? std::max(capture->box_transition, 0.01f) : 0.0f;
+                for (int f = 0; f < 6; ++f) {
+                    reflection_faces[k * 6 + static_cast<lsd::u32>(f)] = device->create_render_target(lsd::render::kReflectionFace, lsd::render::kReflectionFace);
+                    lsd::editor::LightView face_view{at, dirs[f], lsd::radians(90.0f), 1.0f};
+                    draw_world(*device, views[f], face_view, face, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, reflection_faces[k * 6 + static_cast<lsd::u32>(f)], black, true);
+                }
+            }
+            device->set_render_target({}, nullptr);
+            if (reflection_capture_count == 0) {  // none in the level: nothing to reflect but the sky
+                lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, 0);
+                device->set_reflection_atlas({});
+            }
+        }
         for (lsd::u32 v = 0; v < state.viewport_count; ++v) {
             const lsd::f32* rect = state.viewport_rects[v];
             if (rect[2] < 8.0f || rect[3] < 8.0f) continue;
@@ -2392,7 +3068,18 @@ int main(int argc, char** argv) {
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
             // Post-processing (a Post Process Volume applies): the scene goes into a target the post pass reads.
             lsd::rhi::PostDraw post;
-            const bool use_post = !state.view_mode_unlit_or_wire() && lsd::editor::world_post(world, light_view.eye, !state.playing || state.ejected, post);
+            const lsd::world::PostProcessVolume* volume = nullptr;
+            const bool use_post = !state.view_mode_unlit_or_wire() && lsd::editor::world_post(world, light_view.eye, !state.playing || state.ejected, post, &volume);
+            if (volume && volume->color_grading_lut[0]) {  // the volume's Color Grading LUT: a data texture
+                post.color_lut = texture_cache->get(volume->color_grading_lut, false);
+                post.lut_intensity = volume->lut_intensity;
+            }
+            if (post.contact_shadow[3] > 0.0f) {  // toward the sun: world space -> view space
+                const lsd::Vec3 toward = lsd::normalize(lsd::transform_vector(view, {post.contact_shadow[0], post.contact_shadow[1], post.contact_shadow[2]}));
+                post.contact_shadow[0] = toward.x;
+                post.contact_shadow[1] = toward.y;
+                post.contact_shadow[2] = toward.z;
+            }
             post.delta_seconds = dt;  // eye adaptation eases over time
             if (use_post && lens.view == lsd::editor::ViewType::Perspective) {  // depth effects (AO, DOF, TAA) need the projection
                 post.proj[0] = proj.at(0, 0);
@@ -2401,13 +3088,15 @@ int main(int argc, char** argv) {
                 post.proj[3] = proj.at(2, 3);
             }
             const bool taa = post.taa && post.proj[0] != 0.0f && v < 4;
-            if (taa) {
-                // Last frame's clip space from this one's (without the jitter), then a sub-pixel jitter (Halton 2, 3).
+            const bool motion_blur = post.motion_blur > 0.0f && post.proj[0] != 0.0f && v < 4;
+            if (taa || motion_blur) {  // last frame's clip space from this one's (without the jitter): TAA and motion blur read it
                 post.taa_reset = !taa_history[v].valid;
                 const lsd::Mat4 reproject = taa_history[v].view_proj * lsd::inverse(view_proj);
                 std::memcpy(post.reproject, reproject.m, sizeof post.reproject);
                 taa_history[v].view_proj = view_proj;
                 taa_history[v].valid = true;
+            }
+            if (taa) {  // a sub-pixel jitter (Halton 2, 3)
                 const lsd::u32 n = ++taa_history[v].frame % 8 + 1;
                 auto halton = [](lsd::u32 i, lsd::u32 base) {
                     lsd::f32 f = 1.0f, r = 0.0f;
@@ -2420,7 +3109,7 @@ int main(int argc, char** argv) {
                 proj.at(0, 2) += (halton(n, 2) - 0.5f) * 2.0f / pixels[2];
                 proj.at(1, 2) += (halton(n, 3) - 0.5f) * 2.0f / pixels[3];
                 view_proj = proj * view;
-            } else if (v < 4) {
+            } else if (v < 4 && !motion_blur) {
                 taa_history[v].valid = false;
             }
             if (v == 0 && state.high_res_shot) {  // HighResShot: this view again, bigger, into targets read after the frame
@@ -2443,6 +3132,7 @@ int main(int argc, char** argv) {
                         encoded[c] = std::sqrt(lin / (1.0f + lin));
                     }
                     draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_scene, encoded, true);
+                    effects->set_fog(g_view_fog, g_view_fog + 4);
                     effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
                     lsd::rhi::PostDraw shot = post;
                     shot.taa = false;  // one frame: no history
@@ -2452,6 +3142,7 @@ int main(int argc, char** argv) {
                     device->draw_post(shot);
                 } else if (shot_target.valid()) {
                     draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_target, clear_color, false);
+                    effects->set_fog(g_view_fog, g_view_fog + 4);
                     effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
                 }
                 device->set_render_target({}, nullptr);
@@ -2472,6 +3163,10 @@ int main(int argc, char** argv) {
                                                                                        : view_proj;
                 device->draw_lines(grid.vertices, grid.vertex_count, grid_proj.m);
             }
+            if (state.show_navigation && (state.playing || !state.game_view) && g_nav_buffer.valid()) {  // the navmesh (P), Unreal's show Navigation, in Play too
+                device->draw_lines(g_nav_buffer, g_nav_vertex_count, view_proj.m);
+            }
+            effects->set_fog(g_view_fog, g_view_fog + 4);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
             if (scene.valid()) {
                 post.scene = scene;
@@ -2485,8 +3180,11 @@ int main(int argc, char** argv) {
                 g_outline.clear();
             }
             if (state.playing && !state.ejected && v == 0) {  // the game's UI over the player's view
-                play.place_ui_followers(world, view_proj, pixels);
-                game_ui->update(pixels);
+                // The safe zone (Project Settings > User Interface): the UI is laid out inside it.
+                const lsd::f32 inset = std::clamp(state.project.ui_safe_zone, 0.0f, 20.0f) * 0.01f;
+                const lsd::f32 safe[4] = {pixels[0] + pixels[2] * inset, pixels[1] + pixels[3] * inset, pixels[2] * (1.0f - 2.0f * inset), pixels[3] * (1.0f - 2.0f * inset)};
+                play.place_ui_followers(world, view_proj, pixels, safe);
+                game_ui->update(safe);
                 game_ui->render(*device);
             }
         }
@@ -2496,10 +3194,39 @@ int main(int argc, char** argv) {
         state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
         LSD_PROFILE_FRAME();
         if ((frame == screenshot_frame || std::exchange(g_screenshot, false)) && !device->capture_frame("Saved/screenshot.bmp")) {
-            LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl for now.");
+            LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl or -rhi=vulkan for now.");
         }
         device->end_frame();
         ++frame;
+        if (reflection_capture_count) {  // the captures' faces: read back, unwrapped into the atlas, uploaded
+            static std::vector<lsd::u8> atlas_pixels, face_pixels[6];
+            atlas_pixels.assign(static_cast<size_t>(lsd::render::kReflectionAtlas) * lsd::render::kReflectionAtlas * 4, 0);
+            lsd::Mat4 views[6];
+            lsd::render::reflection_views({0.0f, 0.0f, 0.0f}, views);
+            for (lsd::u32 k = 0; k < reflection_capture_count; ++k) {
+                const lsd::u8* faces[6];
+                bool read = true;
+                for (int f = 0; f < 6; ++f) {
+                    face_pixels[f].resize(static_cast<size_t>(lsd::render::kReflectionFace) * lsd::render::kReflectionFace * 4);
+                    read = read && device->read_render_target(reflection_faces[k * 6 + static_cast<lsd::u32>(f)], face_pixels[f].data());
+                    faces[f] = face_pixels[f].data();
+                }
+                if (read) lsd::render::unwrap_reflection(faces, views, k, atlas_pixels.data());
+            }
+            for (lsd::u32 i = 0; i < reflection_capture_count * 6; ++i) device->destroy_texture(reflection_faces[i]);
+            std::vector<std::vector<lsd::u8>> levels;
+            lsd::render::reflection_mips(atlas_pixels.data(), levels);
+            const void* mips[lsd::render::kReflectionMips] = {atlas_pixels.data()};
+            for (size_t l = 0; l < levels.size(); ++l) mips[l + 1] = levels[l].data();
+            const lsd::rhi::TextureHandle atlas = device->create_texture(lsd::render::kReflectionAtlas, lsd::render::kReflectionAtlas, lsd::render::kReflectionMips,
+                                                                         lsd::rhi::TextureFormat::RGBA8, mips);
+            device->set_reflection_atlas(atlas);
+            if (reflection_atlas.valid()) device->destroy_texture(reflection_atlas);  // shortcut: freed at once; defer a frame if a backend complains
+            reflection_atlas = atlas;
+            lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, reflection_capture_count);
+            LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
+            reflection_capture_count = 0;
+        }
         if (shot_target.valid()) {  // HighResShot: read back, save, free
             const lsd::u32 w = static_cast<lsd::u32>(shot_size[0]), h = static_cast<lsd::u32>(shot_size[1]);
             std::vector<lsd::u8> rgba(static_cast<size_t>(w) * h * 4);
@@ -2574,6 +3301,7 @@ int main(int argc, char** argv) {
     lsd::rhi::destroy_device(device, allocator);
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
+    lsd::editor::close_splash(splash);  // the game ended before it was up
     SDL_DestroyWindow(window);
     SDL_Quit();
     lsd::log::open_file(nullptr);  // last: a failure while shutting down still reaches the log file

@@ -16,6 +16,7 @@
 #include "lsd/asset/localization.h"
 #include "lsd/input/input.h"
 #include "lsd/audio/voice_io.h"
+#include "lsd/net/join_code.h"
 #include "lsd/net/net.h"
 #include "lsd/net/voice.h"
 
@@ -40,6 +41,7 @@ class AnimationPlayer;
 // Multiplayer for one Play (Project Settings > Multiplayer): host or join, and how.
 struct NetPlay {
     bool enabled = false;
+    bool allowed = false;    // Project Settings > Multiplayer: lsd.net_host / net_join may switch modes
     bool host = true;        // false: join `address`
     bool dedicated = false;  // a server without a player of its own (no avatar)
     char address[64] = "127.0.0.1";
@@ -68,6 +70,7 @@ public:
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
+    f64 clock() const { return play_clock_; }  // seconds of game time since Play started (flipbooks, events)
     f32 view_ortho() const { return view_ortho_; }  // an orthographic Camera's height in metres; 0: perspective
     // Looks through `camera` (invalid: the player again), cutting or blending over `blend_seconds`.
     void set_view(world::Entity camera, f32 blend_seconds = 0.0f);
@@ -125,9 +128,18 @@ public:
     void set_base_mix(const char* guid) { base_mix_ = guid; }  // Project Settings > Audio > Base Sound Mix (read at each start)
     bool take_settings_changed() { const bool c = settings_changed_; settings_changed_ = false; return c; }
     // A level lsd.open_level asked for (its file path), once; the caller stops, loads it and starts with travel = true.
+    // "*" asks for the level Play started on again (a host / join / leave restart on it).
     bool take_level_request(char* path, usize capacity);
+    // The level's asset name (a joining player follows the server's); set before start.
+    void set_level_name(const char* name) { std::snprintf(level_name_, sizeof level_name_, "%s", name); }
+    void close_port() { upnp_.stop(); }  // Play ended: the router forward (lsd.net_join_code) goes
+    // The editor's workspace tab (lsd.editor_workspace); "" in a packaged game.
+    void set_workspace(const char* name) { std::snprintf(workspace_, sizeof workspace_, "%s", name); }
+    // Join codes as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
+    // `map_port`: a server asks the router to forward its port (once; a couple of seconds).
+    void join_codes(char* out, usize capacity, bool map_port);
     // Moves UI elements that follow objects (lsd.ui_follow) to where those are on screen.
-    void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]);
+    void place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4], const f32 ui_rect[4]);  // ui_rect: where the UI is laid out (the safe zone)
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
     // the graph window's live debugging.
     u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;
@@ -257,7 +269,15 @@ private:
     char key_held_[32] = "";
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
     char level_request_[300] = "";
+    char current_level_[300] = "*";  // the level playing now ("*": the one Play started on)
+    char level_name_[64] = "";
+    char workspace_[32] = "";
+    net::PortMapper upnp_;
     world::Character settings_;
+    u32 idle_frame_ = 0, idle_count_ = 1;
+    char idle_flipbook_[33] = "";  // and its own Flipbook
+    std::unordered_map<u32, i32> flipbook_frames_;  // each flipbook sprite's frame last update (events fire on a change)
+    void update_flipbook_events(world::World& world);  // a side-scroller sprite's own Frame / Frame Count (its idle animation)
     world::Entity character_;  // invalid for the default walker
     bool crouched_ = false;    // the capsule is at crouch_height
     bool swimming_ = false;    // the chest is in a Water Volume
@@ -298,7 +318,25 @@ private:
     struct Agent {
         world::Entity entity;
         i32 id;
+        bool has_target = false;  // where it was sent (kept through navmesh rebuilds)
+        Vec3 target;
     };
+    char motion_tag_[32] = "";  // lsd.set_motion_tag on the player: overrides crouch / swim / air
+    bool rebuild_navmesh();      // the navmesh again from the level as it is now; false if nothing walkable
+    void remember_target(world::Entity e, Vec3 target, bool sent) {
+        for (u32 i = 0; i < agent_count_; ++i) {
+            if (agents_[i].entity == e) agents_[i].has_target = sent, agents_[i].target = target;
+        }
+    }
+    f64 nav_checked_ = 0.0;      // Runtime Rebuild: when the inputs were last compared
+    u64 nav_seen_hash_ = 0;      // ... and what they were then (a change is rebuilt once it has settled)
+    struct NavWatch {
+        world::Entity entity;
+        Mat4 last;
+        u32 moving = 0;  // checks in a row it had moved
+    };
+    std::vector<NavWatch> nav_watch_;               // solid meshes, to tell doors (move, then stop) from things that never stop
+    std::vector<world::Entity> nav_always_moving_;  // left out of the navmesh for the rest of Play
     Agent agents_[ai::kMaxAgents];
     u32 agent_count_ = 0;
     i32 agent_of(world::Entity e);  // adds it on first use; -1 if it cannot walk here
@@ -309,10 +347,14 @@ private:
         world::Entity entity;
         char tree_guid[33];
         const ai::BehaviorTree* tree;  // nullptr: no (valid) tree, perception only
+        u32 tree_version = 0;
         ai::BtRunner runner;
         ai::Blackboard board;
+        ai::BlackboardSchema schema;  // from the AI Controller's Blackboard asset (empty: untyped)
         f32 dt;
+        f64 seen_player = -1e9, seen_enemy = -1e9, heard = -1e9, hurt = -1e9;  // play clock of the last sighting / noise / damage (memory)
     };
+    std::vector<std::string> bb_warned_;  // Blackboard keys a script wrote wrongly (warned once each)
     static constexpr u32 kMaxBrains = 64;
     Brain* brains_ = nullptr;  // kMaxBrains, while playing
     u32 brain_count_ = 0;
@@ -320,7 +362,12 @@ private:
         char guid[33];
         ai::BehaviorTree tree;
         bool ok;
+        i64 modified = 0;   // the .lsdbt's write time (hot reload while playing)
+        u32 version = 0;    // bumped by each reload: brains on it start the new tree from its root
     };
+    bool load_tree(TreeEntry& t);
+    void reload_trees();  // about once a second: trees saved while playing are read again
+    f64 trees_checked_ = 0.0;
     TreeEntry* trees_[16] = {};
     u32 tree_count_ = 0;
     struct Noise {

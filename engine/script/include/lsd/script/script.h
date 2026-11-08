@@ -35,6 +35,24 @@
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_morph(e, name, weight)        a morph target (blend shape) weight on e's skeletal mesh (or its child's)
+//   lsd.morph_names(e) -> {"Nose_Wide", ...}   the morph targets e's skeletal mesh (or its child's) has
+//   lsd.set_outfit(e, slot, mesh [, r, g, b])  what e's Outfit wears in a slot ("Shirt", "Shoes"...), a mesh
+//                                         asset by name or GUID ("" takes it off); the slot is added if new
+//   lsd.assets(type [, folder]) -> {{name =, guid =, folder =}, ...}   assets of a type ("Mesh", "Prefab",
+//                                         "Sound"...) in a folder and below (Content/ relative; "" = all), by name
+//   lsd.play_montage(e, animation [, rate = 1 [, from_bone = "" [, blend = 0.2 [, root_motion = false]]]]) -> seconds   an animation file
+//                                         (by asset name) played once over what e plays, from from_bone down
+//                                         ("spine_01": the upper body only; "": all of it), blended in and out
+//                                         (Unreal's Play Montage); 0 if none. When it ends: on_montage_ended(self).
+//                                         root_motion: the clip's root movement moves the player's Character
+//                                         (dodges, attacks that travel) instead of the input
+//   lsd.play_montage(..., root_motion, slot = "Default")   montage slots (Unreal's): a montage replaces the one
+//                                         in its slot only; montages in other slots (an "UpperBody" attack,
+//                                         a "Face" blink) play over it at the same time, in the order started
+//   lsd.stop_montage(e [, blend = 0.2 [, slot]]), lsd.montage_playing(e [, slot]) -> bool   (no slot: every slot)
+//   lsd.anim_curve(e, name) -> number     an animation curve's value where e's animation is now (0 when none has it)
+//   lsd.set_motion_tag(e, tag)            motion matching picks only clips with this tag ("" = back to automatic:
+//                                         crouch / swim / air from the Character, else the untagged clips)
 //   lsd.set_class_volume(name, volume)    a Sound Class by name ("Master" too): settings sliders
 //   lsd.curve(name, time) -> value        a Curve data asset by name (0 if none); re-read when it changes.
 //                                         A Curve Vector gives x, y, z; a Curve Color r, g, b, a
@@ -46,12 +64,28 @@
 //   lsd.bb_set(e, key, number | x, y, z), lsd.bb_get(e, key) -> number | x, y, z | nil, lsd.bb_clear(e, key)
 //                                         an AI Controller's blackboard (what its behaviour tree reads)
 //   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
+//   lsd.rebuild_navmesh() -> ok           builds the navmesh again now (after moving walls or doors); agents keep walking
+//   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
 //   lsd.ui_open(name) -> doc              a UI document (.rml) by asset name over the game; nil if none
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
 //   lsd.ui_value(doc, id) -> text         a text field's value
+//   lsd.ui_data(name, value)              a data binding (number, text or boolean): documents with
+//                                         data-model="game" show it as {{game.name}} and in data-* attributes;
+//                                         a table is a list (data-for="item : game.name", {{item.field}}, {{game.name.size}})
 //   lsd.ui_show_cursor(on)                a menu: the mouse moves a cursor instead of the player
 //   lsd.ui_follow(doc, id, e [, height])  keeps that element over the object (name tags, health bars);
 //                                         hidden when it is behind the camera; lsd.ui_unfollow(doc, id)
+//   lsd.ui_style(doc, id, property, value)   one style property ("width", "40%"), the others kept
+//   lsd.ui_rml(doc, id, markup)           replaces the element's contents with RML markup
+// Ready-made HUD widgets (no UI document needed; they float over objects):
+//   lsd.health_bar(e, fraction [, height = 2.2 [, "#RRGGBB"]])   a bar over e (0..1), updated by calling
+//                                         again; green to red as it empties; lsd.remove_health_bar(e)
+//   lsd.damage_number(e, amount [, "#RRGGBB"])   a number that rises from e and fades in a second
+//   lsd.prompt(text [, e])                "Press E to open": at the bottom of the screen, or over e;
+//                                         lsd.prompt(nil [, e]) hides it
+//   lsd.settings_menu([open]) -> open     a ready-made options menu (quality, fullscreen, volumes, mouse);
+//                                         no argument: opens or closes it
+//   lsd.on_ui(action, function(element_id) end)   a UI action handled once, engine-wide (before scripts')
 //   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
 //                          mouse_sensitivity, invert_look}   the player's settings (options menus)
 //   lsd.set_settings({quality = 1, ...})  changes those given, applies and saves them
@@ -65,9 +99,13 @@
 //   lsd.key_pressed() -> name | nil       a key / button that went down this frame ("press a key" menus)
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
 // on every script that defines it.
-//   lsd.save_game(slot, value) -> ok      Unreal's SaveGame: numbers, strings, booleans and tables (lists or
-//                                         string keys) to Saved/SaveGames/<slot>.json, versioned
-//   lsd.load_game(slot) -> value          what was saved, or nil; lsd.has_save(slot), lsd.delete_save(slot)
+//   lsd.save_game(slot, value [, version]) -> ok   Unreal's SaveGame: numbers, strings, booleans and tables (lists or
+//                                         string keys) to Saved/SaveGames/<slot>.json; version: your game's save
+//                                         format (a whole number, default 1)
+//   lsd.save_game_async(slot, value [, version]) -> ok   the same, the file written in the background (a load or
+//                                         another save of that slot waits for it); ok = the value could be saved
+//   lsd.load_game(slot) -> value, version what was saved and its version (1 for saves without one), or nil:
+//                                         upgrade old saves by version; lsd.has_save(slot), lsd.delete_save(slot)
 //   lsd.save_objects(slot, {e1, e2}, [{"Transform", "Character"}], [extra]) -> ok   whole objects by name
 //   lsd.load_objects(slot) -> extra, found   puts their components back (Transform through set_position)
 //   lsd.table(name) -> {Row = {Column = value}}   a Data Table (.csv) by asset name; numbers where
@@ -97,6 +135,7 @@
 // lsd.set_camera_view("first" | "third" | "camera"): the player's view (a Camera on the Character); "camera" = its own View.
 // lsd.camera_view() -> "first" | "third".
 // lsd.camera_location() -> x, y, z: where the player's view is this frame (Unreal's Get Camera Location).
+// lsd.camera_forward() -> x, y, z: the way it looks, a unit vector (shoot along it from camera_location: crosshairs).
 //
 // Debug drawing over the viewport (r, g, b 0..1, default red; seconds, default 0 = this frame):
 //   lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])
@@ -149,6 +188,14 @@
 //                                        compensation: check a client's shot against this); nil if unknown
 //   lsd.net_find_games([seconds]) -> { {address, name, players, max_players}, ... }   games on the LAN
 //                                        (blocks up to `seconds`, default 0.5: call it from a menu, not every frame)
+//   lsd.net_host([level]) -> ok, why     host from here (a menu): Play restarts on `level` (default: this one) as the server
+//   lsd.net_join(code) -> ok, why        a join code ("K7QF2-MXA9P") or an address ("1.2.3.4[:port]"): restarts as a client,
+//                                        then follows the server to its level (on_connected / on_disconnected tell how it went)
+//   lsd.net_leave([level]) -> ok         back to single player
+//   lsd.editor_workspace() -> name       the editor's workspace tab while playing in it ("Layout", "Multiplayer"...); "" in a packaged game
+//   lsd.net_join_code() -> { upnp = "off" | "working" | "open" | "failed", message, internet = code | nil,
+//                            lan = { {address, code, tailscale = bool}, ... } }   server: codes to give playtesters;
+//                                        the first call asks the router to open the port (UPnP, a couple of seconds)
 // Events: on_player_joined(self, id), on_player_left(self, id), on_chat(self, from, channel, text),
 // on_connected(self, id), on_disconnected(self). Arguments travel as JSON (numbers, text, tables).
 //
@@ -215,10 +262,14 @@ struct ScriptHost {
     int (*bb_get)(void* user, world::Entity e, const char* key, f32* value) = nullptr;
     void (*bb_clear)(void* user, world::Entity e, const char* key) = nullptr;
     void (*report_noise)(void* user, Vec3 at, f32 loudness) = nullptr;
+    void (*damaged)(void* user, world::Entity target, f32 amount, world::Entity instigator) = nullptr;  // AI damage sense
+    bool (*rebuild_navmesh)(void* user) = nullptr;
     i32 (*ui_open)(void* user, const char* name) = nullptr;  // -1 if none
     void (*ui_close)(void* user, i32 doc) = nullptr;
     bool (*ui_set)(void* user, i32 doc, const char* id, const char* attribute, const char* value) = nullptr;  // attribute nullptr: the text
     bool (*ui_value)(void* user, i32 doc, const char* id, char* out, usize capacity) = nullptr;
+    // Data bindings: type 0 number, 1 text, 2 boolean (number != 0).
+    void (*ui_data)(void* user, const char* name, int type, f64 number, const char* text) = nullptr;  // type 0 number, 1 text, 2 bool, 3 JSON
     void (*ui_show_cursor)(void* user, bool on) = nullptr;
     void (*ui_follow)(void* user, i32 doc, const char* id, world::Entity e, f32 height) = nullptr;  // e invalid: stop
     // The player's settings: a reflected struct, and a call after Lua changed it.
@@ -235,6 +286,7 @@ struct ScriptHost {
     void (*set_camera_view)(void* user, u32 view) = nullptr;
     u32 (*camera_view)(void* user) = nullptr;
     Vec3 (*camera_location)(void* user) = nullptr;
+    Vec3 (*camera_forward)(void* user) = nullptr;
     void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
     void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
     bool (*timeline)(void* user, int what, const char* name, bool loop) = nullptr;           // 0 play, 1 stop
@@ -248,6 +300,11 @@ struct ScriptHost {
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
     void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
+    f32 (*play_montage)(void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion, const char* slot) = nullptr;
+    void (*stop_montage)(void* user, world::Entity e, f32 blend, const char* slot) = nullptr;  // slot "": all
+    bool (*montage_playing)(void* user, world::Entity e, const char* slot) = nullptr;          // slot "": any
+    bool (*anim_curve)(void* user, world::Entity e, const char* name, f32& value) = nullptr;
+    void (*set_motion_tag)(void* user, world::Entity e, const char* tag) = nullptr;
     void (*set_class_volume)(void* user, const char* name, f32 volume) = nullptr;
     // Vehicles and movers: 0 enter vehicle, 1 exit, 2 driven vehicle, 3 ride, 4 get off, 5 / 6 / 7 start / stop / restart a mover.
     u32 (*ride)(void* user, int what, world::Entity e) = nullptr;
@@ -262,6 +319,19 @@ struct ScriptHost {
     bool (*net_seen_position)(void* user, u32 entity, u32 player, Vec3& out) = nullptr;  // lag compensation (server)
     // LAN games: writes "address|name|players|max" lines into `out` (newline-separated); returns how many.
     u32 (*net_find_games)(void* user, f32 seconds, char* out, usize capacity) = nullptr;
+    // Host (0, `arg` a level or ""), join (1, `arg` a join code or address), leave (2, `arg` a level or ""):
+    // Play restarts there in that mode. False with `why` when it cannot.
+    bool (*net_session)(void* user, int what, const char* arg, char* why, usize capacity) = nullptr;
+    // Join codes, as lines: "upnp|off/working/open/failed|message|internet code", then "lan|address|code".
+    void (*net_join_codes)(void* user, char* out, usize capacity) = nullptr;
+    const char* (*editor_workspace)(void* user) = nullptr;  // the editor's workspace tab; "" in a packaged game
+    // "name|guid|folder" lines of the assets of `type` (to_string(AssetType)) under `folder`; returns how many.
+    u32 (*assets)(void* user, const char* type, const char* folder, char* out, usize capacity) = nullptr;
+    // Newline-separated morph target names of e's skeletal mesh (or its child's); returns how many.
+    u32 (*morph_names)(void* user, world::Entity e, char* out, usize capacity) = nullptr;
+    bool (*ui_style)(void* user, i32 doc, const char* id, const char* property, const char* value) = nullptr;
+    bool (*ui_rml)(void* user, i32 doc, const char* id, const char* rml) = nullptr;
+    i32 (*ui_open_text)(void* user, const char* rml) = nullptr;  // a document from markup (the HUD widgets); -1 if none
 };
 
 class ScriptSystem {
@@ -292,6 +362,8 @@ public:
     // Calls `event(self, other)` on the scripts of `target`, if they define it.
     // Native behaviours on `target` get it too. Returns how many scripts / behaviours had it.
     u32 send(world::Entity target, const char* event, world::Entity other);
+    // The same with numbers for its arguments (entities as their handle value, NaN as nil); native behaviours get `other`.
+    u32 send(world::Entity target, const char* event, const f64* args, u32 count, world::Entity other);
     // A behaviour tree's Run Script: `function(self, dt)` on `target`'s script. 1 = returned true,
     // 0 = false (or an error), 2 = nothing (still running), -1 = no such function.
     int call_task(world::Entity target, const char* function, f32 dt);

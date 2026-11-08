@@ -1,4 +1,5 @@
 #include "ui_editor.h"
+#include "keymap.h"
 #include "tips.h"
 #include "workspaces.h"
 
@@ -73,6 +74,8 @@ struct UiWindow {
     f32 drag_from[2] = {};         // preview pixels
     f32 start_left = 0, start_top = 0;
     bool make_relative = false;    // the element was in the normal flow: dragging offsets it (position: relative)
+    int resizing = 0;              // a resize handle held: 1 width (right edge), 2 height (bottom edge), 3 both (corner)
+    f32 start_width = 0, start_height = 0;
     bool show_details = false;     // switch to the Details tab once
 };
 UiWindow g_ui;
@@ -156,6 +159,15 @@ void edited(UiWindow& w) {
     w.changed_at = SDL_GetTicks() + 300;
 }
 
+// Anchors apply to absolutely positioned elements straight under <body> (their parent is the whole screen).
+bool anchorable(const UiWindow& w, const char* id) {
+    if (rml_style(w.text, id, "position") != "absolute") return false;
+    for (const RmlNode& n : rml_outline(w.text)) {
+        if (n.id == id) return n.depth == 0;
+    }
+    return false;
+}
+
 void select_element(UiWindow& w, const std::string& id) {
     w.selected = id;
     w.show_details = !id.empty();
@@ -196,8 +208,37 @@ void draw_canvas(UiWindow& w, ImVec2 image_min, f32 image_width) {
     const f32 px = (mouse.x - image_min.x) * scale, py = (mouse.y - image_min.y) * scale;
     const bool hovered = ImGui::IsItemHovered();
     char hover_id[64] = "";
-    if (hovered && !w.dragging) w.context->element_at(px, py, hover_id, sizeof hover_id);
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !w.dragging && !w.resizing) w.context->element_at(px, py, hover_id, sizeof hover_id);
+    // Resize handles on the selection (UMG's): the right edge sets width, the bottom edge height, the corner both.
+    f32 sel[4] = {};
+    const bool has_sel = !w.selected.empty() && w.context->element_box(w.document, w.selected.c_str(), sel);
+    ImVec2 handles[3];
+    int handle = 0;
+    if (has_sel) {
+        const ImVec2 lo(image_min.x + sel[0] / scale, image_min.y + sel[1] / scale), hi(lo.x + sel[2] / scale, lo.y + sel[3] / scale);
+        handles[0] = ImVec2(hi.x, (lo.y + hi.y) * 0.5f);
+        handles[1] = ImVec2((lo.x + hi.x) * 0.5f, hi.y);
+        handles[2] = hi;
+        for (int k = 0; k < 3; ++k) {
+            if (std::fabs(mouse.x - handles[k].x) <= 5.0f && std::fabs(mouse.y - handles[k].y) <= 5.0f) handle = k + 1;
+        }
+        if (hovered && (handle || w.resizing)) {
+            const int h = w.resizing ? w.resizing : handle;
+            ImGui::SetMouseCursor(h == 1 ? ImGuiMouseCursor_ResizeEW : h == 2 ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_ResizeNWSE);
+        }
+    }
+    if (hovered && handle && !w.dragging && !w.resizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        char value[64] = "";
+        // From the set width / height (px) if there is one, else the element's box as laid out.
+        const f32 set_w = w.context->get_property(w.document, w.selected.c_str(), "width", value, sizeof value) ? pixels_of(value) : 0.0f;
+        const f32 set_h = w.context->get_property(w.document, w.selected.c_str(), "height", value, sizeof value) ? pixels_of(value) : 0.0f;
+        w.start_width = set_w > 0.0f ? set_w : sel[2];
+        w.start_height = set_h > 0.0f ? set_h : sel[3];
+        w.drag_from[0] = px;
+        w.drag_from[1] = py;
+        w.resizing = handle;
+        w.moved = false;
+    } else if (hovered && !w.resizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         select_element(w, hover_id);
         if (hover_id[0]) {
             char value[64] = "";
@@ -205,6 +246,11 @@ void draw_canvas(UiWindow& w, ImVec2 image_min, f32 image_width) {
             w.make_relative = std::strcmp(value, "static") == 0;
             w.start_left = w.context->get_property(w.document, hover_id, "left", value, sizeof value) ? pixels_of(value) : 0.0f;
             w.start_top = w.context->get_property(w.document, hover_id, "top", value, sizeof value) ? pixels_of(value) : 0.0f;
+            f32 box[4];
+            if (anchorable(w, hover_id) && w.context->element_box(w.document, hover_id, box)) {  // any anchor: moved as left / top, re-anchored when dropped
+                w.start_left = box[0];
+                w.start_top = box[1];
+            }
             w.drag_from[0] = px;
             w.drag_from[1] = py;
             w.dragging = true;
@@ -221,21 +267,63 @@ void draw_canvas(UiWindow& w, ImVec2 image_min, f32 image_width) {
         if (std::fabs(px - w.drag_from[0]) + std::fabs(py - w.drag_from[1]) > 3.0f) w.moved = true;
         if (w.moved && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {  // live, on the preview only
             if (w.make_relative) w.context->set_property(w.document, w.selected.c_str(), "position", "relative");
+            if (anchorable(w, w.selected.c_str())) {  // its anchor's offsets off while it follows the mouse
+                for (const char* p : {"right", "bottom"}) w.context->set_property(w.document, w.selected.c_str(), p, "auto");
+                for (const char* p : {"margin-left", "margin-top"}) w.context->set_property(w.document, w.selected.c_str(), p, "0px");
+            }
             w.context->set_property(w.document, w.selected.c_str(), "left", left_text);
             w.context->set_property(w.document, w.selected.c_str(), "top", top_text);
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {  // dropped: into the text
             w.dragging = false;
             if (w.moved) {
-                if (w.make_relative) rml_set_style(w.text, w.selected.c_str(), "position", "relative");
-                rml_set_style(w.text, w.selected.c_str(), "left", left_text);
-                rml_set_style(w.text, w.selected.c_str(), "top", top_text);
-                w.dirty = true;
-                w.previewed = w.text;  // the preview already shows it
+                if (anchorable(w, w.selected.c_str())) {  // where it was dropped, kept on its anchor
+                    f32 box[4];
+                    if (w.context->element_box(w.document, w.selected.c_str(), box)) {
+                        rml_set_anchor(w.text, w.selected.c_str(), rml_anchor(w.text, w.selected.c_str()), box, static_cast<f32>(kPreviewWidth),
+                                       static_cast<f32>(kPreviewHeight));
+                    }
+                    edited(w);  // the preview reloads from the text
+                } else {
+                    if (w.make_relative) rml_set_style(w.text, w.selected.c_str(), "position", "relative");
+                    rml_set_style(w.text, w.selected.c_str(), "left", left_text);
+                    rml_set_style(w.text, w.selected.c_str(), "top", top_text);
+                    w.dirty = true;
+                    w.previewed = w.text;  // the preview already shows it
+                }
             }
         }
     }
+    if (w.resizing) {  // live on the preview while held, into the text when let go (like moving)
+        const f32 step = ImGui::GetIO().KeyCtrl ? 10.0f : 1.0f;
+        const f32 width = std::fmax(1.0f, std::round((w.start_width + px - w.drag_from[0]) / step) * step);
+        const f32 height = std::fmax(1.0f, std::round((w.start_height + py - w.drag_from[1]) / step) * step);
+        char width_text[32], height_text[32];
+        std::snprintf(width_text, sizeof width_text, "%gpx", static_cast<double>(width));
+        std::snprintf(height_text, sizeof height_text, "%gpx", static_cast<double>(height));
+        const bool set_w = w.resizing != 2, set_h = w.resizing != 1;
+        if (std::fabs(px - w.drag_from[0]) + std::fabs(py - w.drag_from[1]) > 2.0f) w.moved = true;
+        if (w.moved && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            if (set_w) w.context->set_property(w.document, w.selected.c_str(), "width", width_text);
+            if (set_h) w.context->set_property(w.document, w.selected.c_str(), "height", height_text);
+        }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            if (w.moved) {
+                if (set_w) rml_set_style(w.text, w.selected.c_str(), "width", width_text);
+                if (set_h) rml_set_style(w.text, w.selected.c_str(), "height", height_text);
+                w.dirty = true;
+                w.previewed = w.text;  // the preview already shows it
+            }
+            w.resizing = 0;
+        }
+    }
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (has_sel) {
+        for (int k = 0; k < 3; ++k) {
+            const bool hot = handle == k + 1 || w.resizing == k + 1;
+            dl->AddRectFilled(ImVec2(handles[k].x - 4, handles[k].y - 4), ImVec2(handles[k].x + 4, handles[k].y + 4), hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(243, 195, 18, 255));
+        }
+    }
     auto outline = [&](const char* id, ImU32 color, f32 thickness) {
         f32 box[4];
         if (!id[0] || !w.context->element_box(w.document, id, box)) return;
@@ -274,8 +362,32 @@ void draw_element_details(UiWindow& w) {
         edited(w);
     }
     ImGui::SetItemTooltip("The Lua function called when it is clicked: function name(self, element_id) in any script");
+    ImGui::SeparatorText("Anchor");
+    if (anchorable(w, w.selected.c_str())) {  // UMG's Anchors: which corner, edge or middle of the screen it keeps its distance to
+        const RmlAnchor now = rml_anchor(w.text, w.selected.c_str());
+        static const char* const kRow[3] = {"Top", "Middle", "Bottom"};
+        static const char* const kColumn[3] = {"Left", "Center", "Right"};
+        for (int y = 0; y < 3; ++y) {
+            for (int x = 0; x < 3; ++x) {
+                char label[48];
+                std::snprintf(label, sizeof label, "%s##anchor%d%d", now.x == x && now.y == y ? "[x]" : "[ ]", x, y);
+                if (x) ImGui::SameLine();
+                if (ImGui::SmallButton(label)) {
+                    f32 box[4];
+                    if (w.context && w.context->element_box(w.document, w.selected.c_str(), box)) {
+                        rml_set_anchor(w.text, w.selected.c_str(), RmlAnchor{x, y}, box, static_cast<f32>(kPreviewWidth), static_cast<f32>(kPreviewHeight));
+                        edited(w);
+                    }
+                }
+                ImGui::SetItemTooltip("Anchor %s %s: it keeps its distance to that point of the screen when the screen is another size (it stays where it is now)",
+                                      kRow[y], kColumn[x]);
+            }
+        }
+    } else {
+        ImGui::TextDisabled("Anchors are for elements with position: absolute straight under <body>.");
+    }
     ImGui::SeparatorText("Style (inline; empty = from the style sheet)");
-    const char* properties[] = {"position", "left", "top", "width", "height", "color", "background-color", "font-size", "font-weight",
+    const char* properties[] = {"position", "left", "top", "right", "bottom", "width", "height", "color", "background-color", "font-size", "font-weight",
                                 "text-align", "padding", "margin", "border", "border-radius", "opacity", "display"};
     for (const char* property : properties) {
         std::snprintf(buffer, sizeof buffer, "%s", rml_style(w.text, w.selected.c_str(), property).c_str());
@@ -306,7 +418,7 @@ void draw_ui_editor(EditorState& s) {
         if (w.dirty) save(s);
         w.open = false;
     }
-    if (with_tip(ImGui::Button("Save"), "Writes the document; open copies in Play reload") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) save(s);
+    if (with_tip(ImGui::Button("Save"), "Writes the document; open copies in Play reload") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && command_pressed(Command::Save))) save(s);
     ImGui::SameLine();
     if (w.message[0]) ImGui::TextUnformatted(w.message);
     else ImGui::TextDisabled("HTML / CSS (RmlUi). onclick=\"name\" calls the Lua function name(self, element_id). Fonts: family sans, or a .ttf in Content/Fonts");
@@ -331,7 +443,7 @@ void draw_ui_editor(EditorState& s) {
                          ImVec2(1, flipped ? 0.0f : 1.0f));
             draw_canvas(w, image_min, width);
         }
-        if (!w.selected.empty() && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        if (!w.selected.empty() && ImGui::IsWindowFocused() && command_pressed(Command::Delete)) {
             rml_remove(w.text, w.selected.c_str());
             w.selected.clear();
             edited(w);
@@ -352,6 +464,20 @@ void draw_ui_editor(EditorState& s) {
     }
     if (!w.style_sheet && with_tip(ImGui::BeginTabItem("Details", nullptr, w.show_details ? ImGuiTabItemFlags_SetSelected : 0), "The selected element's text, click action and style")) {
         draw_element_details(w);
+        ImGui::EndTabItem();
+    }
+    if (!w.style_sheet && with_tip(ImGui::BeginTabItem("Hierarchy"), "Every element of the document, nested as in the text (UMG's Hierarchy); click one to select it")) {
+        const f32 left = ImGui::GetCursorPosX();
+        for (const RmlNode& n : rml_outline(w.text)) {
+            ImGui::SetCursorPosX(left + static_cast<f32>(n.depth) * 16.0f);
+            if (n.id.empty()) {  // no id: the designer cannot address it (give it one in the code)
+                ImGui::TextDisabled("<%s>", n.tag.c_str());
+                continue;
+            }
+            char label[160];
+            std::snprintf(label, sizeof label, "%s  <%s>##%s", n.id.c_str(), n.tag.c_str(), n.id.c_str());
+            if (ImGui::Selectable(label, w.selected == n.id)) w.selected = n.id;  // stays on this tab
+        }
         ImGui::EndTabItem();
     }
     w.show_details = false;

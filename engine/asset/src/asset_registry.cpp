@@ -64,7 +64,8 @@ const char* to_string(AssetType type) {
 AssetType type_from_extension(const char* extension) {
     char lower[16] = "";
     for (usize i = 0; i + 1 < sizeof lower && extension[i]; ++i) lower[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(extension[i])));
-    if (std::strcmp(lower, ".fbx") == 0 || std::strcmp(lower, ".gltf") == 0 || std::strcmp(lower, ".glb") == 0) return AssetType::Mesh;
+    if (std::strcmp(lower, ".hlsl") == 0) return AssetType::MaterialGraph;  // a shader asset: a material written as code
+    if (std::strcmp(lower, ".fbx") == 0 || std::strcmp(lower, ".gltf") == 0 || std::strcmp(lower, ".glb") == 0 || std::strcmp(lower, ".obj") == 0) return AssetType::Mesh;
     if (std::strcmp(lower, ".lsdlevel") == 0) return AssetType::Level;
     if (std::strcmp(lower, ".lsdasset") == 0) return AssetType::Data;
     if (std::strcmp(lower, ".lsdprefab") == 0) return AssetType::Prefab;
@@ -76,7 +77,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lsdbt") == 0) return AssetType::BehaviorTree;
     if (std::strcmp(lower, ".rml") == 0) return AssetType::UiDocument;
     if (std::strcmp(lower, ".rcss") == 0) return AssetType::UiStyle;
-    for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd"}) {
+    for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd", ".hdr", ".exr"}) {
         if (std::strcmp(lower, image) == 0) return AssetType::Texture;
     }
     if (std::strcmp(lower, ".wav") == 0 || std::strcmp(lower, ".ogg") == 0 || std::strcmp(lower, ".flac") == 0 || std::strcmp(lower, ".mp3") == 0) return AssetType::Sound;

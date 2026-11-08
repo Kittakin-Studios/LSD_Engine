@@ -1,11 +1,14 @@
 // Asset pipeline tests, including the milestone 2 exit test on a real Blender FBX:
 // import it into Content/, find it by search, compile it and load the result.
+#include "lsd/asset/asset_meta.h"
 #include "lsd/asset/localization.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
 #include "lsd/asset/material_import.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/array.h"
+
+#include <tinyexr.h>
 
 #include <chrono>
 #include <cmath>
@@ -196,8 +199,8 @@ static void test_gltf_axes(const fs::path& root) {
     // materials; each part imports alone, in its node's space, with the node's transform beside it.
     const char parts_gltf[] = R"({
   "asset": {"version": "2.0"},
-  "scene": 0, "scenes": [{"nodes": [0, 1]}],
-  "nodes": [{"name": "Base", "mesh": 0}, {"name": "Top", "mesh": 1, "translation": [0, 5, 0]}],
+  "scene": 0, "scenes": [{"nodes": [0, 2]}],
+  "nodes": [{"name": "Base", "mesh": 0}, {"name": "Top", "mesh": 1, "translation": [0, 5, 0]}, {"name": "Group", "children": [1]}],
   "materials": [{"name": "Red", "pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1], "metallicFactor": 0, "roughnessFactor": 0.25}},
                 {"name": "Gold", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 1, "metallicRoughnessTexture": {"index": 1}},
                  "normalTexture": {"index": 2}}],
@@ -220,6 +223,7 @@ static void test_gltf_axes(const fs::path& root) {
         CHECK(std::strcmp(parts[1].name, "Top_Red") == 0 && parts[1].base_color[1] == 0.0f && parts[1].roughness == 0.25f);
         CHECK(std::strcmp(parts[2].name, "Top_Gold") == 0 && parts[2].metallic == 1.0f && std::strcmp(parts[2].texture, "Gold_Base.png") == 0);
         CHECK(std::strcmp(parts[2].orm_texture, "Gold_MR.png") == 0 && std::strcmp(parts[2].normal_texture, "Gold_N.png") == 0);
+        CHECK(std::strcmp(parts[0].node_path, "Base") == 0 && std::strcmp(parts[1].node_path, "Group/Top") == 0 && std::strcmp(parts[2].node_path, "Group/Top") == 0);  // the node tree
     }
     CHECK(asset::import_mesh(parts_path.string().c_str(), 1.0f, heap, mesh, error, sizeof error, 2) && mesh.vertex_count == 3);
     CHECK(std::fabs(asset::compute_bounds(mesh).min[2]) < 1e-5f && std::fabs(asset::compute_bounds(mesh).max[2] - 1.0f) < 1e-5f);  // its node's space...
@@ -276,7 +280,89 @@ static void test_texture(const fs::path& root) {
     CHECK(loaded.width == 2 && loaded.height == 2 && loaded.mip_count == 2);
     CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 0 && loaded.mip(0)[5] == 255 && loaded.mip(0)[10] == 255);  // red, green, blue
     CHECK(!asset::load_texture((root / "missing.png").string().c_str(), true, 4096, loaded));
+    // BC compression: an opaque 8x8 becomes BC1 (8 bytes a 4x4 block, every mip at least one block); with alpha, BC3.
+    {
+        std::vector<u8> rgba(8 * 8 * 4, 255);
+        for (usize i = 0; i < rgba.size(); i += 4) rgba[i] = static_cast<u8>(i);  // a ramp in red
+        asset::TextureData bc(default_allocator());
+        CHECK(asset::build_texture(rgba.data(), 8, 8, true, 4096, bc) && bc.mip_count == 4);
+        CHECK(asset::compress_texture(bc) && bc.encoding == asset::TextureEncoding::BC1);
+        CHECK(bc.mip_offset[1] == 4 * 8 && bc.mip_offset[2] == 5 * 8 && bc.mip_offset[3] == 6 * 8 && bc.pixels.size() == 7 * 8);  // 2x2 + 1 + 1 + 1 blocks
+        CHECK(!asset::compress_texture(bc));  // already compressed
+        rgba[3] = 0;  // one see-through pixel
+        asset::TextureData a(default_allocator());
+        CHECK(asset::build_texture(rgba.data(), 8, 8, true, 4096, a) && asset::compress_texture(a) && a.encoding == asset::TextureEncoding::BC3 && a.mip_offset[1] == 4 * 16);
+        {  // a normal map: BC5, X and Y kept (a flat one: both 128, its two endpoints in each channel's 8 bytes)
+            std::vector<u8> flat(8 * 8 * 4);
+            for (usize i = 0; i < flat.size(); i += 4) { flat[i] = 128; flat[i + 1] = 128; flat[i + 2] = 255; flat[i + 3] = 255; }
+            asset::TextureData nm(default_allocator());
+            CHECK(asset::build_texture(flat.data(), 8, 8, false, 4096, nm) && asset::compress_texture(nm, true) && nm.encoding == asset::TextureEncoding::BC5);
+            CHECK(nm.mip_offset[1] == 4 * 16 && nm.pixels[0] == 128 && nm.pixels[8] == 128);
+        }
+        // Cached: the first load encodes and writes the file, the second reads it back the same; a newer source is encoded again.
+        const fs::path cache = root / "TexCache";
+        fs::remove_all(cache);
+        asset::TextureData first(default_allocator()), again(default_allocator()), plain(default_allocator());
+        CHECK(asset::load_texture_cached(tga.string().c_str(), true, 4096, true, cache.string().c_str(), plain) && plain.encoding == asset::TextureEncoding::RGBA8);  // 2x2: too small to compress
+        const fs::path big = root / "big.png";
+        CHECK(asset::write_png(big.string().c_str(), 8, 8, rgba.data()));
+        CHECK(asset::load_texture_cached(big.string().c_str(), true, 4096, true, cache.string().c_str(), first) && first.encoding == asset::TextureEncoding::BC3);
+        CHECK(std::distance(fs::directory_iterator(cache), fs::directory_iterator{}) == 2);
+        CHECK(asset::load_texture_cached(big.string().c_str(), true, 4096, true, cache.string().c_str(), again) && again.encoding == first.encoding && again.pixels.size() == first.pixels.size() &&
+              std::memcmp(again.pixels.data(), first.pixels.data(), first.pixels.size()) == 0 && again.mip_offset[2] == first.mip_offset[2]);
+        fs::remove_all(cache);
+        asset::TextureData odd(default_allocator());
+        CHECK(asset::build_texture(rgba.data(), 6, 6, true, 4096, odd) && !asset::compress_texture(odd) && odd.encoding == asset::TextureEncoding::RGBA8);  // not a multiple of 4
+    }
+    Array<u8> png(default_allocator());  // a picture for the assistant: PNG bytes in memory, halved to fit
+    CHECK(asset::encode_png(tga.string().c_str(), 1, png) && png.size() > 8 && png[0] == 0x89 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G');
+    CHECK(!asset::encode_png((root / "missing.png").string().c_str(), 64, png));
     CHECK(asset::type_from_extension(".PNG") == asset::AssetType::Texture && asset::type_from_extension(".tga") == asset::AssetType::Texture);
+
+    // Float images: a 2x1 Radiance .hdr (flat RGBE: 1, 0.5, 0.25 and 4, 0, 0) and an EXR written by tinyexr.
+    CHECK(asset::type_from_extension(".hdr") == asset::AssetType::Texture && asset::type_from_extension(".EXR") == asset::AssetType::Texture);
+    const fs::path hdr = root / "ramp.hdr";
+    f = std::fopen(hdr.string().c_str(), "wb");
+    const char hdr_header[] = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n";
+    const u8 rgbe[8] = {128, 64, 32, 129, 128, 0, 0, 131};
+    std::fwrite(hdr_header, 1, sizeof hdr_header - 1, f);
+    std::fwrite(rgbe, 1, sizeof rgbe, f);
+    std::fclose(f);
+    CHECK(asset::load_texture(hdr.string().c_str(), false, 4096, loaded) && loaded.width == 2 && loaded.height == 1);
+    CHECK(loaded.mip(0)[0] == 255 && loaded.mip(0)[1] == 128 && loaded.mip(0)[2] == 64 && loaded.mip(0)[4] == 255 && loaded.mip(0)[5] == 0);  // linear; 4 clipped to 1
+    CHECK(asset::load_texture(hdr.string().c_str(), true, 4096, loaded) && loaded.mip(0)[1] >= 186 && loaded.mip(0)[1] <= 189);  // 0.5 linear as sRGB
+    const fs::path exr = root / "ramp.exr";
+    const float exr_pixels[2 * 2 * 4] = {0.25f, 0.5f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 2.0f, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f};
+    const char* err = nullptr;
+    CHECK(SaveEXR(exr_pixels, 2, 2, 4, 1, exr.string().c_str(), &err) == TINYEXR_SUCCESS);
+    u32 ew = 0, eh = 0;
+    CHECK(asset::texture_size(exr.string().c_str(), ew, eh) && ew == 2 && eh == 2);  // from the header
+    CHECK(asset::load_texture(exr.string().c_str(), false, 4096, loaded) && loaded.width == 2 && loaded.height == 2);
+    CHECK(loaded.mip(0)[0] == 64 && loaded.mip(0)[1] == 128 && loaded.mip(0)[2] == 255 && loaded.mip(0)[8] == 255 && loaded.mip(0)[11] == 128);  // 0.25, 0.5, 1; 2 clipped; alpha 0.5
+}
+
+// Animation curves: straight between keys given in any order, held past the ends, per clip and name.
+static void test_anim_curves() {
+    asset::AssetMeta meta;
+    auto key = [&](const char* curve, u32 clip, f32 time, f32 value) {
+        asset::AnimCurveKey k;
+        std::snprintf(k.curve, sizeof k.curve, "%s", curve);
+        k.clip = clip;
+        k.time = time;
+        k.value = value;
+        meta.curve_keys.push_back(k);
+    };
+    key("Footstep", 0, 1.0f, 1.0f);
+    key("Footstep", 0, 0.0f, 0.0f);
+    key("Footstep", 1, 0.0f, 5.0f);
+    key("Trail", 0, 0.5f, 2.0f);
+    f32 v = -1.0f;
+    CHECK(asset::curve_value(meta, 0, "Footstep", 0.25f, v) && std::fabs(v - 0.25f) < 1e-6f);
+    CHECK(asset::curve_value(meta, 0, "Footstep", 3.0f, v) && v == 1.0f);   // held after the last key
+    CHECK(asset::curve_value(meta, 0, "Footstep", -1.0f, v) && v == 0.0f);  // and before the first
+    CHECK(asset::curve_value(meta, 1, "Footstep", 0.7f, v) && v == 5.0f);   // another clip's own keys
+    CHECK(asset::curve_value(meta, 0, "Trail", 0.0f, v) && v == 2.0f);      // one key: everywhere
+    CHECK(!asset::curve_value(meta, 2, "Footstep", 0.0f, v) && !asset::curve_value(meta, 0, "Nope", 0.0f, v));
 }
 
 static void test_localization() {
@@ -310,6 +396,20 @@ static void test_localization() {
     CHECK(std::strcmp(out, "0 pomme") == 0);
     asset::format_text("{0}|plural(zero=No mail,one=One mail,other={1} has mail)", none, 1, "en", out, sizeof out);
     CHECK(std::strcmp(out, "No mail") == 0);
+    // few / many (CLDR): Russian, Polish, Arabic, Japanese.
+    auto plural = [&](const char* n, const char* language, const char* pattern) {
+        const char* args[] = {n};
+        asset::format_text(pattern, args, 1, language, out, sizeof out);
+        return std::string(out);
+    };
+    const char* ru = "{0}|plural(one=one,few=few,many=many,other=other)";
+    CHECK(plural("1", "ru", ru) == "one" && plural("21", "ru", ru) == "one" && plural("3", "ru", ru) == "few" && plural("24", "ru", ru) == "few");
+    CHECK(plural("5", "ru", ru) == "many" && plural("11", "ru", ru) == "many" && plural("12", "ru", ru) == "many" && plural("1.5", "ru", ru) == "other");
+    CHECK(plural("22", "pl", ru) == "few" && plural("25", "pl", ru) == "many" && plural("21", "pl", ru) == "many" && plural("1", "pl", ru) == "one");
+    const char* ar = "{0}|plural(zero=z,one=o,two=t,few=f,many=m,other=x)";
+    CHECK(plural("0", "ar", ar) == "z" && plural("2", "ar", ar) == "t" && plural("7", "ar", ar) == "f" && plural("11", "ar", ar) == "m" && plural("100", "ar", ar) == "x");
+    CHECK(plural("1", "ja", ru) == "other" && plural("3", "ru", "{0}|plural(one=a,other=b)") == "b");  // no form: other; a missing form: other
+    CHECK(plural("1", "en-GB", ru) == "one" && plural("3", "cs", ru) == "few");
     asset::format_text("Hi {1}, {0} new; {5} {x}", three, 2, "en", out, sizeof out);
     CHECK(std::strcmp(out, "Hi Ada, 3 new;  {x}") == 0);  // missing argument: empty; not an argument: as written
     asset::format_text("{1} wins", three, 2, "en", out, 6);
@@ -428,6 +528,7 @@ static void test_material_import(const fs::path& root) {
 int main() {
     test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();
+    test_anim_curves();
     test_fbx_parts();
     test_normals();
     const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "asset_tests";

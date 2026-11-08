@@ -27,6 +27,10 @@ struct GpuMesh {
     u32 index_count = 0;
 };
 
+// Box UV (StaticMesh::box_uv): each vertex's UV projected onto the plane its normal faces most, in
+// metres at this scale (one texture tile per metre on every face; walls upright).
+void box_project_uv(MeshData& mesh, f32 scale_x, f32 scale_y, f32 scale_z);
+
 GpuMesh upload_mesh(rhi::Device& device, const MeshData& mesh);
 void destroy_mesh(rhi::Device& device, GpuMesh& mesh);
 

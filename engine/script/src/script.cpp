@@ -4,6 +4,7 @@
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/data_table.h"
+#include "lsd/asset/guid.h"
 #include "lsd/asset/localization.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/spline.h"
@@ -20,7 +21,11 @@ extern "C" {
 #include <cstring>
 #include <cctype>
 #include <filesystem>
+#include <future>
+#include <map>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace lsd::script {
 
@@ -328,8 +333,190 @@ function lsd.load_objects(slot)
   end
   return data.extra, found
 end
+-- Ready-made HUD widgets: one built-in document, an element per widget, rebuilt when the set changes.
+local hud = {doc = nil, list = {}, order = {}, prompt = false}
+local HUD_RML = [[<rml><head><style>
+body { width: 100%; height: 100%; font-family: sans; }
+div { display: block; }
+.w { position: absolute; }
+.bar { width: 84px; height: 10px; margin-left: -42px; margin-top: -5px; background-color: rgba(13, 4, 4, 210); border: 1px #000000; border-radius: 3px; }
+.fill { height: 100%; width: 100%; background-color: #9BE11F; border-radius: 2px; }
+.dmg { width: 160px; margin-left: -80px; margin-top: -16px; text-align: center; font-size: 28px; font-weight: bold; color: #FFE51A; }
+.prompt { width: 640px; margin-left: -320px; text-align: center; font-size: 22px; color: #FFFFFF; padding: 6px 12px; background-color: rgba(13, 4, 4, 190); border-radius: 6px; }
+#screen_prompt { position: absolute; left: 50%; bottom: 12%; display: none; }
+</style></head><body><div id="widgets"></div><div id="screen_prompt" class="prompt"></div></body></rml>]]
+local function hud_doc()
+  if not hud.doc then hud.doc = lsd._ui_open_text(HUD_RML) end
+  return hud.doc
+end
+local function hud_bar_color(w)
+  if w.color then return w.color end
+  local f = math.max(0, math.min(1, w.fraction))
+  return string.format("#%02X%02X1F", math.floor(255 * (1 - f) + 155 * f), math.floor(60 * (1 - f) + 225 * f))
+end
+local function hud_apply(key, w)
+  local doc = hud.doc
+  if w.kind == "bar" then
+    lsd.ui_style(doc, key .. "_fill", "width", string.format("%.1f%%", math.max(0, math.min(1, w.fraction)) * 100))
+    lsd.ui_style(doc, key .. "_fill", "background-color", hud_bar_color(w))
+  elseif w.kind == "dmg" then
+    if w.color then lsd.ui_style(doc, key, "color", w.color) end
+  end
+  lsd.ui_follow(doc, key, w.e, w.height)
+end
+local function hud_rebuild()
+  local doc = hud_doc()
+  if not doc then return end
+  local parts = {}
+  for _, key in ipairs(hud.order) do
+    local w = hud.list[key]
+    if w.kind == "bar" then parts[#parts + 1] = '<div class="w bar" id="' .. key .. '"><div class="fill" id="' .. key .. '_fill"></div></div>'
+    elseif w.kind == "dmg" then parts[#parts + 1] = '<div class="w dmg" id="' .. key .. '">' .. w.text .. '</div>'
+    else parts[#parts + 1] = '<div class="w prompt" id="' .. key .. '">' .. w.text .. '</div>' end
+  end
+  lsd.ui_rml(doc, "widgets", table.concat(parts))
+  for _, key in ipairs(hud.order) do hud_apply(key, hud.list[key]) end
+end
+local function hud_escape(text)
+  return (string.gsub(tostring(text), "[<>&]", {["<"] = "&lt;", [">"] = "&gt;", ["&"] = "&amp;"}))
+end
+local function hud_add(key, w)
+  if not hud.list[key] then hud.order[#hud.order + 1] = key end
+  hud.list[key] = w
+  hud_rebuild()
+end
+local function hud_remove(key)
+  if not hud.list[key] then return end
+  hud.list[key] = nil
+  for i, k in ipairs(hud.order) do if k == key then table.remove(hud.order, i) break end end
+  if hud.doc then lsd.ui_unfollow(hud.doc, key) end
+  hud_rebuild()
+end
+local hud_number = 0
+function lsd.health_bar(e, fraction, height, color)
+  local key = "hb" .. tostring(e)
+  local w = hud.list[key]
+  if w then
+    w.fraction, w.height, w.color = fraction, height or w.height, color or w.color
+    if hud.doc then hud_apply(key, w) end
+  else
+    hud_add(key, {kind = "bar", e = e, fraction = fraction, height = height or 2.2, color = color})
+  end
+end
+function lsd.remove_health_bar(e) hud_remove("hb" .. tostring(e)) end
+function lsd.damage_number(e, amount, color)
+  if not lsd.alive(e) then return end
+  local live = 0
+  for _, k in ipairs(hud.order) do if hud.list[k].kind == "dmg" then live = live + 1 end end
+  if live >= 32 then return end  -- the oldest are still rising
+  hud_number = hud_number + 1
+  local x, y, z = lsd.position(e)
+  hud_add("dn" .. hud_number, {kind = "dmg", e = e, text = hud_escape(amount), color = color, height = 2.0, born = lsd.time(), base = 2.0})
+end
+function lsd.prompt(text, e)
+  if e then
+    local key = "pr" .. tostring(e)
+    if text == nil then hud_remove(key) else hud_add(key, {kind = "prompt", e = e, text = hud_escape(text), height = 2.4}) end
+    return
+  end
+  local doc = hud_doc()
+  if not doc then return end
+  if text == nil then
+    lsd.ui_style(doc, "screen_prompt", "display", "none")
+  else
+    lsd.ui_set_text(doc, "screen_prompt", tostring(text))
+    lsd.ui_style(doc, "screen_prompt", "display", "block")
+  end
+end
+-- UI actions handled once, engine-wide (before scripts' functions of that name): lsd.on_ui(action, function(element_id) end).
+lsd._ui_actions = {}
+function lsd.on_ui(action, fn) lsd._ui_actions[action] = fn end
+-- A ready-made options menu (Unreal's Game User Settings in a menu): lsd.settings_menu() opens / closes it.
+local settings_doc = nil
+local SETTINGS_RML = [[<rml><head><style>
+body { width: 100%; height: 100%; font-family: sans; color: #FFFFFF; background-color: rgba(0, 0, 0, 120); }
+div { display: block; }
+#panel { position: absolute; left: 50%; top: 50%; width: 560px; margin-left: -280px; margin-top: -250px; padding: 18px 24px;
+         background-color: rgba(13, 4, 4, 235); border: 2px #F3C312; border-radius: 10px; }
+#title { font-size: 34px; font-weight: bold; color: #FFE51A; margin-bottom: 12px; }
+.row { margin: 8px 0; font-size: 20px; }
+.label { display: inline-block; width: 220px; }
+input.range { display: inline-block; width: 240px; height: 18px; nav: auto; tab-index: auto; focus: auto; }
+input.range slidertrack { background-color: #3C3838; height: 6px; margin-top: 6px; }
+input.range sliderbar { width: 16px; height: 18px; background-color: #F3C312; border-radius: 3px; }
+.button { display: inline-block; padding: 4px 14px; margin-right: 6px; background-color: #025291; border-radius: 5px; nav: auto; tab-index: auto; focus: auto; }
+.button:hover, .button:focus { background-color: #EEA70E; }
+.button.on { background-color: #F3C312; color: #141414; }
+#close { margin-top: 14px; padding: 6px 30px; background-color: #F3C312; color: #141414; font-weight: bold; }
+</style></head><body><div id="panel">
+<div id="title">Settings</div>
+<div class="row"><span class="label">Quality</span><button class="button" id="q0" onclick="__lsd_quality">Low</button><button class="button" id="q1" onclick="__lsd_quality">Medium</button><button class="button" id="q2" onclick="__lsd_quality">High</button><button class="button" id="q3" onclick="__lsd_quality">Epic</button></div>
+<div class="row"><span class="label">Fullscreen</span><button class="button" id="fullscreen" onclick="__lsd_toggle">Off</button></div>
+<div class="row"><span class="label">Master volume</span><input type="range" class="range" id="master_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Music</span><input type="range" class="range" id="music_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Effects</span><input type="range" class="range" id="effects_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Mouse sensitivity</span><input type="range" class="range" id="mouse_sensitivity" min="1" max="50" step="1" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Invert look</span><button class="button" id="invert_look" onclick="__lsd_toggle">Off</button></div>
+<button class="button" id="close" onclick="__lsd_settings_close">Close</button>
+</div></body></rml>]]
+local function settings_show()
+  local s = lsd.get_settings()
+  if not s or not settings_doc then return end
+  for q = 0, 3 do lsd.ui_set(settings_doc, "q" .. q, "class", s.quality == q and "button on" or "button") end
+  for _, id in ipairs({"fullscreen", "invert_look"}) do
+    lsd.ui_set_text(settings_doc, id, s[id] and "On" or "Off")
+    lsd.ui_set(settings_doc, id, "class", s[id] and "button on" or "button")
+  end
+  for _, id in ipairs({"master_volume", "music_volume", "effects_volume"}) do lsd.ui_set(settings_doc, id, "value", tostring(s[id])) end
+  lsd.ui_set(settings_doc, "mouse_sensitivity", "value", tostring(math.floor(s.mouse_sensitivity * 10 + 0.5)))  -- in tenths, whole steps
+end
+function lsd.settings_menu(open)
+  if open == nil then open = settings_doc == nil end
+  if open and not settings_doc then
+    settings_doc = lsd._ui_open_text(SETTINGS_RML)
+    settings_show()
+    lsd.ui_show_cursor(true)
+  elseif not open and settings_doc then
+    lsd.ui_close(settings_doc)
+    settings_doc = nil
+    lsd.ui_show_cursor(false)
+  end
+  return settings_doc ~= nil
+end
+lsd.on_ui("__lsd_quality", function(id) lsd.set_settings({quality = tonumber(string.sub(id, 2))}) settings_show() end)
+lsd.on_ui("__lsd_toggle", function(id) local s = lsd.get_settings() lsd.set_settings({[id] = not s[id]}) settings_show() end)
+lsd.on_ui("__lsd_slider", function(id)
+  local v = tonumber(lsd.ui_value(settings_doc, id))
+  if v and id == "mouse_sensitivity" then v = v / 10 end  -- the slider is in tenths (whole steps)
+  if v then lsd.set_settings({[id] = v}) end
+end)
+lsd.on_ui("__lsd_settings_close", function() lsd.settings_menu(false) end)
+local function hud_tick(now)
+  if #hud.order == 0 then return end
+  local gone = {}
+  for _, key in ipairs(hud.order) do
+    local w = hud.list[key]
+    if not lsd.alive(w.e) then gone[#gone + 1] = key
+    elseif w.kind == "dmg" then
+      local age = now - w.born
+      if age >= 1.0 then gone[#gone + 1] = key
+      else
+        w.height = w.base + age * 1.2
+        lsd.ui_follow(hud.doc, key, w.e, w.height)
+        lsd.ui_style(hud.doc, key, "opacity", string.format("%.2f", 1.0 - age * age))
+      end
+    end
+  end
+  for _, key in ipairs(gone) do
+    hud.list[key] = nil
+    for i, k in ipairs(hud.order) do if k == key then table.remove(hud.order, i) break end end
+    if hud.doc then lsd.ui_unfollow(hud.doc, key) end
+  end
+  if #gone > 0 then hud_rebuild() end
+end
 function lsd._tick()
   local now, due = lsd.time(), {}
+  hud_tick(now)
   for id, t in pairs(timers) do if now >= t.at then due[#due + 1] = id end end
   table.sort(due)
   for _, id in ipairs(due) do
@@ -504,11 +691,11 @@ struct Api {
     }
     // Validates into a copy first, so a bad field leaves the component as it was.
     static void write(lua_State* L, world::Entity e, const reflect::TypeInfo& type, void* data, int fields) {
-        alignas(16) u8 copy[4096];  // Script / Native Script with their property lists are ~1.6 KB
-        if (type.size > sizeof copy) luaL_error(L, "%s is too big to set from Lua", type.name);
-        std::memcpy(copy, data, type.size);
-        read_struct(L, fields, type, copy);
-        std::memcpy(world(L).get(e, type), copy, type.size);
+        static std::vector<u8> copy;  // reused: components with long lists (a Skeletal Mesh's morphs) pass 8 KB
+        if (copy.size() < type.size) copy.resize(type.size);
+        std::memcpy(copy.data(), data, type.size);
+        read_struct(L, fields, type, copy.data());
+        std::memcpy(world(L).get(e, type), copy.data(), type.size);
     }
     static int set(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
@@ -818,6 +1005,11 @@ struct Api {
         push_vec3(L, host.camera_location ? host.camera_location(host.user) : Vec3{});
         return 3;
     }
+    static int camera_forward(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        push_vec3(L, host.camera_forward ? host.camera_forward(host.user) : Vec3{1, 0, 0});
+        return 3;
+    }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
     static int ride_call(lua_State* L, int what, bool target) {
         const ScriptHost& host = system(L).host_;
@@ -895,6 +1087,61 @@ struct Api {
         lua_pushnumber(L, p.y);
         lua_pushnumber(L, p.z);
         return 3;
+    }
+    static int net_session(lua_State* L, int what, const char* arg) {
+        const ScriptHost& host = system(L).host_;
+        char why[160] = "multiplayer is not available here";
+        const bool ok = host.net_session && host.net_session(host.user, what, arg, why, sizeof why);
+        lua_pushboolean(L, ok);
+        if (ok) return 1;
+        lua_pushstring(L, why);
+        return 2;
+    }
+    static int net_host(lua_State* L) { return net_session(L, 0, luaL_optstring(L, 1, "")); }
+    static int editor_workspace(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushstring(L, host.editor_workspace ? host.editor_workspace(host.user) : "");
+        return 1;
+    }
+    static int net_join(lua_State* L) { return net_session(L, 1, luaL_checkstring(L, 1)); }
+    static int net_leave(lua_State* L) { return net_session(L, 2, luaL_optstring(L, 1, "")); }
+    static int net_join_code(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        char text[2048] = "";
+        if (host.net_join_codes) host.net_join_codes(host.user, text, sizeof text);
+        lua_createtable(L, 0, 4);
+        lua_createtable(L, 4, 0);  // lan
+        int lan = 0;
+        for (const char* line = text; *line;) {
+            const char* end = std::strchr(line, '\n');
+            const std::string row(line, end ? static_cast<usize>(end - line) : std::strlen(line));
+            line = end ? end + 1 : line + row.size();
+            const usize a = row.find('|'), b = row.find('|', a + 1), c = row.find('|', b + 1);
+            if (a == std::string::npos || b == std::string::npos) continue;
+            if (row.compare(0, a, "upnp") == 0 && c != std::string::npos) {
+                lua_pushstring(L, row.substr(a + 1, b - a - 1).c_str());
+                lua_setfield(L, -3, "upnp");
+                lua_pushstring(L, row.substr(b + 1, c - b - 1).c_str());
+                lua_setfield(L, -3, "message");
+                if (c + 1 < row.size()) {
+                    lua_pushstring(L, row.substr(c + 1).c_str());
+                    lua_setfield(L, -3, "internet");
+                }
+            } else if (row.compare(0, a, "lan") == 0) {
+                const std::string address = row.substr(a + 1, b - a - 1);
+                lua_createtable(L, 0, 3);
+                lua_pushstring(L, address.c_str());
+                lua_setfield(L, -2, "address");
+                lua_pushstring(L, row.substr(b + 1).c_str());
+                lua_setfield(L, -2, "code");
+                unsigned x = 0, y = 0;
+                lua_pushboolean(L, std::sscanf(address.c_str(), "%u.%u", &x, &y) == 2 && x == 100 && (y & 0xC0u) == 64u);  // Tailscale's range
+                lua_setfield(L, -2, "tailscale");
+                lua_rawseti(L, -2, ++lan);
+            }
+        }
+        lua_setfield(L, -2, "lan");
+        return 1;
     }
     static int net_find_games(lua_State* L) {
         const ScriptHost& host = system(L).host_;
@@ -1070,11 +1317,43 @@ struct Api {
                                                       luaL_tolstring_compat(L, 4)));
         return 1;
     }
+    static int ui_data(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (!host.ui_data) return 0;
+        const char* name = luaL_checkstring(L, 1);
+        if (lua_isboolean(L, 2)) host.ui_data(host.user, name, 2, lua_toboolean(L, 2) ? 1.0 : 0.0, "");
+        else if (lua_type(L, 2) == LUA_TNUMBER) host.ui_data(host.user, name, 0, lua_tonumber(L, 2), "");
+        else if (lua_istable(L, 2)) {  // a list (data-for) or record: handed over as JSON
+            std::string json;
+            if (!write_json(L, 2, json, 0)) return luaL_error(L, "ui_data: a list holds numbers, strings, booleans and tables only");
+            host.ui_data(host.user, name, 3, 0.0, json.c_str());
+        }
+        else host.ui_data(host.user, name, 1, 0.0, luaL_tolstring_compat(L, 2));
+        return 0;
+    }
     static int ui_value(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         char text[512];
         if (!host.ui_value || !host.ui_value(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), text, sizeof text)) return 0;
         lua_pushstring(L, text);
+        return 1;
+    }
+    static int ui_style(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_style && host.ui_style(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3),
+                                                          luaL_tolstring_compat(L, 4)));
+        return 1;
+    }
+    static int ui_rml(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_rml && host.ui_rml(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3)));
+        return 1;
+    }
+    static int ui_open_text(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const i32 doc = host.ui_open_text ? host.ui_open_text(host.user, luaL_checkstring(L, 1)) : -1;
+        if (doc < 0) lua_pushnil(L);
+        else lua_pushinteger(L, doc);
         return 1;
     }
     static int ui_follow(lua_State* L) {
@@ -1121,6 +1400,22 @@ struct Api {
         const Vec3 at{static_cast<f32>(luaL_checknumber(L, 1)), static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_checknumber(L, 3))};
         if (host.report_noise) host.report_noise(host.user, at, static_cast<f32>(luaL_optnumber(L, 4, 1.0)));
         return 0;
+    }
+    static int apply_damage(lua_State* L) {
+        ScriptSystem& s = system(L);
+        const world::Entity target = entity(L, 1);
+        const f32 amount = static_cast<f32>(luaL_checknumber(L, 2));
+        world::Entity instigator;
+        if (!lua_isnoneornil(L, 3)) instigator = entity(L, 3);
+        const f64 args[2] = {amount, instigator.valid() ? static_cast<f64>(instigator.value) : std::nan("")};  // none: nil
+        s.send(target, "on_damage", args, 2, instigator);
+        if (s.host_.damaged) s.host_.damaged(s.host_.user, target, amount, instigator);
+        return 0;
+    }
+    static int rebuild_navmesh(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.rebuild_navmesh && host.rebuild_navmesh(host.user));
+        return 1;
     }
     static int move_to(lua_State* L) {
         const ScriptHost& host = system(L).host_;
@@ -1177,6 +1472,36 @@ struct Api {
         if (host.set_audio_param) host.set_audio_param(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
         return 0;
     }
+    static int play_montage(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const f32 seconds = host.play_montage ? host.play_montage(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_optnumber(L, 3, 1.0)),
+                                                                  luaL_optstring(L, 4, ""), static_cast<f32>(luaL_optnumber(L, 5, 0.2)), lua_toboolean(L, 6) != 0,
+                                                                  luaL_optstring(L, 7, "Default")) : 0.0f;
+        lua_pushnumber(L, seconds);
+        return 1;
+    }
+    static int stop_montage(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.stop_montage) host.stop_montage(host.user, entity(L, 1), static_cast<f32>(luaL_optnumber(L, 2, 0.2)), luaL_optstring(L, 3, ""));
+        return 0;
+    }
+    static int montage_playing(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.montage_playing && host.montage_playing(host.user, entity(L, 1), luaL_optstring(L, 2, "")));
+        return 1;
+    }
+    static int set_motion_tag(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.set_motion_tag) host.set_motion_tag(host.user, entity(L, 1), luaL_optstring(L, 2, ""));
+        return 0;
+    }
+    static int anim_curve(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        f32 value = 0.0f;
+        if (host.anim_curve) host.anim_curve(host.user, entity(L, 1), luaL_checkstring(L, 2), value);
+        lua_pushnumber(L, value);
+        return 1;
+    }
     static int set_anim_param(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.set_anim_param) host.set_anim_param(host.user, entity(L, 1), luaL_checkstring(L, 2), static_cast<f32>(luaL_checknumber(L, 3)));
@@ -1207,29 +1532,159 @@ struct Api {
         mesh->morphs.push_back(m);
         return 0;
     }
+    // Splits host "a|b|c" lines into a list of tables with the given keys.
+    static int push_lines(lua_State* L, const char* text, const char* const* keys, int key_count) {
+        lua_newtable(L);
+        int n = 0;
+        for (const char* line = text; *line;) {
+            const char* end = std::strchr(line, '\n');
+            if (!end) end = line + std::strlen(line);
+            lua_newtable(L);
+            const char* field = line;
+            for (int k = 0; k < key_count; ++k) {
+                const char* bar = static_cast<const char*>(std::memchr(field, '|', static_cast<usize>(end - field)));
+                const char* stop = bar && k + 1 < key_count ? bar : end;
+                lua_pushlstring(L, field, static_cast<usize>(stop - field));
+                lua_setfield(L, -2, keys[k]);
+                field = stop < end ? stop + 1 : end;
+            }
+            lua_rawseti(L, -2, ++n);
+            line = *end ? end + 1 : end;
+        }
+        return 1;
+    }
+    static int assets(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        static char text[64 * 1024];
+        text[0] = 0;
+        if (host.assets) host.assets(host.user, luaL_checkstring(L, 1), luaL_optstring(L, 2, ""), text, sizeof text);
+        static const char* const kKeys[] = {"name", "guid", "folder"};
+        return push_lines(L, text, kKeys, 3);
+    }
+    static int morph_names(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        static char text[16 * 1024];
+        text[0] = 0;
+        if (host.morph_names) host.morph_names(host.user, live_entity(L, 1), text, sizeof text);
+        lua_newtable(L);
+        int n = 0;
+        for (const char* line = text; *line;) {
+            const char* end = std::strchr(line, '\n');
+            if (!end) end = line + std::strlen(line);
+            lua_pushlstring(L, line, static_cast<usize>(end - line));
+            lua_rawseti(L, -2, ++n);
+            line = *end ? end + 1 : end;
+        }
+        return 1;
+    }
+    static int set_outfit(lua_State* L) {
+        world::World& w = world(L);
+        const world::Entity e = live_entity(L, 1);
+        const char* slot = luaL_checkstring(L, 2);
+        const char* mesh = luaL_checkstring(L, 3);
+        char guid[33] = "";
+        asset::Guid parsed;
+        if (asset::parse_guid(mesh, parsed)) std::snprintf(guid, sizeof guid, "%s", mesh);
+        else if (mesh[0]) {  // by name
+            const ScriptHost& host = system(L).host_;
+            static char text[64 * 1024];
+            text[0] = 0;
+            if (host.assets) host.assets(host.user, "Mesh", "", text, sizeof text);
+            for (const char* line = text; *line && !guid[0];) {
+                const char* bar = std::strchr(line, '|');
+                const char* end = std::strchr(line, '\n');
+                if (!end) end = line + std::strlen(line);
+                if (bar && bar < end && static_cast<usize>(bar - line) == std::strlen(mesh) && std::strncmp(line, mesh, std::strlen(mesh)) == 0)
+                    std::snprintf(guid, sizeof guid, "%.32s", bar + 1);
+                line = *end ? end + 1 : end;
+            }
+            if (!guid[0]) return luaL_error(L, "set_outfit: no mesh named '%s'", mesh);
+        }
+        auto* outfit = w.get<world::Outfit>(e) ? w.get<world::Outfit>(e) : w.add<world::Outfit>(e);
+        world::OutfitSlot* target = nullptr;
+        for (world::OutfitSlot& s : outfit->slots) {
+            if (std::strcmp(s.slot, slot) == 0) target = &s;
+        }
+        if (!target) {
+            if (outfit->slots.count == outfit->slots.capacity()) return luaL_error(L, "set_outfit: %s has no room for slot %s", w.name(e), slot);
+            world::OutfitSlot s;
+            std::snprintf(s.slot, sizeof s.slot, "%s", slot);
+            outfit->slots.push_back(s);
+            target = &outfit->slots[outfit->slots.count - 1];
+        }
+        std::snprintf(target->mesh, sizeof target->mesh, "%s", guid);
+        if (lua_gettop(L) >= 6) target->color = {static_cast<f32>(luaL_checknumber(L, 4)), static_cast<f32>(luaL_checknumber(L, 5)), static_cast<f32>(luaL_checknumber(L, 6)), 1.0f};
+        return 0;
+    }
     static int set_class_volume(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         if (host.set_class_volume) host.set_class_volume(host.user, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
         return 0;
     }
-    static int save_game(lua_State* L) {
-        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
-        luaL_checkany(L, 2);
-        std::string json = "{\"lsd_save\": " + std::to_string(kSaveVersion) + ", \"data\": ";
-        if (!write_json(L, 2, json, 0)) return luaL_error(L, "save_game: only numbers, strings, booleans and tables can be saved");
-        json += "}\n";
+    // Background saves (Unreal's AsyncSaveGameToSlot): one pending write per file; anything touching that file waits for it.
+    static std::mutex& pending_mutex() {
+        static std::mutex m;
+        return m;
+    }
+    static std::map<std::string, std::shared_future<bool>>& pending_saves() {
+        static std::map<std::string, std::shared_future<bool>> pending;
+        return pending;
+    }
+    static void wait_for_save(const std::string& path) {
+        std::shared_future<bool> f;
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex());
+            auto it = pending_saves().find(path);
+            if (it == pending_saves().end()) return;
+            f = it->second;
+            pending_saves().erase(it);
+        }
+        f.wait();
+    }
+    static bool write_save(const std::string& dir, const std::string& path, const std::string& json) {
         std::error_code error;
-        std::filesystem::create_directories(system(L).save_dir_, error);
+        std::filesystem::create_directories(dir, error);
         const std::string temp = path + ".tmp";  // written whole, then swapped in: a crash never leaves half a save
         FILE* file = std::fopen(temp.c_str(), "wb");
         const bool ok = file && std::fwrite(json.data(), 1, json.size(), file) == json.size();
         if (file) std::fclose(file);
         if (ok) std::filesystem::rename(temp, path, error);
-        lua_pushboolean(L, ok && !error);
+        if (!ok || error) LSD_LOG_WARN("script", "save_game: could not write %s", path.c_str());
+        return ok && !error;
+    }
+    // The save file's text: the engine's format version, the game's own (`version`), then the value.
+    static bool save_json(lua_State* L, std::string& json) {
+        luaL_checkany(L, 2);
+        const lua_Integer version = luaL_optinteger(L, 3, 1);
+        json = "{\"lsd_save\": " + std::to_string(kSaveVersion) + ", \"version\": " + std::to_string(static_cast<long long>(version)) + ", \"data\": ";
+        if (!write_json(L, 2, json, 0)) return false;
+        json += "}\n";
+        return true;
+    }
+    static int save_game(lua_State* L) {
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        std::string json;
+        if (!save_json(L, json)) return luaL_error(L, "save_game: only numbers, strings, booleans and tables can be saved");
+        wait_for_save(path);
+        lua_pushboolean(L, write_save(system(L).save_dir_, path, json));
+        return 1;
+    }
+    static int save_game_async(lua_State* L) {
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        std::string json;
+        if (!save_json(L, json)) return luaL_error(L, "save_game_async: only numbers, strings, booleans and tables can be saved");
+        wait_for_save(path);  // an older write of this slot lands first
+        std::shared_future<bool> f = std::async(std::launch::async, write_save, system(L).save_dir_, path, std::move(json)).share();
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex());
+            pending_saves()[path] = f;
+        }
+        lua_pushboolean(L, 1);
         return 1;
     }
     static int load_game(lua_State* L) {
         const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        wait_for_save(path);
         FILE* file = std::fopen(path.c_str(), "rb");
         if (!file) return 0;
         std::string text;
@@ -1244,16 +1699,22 @@ struct Api {
             LSD_LOG_WARN("script", "load_game: %s is damaged", path.c_str());
             return 0;
         }
-        return 1;
+        const char* version = std::strstr(text.c_str(), "\"version\":");
+        lua_pushinteger(L, version && version < data ? std::atoll(version + 10) : 1);  // saves from before versions: 1
+        return 2;
     }
     static int has_save(lua_State* L) {
         std::error_code error;
-        lua_pushboolean(L, std::filesystem::exists(save_path(system(L).save_dir_, luaL_checkstring(L, 1)), error));
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        wait_for_save(path);
+        lua_pushboolean(L, std::filesystem::exists(path, error));
         return 1;
     }
     static int delete_save(lua_State* L) {
         std::error_code error;
-        lua_pushboolean(L, std::filesystem::remove(save_path(system(L).save_dir_, luaL_checkstring(L, 1)), error));
+        const std::string path = save_path(system(L).save_dir_, luaL_checkstring(L, 1));
+        wait_for_save(path);
+        lua_pushboolean(L, std::filesystem::remove(path, error));
         return 1;
     }
     static int curve(lua_State* L) {
@@ -1488,6 +1949,7 @@ void ScriptSystem::stop() {
         persistent_ = new char[json.size() + 1];
         std::memcpy(persistent_, json.c_str(), json.size() + 1);
     }
+    remove_memory_source(this);
     if (lua_) lua_close(lua_);
     lua_ = nullptr;
     js::destroy(js_);  // after Lua, which held JS functions (timers)
@@ -1515,6 +1977,10 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     path_user_ = path_user;
     // shortcut: Lua's own allocator (no memory cap per script); give it an Allocator with a budget before shipping mods.
     lua_ = luaL_newstate();
+    add_memory_source("Scripts (Lua)", [](void* user) -> usize {  // LuaJIT keeps its own heap: its collector counts it
+        lua_State* L = static_cast<ScriptSystem*>(user)->lua_;
+        return L ? static_cast<usize>(lua_gc(L, LUA_GCCOUNT, 0)) * 1024 + static_cast<usize>(lua_gc(L, LUA_GCCOUNTB, 0)) : 0;
+    }, this);
     curves_ = new CachedCurve[kMaxCurves];
     luaL_openlibs(lua_);
 
@@ -1526,20 +1992,20 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
-        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location},
-        {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"load_game", Api::load_game},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location}, {"camera_forward", Api::camera_forward},
+        {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"save_game_async", Api::save_game_async}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
-        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
-        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow},
+        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"apply_damage", Api::apply_damage}, {"rebuild_navmesh", Api::rebuild_navmesh}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
+        {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow}, {"ui_style", Api::ui_style}, {"ui_rml", Api::ui_rml}, {"_ui_open_text", Api::ui_open_text},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
-        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
-        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"set_morph", Api::set_morph}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"anim_curve", Api::anim_curve}, {"set_motion_tag", Api::set_motion_tag}, {"set_morph", Api::set_morph}, {"morph_names", Api::morph_names}, {"set_outfit", Api::set_outfit}, {"assets", Api::assets}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {
@@ -1882,7 +2348,10 @@ bool ScriptSystem::call(Instance& instance, const char* function, const f64* arg
         return true;  // scripts need not define every event
     }
     lua_rawgeti(lua_, LUA_REGISTRYINDEX, instance.self);
-    for (int i = 0; i < arg_count; ++i) lua_pushnumber(lua_, args[i]);
+    for (int i = 0; i < arg_count; ++i) {
+        if (args[i] != args[i]) lua_pushnil(lua_);  // NaN: no value (an event's missing object)
+        else lua_pushnumber(lua_, args[i]);
+    }
     char what[300];
     std::snprintf(what, sizeof what, "%s (%s)", instance.path, function);
     if (!protected_call(lua_, 1 + arg_count, what)) instance.failed = true;
@@ -1915,6 +2384,10 @@ void ScriptSystem::update(f32 dt) {
 
 u32 ScriptSystem::send(world::Entity target, const char* event, world::Entity other) {
     const f64 arg = other.value;
+    return send(target, event, &arg, 1, other);
+}
+
+u32 ScriptSystem::send(world::Entity target, const char* event, const f64* args, u32 count, world::Entity other) {
     u32 called = 0;
     for (u32 i = 0; lua_ && i < count_; ++i) {
         Instance& instance = instances_[i];
@@ -1923,7 +2396,7 @@ u32 ScriptSystem::send(world::Entity target, const char* event, world::Entity ot
         lua_getfield(lua_, -1, event);
         called += lua_isfunction(lua_, -1);
         lua_pop(lua_, 2);
-        call(instance, event, &arg, 1);
+        call(instance, event, args, static_cast<int>(count));
     }
     return called + native_event(target, event, other, false);
 }
@@ -1958,6 +2431,23 @@ int ScriptSystem::call_task(world::Entity target, const char* function, f32 dt) 
 
 u32 ScriptSystem::broadcast(const char* function, const char* text) {
     u32 called = 0;
+    if (lua_) {  // an engine-wide handler (lsd.on_ui) first: called once, whatever scripts there are
+        lua_getglobal(lua_, "lsd");
+        lua_getfield(lua_, -1, "_ui_actions");
+        if (lua_istable(lua_, -1)) {
+            lua_getfield(lua_, -1, function);
+            if (lua_isfunction(lua_, -1)) {
+                lua_pushstring(lua_, text);
+                char what[160];
+                std::snprintf(what, sizeof what, "lsd.on_ui (%s)", function);
+                protected_call(lua_, 1, what);
+                ++called;
+            } else {
+                lua_pop(lua_, 1);
+            }
+        }
+        lua_pop(lua_, 2);
+    }
     for (u32 i = 0; i < count_; ++i) {
         Instance& instance = instances_[i];
         if (instance.failed || !world_->alive(instance.entity)) continue;

@@ -54,7 +54,7 @@ u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const {
 namespace {
 
 // Simpler LODs for meshes with enough triangles to gain from them.
-void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m) {
+void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false) {
     m.lod_count = 1;
     constexpr u32 kMinTriangles = 512;
     if (data.index_count / 3 < kMinTriangles) return;
@@ -62,7 +62,7 @@ void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshDat
     u32 previous = data.index_count;
     f32 ratio = 0.5f;
     for (u32 lod = 1; lod < CachedMesh::kMaxLods; ++lod, ratio *= 0.5f) {
-        const u32 count = asset::simplify_mesh(data, ratio, indices);
+        const u32 count = asset::simplify_mesh(data, ratio, indices, lock_border);
         if (count == 0 || count > previous * 3 / 4) break;  // the shape will not get simpler: stop
         m.lod_indices[lod] = device.create_buffer(rhi::BufferUsage::Index, indices, sizeof(u32) * count);
         m.lod_index_count[lod] = count;
@@ -112,16 +112,7 @@ bool MeshCache::load(CachedMesh& entry) {
         if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
         entry.compiled_time = time;
     }
-    if (boxed) {  // project each vertex onto the plane its normal faces most, in metres
-        for (u32 i = 0; i < data.vertex_count; ++i) {
-            rhi::MeshVertex& v = data.vertices[i];
-            const f32 x = v.position[0] * box.x, y = v.position[1] * box.y, z = v.position[2] * box.z;
-            const f32 ax = std::fabs(v.normal[0]), ay = std::fabs(v.normal[1]), az = std::fabs(v.normal[2]);
-            const bool side_x = ax >= ay && ax >= az, side_y = !side_x && ay >= az;
-            v.uv[0] = side_x ? (v.normal[0] > 0.0f ? y : -y) : side_y ? (v.normal[1] > 0.0f ? -x : x) : x;
-            v.uv[1] = side_x || side_y ? -z : (v.normal[2] > 0.0f ? -y : y);  // walls upright
-        }
-    }
+    if (boxed) render::box_project_uv(data, box.x, box.y, box.z);
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
     destroy_lods(device_, entry);
     entry.gpu = render::upload_mesh(device_, data);
@@ -153,10 +144,42 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     return &t;
 }
 
+const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key) {
+    if (const auto it = slot_parts_.find(key); it != slot_parts_.end()) return it->second.empty() ? nullptr : &it->second;
+    std::vector<SlotPart>& out = slot_parts_[key];
+    asset::Guid guid;
+    i32 part = -1;
+    const asset::AssetRecord* record = asset::parse_mesh_key(key, guid, part) && part < 0 ? registry_.find(guid) : nullptr;
+    if (!record || record->type != asset::AssetType::Mesh) return nullptr;
+    asset::AssetMeta meta;
+    registry_.load_meta(*record, meta);
+    bool any = false;
+    for (const asset::MaterialSlot& s : meta.material_slots) any = any || s.material[0];
+    if (!any) return nullptr;
+    char source[300], error[256];
+    registry_.source_path(*record, source, sizeof source);
+    Array<asset::MeshPart> parts(allocator_);
+    if (!asset::list_mesh_parts(source, parts, error, sizeof error) || parts.empty()) return nullptr;
+    for (usize k = 0; k < parts.size(); ++k) {
+        SlotPart p{};
+        if (parts.size() == 1) {  // one part: the whole mesh as it is, with that slot's Material
+            std::snprintf(p.key, sizeof p.key, "%s", key);
+        } else {
+            std::snprintf(p.key, sizeof p.key, "%s#%zu", key, k);
+            p.local = trs(parts[k].position * meta.import_scale, parts[k].rotation, parts[k].scale);  // its mesh is scaled by import_scale too
+        }
+        for (const asset::MaterialSlot& s : meta.material_slots) {
+            if (parts[k].material[0] && std::strcmp(s.name, parts[k].material) == 0) std::snprintf(p.material, sizeof p.material, "%s", s.material);
+        }
+        out.push_back(p);
+    }
+    return &out;
+}
+
 const CachedMesh* MeshCache::get(const char* key) {
     const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
     if (slot >= 0) return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
-    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0) return nullptr;  // not generated yet
+    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "EditMesh:", 9) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
@@ -191,6 +214,13 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     entry->gpu = render::upload_mesh(device_, data);
     entry->lod_count = 1;
     entry->lod_screen_size[0] = 1e30f;
+    if (std::strncmp(key, "Landscape:", 10) == 0) {  // terrain LODs (Unreal's landscape LODs); edges locked so neighbouring tiles meet
+        const asset::AssetMeta defaults;
+        entry->lod_screen_size[1] = defaults.lod1_screen_size;
+        entry->lod_screen_size[2] = defaults.lod2_screen_size;
+        entry->lod_screen_size[3] = defaults.lod3_screen_size;
+        build_lods(device_, allocator_, data, *entry, true);
+    }
     const asset::MeshBounds bounds = asset::compute_bounds(data);
     entry->bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry->bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
@@ -203,6 +233,7 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
 }
 
 void MeshCache::hot_reload() {
+    slot_parts_.clear();  // Material Slots or parts may have changed
     for (CachedMesh& m : meshes_) {
         const i64 before = m.compiled_time;
         m.failed = !load(m);

@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <initializer_list>
 #include <map>
@@ -34,7 +35,7 @@ struct Plan {
     const asset::ImportedMaterial* source = nullptr;
     std::string material_path;  // Content/<folder>/Materials/M_<name>.lsdasset
     bool exists = false;        // kept as it is
-    std::string base_color, normal, orm;
+    std::string base_color, normal, orm, emissive;
     bool masked = false;
     bool metal_map = false, rough_map = false;  // packed into the ORM: the values become 1 (they multiply the map)
 };
@@ -196,86 +197,74 @@ private:
 
 } // namespace
 
-bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRecord& mesh_record, const char* original_folder, bool only_with_textures,
-                           MaterialImportReport& report, char* status, usize status_capacity) {
-    const asset::AssetRecord mesh = mesh_record;  // the registry's records move when it rescans
-    report = MaterialImportReport{};
-    char source[300], error[256];
-    registry.source_path(mesh, source, sizeof source);
-    asset::ImportedMaterials file(default_allocator());
-    if (!asset::list_mesh_materials(source, file, error, sizeof error)) {
-        std::snprintf(status, status_capacity, "Could not read the materials of %s: %s", mesh.path, error);
-        return false;
-    }
-    if (file.materials.empty()) {
-        std::snprintf(status, status_capacity, "%s has no materials", mesh.path);
-        return false;
-    }
-    Importer in(registry, mesh, original_folder);
-    if (only_with_textures) {  // automatic import: only files that bring textures (not animation-only files)
-        bool any = false;
-        for (const asset::ImportedMaterial& m : file.materials) {
-            for (const asset::ImportedMap* map : {&m.base_color_map, &m.normal_map, &m.metallic_map, &m.roughness_map, &m.occlusion_map, &m.opacity_map}) {
-                any = any || (map->exists() && !in.locate(*map, true).empty());
-                if (any) break;
-            }
-            if (any) break;
-        }
-        if (!any) {
-            std::snprintf(status, status_capacity, "%s: no textures found, no materials made", mesh.path);
-            return false;
-        }
-    }
-    // Pass 1: texture files (copied or packed) per material.
-    std::error_code fs_error;
-    const fs::path materials_dir = in.mesh_dir() / "Materials";
-    fs::create_directories(materials_dir, fs_error);
+struct MaterialImport {
+    MaterialImport(asset::AssetRegistry& r, const asset::AssetRecord& m, const char* from) : registry(r), mesh(m), file(default_allocator()), in(r, m, from) {}
+    asset::AssetRegistry& registry;
+    const asset::AssetRecord mesh;  // a copy: the registry's records move when it rescans
+    asset::ImportedMaterials file;
+    Importer in;
+    fs::path materials_dir;
     std::vector<Plan> plans;
-    for (const asset::ImportedMaterial& m : file.materials) {
-        Plan plan;
-        plan.source = &m;
-        const std::string name = safe_name(m.name);
-        plan.material_path = (materials_dir / ("M_" + name + asset::kDataAssetExtension)).generic_string();
-        plan.exists = fs::exists(plan.material_path, fs_error);
-        if (!plan.exists) {
-            LSD_LOG_INFO("editor", "Importing material %s", m.name);
-            const std::string base = in.locate(m.base_color_map);
-            auto find = [&](const asset::ImportedMap& map, std::initializer_list<const char*> kinds) {
-                const std::string found = in.locate(map);
-                return found.empty() ? in.sibling(base, kinds) : found;
-            };
-            const std::string opacity = find(m.opacity_map, {"Opacity", "Alpha", "Mask"});
-            if (!opacity.empty()) {  // colour + its cut-out mask in alpha (Masked)
-                const asset::Image* colour = in.image(base);
-                const asset::Image* mask = in.image(opacity);
-                asset::PackSource r{colour, 0}, g{colour, 1}, b{colour, 2}, a{mask, 0};
-                plan.base_color = in.pack("T_" + name + "_BaseColor", r, g, b, a);
-                plan.masked = !plan.base_color.empty() && mask;
-            } else {
-                plan.base_color = in.into_content(base);
-            }
-            plan.normal = in.into_content(find(m.normal_map, {"Normal", "Normals", "Nrm", "N"}));
-            const std::string metal = find(m.metallic_map, {"Metallic", "Metalness", "Metal"});
-            const std::string occlusion = find(m.occlusion_map, {"AO", "AmbientOcclusion", "Occlusion"});
-            std::string rough = find(m.roughness_map, {"Roughness", "Rough"});
-            bool glossy = m.roughness_is_glossiness;
-            if (rough.empty()) {  // smoothness maps (Unity, older Substance presets) are inverted roughness
-                rough = in.sibling(base, {"Glossiness", "Gloss", "Smoothness"});
-                glossy = !rough.empty();
-            }
-            if (!metal.empty() || !rough.empty() || !occlusion.empty()) {  // R occlusion, G roughness, B metallic
-                asset::PackSource r{in.image(occlusion), m.occlusion_map.channel};
-                asset::PackSource g{in.image(rough), m.roughness_map.channel, 255, glossy};
-                asset::PackSource b{in.image(metal), m.metallic_map.channel};
-                asset::PackSource a{};
-                plan.orm = in.pack("T_" + name + "_ORM", r, g, b, a);
-                plan.metal_map = !plan.orm.empty() && b.image;
-                plan.rough_map = !plan.orm.empty() && g.image;
-            }
-            in.free_images();  // big maps: keep only one material's in memory
+    usize next = 0;  // the next file material to plan
+};
+
+namespace {
+
+// Pass 1 for one material: its texture files (copied or packed).
+void plan_material(MaterialImport& job, const asset::ImportedMaterial& m) {
+    Importer& in = job.in;
+    std::error_code fs_error;
+    Plan plan;
+    plan.source = &m;
+    const std::string name = safe_name(m.name);
+    plan.material_path = (job.materials_dir / ("M_" + name + asset::kDataAssetExtension)).generic_string();
+    plan.exists = fs::exists(plan.material_path, fs_error);
+    if (!plan.exists) {
+        LSD_LOG_INFO("editor", "Importing material %s", m.name);
+        const std::string base = in.locate(m.base_color_map);
+        auto find = [&](const asset::ImportedMap& map, std::initializer_list<const char*> kinds) {
+            const std::string found = in.locate(map);
+            return found.empty() ? in.sibling(base, kinds) : found;
+        };
+        const std::string opacity = find(m.opacity_map, {"Opacity", "Alpha", "Mask"});
+        if (!opacity.empty()) {  // colour + its cut-out mask in alpha (Masked)
+            const asset::Image* colour = in.image(base);
+            const asset::Image* mask = in.image(opacity);
+            asset::PackSource r{colour, 0}, g{colour, 1}, b{colour, 2}, a{mask, 0};
+            plan.base_color = in.pack("T_" + name + "_BaseColor", r, g, b, a);
+            plan.masked = !plan.base_color.empty() && mask;
+        } else {
+            plan.base_color = in.into_content(base);
         }
-        plans.push_back(plan);
+        plan.normal = in.into_content(find(m.normal_map, {"Normal", "Normals", "Nrm", "N"}));
+        plan.emissive = in.into_content(find(m.emissive_map, {"Emissive", "Emission", "Glow"}));
+        const std::string metal = find(m.metallic_map, {"Metallic", "Metalness", "Metal"});
+        const std::string occlusion = find(m.occlusion_map, {"AO", "AmbientOcclusion", "Occlusion"});
+        std::string rough = find(m.roughness_map, {"Roughness", "Rough"});
+        bool glossy = m.roughness_is_glossiness;
+        if (rough.empty()) {  // smoothness maps (Unity, older Substance presets) are inverted roughness
+            rough = in.sibling(base, {"Glossiness", "Gloss", "Smoothness"});
+            glossy = !rough.empty();
+        }
+        if (!metal.empty() || !rough.empty() || !occlusion.empty()) {  // R occlusion, G roughness, B metallic
+            asset::PackSource r{in.image(occlusion), m.occlusion_map.channel};
+            asset::PackSource g{in.image(rough), m.roughness_map.channel, 255, glossy};
+            asset::PackSource b{in.image(metal), m.metallic_map.channel};
+            asset::PackSource a{};
+            plan.orm = in.pack("T_" + name + "_ORM", r, g, b, a);
+            plan.metal_map = !plan.orm.empty() && b.image;
+            plan.rough_map = !plan.orm.empty() && g.image;
+        }
+        in.free_images();  // big maps: keep only one material's in memory
     }
+    job.plans.push_back(plan);
+}
+
+// Pass 2 (the Materials) and the mesh's Material Slots.
+void finish(MaterialImport& job, MaterialImportReport& report, char* status, usize status_capacity) {
+    asset::AssetRegistry& registry = job.registry;
+    const asset::AssetRecord& mesh = job.mesh;
+    std::vector<Plan>& plans = job.plans;
     registry.scan();
     // Pass 2: the Materials.
     for (Plan& plan : plans) {
@@ -295,9 +284,17 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
         material.metallic = plan.metal_map ? 1.0f : m.metallic;
         const f32 roughness = m.roughness_is_glossiness ? 1.0f - m.roughness : m.roughness;
         material.roughness = plan.rough_map ? 1.0f : roughness;
-        std::snprintf(material.base_color_texture, sizeof material.base_color_texture, "%s", in.guid_at(plan.base_color).c_str());
-        std::snprintf(material.normal_texture, sizeof material.normal_texture, "%s", in.guid_at(plan.normal).c_str());
-        std::snprintf(material.orm_texture, sizeof material.orm_texture, "%s", in.guid_at(plan.orm).c_str());
+        std::snprintf(material.base_color_texture, sizeof material.base_color_texture, "%s", job.in.guid_at(plan.base_color).c_str());
+        std::snprintf(material.normal_texture, sizeof material.normal_texture, "%s", job.in.guid_at(plan.normal).c_str());
+        std::snprintf(material.orm_texture, sizeof material.orm_texture, "%s", job.in.guid_at(plan.orm).c_str());
+        std::snprintf(material.emissive_texture, sizeof material.emissive_texture, "%s", job.in.guid_at(plan.emissive).c_str());
+        const f32 glow = std::max(m.emissive[0], std::max(m.emissive[1], m.emissive[2]));
+        const f32 scale = glow > 1.0f ? 1.0f / glow : 1.0f;  // brighter than 1: the colour normalised, the rest as Emissive Strength
+        material.emissive.r = m.emissive[0] * scale;
+        material.emissive.g = m.emissive[1] * scale;
+        material.emissive.b = m.emissive[2] * scale;
+        if (glow > 1.0f) material.emissive_strength = glow;
+        if (!plan.emissive.empty() && glow <= 0.0f) material.emissive = LinearColor::hex(0xFFFFFF);  // a map with no colour: its own colours
         if (plan.masked) material.blend_mode = 1;
         else if (m.opacity < 0.999f) {
             material.blend_mode = 2;  // Translucent
@@ -314,7 +311,7 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
     asset::AssetMeta meta;
     registry.load_meta(mesh, meta);
     for (const Plan& plan : plans) {
-        const std::string guid = in.guid_at(plan.material_path);
+        const std::string guid = job.in.guid_at(plan.material_path);
         if (guid.empty()) continue;
         report.materials.emplace_back(plan.source->name, guid);
         asset::MaterialSlot* slot = nullptr;
@@ -327,11 +324,106 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
         if (slot && !slot->material[0]) std::snprintf(slot->material, sizeof slot->material, "%s", guid.c_str());
     }
     if (const asset::AssetRecord* r = registry.find(mesh.guid)) registry.save_meta(*r, meta);
-    report.textures = in.copied();
-    report.missing = in.missing();
+    report.textures = job.in.copied();
+    report.missing = job.in.missing();
     std::snprintf(status, status_capacity, "%s: %u materials made, %u kept, %u textures imported%s", mesh.name, report.created, report.reused, report.textures,
                   report.missing ? " (some textures not found: see the Output Log)" : "");
     LSD_LOG_INFO("editor", "%s", status);
+}
+
+} // namespace
+
+MaterialImport* begin_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRecord& mesh_record, const char* original_folder, bool only_with_textures,
+                                     char* status, usize status_capacity) {
+    auto job = std::make_unique<MaterialImport>(registry, mesh_record, original_folder);
+    const asset::AssetRecord& mesh = job->mesh;
+    char source[300], error[256];
+    registry.source_path(mesh, source, sizeof source);
+    if (!asset::list_mesh_materials(source, job->file, error, sizeof error)) {
+        std::snprintf(status, status_capacity, "Could not read the materials of %s: %s", mesh.path, error);
+        return nullptr;
+    }
+    if (job->file.materials.empty()) {
+        std::snprintf(status, status_capacity, "%s has no materials", mesh.path);
+        return nullptr;
+    }
+    if (only_with_textures) {  // automatic import: only files that bring textures (not animation-only files)
+        bool any = false;
+        for (const asset::ImportedMaterial& m : job->file.materials) {
+            for (const asset::ImportedMap* map : {&m.base_color_map, &m.normal_map, &m.metallic_map, &m.roughness_map, &m.occlusion_map, &m.opacity_map, &m.emissive_map}) {
+                any = any || (map->exists() && !job->in.locate(*map, true).empty());
+                if (any) break;
+            }
+            if (any) break;
+        }
+        if (!any) {
+            std::snprintf(status, status_capacity, "%s: no textures found, no materials made", mesh.path);
+            return nullptr;
+        }
+    }
+    std::error_code fs_error;
+    job->materials_dir = job->in.mesh_dir() / "Materials";
+    fs::create_directories(job->materials_dir, fs_error);
+    return job.release();
+}
+
+bool step_mesh_materials(MaterialImport* job, MaterialImportReport& report, char* status, usize status_capacity) {
+    if (!job) return true;
+    if (job->next < job->file.materials.size()) {
+        plan_material(*job, job->file.materials[job->next++]);
+        return false;
+    }
+    report = MaterialImportReport{};
+    finish(*job, report, status, status_capacity);
+    delete job;
+    return true;
+}
+
+f32 mesh_materials_progress(const MaterialImport* job, char* label, usize label_capacity) {
+    if (!job) return 1.0f;
+    const usize total = job->file.materials.size();
+    const usize at = job->next < total ? job->next : total - 1;
+    std::snprintf(label, label_capacity, "Importing %s: %s (%u / %u)", job->mesh.name, job->file.materials[at].name, static_cast<u32>(at + 1), static_cast<u32>(total));
+    return static_cast<f32>(job->next) / static_cast<f32>(total + 1);  // + 1: the Materials themselves
+}
+
+namespace {
+struct QueuedImport {
+    asset::AssetRecord mesh;
+    std::string from;
+    bool only_with_textures;
+};
+std::deque<QueuedImport> g_queue;  // shortcut: editor main thread only, like the registry it uses
+MaterialImport* g_running = nullptr;
+} // namespace
+
+void queue_mesh_materials(const asset::AssetRecord& mesh, const char* original_folder, bool only_with_textures) {
+    g_queue.push_back({mesh, original_folder ? original_folder : "", only_with_textures});
+}
+
+void update_mesh_materials(asset::AssetRegistry& registry, char* status, usize status_capacity, f32& progress, char* label, usize label_capacity) {
+    while (!g_running && !g_queue.empty()) {  // the next one (nothing to do: its reason goes to the status line)
+        const QueuedImport next = g_queue.front();
+        g_queue.pop_front();
+        g_running = begin_mesh_materials(registry, next.mesh, next.from.c_str(), next.only_with_textures, status, status_capacity);
+        if (!g_running) LSD_LOG_INFO("editor", "%s", status);
+    }
+    if (!g_running) {
+        progress = -1.0f;
+        return;
+    }
+    progress = mesh_materials_progress(g_running, label, label_capacity);
+    MaterialImportReport report;
+    if (step_mesh_materials(g_running, report, status, status_capacity)) g_running = nullptr;
+}
+
+bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRecord& mesh, const char* original_folder, bool only_with_textures,
+                           MaterialImportReport& report, char* status, usize status_capacity) {
+    report = MaterialImportReport{};
+    MaterialImport* job = begin_mesh_materials(registry, mesh, original_folder, only_with_textures, status, status_capacity);
+    if (!job) return false;
+    while (!step_mesh_materials(job, report, status, status_capacity)) {
+    }
     return true;
 }
 

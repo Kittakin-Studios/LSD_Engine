@@ -1,4 +1,5 @@
 #include "graph_editor.h"
+#include "keymap.h"
 #include "tips.h"
 #include "workspaces.h"
 
@@ -79,8 +80,8 @@ struct GraphWindow {
     rhi::Device* device = nullptr;
     rhi::MaterialShaderHandle preview_shader;
     rhi::TextureHandle preview_target;
-    char preview_textures[3][33] = {};
-    bool preview_srgb[3] = {};
+    char preview_textures[4][33] = {};
+    bool preview_srgb[4] = {};
     u32 preview_texture_count = 0;
     f32 preview_params[16][4] = {};
     u32 preview_param_count = 0;
@@ -1062,7 +1063,7 @@ void render_graph_preview(EditorState& s, const f32 background[4]) {
     draw.time = time;
     draw.material_params = &w.preview_params[0][0];  // parameters at their defaults
     draw.material_param_count = w.preview_param_count;
-    rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
+    rhi::TextureHandle* slots[4] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture, &draw.emissive_texture};
     for (u32 i = 0; i < w.preview_texture_count; ++i) *slots[i] = w.preview_textures[i][0] && s.textures ? s.textures->get(w.preview_textures[i], w.preview_srgb[i]) : rhi::TextureHandle{};
     device.draw_mesh(draw);
     device.set_render_target({}, nullptr);
@@ -1456,24 +1457,25 @@ void draw_graph_editor(EditorState& s) {
 
     // Copy / cut / paste / duplicate (the clipboard holds graph text) and undo / redo inside the graph.
     const bool keys = focused && !ImGui::IsAnyItemActive() && !w.wiring;
-    if (keys && io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_C, false) || ImGui::IsKeyPressed(ImGuiKey_X, false)) && !w.selection.empty()) {
+    const bool cut_key = keys && command_pressed(Command::Cut);
+    if ((cut_key || (keys && command_pressed(Command::Copy))) && !w.selection.empty()) {
         ImGui::SetClipboardText(copy_selection(w).c_str());
-        if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+        if (cut_key) {
             for (const u32 id : w.selection) g.remove(id);
             select_only(w, 0);
             w.dirty = true;
         }
     }
-    if (keys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+    if (keys && command_pressed(Command::Paste)) {
         if (!paste(w, ImGui::GetClipboardText(), to_canvas(io.MousePos))) std::snprintf(w.message, sizeof w.message, "The clipboard holds no nodes");
     }
-    if (keys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && !w.selection.empty()) {
+    if (keys && command_pressed(Command::Duplicate) && !w.selection.empty()) {
         const GraphNode* first = g.find(w.selection[0]);
         const std::string part = copy_selection(w);
         if (first) paste(w, part.c_str(), ImVec2(first->x + 30.0f, first->y + 30.0f));
     }
-    const bool undo_key = keys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift;
-    const bool redo_key = keys && io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_Y) || (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)));
+    const bool undo_key = keys && command_pressed(Command::Undo, true);
+    const bool redo_key = keys && (command_pressed(Command::Redo, true) || command_pressed(Command::RedoAlt, true));
     if ((undo_key && !w.undo.empty()) || (redo_key && !w.redo.empty())) {
         auto& from = undo_key ? w.undo : w.redo;
         auto& to = undo_key ? w.redo : w.undo;
@@ -1499,17 +1501,17 @@ void draw_graph_editor(EditorState& s) {
     if (w.kind == script::GraphKind::Script) {
         const std::string lua = lua_path_for(w.guid);
         debugger::trace_source(s.playing ? lua.c_str() : "");  // live flow while playing
-        if (focused && w.selected && ImGui::IsKeyPressed(ImGuiKey_F9)) {
+        if (focused && w.selected && command_pressed(Command::ToggleBreakpoint)) {
             if (const i32 line = node_first_line(lua, w.selected)) debugger::toggle(lua.c_str(), line);
             else std::snprintf(s.status, sizeof s.status, "Save the graph first (the breakpoint goes on its compiled Lua)");
         }
     }
-    if (focused && !ImGui::IsAnyItemActive() && !w.selection.empty() && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+    if (focused && !ImGui::IsAnyItemActive() && !w.selection.empty() && command_pressed(Command::Delete)) {
         for (const u32 id : w.selection) g.remove(id);
         select_only(w, 0);
         w.dirty = true;
     }
-    if (focused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) save_and_compile(s);
+    if (focused && command_pressed(Command::Save)) save_and_compile(s);
     w.view_size = size;
     canvas_drops(w, canvas, size, to_canvas(io.MousePos));
     ImGui::EndChild();

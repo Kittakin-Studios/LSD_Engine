@@ -237,6 +237,16 @@ bool load_sublevel(World& world, Entity root, const char* path) {
     return true;
 }
 
+u32 destroy_editor_only(World& world) {
+    const reflect::TypeInfo& type = reflect::type_of<EditorOnly>();
+    u32 gone = 0;
+    while (world.count(type)) {  // destroying shifts the pool: take the first each time
+        world.destroy(world.owner(type, 0));
+        ++gone;
+    }
+    return gone;
+}
+
 bool save_level_file(const World& world, const char* path) {
     Array<char> text(default_allocator());
     save_level(world, text);

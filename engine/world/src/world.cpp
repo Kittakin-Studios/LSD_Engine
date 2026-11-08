@@ -27,12 +27,13 @@ void init_types() {
         &reflect::type_of<DirectionalLight>(),
         &reflect::type_of<PointLight>(),
         &reflect::type_of<SpotLight>(),
+        &reflect::type_of<RectLight>(),
         &reflect::type_of<SkyLight>(),
         &reflect::type_of<Sky>(),
         &reflect::type_of<HeightFog>(),
         &reflect::type_of<PostProcessVolume>(),
         &reflect::type_of<LightmassImportanceVolume>(),
-        &reflect::type_of<NavMeshBounds>(), &reflect::type_of<NavModifierVolume>(), &reflect::type_of<CullDistanceVolume>(), &reflect::type_of<WaterVolume>(), &reflect::type_of<SplineMeshes>(),
+        &reflect::type_of<NavMeshBounds>(), &reflect::type_of<NavModifierVolume>(), &reflect::type_of<NavLink>(), &reflect::type_of<EditorOnly>(), &reflect::type_of<CullDistanceVolume>(), &reflect::type_of<ReflectionCapture>(), &reflect::type_of<WaterVolume>(), &reflect::type_of<SplineMeshes>(),
         &reflect::type_of<NavAgent>(),
         &reflect::type_of<AIController>(),
         &reflect::type_of<RigidBody>(),
@@ -60,6 +61,9 @@ void init_types() {
         &reflect::type_of<Vehicle>(),
         &reflect::type_of<Transport>(),
         &reflect::type_of<SubLevel>(),
+        &reflect::type_of<Outfit>(),
+        &reflect::type_of<OutfitPiece>(),
+        &reflect::type_of<EditableMesh>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     for (const reflect::TypeInfo* t : types) g_types[g_type_count++] = t;

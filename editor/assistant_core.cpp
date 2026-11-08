@@ -181,6 +181,57 @@ std::string json_escape(const std::string& text) {
     return out + "\"";
 }
 
+std::string base64(const u8* data, usize size) {
+    static const char kDigits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((size + 2) / 3 * 4);
+    for (usize i = 0; i < size; i += 3) {
+        const u32 n = static_cast<u32>(data[i]) << 16 | (i + 1 < size ? static_cast<u32>(data[i + 1]) << 8 : 0u) | (i + 2 < size ? data[i + 2] : 0u);
+        out += kDigits[(n >> 18) & 63];
+        out += kDigits[(n >> 12) & 63];
+        out += i + 1 < size ? kDigits[(n >> 6) & 63] : '=';
+        out += i + 2 < size ? kDigits[n & 63] : '=';
+    }
+    return out;
+}
+
+bool base64_decode(const char* text, std::string& out) {
+    out.clear();
+    u32 bits = 0, count = 0;
+    for (const char* c = text; *c && *c != '='; ++c) {
+        if (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') continue;
+        u32 v;
+        if (*c >= 'A' && *c <= 'Z') v = static_cast<u32>(*c - 'A');
+        else if (*c >= 'a' && *c <= 'z') v = static_cast<u32>(*c - 'a') + 26;
+        else if (*c >= '0' && *c <= '9') v = static_cast<u32>(*c - '0') + 52;
+        else if (*c == '+') v = 62;
+        else if (*c == '/') v = 63;
+        else return false;
+        bits = bits << 6 | v;
+        count += 6;
+        if (count >= 8) {
+            count -= 8;
+            out += static_cast<char>((bits >> count) & 0xFF);
+        }
+    }
+    return true;
+}
+
+bool safe_content_path(const char* path, std::string& out) {
+    out = path ? path : "";
+    for (char& c : out) c = c == '\\' ? '/' : c;
+    if (out.empty() || out[0] == '/' || out.find(':') != std::string::npos) return false;  // absolute, a drive, a stream
+    usize from = 0;
+    while (from <= out.size()) {  // every part: not "", ".", or ".."
+        const usize slash = out.find('/', from);
+        const std::string part = out.substr(from, slash == std::string::npos ? std::string::npos : slash - from);
+        if (part.empty() || part == "." || part == "..") return false;
+        if (slash == std::string::npos) break;
+        from = slash + 1;
+    }
+    return true;
+}
+
 std::string request_url(const Settings& st) {
     std::string base = st.endpoint.empty() ? (st.provider == kAnthropic ? "https://api.anthropic.com" : "https://api.openai.com/v1") : st.endpoint;
     while (!base.empty() && base.back() == '/') base.pop_back();
@@ -199,8 +250,40 @@ std::vector<std::string> request_headers(const Settings& st) {
     return h;
 }
 
-std::string request_body(const Settings& st, const std::string& system, const std::vector<Turn>& turns) {
-    std::string b = "{\"model\":" + json_escape(st.model);
+const ToolSpec* tool_specs(u32& count) {
+    static const ToolSpec kTools[] = {
+        {"console", "Run one LSD_Engine editor console command and get what it logged. Examples: play, stop, save, open <level>, help [prefix], "
+                    "asset.Open <name>, scene.List, validate, stat dump. play / open take effect on the next frame: read_log after.",
+         R"({"type":"object","properties":{"command":{"type":"string","description":"The console line, e.g. \"play\""}},"required":["command"]})"},
+        {"lua", "Run Lua in the running game (only while playing: run the console command play first). The lsd API is there; lsd.log output comes back.",
+         R"({"type":"object","properties":{"code":{"type":"string","description":"Lua code; several lines allowed"}},"required":["code"]})"},
+        {"list_objects", "Every object in the open level (or the playing world): name, parent, world position, components.", R"({"type":"object","properties":{}})"},
+        {"list_assets", "Assets in Content/: name, type, path. The filter matches any part of a line.",
+         R"({"type":"object","properties":{"filter":{"type":"string","description":"Text to match, e.g. \"Script\""}}})"},
+        {"read_log", "The latest Output Log lines (script errors, warnings, lsd.log output), oldest first.",
+         R"({"type":"object","properties":{"lines":{"type":"integer","description":"How many lines, 50 if left out"}}})"},
+        {"read_file", "A text file in Content/ or Source/ (a script, a UI document, game code), up to 64 KB.",
+         R"({"type":"object","properties":{"path":{"type":"string","description":"e.g. Content/Weapon/Weapon.lua"}},"required":["path"]})"},
+        {"write_file", "Write a whole code file in Content/ or Source/ (.lua .js .lsdgraph .rml .rcss .cpp .c .h .hpp, CMakeLists.txt). Saved scripts reload by themselves.",
+         R"({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]})"},
+    };
+    count = static_cast<u32>(sizeof kTools / sizeof kTools[0]);
+    return kTools;
+}
+
+std::string tool_arg(const std::string& input, const char* key) {
+    Parser p{input};
+    const Json v = p.value(0);
+    const Json* field = p.ok ? v.get(key) : nullptr;
+    if (!field) return {};
+    if (field->type == Json::Number) return std::to_string(static_cast<long long>(field->number));
+    return field->type == Json::String ? field->text : input.substr(field->begin, field->end - field->begin);
+}
+
+std::string request_body(const Settings& st, const std::string& system, const std::vector<Turn>& turns, bool tools) {
+    std::string b = "{\"model\":" + json_escape(st.model) + ",\"stream\":true";
+    u32 tool_count = 0;
+    const ToolSpec* specs = tool_specs(tool_count);
     if (st.provider == kAnthropic) {
         // The system prompt (role, engine guide, API) is the same every time: cached.
         b += ",\"max_tokens\":16000,\"system\":[{\"type\":\"text\",\"text\":" + json_escape(system) + ",\"cache_control\":{\"type\":\"ephemeral\"}}]";
@@ -209,17 +292,65 @@ std::string request_body(const Settings& st, const std::string& system, const st
             b += ",\"output_config\":{\"effort\":\"" + std::string(kEffort[st.effort < 3 ? st.effort : 1]) + "\"}";
         }
         if (takes_fallbacks(st)) b += ",\"fallbacks\":\"default\"";
+        if (tools) {
+            b += ",\"tools\":[";
+            for (u32 i = 0; i < tool_count; ++i) {
+                b += std::string(i ? "," : "") + "{\"name\":\"" + specs[i].name + "\",\"description\":" + json_escape(specs[i].description) +
+                     ",\"input_schema\":" + specs[i].schema + "}";
+            }
+            b += "]";
+        }
         b += ",\"messages\":[";
         for (usize i = 0; i < turns.size(); ++i) {
             const Turn& t = turns[i];
             if (i) b += ",";
-            b += t.user ? "{\"role\":\"user\",\"content\":" + json_escape(t.text) + "}"
-                        : "{\"role\":\"assistant\",\"content\":" + (t.raw.empty() ? json_escape(t.text) : t.raw) + "}";
+            if (t.user && !t.results.empty()) {  // what the tools answered, one block per call
+                b += "{\"role\":\"user\",\"content\":[";
+                for (usize k = 0; k < t.results.size(); ++k) {
+                    b += std::string(k ? "," : "") + "{\"type\":\"tool_result\",\"tool_use_id\":" + json_escape(t.results[k].id) + ",\"content\":" +
+                         json_escape(t.results[k].content) + (t.results[k].error ? ",\"is_error\":true}" : "}");
+                }
+                b += "]}";
+            } else if (t.user && !t.image.empty()) {  // a picture, then the words about it
+                b += "{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + t.image +
+                     "\"}},{\"type\":\"text\",\"text\":" + json_escape(t.text) + "}]}";
+            } else {
+                b += t.user ? "{\"role\":\"user\",\"content\":" + json_escape(t.text) + "}"
+                            : "{\"role\":\"assistant\",\"content\":" + (t.raw.empty() ? json_escape(t.text) : t.raw) + "}";
+            }
         }
         return b + "]}";
     }
+    if (tools) {
+        b += ",\"tools\":[";
+        for (u32 i = 0; i < tool_count; ++i) {
+            b += std::string(i ? "," : "") + "{\"type\":\"function\",\"function\":{\"name\":\"" + specs[i].name + "\",\"description\":" +
+                 json_escape(specs[i].description) + ",\"parameters\":" + specs[i].schema + "}}";
+        }
+        b += "]";
+    }
     b += ",\"messages\":[{\"role\":\"system\",\"content\":" + json_escape(system) + "}";
-    for (const Turn& t : turns) b += std::string(",{\"role\":\"") + (t.user ? "user" : "assistant") + "\",\"content\":" + json_escape(t.text) + "}";
+    for (const Turn& t : turns) {
+        if (t.user && !t.results.empty()) {
+            for (const ToolResult& r : t.results) b += ",{\"role\":\"tool\",\"tool_call_id\":" + json_escape(r.id) + ",\"content\":" + json_escape(r.content) + "}";
+            continue;
+        }
+        if (t.user && !t.image.empty()) {  // OpenAI-compatible vision: the text, then the picture as a data URL
+            b += ",{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":" + json_escape(t.text) +
+                 "},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64," + t.image + "\"}}]}";
+            continue;
+        }
+        b += std::string(",{\"role\":\"") + (t.user ? "user" : "assistant") + "\",\"content\":" + json_escape(t.text);
+        if (!t.user && !t.calls.empty()) {
+            b += ",\"tool_calls\":[";
+            for (usize k = 0; k < t.calls.size(); ++k) {
+                b += std::string(k ? "," : "") + "{\"id\":" + json_escape(t.calls[k].id) + ",\"type\":\"function\",\"function\":{\"name\":" +
+                     json_escape(t.calls[k].name) + ",\"arguments\":" + json_escape(t.calls[k].input.empty() ? "{}" : t.calls[k].input) + "}}";
+            }
+            b += "]";
+        }
+        b += "}";
+    }
     return b + "]}";
 }
 
@@ -247,8 +378,10 @@ Reply parse_reply(const Settings& st, int http_status, const std::string& body) 
             r.error = "The reply has no content";
             return r;
         }
-        for (const Json& block : content->values) {  // text blocks only: thinking blocks stay in `raw`
+        for (const Json& block : content->values) {  // text blocks and tool calls: thinking blocks stay in `raw`
             if (block.str("type") == "text") r.text += (r.text.empty() ? "" : "\n\n") + block.str("text");
+            const Json* input = block.get("input");
+            if (block.str("type") == "tool_use") r.calls.push_back({block.str("id"), block.str("name"), input ? body.substr(input->begin, input->end - input->begin) : "{}"});
         }
         r.raw = body.substr(content->begin, content->end - content->begin);
         if (root.str("stop_reason") == "max_tokens") r.text += "\n\n(The reply was cut off at its length limit: ask it to continue.)";
@@ -261,8 +394,107 @@ Reply parse_reply(const Settings& st, int http_status, const std::string& body) 
         }
         r.text = message->str("content");
         r.raw = r.text;
+        if (const Json* calls = message->get("tool_calls"); calls && calls->type == Json::Array) {
+            for (const Json& c : calls->values) {
+                const Json* fn = c.get("function");
+                if (fn) r.calls.push_back({c.str("id"), fn->str("name"), fn->str("arguments")});
+            }
+        }
     }
     r.ok = true;
+    return r;
+}
+
+Reply parse_stream(const Settings& st, int http_status, const std::string& body) {
+    struct Block {
+        std::string type, text, signature, raw;  // raw: the start event's block, for types sent back as they came
+        std::string id, name, input;             // tool_use: its arguments arrive as pieces of JSON
+    };
+    std::vector<Block> blocks;
+    std::vector<ToolCall> openai_calls;  // by the stream's index
+    std::string stop_reason, explanation, error, openai_text;
+    bool any = false, done = false;
+    for (usize at = 0, end; (end = body.find('\n', at)) != std::string::npos; at = end + 1) {  // whole lines only
+        std::string line = body.substr(at, end - at);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!starts(line, "data:")) continue;
+        line.erase(0, line[5] == ' ' ? 6 : 5);
+        any = true;
+        if (line == "[DONE]") {
+            done = true;
+            continue;
+        }
+        Parser p{line};
+        const Json e = p.value(0);
+        if (!p.ok || e.type != Json::Object) continue;
+        if (const Json* err = e.get("error")) error = err->type == Json::String ? err->text : err->str("message");
+        if (st.provider != kAnthropic) {
+            const Json* choices = e.get("choices");
+            if (!choices || choices->type != Json::Array || choices->values.empty()) continue;
+            if (const Json* delta = choices->values[0].get("delta")) {
+                openai_text += delta->str("content");
+                const Json* calls = delta->get("tool_calls");
+                for (usize k = 0; calls && calls->type == Json::Array && k < calls->values.size(); ++k) {
+                    const Json& c = calls->values[k];
+                    const Json* slot = c.get("index");
+                    const usize i = slot && slot->number >= 0 && slot->number < 64 ? static_cast<usize>(slot->number) : k;
+                    if (openai_calls.size() <= i) openai_calls.resize(i + 1);
+                    if (!c.str("id").empty()) openai_calls[i].id = c.str("id");
+                    if (const Json* fn = c.get("function")) {
+                        openai_calls[i].name += fn->str("name");
+                        openai_calls[i].input += fn->str("arguments");
+                    }
+                }
+            }
+            done = done || !choices->values[0].str("finish_reason").empty();
+            continue;
+        }
+        const std::string type = e.str("type");
+        const Json* delta = e.get("delta");
+        const Json* index = e.get("index");
+        Block* block = index && index->number >= 0 && static_cast<usize>(index->number) < blocks.size() ? &blocks[static_cast<usize>(index->number)] : nullptr;
+        if (type == "content_block_start") {
+            if (const Json* cb = e.get("content_block")) {
+                blocks.push_back({cb->str("type"), cb->str("type") == "thinking" ? cb->str("thinking") : cb->str("text"), cb->str("signature"),
+                                  line.substr(cb->begin, cb->end - cb->begin), cb->str("id"), cb->str("name"), ""});
+            }
+        } else if (type == "content_block_delta" && block && delta) {
+            block->text += delta->str("text") + delta->str("thinking");
+            block->signature += delta->str("signature");
+            block->input += delta->str("partial_json");
+        } else if (type == "message_delta" && delta) {
+            stop_reason = delta->str("stop_reason");
+            const Json* details = delta->get("stop_details") ? delta->get("stop_details") : e.get("stop_details");
+            if (details) explanation = details->str("explanation");
+        } else if (type == "message_stop") {
+            done = true;
+        }
+    }
+    if (!any) return parse_reply(st, http_status, body);
+    Reply r;
+    if (st.provider != kAnthropic) {
+        r.text = r.raw = openai_text;
+        for (const ToolCall& c : openai_calls) {
+            if (!c.name.empty()) r.calls.push_back(c);
+        }
+    } else {
+        r.raw = "[";
+        for (const Block& b : blocks) {
+            if (b.type == "text") r.text += (r.text.empty() ? "" : "\n\n") + b.text;
+            const std::string input = b.input.empty() ? "{}" : b.input;
+            if (b.type == "tool_use") r.calls.push_back({b.id, b.name, input});
+            if (r.raw.size() > 1) r.raw += ",";
+            r.raw += b.type == "text"       ? "{\"type\":\"text\",\"text\":" + json_escape(b.text) + "}"
+                     : b.type == "thinking" ? "{\"type\":\"thinking\",\"thinking\":" + json_escape(b.text) + ",\"signature\":" + json_escape(b.signature) + "}"
+                     : b.type == "tool_use" ? "{\"type\":\"tool_use\",\"id\":" + json_escape(b.id) + ",\"name\":" + json_escape(b.name) + ",\"input\":" + input + "}"
+                                            : b.raw;  // redacted thinking and others arrive whole
+        }
+        r.raw += "]";
+        if (stop_reason == "refusal") error = "The model declined this request" + (explanation.empty() ? std::string(".") : ": " + explanation);
+        if (stop_reason == "max_tokens") r.text += "\n\n(The reply was cut off at its length limit: ask it to continue.)";
+    }
+    r.error = !error.empty() ? error : done ? std::string() : "The connection closed before the reply finished.";
+    r.ok = r.error.empty();
     return r;
 }
 
@@ -291,9 +523,20 @@ std::vector<CodeBlock> code_blocks(const std::string& text) {
     return out;
 }
 
-bool writable_path(const std::string& path) {
+bool readable_path(const std::string& path) {
     if (path.empty() || path.find("..") != std::string::npos || path.find(':') != std::string::npos || path[0] == '/' || path[0] == '\\') return false;
     return starts(path, "Content/") || starts(path, "Source/");
+}
+
+bool writable_path(const std::string& path) {
+    if (!readable_path(path)) return false;
+    // Code only: scripts, UI documents, game code (meshes, textures, levels, data assets are not its job).
+    const usize dot = path.rfind('.');
+    const std::string ext = dot == std::string::npos ? std::string() : path.substr(dot);
+    for (const char* code : {".lua", ".js", ".lsdgraph", ".rml", ".rcss", ".cpp", ".c", ".h", ".hpp"}) {
+        if (ext == code) return true;
+    }
+    return path.size() >= 14 && path.compare(path.size() - 14, 14, "CMakeLists.txt") == 0;
 }
 
 } // namespace lsd::editor::assistant

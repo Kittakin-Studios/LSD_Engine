@@ -2,11 +2,14 @@
 #include "tips.h"
 #include "workspaces.h"
 
+#include "lsd/debug_ui/details_panel.h"
+
 #include <imgui.h>
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace lsd::editor {
 
@@ -28,6 +31,7 @@ void ParticleEditor::open(EditorState& s, const asset::AssetRecord& r) {
     time_ = 0.0f;
     instance_.restart();
     select_asset(s, r.name);  // its emitters in Details
+    if (std::strcmp(s.settings.workspace, "Particles") != 0) std::snprintf(s.workspace_request, sizeof s.workspace_request, "Particles");  // Niagara opens in its own space
     ImGui::SetWindowFocus("###ParticleEditor");
 }
 
@@ -74,6 +78,9 @@ void ParticleEditor::draw(EditorState& s) {
     ImGui::Checkbox("Loop", &loop_);
     ImGui::SetItemTooltip("Start again when every emitter has finished (non-looping systems)");
     ImGui::SameLine();
+    ImGui::Checkbox("Bounds", &show_bounds_);
+    ImGui::SetItemTooltip("Draws the box the live particles fill (Niagara's bounds): how far the effect reaches");
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
     with_tip(ImGui::SliderFloat("Speed", &speed_, 0.05f, 4.0f, "%.2fx", ImGuiSliderFlags_Logarithmic), "Preview speed (slow motion or fast forward)");
 
@@ -87,11 +94,38 @@ void ParticleEditor::draw(EditorState& s) {
     }
     sim_ms_ = std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() - start).count();
 
+    // Wide enough: the stack in its own scrolling column beside the preview (Niagara's layout).
+    const bool wide = ImGui::GetContentRegionAvail().x > 512.0f + 360.0f;
+    if (wide) ImGui::BeginChild("##preview_side", ImVec2(512.0f, 0.0f));
+
     // Preview (rendered by render() this frame), orbit with the mouse.
     const f32 side = ImGui::GetContentRegionAvail().x < 512.0f ? ImGui::GetContentRegionAvail().x : 512.0f;
     const bool flipped = s.device->render_targets_flipped();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::Image(static_cast<ImTextureID>(s.device->debug_ui_texture(target_)), ImVec2(side, side), ImVec2(0, flipped ? 1.0f : 0.0f),
                  ImVec2(1, flipped ? 0.0f : 1.0f));
+    if (Vec3 lo, hi; show_bounds_ && instance_.bounds(lo, hi)) {  // its 12 edges over the picture, and its size
+        ImVec2 corner[8];
+        bool ok = true;
+        for (int c = 0; c < 8 && ok; ++c) {
+            const Vec3 p{(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z};
+            const f32 x = view_proj_.at(0, 0) * p.x + view_proj_.at(0, 1) * p.y + view_proj_.at(0, 2) * p.z + view_proj_.at(0, 3);
+            const f32 y = view_proj_.at(1, 0) * p.x + view_proj_.at(1, 1) * p.y + view_proj_.at(1, 2) * p.z + view_proj_.at(1, 3);
+            const f32 w = view_proj_.at(3, 0) * p.x + view_proj_.at(3, 1) * p.y + view_proj_.at(3, 2) * p.z + view_proj_.at(3, 3);
+            ok = w > 0.01f;
+            corner[c] = ImVec2(at.x + (x / w * 0.5f + 0.5f) * side, at.y + (0.5f - y / w * 0.5f) * side);
+        }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        for (int c = 0; c < 8 && ok; ++c) {
+            for (int axis = 1; axis < 8; axis <<= 1) {
+                if (!(c & axis)) dl->AddLine(corner[c], corner[c | axis], IM_COL32(243, 195, 18, 220), 1.5f);
+            }
+        }
+        const Vec3 size = hi - lo;
+        char text[96];
+        std::snprintf(text, sizeof text, "Bounds %.2f x %.2f x %.2f m", static_cast<f64>(size.x), static_cast<f64>(size.y), static_cast<f64>(size.z));
+        dl->AddText(ImVec2(at.x + 6, at.y + side - 20), IM_COL32(243, 195, 18, 255), text);
+    }
     if (ImGui::IsItemHovered()) {
         const ImGuiIO& io = ImGui::GetIO();
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -148,8 +182,104 @@ void ParticleEditor::draw(EditorState& s) {
         ImGui::EndTable();
     }
     ImGui::Text("%u particles   sim %.3f ms   time %.2f s", total, sim_ms_, time_);
-    ImGui::TextDisabled("Edit the emitters in Details; Save there to update the level.");
+    if (wide) {
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##stack_side", ImVec2(0.0f, 0.0f));
+        draw_stack(s);
+        ImGui::EndChild();
+    } else {
+        draw_stack(s);
+    }
     ImGui::End();
+}
+
+// Niagara's emitter stack: the selected emitter's modules in the order a particle meets them, under
+// their stage (Emitter Update, Particle Spawn, Particle Update, Render), editing the same object as
+// Details (saved by itself a moment after a change).
+void ParticleEditor::draw_stack(EditorState& s) {
+    auto* system = static_cast<particles::ParticleSystem*>(edited_data_asset(guid_, reflect::type_of<particles::ParticleSystem>()));
+    ImGui::SeparatorText("Emitter Stack");
+    if (!system) {
+        ImGui::TextDisabled("Select this Particle System in the Content Browser to edit its stack here.");
+        return;
+    }
+    if (ImGui::BeginTabBar("##stack_emitters", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        for (u32 i = 0; i < system->emitters.count; ++i) {
+            char label[64];
+            std::snprintf(label, sizeof label, "%s%s###emitter%u", system->emitters[i].name, system->emitters[i].enabled ? "" : " (off)", i);
+            if (ImGui::BeginTabItem(label)) {
+                stack_emitter_ = i;
+                ImGui::EndTabItem();
+            }
+        }
+        if (with_tip(ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip), "Adds an emitter (up to 8)") &&
+            system->emitters.push_back(particles::ParticleEmitter{})) {
+            mark_data_asset_edited();
+        }
+        ImGui::EndTabBar();
+    }
+    if (system->emitters.count == 0) {
+        ImGui::TextDisabled("No emitters yet: + adds one.");
+        return;
+    }
+    if (stack_emitter_ >= system->emitters.count) stack_emitter_ = 0;
+    particles::ParticleEmitter& e = system->emitters[stack_emitter_];
+    DetailsStyle style = editor_details_style(s);
+    struct Stage {
+        const char* label;
+        ImVec4 color;
+        const char* modules;
+        const char* tip;
+    };
+    static const Stage stages[] = {
+        {"Emitter", ImVec4(0.45f, 0.45f, 0.5f, 1.0f), "Emitter", "Its name, on / off, local or world space"},
+        {"Emitter Update", ImVec4(0.93f, 0.55f, 0.1f, 1.0f), "Spawn", "How many particles it makes, and for how long"},
+        {"Particle Spawn", ImVec4(0.3f, 0.7f, 0.25f, 1.0f), "Initialize Particle,Shape,Velocity", "Once, when each particle is born: its life, where, how fast"},
+        {"Particle Update", ImVec4(0.2f, 0.45f, 0.85f, 1.0f), "Forces,Color,Size,Rotation,Over Life,Collision", "Every frame of its life: forces, colour, size, turning, hits"},
+        {"Render", ImVec4(0.8f, 0.25f, 0.3f, 1.0f), "Renderer", "How it is drawn: sprite, mesh or ribbon, texture, blend"},
+    };
+    bool changed = false;
+    for (const Stage& stage : stages) {
+        ImGui::PushStyleColor(ImGuiCol_Header, stage.color);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(stage.color.x * 1.15f, stage.color.y * 1.15f, stage.color.z * 1.15f, 1.0f));
+        const bool open = ImGui::CollapsingHeader(stage.label, ImGuiTreeNodeFlags_DefaultOpen);
+        ImGui::PopStyleColor(2);
+        ImGui::SetItemTooltip("%s", stage.tip);
+        if (!open) continue;
+        ImGui::PushID(stage.label);
+        // Each module of the stage under its own header with an on / off box (Niagara's module checkboxes).
+        static const struct {
+            const char* category;
+            u32 bit;  // 0: always on
+        } kModules[] = {{"Emitter", 0}, {"Spawn", 0}, {"Initialize Particle", 0}, {"Shape", particles::kModuleShape}, {"Velocity", particles::kModuleVelocity},
+                        {"Forces", particles::kModuleForces}, {"Color", particles::kModuleColor}, {"Size", particles::kModuleSize},
+                        {"Rotation", particles::kModuleRotation}, {"Over Life", particles::kModuleOverLife}, {"Collision", particles::kModuleCollision},
+                        {"Renderer", 0}};
+        for (const auto& m : kModules) {
+            if (!std::strstr(stage.modules, m.category)) continue;
+            if (m.bit) {  // its box above its settings; off: the settings fold away
+                bool on = (e.disabled_modules & m.bit) == 0;
+                char label[48];
+                std::snprintf(label, sizeof label, "Use %s", m.category);
+                if (ImGui::Checkbox(label, &on)) {
+                    e.disabled_modules = on ? e.disabled_modules & ~m.bit : e.disabled_modules | m.bit;
+                    changed = true;
+                }
+                ImGui::SetItemTooltip("Switches the %s module off (its settings stay) to see the effect without it", m.category);
+                if (!on) continue;
+            }
+            style.categories = m.category;
+            changed = draw_details(reflect::type_of<particles::ParticleEmitter>(), &e, &style) || changed;
+        }
+        ImGui::PopID();
+    }
+    if (with_tip(ImGui::Button("Remove Emitter"), "Takes this emitter out of the system (undo with Ctrl+Z in Details is not offered: copy the asset first)") && system->emitters.count > 1) {
+        system->emitters.remove(stack_emitter_);
+        stack_emitter_ = 0;
+        changed = true;
+    }
+    if (changed) mark_data_asset_edited();
 }
 
 void ParticleEditor::render(rhi::Device& device, const f32 background[4]) {

@@ -8,10 +8,36 @@ namespace lsd::asset {
 
 namespace {
 
-// "one" for this number in this language? (zero is handled before: it is chosen only when written)
-bool plural_one(f64 n, const char* language) {
-    const bool french_like = std::strncmp(language, "fr", 2) == 0 || std::strncmp(language, "pt", 2) == 0;
-    return french_like ? (n >= 0.0 && n < 2.0) : n == 1.0;
+// This number's plural form in this language (CLDR's cardinal rules for whole numbers): "one", "two",
+// "few", "many" or "other". A text without that form uses "other". Fractions are "other" (French: below 2 "one").
+const char* plural_form(f64 n, const char* language) {
+    auto is = [&](const char* code) { return std::strncmp(language, code, 2) == 0 && (language[2] == '\0' || language[2] == '-' || language[2] == '_'); };
+    if (is("fr") || is("pt")) return n >= 0.0 && n < 2.0 ? "one" : "other";
+    if (is("ja") || is("zh") || is("ko") || is("th") || is("vi") || is("id") || is("ms")) return "other";  // no plural forms
+    if (n < 0.0) n = -n;
+    if (n != static_cast<f64>(static_cast<u64>(n))) return "other";
+    const u64 i = static_cast<u64>(n), mod10 = i % 10, mod100 = i % 100;
+    if (is("ru") || is("uk") || is("be")) {
+        if (mod10 == 1 && mod100 != 11) return "one";
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "few";
+        return "many";
+    }
+    if (is("pl")) {
+        if (i == 1) return "one";
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "few";
+        return "many";
+    }
+    if (is("cs") || is("sk")) return i == 1 ? "one" : i >= 2 && i <= 4 ? "few" : "other";
+    if (is("ar")) {
+        if (i == 0) return "zero";
+        if (i == 1) return "one";
+        if (i == 2) return "two";
+        if (mod100 >= 3 && mod100 <= 10) return "few";
+        if (mod100 >= 11) return "many";
+        return "other";
+    }
+    if (is("he")) return i == 1 ? "one" : i == 2 ? "two" : "other";
+    return i == 1 ? "one" : "other";  // English, German, Spanish, Italian, Dutch, Swedish... (and the default)
 }
 
 // The `name=` choice of a "plural(one=apple,other=apples)" body [begin, end), or false.
@@ -50,8 +76,8 @@ void format_text(const char* pattern, const char* const* args, u32 arg_count, co
                 if (close) {
                     const f64 value = std::atof(arg);
                     const char *from = nullptr, *to = nullptr;
-                    const bool found = (value == 0.0 && plural_choice(body, close, "zero", from, to)) ||
-                                       (plural_one(value, language) && plural_choice(body, close, "one", from, to)) ||
+                    const bool found = (value == 0.0 && plural_choice(body, close, "zero", from, to)) ||  // zero= written: always at 0
+                                       plural_choice(body, close, plural_form(value, language), from, to) ||
                                        plural_choice(body, close, "other", from, to);
                     if (found) put(from, to);
                     p = close + 1;

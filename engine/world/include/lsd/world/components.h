@@ -23,6 +23,7 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drag a material from the Content Browser onto the object in the viewport, or pick it here") char material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Tints the material (white = as the material is)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "Blocks the player in Play") bool collision = true;
+    LSD_PROPERTY(Edit, Tooltip = "A jump-through platform: the player passes up and sideways through it and lands on its top (Collision on)") bool one_way = false;
     LSD_PROPERTY(Edit, Widget = "Choice:Box,Mesh", Tooltip = "Box: the bounds (fast). Mesh: the triangles themselves (arches, ramps, stairs; Unreal's Use Complex As Simple)")
     u32 collision_shape = 0;
     LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "The surface's friction and bounciness") char physical_material[33] = "";
@@ -30,6 +31,8 @@ struct StaticMesh {
     bool box_uv = false;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Not drawn (nor shadowed) farther than this from the camera; 0 = always (Unreal's Max Draw Distance)")
     f32 max_draw_distance = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Build Lighting bakes a lightmap for it (Unreal's Mobility: Static): baked shadows and bounced light. Off for things that move; physics bodies and movers never get one")
+    bool static_lighting = true;
 };
 
 // Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),
@@ -334,6 +337,48 @@ struct NetReplicated {
 // sheet, on a 1 m quad in the X-Z plane facing -Y (a side-on game looks along +Y: the Front view),
 // pivot at the bottom centre; the Transform's scale sizes it. With Frame Count > 1 it plays that
 // many cells from Frame at FPS (a flipbook); scripts switch animations by setting Frame.
+// A tileset tile's collision in a Tile Map (Paper2D's per-tile collision).
+LSD_STRUCT(Category = "2D")
+struct TileShape {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Full,None,Top Half,Bottom Half,Slope Up,Slope Down,One Way",
+                 Tooltip = "Full: the whole square blocks. None: drawn only (decoration). Halves: the upper or lower half. Slopes: a ramp rising to the right (Up) or to the left (Down). One Way: the player jumps up through it and lands on top")
+    u32 shape = 0;
+};
+
+// One frame of a Flipbook: a cell of the sprite's sheet, how long it shows, and an event.
+LSD_STRUCT(Category = "2D")
+struct FlipbookFrame {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The sheet cell shown (left to right, then down)") u32 cell = 0;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0.001, Tooltip = "How long it shows") f32 duration = 0.1f;
+    LSD_PROPERTY(Edit, Tooltip = "In Play, the sprite's scripts run this function when the frame starts (footstep, swing...); empty = none") char event[32] = "";
+};
+
+// A Flipbook asset (Unreal's Paper2D Flipbook): frames of a sprite sheet, each with its own time and an optional event.
+LSD_STRUCT(Category = "2D")
+struct Flipbook {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The frames in order") List<FlipbookFrame, 256> frames;
+    LSD_PROPERTY(Edit, Tooltip = "Starts over when it ends; off: stops on the last frame") bool loop = true;
+    // The Flipbook window's preview only (sprites playing it use their own sheet).
+    LSD_PROPERTY(Edit, Category = "Preview", Widget = "Asset:Texture", Tooltip = "The sprite sheet the Flipbook window shows the cells from") char preview_texture[33] = "";
+    LSD_PROPERTY(Edit, Category = "Preview", Min = 1, Max = 64, Tooltip = "Cells across the preview sheet") u32 preview_columns = 4;
+    LSD_PROPERTY(Edit, Category = "Preview", Min = 1, Max = 64, Tooltip = "Cells down the preview sheet") u32 preview_rows = 1;
+};
+
+// One more layer of a Tile Map (Unreal's Paper2D Tile Map layers): decoration in front of or behind
+// the main tiles, painted from the same tileset.
+LSD_STRUCT(Category = "2D")
+struct TileLayer {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Its name in the 2D mode's layer list (Background, Foreground...)") char name[32] = "Layer";
+    LSD_PROPERTY(Edit, Tooltip = "Drawn; off: hidden (still kept)") bool visible = true;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Along +Y from the main tiles: positive behind them (backgrounds), negative in front (foreground grass)") f32 depth = 0.1f;
+    LSD_PROPERTY(Edit, Tooltip = "Its tiles block in Play too (with the map's Collision on)") bool collision = false;
+    LSD_PROPERTY(Save) List<i32, 4096> tiles;  // as the map's own tiles
+};
+
 LSD_STRUCT(Component, Category = "2D", Tooltip = "A flat image for 2D games, with sprite-sheet frames and flipbook animation")
 struct Sprite {
     LSD_GENERATED()
@@ -345,12 +390,28 @@ struct Sprite {
     LSD_PROPERTY(Edit, Category = "Flipbook", Min = 1, Max = 4096, Tooltip = "Cells the animation plays from Frame; 1 = a still sprite") u32 frame_count = 1;
     LSD_PROPERTY(Edit, Category = "Flipbook", Min = 0, Max = 120, Tooltip = "Frames a second") f32 fps = 12.0f;
     LSD_PROPERTY(Edit, Category = "Flipbook", Tooltip = "The flipbook starts over when it ends") bool loop = true;
+    LSD_PROPERTY(Edit, Category = "Flipbook", Widget = "Asset:Flipbook", Tooltip = "A Flipbook asset (frames of this sheet with their own durations and events) played instead of Frame / Frame Count / FPS")
+    char flipbook[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Mirror left-right (a side-scroller Character sets it from the way it walks)") bool flip_x = false;
     LSD_PROPERTY(Edit, Tooltip = "Mirror the image upside down") bool flip_y = false;
     LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours, like most 2D games") bool lit = false;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Pixels with less alpha are cut out") f32 alpha_cutoff = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Soft edges and see-through colours (glass, smoke, glows): blended over what is behind, drawn far to near after the solid ones. Off: cut out at Alpha Cutoff")
+    bool translucent = false;
+    LSD_PROPERTY(Edit, Tooltip = "Translucent sprites at the same depth: higher draws on top (Unreal's Translucency Sort Priority)") i32 sort_order = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Lit sprites cast shadows from the level's lights (its cut-out shape)") bool cast_shadows = true;
     LSD_PROPERTY(Edit, Tooltip = "Blocks in Play: a box the sprite's size, 1 m deep (a RigidBody uses the same box)") bool collision = false;
+    LSD_PROPERTY(Edit, Tooltip = "With Collision: a jump-through platform (the player lands on it from above)") bool one_way = false;
+    // On a side-scroller Character (Paper2D Character's flipbooks): Frame / Frame Count are the idle animation.
+    LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell of the walk animation") u32 walk_frame = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the walk animation; 0 = keep the idle one while walking") u32 walk_count = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Tooltip = "On a side-scroller Character: the first cell shown in the air (jumping, falling)") u32 jump_frame = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Min = 0, Max = 4096, Tooltip = "Cells of the in-air animation; 0 = keep the idle or walk one") u32 jump_count = 0;
+    LSD_PROPERTY(Edit, Category = "Character Animation", Widget = "Asset:Flipbook", Tooltip = "On a side-scroller Character: a Flipbook played while walking (instead of Walk Frame / Count)")
+    char walk_flipbook[33] = "";
+    LSD_PROPERTY(Edit, Category = "Character Animation", Widget = "Asset:Flipbook", Tooltip = "On a side-scroller Character: a Flipbook played in the air (instead of Jump Frame / Count)")
+    char jump_flipbook[33] = "";
 };
 
 // A grid of tiles from a tileset image (Unreal's Paper2D Tile Map), painted in the 2D level mode:
@@ -368,8 +429,12 @@ struct TileMap {
     LSD_PROPERTY(Edit, Tooltip = "Whole texels, no blur (pixel art)") bool pixel_art = true;
     LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours") bool lit = false;
     LSD_PROPERTY(Edit, Tooltip = "Painted tiles block in Play (rows of tiles become boxes)") bool collision = true;
+    LSD_PROPERTY(Edit, Tooltip = "Lit maps cast shadows from the level's lights") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Category = "Collision", Tooltip = "Each tileset tile's collision, by tile number (the 2D mode's palette sets it for the chosen tile); missing ones are Full")
+    List<TileShape, 256> tile_shapes;
     // Row by row from the bottom-left: the tileset cell + 1 (cells count left to right, then down), 0 = empty.
     LSD_PROPERTY(Save) List<i32, 4096> tiles;
+    LSD_PROPERTY(Edit, Tooltip = "More layers over or under the main tiles (the 2D mode's Layer list paints them)") List<TileLayer, 3> layers;
 };
 
 // A picture projected onto whatever is inside its box (Unreal's Decal Actor): blood, dirt, cracks,
@@ -402,13 +467,53 @@ struct InstancedStaticMesh {
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Material for every copy (empty: the mesh's own colour)") char material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Colour of every copy (without a material)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "The copies cast shadows") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Tooltip = "Each copy blocks in Play like a Static Mesh with collision (trees, rocks): a box around the mesh, sized and turned as the copy; off for grass") bool collision = false;
     LSD_PROPERTY(Edit, Tooltip = "The copies (foliage paints them); drawn together in one go") List<MeshInstance, 1024> instances;
+};
+
+// An Editable Mesh's point and face (3 or 4 point indices, counter-clockwise seen from outside; d = 0xFFFFFFFF: a triangle).
+LSD_STRUCT()
+struct EditPoint {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) Vec3 p;
+};
+LSD_STRUCT()
+struct EditFace {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) u32 a = 0;
+    LSD_PROPERTY(Save) u32 b = 0;
+    LSD_PROPERTY(Save) u32 c = 0;
+    LSD_PROPERTY(Save) u32 d = 0xFFFFFFFFu;
+};
+
+// A mesh made in the 3D Modeling mode (Unreal's Modeling Mode, PolyEdit): its points and faces live in
+// the level, edited with Extrude, Inset, Bevel, Push / Pull, Delete and Flip, drawn and collided through
+// the Static Mesh beside it (mesh "EditMesh:<id>", built from these by the editor and the game).
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "A mesh shaped in the 3D Modeling mode: click a face there, then extrude, inset or bevel it")
+struct EditableMesh {
+    LSD_GENERATED()
+    LSD_PROPERTY(Save) List<EditPoint, 1024> points;
+    LSD_PROPERTY(Save) List<EditFace, 1024> faces;
+    LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Texture tiles per metre (its UVs are projected from each face's side)") f32 uv_scale = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Slides the texture along U") f32 uv_offset_u = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Slides the texture along V") f32 uv_offset_v = 0.0f;
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turns the texture on every face") f32 uv_rotation = 0.0f;
+};
+
+// A Landscape's paint layer (Unreal's Landscape Layer Info): a texture tiled over the terrain, tinted.
+LSD_STRUCT()
+struct LandscapeLayer {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Its name in the Landscape mode's Paint list (Grass, Rock, Sand...)") char name[32] = "Layer";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "The texture tiled where this layer is painted (none: the tint alone)") char texture[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Colour, multiplied with the texture") LinearColor tint = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "Metres per texture tile") f32 tile = 4.0f;
 };
 
 // Terrain sculpted in Landscape mode (Unreal's Landscape): a square grid of heights centred on the
 // object, drawn and collided through the Static Mesh beside it (its mesh is "Landscape:<id>", built
 // from these heights by the editor and the game every time they change).
-// shortcut: one 65 x 65 grid saved in the level, one material; heightmap files and tiles for big worlds
+// shortcut: one 65 x 65 grid saved in the level, one material; tiles (and bigger grids) for big worlds
 LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Sculptable terrain (the Landscape mode)")
 struct Landscape {
     LSD_GENERATED()
@@ -416,11 +521,27 @@ struct Landscape {
     LSD_PROPERTY(Edit, Units = "m", Min = 1, Tooltip = "Width of the square (the grid stretches with it)") f32 size = 64.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "Metres per texture tile") f32 uv_tile = 4.0f;
     LSD_PROPERTY(Save) List<f32, 4225> heights;  // kResolution x kResolution, row by row (y, then x), metres
+    LSD_PROPERTY(Edit, Tooltip = "Paint layers (Landscape mode > Paint). The first covers everything until others are painted over it; 2 or more to paint")
+    List<LandscapeLayer, 4> layers;
+    LSD_PROPERTY(Save) List<u32, 4225> weights;  // per height: the 4 layers' weights as bytes (layer 0 in the lowest), summing to 255
+    LSD_PROPERTY(Save) List<u32, 4225> holes;    // per height: 1 cuts the squares around it (caves, tunnels); empty until the first hole
+};
+
+// One more mesh a PCG Volume scatters, picked for a point by its weight against the others.
+LSD_STRUCT(Category = "Procedural")
+struct PcgMesh {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "Another mesh to scatter (rocks among the trees)") char mesh[40] = "Cube";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Its material") char material[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Its colour (without a material)") LinearColor color = LinearColor::hex(0x8A8A8E);
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "How often it is picked against the main mesh's Weight and the others'") f32 weight = 1.0f;
 };
 
 // Scatters copies of a mesh on whatever surfaces are inside this box (Unreal's PCG Volume with a
 // surface sampler): density, slope and scale rules, the same result for the same seed. The copies go
-// to an Instanced Static Mesh on a separate object (`output`), rebuilt when a rule or the box changes.
+// to an Instanced Static Mesh on a separate object (`output`; More Meshes to its "Variant N" children),
+// rebuilt when a rule or the box changes. An Exclude volume scatters nothing and keeps the others out
+// of its box (Unreal's PCG difference / exclusion).
 LSD_STRUCT(Component, Category = "Procedural", Tooltip = "Scatters a mesh on the surfaces in its box by density, slope and seed")
 struct PcgVolume {
     LSD_GENERATED()
@@ -429,11 +550,18 @@ struct PcgVolume {
     LSD_PROPERTY(Edit, Tooltip = "Colour of the scattered meshes (without a material)") LinearColor color = LinearColor::hex(0x4F8A3C);
     LSD_PROPERTY(Edit, Min = 0, Tooltip = "Copies per 100 square metres of the box's floor (at most 1024)") f32 density = 20.0f;
     LSD_PROPERTY(Edit, Tooltip = "Same seed, same layout; change it for another") u32 seed = 1;
+    LSD_PROPERTY(Edit, Category = "Spline", Units = "m", Min = 0.1,
+                 Tooltip = "With a Spline on this object: copies along the curve instead of in the box (fences, trees by a road, rocks on a path), this far apart")
+    f32 spline_spacing = 2.0f;
+    LSD_PROPERTY(Edit, Category = "Spline", Units = "m", Min = 0, Tooltip = "With a Spline: how wide a strip along it they scatter in (0 = on the line)") f32 spline_width = 0.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 90, Tooltip = "No copies on surfaces steeper than this") f32 max_slope = 35.0f;
     LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Smallest random size of a scattered mesh") f32 scale_min = 0.8f;
     LSD_PROPERTY(Edit, Min = 0.01, Tooltip = "Largest random size of a scattered mesh") f32 scale_max = 1.2f;
     LSD_PROPERTY(Edit, Tooltip = "Turn each copy at random around Z") bool random_yaw = true;
     LSD_PROPERTY(Edit, Tooltip = "Tilt copies to the surface (rocks on a slope) instead of standing upright") bool align_to_surface = false;
+    LSD_PROPERTY(Edit, Min = 0, Tooltip = "How often the main mesh is picked against More Meshes' weights") f32 weight = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Other meshes scattered with it, each picked by its weight (several kinds of plants, rocks)") List<PcgMesh, 8> more_meshes;
+    LSD_PROPERTY(Edit, Tooltip = "An exclusion box: it scatters nothing, and the other PCG Volumes leave its box empty (paths, clearings, buildings)") bool exclude = false;
     LSD_PROPERTY(Visible, Tooltip = "The object holding the copies") char output[64] = "";
 };
 
@@ -523,10 +651,41 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the animation (1 = as made)") f32 play_rate = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends") bool looping = true;
     LSD_PROPERTY(Edit, Tooltip = "Plays in the editor too, so you see the motion while building") bool playing = true;
+    LSD_PROPERTY(Edit, Tooltip = "Root Motion (Unreal's Root Motion from Everything): in Play the animation's root travel moves the object (a Character through its capsule) instead of sliding the mesh away; the editor shows it in place")
+    bool root_motion = false;
     LSD_PROPERTY(Edit, Widget = "Asset:AnimGraph", Tooltip = "A state machine (Idle, Walk/Run blend space, Jump...) driven by parameters; replaces the clip above")
     char anim_graph[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Morph targets (blend shapes: faces, correctives) mixed in by weight; scripts set them with lsd.set_morph")
-    List<MorphWeight, 16> morphs;
+    List<MorphWeight, 64> morphs;
+    LSD_PROPERTY(Edit, Tooltip = "Copies the pose of this object's Skeletal Mesh bone by bone, by bone name (Unreal's Leader Pose Component): clothes and hair skinned to the same skeleton as a body. Empty: its own animation")
+    char leader_pose[64] = "";
+};
+
+// One body area of an Outfit: what is worn there and the bone a rigid piece sticks to.
+LSD_STRUCT(Category = "Character")
+struct OutfitSlot {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The body area (Shirt, Pants, Shoes, Gloves, Hat...); scripts name it in lsd.set_outfit") char slot[24] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "What is worn there: a mesh skinned to the body's skeleton follows its pose; a rigid mesh (a hat, glasses) sticks to Bone. Empty: nothing")
+    char mesh[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The bone (or socket) a rigid piece sticks to (UE5 Manny names: head, spine_03, hand_r, pelvis, foot_r...)") char bone[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Tint of the piece") LinearColor color = LinearColor::hex(0xFFFFFF);
+};
+
+// Modular clothes (Unreal's modular characters with a Leader Pose): each slot's mesh becomes a child
+// of this object, skinned pieces copying its skeleton's pose by bone name, rigid ones attached to
+// their area's bone. An empty list gets the UE5 Manny areas.
+LSD_STRUCT(Component, Category = "Character", Tooltip = "Clothes and gear by body area (shirt on the chest, gloves on the hands...): they follow the Skeletal Mesh's skeleton")
+struct Outfit {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The body areas and what is worn on each") List<OutfitSlot, 16> slots;
+};
+
+// A child the Outfit made for one of its slots (replaced when the slot changes).
+LSD_STRUCT(Component, Category = "Character", Tooltip = "Made by an Outfit for one of its slots")
+struct OutfitPiece {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The Outfit slot it shows") char slot[24] = "";
 };
 
 // Gameplay tags (Unreal's Gameplay Tags): dotted names, so "Damage.Fire" also counts as "Damage".
@@ -641,6 +800,23 @@ struct DirectionalLight {
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "1900 candle, 3200 tungsten, 5500 noon sun, 6500 overcast") f32 temperature = 6500.0f;
     LSD_PROPERTY(Edit, Tooltip = "The first sun with this on casts shadows (4 cascades)") bool cast_shadows = true;
     LSD_PROPERTY(Edit, Units = "m", Min = 5, Max = 1000, Tooltip = "Shadows end this far from the camera; shorter is sharper") f32 shadow_distance = 60.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 2,
+                 Tooltip = "Contact Shadow Length (Unreal's): a short screen-space shadow ray this long toward the sun, for the small contact shadows the shadow map misses (feet on the floor, props on a table); 0 = off. Needs a Post Process Volume's look (the default one counts)")
+    f32 contact_shadow_length = 0.0f;
+};
+
+// Unreal's Sphere Reflection Capture: what is around this point, captured from here, is what shiny
+// surfaces inside Radius reflect (instead of the sky). Captured when the level opens and on Build >
+// Build Reflection Captures (move things, then build again); up to 8 in a level.
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "Shiny surfaces inside its radius reflect what is around it (Sphere Reflection Capture); Build > Build Reflection Captures after changes")
+struct ReflectionCapture {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Max = 500, Tooltip = "Sphere: surfaces this close reflect this capture (it fades out over the last quarter)") f32 radius = 10.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Sphere,Box",
+                 Tooltip = "Box (Unreal's Box Reflection Capture): surfaces inside Box Size reflect it, bent to where each ray meets the box's walls, so a room's reflections line up with its walls")
+    u32 shape = 0;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Box: its size along X, Y, Z, centred on the capture (match the room; world axes, the capture's turn is ignored)") Vec3 box_size = {10.0f, 10.0f, 4.0f};
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "Box: it fades in over this distance inside its walls") f32 box_transition = 1.0f;
 };
 
 // A bulb (Unreal's Point Light): shines in every direction.
@@ -653,6 +829,10 @@ struct PointLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color (warm bulbs, cold daylight)") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
+                 Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
+    u32 shadow_resolution = 1;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the bulb's size; bigger gives softer, wider highlights (a sphere light)") f32 source_radius = 0.0f;
 };
 
 // A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
@@ -667,6 +847,25 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
+                 Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
+    u32 shadow_resolution = 1;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the lamp's size; bigger gives softer, wider highlights") f32 source_radius = 0.0f;
+};
+
+// An area light (Unreal's Rect Light): a glowing panel or disc lighting what is in front of it (+X), with soft
+// wide highlights: windows, screens, softboxes, ceiling panels.
+LSD_STRUCT(Component, Category = "Lights", Tooltip = "A glowing panel or disc (Unreal's Rect Light): soft light from its front (+X)")
+struct RectLight {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The light's colour") LinearColor color = LinearColor::hex(0xFFFFFF);
+    LSD_PROPERTY(Edit, Units = "lm", Min = 0, Tooltip = "Total light leaving its front") f32 intensity = 1000.0f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Rect,Disc", Tooltip = "A rectangle (Source Width x Height) or a disc (Source Width across)") u32 shape = 0;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Max = 50, Tooltip = "Its width (a disc: its diameter), across the object's Y") f32 source_width = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Max = 50, Tooltip = "Its height, along the object's Z") f32 source_height = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 8.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
+    LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2700 K warm panel, 6500 K daylight window") f32 temperature = 6500.0f;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).
@@ -703,6 +902,12 @@ struct HeightFog {
     LSD_PROPERTY(Edit, Tooltip = "Colour of the fog") LinearColor color = LinearColor::hex(0xB8D2EA);
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "No fog nearer than this") f32 start_distance = 0.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Never thicker than this (1 = can hide everything)") f32 max_opacity = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Tooltip = "Volumetric fog (Unreal's): the sun lights the fog and shadows cut through it (light shafts, god rays). Needs a Directional Light that casts shadows")
+    bool volumetric = false;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Min = 0, Max = 1, Tooltip = "How strongly light and shadow shape the fog (0 = plain height fog)") f32 scattering = 0.8f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Min = -0.9, Max = 0.9, Tooltip = "How much the light scatters forward: higher glows brighter looking toward the sun") f32 anisotropy = 0.5f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Units = "m", Min = 1, Tooltip = "How far from the camera shafts are traced") f32 view_distance = 60.0f;
+    LSD_PROPERTY(Edit, Category = "Volumetric", Min = 4, Max = 64, Tooltip = "Samples along each view ray: more is smoother and slower") u32 steps = 16;
 };
 
 // Colour grading and camera effects (Unreal's Post Process Volume): applies while the camera is
@@ -720,13 +925,22 @@ LSD_STRUCT(Component, Category = "Environment", Tooltip = "The look inside its b
 struct PostProcessVolume {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "Everywhere, not just inside the box") bool unbound = true;
-    LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the higher priority wins") i32 priority = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Where volumes overlap, the higher priority is applied last (on top)") i32 priority = 0;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 100, Tooltip = "Blend Radius: outside the box its look fades out over this distance (Unreal's); 0 = a hard edge")
+    f32 blend_radius = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Blend Weight: how much of its look applies (1 = all of it, 0 = none)") f32 blend_weight = 1.0f;
     LSD_PROPERTY(Edit, Units = "EV", Min = -10, Max = 10, Tooltip = "Brighter (+) or darker (-) on top of World Settings exposure") f32 exposure_compensation = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Filmic (ACES) curve: soft highlights instead of clipping") bool filmic_tonemapper = true;
     LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "0 = black and white") f32 saturation = 1.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 2, Tooltip = "Difference between dark and bright (1 = unchanged)") f32 contrast = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Multiplies the image (colour grading gain)") LinearColor tint = LinearColor::hex(0xFFFFFF);
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Darker corners") f32 vignette = 0.3f;
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture",
+                 Tooltip = "Color Grading LUT (Unreal's): a 256 x 16 strip of 16 tiles, red across, green down, blue tile by tile. Make one by grading a screenshot with the neutral strip pasted in (Photoshop, GIMP...) and cropping the strip out; empty = none")
+    char color_grading_lut[33] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Motion Blur Amount (Unreal's): the camera's own movement blurs the picture along it; 0 = off") f32 motion_blur_amount = 0.0f;
+    LSD_PROPERTY(Edit, Units = "%", Min = 0, Max = 20, Tooltip = "Motion Blur Max: the longest smear, as a percentage of the screen's width") f32 motion_blur_max = 5.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much of the LUT's look: 0 none, 1 all") f32 lut_intensity = 1.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Glow around bright parts (emissive, the sun's highlights); 0 = off") f32 bloom_intensity = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How bright (after exposure) a pixel must be to glow; 1 = white") f32 bloom_threshold = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "FXAA: smooths jagged edges") bool anti_aliasing = true;
@@ -794,14 +1008,60 @@ struct NavAgent {
 
 // Thinks for a Nav Agent (Unreal's AI Controller): runs a Behavior Tree with its own blackboard,
 // and sees / hears the player. Perception sets CanSeePlayer (1 while in view), PlayerLocation (where
-// it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range).
+// it was last seen) and NoiseLocation (lsd.report_noise / Report Noise within hearing range); with a
+// Team, CanSeeEnemy / EnemyLocation for agents of other teams; memories fade after Memory Seconds.
+// A Blackboard asset's key (Unreal's Blackboard Key): its name, type and starting value.
+LSD_STRUCT()
+struct BlackboardKey {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The key's name (trees and lsd.set_blackboard use it)") char name[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Bool,Float,Int,Vector,Object", Tooltip = "What it holds: a yes / no, a number, a whole number, a location, or an object") u32 type = 1;
+    LSD_PROPERTY(Edit, Tooltip = "Its starting value (Bool: 0 or 1; Float and Int; ignored for Vector and Object)") f32 default_value = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Its starting location (Vector keys)") Vec3 default_location;
+    LSD_PROPERTY(Edit, Tooltip = "What it is for (a note for the team)") char description[64] = "";
+};
+
+// Blackboard asset (Unreal's Blackboard Data): the keys an AI's tree uses, typed, with defaults. New Data Asset >
+// BlackboardData, then pick it on the AI Controller; scripts writing a key it lacks (or the wrong type) are warned.
+LSD_STRUCT(Category = "AI", Tooltip = "The keys an AI's Behavior Tree uses, typed, with their starting values")
+struct BlackboardData {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The keys (perception's CanSeePlayer, PlayerLocation... need not be listed)") List<BlackboardKey, 32> keys;
+};
+
 LSD_STRUCT(Component, Category = "AI", Tooltip = "An AI brain: a Behavior Tree, sight and hearing")
 struct AIController {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:BehaviorTree", Tooltip = "The Behavior Tree that decides what it does") char behavior_tree[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:BlackboardData", Tooltip = "Its Blackboard asset: typed keys with starting values (empty: any key, all unset)") char blackboard[33] = "";
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it sees the player (CanSeePlayer)") f32 sight_range = 15.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 360, Tooltip = "Field of view, centred on the object's +X") f32 sight_angle = 120.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it hears noises (lsd.report_noise / Report Noise)") f32 hearing_range = 12.0f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0,
+                 Tooltip = "Memory (Unreal's Max Age): PlayerLocation, EnemyLocation and NoiseLocation / HeardNoise are forgotten this long after it last saw or heard them (0 = never)")
+    f32 memory_seconds = 10.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Team (0 = none): it sees agents of other teams as enemies (CanSeeEnemy, EnemyLocation); guards and monsters on different teams fight")
+    u32 team = 0;
+    LSD_PROPERTY(Edit, Tooltip = "The player's team: an agent on this team (Team not 0) is friendly and ignores the player (no CanSeePlayer)") u32 player_team = 1;
+};
+
+// Editor-only object (Unreal's bIsEditorOnlyActor and Note actor): reference meshes, notes, helpers. Play starts
+// without it (and its children) and packaging strips it from the shipped levels.
+LSD_STRUCT(Component, Category = "Editor", Tooltip = "Exists only in the editor: gone in Play and in packaged games (notes, reference meshes, helpers)")
+struct EditorOnly {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "A note for the team (Unreal's Note actor)") char note[256] = "";
+};
+
+// A jump or drop the navmesh does not join by itself (Unreal's Nav Link Proxy): from the object to End. AI paths
+// may cross it; agents go across in a straight line. Rebuilds the navmesh like any level change.
+LSD_STRUCT(Component, Category = "AI", Tooltip = "A jump, drop or ladder for AI paths: from this object to End")
+struct NavLink {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "The far end, from the object (turns with it); both ends must be near the navmesh") Vec3 end = {2.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Tooltip = "Agents may cross both ways; off = only from the object to End (a drop off a ledge)") bool both_ways = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 5, Tooltip = "How far from each end the navmesh may be") f32 snap_radius = 0.5f;
+    LSD_PROPERTY(Edit, Tooltip = "Off: paths ignore it") bool enabled = true;
 };
 
 // How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).
@@ -813,6 +1073,8 @@ struct NavSettings {
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Tallest step walkers climb") f32 max_step_height = 0.45f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground walkers go up") f32 max_slope = 45.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 1, Tooltip = "Smaller: follows the geometry closer, builds slower") f32 cell_size = 0.15f;
+    LSD_PROPERTY(Edit, Tooltip = "Runtime Rebuild (Unreal's Runtime Generation: Dynamic): in Play, about once a second, the navmesh is built again when something solid moved (a door, a bridge, a crate pushed by a script); agents keep walking. Costs a rebuild's time each time it happens")
+    bool runtime_rebuild = false;
 };
 
 // Per-level settings (Unreal's World Settings), saved in the level file.
@@ -826,6 +1088,8 @@ struct WorldSettings {
     LSD_PROPERTY(Edit, Widget = "Asset:GameMode", Tooltip = "Rules for Play: player prefab and game script") char game_mode[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Script", Tooltip = "This level's own script (Unreal's Level Blueprint): a visual script or Lua file for one-off events; it runs while the level plays") char level_script[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "How the navmesh is built for AI (agent size, steps, slopes)") NavSettings navigation;
+    LSD_PROPERTY(Edit, Widget = "Choice:Off,256,512,1024,2048,4096", Tooltip = "Build Lighting's lightmap atlas for the level's static meshes (sharp baked shadows and bounced light); Off: light probes only")
+    u32 lightmap_resolution = 3;
 };
 
 } // namespace lsd::world

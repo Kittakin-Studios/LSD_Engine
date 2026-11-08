@@ -40,6 +40,17 @@ namespace {
 
 std::string json_string(const char* text);  // a JSON string literal (with Multiplayer, below)
 
+// Sight: `dir` (normalised, from the eye) inside the field of view `angle` (degrees) around m's flat +X.
+bool in_view(const Mat4& m, f32 angle, Vec3 dir) {
+    if (angle >= 360.0f) return true;
+    Vec3 forward = transform_vector(m, {1, 0, 0});
+    forward.z = 0;
+    const f32 flat = length(forward);
+    const Vec3 along{dir.x, dir.y, 0};
+    if (flat <= 1e-4f || length(along) <= 1e-4f) return false;
+    return dot(forward * (1.0f / flat), normalize(along)) >= std::cos(radians(angle * 0.5f));
+}
+
 // Action ids of the built-in controls used when the level has no Character (not real asset GUIDs).
 constexpr char kDefaultMove[] = "000000000000000000000000000d0001";
 constexpr char kDefaultLook[] = "000000000000000000000000000d0002";
@@ -133,7 +144,7 @@ i32 PlaySession::agent_of(world::Entity e) {
         LSD_LOG_WARN("play", "%s: Nav Agent is not on the navmesh", world_->name(e));
         return -1;
     }
-    agents_[agent_count_++] = {e, id};
+    agents_[agent_count_++] = {e, id, false, {}};
     return id;
 }
 
@@ -145,13 +156,51 @@ const ai::BehaviorTree* PlaySession::tree_for(const char* guid) {
     if (tree_count_ == sizeof trees_ / sizeof trees_[0]) return nullptr;
     TreeEntry* t = trees_[tree_count_++] = new TreeEntry();
     std::snprintf(t->guid, sizeof t->guid, "%s", guid);
+    t->ok = load_tree(*t);
+    return t->ok ? &t->tree : nullptr;
+}
+
+// Reads the tree into `t` (a failed read keeps what it had: a half-saved tree never runs).
+bool PlaySession::load_tree(TreeEntry& t) {
     asset::Guid id;
-    const asset::AssetRecord* r = asset::parse_guid(guid, id) ? registry_->find(id) : nullptr;
+    const asset::AssetRecord* r = asset::parse_guid(t.guid, id) ? registry_->find(id) : nullptr;
     char path[300], error[256] = "";
     if (r) registry_->source_path(*r, path, sizeof path);
-    t->ok = r && load_behavior_tree(path, t->tree, error, sizeof error);
-    if (!t->ok) LSD_LOG_ERROR("ai", "Behaviour tree %s: %s", r ? r->name : guid, error[0] ? error : "not found");
-    return t->ok ? &t->tree : nullptr;
+    auto resolve = [](void* user, const char* name, char* out, usize capacity) {  // Run Behavior nodes
+        const auto& self = *static_cast<const PlaySession*>(user);
+        const asset::AssetRecord* tree = self.find_asset(asset::AssetType::BehaviorTree, name);
+        if (tree) self.registry_->source_path(*tree, out, capacity);
+        return tree != nullptr;
+    };
+    std::error_code ec;
+    if (r) t.modified = static_cast<i64>(std::filesystem::last_write_time(path, ec).time_since_epoch().count());
+    static ai::BehaviorTree loaded;  // shortcut: one scratch tree (Play is single-threaded)
+    const bool ok = r && load_behavior_tree(path, loaded, error, sizeof error, resolve, this);
+    if (ok) t.tree = loaded;
+    else LSD_LOG_ERROR("ai", "Behaviour tree %s: %s", r ? r->name : t.guid, error[0] ? error : "not found");
+    return ok;
+}
+
+void PlaySession::reload_trees() {
+    if (play_clock_ - trees_checked_ < 1.0) return;
+    trees_checked_ = play_clock_;
+    for (u32 i = 0; i < tree_count_; ++i) {
+        TreeEntry& t = *trees_[i];
+        asset::Guid id;
+        const asset::AssetRecord* r = asset::parse_guid(t.guid, id) ? registry_->find(id) : nullptr;
+        if (!r) continue;
+        char path[300];
+        registry_->source_path(*r, path, sizeof path);
+        std::error_code ec;
+        const i64 now = static_cast<i64>(std::filesystem::last_write_time(path, ec).time_since_epoch().count());
+        if (ec || now == t.modified) continue;
+        if (load_tree(t)) {
+            t.ok = true;
+            ++t.version;
+            LSD_LOG_INFO("ai", "Reloaded behaviour tree %s", r->name);
+        }
+        t.modified = now;  // a broken save is not retried every second
+    }
 }
 
 PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
@@ -167,6 +216,17 @@ PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
     b.entity = e;
     std::snprintf(b.tree_guid, sizeof b.tree_guid, "%s", controller->behavior_tree);
     b.tree = tree_for(b.tree_guid);
+    if (world::BlackboardData data; controller->blackboard[0] && registry_ && load_asset(*registry_, controller->blackboard, data)) {
+        for (const world::BlackboardKey& k : data.keys) {
+            if (!k.name[0] || b.schema.count == ai::kMaxBlackboardKeys) continue;
+            ai::BbKey& key = b.schema.keys[b.schema.count++];
+            std::snprintf(key.name, sizeof key.name, "%s", k.name);
+            key.type = static_cast<ai::BbType>(k.type < 5 ? k.type : 1);
+            if (key.type == ai::BbType::Vector) key.value[0] = k.default_location.x, key.value[1] = k.default_location.y, key.value[2] = k.default_location.z;
+            else key.value[0] = k.default_value;
+        }
+        ai::apply_defaults(b.schema, b.board);
+    }
     return &b;
 }
 
@@ -180,6 +240,7 @@ u32 PlaySession::active_bt_nodes(const char* guid, u32* out, u32 capacity) const
 // Perception, then each AI Controller's behaviour tree.
 void PlaySession::update_brains(world::World& world, f32 dt) {
     if (!brains_) return;
+    reload_trees();
     const reflect::TypeInfo& type = reflect::type_of<world::AIController>();
     for (u32 i = 0; i < world.count(type); ++i) brain_of(world.owner(type, i));  // new ones (spawned) too
     const Vec3 player_eye = feet_ + Vec3{0, 0, settings_.eye_height};
@@ -187,7 +248,9 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
     host.move_to = [](void* user, Vec3 target, f32) {
         Brain& b = *static_cast<Brain*>(user);
         const i32 agent = b.session->agent_of(b.entity);
-        return agent >= 0 && b.session->nav_.move_agent(agent, target);
+        const bool sent = agent >= 0 && b.session->nav_.move_agent(agent, target);
+        b.session->remember_target(b.entity, target, sent);
+        return sent;
     };
     host.moving = [](void* user) {
         Brain& b = *static_cast<Brain*>(user);
@@ -196,6 +259,7 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
     host.stop = [](void* user) {
         Brain& b = *static_cast<Brain*>(user);
         b.session->nav_.stop_agent(b.session->agent_of(b.entity));
+        b.session->remember_target(b.entity, {}, false);
     };
     host.position = [](void* user) {
         Brain& b = *static_cast<Brain*>(user);
@@ -223,20 +287,53 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
         bool sees = distance <= controller->sight_range && distance > 1e-3f;
         if (sees) {
             const Vec3 dir = to_player * (1.0f / distance);
-            Vec3 forward = transform_vector(m, {1, 0, 0});
-            forward.z = 0;
-            const f32 flat = length(forward);
-            const f32 half = radians(controller->sight_angle * 0.5f);
-            sees = controller->sight_angle >= 360.0f || (flat > 1e-4f && dot(forward * (1.0f / flat), normalize(Vec3{dir.x, dir.y, 0})) >= std::cos(half));
+            sees = in_view(m, controller->sight_angle, dir);
             physics::RayHit hit;
             const f32 skip = 0.6f;  // past the agent's own body
             if (sees && distance > skip && physics_->raycast(eye + dir * skip, dir, distance - skip - 0.3f, hit)) sees = false;
         }
-        if (sees) {
+        if (sees && !(controller->team && controller->team == controller->player_team)) {
             b.board.set("CanSeePlayer", 1.0f);
             b.board.set("PlayerLocation", feet_);
+            b.seen_player = play_clock_;
         } else {
             b.board.clear("CanSeePlayer");
+        }
+        // Touch: the player bumps into it (feet within a metre sideways and about the same height), seen or not (from behind).
+        const Vec3 gap = feet_ - at;
+        if (std::sqrt(gap.x * gap.x + gap.y * gap.y) < 1.0f && std::fabs(gap.z) < 1.0f && !(controller->team && controller->team == controller->player_team)) {
+            b.board.set("TouchedPlayer", 1.0f);
+            b.board.set("PlayerLocation", feet_);
+            b.seen_player = play_clock_;
+        } else {
+            b.board.clear("TouchedPlayer");
+        }
+        // Teams (Unreal's affiliation): the nearest agent of another team it can see.
+        if (controller->team) {
+            f32 best = controller->sight_range;
+            Vec3 enemy;
+            bool found = false;
+            for (u32 o = 0; o < brain_count_; ++o) {
+                const auto* other = o != i && world.alive(brains_[o].entity) ? world.get<world::AIController>(brains_[o].entity) : nullptr;
+                if (!other || !other->team || other->team == controller->team) continue;
+                const Mat4 om = world.world_matrix(brains_[o].entity);
+                const Vec3 target{om.at(0, 3), om.at(1, 3), om.at(2, 3) + 1.0f};
+                const f32 d = length(target - eye);
+                if (d >= best || d < 1e-3f || !in_view(m, controller->sight_angle, (target - eye) * (1.0f / d))) continue;
+                physics::RayHit hit;
+                const Vec3 dir = (target - eye) * (1.0f / d);
+                if (d > 1.2f && physics_->raycast(eye + dir * 0.6f, dir, d - 1.2f, hit)) continue;  // past both bodies
+                best = d;
+                enemy = target - Vec3{0, 0, 1.0f};
+                found = true;
+            }
+            if (found) {
+                b.board.set("CanSeeEnemy", 1.0f);
+                b.board.set("EnemyLocation", enemy);
+                b.seen_enemy = play_clock_;
+            } else {
+                b.board.clear("CanSeeEnemy");
+            }
         }
         // Hearing.
         for (u32 n = 0; n < noise_count_; ++n) {
@@ -245,10 +342,31 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
             if (dot(d, d) > reach * reach) continue;
             b.board.set("NoiseLocation", noises_[n].at);
             b.board.set("HeardNoise", 1.0f);
+            b.heard = play_clock_;
         }
+        // Memory (Unreal's Max Age): what was last seen or heard is forgotten after a while.
+        if (controller->memory_seconds > 0.0f) {
+            const f32 age = controller->memory_seconds;
+            if (b.board.find("PlayerLocation") && play_clock_ - b.seen_player > age) b.board.clear("PlayerLocation");
+            if (b.board.find("EnemyLocation") && play_clock_ - b.seen_enemy > age) b.board.clear("EnemyLocation");
+            if (b.board.find("NoiseLocation") && play_clock_ - b.heard > age) {
+                b.board.clear("NoiseLocation");
+                b.board.clear("HeardNoise");
+            }
+            if (b.board.find("Damaged") && play_clock_ - b.hurt > age) {
+                for (const char* key : {"Damaged", "DamageAmount", "Attacker", "AttackerLocation"}) b.board.clear(key);
+            }
+        }
+        if (!b.tree) b.tree = tree_for(b.tree_guid);  // a tree that failed to load may have been fixed
         if (b.tree) {
             b.dt = dt;
             host.user = &b;
+            for (u32 k = 0; k < tree_count_; ++k) {
+                if (&trees_[k]->tree != b.tree || trees_[k]->version == b.tree_version) continue;
+                b.runner.reset(host);  // the tree changed under it: stop what it did, start from the new root
+                b.runner = ai::BtRunner{};
+                b.tree_version = trees_[k]->version;
+            }
             b.runner.tick(*b.tree, b.board, host, dt);
         }
         ++i;
@@ -257,7 +375,61 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
 }
 
 // Moves the agents and writes them back to their objects (feet on the navmesh, facing their way).
+// Builds the navmesh from the level as it is now (nothing happens when its inputs did not change). The crowd
+// starts over: each agent comes back where it stands and is sent on to where it was going.
+bool PlaySession::rebuild_navmesh() {
+    if (!world_ || !meshes_) return false;
+    bool reused = false;
+    const u64 start = SDL_GetTicksNS();
+    Agent kept[ai::kMaxAgents];
+    const u32 count = agent_count_;
+    for (u32 i = 0; i < count; ++i) kept[i] = agents_[i];
+    if (!build_level_navmesh(*world_, *meshes_, nav_, &nav_hash_, &reused, &nav_always_moving_)) {
+        nav_.clear();
+        agent_count_ = 0;
+        return false;
+    }
+    if (reused) return true;
+    agent_count_ = 0;
+    for (u32 i = 0; i < count; ++i) {
+        const i32 id = world_->alive(kept[i].entity) ? agent_of(kept[i].entity) : -1;
+        if (id < 0 || !kept[i].has_target) continue;
+        nav_.move_agent(id, kept[i].target);
+        agents_[agent_count_ - 1].has_target = true;
+        agents_[agent_count_ - 1].target = kept[i].target;
+    }
+    LSD_LOG_INFO("play", "Navmesh rebuilt (%u tiles changed, %.0f ms)", nav_.last_rebuilt_tiles(), static_cast<f64>(SDL_GetTicksNS() - start) * 1e-6);
+    return true;
+}
+
 void PlaySession::update_agents(world::World& world, f32 dt) {
+    // Runtime Rebuild: about once a second, the inputs are compared; a change is rebuilt once it has settled (the same as a
+    // second ago), so a door that opened is rebuilt once and something that never stops moving costs nothing.
+    if (world.settings().navigation.runtime_rebuild && meshes_ && play_clock_ - nav_checked_ >= 1.0) {
+        nav_checked_ = play_clock_;
+        // Solid meshes moving at three checks in a row (a platform a script keeps moving) are left out for good.
+        const reflect::TypeInfo& mesh_type = reflect::type_of<world::StaticMesh>();
+        for (u32 i = 0; i < world.count(mesh_type); ++i) {
+            const world::Entity e = world.owner(mesh_type, i);
+            if (!static_cast<const world::StaticMesh*>(world.at(mesh_type, i))->collision) continue;
+            const Mat4 m = world.world_matrix(e);
+            NavWatch* w = nullptr;
+            for (NavWatch& n : nav_watch_) w = n.entity == e ? &n : w;
+            if (!w) {
+                nav_watch_.push_back({e, m, 0});
+                continue;
+            }
+            w->moving = std::memcmp(w->last.m, m.m, sizeof m.m) != 0 ? w->moving + 1 : 0;
+            w->last = m;
+            if (w->moving == 3 && std::find(nav_always_moving_.begin(), nav_always_moving_.end(), e) == nav_always_moving_.end()) {
+                nav_always_moving_.push_back(e);
+                LSD_LOG_INFO("play", "%s keeps moving: left out of the navmesh (Runtime Rebuild waits for things that stop)", world.name(e));
+            }
+        }
+        const u64 now = navmesh_inputs_hash(world, *meshes_, &nav_always_moving_);
+        if (now != nav_hash_ && now == nav_seen_hash_) rebuild_navmesh();
+        nav_seen_hash_ = now;
+    }
     if (!nav_.valid()) return;
     nav_.update(dt);
     for (u32 i = 0; i < agent_count_;) {
@@ -288,6 +460,11 @@ void PlaySession::stop() {
     moving_.clear();
     driving_ = riding_ = {};
     play_clock_ = 0.0;
+    nav_checked_ = 0.0;
+    motion_tag_[0] = '\0';
+    nav_seen_hash_ = 0;
+    nav_watch_.clear();
+    nav_always_moving_.clear();
     interact_was_down_ = false;
     chat_.clear();
     if (ui_) ui_->close_all();
@@ -442,11 +619,16 @@ bool PlaySession::rebind(const char* action, const char* from, const char* to) {
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel) {
     stop();
     const u64 start_ns = SDL_GetTicksNS();  // how long Play takes to start (logged at the end)
-    if (!travel) scripts_.clear_persistent();  // a new Play: a fresh game instance
+    if (!travel) {
+        scripts_.clear_persistent();  // a new Play: a fresh game instance
+        std::snprintf(current_level_, sizeof current_level_, "*");
+    }
+    if (!net_play_.enabled || !net_play_.host) upnp_.stop();  // left or joined: the forward goes
     level_request_[0] = '\0';
     registry_ = &registry;
     world_ = &world;
     meshes_ = &meshes;
+    if (const u32 gone = world::destroy_editor_only(world)) LSD_LOG_INFO("play", "%u editor-only object(s) left out of Play", gone);
     physics_ = new physics::PhysicsWorld();
     physics_->set_gravity(world.settings().gravity);
     live_gravity_ = world.settings().gravity;
@@ -505,6 +687,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     }
     brains_ = new Brain[kMaxBrains];
     brain_count_ = 0;
+    bb_warned_.clear();
     noise_count_ = 0;
     Vec3 scale;
 
@@ -520,6 +703,11 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         character_ = world.owner(character_type, 0);
         settings_ = *world.get<world::Character>(character_);
         live_character_ = settings_;  // live edits compare with this
+        if (const auto* sprite = world.get<world::Sprite>(character_)) {
+            idle_frame_ = sprite->frame;
+            idle_count_ = sprite->frame_count;
+            std::snprintf(idle_flipbook_, sizeof idle_flipbook_, "%s", sprite->flipbook);
+        }
         decompose_trs(world.world_matrix(character_), feet_, rotation, scale);
         yaw_ = radians(rotation.z);
         pitch_ = 0.0f;
@@ -582,6 +770,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     bone_ride_valid_ = false;
     host.set_camera_view = [](void* user, u32 view) { static_cast<PlaySession*>(user)->camera_view_override_ = view; };
     host.camera_location = [](void* user) { return static_cast<PlaySession*>(user)->eye(); };
+    host.camera_forward = [](void* user) { return static_cast<PlaySession*>(user)->view_forward(); };
     host.camera_view = [](void* user) -> u32 {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.camera_view_override_ < 2) return self.camera_view_override_;
@@ -739,6 +928,25 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_audio_param = [](void* user, const char* name, f32 value) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->set_param(name, value);
     };
+    host.play_montage = [](void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion, const char* slot) {
+        auto& self = *static_cast<PlaySession*>(user);
+        return self.animations_ && self.skinned_ ? self.animations_->play_montage(*self.world_, *self.skinned_, e, animation, rate, from_bone, blend, root_motion, slot) : 0.0f;
+    };
+    host.stop_montage = [](void* user, world::Entity e, f32 blend, const char* slot) {
+        if (auto* a = static_cast<PlaySession*>(user)->animations_) a->stop_montage(e, blend, slot);
+    };
+    host.montage_playing = [](void* user, world::Entity e, const char* slot) {
+        const auto* a = static_cast<PlaySession*>(user)->animations_;
+        return a && a->montage_playing(e, slot);
+    };
+    host.set_motion_tag = [](void* user, world::Entity e, const char* tag) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (e == self.character_) std::snprintf(self.motion_tag_, sizeof self.motion_tag_, "%s", tag);  // shortcut: the player's only (it is the one fed input)
+    };
+    host.anim_curve = [](void* user, world::Entity e, const char* name, f32& value) {
+        const auto& self = *static_cast<PlaySession*>(user);
+        return self.animations_ && self.skinned_ && self.animations_->curve_value(*self.world_, *self.skinned_, e, name, value);
+    };
     host.set_anim_param = [](void* user, world::Entity e, const char* name, f32 value) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.animations_) self.animations_->set_param(*self.world_, e, name, value);
@@ -773,6 +981,92 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         e.value = entity;
         return self.world_ && self.net_.seen_position(*self.world_, e, player, out);
     };
+    host.net_session = [](void* user, int what, const char* arg, char* why, usize capacity) {
+        auto& self = *static_cast<PlaySession*>(user);
+        NetPlay& play = self.net_play_;
+        if (!play.allowed) {
+            std::snprintf(why, capacity, "turn on Project Settings > Multiplayer");
+            return false;
+        }
+        char path[300];
+        std::snprintf(path, sizeof path, "%s", self.current_level_);
+        if (what != 1 && arg[0]) {
+            const asset::AssetRecord* r = self.find_asset(asset::AssetType::Level, arg);
+            if (!r) {
+                std::snprintf(why, capacity, "no level named '%s'", arg);
+                return false;
+            }
+            self.registry_->source_path(*r, path, sizeof path);
+        }
+        if (what == 1) {
+            char address[64];
+            if (!net::parse_join_code(arg, play.settings.port, address, sizeof address)) {
+                std::snprintf(why, capacity, "'%s' is not a join code (10 letters and digits) or an address", arg);
+                return false;
+            }
+            std::snprintf(play.address, sizeof play.address, "%s", address);
+            LSD_LOG_INFO("net", "Joining %s", address);
+        }
+        play.enabled = what != 2;
+        play.host = what == 0;
+        play.dedicated = false;
+        std::snprintf(self.level_request_, sizeof self.level_request_, "%s", path);
+        return true;
+    };
+    host.net_join_codes = [](void* user, char* out, usize capacity) { static_cast<PlaySession*>(user)->join_codes(out, capacity, true); };
+    host.assets = [](void* user, const char* type, const char* folder, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        std::vector<const asset::AssetRecord*> hits;
+        const usize folder_len = std::strlen(folder);
+        for (usize i = 0; i < self.registry_->count(); ++i) {
+            const asset::AssetRecord& r = self.registry_->get(i);
+            if (std::strcmp(asset::to_string(r.type), type) != 0 || std::strncmp(r.folder, folder, folder_len) != 0) continue;
+            if (folder_len && r.folder[folder_len] && r.folder[folder_len] != '/') continue;  // "Clothes" is not "ClothesOld"
+            hits.push_back(&r);
+        }
+        std::sort(hits.begin(), hits.end(), [](const asset::AssetRecord* a, const asset::AssetRecord* b) { return std::strcmp(a->name, b->name) < 0; });
+        usize used = 0;
+        u32 n = 0;
+        for (const asset::AssetRecord* r : hits) {
+            char guid[33];
+            asset::to_string(r->guid, guid);
+            const int w = std::snprintf(out + used, capacity - used, "%s%s|%s|%s", n ? "\n" : "", r->name, guid, r->folder);
+            if (w < 0 || used + static_cast<usize>(w) >= capacity) break;
+            used += static_cast<usize>(w);
+            ++n;
+        }
+        if (!n && capacity) out[0] = 0;
+        return n;
+    };
+    host.morph_names = [](void* user, world::Entity e, char* out, usize capacity) {
+        const auto& self = *static_cast<const PlaySession*>(user);
+        if (capacity) out[0] = 0;
+        if (!self.skinned_) return 0u;
+        const auto& type = reflect::type_of<world::SkeletalMesh>();
+        const world::SkeletalMesh* mesh = self.world_->get<world::SkeletalMesh>(e);
+        for (u32 i = 0; !mesh && i < self.world_->count(type); ++i) {  // a Character's mesh child
+            const world::Entity child = self.world_->owner(type, i);
+            if (self.world_->parent(child) == e && !self.world_->get<world::OutfitPiece>(child)) mesh = self.world_->get<world::SkeletalMesh>(child);
+        }
+        const SkinnedEntry* model = mesh ? self.skinned_->get(mesh->mesh) : nullptr;
+        if (!model) return 0u;
+        usize used = 0;
+        u32 n = 0;
+        for (const anim::MorphTarget& t : model->model->morphs) {
+            bool seen = false;  // several meshes of a file share a name
+            for (const anim::MorphTarget& u : model->model->morphs) {
+                if (&u == &t) break;
+                if (std::strcmp(u.name, t.name) == 0) seen = true;
+            }
+            if (seen) continue;
+            const int w = std::snprintf(out + used, capacity - used, "%s%s", n ? "\n" : "", t.name);
+            if (w < 0 || used + static_cast<usize>(w) >= capacity) break;
+            used += static_cast<usize>(w);
+            ++n;
+        }
+        return n;
+    };
+    host.editor_workspace = [](void* user) -> const char* { return static_cast<PlaySession*>(user)->workspace_; };
     host.net_find_games = [](void* user, f32 seconds, char* out, usize capacity) {
         const auto& self = *static_cast<PlaySession*>(user);
         net::LanGame games[32];
@@ -790,11 +1084,14 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.move_to = [](void* user, world::Entity e, Vec3 target) {
         auto& self = *static_cast<PlaySession*>(user);
         const i32 agent = self.agent_of(e);
-        return agent >= 0 && self.nav_.move_agent(agent, target);
+        const bool sent = agent >= 0 && self.nav_.move_agent(agent, target);
+        self.remember_target(e, target, sent);
+        return sent;
     };
     host.stop_move = [](void* user, world::Entity e) {
         auto& self = *static_cast<PlaySession*>(user);
         self.nav_.stop_agent(self.agent_of(e));
+        self.remember_target(e, {}, false);
     };
     host.is_moving = [](void* user, world::Entity e) {
         auto& self = *static_cast<PlaySession*>(user);
@@ -818,6 +1115,26 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.ui_set = [](void* user, i32 doc, const char* id, const char* attribute, const char* value) {
         auto* ui = static_cast<PlaySession*>(user)->ui_;
         return ui && (attribute ? ui->set_attribute(doc, id, attribute, value) : ui->set_text(doc, id, value));
+    };
+    host.ui_style = [](void* user, i32 doc, const char* id, const char* property, const char* value) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        return ui && ui->set_property(doc, id, property, value);
+    };
+    host.ui_rml = [](void* user, i32 doc, const char* id, const char* rml) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        return ui && ui->set_rml(doc, id, rml);
+    };
+    host.ui_open_text = [](void* user, const char* rml) -> i32 {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        return ui ? ui->open_text(rml, "Content/") : -1;
+    };
+    host.ui_data = [](void* user, const char* name, int type, f64 number, const char* text) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        if (!ui) return;
+        if (type == 0) ui->set_data(name, number);
+        else if (type == 2) ui->set_data(name, number != 0.0);
+        else if (type == 3) ui->set_data_json(name, text);
+        else ui->set_data(name, text);
     };
     host.ui_value = [](void* user, i32 doc, const char* id, char* out, usize capacity) {
         auto* ui = static_cast<PlaySession*>(user)->ui_;
@@ -874,9 +1191,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return n;
     };
     host.bb_set = [](void* user, world::Entity e, const char* key, const f32* value, bool vector) {
-        if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) {
-            if (vector) b->board.set(key, Vec3{value[0], value[1], value[2]});
-            else b->board.set(key, value[0]);
+        auto& self = *static_cast<PlaySession*>(user);
+        Brain* b = self.brain_of(e);
+        const char* problem = b ? ai::typed_set(b->schema, b->board, key, value, vector) : nullptr;
+        if (problem && std::find(self.bb_warned_.begin(), self.bb_warned_.end(), key) == self.bb_warned_.end()) {  // once per key
+            self.bb_warned_.emplace_back(key);
+            LSD_LOG_WARN("ai", "lsd.set_blackboard(%s, \"%s\"): %s; not written", self.world_->name(e), key, problem);
         }
     };
     host.bb_get = [](void* user, world::Entity e, const char* key, f32* value) {
@@ -888,6 +1208,20 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     };
     host.bb_clear = [](void* user, world::Entity e, const char* key) {
         if (Brain* b = static_cast<PlaySession*>(user)->brain_of(e)) b->board.clear(key);
+    };
+    host.rebuild_navmesh = [](void* user) { return static_cast<PlaySession*>(user)->rebuild_navmesh(); };
+    host.damaged = [](void* user, world::Entity target, f32 amount, world::Entity instigator) {  // the damage sense
+        auto& self = *static_cast<PlaySession*>(user);
+        Brain* b = self.brain_of(target);
+        if (!b) return;
+        b->board.set("Damaged", 1.0f);
+        b->board.set("DamageAmount", amount);
+        if (self.world_->alive(instigator)) {  // the player too: its Character is an object
+            const Mat4 m = self.world_->world_matrix(instigator);
+            b->board.set("Attacker", static_cast<f32>(instigator.value));
+            b->board.set("AttackerLocation", Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        }
+        b->hurt = self.play_clock_;
     };
     host.report_noise = [](void* user, Vec3 at, f32 loudness) {
         auto& self = *static_cast<PlaySession*>(user);
@@ -1020,17 +1354,59 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
         apply_material(d, mesh->physical_material);
+        d.one_way = mesh->one_way;
         add_body(e, d);
     }
+    if (const auto* ism = world.get<world::InstancedStaticMesh>(e); ism && ism->collision && ism->instances.count) {
+        // Per-copy collision (foliage trees and rocks): a static box per copy, fitted to the mesh's bounds.
+        // shortcut: a body per copy (Jolt handles thousands of static boxes); one compound body per object if levels get dense
+        if (const CachedMesh* copy_mesh = meshes_->get(ism->mesh)) {
+            const Mat4 m = world.world_matrix(e);
+            for (u32 k = 0; k < ism->instances.count; ++k) {
+                const world::MeshInstance& in = ism->instances[k];
+                Vec3 copy_scale, copy_centre;
+                add_body(e, fitted_body(m * trs(in.position, in.rotation, in.scale), copy_mesh->bounds_min, copy_mesh->bounds_max, 0, physics::Motion::Static, copy_scale, copy_centre));
+            }
+        }
+    }
     if (const auto* sprite = world.get<world::Sprite>(e); sprite && sprite->collision && !cached) {
-        add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));  // the sprite's quad, 1 m deep
+        physics::BodyDesc d = fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre);  // the sprite's quad, 1 m deep
+        d.one_way = sprite->one_way;
+        add_body(e, d);
     }
     if (const auto* map = world.get<world::TileMap>(e); map && map->collision) {  // a box per run of solid tiles in a row
         static TileRun runs[4096];
-        const u32 count = tile_runs(*map, runs, 4096);
+        u32 count = tile_runs(*map, runs, 4096);
+        for (const world::TileLayer& layer : map->layers) {  // layers that collide add theirs (on the same play plane)
+            if (layer.collision && count < 4096) count += tile_runs(*map, layer.tiles, runs + count, 4096 - count);
+        }
+        const Mat4 map_world = world.world_matrix(e);
         for (u32 k = 0; k < count; ++k) {
             Vec3 run_scale, run_centre;
-            add_body(e, fitted_body(world.world_matrix(e), runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre));
+            if (runs[k].kind == 0 || runs[k].kind == 3) {
+                physics::BodyDesc d = fitted_body(map_world, runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre);
+                d.one_way = runs[k].kind == 3;
+                add_body(e, d);
+                continue;
+            }
+            // A ramp: the wedge's six corners in world space, around its centre (a convex body).
+            const TileRun& r = runs[k];
+            const f32 low_x = r.kind == 1 ? r.hi.x : r.lo.x;  // the tall side: right for Slope Up, left for Slope Down
+            const Vec3 local[6] = {{r.lo.x, r.lo.y, r.lo.z}, {r.hi.x, r.lo.y, r.lo.z}, {low_x, r.lo.y, r.hi.z},
+                                   {r.lo.x, r.hi.y, r.lo.z}, {r.hi.x, r.hi.y, r.lo.z}, {low_x, r.hi.y, r.hi.z}};
+            Vec3 corners[6];
+            Vec3 middle{};
+            for (int c = 0; c < 6; ++c) {
+                corners[c] = transform_point(map_world, local[c]);
+                middle = middle + corners[c] * (1.0f / 6.0f);
+            }
+            for (Vec3& p : corners) p = p - middle;
+            physics::BodyDesc ramp;
+            ramp.shape = physics::Shape::Convex;
+            ramp.transform = translation(middle);
+            ramp.points = corners;
+            ramp.point_count = 6;
+            add_body(e, ramp);
         }
     }
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
@@ -1073,9 +1449,33 @@ world::Entity PlaySession::create_spawn(world::World& world, const char* name, V
     return e;
 }
 
+void PlaySession::join_codes(char* out, usize capacity, bool map_port) {
+    const u16 port = net_play_.settings.port;
+    if (map_port && net_.mode() == net::Mode::Server && upnp_.state() == net::PortMapper::State::Off) upnp_.start(port);
+    static const char* const states[] = {"off", "working", "open", "failed"};
+    char internet[16] = "";
+    if (upnp_.state() == net::PortMapper::State::Open) net::make_join_code(upnp_.external_address(), port, internet, sizeof internet);
+    int used = std::snprintf(out, capacity, "upnp|%s|%s|%s\n", states[static_cast<int>(upnp_.state())], upnp_.message(), internet);
+    char locals[8][16];
+    const u32 n = net::local_addresses(locals, 8);  // shortcut: asks the OS each call; cache it if the panel's refresh shows up in stat dump
+    for (u32 k = 0; k < n && used > 0 && static_cast<usize>(used) < capacity; ++k) {
+        char code[16];
+        net::make_join_code(locals[k], port, code, sizeof code);
+        used += std::snprintf(out + used, capacity - static_cast<usize>(used), "lan|%s|%s\n", locals[k], code);
+    }
+}
+
 bool PlaySession::take_level_request(char* path, usize capacity) {
     if (!level_request_[0]) return false;
     std::snprintf(path, capacity, "%s", level_request_);
+    if (std::strcmp(level_request_, "*") != 0) {  // the level's name is its file's
+        std::snprintf(current_level_, sizeof current_level_, "%s", level_request_);
+        const char* slash = std::strrchr(level_request_, '/');
+        const char* back = std::strrchr(level_request_, '\\');
+        const char* file = slash && back ? (slash > back ? slash : back) + 1 : slash ? slash + 1 : back ? back + 1 : level_request_;
+        std::snprintf(level_name_, sizeof level_name_, "%s", file);
+        if (char* dot = std::strrchr(level_name_, '.')) *dot = '\0';
+    }
     level_request_[0] = '\0';
     return true;
 }
@@ -1179,7 +1579,7 @@ void PlaySession::start_game_mode(world::World& world) {
     ui_cursor_ = mode.show_cursor;
 }
 
-void PlaySession::place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4]) {
+void PlaySession::place_ui_followers(const world::World& world, const Mat4& view_proj, const f32 viewport[4], const f32 ui_rect[4]) {
     if (!ui_) return;
     for (u32 i = 0; i < ui_follower_count_;) {
         const UiFollower& f = ui_followers_[i];
@@ -1196,8 +1596,9 @@ void PlaySession::place_ui_followers(const world::World& world, const Mat4& view
             ui_->set_property(f.doc, f.id, "visibility", "hidden");  // behind the camera
         } else {
             char left[32], top[32];
-            std::snprintf(left, sizeof left, "%.1fpx", static_cast<f64>((x / w * 0.5f + 0.5f) * viewport[2]));
-            std::snprintf(top, sizeof top, "%.1fpx", static_cast<f64>((0.5f - y / w * 0.5f) * viewport[3]));
+            // Over the object in the view, in the UI's own space (it starts at the safe zone's corner).
+            std::snprintf(left, sizeof left, "%.1fpx", static_cast<f64>((x / w * 0.5f + 0.5f) * viewport[2] + viewport[0] - ui_rect[0]));
+            std::snprintf(top, sizeof top, "%.1fpx", static_cast<f64>((0.5f - y / w * 0.5f) * viewport[3] + viewport[1] - ui_rect[1]));
             ui_->set_property(f.doc, f.id, "left", left);
             ui_->set_property(f.doc, f.id, "top", top);
             ui_->set_property(f.doc, f.id, "visibility", "visible");
@@ -1378,8 +1779,25 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
     const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};
     Vec3 velocity = settings_.side_scroller ? Vec3{move.x, 0, 0} : ahead * move.y + right * move.x;  // 2D: along X only
-    if (settings_.side_scroller && move.x != 0.0f) {  // the player's sprite faces the way it walks
-        if (auto* sprite = world.get<world::Sprite>(character_)) sprite->flip_x = move.x < 0.0f;
+    if (settings_.side_scroller) {  // the player's sprite faces the way it walks and plays idle / walk / jump
+        if (auto* sprite = world.get<world::Sprite>(character_)) {
+            if (move.x != 0.0f) sprite->flip_x = move.x < 0.0f;
+            const bool air = !physics_->character_on_ground() && !swimming_;
+            u32 first = idle_frame_, cells = idle_count_;
+            const char* flipbook = idle_flipbook_;
+            if (air && (sprite->jump_flipbook[0] || sprite->jump_count)) {
+                first = sprite->jump_frame;
+                cells = sprite->jump_count ? sprite->jump_count : 1;
+                flipbook = sprite->jump_flipbook;
+            } else if (move.x != 0.0f && (sprite->walk_flipbook[0] || sprite->walk_count)) {
+                first = sprite->walk_frame;
+                cells = sprite->walk_count ? sprite->walk_count : 1;
+                flipbook = sprite->walk_flipbook;
+            }
+            sprite->frame = first;
+            sprite->frame_count = cells;
+            if (flipbook != sprite->flipbook) std::snprintf(sprite->flipbook, sizeof sprite->flipbook, "%s", flipbook);
+        }
     }
     const f32 amount = length(velocity);
     if (amount > 1.0f) velocity = velocity * (1.0f / amount);
@@ -1412,6 +1830,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 n = length(swim);
         if (n > 1.0f) swim = swim * (1.0f / n);
         physics_->move_character(swim * settings_.swim_speed, false, 0.0f, dt, true);
+    } else if (Vec3 rooted; animations_ && dt > 0.0f && animations_->take_root_motion(character_, rooted)) {  // a root-motion montage moves it
+        physics_->move_character(Vec3{rooted.x / dt, rooted.y / dt, 0.0f}, false, 0.0f, dt);
     } else if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; !car || car->vehicle == ~0u) {
         physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
     }  // in a Physics vehicle the driver sits inside its body: not moved, so it cannot push the car
@@ -1430,6 +1850,9 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 speed = crouched_ ? settings_.crouch_speed : settings_.walk_speed;
         motion.desired_velocity = aboard ? Vec3{} : Vec3{velocity.x * speed, velocity.y * speed, 0.0f};
         motion.facing = motion.desired_facing = yaw_;
+        // Which clips (MotionClip::tags): a script's tag, else the Character's stance; none: the untagged ones.
+        const char* stance = crouched_ ? "crouch" : swimming_ ? "swim" : !physics_->character_on_ground() ? "air" : "";
+        std::snprintf(motion.tag, sizeof motion.tag, "%s", motion_tag_[0] ? motion_tag_ : stance);
         animations_->set_motion_input(character_, motion);
         animations_->set_param(world, character_, "VerticalSpeed", moved.z / dt);
         animations_->set_param(world, character_, "InAir", physics_->character_on_ground() || swimming_ ? 0.0f : 1.0f);
@@ -1548,15 +1971,39 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         sounds_->audio()->set_position(emitters_[i].voice, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
     }
     update_audio_volumes(world, dt);
+    if (animations_) animations_->apply_root_motion(world, character_);  // root motion of objects without the player's Character
     send_hits();
     update_triggers(world);
     {
         LSD_PROFILE_SCOPE("scripts");
+        update_flipbook_events(world);
+        if (animations_) {  // montages that ended last frame: function on_montage_ended(self)
+            static std::vector<world::Entity> ended;
+            ended.clear();
+            animations_->take_finished_montages(ended);
+            for (const world::Entity e : ended) scripts_.send(e, "on_montage_ended", {});
+        }
         scripts_.update(dt);
     }
     update_brains(world, dt);
     update_agents(world, dt);
     net_send(world, dt);
+}
+
+// Flipbook events: when a sprite's Flipbook reaches a frame with an Event, its scripts run that function.
+void PlaySession::update_flipbook_events(world::World& world) {
+    const reflect::TypeInfo& sprite_type = reflect::type_of<world::Sprite>();
+    for (u32 i = 0; i < world.count(sprite_type); ++i) {
+        const auto* sprite = static_cast<const world::Sprite*>(world.at(sprite_type, i));
+        const world::Flipbook* fb = sprite->flipbook[0] ? find_flipbook(registry_, sprite->flipbook) : nullptr;
+        if (!fb) continue;
+        const world::Entity e = world.owner(sprite_type, i);
+        const i32 frame = flipbook_frame(*fb, static_cast<f32>(play_clock_));
+        const auto seen = flipbook_frames_.find(e.value);
+        if (seen != flipbook_frames_.end() && seen->second == frame) continue;  // still the same frame
+        flipbook_frames_[e.value] = frame;
+        if (frame >= 0 && fb->frames[static_cast<u32>(frame)].event[0]) scripts_.send(e, fb->frames[static_cast<u32>(frame)].event, {});
+    }
 }
 
 // ---- Multiplayer ----
@@ -1681,6 +2128,18 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
                 net_.send_event(static_cast<i32>(ev.from), "__seated", args);
             } else if (std::strcmp(ev.name, "__unseat") == 0 && net_.mode() == net::Mode::Server) {
                 server_free_seats(world, ev.from);
+            } else if (std::strcmp(ev.name, "__level") == 0 && net_.mode() == net::Mode::Client) {  // joined: the server's level, if it is another
+                const char* open = std::strchr(ev.json, '"');
+                const char* close = open ? std::strrchr(ev.json, '"') : nullptr;
+                const std::string level = open && close > open ? std::string(open + 1, static_cast<usize>(close - open - 1)) : std::string();
+                if (!level.empty() && level != level_name_) {
+                    if (const asset::AssetRecord* r = find_asset(asset::AssetType::Level, level.c_str())) {
+                        LSD_LOG_INFO("net", "The server is on %s: going there", level.c_str());
+                        registry_->source_path(*r, level_request_, sizeof level_request_);
+                    } else {
+                        LSD_LOG_ERROR("play", "The server is on level '%s', which this machine does not have", level.c_str());
+                    }
+                }
             } else if (std::strcmp(ev.name, "__travel") == 0 && net_.mode() == net::Mode::Client) {  // the server opened a level: follow
                 const char* open = std::strchr(ev.json, '"');
                 const char* close = open ? std::strrchr(ev.json, '"') : nullptr;
@@ -1711,6 +2170,7 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
                 char name[32];
                 std::snprintf(name, sizeof name, "Player %u", ev.from);
                 net_.set_owner(world, make_avatar(world, name, feet_, false), ev.from);
+                if (level_name_[0]) net_.send_event(static_cast<i32>(ev.from), "__level", ("[" + json_string(level_name_) + "]").c_str());
             }
             scripts_.net_call("on_player_joined", ev.from, "[]");
             break;

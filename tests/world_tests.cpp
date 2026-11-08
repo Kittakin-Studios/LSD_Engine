@@ -418,8 +418,22 @@ static void test_sublevel() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Editor Only: the object and its children go; the rest stays.
+static void test_editor_only() {
+    World w(default_allocator());
+    const Entity note = w.create("Note");
+    w.add<EditorOnly>(note);
+    const Entity child = w.create("Child");
+    w.set_parent(child, note);
+    const Entity keep = w.create("Keep");
+    CHECK(destroy_editor_only(w) == 1);
+    CHECK(!w.alive(note) && !w.alive(child) && w.alive(keep));
+    CHECK(destroy_editor_only(w) == 0);
+}
+
 int main() {
     test_math();
+    test_editor_only();
     test_sublevel();
     test_entities();
     test_level_round_trip();

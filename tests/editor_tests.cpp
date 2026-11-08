@@ -1,18 +1,34 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
 #include "light_bake.h"
+#include "lsd/asset/texture.h"
+#include "lighting.h"
+#include "lsd/render/mesh.h"
 #include "references.h"
 
 #include "lsd/asset/asset_registry.h"
 
 #include <filesystem>
 #include <fstream>
+#include "keymap.h"
+#include "landscape_paint.h"
 #include "rml_edit.h"
+#include "editor_settings.h"
 #include "sound_cue.h"
 #include "transactions.h"
+#include "behavior.h"
+#include "landscape_core.h"
+#include "mesh_edit.h"
+#include "loc_gather.h"
+#include "scalability.h"
+#include "template_levels.h"
+#include "paper2d_core.h"
+#include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -111,9 +127,28 @@ static void test_sound_cue() {
     CHECK(evaluate_cue(h, env, v, 16) == 1 && v[0].looping && v[0].delay == 1.0f);
 }
 
+static void test_rml_anchor() {  // UMG anchors: re-anchoring keeps the element where it is
+    using namespace lsd::editor;
+    std::string rml = "<rml><body><div id=\"hud\" style=\"position: absolute; left: 100px; top: 50px; width: 200px; height: 40px;\"></div></body></rml>";
+    CHECK(rml_anchor(rml, "hud").x == 0 && rml_anchor(rml, "hud").y == 0);
+    const float box[4] = {100, 50, 200, 40};
+    CHECK(rml_set_anchor(rml, "hud", RmlAnchor{2, 2}, box, 1280, 720));  // bottom right
+    CHECK(rml_style(rml, "hud", "right") == "980px" && rml_style(rml, "hud", "bottom") == "630px" && rml_style(rml, "hud", "left").empty());
+    CHECK(rml_anchor(rml, "hud").x == 2 && rml_anchor(rml, "hud").y == 2);
+    CHECK(rml_set_anchor(rml, "hud", RmlAnchor{1, 0}, box, 1280, 720));  // top centre
+    CHECK(rml_style(rml, "hud", "left") == "50%" && rml_style(rml, "hud", "margin-left") == "-540px" && rml_style(rml, "hud", "right").empty() &&
+          rml_style(rml, "hud", "top") == "50px" && rml_style(rml, "hud", "bottom").empty());
+    CHECK(rml_anchor(rml, "hud").x == 1 && rml_anchor(rml, "hud").y == 0);
+}
+
 static void test_rml_edit() {  // the UI designer's writes into the document text
     using namespace lsd::editor;
     std::string rml = "<rml><body>\n<div id=\"panel\" style=\"left: 40px; color: red;\">\n  <div id=\"title\">Title</div>\n  <button id=\"play\">Play</button>\n</div>\n<img id=\"pic\" src=\"a.png\"/>\n</body></rml>";
+    {  // the Hierarchy: nesting from the tags, self-closing ones have no children, comments are skipped
+        const std::vector<RmlNode> tree = rml_outline("<rml><head><title>x</title></head><body><!-- <div id=\"no\"> -->" + rml.substr(rml.find("<body>") + 6));
+        CHECK(tree.size() == 4 && tree[0].id == "panel" && tree[0].depth == 0 && tree[1].id == "title" && tree[1].depth == 1);
+        CHECK(tree[2].tag == "button" && tree[2].depth == 1 && tree[3].id == "pic" && tree[3].tag == "img" && tree[3].depth == 0);
+    }
     CHECK(rml_style(rml, "panel", "left") == "40px" && rml_style(rml, "panel", "top").empty());
     CHECK(rml_set_style(rml, "panel", "left", "120px") && rml_style(rml, "panel", "left") == "120px");
     CHECK(rml_set_style(rml, "panel", "top", "8px") && rml_style(rml, "panel", "top") == "8px" && rml_style(rml, "panel", "color") == "red");
@@ -157,6 +192,68 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
 }
 
+static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor under a 4 m roof, the sun straight down
+    using namespace lsd;
+    editor::BakeScene scene;
+    const Vec3 a{-10, -10, 0}, b{10, -10, 0}, c{10, 10, 0}, d{-10, 10, 0};
+    const Vec3 ra{-2, -2, 2}, rb{2, -2, 2}, rc{2, 2, 2}, rd{-2, 2, 2};
+    scene.positions = {a, b, c, a, c, d, ra, rb, rc, ra, rc, rd};
+    scene.albedo = {Vec3{0.5f, 0.5f, 0.5f}, Vec3{0.5f, 0.5f, 0.5f}, Vec3{}, Vec3{}};
+    for (int i = 0; i < 3; ++i) scene.lights.sky[i] = scene.lights.ground[i] = 1.0f;
+    scene.lights.count = 1;
+    scene.lights.lights[0] = rhi::GpuLight{};
+    scene.lights.lights[0].type = 0.0f;
+    scene.lights.lights[0].direction[2] = -1.0f;
+    for (int i = 0; i < 3; ++i) scene.lights.lights[0].color[i] = 3.0f;
+    scene.lo = {-1, -1, 1};
+    scene.hi = {1, 1, 1.5f};
+    scene.spacing = 1.0f;
+    scene.lightmap_size = 256;
+    editor::BakeScene::LightmapSource floor;
+    std::snprintf(floor.object.name, sizeof floor.object.name, "Floor");
+    std::snprintf(floor.object.mesh, sizeof floor.object.mesh, "Plane");
+    render::MeshData plane = render::make_plane(default_allocator());
+    floor.object.vertices.assign(plane.vertices, plane.vertices + plane.vertex_count);
+    floor.object.indices.assign(plane.indices, plane.indices + plane.index_count);
+    render::free_mesh(default_allocator(), plane);
+    floor.world = scaling(Vec3{20, 20, 1});
+    scene.lightmap_sources.push_back(floor);
+    editor::BakedLighting baked;
+    std::atomic<u32> done{0}, total{0};
+    editor::bake_lighting(scene, baked, &done, &total);
+    CHECK(baked.has_lightmap() && baked.objects.size() == 1 && baked.lightmap.size() == 256u * 256u * 4u && done.load() == total.load());
+    bool uvs_in_atlas = !baked.objects.empty();
+    for (const rhi::MeshVertex& v : baked.objects.empty() ? std::vector<rhi::MeshVertex>{} : baked.objects[0].vertices) {
+        uvs_in_atlas = uvs_in_atlas && v.lightmap_uv[0] > 0.0f && v.lightmap_uv[0] < 1.0f && v.lightmap_uv[1] > 0.0f && v.lightmap_uv[1] < 1.0f;
+    }
+    CHECK(uvs_in_atlas);
+    u32 covered = 0, shadowed = 0;
+    u32 lit_sum = 0, dark_sum = 0;
+    for (usize i = 0; i < baked.lightmap.size(); i += 4) {
+        if (!baked.lightmap[i]) continue;  // outside the charts
+        ++covered;
+        if (baked.lightmap[i + 3] < 128) {
+            ++shadowed;
+            dark_sum += baked.lightmap[i];
+        } else {
+            lit_sum += baked.lightmap[i];
+        }
+    }
+    const f32 share = covered ? static_cast<f32>(shadowed) / static_cast<f32>(covered) : 0.0f;
+    CHECK(covered > 1000 && share > 0.02f && share < 0.08f);  // 16 of 400 square metres under the roof
+    CHECK(shadowed && covered > shadowed && dark_sum / shadowed < lit_sum / (covered - shadowed));  // and less sky there
+    CHECK(editor::find_lightmap_object(baked, "Floor", "Plane", {0, 0, 0}) == 0 && editor::find_lightmap_object(baked, "Floor", "Plane", {1, 0, 0}) == -1 &&
+          editor::find_lightmap_object(baked, "Floor", "Cube", {0, 0, 0}) == -1);
+    rhi::LightSetup setup;
+    editor::apply_baked_lighting(baked, setup);
+    CHECK(setup.lightmap_info[1] == 1.0f && setup.lightmap_info[0] == baked.lightmap_scale);
+    const std::string path = (std::filesystem::path(LSD_TEST_TEMP_DIR) / "Lightmap_BuiltData.lsdlight").generic_string();
+    CHECK(editor::save_baked_lighting(path.c_str(), baked));
+    editor::BakedLighting loaded;
+    CHECK(editor::load_baked_lighting(path.c_str(), loaded) && loaded.has_lightmap() && loaded.lightmap == baked.lightmap && loaded.objects.size() == 1 &&
+          loaded.objects[0].indices == baked.objects[0].indices && std::strcmp(loaded.objects[0].name, "Floor") == 0);
+}
+
 static void test_references() {  // Reference Viewer: who uses what, and Replace References
     using namespace lsd;
     CHECK(editor::find_guids("x 0123456789abcdef0123456789ABCDEF y 0123").size() == 1);
@@ -181,6 +278,39 @@ static void test_references() {  // Reference Viewer: who uses what, and Replace
     index.build(registry);
     CHECK(index.used_by(b).empty() && index.used_by(c).size() == 1);
     std::filesystem::remove_all(dir, error);
+
+    // Cooking: the project names the level by path, the level uses a script by GUID, the script names a
+    // sound and a UI document; the document brings its stylesheet and its .js; an unused script stays out.
+    const std::filesystem::path cook = std::filesystem::path(LSD_TEST_TEMP_DIR) / "CookContent";
+    std::filesystem::remove_all(cook, error);
+    std::filesystem::create_directories(cook / "Levels", error);
+    std::filesystem::create_directories(cook / "UI", error);
+    std::ofstream(cook / "Levels" / "Main.lsdlevel") << "{}";
+    std::ofstream(cook / "Door.lua") << "function on_start(self) lsd.play_sound(\"Creak\"); lsd.ui_open('Menu') end";
+    std::ofstream(cook / "Unused.lua") << "-- nobody asks for me";
+    std::ofstream(cook / "Creak.wav") << "RIFF";
+    std::ofstream(cook / "UI" / "Menu.rml") << "<rml><head><link type=\"text/rcss\" href=\"Menu.rcss\"/></head></rml>";
+    std::ofstream(cook / "UI" / "Menu.rcss") << "body {}";
+    std::ofstream(cook / "UI" / "Menu.js") << "function onOpen() {}";
+    asset::AssetRegistry assets(default_allocator(), cook.generic_string().c_str());
+    assets.scan();
+    char door[33] = "";
+    for (usize i = 0; i < assets.count(); ++i) {
+        if (std::strcmp(assets.get(i).name, "Door") == 0) asset::to_string(assets.get(i).guid, door);
+    }
+    std::ofstream(cook / "Levels" / "Main.lsdlevel") << "{\"Script\": {\"script\": \"" << door << "\"}}";
+    const std::vector<std::string> cooked = editor::cook_set(assets, "{\"game_default_level\": \"Content/Levels/Main.lsdlevel\"}");
+    auto has = [&](const char* name) {
+        for (usize i = 0; i < assets.count(); ++i) {
+            char g[33];
+            asset::to_string(assets.get(i).guid, g);
+            if (std::strcmp(assets.get(i).path, name) == 0) return std::find(cooked.begin(), cooked.end(), std::string(g)) != cooked.end();
+        }
+        return false;
+    };
+    CHECK(has("Levels/Main.lsdlevel") && has("Door.lua") && has("Creak.wav") && has("UI/Menu.rml") && has("UI/Menu.rcss") && has("UI/Menu.js"));
+    CHECK(!has("Unused.lua") && cooked.size() == 6);
+    std::filesystem::remove_all(cook, error);
 }
 
 // LSD Assistant without the network: what each provider is sent, its replies read back (thinking
@@ -189,7 +319,7 @@ static void test_assistant() {
     using namespace lsd::editor::assistant;
     Settings claude;
     claude.key = "k";
-    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", ""}};
+    std::vector<Turn> turns{{true, "Make a \"door\"\nthat opens", "", {}, {}, ""}};
     const std::string body = request_body(claude, "You are LSD Assistant", turns);
     CHECK(request_url(claude) == "https://api.anthropic.com/v1/messages");
     CHECK(body.find("\"model\":\"claude-opus-5-5\"") != std::string::npos && body.find("\"cache_control\":{\"type\":\"ephemeral\"}") != std::string::npos);
@@ -207,13 +337,22 @@ static void test_assistant() {
     haiku.model = "claude-haiku-4-5";  // no effort, no fallback on older models
     const std::string old = request_body(haiku, "s", turns);
     CHECK(old.find("effort") == std::string::npos && old.find("fallbacks") == std::string::npos);
+    // A picture with the message: base64 PNG, an image block before the text (Anthropic) or a data URL (OpenAI).
+    const u8 bytes[5] = {'M', 'a', 'n', 0xFF, 0x00};
+    CHECK(base64(bytes, 3) == "TWFu" && base64(bytes, 4) == "TWFu/w==" && base64(bytes, 5) == "TWFu/wA=" && base64(bytes, 0).empty());
+    std::vector<Turn> pictured{{true, "What is wrong here?", "", {}, {}, "AAAA"}};
+    const std::string with_image = request_body(claude, "s", pictured);
+    CHECK(with_image.find("[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AAAA\"}},{\"type\":\"text\"") != std::string::npos);
+    Settings openai = claude;
+    openai.provider = kOpenAICompatible;
+    CHECK(request_body(openai, "s", pictured).find("\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}") != std::string::npos);
 
     const std::string reply = R"({"id":"m","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"abc"},)"
                               R"({"type":"text","text":"Here:\n```lua Content/Script/Door.lua\nfunction on_start(self) end\n```\nDone \u00e9"}],"stop_reason":"end_turn"})";
     const Reply r = parse_reply(claude, 200, reply);
     CHECK(r.ok && r.text.find("Done \xc3\xa9") != std::string::npos && r.raw.find("\"signature\":\"abc\"") != std::string::npos && r.raw.front() == '[');
-    turns.push_back({false, r.text, r.raw});
-    turns.push_back({true, "thanks", ""});
+    turns.push_back({false, r.text, r.raw, {}, {}, ""});
+    turns.push_back({true, "thanks", "", {}, {}, ""});
     const std::string next = request_body(claude, "s", turns);
     CHECK(next.find("\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"") != std::string::npos);  // sent back unchanged
     const std::vector<CodeBlock> blocks = code_blocks(r.text);
@@ -224,27 +363,598 @@ static void test_assistant() {
     CHECK(!error.ok && error.error == "invalid x-api-key");
     CHECK(!parse_reply(claude, 0, "").ok);
 
+    // Streamed (server-sent events): text grows as deltas come, thinking kept with its signature.
+    CHECK(body.find("\"stream\":true") != std::string::npos);
+    const std::string stream =
+        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"content\":[]}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo \\u00e9\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_del";  // cut mid-line: not read yet
+    const Reply part = parse_stream(claude, 0, stream);
+    CHECK(!part.ok && part.text == "Hello \xc3\xa9");
+    const std::string whole = stream.substr(0, stream.rfind("data:")) +
+                              "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+    const Reply streamed = parse_stream(claude, 200, whole);
+    CHECK(streamed.ok && streamed.text == "Hello \xc3\xa9");
+    CHECK(streamed.raw == "[{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"sig\"},{\"type\":\"text\",\"text\":\"Hello \xc3\xa9\"}]");
+    const std::string refused = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+    CHECK(!parse_stream(claude, 200, refused).ok);
+    CHECK(!parse_stream(claude, 529, "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n").ok);
+    CHECK(parse_stream(claude, 401, R"({"type":"error","error":{"message":"invalid x-api-key"}})").error == "invalid x-api-key");  // not a stream
+
     Settings local;
     local.provider = kOpenAICompatible;
     local.endpoint = "http://localhost:11434/v1/";
     local.model = "llama3.1";
     CHECK(request_url(local) == "http://localhost:11434/v1/chat/completions");
     CHECK(request_headers(local).size() == 1);  // no key: no Authorization header
-    CHECK(request_body(local, "sys", {{true, "hi", ""}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
+    CHECK(request_body(local, "sys", {{true, "hi", "", {}, {}, ""}}).find("{\"role\":\"system\",\"content\":\"sys\"}") != std::string::npos);
     const Reply o = parse_reply(local, 200, R"({"choices":[{"message":{"role":"assistant","content":"hello"}}]})");
     CHECK(o.ok && o.text == "hello");
+    const Reply os = parse_stream(local, 200, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n"
+                                              "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+    CHECK(os.ok && os.text == "hello" && os.raw == "hello");
+
+    // Tools: offered when on, calls read back from both providers' streams, results sent the way each expects.
+    CHECK(request_body(claude, "s", turns, true).find("\"tools\":[{\"name\":\"console\"") != std::string::npos);
+    CHECK(request_body(claude, "s", turns).find("\"tools\"") == std::string::npos);
+    CHECK(request_body(local, "s", {{true, "hi", "", {}, {}, ""}}, true).find("{\"type\":\"function\",\"function\":{\"name\":\"console\"") != std::string::npos);
+    const Reply use = parse_stream(claude, 200,
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Starting Play.\"}}\n\n"
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"console\",\"input\":{}}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\"}}\n\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\" \\\"play\\\"}\"}}\n\n"
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n");
+    CHECK(use.ok && use.text == "Starting Play." && use.calls.size() == 1 && use.calls[0].id == "tu_1" && use.calls[0].name == "console");
+    CHECK(tool_arg(use.calls[0].input, "command") == "play" && tool_arg("{\"lines\":20}", "lines") == "20" && tool_arg("{}", "x").empty());
+    CHECK(use.raw.find("{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"console\",\"input\":{\"command\": \"play\"}}") != std::string::npos);
+    std::vector<Turn> acted{{true, "play it", "", {}, {}, ""}, {false, use.text, use.raw, use.calls, {}, ""}, {true, "", "", {}, {{"tu_1", "Play started", false}}, ""}};
+    const std::string back = request_body(claude, "s", acted, true);
+    CHECK(back.find("{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu_1\",\"content\":\"Play started\"}]}") != std::string::npos);
+    const Reply ocall = parse_stream(local, 200,
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"\"}}]}}]}\n\n"
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"lines\\\":5}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n");
+    CHECK(ocall.ok && ocall.calls.size() == 1 && ocall.calls[0].id == "call_9" && ocall.calls[0].name == "read_log" && tool_arg(ocall.calls[0].input, "lines") == "5");
+    std::vector<Turn> oacted{{true, "log?", "", {}, {}, ""}, {false, "", "", ocall.calls, {}, ""}, {true, "", "", {}, {{"call_9", "[game] ok", false}}, ""}};
+    const std::string oback = request_body(local, "s", oacted, true);
+    CHECK(oback.find("\"tool_calls\":[{\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"read_log\",\"arguments\":\"{\\\"lines\\\":5}\"}}]") != std::string::npos);
+    CHECK(oback.find("{\"role\":\"tool\",\"tool_call_id\":\"call_9\",\"content\":\"[game] ok\"}") != std::string::npos);
+    CHECK(readable_path("Content/Levels/A.lsdlevel") && !readable_path("Config/project.json") && !readable_path("Content/../Saved/editor_settings.json"));
 
     CHECK(writable_path("Content/Script/Door.lua") && writable_path("Source/Door.cpp"));
     CHECK(!writable_path("../evil.lua") && !writable_path("Content/../x") && !writable_path("C:/Windows/x") && !writable_path("/etc/x") && !writable_path("Config/project.json"));
+    CHECK(writable_path("Content/UI/HUD.rml") && writable_path("Source/CMakeLists.txt") && !writable_path("Content/Mesh/Gun.fbx") && !writable_path("Content/Weapon/IA_Aim.lsdasset"));
+}
+
+// Shortcuts: text round trip, defaults, only changed chords saved and loaded back.
+static void test_keymap() {
+    using editor::Command;
+    char text[32];
+    editor::chord_text(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, text, sizeof text);
+    CHECK(std::strcmp(text, "Ctrl+Shift+S") == 0);
+    CHECK(editor::parse_chord("Ctrl+Shift+S") == (ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S));
+    CHECK(editor::parse_chord("Alt+F11") == (ImGuiMod_Alt | ImGuiKey_F11) && editor::parse_chord("Delete") == ImGuiKey_Delete);
+    CHECK(editor::parse_chord("") == 0 && editor::parse_chord("Ctrl+Nope") == 0);
+    CHECK(std::strcmp(editor::command_text(Command::Save), "Ctrl+S") == 0);
+
+    editor::EditorSettings set;
+    editor::set_command_chord(Command::Save, ImGuiMod_Alt | ImGuiKey_W);
+    editor::set_command_chord(Command::Delete, 0);
+    editor::save_keymap(set);
+    CHECK(set.shortcuts.count == 2);
+    editor::load_keymap(editor::EditorSettings{});  // defaults again
+    CHECK(editor::command_chord(Command::Save) == (ImGuiMod_Ctrl | ImGuiKey_S));
+    editor::load_keymap(set);
+    CHECK(editor::command_chord(Command::Save) == (ImGuiMod_Alt | ImGuiKey_W) && editor::command_chord(Command::Delete) == 0);
+    CHECK(std::strcmp(editor::command_text(Command::Delete), "") == 0);
+    editor::load_keymap(editor::EditorSettings{});
+}
+
+// Landscape paint: the weights always sum to 255, painting moves toward the layer, erasing away.
+static void test_landscape_paint() {
+    auto sum = [](u32 p) { return (p & 0xFFu) + ((p >> 8) & 0xFFu) + ((p >> 16) & 0xFFu) + (p >> 24); };
+    auto layer = [](u32 p, int k) { return (p >> (8 * k)) & 0xFFu; };
+    u32 w = 255u;  // all layer 0
+    w = editor::paint_weight(w, 1, 0.5f, false);
+    CHECK(sum(w) == 255 && layer(w, 1) >= 126 && layer(w, 1) <= 129 && layer(w, 0) + layer(w, 1) == 255);
+    w = editor::paint_weight(w, 2, 0.5f, false);  // the others give way in proportion
+    CHECK(sum(w) == 255 && layer(w, 2) >= 126 && layer(w, 0) > 50 && layer(w, 1) > 50);
+    for (int i = 0; i < 40; ++i) w = editor::paint_weight(w, 3, 0.3f, false);
+    CHECK(sum(w) == 255 && layer(w, 3) >= 254);
+    w = editor::paint_weight(w, 3, 1.0f, true);  // all of layer 3 erased: the rest goes back to layer 0
+    CHECK(sum(w) == 255 && layer(w, 3) == 0 && layer(w, 0) == 255);
+    w = editor::paint_weight(w, 0, 1.0f, true);  // erasing the only layer: layer 1 takes it
+    CHECK(sum(w) == 255 && layer(w, 0) == 0 && layer(w, 1) == 255);
+    for (u32 seed = 1; seed < 2000; ++seed) {  // any mix, any step: still 255
+        u32 p = 255u;
+        for (int s = 0; s < 6; ++s) p = editor::paint_weight(p, static_cast<int>((seed + s) % 4), static_cast<f32>((seed * 7 + s) % 10) / 9.0f, (seed + s) % 3 == 0);
+        CHECK(sum(p) == 255);
+    }
+    CHECK(editor::paint_weight(0x12345678u, 7, 1.0f, false) == 0x12345678u);
+}
+
+// Project templates: each builds a playable level (one player, the right camera), and survives a save / load.
+static void test_templates() {
+    HeapAllocator heap("templates");
+    {
+        world::World w(heap);
+        editor::TemplateArt art;
+        std::snprintf(art.tiles, sizeof art.tiles, "%s", "0123456789abcdef0123456789abcdef");
+        for (int t = 0; t < static_cast<int>(editor::Template::Count); ++t) {
+            const auto kind = static_cast<editor::Template>(t);
+            editor::build_template_world(w, kind, art);
+            const u32 characters = w.count(reflect::type_of<world::Character>());
+            CHECK(editor::template_name(kind)[0] && editor::template_description(kind)[0]);
+            const bool showcase = kind == editor::Template::CharacterCustomization || kind == editor::Template::CharacterSelection;
+            CHECK(characters == (kind == editor::Template::Empty || showcase ? 0u : 1u));
+            if (showcase) {  // a body on a stage, its script, and the camera on it
+                CHECK(w.count(reflect::type_of<world::SkeletalMesh>()) == 1 && w.count(reflect::type_of<world::Script>()) == 1);
+                CHECK(w.count(reflect::type_of<world::Camera>()) == 1);
+                CHECK(w.count(reflect::type_of<world::Outfit>()) == (kind == editor::Template::CharacterCustomization ? 1u : 0u));
+            }
+            CHECK(kind != editor::Template::Orthographic || (w.count(reflect::type_of<world::Camera>()) == 1 &&
+                                                             static_cast<const world::Camera*>(w.at(reflect::type_of<world::Camera>(), 0))->orthographic));
+            CHECK(w.count(reflect::type_of<world::DirectionalLight>()) == (kind == editor::Template::TwoD ? 0u : 1u));
+            if (characters) {
+                const world::Entity player = w.owner(reflect::type_of<world::Character>(), 0);
+                const auto* c = w.get<world::Character>(player);
+                const bool side = kind == editor::Template::SideScrolling || kind == editor::Template::TwoD || kind == editor::Template::TwoPointFiveD;
+                CHECK(c->side_scroller == side);
+                CHECK(!side || w.count(reflect::type_of<world::Camera>()) == 1);  // the follow camera
+                CHECK(kind != editor::Template::ThirdPerson || c->camera_distance > 0.0f);
+            }
+            if (kind == editor::Template::TwoD) {
+                const auto* map = static_cast<const world::TileMap*>(w.at(reflect::type_of<world::TileMap>(), 0));
+                CHECK(map && map->tiles.count == map->width * map->height && std::strcmp(map->tileset, art.tiles) == 0);
+                CHECK(map && map->tiles[0] == 2 && map->tiles[map->width] == 1);  // dirt under grass at the start
+                CHECK(map && map->tiles[map->width + 19] == 0);                  // a pit
+                const auto* hero = w.get<world::Sprite>(w.owner(reflect::type_of<world::Character>(), 0));
+                CHECK(hero && hero->walk_count == 4 && hero->jump_count == 1 && hero->columns == 4 && hero->rows == 2);
+            }
+            const std::string path = std::string(LSD_TEST_TEMP_DIR) + "/template_test.lsdlevel";
+            CHECK(world::save_level_file(w, path.c_str()));
+            world::World loaded(heap);
+            CHECK(world::load_level_file(loaded, path.c_str()));
+            CHECK(loaded.count(reflect::type_of<world::Character>()) == characters);
+            std::filesystem::remove(path);
+        }
+    }
+    // The 2D art: drawn cells on a see-through background.
+    std::vector<u8> hero(static_cast<usize>(editor::kHeroWidth) * editor::kHeroHeight * 4);
+    editor::template_hero(hero.data());
+    CHECK(hero[3] == 0);  // the top-left corner is transparent
+    u32 solid = 0;
+    for (usize i = 3; i < hero.size(); i += 4) solid += hero[i] == 255 ? 1u : 0u;
+    CHECK(solid > 1000);  // eight figures
+    std::vector<u8> tiles(static_cast<usize>(editor::kTilesetSize) * editor::kTilesetSize * 4);
+    editor::template_tileset(tiles.data());
+    CHECK(tiles[3] == 255 && tiles[1] > tiles[0]);  // the grass tile: opaque, green on top
+}
+
+// Tile map layers: layer 0 is the map's own tiles, the others its Layers; a layer's tiles give their own runs.
+static void test_tile_layers() {
+    world::TileMap map;
+    map.width = 4;
+    map.height = 2;
+    for (u32 i = 0; i < 8; ++i) map.tiles.push_back(i < 4 ? 1 : 0);  // the bottom row solid
+    world::TileLayer deco;
+    for (u32 i = 0; i < 8; ++i) deco.tiles.push_back(i == 5 || i == 6 ? 2 : 0);  // two tiles on the second row
+    map.layers.push_back(deco);
+    CHECK(editor::layer_tiles(map, 0) == &map.tiles && editor::layer_tiles(map, 1) == &map.layers[0].tiles && !editor::layer_tiles(map, 2));
+    editor::TileRun runs[8];
+    CHECK(editor::tile_runs(map, runs, 8) == 1 && std::fabs(runs[0].hi.x - 4.0f) < 1e-5f);
+    CHECK(editor::tile_runs(map, map.layers[0].tiles, runs, 8) == 1 && std::fabs(runs[0].lo.x - 1.0f) < 1e-5f && std::fabs(runs[0].lo.z - 1.0f) < 1e-5f);
+}
+
+// Modeling: a box extruded, inset, bevelled and picked stays a closed, outward-facing mesh.
+static void test_mesh_edit() {
+    world::EditableMesh m;
+    editor::make_box(m);
+    CHECK(m.points.count == 8 && m.faces.count == 6);
+    const Vec3 top = editor::face_normal(m, 0);
+    CHECK(std::fabs(top.z - 1.0f) < 1e-5f);  // face 0 is the top, facing up
+    for (u32 f = 0; f < m.faces.count; ++f) CHECK(dot(editor::face_normal(m, f), editor::face_centre(m, f) - Vec3{0, 0, 0.5f}) > 0.0f);  // all outward
+    CHECK(editor::extrude(m, 0, 1.0f));
+    CHECK(m.points.count == 12 && m.faces.count == 10 && std::fabs(editor::face_centre(m, 0).z - 2.0f) < 1e-5f);
+    for (u32 f = 0; f < m.faces.count; ++f) CHECK(dot(editor::face_normal(m, f), editor::face_centre(m, f) - Vec3{0, 0, 1.0f}) > 0.0f);  // the walls face out too
+    CHECK(editor::inset(m, 0, 0.5f));
+    CHECK(m.faces.count == 14 && std::fabs(editor::face_normal(m, 0).z - 1.0f) < 1e-5f);
+    const u32 faces = m.faces.count, points = m.points.count;
+    CHECK(editor::bevel(m, 0, 0.2f, 0.3f));
+    CHECK(m.faces.count == faces + 8 && m.points.count == points + 8);
+    f32 t = 0.0f;
+    CHECK(editor::pick_face(m, {0, 0, 10}, {0, 0, -1}, t) == 0 && std::fabs(t - (10.0f - 2.3f)) < 1e-4f);  // straight down onto the bevelled top
+    CHECK(editor::pick_face(m, {5, 5, 10}, {0, 0, -1}, t) == -1);
+    CHECK(editor::push_pull(m, 0, 0.2f) && std::fabs(editor::face_centre(m, 0).z - 2.5f) < 1e-4f);
+    CHECK(editor::flip_face(m, 0) && editor::face_normal(m, 0).z < -0.99f);
+    CHECK(editor::delete_face(m, 0) && m.faces.count == faces + 7);
+    render::MeshData data;
+    editor::build_edit_mesh(m, data);
+    CHECK(data.vertex_count == data.index_count && data.index_count == m.faces.count * 6);  // all quads: 2 triangles each
+    render::free_mesh(default_allocator(), data);
+    world::EditableMesh box;  // deleting a box corner takes the three faces meeting there
+    editor::make_box(box);
+    CHECK(editor::delete_point(box, 7) && box.faces.count == 3 && !editor::delete_point(box, 7));
+    editor::make_box(box);  // an edge belongs to two faces
+    CHECK(editor::delete_edge(box, 4, 5) && box.faces.count == 4);
+
+    // Booleans: a box against a copy moved half a metre along X.
+    auto x_range = [](const world::EditableMesh& mesh, f32& lo, f32& hi) {
+        lo = 1e9f;
+        hi = -1e9f;
+        for (u32 f = 0; f < mesh.faces.count; ++f) {
+            for (u32 i = 0; i < editor::face_size(mesh.faces[f]); ++i) {
+                const f32 x = editor::face_point(mesh, mesh.faces[f], i).x;
+                lo = std::fmin(lo, x);
+                hi = std::fmax(hi, x);
+            }
+        }
+    };
+    const Mat4 shifted = translation({0.5f, 0.0f, 0.0f});
+    world::EditableMesh tool;
+    editor::make_box(tool);
+    f32 lo = 0.0f, hi = 0.0f;
+    world::EditableMesh u;
+    editor::make_box(u);
+    CHECK(editor::boolean_op(u, tool, shifted, editor::BooleanOp::Union));
+    x_range(u, lo, hi);
+    CHECK(std::fabs(lo + 0.5f) < 1e-4f && std::fabs(hi - 1.0f) < 1e-4f);
+    world::EditableMesh sub;
+    editor::make_box(sub);
+    CHECK(editor::boolean_op(sub, tool, shifted, editor::BooleanOp::Subtract));
+    x_range(sub, lo, hi);
+    CHECK(std::fabs(lo + 0.5f) < 1e-4f && std::fabs(hi) < 1e-4f);  // what is left: the box's -X half
+    world::EditableMesh both;
+    editor::make_box(both);
+    CHECK(editor::boolean_op(both, tool, shifted, editor::BooleanOp::Intersect));
+    x_range(both, lo, hi);
+    CHECK(std::fabs(lo) < 1e-4f && std::fabs(hi - 0.5f) < 1e-4f);
+    for (u32 f = 0; f < sub.faces.count; ++f) CHECK(dot(editor::face_normal(sub, f), editor::face_centre(sub, f) - Vec3{-0.25f, 0, 0.5f}) > 0.0f);  // still facing out
+    world::EditableMesh apart;  // nothing in common: an empty intersection leaves the mesh as it was
+    editor::make_box(apart);
+    CHECK(!editor::boolean_op(apart, tool, translation({5.0f, 0.0f, 0.0f}), editor::BooleanOp::Intersect) && apart.faces.count == 6);
+    const std::string obj = editor::to_obj(m, "Box");
+    CHECK(obj.find("\nv ") != std::string::npos && obj.find("\nf ") != std::string::npos);
+}
+
+// Landscape: a heightmap image in and out again, and holes that remove the squares around them.
+static void test_landscape_core() {
+    constexpr u32 kGrid = world::Landscape::kResolution;
+    std::vector<u8> ramp(16 * 8 * 4);
+    for (u32 y = 0; y < 8; ++y) {
+        for (u32 x = 0; x < 16; ++x) {
+            u8* p = &ramp[(y * 16 + x) * 4];
+            p[0] = p[1] = p[2] = static_cast<u8>(x * 17);  // black on the left (-X) to white on the right
+            p[3] = 255;
+        }
+    }
+    world::Landscape l;
+    editor::heights_from_image(l, ramp.data(), 16, 8, 10.0f);
+    CHECK(l.heights.count == kGrid * kGrid);
+    CHECK(std::fabs(l.heights[0]) < 1e-4f && std::fabs(l.heights[kGrid - 1] - 10.0f) < 1e-3f);
+    CHECK(l.heights[kGrid / 2] > 4.0f && l.heights[kGrid / 2] < 6.0f);
+    std::vector<u8> out(static_cast<usize>(kGrid) * kGrid * 4);
+    editor::image_from_heights(l, 10.0f, out.data());
+    CHECK(out[0] == 0 && out[(kGrid - 1) * 4] == 255 && out[3] == 255);
+    // 16 bits (Unreal's .r16): a height comes back within 1 / 65535 of the range, through a file too.
+    l.heights[7 * kGrid + 9] = 12.3456f;
+    std::vector<u16> samples(static_cast<usize>(kGrid) * kGrid);
+    editor::samples_from_heights(l, 50.0f, samples.data());
+    const std::string r16 = LSD_TEST_TEMP_DIR "/landscape_test.r16";
+    CHECK(editor::write_r16(r16.c_str(), samples.data(), kGrid));
+    std::vector<u16> read;
+    u32 side = 0;
+    CHECK(editor::read_r16(r16.c_str(), read, side) && side == kGrid && read == samples);
+    world::Landscape back;
+    editor::heights_from_samples(back, read.data(), side, side, 50.0f);
+    CHECK(std::fabs(back.heights[7 * kGrid + 9] - 12.3456f) < 50.0f / 65535.0f + 1e-4f);
+    CHECK(std::fabs(back.heights[kGrid - 1] - 10.0f) < 1e-3f);  // the ramp's top corner
+    std::remove(r16.c_str());
+    CHECK(l.holes.count == 0 && editor::quad_open(l, 3, 3));
+    editor::set_hole(l, 4, 4, true);
+    CHECK(l.holes.count == kGrid * kGrid && editor::is_hole(l, 4, 4));
+    CHECK(!editor::quad_open(l, 3, 3) && !editor::quad_open(l, 4, 4) && editor::quad_open(l, 5, 5));  // the four squares around it
+    editor::set_hole(l, 4, 4, false);
+    CHECK(editor::quad_open(l, 3, 3));
+}
+
+// Gather Text: keys from scripts and UI texts, merged into the string table without duplicates.
+static void test_gather_text() {
+    std::vector<editor::GatheredText> found;
+    editor::gather_script_text("local t = lsd.text(\"MENU_PLAY\") .. lsd.text( 'SCORE', 3) .. lsd.text(name)", found);
+    CHECK(found.size() == 2 && found[0].key == "MENU_PLAY" && found[1].key == "SCORE");
+    editor::gather_rml_text("<rml><head><title>Menu</title><style>body { color: red; }</style></head><body>"
+                            "<button id=\"go\">Start  Game</button><div>{{game.score}}</div><div> 42 </div><p>Quit &amp; Save</p></body></rml>",
+                            found);
+    CHECK(found.size() == 4 && found[2].key == "Start Game" && found[2].text == "Start Game" && found[3].key == "Quit & Save");
+    std::string csv;
+    CHECK(editor::merge_string_table("Key,en,fr\nMENU_PLAY,Play,Jouer\n", found, csv) == 3);
+    CHECK(csv.find("MENU_PLAY,Play,Jouer") != std::string::npos && csv.find("Start Game,Start Game,") != std::string::npos);
+    std::string again;
+    CHECK(editor::merge_string_table(csv, found, again) == 0);
+    std::string fresh;
+    CHECK(editor::merge_string_table("", found, fresh) == 4 && fresh.rfind("Key,en\n", 0) == 0);
+}
+
+// Run Behavior: another tree's branch is copied in where the node is, glowing as that node.
+static void test_run_behavior() {
+    HeapAllocator heap("bt");
+    script::Graph sub(heap);
+    const u32 sub_root = sub.add("BtRoot", 0, 0)->id;
+    script::GraphNode* wait = sub.add("BtWait", 0, 0);
+    std::snprintf(wait->values[1], sizeof wait->values[1], "%s", "3");
+    CHECK(sub.connect(sub_root, 0, wait->id, 0));
+    static std::string sub_path;
+    sub_path = std::string(LSD_TEST_TEMP_DIR) + "/BT_Sub.lsdbt";
+    CHECK(script::save_graph_file(sub, sub_path.c_str()));
+    script::Graph main_tree(heap);
+    const u32 root = main_tree.add("BtRoot", 0, 0)->id;
+    const u32 seq = main_tree.add("BtSequence", 0, 0)->id;
+    script::GraphNode* run = main_tree.add("BtRunBehavior", 0, 0);
+    CHECK(run != nullptr);
+    if (!run) return;
+    std::snprintf(run->values[1], sizeof run->values[1], "%s", "BT_Sub");
+    const u32 run_id = run->id;
+    const u32 set = main_tree.add("BtSetKey", 0, 0)->id;
+    CHECK(main_tree.connect(root, 0, seq, 0) && main_tree.connect(seq, 0, run_id, 0) && main_tree.connect(seq, 1, set, 0));
+    ai::BehaviorTree tree;
+    char error[256] = "";
+    auto resolve = [](void*, const char* name, char* out, usize capacity) {
+        if (std::strcmp(name, "BT_Sub") != 0) return false;
+        std::snprintf(out, capacity, "%s", sub_path.c_str());
+        return true;
+    };
+    CHECK(editor::build_behavior_tree(main_tree, tree, error, sizeof error, resolve, nullptr));
+    bool copied = false;
+    for (u32 i = 0; i < tree.count; ++i) copied |= tree.nodes[i].type == ai::BtType::Wait && tree.nodes[i].value == 3.0f && tree.nodes[i].id == run_id;
+    CHECK(copied && tree.count == 5);  // root, sequence, run behavior (a one-child sequence), wait, set key
+    CHECK(!editor::build_behavior_tree(main_tree, tree, error, sizeof error) && error[0]);  // nothing to find the tree with
+    std::filesystem::remove(sub_path);
+}
+
+// Device Profiles: GPU name (any case), video memory range and platform; applying sets the quality and groups.
+static void test_device_profiles() {
+    editor::DeviceProfile deck;
+    std::snprintf(deck.gpu_contains, sizeof deck.gpu_contains, "%s", "van gogh");
+    deck.platform = 2;
+    deck.quality = 1;
+    deck.shadow_quality = 1;
+    CHECK(editor::profile_matches(deck, "AMD Custom GPU 0405 (Van Gogh)", 1024ull << 20, 2));
+    CHECK(!editor::profile_matches(deck, "AMD Custom GPU 0405 (Van Gogh)", 1024ull << 20, 1));  // not on Windows
+    CHECK(!editor::profile_matches(deck, "NVIDIA GeForce RTX 4090", 24ull << 30, 2));
+    editor::DeviceProfile small;
+    small.max_video_memory_mb = 4096;
+    small.quality = 0;
+    CHECK(editor::profile_matches(small, "Any GPU", 3ull << 30, 1) && !editor::profile_matches(small, "Any GPU", 8ull << 30, 1));
+    editor::GameUserSettings s;
+    editor::apply_profile(deck, s);
+    CHECK(s.quality == 1 && s.shadow_quality == 1 && s.post_quality == 0);
+}
+
+// Engine Scalability: groups follow the overall quality unless set, and Low trims the post pass.
+static void test_scalability() {
+    editor::GameUserSettings s;
+    s.quality = 1;
+    s.shadow_quality = 4;  // Epic on its own
+    const editor::Scalability q = editor::resolve_scalability(s);
+    CHECK(q.shadows == 3 && q.post == 1 && q.view_distance == 1 && q.effects == 1);
+    CHECK(editor::view_distance_scale(0) < editor::view_distance_scale(3) && editor::effects_scale(3) == 1.0f);
+    rhi::PostDraw post;
+    post.taa = true;
+    post.fxaa = false;
+    post.ao_intensity = post.ssr_intensity = 1.0f;
+    post.dof_focal_distance = 5.0f;
+    rhi::PostDraw high = post;
+    editor::limit_post(2, high);
+    CHECK(high.taa && high.ssr_intensity == 1.0f);  // High: as the volume sets it
+    editor::limit_post(1, post);
+    CHECK(!post.taa && post.fxaa && post.ssr_intensity == 0.0f && post.dof_focal_distance == 0.0f && post.ao_intensity == 1.0f);
+    editor::limit_post(0, post);
+    CHECK(post.ao_intensity == 0.0f);
+}
+
+// 2D: a Tile Map's collision from its tile shapes, and Flipbook timing.
+static void test_paper2d() {
+    world::TileMap map;
+    map.width = 6;
+    map.height = 1;
+    map.tile_size = 1.0f;
+    for (u32 i = 0; i < 6; ++i) map.tiles.push_back(0);
+    map.tiles[0] = map.tiles[1] = 1;  // two Full tiles: one box
+    map.tiles[2] = 2;                 // tile 2: a slope
+    map.tiles[3] = 3;                 // tile 3: decoration
+    map.tiles[4] = map.tiles[5] = 4;  // tile 4: top halves, one box
+    for (u32 i = 0; i < 4; ++i) map.tile_shapes.push_back({});
+    map.tile_shapes[1].shape = editor::kTileSlopeUp;
+    map.tile_shapes[2].shape = editor::kTileNone;
+    map.tile_shapes[3].shape = editor::kTileTopHalf;
+    editor::TileRun runs[8];
+    const u32 n = editor::tile_runs(map, runs, 8);
+    CHECK(n == 3);
+    CHECK(n == 3 && runs[0].kind == 0 && runs[0].lo.x == 0.0f && runs[0].hi.x == 2.0f && runs[0].hi.z == 1.0f);
+    CHECK(n == 3 && runs[1].kind == 1 && runs[1].lo.x == 2.0f && runs[1].hi.x == 3.0f);
+    CHECK(n == 3 && runs[2].kind == 0 && runs[2].lo.x == 4.0f && runs[2].hi.x == 6.0f && runs[2].lo.z == 0.5f);
+    CHECK(editor::tile_shape(map, 0) == editor::kTileNone && editor::tile_shape(map, 9) == editor::kTileFull);
+
+    world::Flipbook fb;
+    CHECK(editor::flipbook_frame(fb, 1.0f) == -1);
+    for (u32 i = 0; i < 3; ++i) fb.frames.push_back({});
+    fb.frames[0].duration = 0.1f;
+    fb.frames[1].duration = 0.3f;  // a held frame
+    fb.frames[2].duration = 0.1f;
+    CHECK(editor::flipbook_frame(fb, 0.05f) == 0);
+    CHECK(editor::flipbook_frame(fb, 0.2f) == 1 && editor::flipbook_frame(fb, 0.39f) == 1);
+    CHECK(editor::flipbook_frame(fb, 0.45f) == 2);
+    CHECK(editor::flipbook_frame(fb, 0.55f) == 0);  // looped
+    fb.loop = false;
+    CHECK(editor::flipbook_frame(fb, 5.0f) == 2);   // held on the last frame
+}
+
+void test_post_blend() {
+    world::World w(default_allocator());
+    world::PostProcessVolume out;
+    CHECK(!editor::blend_post_volumes(w, {0, 0, 0}, false, out) && out.saturation == 1.0f);  // none: the defaults
+    const world::Entity global = w.create("Global");
+    w.add<world::PostProcessVolume>(global)->saturation = 0.0f;  // unbound, weight 1: black and white everywhere
+    const world::Entity box = w.create("Box");
+    auto* local = w.add<world::PostProcessVolume>(box);
+    local->unbound = false;
+    local->priority = 1;
+    local->saturation = 2.0f;
+    local->blend_radius = 2.0f;
+    local->filmic_tonemapper = false;
+    w.get<world::Transform>(box)->scale = {2, 2, 2};  // x, y -1..1, z 0..2
+    CHECK(editor::blend_post_volumes(w, {0, 0, 1}, false, out) && std::fabs(out.saturation - 2.0f) < 1e-5f && !out.filmic_tonemapper);  // inside: on top
+    CHECK(editor::blend_post_volumes(w, {2, 0, 1}, false, out) && std::fabs(out.saturation - 1.0f) < 1e-5f && !out.filmic_tonemapper);  // 1 m out of 2: half
+    CHECK(editor::blend_post_volumes(w, {4, 0, 1}, false, out) && std::fabs(out.saturation) < 1e-5f && out.filmic_tonemapper);  // beyond the radius: the global one
+    local->blend_weight = 0.25f;
+    CHECK(editor::blend_post_volumes(w, {0, 0, 1}, false, out) && std::fabs(out.saturation - 0.5f) < 1e-5f && out.filmic_tonemapper);  // a quarter in: switches stay
+}
+
+void test_bake_texture_albedo() {  // Build Lighting: a triangle's albedo takes its material's base colour texture
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(LSD_TEST_TEMP_DIR) / "BakeAlbedo";
+    std::error_code error;
+    fs::remove_all(dir, error);
+    fs::create_directories(dir, error);
+    u8 red[4 * 4 * 4];
+    for (int i = 0; i < 16; ++i) red[i * 4] = 255, red[i * 4 + 1] = 0, red[i * 4 + 2] = 0, red[i * 4 + 3] = 255;
+    CHECK(asset::write_png((dir / "T_Red.png").string().c_str(), 4, 4, red));
+    asset::AssetRegistry registry(default_allocator(), dir.generic_string().c_str());
+    registry.scan();
+    char texture[33] = "";
+    for (usize i = 0; i < registry.count(); ++i) {
+        if (std::strcmp(registry.get(i).name, "T_Red") == 0) asset::to_string(registry.get(i).guid, texture);
+    }
+    std::ofstream(dir / "M_Red.lsdasset") << "{\"type\": \"Material\", \"data\": {\"base_color_texture\": \"" << texture << "\"}}";
+    registry.scan();
+    char material[33] = "";
+    for (usize i = 0; i < registry.count(); ++i) {
+        if (std::strcmp(registry.get(i).name, "M_Red") == 0) asset::to_string(registry.get(i).guid, material);
+    }
+    world::World w(default_allocator());
+    auto* mesh = w.add<world::StaticMesh>(w.create("Box"));
+    std::snprintf(mesh->mesh, sizeof mesh->mesh, "Cube");
+    std::snprintf(mesh->material, sizeof mesh->material, "%s", material);
+    mesh->color = LinearColor::hex(0xFFFFFF);  // no tint: the texture's own colour
+    editor::BakeScene scene;
+    CHECK(texture[0] && material[0] && editor::gather_bake_scene(w, registry, dir.generic_string().c_str(), default_allocator(), scene) && !scene.albedo.empty());
+    if (!scene.albedo.empty()) CHECK(scene.albedo[0].x > 0.9f && scene.albedo[0].y < 0.05f && scene.albedo[0].z < 0.05f);
+    fs::remove_all(dir, error);
+}
+
+void test_push_helpers() {  // Remote Console > Push Changes: what may be written, and the bytes back
+    std::string path, bytes;
+    CHECK(editor::assistant::safe_content_path("Scripts\\Door.lua", path) && path == "Scripts/Door.lua");
+    CHECK(!editor::assistant::safe_content_path("../Config/x", path) && !editor::assistant::safe_content_path("/etc/passwd", path) && !editor::assistant::safe_content_path("C:/x", path) &&
+          !editor::assistant::safe_content_path("a//b", path) && !editor::assistant::safe_content_path("a/./b", path) && !editor::assistant::safe_content_path("", path));
+    const u8 data[5] = {0, 255, 'h', 'i', '!'};
+    CHECK(editor::assistant::base64_decode(editor::assistant::base64(data, 5).c_str(), bytes) && bytes.size() == 5 && std::memcmp(bytes.data(), data, 5) == 0);
+    CHECK(!editor::assistant::base64_decode("ab$c", bytes));
+}
+
+void test_landscape_tiles() {  // Add Tile: the new tile's shared edge is its neighbour's, continued across
+    constexpr u32 n = world::Landscape::kResolution;
+    static world::Landscape from, to;
+    from.size = 32.0f;
+    from.heights.count = n * n;
+    for (u32 j = 0; j < n; ++j)
+        for (u32 i = 0; i < n; ++i) from.heights[j * n + i] = static_cast<f32>(i) * 0.1f + static_cast<f32>(j);
+    editor::extend_tile(from, 1, 0, to);  // to +X: its first column is from's last
+    CHECK(to.size == 32.0f && to.heights.count == n * n);
+    CHECK(to.heights[5 * n + 0] == from.heights[5 * n + n - 1] && to.heights[5 * n + 30] == from.heights[5 * n + n - 1]);
+    editor::extend_tile(from, 0, -1, to);  // to -Y: its last row is from's first
+    CHECK(to.heights[(n - 1) * n + 7] == from.heights[7] && to.heights[3 * n + 7] == from.heights[7]);
+}
+
+void test_shadow_cells() {  // Shadow Resolution: aligned squares in the 8 x 8 cell atlas
+    editor::ShadowCells cells;
+    f32 x = -1, y = -1;
+    CHECK(cells.take(4, x, y) && x == 0.0f && y == 0.0f);   // High: a quarter of the atlas
+    CHECK(cells.take(4, x, y) && x == 0.5f && y == 0.0f);
+    CHECK(cells.take(2, x, y) && x == 0.0f && y == 0.5f);   // Medium: the old quarter-size tiles
+    CHECK(cells.take(1, x, y) && x == 0.25f && y == 0.5f);  // Low
+    CHECK(cells.take(4, x, y) && x == 0.5f && y == 0.5f);
+    CHECK(!cells.take(4, x, y));                            // full for High
+    cells.give(0.5f, 0.5f, 4);
+    CHECK(cells.take(4, x, y) && x == 0.5f && y == 0.5f);   // given back, taken again
+    // Through world_lights: a High spot gets a half-atlas tile, a Low one an eighth, and a High point light (six views
+    // of half the atlas cannot fit) falls back to Medium quarters.
+    editor::set_shadow_quality(2);
+    world::World w(default_allocator());
+    auto spot = [&](const char* name, u32 resolution, Vec3 at) {
+        const world::Entity e = w.create(name);
+        w.get<world::Transform>(e)->position = at;
+        w.add<world::SpotLight>(e)->shadow_resolution = resolution;
+    };
+    spot("High", 2, {0, 0, 2});
+    spot("Low", 0, {1, 0, 2});
+    const world::Entity point = w.create("Point");
+    w.get<world::Transform>(point)->position = {2, 0, 2};
+    w.add<world::PointLight>(point)->shadow_resolution = 2;
+    editor::LightView view;
+    view.eye = {0, -5, 2};
+    const rhi::LightSetup s = editor::world_lights(w, view, false);
+    f32 sizes[3] = {};
+    for (u32 i = 0; i < s.count; ++i) {
+        if (s.lights[i].shadow_tile < 0.0f) continue;
+        const f32 size = s.local_tiles[static_cast<u32>(s.lights[i].shadow_tile)][2];
+        sizes[s.lights[i].type == static_cast<f32>(rhi::LightType::Point) ? 2 : s.lights[i].position[0] < 0.5f ? 0 : 1] = size;
+    }
+    CHECK(sizes[0] == 0.5f && sizes[1] == 0.125f && sizes[2] == 0.25f && s.local_tiles[0][3] == 8.0f);  // 1 + 1 + 6 tiles
+}
+
+void test_particle_light() {
+    rhi::LightSetup s;
+    s.exposure = 2.0f;
+    s.count = 0;
+    for (int c = 0; c < 3; ++c) s.sky[c] = 0.5f, s.ground[c] = 0.1f;
+    const Vec3 up = editor::particle_light(s, {0, 0, 0}, {0, 0, 1});
+    CHECK(std::fabs(up.x - 1.0f) < 1e-5f);  // the sky's ambient times exposure
+    s.count = 1;  // a point light 2 m away along +X, range 10, colour 4 pi
+    s.lights[0] = rhi::GpuLight{};
+    s.lights[0].type = 1.0f;
+    s.lights[0].position[0] = 2.0f;
+    s.lights[0].range = 10.0f;
+    for (int c = 0; c < 3; ++c) s.lights[0].color[c] = 4.0f * kPi;
+    const Vec3 facing = editor::particle_light(s, {0, 0, 0}, {1, 0, 0});
+    const Vec3 away = editor::particle_light(s, {0, 0, 0}, {-1, 0, 0});
+    const f32 r = 4.0f / 100.0f, window = (1.0f - r * r) * (1.0f - r * r);
+    const f32 ambient = 2.0f * (0.1f + 0.4f * 0.5f);
+    CHECK(std::fabs(facing.x - (ambient + 2.0f * 4.0f * window / 4.0f)) < 1e-4f);  // wrap 1: 4 pi / pi / 4 m2 times the window, times exposure
+    CHECK(std::fabs(away.x - ambient) < 1e-4f && facing.x > away.x);  // from behind: wrap 0
 }
 
 int main() {
+    test_paper2d();
+    test_templates();
+    test_scalability();
+    test_device_profiles();
+    test_run_behavior();
+    test_gather_text();
+    test_landscape_core();
+    test_mesh_edit();
+    test_tile_layers();
+    test_keymap();
+    test_landscape_paint();
     test_assistant();
     test_undo_redo();
     test_references();
     test_light_bake();
+    test_lightmaps();
     test_rml_edit();
+    test_rml_anchor();
     test_sound_cue();
+    test_particle_light();
+    test_shadow_cells();
+    test_landscape_tiles();
+    test_push_helpers();
+    test_bake_texture_albedo();
+    test_post_blend();
     if (g_failures == 0) std::printf("All editor tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

@@ -1,4 +1,5 @@
 #include "lighting.h"
+#include "scalability.h"
 
 #include "light_bake.h"
 
@@ -117,21 +118,17 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
         s.fog_color[1] = fog->color.g;
         s.fog_color[2] = fog->color.b;
         s.fog_color[3] = fog->start_distance;
+        if (fog->volumetric) {
+            s.volumetric[0] = fog->scattering;
+            s.volumetric[1] = fog->anisotropy;
+            s.volumetric[2] = fog->view_distance;
+            s.volumetric[3] = static_cast<f32>(fog->steps < 4 ? 4u : fog->steps > 64 ? 64u : fog->steps);
+        }
         break;
     }
-    const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
-    const world::PostProcessVolume* best = nullptr;
-    for (u32 i = 0; i < w.count(post_type); ++i) {
-        const world::Entity e = w.owner(post_type, i);
-        if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
-        const auto* v = static_cast<const world::PostProcessVolume*>(w.at(post_type, i));
-        if (!v->unbound) {
-            const Vec3 p = transform_point(affine_inverse(w.world_matrix(e)), eye);  // the unit volume: x, y in -0.5..0.5, z in 0..1
-            if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;
-        }
-        if (!best || v->priority > best->priority) best = v;
-    }
-    if (!best) return;
+    world::PostProcessVolume blended;
+    if (!blend_post_volumes(w, eye, skip_hidden, blended)) return;
+    const world::PostProcessVolume* best = &blended;
     s.exposure *= std::pow(2.0f, best->exposure_compensation);
     s.post[0] = best->saturation;
     s.post[1] = best->contrast;
@@ -149,38 +146,158 @@ u32 g_atlas_size = 4096;
 
 } // namespace
 
+bool ShadowCells::take(u32 side, f32& x, f32& y) {
+    for (u32 cy = 0; cy + side <= 8; cy += side) {
+        for (u32 cx = 0; cx + side <= 8; cx += side) {
+            bool free = true;
+            for (u32 j = 0; j < side && free; ++j) {
+                for (u32 i = 0; i < side && free; ++i) free = !used[cy + j][cx + i];
+            }
+            if (!free) continue;
+            for (u32 j = 0; j < side; ++j) {
+                for (u32 i = 0; i < side; ++i) used[cy + j][cx + i] = true;
+            }
+            x = static_cast<f32>(cx) / 8.0f;
+            y = static_cast<f32>(cy) / 8.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
+void ShadowCells::give(f32 x, f32 y, u32 side) {
+    const u32 cx = static_cast<u32>(x * 8.0f + 0.5f), cy = static_cast<u32>(y * 8.0f + 0.5f);
+    for (u32 j = 0; j < side && cy + j < 8; ++j) {
+        for (u32 i = 0; i < side && cx + i < 8; ++i) used[cy + j][cx + i] = false;
+    }
+}
+
+Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
+    const f32 up = normal.z * 0.5f + 0.5f;
+    Vec3 light{s.ground[0] + (s.sky[0] - s.ground[0]) * up, s.ground[1] + (s.sky[1] - s.ground[1]) * up, s.ground[2] + (s.sky[2] - s.ground[2]) * up};
+    for (u32 i = 0; i < s.count && i < rhi::kMaxLights; ++i) {
+        const rhi::GpuLight& L = s.lights[i];
+        Vec3 l;
+        f32 atten = 1.0f;
+        if (L.type < 0.5f) {  // directional
+            l = {-L.direction[0], -L.direction[1], -L.direction[2]};
+        } else {  // as the mesh shader: inverse square with a smooth window to zero at the range, spot cones
+            const Vec3 to = Vec3{L.position[0], L.position[1], L.position[2]} - position;
+            const f32 dist2 = std::max(dot(to, to), 1e-4f);
+            l = to * (1.0f / std::sqrt(dist2));
+            const f32 r = dist2 / (L.range * L.range);
+            const f32 window = std::clamp(1.0f - r * r, 0.0f, 1.0f);
+            atten = window * window / dist2;
+            const f32 cos_to = -dot(l, Vec3{L.direction[0], L.direction[1], L.direction[2]});
+            if (L.type > 1.5f && L.type < 2.5f) atten *= std::clamp((cos_to - L.spot_outer_cos) / std::max(L.spot_inner_cos - L.spot_outer_cos, 1e-4f), 0.0f, 1.0f);
+            if (L.type > 2.5f) atten *= std::clamp(cos_to, 0.0f, 1.0f);  // rect / disc: in front only
+        }
+        const f32 wrap = dot(normal, l) * 0.5f + 0.5f;  // half-Lambert: a sprite stands for a volume, not a card
+        const f32 k = wrap * atten / kPi;
+        light = light + Vec3{L.color[0], L.color[1], L.color[2]} * k;
+    }
+    return light * s.exposure;
+}
+
 void set_shadow_quality(u32 quality) { g_quality = quality < 3 ? quality : 3; }
+u32 g_post_quality = 3;
+void set_post_quality(u32 quality) { g_post_quality = quality; }
 const BakedLighting* g_baked = nullptr;
 u32 shadow_atlas_size() { return g_atlas_size; }
 void set_baked_lighting(const BakedLighting* lighting) { g_baked = lighting; }
 rhi::LightSetup level_lights(const world::World& w, const LightView& view) { return lights_only(w, view, true); }
 void set_shadow_atlas_size(u32 size) { g_atlas_size = size; }
 
+namespace {
+f32 g_reflection_probes[rhi::kMaxReflectionProbes][4] = {};
+f32 g_reflection_boxes[rhi::kMaxReflectionProbes][4] = {};
+u32 g_reflection_count = 0;
+} // namespace
+
+void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count) {
+    g_reflection_count = count < rhi::kMaxReflectionProbes ? count : rhi::kMaxReflectionProbes;
+    for (u32 i = 0; i < g_reflection_count; ++i) {
+        for (int c = 0; c < 4; ++c) {
+            g_reflection_probes[i][c] = probes[i][c];
+            g_reflection_boxes[i][c] = boxes ? boxes[i][c] : 0.0f;
+        }
+    }
+}
+
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
     rhi::LightSetup s = lights_only(w, view, skip_hidden);
+    s.reflection_info[0] = static_cast<f32>(g_reflection_count);
+    for (u32 k = 0; k < g_reflection_count; ++k) {
+        for (int c = 0; c < 4; ++c) {
+            s.reflections[k][c] = g_reflection_probes[k][c];
+            s.reflection_boxes[k][c] = g_reflection_boxes[k][c];
+        }
+    }
     add_atmosphere(w, view.eye, skip_hidden, s);
     s.output[1] = 1.0f / static_cast<f32>(g_atlas_size);  // the local atlas's texel, for its filtering
     if (g_baked) apply_baked_lighting(*g_baked, s);
     return s;
 }
 
-bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out) {
+bool blend_post_volumes(const world::World& w, Vec3 eye, bool skip_hidden, world::PostProcessVolume& out) {
     const reflect::TypeInfo& post_type = reflect::type_of<world::PostProcessVolume>();
-    const world::PostProcessVolume* best = nullptr;
-    for (u32 i = 0; i < w.count(post_type); ++i) {
+    struct Reach {
+        const world::PostProcessVolume* volume;
+        f32 weight;
+    };
+    Reach reach[32];
+    u32 n = 0;
+    for (u32 i = 0; i < w.count(post_type) && n < 32; ++i) {  // shortcut: the first 32 volumes reaching the eye; plenty for a level
         const world::Entity e = w.owner(post_type, i);
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
         const auto* v = static_cast<const world::PostProcessVolume*>(w.at(post_type, i));
-        if (!v->unbound) {
-            const Vec3 p = transform_point(affine_inverse(w.world_matrix(e)), eye);
-            if (p.x < -0.5f || p.x > 0.5f || p.y < -0.5f || p.y > 0.5f || p.z < 0.0f || p.z > 1.0f) continue;
+        f32 weight = std::clamp(v->blend_weight, 0.0f, 1.0f);
+        if (!v->unbound) {  // the unit volume: x, y in -0.5..0.5, z in 0..1; outside, the world distance to it
+            const Mat4 m = w.world_matrix(e);
+            const Vec3 p = transform_point(affine_inverse(m), eye);
+            const Vec3 nearest{std::clamp(p.x, -0.5f, 0.5f), std::clamp(p.y, -0.5f, 0.5f), std::clamp(p.z, 0.0f, 1.0f)};
+            const f32 outside = length(transform_point(m, nearest) - eye);
+            if (outside > 0.0f) weight *= v->blend_radius > 0.0f ? std::clamp(1.0f - outside / v->blend_radius, 0.0f, 1.0f) : 0.0f;
         }
-        if (!best || v->priority > best->priority) best = v;
+        if (weight > 0.0f) reach[n++] = {v, weight};
     }
+    std::stable_sort(reach, reach + n, [](const Reach& a, const Reach& b) { return a.volume->priority < b.volume->priority; });
     // Without a volume the level still gets the default look (as in Unreal: filmic tonemapper, bloom,
     // AO, reflections, anti-aliasing): the values a new Post Process Volume starts with.
-    static const world::PostProcessVolume defaults;
-    if (!best) best = &defaults;
+    out = world::PostProcessVolume{};
+    const reflect::TypeInfo& type = reflect::type_of<world::PostProcessVolume>();
+    for (u32 k = 0; k < n; ++k) {
+        const f32 t = reach[k].weight;
+        auto* to = reinterpret_cast<u8*>(&out);
+        const auto* from = reinterpret_cast<const u8*>(reach[k].volume);
+        for (u32 p = 0; p < type.property_count; ++p) {
+            const reflect::Property& prop = type.properties[p];
+            if (prop.type == reflect::FieldType::F32) {
+                f32 a, b;
+                std::memcpy(&a, to + prop.offset, 4);
+                std::memcpy(&b, from + prop.offset, 4);
+                a += (b - a) * t;
+                std::memcpy(to + prop.offset, &a, 4);
+            } else if (prop.type == reflect::FieldType::Struct && prop.size == sizeof(LinearColor)) {  // the tint: four floats
+                for (u32 c = 0; c < 4; ++c) {
+                    f32 a, b;
+                    std::memcpy(&a, to + prop.offset + c * 4, 4);
+                    std::memcpy(&b, from + prop.offset + c * 4, 4);
+                    a += (b - a) * t;
+                    std::memcpy(to + prop.offset + c * 4, &a, 4);
+                }
+            } else if (t >= 0.5f) {  // switches, choices, the LUT: the volume's once it is at least half in
+                std::memcpy(to + prop.offset, from + prop.offset, prop.size);
+            }
+        }
+    }
+    return n > 0;
+}
+
+bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw& out, const world::PostProcessVolume** chosen) {
+    static world::PostProcessVolume blended;  // what *chosen points at (main thread, one view at a time)
+    const bool any = blend_post_volumes(w, eye, skip_hidden, blended);
+    const world::PostProcessVolume* best = &blended;
     out.bloom_intensity = best->bloom_intensity;
     out.bloom_threshold = best->bloom_threshold;
     out.tint[0] = best->tint.r;
@@ -190,6 +307,21 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.saturation = best->saturation;
     out.contrast = best->contrast;
     out.vignette = best->vignette;
+    out.motion_blur = best->motion_blur_amount;
+    out.motion_blur_max = best->motion_blur_max * 0.01f;
+    if (chosen) *chosen = any ? best : nullptr;
+    const reflect::TypeInfo& sun_type = reflect::type_of<world::DirectionalLight>();
+    for (u32 i = 0; i < w.count(sun_type); ++i) {
+        const auto* sun = static_cast<const world::DirectionalLight*>(w.at(sun_type, i));
+        const world::Entity e = w.owner(sun_type, i);
+        if (sun->contact_shadow_length <= 0.0f || (skip_hidden && w.hidden_in_hierarchy(e))) continue;
+        const Vec3 toward = forward_of(w.world_matrix(e)) * -1.0f;
+        out.contact_shadow[0] = toward.x;
+        out.contact_shadow[1] = toward.y;
+        out.contact_shadow[2] = toward.z;
+        out.contact_shadow[3] = sun->contact_shadow_length;
+        break;
+    }
     out.fxaa = best->anti_aliasing;
     out.taa = best->temporal_aa;
     out.ao_intensity = best->ao_intensity;
@@ -206,6 +338,7 @@ bool world_post(const world::World& w, Vec3 eye, bool skip_hidden, rhi::PostDraw
     out.exposure_max_ev = best->exposure_max_ev;
     out.exposure_speed_up = best->exposure_speed_up;
     out.exposure_speed_down = best->exposure_speed_down;
+    limit_post(g_post_quality, out);  // Engine Scalability > Post Processing
     return true;
 }
 
@@ -322,8 +455,9 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
     const reflect::TypeInfo& spot_type = reflect::type_of<world::SpotLight>();
+    const reflect::TypeInfo& rect_type = reflect::type_of<world::RectLight>();
     const reflect::TypeInfo& sky_type = reflect::type_of<world::SkyLight>();
-    if (!w.count(dir_type) && !w.count(point_type) && !w.count(spot_type) && !w.count(sky_type)) return rhi::default_lights();
+    if (!w.count(dir_type) && !w.count(point_type) && !w.count(spot_type) && !w.count(rect_type) && !w.count(sky_type)) return rhi::default_lights();
 
     rhi::LightSetup s;
     s.exposure = 1.0f / (1.2f * std::pow(2.0f, w.settings().exposure_ev100));
@@ -372,15 +506,30 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
     };
     // Local shadow tiles: a perspective view per spot light, six 90-degree views per point light.
     u32 tiles_used = 0;
-    auto add_tile = [&](Vec3 from, Vec3 dir, Vec3 up, f32 fov, f32 range) {
+    ShadowCells cells;
+    // `count` tiles of `side` cells (Shadow Resolution: 1 Low, 2 Medium, 4 High), smaller when they do not fit;
+    // 0 when not even Low fits. Their places go to local_tiles[tiles_used...].
+    auto place_tiles = [&](u32 count, u32 side) -> u32 {
+        if (tiles_used + count > rhi::kMaxShadowTiles) return 0;
+        for (; side >= 1; side /= 2) {
+            u32 placed = 0;
+            for (; placed < count; ++placed) {
+                f32* tile = s.local_tiles[tiles_used + placed];
+                if (!cells.take(side, tile[0], tile[1])) break;
+                tile[2] = static_cast<f32>(side) / 8.0f;
+            }
+            if (placed == count) return side;
+            for (u32 k = 0; k < placed; ++k) cells.give(s.local_tiles[tiles_used + k][0], s.local_tiles[tiles_used + k][1], side);  // undo, try smaller
+        }
+        return 0;
+    };
+    auto add_tile = [&](Vec3 from, Vec3 dir, Vec3 up, f32 fov, f32 range) {  // its place already set by place_tiles
         const u32 t = tiles_used++;
         const Mat4 vp = perspective(fov, 1.0f, 0.05f, range) * look_at(from, from + dir, up);
         for (int k = 0; k < 16; ++k) s.local_matrices[t][k] = vp.m[k];
-        s.local_tiles[t][0] = static_cast<f32>(t % 4) * 0.25f;
-        s.local_tiles[t][1] = static_cast<f32>(t / 4) * 0.25f;
-        s.local_tiles[t][2] = 0.25f;
     };
-    const f32 tile_texels = static_cast<f32>(shadow_atlas_size()) * 0.25f;
+    auto side_of = [](u32 resolution) { return resolution == 0 ? 1u : resolution >= 2 ? 4u : 2u; };
+    const f32 cell_texels = static_cast<f32>(shadow_atlas_size()) / 8.0f;
     for (u32 i = 0; i < w.count(dir_type) && s.count < rhi::kMaxLights; ++i) {
         const world::Entity e = w.owner(dir_type, i);
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
@@ -399,7 +548,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
     };
     Candidate candidates[512];
     u32 n = 0;
-    for (const reflect::TypeInfo* type : {&point_type, &spot_type}) {
+    for (const reflect::TypeInfo* type : {&point_type, &spot_type, &rect_type}) {
         for (u32 i = 0; i < w.count(*type) && n < 512; ++i) {
             const world::Entity e = w.owner(*type, i);
             if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
@@ -425,13 +574,20 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const auto* light = static_cast<const world::PointLight*>(w.at(point_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
-            if (light->cast_shadows && g_quality >= 2 && tiles_used + 6 <= rhi::kMaxShadowTiles) {
+            s.lights[s.count - 1].source_radius = light->source_radius;
+            const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(6, side_of(light->shadow_resolution)) : 0u;
+            if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 l.shadow_tile = static_cast<f32>(tiles_used);
-                l.shadow_offset = 2.0f / tile_texels * 1.5f;  // texel size per metre for a 90 degree view
+                l.shadow_offset = 2.0f / (cell_texels * static_cast<f32>(side)) * 1.5f;  // texel size per metre for a 90 degree view
                 const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
                 for (int f = 0; f < 6; ++f) add_tile(position, dirs[f], f < 4 ? Vec3{0, 0, 1} : Vec3{1, 0, 0}, kPi * 0.5f, light->attenuation_radius);
             }
+        } else if (candidates[k].type == &rect_type) {  // an area light, one-sided: lumens over pi give its candela straight ahead
+            const auto* light = static_cast<const world::RectLight*>(w.at(rect_type, candidates[k].index));
+            const bool disc = light->shape == 1;
+            put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, forward_of(m), light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
+                light->attenuation_radius, disc ? light->source_width * 0.5f : light->source_width, light->source_height);
         } else {
             const auto* light = static_cast<const world::SpotLight*>(w.at(spot_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
@@ -439,11 +595,13 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const Vec3 dir = forward_of(m);
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
-            if (light->cast_shadows && g_quality >= 2 && tiles_used + 1 <= rhi::kMaxShadowTiles) {
+            s.lights[s.count - 1].source_radius = light->source_radius;
+            const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
+            if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 const f32 fov = radians(outer) * 2.0f + 0.1f;  // the cone, plus a little for the filter
                 l.shadow_tile = static_cast<f32>(tiles_used);
-                l.shadow_offset = 2.0f * std::tan(fov * 0.5f) / tile_texels * 1.5f;
+                l.shadow_offset = 2.0f * std::tan(fov * 0.5f) / (cell_texels * static_cast<f32>(side)) * 1.5f;
                 add_tile(position, dir, std::fabs(dir.z) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 0, 1}, fov, light->attenuation_radius);
             }
         }

@@ -70,12 +70,14 @@ constexpr char kMeshVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
+layout(location = 5) in vec2 a_lightmap_uv;  // not in the skinned layout: reads 0 there
 uniform mat4 u_mvp;
 uniform vec4 u_normal[3];
 uniform vec4 u_world[3];
 out vec3 v_normal;
 out vec3 v_wpos;
 out vec2 v_uv;
+out vec2 v_lightmap_uv;
 #ifdef INSTANCED
 layout(std140, binding = 2) uniform Instances { vec4 instance_rows[768]; };  // 3 rows per instance: its world matrix
 #endif
@@ -91,6 +93,7 @@ void main() {
     v_normal = cross(c1, c2) * normal.x + cross(c2, c0) * normal.y + cross(c0, c1) * normal.z;
     v_wpos = world_pos;
     v_uv = a_uv;
+    v_lightmap_uv = vec2(0.0);  // instances are not lightmapped
     return;
 #endif
     skin(position, normal);
@@ -99,6 +102,7 @@ void main() {
     vec4 p = vec4(position, 1.0);
     v_wpos = vec3(dot(u_world[0], p), dot(u_world[1], p), dot(u_world[2], p));
     v_uv = a_uv;
+    v_lightmap_uv = a_lightmap_uv;
 }
 )";
 
@@ -116,6 +120,10 @@ layout(std140, binding = 1) uniform Lights {
     vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px; vec4 hdr_out;
     vec4 probe_origin; vec4 probe_cell; uvec4 probe_dims; vec4 probes[1536];
     vec4 decal_info; vec4 decals[80];
+    vec4 reflection_info; vec4 reflections[8];
+    vec4 lightmap_info;
+    vec4 volumetric;
+    vec4 reflection_boxes[8];
 };
 // The ambient light reaching a point facing n: the baked probes (trilinear, fading back to the sky
 // light over a cell outside the grid), or the sky / ground colours.
@@ -163,6 +171,66 @@ float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
         for (int x = -1; x <= 1; ++x) lit += texture(shadow_tex, vec3(clamp(uv + vec2(x, y) * shadow_info.z, lo, hi), s.z));
     return lit / 9.0;
 }
+float sun_visibility(vec3 p, vec3 cam) {  // one tap of the sun's shadow in the air (volumetric fog)
+    float dist = length(p - cam);
+    int count = int(shadow_info.x);
+    int c = 0;
+    while (c + 1 < count && dist > shadow_split[c]) ++c;
+    if (dist > shadow_split[count - 1]) return 1.0;
+    vec4 s = shadow_vp[c] * vec4(p, 1.0);
+    vec2 uv = s.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0) return 1.0;
+    vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
+    return texture(shadow_tex, vec3(origin + uv * shadow_tile[c].z, s.z));
+}
+// Area lights (see the HLSL's area_point): the direction to the light shape's point nearest the reflection.
+void area_point(Light L, vec3 wpos, vec3 rv, float roughness, inout vec3 ls, inout float sa2, inout float norm) {
+    vec3 to = L.pos_type.xyz - wpos;
+    vec3 p = to;
+    float size = 0.0;
+    if (L.pos_type.w > 2.5) {
+        vec3 ln = L.dir_range.xyz;
+        vec3 right = normalize(cross(abs(ln.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), ln));
+        vec3 up = cross(ln, right);
+        float denom = dot(rv, ln);
+        float t = abs(denom) > 1e-4 ? dot(to, ln) / denom : -1.0;
+        vec3 on_plane = rv * t - to;
+        vec2 uv = t > 0.0 ? vec2(dot(on_plane, right), dot(on_plane, up)) : vec2(0.0);
+        if (L.pos_type.w < 3.5) {
+            vec2 extent = vec2(L.color_inner.w, L.spot.x) * 0.5;
+            uv = clamp(uv, -extent, extent);
+            size = length(extent);
+        } else {
+            float len = length(uv);
+            if (len > L.color_inner.w) uv *= L.color_inner.w / len;
+            size = L.color_inner.w;
+        }
+        p = to + right * uv.x + up * uv.y;
+    } else if (L.spot.w > 0.0) {
+        vec3 c = dot(to, rv) * rv - to;
+        p = to + c * clamp(L.spot.w / max(length(c), 1e-4), 0.0, 1.0);
+        size = L.spot.w;
+    }
+    if (size <= 0.0) return;
+    ls = normalize(p);
+    float a = roughness * roughness, wide = clamp(a + size / (2.0 * max(length(to), 1e-3)), 0.0, 1.0);
+    sa2 = wide * wide;
+    norm = (a / wide) * (a / wide);
+}
+
+float fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the fog along the view ray
+    if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
+    vec3 to = wpos - cam;
+    float len = min(length(to), volumetric.z);
+    vec3 dir = to / max(length(to), 1e-4);
+    int steps = int(max(volumetric.w, 1.0));
+    float vis = 0.0;
+    for (int k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * (float(k) + 0.5) / float(steps)), cam);
+    vis /= float(steps);
+    float g = volumetric.y, cosv = dot(dir, -lights[int(shadow_info.y)].dir_range.xyz);
+    float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+    return mix(1.0, min(vis * phase, 4.0), volumetric.x);
+}
 float local_shadow(Light L, vec3 wpos, vec3 n) {
     int tile = int(L.spot.y);
     vec3 d = wpos - L.pos_type.xyz;
@@ -189,6 +257,9 @@ layout(binding = 2) uniform sampler2D orm_tex;
 // Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
 // not face along the box's +Z and towards its top and bottom.
 layout(binding = 5) uniform sampler2D decal_tex;
+layout(binding = 6) uniform sampler2D reflection_tex;  // reflection captures (lat-long tiles, mipmapped)
+layout(binding = 7) uniform sampler2D lightmap_tex;    // the level's lightmaps (Build Lighting)
+layout(binding = 8) uniform sampler2D emissive_tex;    // the emissive map (white without one)
 vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
     uint count = uint(decal_info.x);
     for (uint d = 0u; d < count; ++d) {
@@ -208,6 +279,7 @@ vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
 in vec3 v_normal;
 in vec3 v_wpos;
 in vec2 v_uv;
+in vec2 v_lightmap_uv;
 out vec4 o_color;
 //@MATERIAL
 const float PI = 3.14159265;
@@ -215,6 +287,43 @@ const float PI = 3.14159265;
 vec3 sky_radiance(vec3 d) {
     float h = 1.0 - abs(d.z);
     return mix(ground.rgb, sky_color.rgb, smoothstep(-0.25, 0.25, d.z)) * (1.0 + 0.35 * h * h * h);
+}
+float capture_weight(uint k, vec3 wpos) {  // as the HLSL's
+    if (reflection_boxes[k].w > 0.0) {
+        vec3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
+        return clamp(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w, 0.0, 1.0);
+    }
+    return clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
+}
+vec3 capture_sample(uint k, vec3 r, float roughness, vec3 wpos) {
+    if (reflection_boxes[k].w > 0.0) {
+        vec3 safe = r + vec3(r.x >= 0.0 ? 1e-5 : -1e-5, r.y >= 0.0 ? 1e-5 : -1e-5, r.z >= 0.0 ? 1e-5 : -1e-5);
+        vec3 c = reflections[k].xyz, e = reflection_boxes[k].xyz;
+        vec3 far_side = max((c + e - wpos) / safe, (c - e - wpos) / safe);
+        float t = min(min(far_side.x, far_side.y), far_side.z);
+        r = normalize(wpos + r * t - c);
+    }
+    float lod = roughness * 5.0;
+    vec2 margin = 0.5 * exp2(lod) / vec2(256.0, 128.0);
+    vec2 uv = vec2(atan(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
+    uv = clamp(uv, margin, 1.0 - margin);
+    vec2 atlas = (vec2(float(k % 2u), float(k / 2u)) + uv) / vec2(2.0, 4.0);
+    vec3 c = min(textureLod(reflection_tex, atlas, lod).rgb, vec3(0.999));
+    return c * c / (1.0 - c * c) / max(exposure, 1e-6);
+}
+// Reflection captures (as the HLSL): the two this point is most inside, blended, over the sky reflection.
+vec3 capture_reflection(vec3 sky_part, vec3 r, float roughness, vec3 wpos) {
+    float near_w = 0.0, next_w = 0.0;
+    uint k1 = 0u, k2 = 0u;
+    for (uint k = 0u; k < uint(reflection_info.x) && k < 8u; ++k) {
+        float w = capture_weight(k, wpos);
+        if (w > near_w) { next_w = near_w; k2 = k1; near_w = w; k1 = k; }
+        else if (w > next_w) { next_w = w; k2 = k; }
+    }
+    if (near_w <= 0.0) return sky_part;
+    vec3 c = capture_sample(k1, r, roughness, wpos);
+    if (next_w > 0.0) c = mix(c, capture_sample(k2, r, roughness, wpos), next_w / (near_w + next_w));
+    return mix(sky_part, c, near_w);
 }
 // The split-sum environment BRDF (scale, bias for F0), an analytic fit of the usual lookup table.
 vec2 env_brdf(float ndv, float roughness) {
@@ -224,14 +333,14 @@ vec2 env_brdf(float ndv, float roughness) {
 }
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
-vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
+vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
     c *= tint.rgb;
     if (post.w > 0.5) c = aces(c);
     if (fog.w > 0.0) {
         float d = max(length(wpos - cam) - fog_color.w, 0.0);
         float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
         float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-        c = mix(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+        c = mix(c, fog_color.rgb * fog_lit, min(1.0 - exp(-fog.x * d * ray), fog.w));
     }
     float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
     c = max(mix(vec3(luma), c, post.x), 0.0);
@@ -243,17 +352,17 @@ vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
     return c;
 }
 vec3 hdr_encode(vec3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel) {
+vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
     if (hdr_out.x > 0.5) {
         if (fog.w > 0.0) {
             float d = max(length(wpos - cam) - fog_color.w, 0.0);
             float h0 = cam.z - fog.z, h1 = wpos.z - fog.z, dh = h1 - h0;
             float ray = abs(dh * fog.y) > 1e-4 ? (exp(-fog.y * h0) - exp(-fog.y * h1)) / (fog.y * dh) : exp(-fog.y * h0);
-            c = mix(c, fog_color.rgb, min(1.0 - exp(-fog.x * d * ray), fog.w));
+            c = mix(c, fog_color.rgb * fog_lit, min(1.0 - exp(-fog.x * d * ray), fog.w));
         }
         return hdr_encode(c);
     }
-    return to_srgb(finish(c, wpos, cam, pixel));
+    return to_srgb(finish(c, wpos, cam, pixel, fog_lit));
 }
 vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
     vec3 dp1 = dFdx(wpos), dp2 = dFdy(wpos);
@@ -268,6 +377,16 @@ vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
 void main() {
     vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
     vec3 geometric_n = n;  // before the normal map: reflections never point into the surface
+    if (u_flags.x > 4.5) {  // Lightmap Density view mode: a checker of lightmap texels, green where lightmapped, grey elsewhere
+        vec3 c = vec3(0.3);
+        if (lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0) {
+            vec2 cell = floor(v_lightmap_uv * lightmap_info.z);
+            c = mod(cell.x + cell.y, 2.0) > 0.5 ? vec3(0.15, 0.55, 0.2) : vec3(0.08, 0.32, 0.12);
+        }
+        c *= 0.55 + 0.45 * clamp(dot(n, normalize(vec3(0.4, 0.3, 0.85))), 0.0, 1.0);
+        o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(c) : to_srgb(c), 1.0);
+        return;
+    }
     if (u_flags.x > 3.5) { o_color = vec4(0.06, 0.025, 0.01, 1.0); return; }  // Overdraw view mode
     // u_flags.y packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     bool has_normal_map = mod(u_flags.y, 2.0) > 0.5;
@@ -291,12 +410,15 @@ void main() {
     vec4 base = u_color * (pixel_art ? textureLod(base_tex, (floor(v_uv * texel_size) + 0.5) / texel_size, 0.0) : texture(base_tex, v_uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (u_flags.x > 0.5 && u_flags.x < 1.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
-    if (has_normal_map) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
+    if (has_normal_map) {  // Z from X and Y: BC5 maps have none, RGBA8 ones give the same
+        vec2 nxy = texture(normal_tex, v_uv).xy * 2.0 - 1.0;
+        n = perturb_normal(n, v_wpos, v_uv, vec3(nxy, sqrt(clamp(1.0 - dot(nxy, nxy), 0.0, 1.0))));
+    }
     vec3 orm = texture(orm_tex, v_uv).rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
-    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x);
+    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, v_uv).rgb;
 #endif
     if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
     base.rgb = apply_decals(base.rgb, v_wpos, n);
@@ -307,6 +429,14 @@ void main() {
     float a2 = roughness * roughness * roughness * roughness;
     float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     vec3 lit = vec3(0.0);
+    // Lightmap (as the HLSL): RGB the ambient light, A the sun's baked visibility.
+    bool lightmapped = lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0;
+    vec4 baked = vec4(0.0, 0.0, 0.0, 1.0);
+    if (lightmapped) {
+        baked = textureLod(lightmap_tex, v_lightmap_uv, 0.0);
+        vec3 c = min(baked.rgb, vec3(0.999));
+        baked.rgb = c / (1.0 - c) * lightmap_info.x;
+    }
     for (uint li = 0u; li < light_count; ++li) {
         Light L = lights[li];
         vec3 l;
@@ -320,34 +450,39 @@ void main() {
             float r = dist2 / (L.dir_range.w * L.dir_range.w);
             float window = clamp(1.0 - r * r, 0.0, 1.0);
             atten = window * window / dist2;
-            if (L.pos_type.w > 1.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+            if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+            if (L.pos_type.w > 2.5) atten *= clamp(dot(-l, L.dir_range.xyz), 0.0, 1.0);  // rect / disc: lights only in front
         }
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;
-        if (float(li) == shadow_info.y) atten *= sun_shadow(v_wpos, n, u_mat[1].yzw);
+        if (float(li) == shadow_info.y) atten *= lightmapped ? min(sun_shadow(v_wpos, n, u_mat[1].yzw), baked.a) : sun_shadow(v_wpos, n, u_mat[1].yzw);
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, v_wpos, n);
-        vec3 h = normalize(v + l);
+        vec3 ls = l;  // specular's direction: an area light's nearest point (the centre otherwise)
+        float sa2 = a2, spec_norm = 1.0;
+        if (L.pos_type.w > 0.5) area_point(L, v_wpos, reflect(-v, n), roughness, ls, sa2, spec_norm);
+        float ndls = clamp(dot(n, ls), 0.0, 1.0);
+        vec3 h = normalize(v + ls);
         float ndh = clamp(dot(n, h), 0.0, 1.0), vdh = clamp(dot(v, h), 0.0, 1.0);
-        float d = a2 / (PI * pow(ndh * ndh * (a2 - 1.0) + 1.0, 2.0));
-        float g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+        float d = sa2 / (PI * pow(ndh * ndh * (sa2 - 1.0) + 1.0, 2.0));
+        float g = (ndls / (ndls * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
         vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-        vec3 specular = d * g * f / max(4.0 * ndl * ndv, 1e-4);
+        vec3 specular = d * g * f / max(4.0 * ndls * ndv, 1e-4);
         vec3 diffuse = (1.0 - f) * (1.0 - metallic) * base.rgb / PI;
-        lit += (diffuse + specular) * L.color_inner.xyz * ndl * atten;
+        lit += (diffuse * ndl + specular * ndls * spec_norm) * L.color_inner.xyz * atten;
     }
     // Ambient (see the HLSL): diffuse from the sky / probes, specular from the sky along the reflection.
-    vec3 sky = ambient_light(v_wpos, n);
+    vec3 sky = lightmapped ? baked.rgb : ambient_light(v_wpos, n);
     vec3 r = reflect(-v, n);
     vec3 lum = vec3(0.2126, 0.7152, 0.0722);
     float open_sky = clamp(dot(sky, lum) / max(dot(mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4), 0.0, 1.0);
-    vec3 reflected = mix(sky_radiance(r) * open_sky, sky, roughness * roughness);
+    vec3 reflected = capture_reflection(mix(sky_radiance(r) * open_sky, sky, roughness * roughness), r, roughness, v_wpos);
     vec2 ab = env_brdf(ndv, roughness);
     vec3 env_spec = f0 * ab.x + ab.y;
     float spec_ao = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
     float horizon = clamp(1.0 + 1.2 * dot(r, geometric_n), 0.0, 1.0);
     lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
-    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
+    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy, fog.w > 0.0 ? fog_light(v_wpos, u_mat[1].yzw) : 1.0), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 #else
 // The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
@@ -360,7 +495,7 @@ void main() {
         float s = dot(d, u_sky[3].xyz);
         c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0) + 0.06 * pow(clamp(s, 0.0, 1.0), 6.0));
     }
-    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy), 1.0);
+    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy, 1.0), 1.0);
 }
 #endif
 )";
@@ -393,12 +528,15 @@ vec3 lsd_v3(float x) { return vec3(x); }
 vec4 lsd_tex0(vec3 uv) { return texture(base_tex, uv.xy); }
 vec4 lsd_tex1(vec3 uv) { return texture(normal_tex, uv.xy); }
 vec4 lsd_tex2(vec3 uv) { return texture(orm_tex, uv.xy); }
+vec4 lsd_tex3(vec3 uv) { return texture(emissive_tex, uv.xy); }
 layout(std140, binding = 3) uniform MaterialParams { vec4 lsd_params[16]; };
 )";
 
 constexpr char kShadowVertexShader[] = R"(#version 460 core
 layout(location = 0) in vec3 a_pos;
+layout(location = 2) in vec2 a_uv;
 uniform mat4 u_mvp;
+out vec2 v_uv;
 #ifdef INSTANCED
 layout(std140, binding = 2) uniform Instances { vec4 instance_rows[768]; };  // 3 rows per copy: its world matrix
 #endif
@@ -410,10 +548,18 @@ void main() {
     position = vec3(dot(instance_rows[gl_InstanceID * 3], p), dot(instance_rows[gl_InstanceID * 3 + 1], p), dot(instance_rows[gl_InstanceID * 3 + 2], p));
 #endif
     gl_Position = u_mvp * vec4(position, 1.0);
+    v_uv = a_uv;
 }
 )";
 constexpr char kShadowFragmentShader[] = R"(#version 460 core
 void main() {}
+)";
+// Masked casters: the base colour texture's alpha (times the tint's) under the cutoff casts no shadow.
+constexpr char kCutoutShadowFragmentShader[] = R"(#version 460 core
+layout(binding = 0) uniform sampler2D base_tex;
+uniform vec2 u_cut;
+in vec2 v_uv;
+void main() { if (texture(base_tex, v_uv).a * u_cut.y < u_cut.x) discard; }
 )";
 
 // GPU-driven culling (MeshDraw::gpu_cull): pass 0 clears the visible count, pass 1 tests every
@@ -483,13 +629,17 @@ void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); v_color = a_color; v_uv = 
 
 constexpr char kParticleFragmentShader[] = R"(#version 460 core
 layout(binding = 0) uniform sampler2D u_sprite;
+layout(binding = 1) uniform sampler2D u_scene_depth;  // the target's depth (soft particles)
 uniform float u_hdr;  // 1: into a scene target (post pass)
+uniform vec4 u_soft;  // see draw_particles
 in vec4 v_color;
 in vec2 v_uv;
 out vec4 o_color;
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+float view_distance(float d) { return u_soft.w > 0.5 ? (u_soft.z - d) / u_soft.y : u_soft.z / (d + u_soft.y); }
 void main() {
     vec4 c = v_color * texture(u_sprite, v_uv);
+    if (u_soft.x > 0.0) c.a *= clamp((view_distance(texelFetch(u_scene_depth, ivec2(gl_FragCoord.xy), 0).r) - view_distance(gl_FragCoord.z)) / u_soft.x, 0.0, 1.0);
     vec3 lin = max(c.rgb, 0.0);
     o_color = vec4(u_hdr > 0.5 ? sqrt(lin / (1.0 + lin)) : to_srgb(c.rgb), clamp(c.a, 0.0, 1.0));
 }
@@ -615,6 +765,13 @@ void main() {
     vec2 v = v_uv - 0.5;
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
     vec3 s = to_srgb(c);
+    if (grade.w > 0.0) {  // Color Grading LUT: 16 tiles of 16 x 16 (red across, green down), blue picks the tile
+        float b = clamp(s.b, 0.0, 1.0) * 15.0, b0 = floor(b);
+        vec2 inner = (clamp(s.rg, 0.0, 1.0) * 15.0 + 0.5) / vec2(256.0, 16.0);
+        vec3 lo = textureLod(t2, inner + vec2(b0 / 16.0, 0.0), 0.0).rgb;
+        vec3 hi = textureLod(t2, inner + vec2(min(b0 + 1.0, 15.0) / 16.0, 0.0), 0.0).rgb;
+        s = mix(s, mix(lo, hi, b - b0), grade.w);
+    }
     o_color = vec4(s, dot(s, vec3(0.299, 0.587, 0.114)));
 #elif defined(SSR)
     // Screen-space reflections: the view ray mirrored about the surface, marched through the depth
@@ -690,6 +847,21 @@ void main() {
         sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    // Contact shadows (u_post[8]: toward the sun in view space, w = length), as the HLSL.
+    vec4 ray = u_post[8];
+    if (ray.w > 0.0 && dot(n, ray.xyz) > 0.05) {  // faces the sun (else the sun does not light it anyway)
+        for (int s = 0; s < 12; ++s) {
+            vec3 q = p + ray.xyz * (ray.w * (float(s) + noise) / 12.0);
+            if (q.z > -0.05) break;
+            vec2 uv = to_uv(vec2(q.x * u_post[4].x / -q.z, q.y * u_post[4].y / -q.z));
+            if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+            float behind = -q.z - view_distance(depth_at(uv));
+            if (behind > 0.008 * -q.z + 0.02 && behind < 0.25) {
+                ao *= 0.6;  // shortcut: as the HLSL (the shaded colour, not the sun's light alone)
+                break;
+            }
+        }
+    }
     o_color = vec4(ao, ao, ao, 1.0);
 #elif defined(AO_APPLY)
     // The occlusion blurred over 4 x 4 pixels at a similar depth (hides its noise), times the scene.
@@ -722,19 +894,41 @@ void main() {
     bool outside = u_post[7].y > 0.5 || prev.w <= 0.0 || any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)));
     vec3 history = clamp(textureLod(t1, prev_uv, 0.0).rgb, lo, hi);
     o_color = vec4(outside ? cur : mix(history, cur, u_post[7].x), 1.0);
+#elif defined(MOTION)
+    // Motion blur (u_post[7].z amount, .w longest smear in uv): where this pixel was last frame, as TAA
+    // finds it, gives its movement on screen; 8 taps along it, centred on the pixel.
+    vec4 here = vec4(to_ndc(v_uv), depth_at(v_uv), 1.0);
+    vec4 prev = vec4(dot(u_post[8], here), dot(u_post[9], here), dot(u_post[10], here), dot(u_post[11], here));
+    vec2 move = prev.w > 0.0 ? (v_uv - to_uv(prev.xy / prev.w)) * u_post[7].z : vec2(0.0);
+    float span = length(move);
+    if (span > u_post[7].w) move *= u_post[7].w / span;
+    if (span / texel.x < 0.5) {
+        o_color = vec4(encode(tap(t0, v_uv)), 1.0);
+    } else {
+        vec3 sum = vec3(0.0);
+        for (int k = 0; k < 8; ++k) sum += tap(t0, v_uv + move * (float(k) / 7.0 - 0.5));
+        o_color = vec4(encode(sum / 8.0), 1.0);
+    }
 #elif defined(DOF)
     // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
     // (a sharp object in front does not smear into the background behind it).
+    // Bokeh: bright samples weigh more, so out-of-focus lights open into discs.
     float radius = coc(view_distance(depth_at(v_uv)));
-    vec3 sum = tap(t0, v_uv);
-    float weight = 1.0;
+    vec3 centre = tap(t0, v_uv);
+    float lc = dot(centre, vec3(0.2126, 0.7152, 0.0722));
+    if (lc > 8.0) centre *= 8.0 / lc;  // hot pixels scaled down first: no dotted sample pattern
+    float weight = 1.0 + min(4.0 * max(dot(centre, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 4.0);
+    vec3 sum = centre * weight;
     if (radius > 0.5) {
-        for (int i = 0; i < 24; ++i) {
+        for (int i = 0; i < 40; ++i) {
             float a = float(i) * 2.39996323;
-            float r = sqrt((float(i) + 0.5) / 24.0) * radius;
+            float r = sqrt((float(i) + 0.5) / 40.0) * radius;
             vec2 uv = v_uv + vec2(cos(a), sin(a)) * r * texel.xy;
-            float w = clamp(coc(view_distance(depth_at(uv))) - r + 1.0, 0.0, 1.0);
-            sum += tap(t0, uv) * w;
+            vec3 c = box4(t0, uv, texel.xy * max(0.5, radius * 0.15));  // a footprint as wide as the gap between samples
+            float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            if (l > 8.0) c *= 8.0 / l;
+            float w = clamp(coc(view_distance(depth_at(uv))) - r + 1.0, 0.0, 1.0) * (1.0 + min(4.0 * max(dot(c, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 4.0));
+            sum += c * w;
             weight += w;
         }
     }
@@ -822,6 +1016,8 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                  \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)          \
     X(PFNGLTEXTURESUBIMAGE2DPROC, glTextureSubImage2D)              \
+    X(PFNGLTEXTUREBARRIERPROC, glTextureBarrier)                    \
+    X(PFNGLCOMPRESSEDTEXTURESUBIMAGE2DPROC, glCompressedTextureSubImage2D) \
     X(PFNGLBINDTEXTUREUNITPROC, glBindTextureUnit)                  \
     X(PFNGLUNIFORM2FPROC, glUniform2f)                              \
     X(PFNGLTEXTUREPARAMETERFPROC, glTextureParameterf)              \
@@ -872,7 +1068,7 @@ class OpenGLDevice final : public Device {
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, taa[2];  // occlusion, scene with it, depth of field, TAA output / history
+        TextureHandle ao, lit, dof, motion, taa[2];  // occlusion, scene with it, depth of field, motion blur, TAA output / history
         TextureHandle ssr;                   // the scene with reflections
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
@@ -975,6 +1171,8 @@ public:
             const char* ext = reinterpret_cast<const char*>(gl_.glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i)));
             if (std::strcmp(ext, "GL_NVX_gpu_memory_info") == 0) has_nvx_memory_info_ = true;
             if (std::strcmp(ext, "GL_ATI_meminfo") == 0) has_ati_meminfo_ = true;
+            if (std::strcmp(ext, "GL_EXT_texture_compression_s3tc") == 0) has_s3tc_ = true;
+            if (std::strcmp(ext, "GL_EXT_texture_sRGB") == 0 || std::strcmp(ext, "GL_EXT_texture_sRGB_S3TC") == 0) has_srgb_s3tc_ = true;
             if (std::strcmp(ext, "GL_NV_mesh_shader") == 0 || std::strcmp(ext, "GL_EXT_mesh_shader") == 0) info_.supports_mesh_shaders = true;
         }
         // VRAM size for preset selection. AMD only reports free memory, which at startup is close to the total.
@@ -1040,7 +1238,9 @@ public:
         set_shadow_map({}, {});
     }
 
+    bool supports_bc() const override { return has_s3tc_ && has_srgb_s3tc_; }
     TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
+        if (is_block_compressed(format) && !supports_bc()) return {};
         u32 slot = 0;
         while (slot < kMaxTextures && textures_[slot].id) ++slot;
         if (slot == kMaxTextures || width == 0 || height == 0 || mip_count == 0 || mip_count > kMaxMips) {
@@ -1049,12 +1249,26 @@ public:
         }
         Texture& t = textures_[slot];
         gl_.glCreateTextures(GL_TEXTURE_2D, 1, &t.id);
-        gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), format == TextureFormat::RGBA8_sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8,
-                               static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+        // S3TC (EXT_texture_compression_s3tc / EXT_texture_sRGB): BC1 = RGBA DXT1, BC3 = DXT5.
+        GLenum internal = format == TextureFormat::RGBA8_sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+        switch (format) {
+            case TextureFormat::BC1: internal = 0x83F1; break;       // GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+            case TextureFormat::BC1_sRGB: internal = 0x8C4D; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+            case TextureFormat::BC3: internal = 0x83F3; break;       // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+            case TextureFormat::BC3_sRGB: internal = 0x8C4F; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+            case TextureFormat::BC5: internal = 0x8DBD; break;       // GL_COMPRESSED_RG_RGTC2 (core since 3.0)
+            default: break;
+        }
+        gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), internal, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         for (u32 m = 0; m < mip_count; ++m) {
             const u32 w = width >> m ? width >> m : 1, h = height >> m ? height >> m : 1;
-            gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA, GL_UNSIGNED_BYTE, mips[m]);
+            if (is_block_compressed(format)) {
+                gl_.glCompressedTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), internal,
+                                                  static_cast<GLsizei>(texture_bytes(format, w, h)), mips[m]);
+            } else {
+                gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA, GL_UNSIGNED_BYTE, mips[m]);
+            }
         }
         gl_.glTextureParameteri(t.id, GL_TEXTURE_MIN_FILTER, mip_count > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         gl_.glTextureParameteri(t.id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1119,6 +1333,7 @@ public:
 
     void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
         const Target* t = lookup(handle);
+        bound_target_ = t;
         glDisable(GL_SCISSOR_TEST);
         if (!t) {
             gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1267,9 +1482,13 @@ public:
         gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
+        const Texture* emissive = lookup_texture(draw.emissive_texture);
+        gl_.glBindTextureUnit(8, emissive ? emissive->id : textures_[white_].id);
         gl_.glBindTextureUnit(3, shadow_texture_);
         gl_.glBindTextureUnit(4, local_shadow_texture_);
         gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);
+        gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);
+        gl_.glBindTextureUnit(7, lightmap_texture_ ? lightmap_texture_ : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1 translucent, 2 additive, 3 overdraw (no depth test)
         if (blend) {
@@ -1335,7 +1554,14 @@ public:
         return TextureHandle::make(kMaxTargets + kMaxTextures + slot, m.generation);
     }
 
-    void begin_shadow_pass(TextureHandle handle) override {
+    void clear_shadow_viewport() override {
+        if (!in_shadow_pass_) return;
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClear(GL_DEPTH_BUFFER_BIT);  // set_viewport's scissor keeps it to the tile
+    }
+
+    void begin_shadow_pass(TextureHandle handle, bool clear) override {
         const ShadowMap* m = lookup_shadow(handle);
         if (!m) return;
         gl_.glBindFramebuffer(GL_FRAMEBUFFER, m->fbo);
@@ -1344,7 +1570,7 @@ public:
         glViewport(0, 0, static_cast<GLsizei>(m->size), static_cast<GLsizei>(m->size));
         glDepthMask(GL_TRUE);
         glClearDepth(1.0);
-        glClear(GL_DEPTH_BUFFER_BIT);
+        if (clear) glClear(GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(2.0f, 1.0f);  // against shadow acne on slopes; the shader adds a normal offset
@@ -1353,14 +1579,22 @@ public:
     }
 
     void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,
-                            u32 joint_count) override {
+                            u32 joint_count, const ShadowCutout* cutout) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || !in_shadow_pass_) return;
         const bool skinned = joint_rows && joint_count;
         if (skinned) upload_joints(joint_rows, joint_count);
-        gl_.glUseProgram(skinned ? skinned_shadow_program_ : shadow_program_);
-        gl_.glUniformMatrix4fv(skinned ? skinned_shadow_mvp_ : shadow_mvp_, 1, GL_FALSE, light_mvp);
+        const Texture* cut_tex = cutout ? lookup_texture(cutout->texture) : nullptr;
+        const int variant = (skinned ? 1 : 0) + (cut_tex ? 2 : 0);  // plain, skinned, cut-out, skinned cut-out
+        const GLuint programs[4] = {shadow_program_, skinned_shadow_program_, cutout_shadow_program_[0], cutout_shadow_program_[1]};
+        const GLint mvps[4] = {shadow_mvp_, skinned_shadow_mvp_, cutout_shadow_mvp_[0], cutout_shadow_mvp_[1]};
+        gl_.glUseProgram(programs[variant]);
+        gl_.glUniformMatrix4fv(mvps[variant], 1, GL_FALSE, light_mvp);
+        if (cut_tex) {
+            gl_.glUniform2f(cutout_shadow_cut_[skinned ? 1 : 0], cutout->cutoff, cutout->alpha);
+            gl_.glBindTextureUnit(0, cut_tex->id);
+        }
         const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(vao, ib->id);
@@ -1397,6 +1631,16 @@ public:
         decal_texture_ = t ? t->id : 0;
     }
 
+    void set_reflection_atlas(TextureHandle atlas) override {
+        const Texture* t = lookup_texture(atlas);
+        reflection_texture_ = t ? t->id : 0;
+    }
+
+    void set_lightmap_atlas(TextureHandle atlas) override {
+        const Texture* t = lookup_texture(atlas);
+        lightmap_texture_ = t ? t->id : 0;
+    }
+
     void set_shadow_map(TextureHandle sun, TextureHandle local) override {
         const ShadowMap* s = lookup_shadow(sun);
         const ShadowMap* l = lookup_shadow(local);
@@ -1422,7 +1666,7 @@ public:
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertex_count));
     }
 
-    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
         const u32 bytes = vertex_count * static_cast<u32>(sizeof(ParticleVertex));
         if (!vertex_count || bytes > kParticleRingBytes) return;
         if (particle_offset_ + bytes > kParticleRingBytes) particle_offset_ = 0;  // GL keeps earlier draws' data (it syncs the update)
@@ -1435,6 +1679,11 @@ public:
         gl_.glUseProgram(particle_program_);
         gl_.glUniformMatrix4fv(particle_mvp_, 1, GL_FALSE, view_proj);
         gl_.glUniform1f(particle_hdr_, hdr_output_ ? 1.0f : 0.0f);
+        const bool soft_fade = soft && soft[0] > 0.0f && bound_target_;
+        const f32 no_soft[4] = {};
+        gl_.glUniform4fv(particle_soft_, 1, soft_fade ? soft : no_soft);
+        if (soft_fade) gl_.glTextureBarrier();  // its depth is read while attached: defined since nothing writes it from here on
+        gl_.glBindTextureUnit(1, soft_fade ? bound_target_->depth : textures_[white_].id);
         gl_.glBindTextureUnit(0, t ? t->id : textures_[white_].id);
         gl_.glVertexArrayVertexBuffer(particle_vao_, 0, particle_vbo_, particle_offset_, sizeof(ParticleVertex));
         gl_.glBindVertexArray(particle_vao_);
@@ -1508,6 +1757,7 @@ public:
         destroy_texture(c.ao);
         destroy_texture(c.lit);
         destroy_texture(c.dof);
+        destroy_texture(c.motion);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
@@ -1524,6 +1774,7 @@ public:
         c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
+        c.motion = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1556,7 +1807,8 @@ public:
         gl_.glUniform4fv(post_uniforms_[program], 12, constants);
         gl_.glBindTextureUnit(0, a ? a->color : textures_[white_].id);
         gl_.glBindTextureUnit(1, b ? b->color : textures_[white_].id);
-        gl_.glBindTextureUnit(2, d ? d->depth : textures_[white_].id);
+        const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
+        gl_.glBindTextureUnit(2, d ? d->depth : plain ? plain->id : textures_[white_].id);
         gl_.glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
@@ -1588,8 +1840,9 @@ public:
             out[1] = target ? 1.0f / static_cast<f32>(target->height) : 0.0f;
         };
         const bool depth_effects = p.proj[0] != 0.0f;
-        const bool ao = depth_effects && p.ao_intensity > 0.0f;
+        const bool ao = depth_effects && (p.ao_intensity > 0.0f || p.contact_shadow[3] > 0.0f);
         const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
         const bool taa = depth_effects && p.taa;
         const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
         if (!taa) c.history_valid = false;
@@ -1605,6 +1858,8 @@ public:
         k[27] = p.dof_transition;
         k[28] = 0.1f;  // TAA: how much of this frame goes in
         k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        k[30] = p.motion_blur;
+        k[31] = p.motion_blur_max;
         for (int r = 0; r < 4; ++r) {
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
@@ -1615,7 +1870,10 @@ public:
             src = c.ssr;
         }
         if (ao) {
-            post_pass(5, c.ao, nullptr, {}, {}, p.scene, k);
+            f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
+            std::memcpy(ka, k, sizeof ka);
+            std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
+            post_pass(5, c.ao, nullptr, {}, {}, p.scene, ka);
             post_pass(6, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
@@ -1629,6 +1887,10 @@ public:
         if (dof) {
             post_pass(8, c.dof, nullptr, src, {}, p.scene, k);
             src = c.dof;
+        }
+        if (motion) {
+            post_pass(13, c.motion, nullptr, src, {}, p.scene, k);
+            src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
             f32 e[48] = {};
@@ -1672,8 +1934,9 @@ public:
         g[12] = p.saturation;
         g[13] = p.contrast;
         g[14] = p.vignette;
+        g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, {}, g);
+        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
@@ -1943,6 +2206,12 @@ private:
         }
         skinned_shadow_program_ = link(with_skinning(kShadowVertexShader, true).c_str(), kShadowFragmentShader);
         skinned_shadow_mvp_ = gl_.glGetUniformLocation(skinned_shadow_program_, "u_mvp");
+        for (int k = 0; k < 2; ++k) {  // Masked casters: static, skinned
+            cutout_shadow_program_[k] = link(with_skinning(kShadowVertexShader, k == 1).c_str(), kCutoutShadowFragmentShader);
+            if (!cutout_shadow_program_[k]) return false;
+            cutout_shadow_mvp_[k] = gl_.glGetUniformLocation(cutout_shadow_program_[k], "u_mvp");
+            cutout_shadow_cut_[k] = gl_.glGetUniformLocation(cutout_shadow_program_[k], "u_cut");
+        }
         if (!skinned_program_.id || !instanced_program_.id || !shadow_program_ || !skinned_shadow_program_) return false;
         if (!program_ || !mesh_program_ || !line_program_) return false;
         params_location_ = gl_.glGetUniformLocation(program_, "params");
@@ -1968,6 +2237,7 @@ private:
         attribute(mesh_vao_, 0, 3, offsetof(MeshVertex, position));
         attribute(mesh_vao_, 1, 3, offsetof(MeshVertex, normal));
         attribute(mesh_vao_, 2, 2, offsetof(MeshVertex, uv));
+        attribute(mesh_vao_, 5, 2, offsetof(MeshVertex, lightmap_uv));
         gl_.glCreateVertexArrays(1, &skinned_vao_);
         attribute(skinned_vao_, 0, 3, offsetof(SkinnedVertex, position));
         attribute(skinned_vao_, 1, 3, offsetof(SkinnedVertex, normal));
@@ -2016,9 +2286,10 @@ private:
         if (!particle_program_) return false;
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
         particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
+        particle_soft_ = gl_.glGetUniformLocation(particle_program_, "u_soft");
         const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
                                                    "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n",
-                                                   "#define METER\n", "#define EXPOSE\n", "#define OUTLINE\n"};
+                                                   "#define METER\n", "#define EXPOSE\n", "#define OUTLINE\n", "#define MOTION\n"};
         for (u32 i = 0; i < kPostPrograms; ++i) {
             std::string fragment = kPostFragmentShader;
             fragment.insert(fragment.find('\n') + 1, post_defines[i]);
@@ -2051,6 +2322,8 @@ private:
     GLuint mesh_program_ = 0;  // == mesh_.id
     MeshProgram mesh_, skinned_program_, instanced_program_;
     GLuint decal_texture_ = 0;
+    GLuint reflection_texture_ = 0;
+    GLuint lightmap_texture_ = 0;
     MaterialShader material_shaders_[kMaxMaterialShaders];
     GLuint mesh_vao_ = 0, skinned_vao_ = 0;
     GLuint instanced_shadow_program_ = 0;
@@ -2075,9 +2348,10 @@ private:
     GLint sky_mvp_ = -1, sky_camera_ = -1, sky_values_ = -1;
     f32 viewport_[4] = {};  // the last set_viewport (top-left origin), for the shaders' vignette
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
-    GLint particle_mvp_ = -1, particle_hdr_ = -1;
+    GLint particle_mvp_ = -1, particle_hdr_ = -1, particle_soft_ = -1;
+    const Target* bound_target_ = nullptr;  // set_render_target's (null: the window)
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
-    static constexpr u32 kPostPrograms = 13;
+    static constexpr u32 kPostPrograms = 14;  // 13: motion blur
     GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof, ssr, meter, expose
     GLint post_uniforms_[kPostPrograms] = {};
     PostChain post_chains_[4];
@@ -2085,6 +2359,8 @@ private:
     u32 particle_offset_ = 0;
     GLuint skinned_shadow_program_ = 0;
     GLint skinned_shadow_mvp_ = -1;
+    GLuint cutout_shadow_program_[2] = {};  // Masked casters: static, skinned
+    GLint cutout_shadow_mvp_[2] = {-1, -1}, cutout_shadow_cut_[2] = {-1, -1};
     GLuint line_program_ = 0;
     GLuint line_vao_ = 0;
     GLint line_mvp_ = -1;
@@ -2106,6 +2382,7 @@ private:
     bool validation_ = false;
     bool has_nvx_memory_info_ = false;
     bool has_ati_meminfo_ = false;
+    bool has_s3tc_ = false, has_srgb_s3tc_ = false;  // BC1 / BC3 textures
     bool debug_ui_ = false;
 };
 

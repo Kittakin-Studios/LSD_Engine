@@ -6,6 +6,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -35,6 +36,13 @@ struct Entry {
 
 std::mutex g_mutex;
 std::vector<Entry> g_status;  // changed files only
+struct Lock {
+    std::string path;  // relative to Content/
+    std::string owner;
+    bool mine;
+};
+std::vector<Lock> g_locks;  // Git LFS locks under Content/
+std::atomic<bool> g_lfs{false}, g_locks_dirty{false};
 std::thread g_thread;
 std::atomic<bool> g_running{false}, g_dirty{false}, g_enabled{false};
 
@@ -43,6 +51,9 @@ std::string g_title, g_output;
 bool g_window = false, g_open_submit = false;
 std::string g_submit_path;
 char g_message[512] = "";
+bool g_changes = false;                   // the Changes window
+std::vector<std::string> g_ticked;        // its ticked rows (Content/-relative paths)
+std::string g_revert_path, g_open_revert; // Revert: the asset waiting for its confirmation
 
 // Runs `git <args>` in the project folder; false if it failed (not a repository, no git...).
 bool git(const std::string& args, std::string& out) {
@@ -97,6 +108,46 @@ void read_status() {
     g_enabled = true;
 }
 
+// A JSON string value after `key` from `at` on ("" if none); `at` moves past it.
+std::string json_value(const std::string& json, const char* key, usize& at) {
+    const std::string k = std::string("\"") + key + "\":";
+    usize p = json.find(k, at);
+    if (p == std::string::npos) return {};
+    p = json.find('"', p + k.size());
+    if (p == std::string::npos) return {};
+    std::string v;
+    for (++p; p < json.size() && json[p] != '"'; ++p) {
+        if (json[p] == '\\' && p + 1 < json.size()) ++p;
+        v += json[p];
+    }
+    at = p;
+    return v;
+}
+
+// `git lfs locks --verify --json`: {"ours": [{"path": ..., "owner": {"name": ...}}], "theirs": [...]}
+// (without --verify support: a plain list, matched to this user's name).
+void read_locks() {
+    std::string out;
+    bool verified = git("lfs locks --verify --json", out);
+    if (!verified && !git("lfs locks --json", out)) return;  // no LFS remote: no locks
+    std::string me;
+    if (!verified && git("config user.name", me)) {
+        while (!me.empty() && (me.back() == '\n' || me.back() == '\r')) me.pop_back();
+    }
+    const usize theirs = verified ? out.find("\"theirs\"") : std::string::npos;
+    std::vector<Lock> locks;
+    for (usize at = 0;;) {
+        const std::string path = json_value(out, "path", at);
+        if (path.empty()) break;
+        const usize here = at;
+        const std::string owner = json_value(out, "name", at);
+        if (path.rfind("Content/", 0) != 0) continue;
+        locks.push_back({path.substr(8), owner, verified ? (theirs == std::string::npos || here < theirs) : owner == me});
+    }
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_locks.swap(locks);
+}
+
 void show(const char* title, const std::string& content_path, const std::string& args) {
     g_title = std::string(title) + ": Content/" + content_path;
     if (!git(args, g_output) && g_output.empty()) g_output = "git failed";
@@ -112,11 +163,18 @@ void start() {
     g_dirty = true;
     g_thread = std::thread([] {
         auto last = std::chrono::steady_clock::now() - std::chrono::hours(1);
+        auto last_locks = last;
+        std::string version;
+        g_lfs = git("lfs version", version);
         while (g_running) {
             const auto now = std::chrono::steady_clock::now();
             if (g_dirty.exchange(false) || now - last > std::chrono::seconds(4)) {
                 read_status();
                 last = std::chrono::steady_clock::now();
+            }
+            if (g_lfs && g_enabled && (g_locks_dirty.exchange(false) || now - last_locks > std::chrono::seconds(20))) {
+                read_locks();
+                last_locks = std::chrono::steady_clock::now();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -145,6 +203,36 @@ char status(const char* content_path) {
     return code;
 }
 
+std::string locked_by(const char* content_path, bool& mine) {
+    mine = false;
+    if (!g_lfs) return {};
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (const Lock& l : g_locks) {
+        if (l.path == content_path) {
+            mine = l.mine;
+            return l.owner;  // a copy: the background thread replaces the list
+        }
+    }
+    return {};
+}
+
+// Puts the asset (and its .meta) back to the last commit. Each path on its own: a .meta that is new has nothing to go back to.
+static bool revert(const std::string& content_path) {
+    std::string out;
+    const bool ok = git("restore --source=HEAD --staged --worktree -- \"Content/" + content_path + "\"", out);
+    if (!ok) LSD_LOG_ERROR("source", "Revert failed: %s", out.c_str());
+    std::error_code ec;
+    if (std::filesystem::exists("Content/" + content_path + ".meta", ec)) git("restore --source=HEAD --staged --worktree -- \"Content/" + content_path + ".meta\"", out);
+    if (ok) LSD_LOG_INFO("source", "Reverted Content/%s", content_path.c_str());
+    refresh();
+    return ok;
+}
+
+void open_changes() {
+    g_changes = true;
+    refresh();
+}
+
 void asset_menu(const char* content_path) {
     if (!g_enabled || !with_tip(ImGui::BeginMenu("Source Control"), "Git: history, diff and submit for this asset")) return;
     const std::string path = content_path;
@@ -159,8 +247,35 @@ void asset_menu(const char* content_path) {
             g_message[0] = '\0';
             g_open_submit = true;
         }
+        if (with_tip(ImGui::MenuItem("Revert...", nullptr, false, code == 'M' || code == 'R'), "Throws away your changes: back to the last commit (asks first)")) g_open_revert = path;
+        if (with_tip(ImGui::MenuItem("View Changes..."), "Every changed asset in one window (Unreal's View Changelists): tick and submit, or revert")) open_changes();
     }
-    if (with_tip(ImGui::MenuItem("Refresh Status"), "Asks Git again what changed")) refresh();
+    if (g_lfs && safe(path)) {
+        ImGui::Separator();
+        bool mine = false;
+        const std::string owner = locked_by(content_path, mine);
+        if (owner.empty()) {
+            if (with_tip(ImGui::MenuItem("Lock (Check Out)"), "Git LFS: locks the asset on the server so teammates know you are changing it (they cannot push it)")) {
+                show("Lock", path, "lfs lock \"Content/" + path + "\"");
+                g_locks_dirty = true;
+            }
+        } else if (mine) {
+            if (with_tip(ImGui::MenuItem("Unlock (Check In)"), "Git LFS: releases your lock (push your changes first)")) {
+                show("Unlock", path, "lfs unlock \"Content/" + path + "\"");
+                g_locks_dirty = true;
+            }
+        } else {
+            ImGui::TextDisabled("Locked by %s", owner.c_str());
+            if (with_tip(ImGui::MenuItem("Break Lock"), "Git LFS: removes a teammate's lock (only when they cannot: it may lose their work)")) {
+                show("Break Lock", path, "lfs unlock --force \"Content/" + path + "\"");
+                g_locks_dirty = true;
+            }
+        }
+    }
+    if (with_tip(ImGui::MenuItem("Refresh Status"), "Asks Git again what changed (and who holds locks)")) {
+        refresh();
+        g_locks_dirty = true;
+    }
     ImGui::EndMenu();
 }
 
@@ -172,6 +287,91 @@ void draw() {
             ImGui::InputTextMultiline("##output", g_output.data(), g_output.size() + 1, ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
         }
         ImGui::End();
+    }
+    if (g_changes) {  // Unreal's View Changelists, one changelist
+        ImGui::SetNextWindowSize(ImVec2(640, 420), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Changes", &g_changes)) {
+            std::vector<Entry> changed;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                for (const Entry& e : g_status) {  // the assets (their .meta rides along)
+                    if (e.path.size() < 5 || e.path.compare(e.path.size() - 5, 5, ".meta") != 0) changed.push_back(e);
+                }
+            }
+            if (!g_enabled) ImGui::TextDisabled("The project is not a Git repository (or git is not installed).");
+            else if (changed.empty()) ImGui::TextDisabled("Nothing changed since the last commit.");
+            ImGui::BeginChild("##list", ImVec2(0, -130), ImGuiChildFlags_Borders);
+            for (const Entry& e : changed) {
+                ImGui::PushID(e.path.c_str());
+                bool on = std::find(g_ticked.begin(), g_ticked.end(), e.path) != g_ticked.end();
+                if (ImGui::Checkbox("##tick", &on)) {
+                    if (on) g_ticked.push_back(e.path);
+                    else g_ticked.erase(std::remove(g_ticked.begin(), g_ticked.end(), e.path), g_ticked.end());
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(e.code == 'A' ? ImVec4(0.61f, 0.88f, 0.12f, 1) : ImVec4(0.95f, 0.76f, 0.07f, 1), "%c", e.code);
+                ImGui::SameLine();
+                ImGui::TextUnformatted(e.path.c_str());
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 70);
+                ImGui::BeginDisabled(e.code == 'A' || !safe(e.path));
+                if (with_tip(ImGui::SmallButton("Revert"), "Throws away the changes to this asset (asks first); a new asset has nothing to go back to")) g_open_revert = e.path;
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            g_ticked.erase(std::remove_if(g_ticked.begin(), g_ticked.end(), [&](const std::string& p) {
+                               return std::none_of(changed.begin(), changed.end(), [&](const Entry& e) { return e.path == p; });
+                           }), g_ticked.end());  // rows that are no longer changed
+            if (with_tip(ImGui::SmallButton("Tick All"), "Ticks every row")) {
+                g_ticked.clear();
+                for (const Entry& e : changed) g_ticked.push_back(e.path);
+            }
+            ImGui::SameLine();
+            if (with_tip(ImGui::SmallButton("Refresh"), "Asks Git again what changed")) refresh();
+            ImGui::InputTextMultiline("Description", g_message, sizeof g_message, ImVec2(-90, 60));
+            ImGui::BeginDisabled(g_ticked.empty() || !g_message[0]);
+            if (with_tip(ImGui::Button("Submit Selected"), "Commits the ticked assets (and their .meta) with the description; push from your Git tool to share them")) {
+                std::string spec;
+                for (const std::string& p : g_ticked) {
+                    if (safe(p)) spec += pathspec(p) + " ";
+                }
+                const char* message_file = "Saved/commit_message.txt";
+                std::error_code ec;
+                std::filesystem::create_directories("Saved", ec);
+                if (FILE* f = std::fopen(message_file, "wb")) {
+                    std::fwrite(g_message, 1, std::strlen(g_message), f);
+                    std::fclose(f);
+                }
+                std::string out;
+                const bool done = !spec.empty() && git("add -- " + spec, out) && git("commit -F \"" + std::string(message_file) + "\" --only -- " + spec, out);
+                std::filesystem::remove(message_file, ec);
+                if (done) LSD_LOG_INFO("source", "Submitted %zu asset(s)", g_ticked.size());
+                else LSD_LOG_ERROR("source", "Submit failed: %s", out.c_str());
+                if (done) {
+                    g_ticked.clear();
+                    g_message[0] = '\0';
+                }
+                refresh();
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::End();
+    }
+    if (!g_open_revert.empty()) {
+        g_revert_path = g_open_revert;
+        g_open_revert.clear();
+        ImGui::OpenPopup("Revert Asset");
+    }
+    if (ImGui::BeginPopupModal("Revert Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Throw away your changes to Content/%s?", g_revert_path.c_str());
+        ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "It goes back to the last commit; the changes cannot be brought back.");
+        if (with_tip(ImGui::Button("Revert"), "Puts the asset (and its .meta) back to the last commit")) {
+            revert(g_revert_path);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("Cancel"), "Keeps your changes") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
     if (g_open_submit) ImGui::OpenPopup("Submit to Source Control");
     g_open_submit = false;

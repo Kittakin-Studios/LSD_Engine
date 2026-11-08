@@ -96,11 +96,26 @@ void AnimationPlayer::set_motion_input(world::Entity character, const anim::Moti
 bool AnimationPlayer::motion_readout(world::Entity e, char* out, usize capacity) const {
     for (const State& s : states_) {
         if (!s.used || s.entity != e || !s.motion_data || s.motion.clip < 0) continue;
-        std::snprintf(out, capacity, "%s at %.2f s (match %.2f)%s", s.motion_data->names[s.motion.clip], static_cast<f64>(s.motion.time), static_cast<f64>(s.motion.cost),
-                      s.motion.fade < 1.0f && s.motion.previous_clip >= 0 ? ", blending" : "");
+        std::snprintf(out, capacity, "%s at %.2f s (match %.2f)%s%s%s", s.motion_data->names[s.motion.clip], static_cast<f64>(s.motion.time), static_cast<f64>(s.motion.cost),
+                      s.motion.fade < 1.0f && s.motion.previous_clip >= 0 ? ", blending" : "", s.motion.tag[0] ? ", tag " : "", s.motion.tag);
         return true;
     }
     return false;
+}
+
+u32 AnimationPlayer::motion_candidates(world::Entity e, char (*lines)[96], u32 capacity) const {
+    for (const State& s : states_) {
+        if (!s.used || s.entity != e || !s.motion_data || s.motion.clip < 0) continue;
+        anim::MotionCandidate found[8];
+        const u32 n = anim::motion_candidates(*s.motion_data, s.motion.query, s.motion.tag, found, capacity < 8 ? capacity : 8);
+        for (u32 k = 0; k < n; ++k) {
+            const anim::MotionFrame& f = s.motion_data->frames[found[k].frame];
+            std::snprintf(lines[k], sizeof lines[k], "%s %.2f s: %.2f pose + %.2f path", s.motion_data->names[f.clip], static_cast<f64>(f.time),
+                          static_cast<f64>(found[k].pose_cost), static_cast<f64>(found[k].path_cost));
+        }
+        return n;
+    }
+    return 0;
 }
 
 namespace {
@@ -192,6 +207,8 @@ const anim::Pose* AnimationPlayer::pose(world::Entity e) const {
 }
 
 void AnimationPlayer::reset() {
+    montages_.clear();
+    finished_montages_.clear();
     for (State& s : states_) {
         s.time = 0.0f;
         s.graph = anim::GraphState{};
@@ -223,7 +240,170 @@ void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32
 }
 
 // After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
+f32 AnimationPlayer::play_montage(const world::World& world, SkinnedCache& cache, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend,
+                                  bool root_motion, const char* slot) {
+    if (!slot || !slot[0]) slot = "Default";
+    world::Entity mesh_entity = world.alive(e) && world.get<world::SkeletalMesh>(e) ? e : world::Entity{};
+    for (u32 k = 0; k < world.slot_count() && !mesh_entity.valid(); ++k) {  // a Character's mesh under it
+        const world::Entity c = world.entity_at_slot(k);
+        if (c.valid() && world.parent(c) == e && world.get<world::SkeletalMesh>(c)) mesh_entity = c;
+    }
+    const auto* mesh = mesh_entity.valid() ? world.get<world::SkeletalMesh>(mesh_entity) : nullptr;
+    if (!mesh) return 0.0f;
+    char guid[33] = "";
+    for (usize i = 0; i < cache.registry().count() && !guid[0]; ++i) {
+        const asset::AssetRecord& r = cache.registry().get(i);
+        if (std::strcmp(r.name, animation) == 0) asset::to_string(r.guid, guid);
+    }
+    const ClipSet* set = guid[0] ? cache.clips(mesh->mesh, guid) : nullptr;
+    if (!set || set->count == 0 || set->clips[0].duration <= 0.0f) return 0.0f;
+    stop_montage(e, 0.0f, slot);  // one at a time per slot
+    Montage m;
+    std::snprintf(m.slot, sizeof m.slot, "%s", slot);
+    m.owner = e;
+    m.mesh = mesh_entity;
+    std::snprintf(m.animation, sizeof m.animation, "%s", guid);
+    std::snprintf(m.from_bone, sizeof m.from_bone, "%s", from_bone ? from_bone : "");
+    m.rate = rate > 0.0f ? rate : 1.0f;
+    m.blend = blend > 0.0f ? blend : 0.0f;
+    m.root_motion = root_motion;
+    montages_.push_back(m);
+    return set->clips[0].duration / m.rate;
+}
+
+void AnimationPlayer::stop_montage(world::Entity e, f32 blend, const char* slot) {
+    for (usize i = montages_.size(); i-- > 0;) {
+        if (montages_[i].owner != e || (slot && slot[0] && std::strcmp(montages_[i].slot, slot) != 0)) continue;
+        if (blend > 0.0f) {
+            montages_[i].fade_speed = 1.0f / blend;
+        } else {
+            finished_montages_.push_back(e);
+            montages_.erase(montages_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+}
+
+bool AnimationPlayer::montage_playing(world::Entity e, const char* slot) const {
+    for (const Montage& m : montages_) {
+        if (m.owner == e && m.fade_speed == 0.0f && (!slot || !slot[0] || std::strcmp(m.slot, slot) == 0)) return true;
+    }
+    return false;
+}
+
+bool AnimationPlayer::take_root_motion(world::Entity e, Vec3& moved) {
+    for (Montage& m : montages_) {
+        if (m.owner != e || !m.root_motion) continue;
+        moved = m.moved;
+        m.moved = {};
+        return true;
+    }
+    for (State& s : states_) {
+        if (!s.used || !s.root_on || s.owner != e) continue;
+        moved = s.root_moved;
+        s.root_moved = {};
+        return true;
+    }
+    return false;
+}
+
+void AnimationPlayer::step_root_motion(const world::World& world, State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& entry, const anim::BlendInput* inputs, u32 count) {
+    state.root_on = mesh.root_motion;
+    if (!mesh.root_motion) {
+        state.root_started = false;
+        state.root_moved = {};
+        return;
+    }
+    u32 best = 0;  // a loop wraps when the strongest clip goes back to its start
+    for (u32 k = 1; k < count; ++k) {
+        if (inputs[k].weight > inputs[best].weight) best = k;
+    }
+    const anim::Clip* clip = count ? inputs[best].clip : nullptr;
+    const f32 ratio = count ? inputs[best].ratio : 0.0f;
+    const bool wrapped = clip && clip == state.root_clip && ratio < state.root_ratio;
+    state.root_clip = clip;
+    state.root_ratio = ratio;
+    const Vec3 offset = state.pose.strip_root(*entry.model);
+    // shortcut: the frame a loop wraps repeats last frame's step (the root jumps back to its start); exact would sample the clip's ends
+    const Vec3 step = !state.root_started ? Vec3{} : wrapped ? state.root_step : offset - state.root_last;
+    state.root_step = step;
+    state.root_last = offset;
+    state.root_started = true;
+    if (in_play_) state.root_moved = state.root_moved + transform_vector(skeletal_matrix(world, state.entity, mesh, &entry), step);  // the editor shows it in place
+}
+
+bool AnimationPlayer::curve_value(const world::World& world, const SkinnedCache& cache, world::Entity e, const char* name, f32& value) const {
+    for (const State& s : states_) {
+        if (!s.used || !s.input_count) continue;
+        bool mine = false;  // e itself, or a parent of the mesh (a Character)
+        for (world::Entity p = s.entity; p.valid() && !mine; p = world.parent(p)) mine = p == e;
+        if (!mine) continue;
+        f32 sum = 0.0f, total = 0.0f;
+        bool any = false;
+        for (u32 k = 0; k < s.input_count; ++k) {
+            const anim::BlendInput& in = s.inputs[k];
+            const ClipSet* set = in.clip ? cache.set_of(in.clip) : nullptr;
+            f32 v = 0.0f;  // a clip without the curve counts as 0 (as Unreal's)
+            if (set && asset::curve_value(set->meta, static_cast<u32>(in.clip - set->clips), name, in.ratio * in.clip->duration, v)) any = true;
+            else if (in.clip && in.clip->curve_value(name, in.ratio, v)) any = true;  // a curve the file itself carries (FBX user property)
+            sum += v * in.weight;
+            total += in.weight;
+        }
+        if (!any) continue;
+        value = total > 0.0f ? sum / total : 0.0f;
+        return true;
+    }
+    return false;
+}
+
+void AnimationPlayer::apply_root_motion(world::World& world, world::Entity player) {
+    for (State& s : states_) {
+        if (!s.used || !s.root_on || s.owner == player || !world.alive(s.owner)) continue;
+        Mat4 m = world.world_matrix(s.owner);
+        m.at(0, 3) += s.root_moved.x;
+        m.at(1, 3) += s.root_moved.y;
+        world.set_world_matrix(s.owner, m);
+        s.root_moved = {};
+    }
+}
+
+void AnimationPlayer::take_finished_montages(std::vector<world::Entity>& out) {
+    out.insert(out.end(), finished_montages_.begin(), finished_montages_.end());
+    finished_montages_.clear();
+}
+
+void AnimationPlayer::apply_montage(const world::World& world, State& state, const SkinnedEntry& entry) {
+    for (usize i = 0; i < montages_.size(); ++i) {
+        Montage& m = montages_[i];
+        const auto* mesh = m.mesh == state.entity ? world.get<world::SkeletalMesh>(state.entity) : nullptr;
+        if (!mesh || !cache_ || !entry.model) continue;
+        const ClipSet* set = cache_->clips(mesh->mesh, m.animation);
+        const anim::Clip* clip = set && set->count ? &set->clips[0] : nullptr;
+        if (!clip || clip->duration <= 0.0f) continue;
+        m.time += dt_ * m.rate;
+        if (m.fade_speed > 0.0f) m.fade -= dt_ * m.fade_speed;
+        if (m.time >= clip->duration || m.fade <= 0.0f) {  // played out (or faded): back to what plays under it
+            finished_montages_.push_back(m.owner);
+            montages_.erase(montages_.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+            continue;
+        }
+        f32 w = m.fade;
+        if (m.blend > 0.0f) {
+            const f32 in = m.time / m.blend, out = (clip->duration - m.time) / m.blend;
+            w = std::fmin(w, std::fmin(in < 1.0f ? in : 1.0f, out < 1.0f ? out : 1.0f));
+        }
+        state.pose.layer(*entry.model, clip, m.time / clip->duration, w, m.from_bone[0] ? entry.model->find_joint(m.from_bone) : -1);
+        if (m.root_motion) {  // the root's travel since last frame moves the object; the mesh stays on it
+            const Vec3 offset = state.pose.strip_root(*entry.model);
+            if (m.started) m.moved = m.moved + transform_vector(skeletal_matrix(world, state.entity, *mesh, &entry), offset - m.last);
+            m.last = offset;
+            m.started = true;
+        }
+    }
+}
+
 void AnimationPlayer::apply_ik(world::World& world, State& state, const SkinnedEntry& entry) {
+    apply_montage(world, state, entry);  // montages over the sampled pose first, IK on top of both
     const anim::SkinnedModel& model = *entry.model;
     const auto* mesh = world.get<world::SkeletalMesh>(state.entity);
     const Mat4 to_world = mesh ? skeletal_matrix(world, state.entity, *mesh, &entry) : world.world_matrix(state.entity);
@@ -282,15 +462,82 @@ bool AnimationPlayer::socket(const world::World& world, const SkinnedCache& cach
         const SkinnedEntry* model = const_cast<SkinnedCache&>(cache).get(mesh->mesh);
         const i32 j = model && model->model ? model->model->find_joint(s.bone) : -1;
         if (j < 0) return false;
-        out = skeletal_matrix(world, e, *mesh, model) * p->joint_model(static_cast<u32>(j)) * trs(s.position, s.rotation, Vec3{1, 1, 1});
+        out = skeletal_matrix(world, e, *mesh, model) * without_scale(p->joint_model(static_cast<u32>(j))) * trs(s.position, s.rotation, Vec3{1, 1, 1});
         return true;
     }
     // No socket of that name: a bone of that name (Unreal attaches to either).
     const SkinnedEntry* model = const_cast<SkinnedCache&>(cache).get(mesh->mesh);
     const i32 j = model && model->model ? model->model->find_joint(name) : -1;
     if (j < 0) return false;
-    out = skeletal_matrix(world, e, *mesh, model) * p->joint_model(static_cast<u32>(j));
+    out = skeletal_matrix(world, e, *mesh, model) * without_scale(p->joint_model(static_cast<u32>(j)));
     return true;
+}
+
+namespace {
+
+// The UE5 Manny body areas an empty Outfit starts with (bone for rigid pieces).
+const char* const kOutfitAreas[][2] = {{"Hair", "head"},      {"Hat", "head"},        {"Glasses", "head"},  {"Shirt", "spine_03"},
+                                       {"Jacket", "spine_05"}, {"Gloves", "hand_r"},  {"Glove L", "hand_l"}, {"Pants", "pelvis"},
+                                       {"Belt", "pelvis"},     {"Shoes", "foot_r"},   {"Shoe L", "foot_l"},  {"Backpack", "spine_05"}};
+
+} // namespace
+
+void AnimationPlayer::update_outfits(world::World& world, SkinnedCache& cache) {
+    const reflect::TypeInfo& type = reflect::type_of<world::Outfit>();
+    if (!world.count(type)) return;
+    std::vector<world::Entity> bodies;  // first: making pieces adds components and may move the pools
+    for (u32 i = 0; i < world.count(type); ++i) bodies.push_back(world.owner(type, i));
+    for (const world::Entity body : bodies) {
+        auto* outfit = world.get<world::Outfit>(body);
+        if (!outfit) continue;
+        if (!outfit->slots.count) {
+            for (const auto& area : kOutfitAreas) {
+                world::OutfitSlot slot;
+                std::snprintf(slot.slot, sizeof slot.slot, "%s", area[0]);
+                std::snprintf(slot.bone, sizeof slot.bone, "%s", area[1]);
+                outfit->slots.push_back(slot);
+            }
+        }
+        std::vector<world::OutfitSlot> wanted;  // a copy: the pools move below
+        for (u32 i = 0; i < outfit->slots.count; ++i) wanted.push_back(outfit->slots[i]);
+        char body_name[64];
+        std::snprintf(body_name, sizeof body_name, "%s", world.name(body));
+        for (const world::OutfitSlot& slot : wanted) {
+            world::Entity piece;
+            for (u32 s = 0; s < world.slot_count() && !piece.valid(); ++s) {
+                const world::Entity c = world.entity_at_slot(s);
+                const auto* p = c.valid() && world.parent(c) == body ? world.get<world::OutfitPiece>(c) : nullptr;
+                if (p && std::strcmp(p->slot, slot.slot) == 0) piece = c;
+            }
+            if (!slot.mesh[0]) {
+                if (piece.valid()) world.destroy(piece);
+                continue;
+            }
+            const bool skinned = cache.get(slot.mesh) != nullptr;
+            if (!piece.valid()) {
+                piece = world.create(slot.slot);
+                std::snprintf(world.add<world::OutfitPiece>(piece)->slot, sizeof(world::OutfitPiece::slot), "%s", slot.slot);
+                world.set_parent(piece, body, false);  // at the body's origin: skinned pieces share its model space
+            }
+            if (skinned) {
+                if (world.get<world::StaticMesh>(piece)) world.remove(piece, reflect::type_of<world::StaticMesh>());
+                if (world.get<world::AttachToSocket>(piece)) world.remove(piece, reflect::type_of<world::AttachToSocket>());
+                auto* m = world.get<world::SkeletalMesh>(piece) ? world.get<world::SkeletalMesh>(piece) : world.add<world::SkeletalMesh>(piece);
+                if (std::strcmp(m->mesh, slot.mesh) != 0) std::snprintf(m->mesh, sizeof m->mesh, "%s", slot.mesh);
+                std::snprintf(m->leader_pose, sizeof m->leader_pose, "%s", body_name);
+                m->color = slot.color;
+            } else {
+                if (world.get<world::SkeletalMesh>(piece)) world.remove(piece, reflect::type_of<world::SkeletalMesh>());
+                auto* m = world.get<world::StaticMesh>(piece) ? world.get<world::StaticMesh>(piece) : world.add<world::StaticMesh>(piece);
+                if (std::strcmp(m->mesh, slot.mesh) != 0) std::snprintf(m->mesh, sizeof m->mesh, "%s", slot.mesh);
+                m->collision = false;  // worn: the body's capsule collides
+                m->color = slot.color;
+                auto* a = world.get<world::AttachToSocket>(piece) ? world.get<world::AttachToSocket>(piece) : world.add<world::AttachToSocket>(piece);
+                std::snprintf(a->target, sizeof a->target, "%s", body_name);
+                std::snprintf(a->socket, sizeof a->socket, "%s", slot.bone);
+            }
+        }
+    }
 }
 
 void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache& cache) {
@@ -312,6 +559,9 @@ void AnimationPlayer::attach_to_sockets(world::World& world, const SkinnedCache&
 }
 
 void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds) {
+    cache_ = &cache;
+    dt_ = dt;
+    in_play_ = sounds != nullptr;  // Play, running
     for (State& s : states_) {  // objects deleted or without the component any more
         if (!s.used || (world.alive(s.entity) && world.get<world::SkeletalMesh>(s.entity))) continue;
         s.used = false;
@@ -340,8 +590,19 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             }
         }
         if (!state) continue;  // more than 256 animated objects: the rest stay still
+        if (mesh->leader_pose[0]) {  // posed from its leader below, once every leader has its pose
+            followers_.push_back({state, e});
+            continue;
+        }
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        state->owner = e;  // root motion moves its Character (this object or a parent), else the object itself
+        for (world::Entity p = e; p.valid(); p = world.parent(p)) {
+            if (world.get<world::Character>(p)) {
+                state->owner = p;
+                break;
+            }
+        }
 
         // Motion Matching: the Character (this object or a parent) asks for it; it picks the frames.
         const world::Character* character = nullptr;
@@ -358,6 +619,8 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             const u32 n = anim::step_motion(motion->data, motion->settings, input, state->motion, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
+            if (n == 1 && inputs[0].mirrored) state->pose.mirror(*model->model, motion->data.forward_yaw);  // a mirrored clip's frame
+            if (motion->settings.blend_mode == 1) state->pose.inertialize(*model->model, state->motion.switched, mesh->playing ? dt * mesh->play_rate : 0.0f, motion->settings.blend_time * 0.25f);
             apply_ik(world, *state, *model);
             update_morphs(*state, *mesh, *model);
             continue;
@@ -368,9 +631,36 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         if (const anim::AnimGraph* graph = mesh->anim_graph[0] ? cache.graph(mesh->anim_graph) : nullptr) {
             const ClipSet* set = cache.clips(mesh->mesh, graph->animation[0] ? graph->animation : mesh->animation);
             anim::BlendInput* inputs = state->inputs;
-            const u32 n = anim::step_graph(*graph, set ? set->clips : nullptr, set ? set->count : 0, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
+            // The clip table: the graph's file's clips, then one entry per state / sample naming a file of its own.
+            const anim::Clip* table[64] = {};
+            u32 table_count = set ? (set->count < 64 ? set->count : 64) : 0;
+            for (u32 k = 0; k < table_count; ++k) table[k] = &set->clips[k];
+            const anim::AnimGraph* run = graph;
+            static anim::AnimGraph remapped;  // a copy pointing at the table (only for graphs that name other files)
+            bool own_files = false;
+            for (const anim::AnimState& st : graph->states) {
+                own_files |= st.animation[0] != 0;
+                for (const anim::BlendSample& sample : st.samples) own_files |= sample.animation[0] != 0;
+            }
+            if (own_files) {
+                remapped = *graph;
+                auto place = [&](const char* file, u32& clip) {
+                    if (!file[0]) return;
+                    const ClipSet* other = cache.clips(mesh->mesh, file);
+                    const anim::Clip* c = other && clip < other->count ? &other->clips[clip] : nullptr;
+                    if (table_count < 64) table[table_count] = c;
+                    clip = table_count < 64 ? table_count++ : 63;
+                };
+                for (anim::AnimState& st : remapped.states) {
+                    place(st.animation, st.clip);
+                    for (anim::BlendSample& sample : st.samples) place(sample.animation, sample.clip);
+                }
+                run = &remapped;
+            }
+            const u32 n = anim::step_graph(*run, table, table_count, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
+            step_root_motion(world, *state, *mesh, *model, inputs, n);
             apply_ik(world, *state, *model);
             update_morphs(*state, *mesh, *model);
             // Notifies follow the strongest clip (a blend space's feet are in step, so one is enough).
@@ -378,7 +668,8 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             for (u32 k = 1; k < n; ++k) {
                 if (inputs[k].weight > inputs[best].weight) best = k;
             }
-            const u32 clip = n && set && inputs[best].clip ? static_cast<u32>(inputs[best].clip - set->clips) : ~0u;
+            const bool in_set = n && set && inputs[best].clip >= set->clips && inputs[best].clip < set->clips + set->count;  // notifies: the graph's own file
+            const u32 clip = in_set ? static_cast<u32>(inputs[best].clip - set->clips) : ~0u;
             const f32 ratio = n ? inputs[best].ratio : 0.0f;
             if (sounds && clip != ~0u && clip == state->notify_clip && ratio != state->notify_ratio) {
                 const f32 duration = set->clips[clip].duration;
@@ -394,11 +685,12 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 before = state->time;
         if (clip && mesh->playing) state->time += dt * mesh->play_rate;
         state->pose.sample(*model->model, clip, state->time, mesh->looping);
-        apply_ik(world, *state, *model);
         f32 ratio = clip && clip->duration > 0.0f ? state->time / clip->duration : 0.0f;  // as Pose::sample does
         ratio = mesh->looping ? ratio - std::floor(ratio) : (ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio);
         state->inputs[0] = {clip, ratio, 1.0f};
         state->input_count = clip ? 1 : 0;
+        step_root_motion(world, *state, *mesh, *model, state->inputs, state->input_count);
+        apply_ik(world, *state, *model);
         update_morphs(*state, *mesh, *model);
 
         // Notifies whose time this frame's advance crossed (wrapping when looping).
@@ -408,6 +700,27 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         const f32 from = local(before), to = local(state->time);
         fire_notifies(*set, mesh->clip, from, to, mesh->looping && to < from, at, *sounds);
     }
+    // Leader poses: clothes (and hair, gear) on the same skeleton copy their body's pose by bone name.
+    for (const Follower& f : followers_) {
+        const auto* mesh = world.get<world::SkeletalMesh>(f.entity);
+        const SkinnedEntry* model = mesh ? cache.get(mesh->mesh) : nullptr;
+        if (!model) continue;
+        world::Entity leader;  // by name: its parents first (clothes under a body), then the whole level
+        for (world::Entity p = world.parent(f.entity); p.valid() && !leader.valid(); p = world.parent(p)) {
+            if (std::strcmp(world.name(p), mesh->leader_pose) == 0) leader = p;
+        }
+        for (u32 slot = 0; !leader.valid() && slot < world.slot_count(); ++slot) {
+            const world::Entity c = world.entity_at_slot(slot);
+            if (c.valid() && c != f.entity && std::strcmp(world.name(c), mesh->leader_pose) == 0) leader = c;
+        }
+        const auto* leader_mesh = leader.valid() ? world.get<world::SkeletalMesh>(leader) : nullptr;
+        const SkinnedEntry* leader_model = leader_mesh ? cache.get(leader_mesh->mesh) : nullptr;
+        const anim::Pose* leader_pose = leader_model ? pose(leader) : nullptr;
+        if (leader_pose && leader_pose->joint_count()) f.state->pose.follow(*model->model, *leader_model->model, *leader_pose);
+        else f.state->pose.sample(*model->model, nullptr, 0.0f, false);  // no leader (yet): its rest pose
+        update_morphs(*f.state, *mesh, *model);
+    }
+    followers_.clear();
     ik_count_ = 0;  // requests last one frame
 }
 

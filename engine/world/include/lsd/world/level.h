@@ -26,6 +26,8 @@ void save_level(const World& world, Array<char>& out);
 bool load_level(World& world, const char* text, usize length);
 
 bool save_level_file(const World& world, const char* path);
+// Destroys every object with an EditorOnly component, children too (Play and packaging); returns how many went.
+u32 destroy_editor_only(World& world);
 bool load_level_file(World& world, const char* path);
 // Sub-levels: a level's objects copied under `root` (local transforms kept, so they move with it),
 // transient (never saved into this level) and locked (picked as `root`). Its world settings are

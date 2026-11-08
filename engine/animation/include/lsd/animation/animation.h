@@ -7,6 +7,9 @@
 #include "lsd/foundation/math.h"
 #include "lsd/rhi/rhi.h"
 
+#include <cmath>
+#include <cstring>
+
 namespace lsd::anim {
 
 // A morph target (Unreal's Morph Target, Blender's shape key): sparse position offsets from the
@@ -18,6 +21,7 @@ struct MorphTarget {
 struct MorphDelta {
     u32 vertex = 0;
     f32 offset[3] = {0, 0, 0};
+    f32 normal[3] = {0, 0, 0};  // how the vertex's normal turns at full weight (its neighbours' too, with no offset)
 };
 
 // The triangles of a skinned mesh that use one of the file's materials (Unreal's Material Slot /
@@ -45,6 +49,8 @@ struct SkinnedModel {
     const char* joint_name(u32 joint) const;
     i32 joint_parent(u32 joint) const;   // -1 for a root
     i32 find_joint(const char* name) const;  // -1 if there is none
+    // The bone root motion comes from: Unreal's "root", else the top bone under the import's Root (Mixamo's Hips).
+    i32 motion_root() const;
 
     struct Impl;
     Impl* impl = nullptr;  // the ozz skeleton
@@ -70,19 +76,41 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
 
 // The bind pose with morph targets mixed in: `weight(name)` for each target (0 = untouched, 1 = the
 // full shape; outside 0..1 exaggerates). Writes model.vertices.size() vertices to `out`, ready to skin.
-// shortcut: positions only (normals stay the bind pose's), fine for faces; add normal offsets for big shape changes
+// Normals turn with the shape (their offsets blended by weight, then made unit length again).
 template <typename WeightOf>
 void apply_morphs(const SkinnedModel& model, WeightOf weight, rhi::SkinnedVertex* out) {
     std::memcpy(out, model.vertices.data(), model.vertices.size() * sizeof(rhi::SkinnedVertex));
+    bool turned = false;
     for (const MorphTarget& t : model.morphs) {
         const f32 w = weight(t.name);
         if (w == 0.0f) continue;
         for (u32 i = t.first; i < t.first + t.count; ++i) {
             const MorphDelta& d = model.morph_deltas[i];
-            for (int k = 0; k < 3; ++k) out[d.vertex].position[k] += d.offset[k] * w;
+            for (int k = 0; k < 3; ++k) {
+                out[d.vertex].position[k] += d.offset[k] * w;
+                out[d.vertex].normal[k] += d.normal[k] * w;
+            }
+            turned = turned || d.normal[0] != 0.0f || d.normal[1] != 0.0f || d.normal[2] != 0.0f;
+        }
+    }
+    if (!turned) return;
+    for (const MorphTarget& t : model.morphs) {
+        if (weight(t.name) == 0.0f) continue;
+        for (u32 i = t.first; i < t.first + t.count; ++i) {
+            f32* n = out[model.morph_deltas[i].vertex].normal;
+            const f32 len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+            if (len > 1e-6f) n[0] /= len, n[1] /= len, n[2] /= len;
         }
     }
 }
+
+// A simpler version of some of a skinned mesh's triangles (an LOD): `indices` (a section of model.indices) cut to about
+// `ratio` of its triangles, written to `out` as indices into the same vertices (skinning and morphs unchanged). Returns
+// how many; 0 when it will not get simpler. Corners are welded to simplify, then each kept vertex is one of its corners.
+u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f32 ratio, u32* out);
+
+// Import: each morph target's normal offsets, from its full shape's normals recomputed the way the mesh's are.
+void add_morph_normals(SkinnedModel& model, u32 normals, f32 smoothing_angle);
 
 struct Clip {
     Clip() = default;
@@ -93,6 +121,9 @@ struct Clip {
     f32 duration = 0.0f;  // seconds
     // A morph target's weight animated by this clip at `ratio` (0..1); false if the clip leaves it alone.
     bool morph_weight(const char* morph, f32 ratio, f32& weight) const;
+    // An animation curve the file carries (an FBX user-defined number property animated in the take, by its
+    // name: Unreal's imported curves) at `ratio` (0..1); false if the clip has none of that name.
+    bool curve_value(const char* curve, f32 ratio, f32& value) const;
     struct Impl;
     Impl* impl = nullptr;  // the ozz animation and morph weight curves
 };
@@ -100,13 +131,19 @@ struct Clip {
 // Every animation (take / stack) in an FBX, sampled at 30 frames a second onto `model`'s skeleton
 // by joint name (joints the file does not animate keep their rest pose). Returns how many were
 // written to `out`.
-u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity);
+// Trim (Unreal's Crop): clip `clip` keeps only `start`..`end` seconds of its take (end 0 = to the take's end).
+struct ClipTrim {
+    u32 clip = 0;
+    f32 start = 0.0f, end = 0.0f;
+};
+u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims = nullptr, u32 trim_count = 0);
 
 // One clip's contribution to a blended pose.
 struct BlendInput {
     const Clip* clip = nullptr;  // nullptr: the rest pose
     f32 ratio = 0.0f;            // 0..1 through the clip
     f32 weight = 1.0f;
+    bool mirrored = false;       // motion matching: play it mirrored (Pose::mirror)
 };
 constexpr u32 kMaxBlendInputs = 6;  // a 2D blend space (3) crossfading from another (3)
 
@@ -136,6 +173,25 @@ public:
     // (in its own space) turns toward `target`. weight 0..1 blends with the animation.
     bool two_bone_ik(const SkinnedModel& model, u32 end_joint, Vec3 target, f32 weight);
     bool aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forward, f32 weight);
+    // A clip over the sampled pose (Unreal's Layered Blend per Bone, as montages use): from
+    // `from_joint` down its children (-1: every joint), mixed in by `weight` 0..1. Call after sample.
+    bool layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 weight, i32 from_joint);
+    // Root motion: the motion root's (SkinnedModel::motion_root) sideways (x, y) move away from its rest place
+    // is taken out of the pose (the mesh stays over its capsule) and returned, in model space; the game moves the object.
+    Vec3 strip_root(const SkinnedModel& model);
+    // Inertial blending (Unreal's Inertialization): call right after sample / sample_blend. When
+    // `switched` (the animation jumped this frame), the difference from last frame's pose is kept
+    // and added back, halving every `half_life` seconds, so the jump eases out instead of popping.
+    bool inertialize(const SkinnedModel& model, bool switched, f32 dt, f32 half_life);
+    // Mirrors the sampled pose left to right (Unreal's Mirror Data Table): each joint takes its
+    // partner's pose (paired by name: _l / _r, Left / Right, l_ / r_), reflected across the model's
+    // plane through its forward axis (`forward_yaw` radians about Z, 0 = +X) and up. The bind pose
+    // (the skinning pose) mirrors onto itself. Call after sample / sample_blend.
+    bool mirror(const SkinnedModel& model, f32 forward_yaw);
+    // Leader pose (Unreal's Leader Pose Component: clothes skinned to the same skeleton as a body):
+    // each of `model`'s joints takes the model-space pose of `leader`'s joint with the same name
+    // (from `leader_model`); joints the leader lacks stay at their bind pose. Replaces any sampled pose.
+    bool follow(const SkinnedModel& model, const SkinnedModel& leader_model, const Pose& leader);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

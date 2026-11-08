@@ -42,6 +42,11 @@ struct MeshWindow {
     f32 morph_weight = 1.0f;
     rhi::BufferHandle morphed;
     u64 morphed_for = 0;      // what `morphed` was built from (0 = rebuild)
+    i32 clip = -1;            // the animation previewed (-1 = the rest pose), from the mesh's own file
+    f32 clip_time = 0.0f;
+    bool clip_playing = true;
+    char curve[32] = "Footstep";  // Animations: the curve keyed with Key Curve Here
+    f32 curve_key = 1.0f;
 };
 MeshWindow g_mw;
 
@@ -96,6 +101,7 @@ void open_mesh_editor(EditorState& s, const asset::AssetRecord& record) {
     g_mw.zoom = 1.0f;
     g_mw.morph[0] = '\0';
     g_mw.morphed_for = 0;
+    g_mw.clip = -1;
     ImGui::SetWindowFocus("###MeshEditor");
 }
 
@@ -128,7 +134,9 @@ void render_mesh_editor(rhi::Device& device, const f32 background[4]) {
     const f32 grey[4] = {0.75f, 0.75f, 0.78f, 1.0f};
     std::memcpy(draw.color, grey, sizeof grey);
     if (skinned) {
-        g_mw.pose.sample(*skinned->model, nullptr, 0.0f, false);  // the rest pose
+        const ClipSet* set = g_mw.clip >= 0 && s.skinned ? s.skinned->clips(g_mw.key, nullptr) : nullptr;
+        const anim::Clip* clip = set && static_cast<u32>(g_mw.clip) < set->count ? &set->clips[g_mw.clip] : nullptr;
+        g_mw.pose.sample(*skinned->model, clip, g_mw.clip_time, false);  // no clip: the rest pose
         draw.vertices = skinned->vertices;
         if (g_mw.morph[0]) {  // the previewed morph target mixed into the rest pose
             u32 bits;
@@ -225,7 +233,7 @@ void draw_mesh_editor(EditorState& s) {
                 const i32 j = model.find_joint(sock.bone);
                 ImVec2 p;
                 if (j < 0) continue;
-                const Mat4 m = g_mw.pose.joint_model(static_cast<u32>(j)) * trs(sock.position, sock.rotation, Vec3{1, 1, 1});
+                const Mat4 m = without_scale(g_mw.pose.joint_model(static_cast<u32>(j))) * trs(sock.position, sock.rotation, Vec3{1, 1, 1});
                 if (!project(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, p)) continue;
                 dl->AddRectFilled(ImVec2(p.x - 4, p.y - 4), ImVec2(p.x + 4, p.y + 4), IM_COL32(238, 167, 14, 255));
                 dl->AddText(ImVec2(p.x + 6, p.y - 7), IM_COL32(238, 167, 14, 255), sock.name);
@@ -297,6 +305,100 @@ void draw_mesh_editor(EditorState& s) {
             }
             ImGui::EndChild();
             ImGui::TextDisabled("Click: preview it (name copied for SkeletalMesh > Morphs or lsd.set_morph)");
+        }
+        // Animations in the file (Unreal's Animation Sequence preview and Crop): play, scrub, trim.
+        if (const ClipSet* set = s.skinned ? s.skinned->clips(g_mw.key, nullptr) : nullptr; set && set->count) {
+            ImGui::SeparatorText("Animations");
+            ImGui::SetNextItemWidth(-1.0f);
+            const char* shown = g_mw.clip >= 0 && static_cast<u32>(g_mw.clip) < set->count ? set->clips[g_mw.clip].name : "(rest pose)";
+            if (ImGui::BeginCombo("##clip", shown)) {
+                if (ImGui::Selectable("(rest pose)", g_mw.clip < 0)) g_mw.clip = -1;
+                for (u32 c = 0; c < set->count; ++c) {
+                    ImGui::PushID(static_cast<int>(c));
+                    if (ImGui::Selectable(set->clips[c].name, g_mw.clip == static_cast<i32>(c))) {
+                        g_mw.clip = static_cast<i32>(c);
+                        g_mw.clip_time = 0.0f;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("Plays one of the file's animations in the preview");
+            if (g_mw.clip >= 0 && static_cast<u32>(g_mw.clip) < set->count) {
+                const anim::Clip& clip = set->clips[g_mw.clip];
+                if (g_mw.clip_playing && clip.duration > 0.0f) g_mw.clip_time = std::fmod(g_mw.clip_time + ImGui::GetIO().DeltaTime, clip.duration);
+                if (with_tip(ImGui::SmallButton(g_mw.clip_playing ? "Pause" : "Play"), "Stops or plays the preview")) g_mw.clip_playing = !g_mw.clip_playing;
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderFloat("##time", &g_mw.clip_time, 0.0f, clip.duration, "%.2f s")) g_mw.clip_playing = false;
+                ImGui::SetItemTooltip("Scrub: the frame at this time (frame %d of %d at 30 fps)", static_cast<int>(g_mw.clip_time * 30.0f), static_cast<int>(clip.duration * 30.0f));
+                // Trim: seconds of the take as the file has it; Save cuts it (the preview then shows the cut take).
+                asset::ClipRange* range = nullptr;
+                for (asset::ClipRange& r : g_mw.meta.clip_ranges) {
+                    if (r.clip == static_cast<u32>(g_mw.clip)) range = &r;
+                }
+                if (!range) {
+                    if (with_tip(ImGui::SmallButton("Trim..."), "Keeps only part of this take (Unreal's Crop): set start and end, then Save")) {
+                        asset::ClipRange r;
+                        r.clip = static_cast<u32>(g_mw.clip);
+                        if (g_mw.meta.clip_ranges.push_back(r)) g_mw.meta_dirty = true;
+                    }
+                } else {
+                    f32 cut_at = 0.0f;  // where the take the preview plays (as last saved) starts in the file
+                    for (const asset::ClipRange& r : set->meta.clip_ranges) {
+                        if (r.clip == static_cast<u32>(g_mw.clip)) cut_at = r.start;
+                    }
+                    g_mw.meta_dirty |= with_tip(ImGui::DragFloat("Start", &range->start, 1.0f / 30.0f, 0.0f, 3600.0f, "%.3f s"), "Where the kept part starts, in the file's take");
+                    g_mw.meta_dirty |= with_tip(ImGui::DragFloat("End", &range->end, 1.0f / 30.0f, 0.0f, 3600.0f, "%.3f s"), "Where it ends (0 = the take's end)");
+                    if (with_tip(ImGui::SmallButton("Start Here"), "Start = the scrubbed time")) {
+                        range->start = cut_at + g_mw.clip_time;
+                        g_mw.meta_dirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (with_tip(ImGui::SmallButton("End Here"), "End = the scrubbed time")) {
+                        range->end = cut_at + g_mw.clip_time;
+                        g_mw.meta_dirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (with_tip(ImGui::SmallButton("No Trim"), "Plays the whole take again")) {
+                        g_mw.meta.clip_ranges.remove(static_cast<u32>(range - g_mw.meta.clip_ranges.begin()));
+                        g_mw.meta_dirty = true;
+                    }
+                    ImGui::TextDisabled("Save to cut it; notify times count from the new start.");
+                }
+                // Curves (Unreal's Anim Curves): a key of a named value at the scrubbed time; scripts read it with lsd.anim_curve.
+                ImGui::SetNextItemWidth(110);
+                ImGui::InputText("##curve", g_mw.curve, sizeof g_mw.curve);
+                ImGui::SetItemTooltip("The curve's name (scripts: lsd.anim_curve(self, name); visual scripts: Get Curve Value)");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60);
+                ImGui::DragFloat("##curve_value", &g_mw.curve_key, 0.01f);
+                ImGui::SetItemTooltip("The value at this key");
+                ImGui::SameLine();
+                if (with_tip(ImGui::SmallButton("Key Curve Here"), "Adds (or moves) a key of this curve at the scrubbed time; Save to keep it") && g_mw.curve[0]) {
+                    asset::AnimCurveKey key;
+                    std::snprintf(key.curve, sizeof key.curve, "%s", g_mw.curve);
+                    key.clip = static_cast<u32>(g_mw.clip);
+                    key.time = g_mw.clip_time;
+                    key.value = g_mw.curve_key;
+                    bool replaced = false;
+                    for (asset::AnimCurveKey& k : g_mw.meta.curve_keys) {
+                        if (k.clip == key.clip && std::strcmp(k.curve, key.curve) == 0 && std::fabs(k.time - key.time) < 1.0f / 60.0f) k = key, replaced = true;
+                    }
+                    if (replaced || g_mw.meta.curve_keys.push_back(key)) g_mw.meta_dirty = true;
+                }
+                u32 keys = 0;
+                for (const asset::AnimCurveKey& k : g_mw.meta.curve_keys) keys += k.clip == static_cast<u32>(g_mw.clip) ? 1u : 0u;
+                if (keys) {
+                    f32 v = 0.0f;
+                    const bool has = asset::curve_value(g_mw.meta, static_cast<u32>(g_mw.clip), g_mw.curve, g_mw.clip_time, v);
+                    ImGui::TextDisabled("%u curve key(s) on this take%s", keys, has ? "" : " (none for this name)");
+                    if (has) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("- %s here: %.3f", g_mw.curve, static_cast<f64>(v));
+                    }
+                }
+            }
         }
         ImGui::SeparatorText("Sockets");
         ImGui::BeginDisabled(g_mw.bone < 0);

@@ -82,12 +82,18 @@ bool list_fbx(const char* path, ImportedMaterials& out, char* error, usize error
         if (mat->pbr.roughness.has_value) m.roughness = static_cast<f32>(mat->pbr.roughness.value_real);
         if (mat->pbr.opacity.has_value) m.opacity = static_cast<f32>(mat->pbr.opacity.value_real);
         m.roughness_is_glossiness = mat->features.roughness_as_glossiness.enabled;
+        const ufbx_vec4 e = mat->pbr.emission_color.value_vec4;
+        const f32 e_factor = mat->pbr.emission_factor.has_value ? static_cast<f32>(mat->pbr.emission_factor.value_real) : 1.0f;
+        m.emissive[0] = static_cast<f32>(e.x) * e_factor;
+        m.emissive[1] = static_cast<f32>(e.y) * e_factor;
+        m.emissive[2] = static_cast<f32>(e.z) * e_factor;
         const ufbx_material_map none{};
         read_map(out, m.base_color_map, mat->pbr.base_color, mat->fbx.diffuse_color);
         read_map(out, m.normal_map, mat->pbr.normal_map, mat->fbx.normal_map.texture ? mat->fbx.normal_map : mat->fbx.bump);
         read_map(out, m.metallic_map, mat->pbr.metalness, mat->fbx.reflection_factor);
         read_map(out, m.roughness_map, mat->pbr.roughness, none);
         read_map(out, m.occlusion_map, mat->pbr.ambient_occlusion, none);
+        read_map(out, m.emissive_map, mat->pbr.emission_color, mat->fbx.emission_color);
         read_map(out, m.opacity_map, mat->pbr.opacity, mat->fbx.transparency_factor.texture ? mat->fbx.transparency_factor : mat->fbx.transparency_color);
         // Blender writes the colour map into the transparency slot when its alpha is used: not a separate mask.
         if (m.opacity_map.exists() && std::strcmp(m.opacity_map.path, m.base_color_map.path) == 0) m.opacity_map = ImportedMap{};
@@ -135,6 +141,9 @@ bool list_gltf(const char* path, ImportedMaterials& out, char* error, usize erro
         read_map(out, m.roughness_map, pbr.metallic_roughness_texture.texture, 1);
         read_map(out, m.metallic_map, pbr.metallic_roughness_texture.texture, 2);
         read_map(out, m.occlusion_map, mat.occlusion_texture.texture, 0);
+        read_map(out, m.emissive_map, mat.emissive_texture.texture, 0);
+        const f32 strength = mat.has_emissive_strength ? mat.emissive_strength.emissive_strength : 1.0f;
+        for (u32 k = 0; k < 3; ++k) m.emissive[k] = mat.emissive_factor[k] * strength;
         out.materials.push_back(m);
     }
     cgltf_free(data);
@@ -150,7 +159,7 @@ ImportedMaterials::~ImportedMaterials() {
 bool list_mesh_materials(const char* path, ImportedMaterials& out, char* error, usize error_capacity) {
     out.materials.clear();
     if (error_capacity) error[0] = '\0';
-    if (ends_with(path, ".fbx")) return list_fbx(path, out, error, error_capacity);
+    if (ends_with(path, ".fbx") || ends_with(path, ".obj")) return list_fbx(path, out, error, error_capacity);  // ufbx: OBJ and its .mtl
     if (ends_with(path, ".gltf") || ends_with(path, ".glb")) return list_gltf(path, out, error, error_capacity);
     std::snprintf(error, error_capacity, "Not a mesh file: %s", path);
     return false;

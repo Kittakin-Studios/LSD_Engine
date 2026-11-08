@@ -12,7 +12,7 @@
 namespace lsd::script {
 
 constexpr char kMaterialGraphExtension[] = ".lsdmatgraph";
-constexpr u32 kMaxMaterialTextures = 3;  // the lit-mesh shader's three texture slots
+constexpr u32 kMaxMaterialTextures = 4;  // the lit-mesh shader's texture slots: base colour, normal, ORM and emissive (t0 t1 t2 t8)
 constexpr u32 kMaxMaterialParams = 16;   // rhi::kMaxMaterialParams
 
 struct MaterialTextureSlot {
@@ -39,6 +39,21 @@ struct MaterialCode {
 
 // False with a message naming the problem: no (or two) Material Output, a loop, a Texture Sample
 // without a texture, more than kMaxMaterialTextures textures or kMaxMaterialParams parameters.
+// Material Function nodes are compiled in place (up to 4 deep) from the graph file the resolver finds.
 bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, usize error_capacity);
+
+// Material Functions (Unreal's): a Material Graph with a Function Output node (and Function Input
+// nodes A, B, C) used from other graphs by a Material Function node naming it. The program sets how a
+// name becomes a graph file; without it Material Function nodes fail to compile.
+using MaterialFunctionResolver = bool (*)(void* user, const char* name, char* path, usize capacity);
+void set_material_function_resolver(MaterialFunctionResolver resolver, void* user);
+
+// Shader assets (a .hlsl file in Content): a material written as code, the same function a graph
+// compiles to (`Surface material_main(MaterialIn mi)`, with lsd_tex0..2, lsd_params[], mi.time...).
+// Lines `// texture: T_Rock color` (color / normal / data) and `// param: Brightness 1.0` or
+// `// param: Tint 1, 0.5, 0` declare its textures (slots in order) and parameters (lsd_params[slot]).
+// False with a message when there is no material_main or too many textures / parameters.
+bool parse_shader_source(const char* text, MaterialCode& out, char* error, usize error_capacity);
+constexpr char kShaderExtension[] = ".hlsl";
 
 } // namespace lsd::script

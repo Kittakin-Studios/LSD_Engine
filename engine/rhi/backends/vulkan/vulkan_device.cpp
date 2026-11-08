@@ -1,5 +1,14 @@
-// Vulkan 1.3 backend: adapter enumeration, VK_EXT_memory_budget, swapchain with dynamic rendering,
-// test triangle (SPIR-V compiled from HLSL by DXC at build time) and ImGui.
+// Vulkan 1.3 backend: adapter enumeration, VK_EXT_memory_budget, swapchain with dynamic rendering and
+// a depth buffer, vertex / index buffers, textures (mipmapped, also shown by ImGui), the sky, lines
+// and lit meshes (base colour and its texture, Masked, sun and sky ambient), the test triangle
+// (SPIR-V compiled from HLSL by DXC at build time) and ImGui.
+// Skinned and instanced meshes read their joint / copy matrices from a per-frame ring buffer; the sun
+// and the spot / point lights cast shadows (depth-only passes into shadow atlases, compare sampler);
+// game UI and particles stream their vertices through a per-frame buffer. Render targets (colour +
+// depth) take thumbnails, previews and the scene for the post pass. Lit meshes, the sky and the post
+// pass run D3D12's own shaders (engine/rhi/shaders/mesh.hlsl and post.hlsl) compiled to SPIR-V;
+// Material Graph shaders compile at runtime through the Vulkan SDK's DXC when it is installed; GPU
+// culling of instanced draws runs shaders/cull.hlsl as compute with indirect draws.
 #include "lsd/rhi/rhi.h"
 #include "lsd/foundation/log.h"
 
@@ -9,8 +18,16 @@
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdio>
+#include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <new>
+#include <string>
+#include <vector>
 
 // Vulkan's idiom `VkXxxInfo info{VK_STRUCTURE_TYPE_...}` zeroes the rest (pNext, flags...) on purpose.
 #if defined(__clang__) || defined(__GNUC__)
@@ -20,15 +37,92 @@
 #if LSD_VULKAN_HAVE_SPIRV
 #include "triangle_vs.spv.h"
 #include "triangle_ps.spv.h"
+#include "mesh_vs.spv.h"
+#include "mesh_ps.spv.h"
+#include "lines_vs.spv.h"
+#include "lines_ps.spv.h"
+#include "sky_vs.spv.h"
+#include "sky_ps.spv.h"
+#include "mesh_skinned_vs.spv.h"
+#include "mesh_skinned_ps.spv.h"
+#include "mesh_instanced_vs.spv.h"
+#include "mesh_instanced_ps.spv.h"
+#include "shadow_vs.spv.h"
+#include "shadow_ps.spv.h"
+#include "shadow_skinned_vs.spv.h"
+#include "shadow_instanced_vs.spv.h"
+#include "ui_vs.spv.h"
+#include "ui_ps.spv.h"
+#include "particle_vs.spv.h"
+#include "particle_ps.spv.h"
+#include "post_full.spv.h"
+#include "post_prefilter.spv.h"
+#include "post_down.spv.h"
+#include "post_up.spv.h"
+#include "post_composite.spv.h"
+#include "post_fxaa.spv.h"
+#include "post_ssr.spv.h"
+#include "post_ao.spv.h"
+#include "post_ao_apply.spv.h"
+#include "post_taa.spv.h"
+#include "post_dof.spv.h"
+#include "post_motion.spv.h"
+#include "post_meter.spv.h"
+#include "post_expose.spv.h"
+#include "post_outline.spv.h"
+#include "cull_reset.spv.h"
+#include "cull_main.spv.h"
+#include "cull_args.spv.h"
 #endif
 
 namespace lsd::rhi {
 
 namespace {
 
+#include "mesh_hlsl.h"              // kMeshHlsl: engine/rhi/shaders/mesh.hlsl (Material Graph shaders start from it)
+#include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl
+
 constexpr u32 kFramesInFlight = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr u32 kMaxSwapchainImages = 8;
+constexpr u32 kMaxBuffers = 4096;
+constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+constexpr u32 kMaxMaterialShaders = 256;
+constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 floats, as D3D12's root constants)
+constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
+constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / Instances block: 3 float4 rows each
+constexpr VkDeviceSize kParamsBytes = 256;            // its MaterialParams block (16 float4)
+constexpr u32 kCullPushBytes = 144;                   // cull.hlsl's constants
+constexpr u32 kCullSetsPerFrame = 256;                // gpu_cull draws a frame
+constexpr u32 kMaxTextures = 4096;
+constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
+constexpr VkDeviceSize kRowsWindow = 64u << 10;    // what one draw may read from it (the descriptor's range)
+constexpr u32 kInstancesPerDraw = static_cast<u32>(kRowsWindow / 48);  // 3 float4 rows per copy
+constexpr u32 kShadowPushBytes = 80;  // shadow.hlsl's Push
+constexpr u32 kUiPushBytes = 16;      // ui.hlsl's Push
+constexpr u32 kParticlePushBytes = 96;  // particle.hlsl's Push
+constexpr VkDeviceSize kStreamBytes = kParticleRingBytes;  // per frame in flight: UI and particle vertices
+// make_pipeline's colour blending: UI (premultiplied), particles / outline (alpha, additive) and the
+// lit meshes' MeshDraw::blend modes, which keep the scene target's alpha (SSR) as D3D12 does.
+// The lit meshes' vertex layouts (mesh.hlsl's VsIn: locations in declaration order).
+constexpr VkVertexInputAttributeDescription kMeshAttributes[4] = {
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, position)},
+    {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
+    {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, lightmap_uv)},
+};
+constexpr VkVertexInputAttributeDescription kSkinnedAttributes[5] = {
+    {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, position)},
+    {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SkinnedVertex, normal)},
+    {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SkinnedVertex, uv)},
+    {3, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(SkinnedVertex, joints)},
+    {4, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(SkinnedVertex, weights)},
+};
+
+enum class Blend { Opaque, Premultiplied, Alpha, Additive, MeshTranslucent, MeshAdditive, MeshOverdraw };
+constexpr u32 kPostPushBytes = 192;  // post.hlsl's Post constants (48 floats)
+enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kPostPasses };
+constexpr u32 kPostSetsPerFrame = 512;  // post passes' descriptor sets a frame (about 16 a view)
 
 bool check(VkResult result, const char* what) {
     if (result == VK_SUCCESS) return true;
@@ -66,10 +160,22 @@ struct PhysicalDevice {
 };
 
 class VulkanDevice final : public Device {
+private:
+    struct Texture;  // defined below; passes take it by reference
+    struct Frame;
+    struct MaterialShader;
+    struct Buffer;
+
 public:
     ~VulkanDevice() override {
         if (device_) vkDeviceWaitIdle(device_);
-        if (debug_ui_) ImGui_ImplVulkan_Shutdown();
+        if (debug_ui_) {
+            for (Texture& t : textures_) {
+                if (t.ui_set) ImGui_ImplVulkan_RemoveTexture(t.ui_set);
+                t.ui_set = VK_NULL_HANDLE;
+            }
+            ImGui_ImplVulkan_Shutdown();
+        }
         if (device_) {
             destroy_swapchain();
             for (u32 i = 0; i < kFramesInFlight; ++i) {
@@ -79,6 +185,62 @@ public:
             }
             vkDestroyPipeline(device_, pipeline_, nullptr);
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
+            for (MaterialShader& m : material_shaders_) release_material(m);
+            for (VkPipeline pipeline : cull_pipelines_) vkDestroyPipeline(device_, pipeline, nullptr);
+            vkDestroyPipelineLayout(device_, cull_layout_, nullptr);
+            if (cull_set_layout_) vkDestroyDescriptorSetLayout(device_, cull_set_layout_, nullptr);
+            for (Buffer* b : {&cull_out_, &cull_args_}) {
+                if (b->buffer) vkDestroyBuffer(device_, b->buffer, nullptr);
+                if (b->memory) vkFreeMemory(device_, b->memory, nullptr);
+            }
+            for (auto& kind : mesh_pipelines_) {
+                for (VkPipeline pipeline : kind) vkDestroyPipeline(device_, pipeline, nullptr);
+            }
+            vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
+            vkDestroyPipelineLayout(device_, shadow_layout_, nullptr);
+            vkDestroyPipeline(device_, line_pipeline_, nullptr);
+            vkDestroyPipelineLayout(device_, line_layout_, nullptr);
+            vkDestroyPipeline(device_, sky_pipeline_, nullptr);
+            for (VkPipeline shadow : shadow_pipelines_) vkDestroyPipeline(device_, shadow, nullptr);
+            vkDestroyPipeline(device_, ui_pipeline_, nullptr);
+            vkDestroyPipeline(device_, particle_pipelines_[0], nullptr);
+            vkDestroyPipeline(device_, particle_pipelines_[1], nullptr);
+            vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
+            vkDestroyPipelineLayout(device_, particle_layout_, nullptr);
+            for (VkPipeline post : post_pipelines_) vkDestroyPipeline(device_, post, nullptr);
+            vkDestroyPipelineLayout(device_, post_layout_, nullptr);
+            for (Frame& f : frames_) {
+                if (f.post_pool) vkDestroyDescriptorPool(device_, f.post_pool, nullptr);
+            }
+            if (post_set_layout_) vkDestroyDescriptorSetLayout(device_, post_set_layout_, nullptr);
+            if (post_sampler_) vkDestroySampler(device_, post_sampler_, nullptr);
+            if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
+            for (Frame& f : frames_) {
+                if (f.draw_pool) vkDestroyDescriptorPool(device_, f.draw_pool, nullptr);
+            }
+            if (buffers_pool_) vkDestroyDescriptorPool(device_, buffers_pool_, nullptr);
+            for (VkDescriptorSetLayout layout : {material_set_layout_, view_set_layout_, buffers_set_layout_}) {
+                if (layout) vkDestroyDescriptorSetLayout(device_, layout, nullptr);
+            }
+            for (Frame& f : frames_) {
+                if (f.ring) vkDestroyBuffer(device_, f.ring, nullptr);
+                if (f.ring_memory) vkFreeMemory(device_, f.ring_memory, nullptr);
+                if (f.stream) vkDestroyBuffer(device_, f.stream, nullptr);
+                if (f.stream_memory) vkFreeMemory(device_, f.stream_memory, nullptr);
+            }
+            if (rows_pool_) vkDestroyDescriptorPool(device_, rows_pool_, nullptr);
+            if (timestamp_pool_) vkDestroyQueryPool(device_, timestamp_pool_, nullptr);
+            if (rows_set_layout_) vkDestroyDescriptorSetLayout(device_, rows_set_layout_, nullptr);
+            for (Texture& t : textures_) release_texture(t);
+            if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
+            if (texture_pool_) vkDestroyDescriptorPool(device_, texture_pool_, nullptr);
+            if (texture_set_layout_) vkDestroyDescriptorSetLayout(device_, texture_set_layout_, nullptr);
+            if (particle_depth_layout_) vkDestroyDescriptorSetLayout(device_, particle_depth_layout_, nullptr);
+            if (upload_pool_) vkDestroyCommandPool(device_, upload_pool_, nullptr);
+            for (Buffer& b : buffers_) {
+                if (b.buffer) vkDestroyBuffer(device_, b.buffer, nullptr);
+                if (b.memory) vkFreeMemory(device_, b.memory, nullptr);
+            }
             vkDestroyDevice(device_, nullptr);
         }
         if (instance_) {
@@ -144,7 +306,7 @@ public:
                 break;
             }
         }
-        return build_swapchain(width, height) && create_triangle_pipeline();
+        return build_swapchain(width, height) && create_triangle_pipeline() && create_scene_pipelines();
     }
 
     void resize_swapchain(u32 width, u32 height) override {
@@ -167,69 +329,1373 @@ public:
         if (skip_frame_) return;
         vkResetFences(device_, 1, &f.fence);
         vkResetCommandPool(device_, f.pool, 0);
+        read_timestamps();  // this slot's last frame has finished: its GPU timings
+        f.ring_used = 0;  // the GPU is done with this frame's ring and stream
+        f.stream_used = 0;
+        if (f.post_pool) vkResetDescriptorPool(device_, f.post_pool, 0);
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(f.cmd, &begin);
+        if (timestamp_pool_) vkCmdResetQueryPool(f.cmd, timestamp_pool_, frame_ * kGpuTimestamps, kGpuTimestamps);  // outside any pass
 
         transition(f.cmd, images_[image_], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        transition(f.cmd, depth_image_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        lights_in_ring_ = false;
+        view_set_ = VK_NULL_HANDLE;
+        f.memo_count = 0;
+        if (f.draw_pool) vkResetDescriptorPool(device_, f.draw_pool, 0);
+        shadow_pass_ = nullptr;
+        target_ = nullptr;
+        sun_shadow_ = {};
+        local_shadow_ = {};
+        begin_main_pass(clear_color);
+        set_lights(default_lights());  // as D3D12: every view starts from the default look
+    }
 
+    // The window pass (colour + depth). clear_color null: carries on after a shadow pass (load what is there).
+    void begin_main_pass(const f32* clear_color) {
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         color.imageView = views_[image_];
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        std::memcpy(color.clearValue.color.float32, clear_color, sizeof(f32) * 4);
+        if (clear_color) std::memcpy(color.clearValue.color.float32, clear_color, sizeof(f32) * 4);
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = depth_view_;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;  // kept: a shadow pass may split the frame's pass
+        depth.clearValue.depthStencil.depth = 1.0f;  // as D3D12: 0 near, 1 far, LESS_EQUAL
         VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
         rendering.renderArea.extent = extent_;
         rendering.layerCount = 1;
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachments = &color;
-        vkCmdBeginRendering(f.cmd, &rendering);
-
-        // Negative height flips Y so clip space matches D3D12 and OpenGL (+Y up).
-        const VkViewport viewport{0.0f, static_cast<f32>(extent_.height), static_cast<f32>(extent_.width), -static_cast<f32>(extent_.height), 0.0f, 1.0f};
-        const VkRect2D scissor{{0, 0}, extent_};
-        vkCmdSetViewport(f.cmd, 0, 1, &viewport);
-        vkCmdSetScissor(f.cmd, 0, 1, &scissor);
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        in_pass_ = true;
+        set_viewport(0.0f, 0.0f, static_cast<f32>(extent_.width), static_cast<f32>(extent_.height));
     }
 
-    // shortcut: Vulkan meshes and lines wait for SPIR-V from the shader pipeline (Vulkan SDK's DXC);
-    // until then they are skipped with one warning, and the scene shows on D3D12 and OpenGL.
-    BufferHandle create_buffer(BufferUsage, const void*, u64) override {
-        if (!warned_no_meshes_) LSD_LOG_WARN("vulkan", "Mesh and line drawing is not implemented on Vulkan yet; use -rhi=d3d12 or -rhi=opengl.");
-        warned_no_meshes_ = true;
-        return {};
+    // Ends the pass being recorded (the window's, a render target's, a shadow map's); a render
+    // target's colour goes back to shader-readable.
+    void end_pass() {
+        if (!in_pass_) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdEndRendering(cmd);
+        in_pass_ = false;
+        if (target_) {
+            transition(cmd, target_->image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            target_ = nullptr;
+        }
     }
-    void destroy_buffer(BufferHandle) override {}
-    TextureHandle create_render_target(u32, u32) override { return {}; }
-    TextureHandle create_texture(u32, u32, u32, TextureFormat, const void* const*) override { return {}; }
-    void destroy_texture(TextureHandle) override {}
-    void set_render_target(TextureHandle, const f32*) override {}
-    u64 debug_ui_texture(TextureHandle) override { return 0; }
-    void set_lights(const LightSetup&) override {}
-    TextureHandle create_shadow_map(u32) override { return {}; }
-    void begin_shadow_pass(TextureHandle) override {}
-    void draw_shadow_caster(BufferHandle, BufferHandle, u32, const f32*, const f32*, u32) override {}
-    void draw_shadow_instances(BufferHandle, BufferHandle, u32, const f32*, const f32*, u32) override {}
-    void end_shadow_pass() override {}
-    void set_shadow_map(TextureHandle, TextureHandle) override {}
-    void set_decal_atlas(TextureHandle) override {}
-    void draw_mesh(const MeshDraw&) override {}
-    void draw_lines(BufferHandle, u32, const f32*) override {}
-    void draw_sky(const SkyDraw&) override {}
-    void draw_ui(const UiDraw&) override {}
-    void draw_post(const PostDraw&) override {}
-    bool read_render_target(TextureHandle, u8*) override { return false; }
-    void draw_particles(const ParticleVertex*, u32, const f32*, TextureHandle, bool) override {}
-    MaterialShaderHandle create_material_shader(const char*) override { return {}; }
-    void destroy_material_shader(MaterialShaderHandle) override {}
+
+    // Draws into a render target: cleared to clear_color (null: carries on with what it holds).
+    void begin_target_pass(Texture& t, const f32* clear_color) {
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        transition(cmd, t.image, clear_color ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        if (clear_color || t.depth_readable) {  // a cleared depth starts from nothing; a read one goes back to being drawn into
+            transition(cmd, t.depth_image, clear_color ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | tests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, tests,
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+            t.depth_readable = false;
+        }
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = t.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        if (clear_color) std::memcpy(color.clearValue.color.float32, clear_color, sizeof(f32) * 4);
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = t.depth_view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = clear_color ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil.depth = 1.0f;
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea.extent = {t.width, t.height};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        in_pass_ = true;
+        target_ = &t;
+        set_viewport(0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height));
+    }
+
+    // A device-local image and its view (render targets' colour and depth).
+    bool make_image(u32 width, u32 height, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkImage& image, VkDeviceMemory& memory, VkImageView& view) {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = format;
+        info.extent = {width, height, 1};
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = usage;
+        if (!check(vkCreateImage(device_, &info, nullptr, &image), "vkCreateImage (render target)")) return false;
+        VkMemoryRequirements need;
+        vkGetImageMemoryRequirements(device_, image, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &memory), "vkAllocateMemory (render target)") ||
+            !check(vkBindImageMemory(device_, image, memory, 0), "vkBindImageMemory (render target)")) return false;
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = format;
+        view_info.subresourceRange = {aspect, 0, 1, 0, 1};
+        return check(vkCreateImageView(device_, &view_info, nullptr, &view), "vkCreateImageView (render target)");
+    }
+
+    // shortcut: host-visible memory (no staging copy), one allocation per buffer; a staging upload and
+    // a sub-allocator (VMA-like) when scenes get large
+    BufferHandle create_buffer(BufferUsage usage, const void* data, u64 size) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].buffer) ++slot;
+        if (slot == kMaxBuffers || size == 0 || !data) {
+            LSD_LOG_ERROR("vulkan", "create_buffer failed: table full (%u) or empty data.", kMaxBuffers);
+            return {};
+        }
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = size;
+        info.usage = usage == BufferUsage::Index ? VK_BUFFER_USAGE_INDEX_BUFFER_BIT : VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        Buffer& b = buffers_[slot];
+        if (!check(vkCreateBuffer(device_, &info, nullptr, &b.buffer), "vkCreateBuffer")) return {};
+        VkMemoryRequirements need;
+        vkGetBufferMemoryRequirements(device_, b.buffer, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        void* mapped = nullptr;
+        if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &b.memory), "vkAllocateMemory (buffer)") ||
+            !check(vkBindBufferMemory(device_, b.buffer, b.memory, 0), "vkBindBufferMemory") ||
+            !check(vkMapMemory(device_, b.memory, 0, size, 0, &mapped), "vkMapMemory")) {
+            vkDestroyBuffer(device_, b.buffer, nullptr);
+            if (b.memory) vkFreeMemory(device_, b.memory, nullptr);
+            b.buffer = VK_NULL_HANDLE;
+            b.memory = VK_NULL_HANDLE;
+            return {};
+        }
+        std::memcpy(mapped, data, size);
+        vkUnmapMemory(device_, b.memory);
+        b.size = size;
+        return BufferHandle::make(slot, b.generation);
+    }
+
+    void destroy_buffer(BufferHandle handle) override {
+        Buffer* b = lookup(handle);
+        if (!b) return;
+        vkDeviceWaitIdle(device_);  // shortcut: stalls; deferred release (per frame in flight) when buffers churn
+        vkDestroyBuffer(device_, b->buffer, nullptr);
+        vkFreeMemory(device_, b->memory, nullptr);
+        b->buffer = VK_NULL_HANDLE;
+        b->memory = VK_NULL_HANDLE;
+        ++b->generation;
+    }
+    // Offscreen colour (the window's format) with its own depth buffer; the colour is kept
+    // shader-readable between passes, the depth readable by the post pass.
+    TextureHandle create_render_target(u32 width, u32 height) override {
+        if (!texture_set_layout_ || width == 0 || height == 0) return {};
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].image) ++slot;
+        if (slot == kMaxTextures) {
+            LSD_LOG_ERROR("vulkan", "create_render_target failed: table full (%u).", kMaxTextures);
+            return {};
+        }
+        Texture& t = textures_[slot];
+        bool ok = make_image(width, height, format_.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             VK_IMAGE_ASPECT_COLOR_BIT, t.image, t.memory, t.view) &&
+                  make_image(width, height, kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+                             t.depth_image, t.depth_memory, t.depth_view);
+        if (ok) {
+            const VkCommandBuffer cmd = begin_upload();
+            ok = cmd != VK_NULL_HANDLE;
+            if (ok) {
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                transition(cmd, t.depth_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                ok = end_upload(cmd);
+            }
+        }
+        VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        set_info.descriptorPool = texture_pool_;
+        set_info.descriptorSetCount = 1;
+        set_info.pSetLayouts = &texture_set_layout_;
+        ok = ok && check(vkAllocateDescriptorSets(device_, &set_info, &t.set), "vkAllocateDescriptorSets (render target)");
+        if (!ok) {
+            release_texture(t);
+            return {};
+        }
+        VkDescriptorImageInfo described{sampler_, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = t.set;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &described;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        t.width = width;
+        t.height = height;
+        t.depth_readable = true;
+        return TextureHandle::make(slot, t.generation);
+    }
+    bool supports_bc() const override { return bc_; }
+    TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) override {
+        if (!texture_set_layout_ || width == 0 || height == 0 || mip_count == 0 || !mips) return {};
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].image) ++slot;
+        if (slot == kMaxTextures) {
+            LSD_LOG_ERROR("vulkan", "create_texture failed: table full (%u).", kMaxTextures);
+            return {};
+        }
+        mip_count = mip_count < kMaxMips ? mip_count : kMaxMips;
+        Texture& t = textures_[slot];
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_2D;
+        switch (format) {
+            case TextureFormat::RGBA8_sRGB: image.format = VK_FORMAT_R8G8B8A8_SRGB; break;
+            case TextureFormat::BC1: image.format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; break;
+            case TextureFormat::BC1_sRGB: image.format = VK_FORMAT_BC1_RGBA_SRGB_BLOCK; break;
+            case TextureFormat::BC3: image.format = VK_FORMAT_BC3_UNORM_BLOCK; break;
+            case TextureFormat::BC3_sRGB: image.format = VK_FORMAT_BC3_SRGB_BLOCK; break;
+            case TextureFormat::BC5: image.format = VK_FORMAT_BC5_UNORM_BLOCK; break;
+            default: image.format = VK_FORMAT_R8G8B8A8_UNORM; break;
+        }
+        if (is_block_compressed(format) && !bc_) return {};
+        image.extent = {width, height, 1};
+        image.mipLevels = mip_count;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (!check(vkCreateImage(device_, &image, nullptr, &t.image), "vkCreateImage (texture)")) return {};
+        VkMemoryRequirements need;
+        vkGetImageMemoryRequirements(device_, t.image, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &t.memory), "vkAllocateMemory (texture)") ||
+            !check(vkBindImageMemory(device_, t.image, t.memory, 0), "vkBindImageMemory (texture)")) {
+            release_texture(t);
+            return {};
+        }
+        // The mips through a staging buffer, one copy each (shortcut: waits for the upload; batch them on a transfer queue when loading many)
+        VkDeviceSize total = 0;
+        for (u32 m = 0; m < mip_count; ++m) total += texture_bytes(format, std::max(1u, width >> m), std::max(1u, height >> m));
+        VkBufferCreateInfo staging_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        staging_info.size = total;
+        staging_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VkBuffer staging = VK_NULL_HANDLE;
+        VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+        void* mapped = nullptr;
+        bool ok = check(vkCreateBuffer(device_, &staging_info, nullptr, &staging), "vkCreateBuffer (staging)");
+        if (ok) {
+            VkMemoryRequirements sneed;
+            vkGetBufferMemoryRequirements(device_, staging, &sneed);
+            VkMemoryAllocateInfo salloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            salloc.allocationSize = sneed.size;
+            salloc.memoryTypeIndex = memory_type(sneed.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            ok = salloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &salloc, nullptr, &staging_memory), "vkAllocateMemory (staging)") &&
+                 check(vkBindBufferMemory(device_, staging, staging_memory, 0), "vkBindBufferMemory (staging)") &&
+                 check(vkMapMemory(device_, staging_memory, 0, total, 0, &mapped), "vkMapMemory (staging)");
+        }
+        VkBufferImageCopy regions[kMaxMips] = {};
+        if (ok) {
+            VkDeviceSize at = 0;
+            for (u32 m = 0; m < mip_count; ++m) {
+                const u32 w = std::max(1u, width >> m), h = std::max(1u, height >> m);
+                const VkDeviceSize bytes = texture_bytes(format, w, h);
+                if (mips[m]) std::memcpy(static_cast<u8*>(mapped) + at, mips[m], bytes);
+                regions[m].bufferOffset = at;
+                regions[m].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 1};
+                regions[m].imageExtent = {w, h, 1};
+                at += bytes;
+            }
+            vkUnmapMemory(device_, staging_memory);
+            const VkCommandBuffer cmd = begin_upload();
+            ok = cmd != VK_NULL_HANDLE;
+            if (ok) {
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, mip_count);
+                vkCmdCopyBufferToImage(cmd, staging, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mip_count, regions);
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_COLOR_BIT, mip_count);
+                ok = end_upload(cmd);
+            }
+        }
+        if (staging) vkDestroyBuffer(device_, staging, nullptr);
+        if (staging_memory) vkFreeMemory(device_, staging_memory, nullptr);
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = t.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = image.format;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_count, 0, 1};
+        ok = ok && check(vkCreateImageView(device_, &view, nullptr, &t.view), "vkCreateImageView (texture)");
+        // Its descriptor set for the mesh shader (set 0, binding 0: a combined image sampler).
+        VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        set_info.descriptorPool = texture_pool_;
+        set_info.descriptorSetCount = 1;
+        set_info.pSetLayouts = &texture_set_layout_;
+        ok = ok && check(vkAllocateDescriptorSets(device_, &set_info, &t.set), "vkAllocateDescriptorSets (texture)");
+        if (!ok) {
+            release_texture(t);
+            return {};
+        }
+        VkDescriptorImageInfo described{sampler_, t.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = t.set;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &described;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        return TextureHandle::make(slot, t.generation);
+    }
+
+    void destroy_texture(TextureHandle handle) override {
+        Texture* t = lookup_texture(handle);
+        if (!t) return;
+        vkDeviceWaitIdle(device_);  // shortcut: stalls; deferred release when textures churn
+        if (t->ui_set && debug_ui_) ImGui_ImplVulkan_RemoveTexture(t->ui_set);
+        t->ui_set = VK_NULL_HANDLE;
+        frames_[frame_].memo_count = 0;  // this frame's material / view sets may name its view
+        view_set_ = VK_NULL_HANDLE;
+        release_texture(*t);
+        ++t->generation;
+    }
+    void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
+        if (skip_frame_ || shadow_pass_) return;
+        Texture* t = lookup_texture(handle);
+        end_pass();
+        if (t && t->depth_image) begin_target_pass(*t, clear_color);
+        else begin_main_pass(nullptr);  // back to the window, not cleared again
+    }
+    u64 debug_ui_texture(TextureHandle handle) override {  // ImGui's descriptor for it (thumbnails, previews), made on first use
+        Texture* t = lookup_texture(handle);
+        if (!t || !debug_ui_) return 0;
+        if (!t->ui_set) t->ui_set = ImGui_ImplVulkan_AddTexture(sampler_, t->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        return reinterpret_cast<u64>(t->ui_set);
+    }
+    void set_lights(const LightSetup& lights) override {  // mesh.hlsl's Lights block, as D3D12 (the viewport filled in)
+        lights_ = lights;
+        std::memcpy(lights_.viewport, viewport_, sizeof lights_.viewport);
+        lights_in_ring_ = false;
+    }
+
+    // A square depth texture, kept in the shader-read layout between shadow passes (cleared to far at first).
+    TextureHandle create_shadow_map(u32 size) override {
+        if (!texture_set_layout_ || !shadow_sampler_ || size == 0) return {};
+        u32 slot = 0;
+        while (slot < kMaxTextures && textures_[slot].image) ++slot;
+        if (slot == kMaxTextures) return {};
+        Texture& t = textures_[slot];
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.format = kDepthFormat;
+        image.extent = {size, size, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (!check(vkCreateImage(device_, &image, nullptr, &t.image), "vkCreateImage (shadow map)")) return {};
+        VkMemoryRequirements need;
+        vkGetImageMemoryRequirements(device_, t.image, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        bool ok = alloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &alloc, nullptr, &t.memory), "vkAllocateMemory (shadow map)") &&
+                  check(vkBindImageMemory(device_, t.image, t.memory, 0), "vkBindImageMemory (shadow map)");
+        if (ok) {
+            const VkCommandBuffer cmd = begin_upload();
+            ok = cmd != VK_NULL_HANDLE;
+            if (ok) {
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                           VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                const VkClearDepthStencilValue far{1.0f, 0};
+                const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                vkCmdClearDepthStencilImage(cmd, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &range);
+                transition(cmd, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                ok = end_upload(cmd);
+            }
+        }
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = t.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = kDepthFormat;
+        view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        ok = ok && check(vkCreateImageView(device_, &view, nullptr, &t.view), "vkCreateImageView (shadow map)");
+        if (!ok) {
+            release_texture(t);
+            return {};
+        }
+        t.shadow_size = size;
+        return TextureHandle::make(slot, t.generation);
+    }
+
+    // Leaves the window pass, draws depth into the shadow map (set_viewport picks its tiles); end_shadow_pass returns.
+    void clear_shadow_viewport() override {
+        if (skip_frame_ || !shadow_pass_ || !in_pass_) return;
+        VkClearAttachment clear{};
+        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clear.clearValue.depthStencil.depth = 1.0f;
+        VkClearRect rect{};
+        rect.rect = {{static_cast<i32>(viewport_[0]), static_cast<i32>(viewport_[1])}, {static_cast<u32>(viewport_[2]), static_cast<u32>(viewport_[3])}};
+        rect.layerCount = 1;
+        vkCmdClearAttachments(frames_[frame_].cmd, 1, &clear, 1, &rect);
+    }
+
+    void begin_shadow_pass(TextureHandle handle, bool clear) override {
+        Texture* t = lookup_texture(handle);
+        if (skip_frame_ || shadow_pass_ || !t || !t->shadow_size) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        resume_target_ = target_;  // end_shadow_pass carries on drawing into it
+        end_pass();
+        transition(cmd, t->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                   VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = t->view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil.depth = 1.0f;
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea.extent = {t->shadow_size, t->shadow_size};
+        rendering.layerCount = 1;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        in_pass_ = true;
+        shadow_pass_ = t;
+        const f32 size = static_cast<f32>(t->shadow_size);
+        set_viewport(0.0f, 0.0f, size, size);
+    }
+
+    void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
+                            const f32* joint_rows, u32 joint_count, const ShadowCutout* cutout) override {
+        const bool skinned = joint_rows && joint_count;
+        const Texture* masked = !skinned && cutout ? lookup_texture(cutout->texture) : nullptr;  // shortcut: skinned casters cast solid
+        draw_shadow(vertices, indices, index_count, light_mvp, skinned ? 1 : masked ? 3 : 0, joint_rows, skinned ? std::min(joint_count, kMaxJoints) : 0, masked ? masked->set : VK_NULL_HANDLE,
+                    masked ? cutout->cutoff : 0.0f, masked ? cutout->alpha : 1.0f);
+    }
+
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+        if (rows && count) draw_shadow(vertices, indices, index_count, view_proj, 2, rows, count, VK_NULL_HANDLE, 0.0f, 1.0f);
+    }
+
+    void end_shadow_pass() override {
+        if (skip_frame_ || !shadow_pass_) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        end_pass();
+        transition(cmd, shadow_pass_->image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        shadow_pass_ = nullptr;
+        if (resume_target_) begin_target_pass(*resume_target_, nullptr);
+        else begin_main_pass(nullptr);
+        resume_target_ = nullptr;
+    }
+
+    void set_shadow_map(TextureHandle sun, TextureHandle local) override {
+        sun_shadow_ = sun;
+        local_shadow_ = local;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    void set_decal_atlas(TextureHandle atlas) override {
+        decal_atlas_ = atlas;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    void set_reflection_atlas(TextureHandle atlas) override {
+        reflection_atlas_ = atlas;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    void set_lightmap_atlas(TextureHandle atlas) override {
+        lightmap_atlas_ = atlas;
+        view_set_ = VK_NULL_HANDLE;
+    }
+    // As D3D12's draw_mesh: the same constants (mesh.hlsl's Draw) and pipelines per kind (static,
+    // skinned, instanced) and mode (opaque, wireframe, translucent, additive, overdraw).
+    // shortcut: no Material Graph shaders on Vulkan yet (the built-in material draws); no GPU culling.
+    void draw_mesh(const MeshDraw& draw) override {
+        if (skip_frame_ || shadow_pass_) return;
+        const bool skinned = draw.joint_rows && draw.joint_count;
+        const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
+        const u32 kind = skinned ? 1u : instanced ? 2u : 0u;
+        const u32 mode = draw.wireframe ? 1u : draw.blend >= 1 && draw.blend <= 3 ? 1u + draw.blend : 0u;
+        // A Material Graph (not wireframe, not instanced) draws with its own pipelines; the Overdraw mode stays built-in.
+        const MaterialShader* material = draw.wireframe || instanced ? nullptr : lookup_material(draw.material_shader);
+        const VkPipeline pipeline = material && draw.blend < 3 ? material->pipelines[kind][draw.blend] : mesh_pipelines_[kind][mode];
+        const Buffer* vb = lookup(draw.vertices);
+        const Buffer* ib = lookup(draw.indices);
+        if (!pipeline || !vb || !ib || draw.index_count == 0) return;
+        Frame& f = frames_[frame_];
+        // GPU culling first (compute), the draws below read what it keeps.
+        const u32 cull_batches = (draw.instance_count + kMaxJoints - 1) / kMaxJoints;
+        const bool culled = draw.gpu_cull && instanced && run_culling(f, draw, cull_batches);
+        if (!lights_in_ring_) {  // this view's Lights block, once per set_lights
+            if (!ring_write(f, &lights_, sizeof lights_, lights_at_)) return;
+            lights_in_ring_ = true;
+        }
+        f32 c[kMeshPushBytes / sizeof(f32)] = {};
+        std::memcpy(c, draw.mvp, sizeof draw.mvp);
+        std::memcpy(c + 16, draw.normal_matrix, sizeof draw.normal_matrix);
+        std::memcpy(c + 28, draw.world, sizeof draw.world);
+        std::memcpy(c + 40, draw.color, sizeof draw.color);
+        c[19] = draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view);
+        const Texture* normal = lookup_texture(draw.normal_texture);
+        if (normal && normal->shadow_size) normal = nullptr;
+        const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
+        c[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f);  // see n1.w in the shader
+        c[27] = draw.time;  // the normal matrix's spare w
+        c[44] = draw.metallic;
+        c[45] = draw.roughness;
+        c[46] = draw.emissive[0];
+        c[47] = draw.emissive[1];
+        c[48] = draw.emissive[2];
+        std::memcpy(c + 49, draw.camera_position, sizeof draw.camera_position);
+        const VkDescriptorSet sets[2] = {material_set(f, view_of(draw.base_color_texture, white_), normal ? normal->view : view_of({}, flat_normal_),
+                                                      view_of(draw.orm_texture, white_), view_of(draw.emissive_texture, white_)),
+                                         view_set(f)};
+        if (!sets[0] || !sets[1]) return;
+        const VkCommandBuffer cmd = f.cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 2, sets, 0, nullptr);
+        u32 offsets[3] = {lights_at_, lights_at_, lights_at_};  // Lights, rows, material parameters (unused: any valid offset)
+        if (material) {  // its parameters: 16 float4, unset ones 0
+            f32 values[kParamsBytes / sizeof(f32)] = {};
+            const u32 count = std::min(draw.material_param_count, static_cast<u32>(kParamsBytes / 16));
+            if (draw.material_params) std::memcpy(values, draw.material_params, count * 16);
+            if (!ring_write(f, values, sizeof values, offsets[2])) return;
+        }
+        const VkDeviceSize zero = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &zero);
+        vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
+        if (!skinned && !instanced) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
+            vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
+            return;
+        }
+        if (culled) {  // each batch's visible rows from the cull output, its count from the GPU
+            for (u32 b = 0; b < cull_batches; ++b) {
+                offsets[1] = b * static_cast<u32>(kRowsBytes);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.culled_set, 3, offsets);
+                vkCmdDrawIndexedIndirect(cmd, cull_args_.buffer, 16 + static_cast<VkDeviceSize>(b) * 20, 1, 20);
+            }
+            return;
+        }
+        // Joints (at most kMaxJoints) or the copies in batches of kMaxJoints, as D3D12.
+        const u32 total = skinned ? std::min(draw.joint_count, kMaxJoints) : draw.instance_count;
+        const f32* rows = skinned ? draw.joint_rows : draw.instance_rows;
+        for (u32 first = 0; first < total;) {
+            const u32 count = skinned ? total : std::min(total - first, kMaxJoints);
+            if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, offsets[1])) return;  // full this frame: the rest waits
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
+            vkCmdDrawIndexed(cmd, draw.index_count, skinned ? 1 : count, 0, 0, 0);
+            first += count;
+        }
+    }
+
+    bool supports_gpu_culling() const override { return cull_pipelines_[2] != VK_NULL_HANDLE; }
+
+    // The compute passes for a gpu_cull draw, between a pause and a resume of the pass (compute cannot
+    // run inside one); false (nothing recorded) if it cannot run: the draw draws every copy.
+    bool run_culling(Frame& f, const MeshDraw& draw, u32 batches) {
+        if (!cull_pipelines_[2] || draw.instance_count > kMaxCulledInstances) return false;
+        struct {
+            f32 planes[6][4];
+            f32 box_min[4], box_max[4];
+            u32 info[4];
+        } cull{};
+        static_assert(sizeof cull == kCullPushBytes, "cull.hlsl's constants");
+        frustum_planes(draw.mvp, cull.planes);
+        std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
+        std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
+        cull.info[0] = draw.instance_count;
+        cull.info[1] = draw.index_count;
+        cull.info[2] = batches;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(draw.instance_count) * 48;
+        const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+        const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
+        if (!f.ring_mapped || at + bytes + kRowsWindow > kRingBytes) return false;  // the rows go in whole (not a window): leave the ring's usual room
+        std::memcpy(f.ring_mapped + at, draw.instance_rows, bytes);
+        f.ring_used = at + bytes;
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &cull_set_layout_;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) return false;
+        const VkDescriptorBufferInfo buffers[3] = {{f.ring, at, bytes}, {cull_out_.buffer, 0, VK_WHOLE_SIZE}, {cull_args_.buffer, 0, VK_WHOLE_SIZE}};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.descriptorCount = 3;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = buffers;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        const VkCommandBuffer cmd = f.cmd;
+        Texture* resume = target_;
+        const f32 viewport[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
+        end_pass();
+        // The last culled draw's reads (arguments, rows) before these writes; then each pass's writes before the next.
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_layout_, 0, 1, &set, 0, nullptr);
+        vkCmdPushConstants(cmd, cull_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes, &cull);
+        const u32 groups[3] = {1, (draw.instance_count + 63) / 64, (batches + 63) / 64};
+        for (u32 k = 0; k < 3; ++k) {
+            if (k) memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                  VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pipelines_[k]);
+            vkCmdDispatch(cmd, groups[k], 1, 1);
+        }
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT);
+        if (resume) begin_target_pass(*resume, nullptr);
+        else begin_main_pass(nullptr);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        return true;
+    }
+
+    static void memory_barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+        VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        barrier.srcStageMask = src_stage;
+        barrier.srcAccessMask = src_access;
+        barrier.dstStageMask = dst_stage;
+        barrier.dstAccessMask = dst_access;
+        VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }
+
+    // GPU culling's resources: the passes (cull.hlsl), its output rows and indirect arguments (device
+    // memory) and each frame's set 2 reading the rows from that output. Optional: without them gpu_cull
+    // draws draw every copy.
+    bool create_culling() {
+#if LSD_VULKAN_HAVE_SPIRV
+        const VkDescriptorSetLayoutBinding bindings[3] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 3;
+        layout.pBindings = bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &cull_set_layout_), "vkCreateDescriptorSetLayout (cull)")) return false;
+        const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes};
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = 1;
+        pipeline_layout.pSetLayouts = &cull_set_layout_;
+        pipeline_layout.pushConstantRangeCount = 1;
+        pipeline_layout.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &cull_layout_), "vkCreatePipelineLayout (cull)")) return false;
+        const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+        if (!make_device_buffer(static_cast<VkDeviceSize>(kMaxCulledInstances) * 48, usage, cull_out_) ||
+            !make_device_buffer(16 + static_cast<VkDeviceSize>(kMaxCulledInstances / kMaxJoints) * 20, usage, cull_args_)) return false;
+        for (Frame& f : frames_) {
+            VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            info.descriptorPool = buffers_pool_;
+            info.descriptorSetCount = 1;
+            info.pSetLayouts = &buffers_set_layout_;
+            if (!check(vkAllocateDescriptorSets(device_, &info, &f.culled_set), "vkAllocateDescriptorSets (culled)")) return false;
+            const VkDescriptorBufferInfo ranges[3] = {{f.ring, 0, sizeof(LightSetup)}, {cull_out_.buffer, 0, kRowsBytes}, {f.ring, 0, kParamsBytes}};
+            VkWriteDescriptorSet writes[3] = {};
+            for (u32 i = 0; i < 3; ++i) {
+                writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                writes[i].dstSet = f.culled_set;
+                writes[i].dstBinding = i;
+                writes[i].descriptorCount = 1;
+                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                writes[i].pBufferInfo = &ranges[i];
+            }
+            vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        }
+        const u32* code[3] = {kCullResetSpirv, kCullMainSpirv, kCullArgsSpirv};
+        const usize sizes[3] = {sizeof kCullResetSpirv, sizeof kCullMainSpirv, sizeof kCullArgsSpirv};
+        for (u32 k = 0; k < 3; ++k) {
+            VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            module_info.codeSize = sizes[k];
+            module_info.pCode = code[k];
+            VkShaderModule module = VK_NULL_HANDLE;
+            if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (cull)")) return false;
+            VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+            create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            create.stage.module = module;
+            create.stage.pName = "main";
+            create.layout = cull_layout_;
+            const bool ok = check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &cull_pipelines_[k]), "vkCreateComputePipelines (cull)");
+            vkDestroyShaderModule(device_, module, nullptr);
+            if (!ok) return false;
+        }
+#endif
+        return true;
+    }
+
+    bool make_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& out) {
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = size;
+        info.usage = usage;
+        if (!check(vkCreateBuffer(device_, &info, nullptr, &out.buffer), "vkCreateBuffer (cull)")) return false;
+        VkMemoryRequirements need;
+        vkGetBufferMemoryRequirements(device_, out.buffer, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        out.size = size;
+        return alloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &alloc, nullptr, &out.memory), "vkAllocateMemory (cull)") &&
+               check(vkBindBufferMemory(device_, out.buffer, out.memory, 0), "vkBindBufferMemory (cull)");
+    }
+
+    // A texture's view for the lit shader (not a shadow map), else the fallback's (white, flat normal).
+    VkImageView view_of(TextureHandle handle, TextureHandle fallback) {
+        const Texture* t = lookup_texture(handle);
+        if (!t || t->shadow_size) t = lookup_texture(fallback);
+        return t ? t->view : VK_NULL_HANDLE;
+    }
+
+    // Set 0: a material's base colour, normal, ORM and emissive textures; the frame's last few kept (draws repeat them).
+    VkDescriptorSet material_set(Frame& f, VkImageView base, VkImageView normal, VkImageView orm, VkImageView emissive) {
+        if (!base || !normal || !orm || !emissive) return VK_NULL_HANDLE;
+        for (u32 i = 0; i < std::min(f.memo_count, kMaterialMemo); ++i) {
+            const MaterialMemo& m = f.memo[i];
+            if (m.views[0] == base && m.views[1] == normal && m.views[2] == orm && m.views[3] == emissive) return m.set;
+        }
+        const VkImageView views[4] = {base, normal, orm, emissive};
+        const VkDescriptorSet set = allocate_set(f, material_set_layout_, views, 3);
+        if (set) {  // emissive at binding 4 (3 is the sampler)
+            const VkDescriptorImageInfo image{VK_NULL_HANDLE, emissive, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = set;
+            write.dstBinding = 4;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            write.pImageInfo = &image;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            MaterialMemo& m = f.memo[f.memo_count++ % kMaterialMemo];
+            std::memcpy(m.views, views, sizeof views);
+            m.set = set;
+        }
+        return set;
+    }
+
+    // Set 1: the view's shadow maps (the far 1x1 one for a missing one), decal, reflection and lightmap atlases (white when unset).
+    VkDescriptorSet view_set(Frame& f) {
+        if (view_set_) return view_set_;
+        auto shadow_view = [&](TextureHandle h) {
+            const Texture* t = lookup_texture(h);
+            if (!t || !t->shadow_size) t = lookup_texture(no_shadow_);
+            return t ? t->view : VK_NULL_HANDLE;
+        };
+        const VkImageView views[5] = {shadow_view(sun_shadow_), shadow_view(local_shadow_), view_of(decal_atlas_, white_), view_of(reflection_atlas_, white_),
+                                      view_of(lightmap_atlas_, white_)};
+        for (VkImageView v : views) {
+            if (!v) return VK_NULL_HANDLE;
+        }
+        view_set_ = allocate_set(f, view_set_layout_, views, 5);
+        return view_set_;
+    }
+
+    // A set from the frame's pool with `count` sampled images at bindings 0.. (its samplers are immutable).
+    VkDescriptorSet allocate_set(Frame& f, VkDescriptorSetLayout layout, const VkImageView* views, u32 count) {
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &layout;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!f.draw_pool || vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) {
+            if (!warned_sets_) LSD_LOG_WARN("vulkan", "Too many material / view changes this frame: some meshes are skipped.");
+            warned_sets_ = true;
+            return VK_NULL_HANDLE;
+        }
+        VkDescriptorImageInfo images[5] = {};
+        for (u32 i = 0; i < count; ++i) images[i] = {VK_NULL_HANDLE, views[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.descriptorCount = count;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = images;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        return set;
+    }
+
+    // One caster: kind 0 static, 1 skinned (rows = joints), 2 instanced (rows = copies, mvp = the light's view-projection), 3 Masked.
+    void draw_shadow(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32* mvp, int kind, const f32* rows, u32 row_count,
+                     VkDescriptorSet masked, f32 cutoff, f32 alpha) {
+        if (skip_frame_ || !shadow_pass_ || !shadow_pipelines_[kind] || index_count == 0) return;
+        const Buffer* vb = lookup(vertices);
+        const Buffer* ib = lookup(indices);
+        if (!vb || !ib) return;
+        Frame& f = frames_[frame_];
+        const VkCommandBuffer cmd = f.cmd;
+        f32 push[kShadowPushBytes / sizeof(f32)] = {};
+        std::memcpy(push, mvp, sizeof(f32) * 16);
+        push[16] = cutoff;
+        push[17] = alpha;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipelines_[kind]);
+        vkCmdPushConstants(cmd, shadow_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kShadowPushBytes, push);
+        if (masked) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_layout_, 0, 1, &masked, 0, nullptr);
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
+        vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
+        if (kind == 0 || kind == 3) {
+            vkCmdDrawIndexed(cmd, index_count, 1, 0, 0, 0);
+            return;
+        }
+        for (u32 first = 0; first < row_count;) {
+            const u32 count = kind == 1 ? row_count : std::min(row_count - first, kInstancesPerDraw);
+            u32 at = 0;
+            if (!ring_write(f, rows + static_cast<usize>(first) * 12, static_cast<VkDeviceSize>(count) * 48, at)) return;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_layout_, 1, 1, &f.rows_set, 1, &at);
+            vkCmdDrawIndexed(cmd, index_count, kind == 1 ? 1 : count, 0, 0, 0);
+            first += count;
+        }
+    }
+
+    void draw_lines(BufferHandle vertices, u32 vertex_count, const f32* mvp) override {
+        if (skip_frame_ || !line_pipeline_ || vertex_count == 0) return;
+        const Buffer* vb = lookup(vertices);
+        if (!vb) return;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline_);
+        vkCmdPushConstants(cmd, line_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16, mvp);
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &offset);
+        vkCmdDraw(cmd, vertex_count, 1, 0, 0);
+    }
+    void draw_sky(const SkyDraw& sky) override {  // mesh.hlsl's sky through the Draw constants, as D3D12
+        if (skip_frame_ || shadow_pass_ || !sky_pipeline_) return;
+        Frame& f = frames_[frame_];
+        if (!lights_in_ring_) {
+            if (!ring_write(f, &lights_, sizeof lights_, lights_at_)) return;
+            lights_in_ring_ = true;
+        }
+        f32 c[kMeshPushBytes / sizeof(f32)] = {};
+        std::memcpy(c, sky.inv_view_proj, sizeof sky.inv_view_proj);
+        std::memcpy(c + 16, sky.zenith, 16);
+        std::memcpy(c + 20, sky.horizon, 16);
+        std::memcpy(c + 24, sky.ground, 16);
+        std::memcpy(c + 28, sky.sun_direction, 16);
+        std::memcpy(c + 32, sky.sun_color, 16);
+        std::memcpy(c + 49, sky.camera, 12);
+        const u32 offsets[3] = {lights_at_, lights_at_, lights_at_};
+        const VkCommandBuffer cmd = f.cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_pipeline_);
+        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+    void draw_ui(const UiDraw& d) override {
+        if (skip_frame_ || shadow_pass_ || !ui_pipeline_ || !d.vertex_count || !d.index_count || d.viewport[2] <= 0.0f || d.viewport[3] <= 0.0f) return;
+        Frame& f = frames_[frame_];
+        VkDeviceSize vat = 0, iat = 0;
+        if (!stream_write(f, d.vertices, static_cast<VkDeviceSize>(d.vertex_count) * sizeof(UiVertex), vat) ||
+            !stream_write(f, d.indices, static_cast<VkDeviceSize>(d.index_count) * 4, iat)) return;
+        const f32 push[4] = {d.translation[0], d.translation[1], 2.0f / d.viewport[2], 2.0f / d.viewport[3]};
+        const Texture* t = lookup_texture(d.texture);
+        if (!t || t->shadow_size) t = lookup_texture(white_);
+        if (!t) return;
+        const VkCommandBuffer cmd = f.cmd;
+        const f32 saved[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
+        set_viewport(d.viewport[0], d.viewport[1], d.viewport[2], d.viewport[3]);
+        if (d.scissor[2] > 0) {  // inside the viewport; Vulkan wants a non-negative offset
+            const i32 x = std::max(0, static_cast<i32>(d.viewport[0]) + d.scissor[0]), y = std::max(0, static_cast<i32>(d.viewport[1]) + d.scissor[1]);
+            const VkRect2D scissor{{x, y}, {static_cast<u32>(std::max(0, d.scissor[2])), static_cast<u32>(std::max(0, d.scissor[3]))}};
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+        }
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        vkCmdPushConstants(cmd, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kUiPushBytes, push);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_layout_, 0, 1, &t->set, 0, nullptr);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &vat);
+        vkCmdBindIndexBuffer(cmd, f.stream, iat, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, d.index_count, 1, 0, 0, 0);
+        set_viewport(saved[0], saved[1], saved[2], saved[3]);  // back to the caller's rectangle
+    }
+    // Post-processing (Unreal's post-process stack), as D3D12's draw_post: the same passes from
+    // shaders/post.hlsl, into a chain of targets per scene size.
+    void draw_post(const PostDraw& p) override {
+        Texture* scene = lookup_texture(p.scene);
+        if (skip_frame_ || shadow_pass_ || !scene || !scene->depth_image || !post_pipelines_[kComposite]) return;
+        PostChain& c = post_chain(scene->width, scene->height);
+        auto size = [&](TextureHandle t, f32* out) {
+            const Texture* target = lookup_texture(t);
+            out[0] = target && target->width ? 1.0f / static_cast<f32>(target->width) : 0.0f;
+            out[1] = target && target->height ? 1.0f / static_cast<f32>(target->height) : 0.0f;
+        };
+        const bool depth_effects = p.proj[0] != 0.0f;
+        const bool ao = depth_effects && (p.ao_intensity > 0.0f || p.contact_shadow[3] > 0.0f);
+        const bool dof = depth_effects && p.dof_focal_distance > 0.0f;
+        const bool motion = depth_effects && p.motion_blur > 0.0f && !p.taa_reset;
+        const bool taa = depth_effects && p.taa;
+        const bool ssr = depth_effects && p.ssr_intensity > 0.0f;
+        if (!taa) c.history_valid = false;
+        f32 k[48] = {};  // the constants every pass reads (post.hlsl's Post)
+        for (int i = 0; i < 4; ++i) k[16 + i] = p.proj[i];
+        k[20] = p.ao_radius > 0.01f ? p.ao_radius : 0.01f;
+        k[21] = p.ao_intensity;
+        k[22] = p.ssr_intensity;
+        k[23] = p.ssr_max_distance > 0.5f ? p.ssr_max_distance : 0.5f;
+        k[24] = p.dof_focal_distance;
+        k[25] = p.dof_focal_region;
+        k[26] = p.dof_max_blur;
+        k[27] = p.dof_transition;
+        k[28] = 0.1f;  // TAA: how much of this frame goes in
+        k[29] = (p.taa_reset || !c.history_valid) ? 1.0f : 0.0f;
+        k[30] = p.motion_blur;
+        k[31] = p.motion_blur_max;
+        for (int r = 0; r < 4; ++r) {
+            for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
+        }
+        size(p.scene, k);
+        end_pass();  // the scene's colour (and depth below) become readable
+        if ((ao || dof || taa || ssr || motion) && !scene->depth_readable) {
+            const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            transition(frames_[frame_].cmd, scene->depth_image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tests,
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+            scene->depth_readable = true;
+        }
+        TextureHandle src = p.scene;
+        if (ssr) {  // first: it reads the scene's alpha (reflectivity)
+            post_pass(kSsr, c.ssr, nullptr, p.scene, {}, p.scene, k);
+            src = c.ssr;
+        }
+        if (ao) {
+            f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
+            std::memcpy(ka, k, sizeof ka);
+            std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
+            post_pass(kAo, c.ao, nullptr, {}, {}, p.scene, ka);
+            post_pass(kAoApply, c.lit, nullptr, src, c.ao, p.scene, k);
+            src = c.lit;
+        }
+        if (taa) {
+            const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
+            post_pass(kTaa, out, nullptr, src, history, p.scene, k);
+            c.taa_index ^= 1u;
+            c.history_valid = true;
+            src = out;
+        }
+        if (dof) {
+            post_pass(kDof, c.dof, nullptr, src, {}, p.scene, k);
+            src = c.dof;
+        }
+        if (motion) {
+            post_pass(kMotion, c.motion, nullptr, src, {}, p.scene, k);
+            src = c.motion;
+        }
+        if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
+            f32 e[48] = {};
+            e[4] = p.exposure_min_ev;
+            e[5] = p.exposure_max_ev;
+            e[6] = p.exposure_compensation;
+            e[7] = c.exposure_valid && p.delta_seconds > 0.0f ? 0.0f : 1.0f;  // 1: jump to the target
+            e[8] = p.delta_seconds * p.exposure_speed_up;
+            e[9] = p.delta_seconds * p.exposure_speed_down;
+            const TextureHandle now = c.exposure[c.exposure_index], last = c.exposure[c.exposure_index ^ 1u];
+            post_pass(kMeter, now, nullptr, src, last, {}, e);
+            post_pass(kExpose, c.exposed, nullptr, src, now, {}, e);
+            c.exposure_index ^= 1u;
+            c.exposure_valid = true;
+            src = c.exposed;
+        } else {
+            c.exposure_valid = false;
+        }
+        const bool bloom = p.bloom_intensity > 0.0f;
+        if (bloom) {
+            k[4] = p.bloom_threshold;
+            size(src, k);
+            post_pass(kPrefilter, c.down[0], nullptr, src, {}, {}, k);
+            for (u32 i = 1; i < 5; ++i) {
+                size(c.down[i - 1], k);
+                post_pass(kDown, c.down[i], nullptr, c.down[i - 1], {}, {}, k);
+            }
+            for (i32 i = 3; i >= 0; --i) {  // up[i] = down[i] + blur(up[i + 1]); the lowest uses down[4]
+                const TextureHandle below = i == 3 ? c.down[4] : c.up[i + 1];
+                size(c.down[i], k);
+                size(below, k + 2);
+                post_pass(kUp, c.up[i], nullptr, c.down[i], below, {}, k);
+            }
+        }
+        f32 g[48] = {};
+        g[5] = bloom ? p.bloom_intensity : 0.0f;
+        g[8] = p.tint[0];
+        g[9] = p.tint[1];
+        g[10] = p.tint[2];
+        g[11] = p.tonemap ? 1.0f : 0.0f;
+        g[12] = p.saturation;
+        g[13] = p.contrast;
+        g[14] = p.vignette;
+        g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
+        const bool fxaa = p.fxaa && !taa;
+        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        if (fxaa) {
+            f32 f[48] = {};
+            size(c.ldr, f);
+            post_pass(kFxaa, p.output, p.viewport, c.ldr, {}, {}, f);
+        }
+        set_render_target({}, nullptr);
+        set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
+    }
+
+    // The selection outline: the selected meshes as a white mask, its edge painted over the viewport.
+    void draw_outline(const MeshDraw* draws, u32 count, const f32 color[4], const f32 viewport[4]) override {
+        const u32 w = static_cast<u32>(viewport[2]), h = static_cast<u32>(viewport[3]);
+        if (skip_frame_ || shadow_pass_ || !count || !w || !h || !post_pipelines_[kOutline]) return;
+        if (outline_size_[0] != w || outline_size_[1] != h) {  // the mask: one per viewport size, kept
+            destroy_texture(outline_mask_);
+            outline_mask_ = create_render_target(w, h);
+            outline_size_[0] = w;
+            outline_size_[1] = h;
+        }
+        const f32 clear[4] = {0, 0, 0, 0};
+        set_render_target(outline_mask_, clear);
+        for (u32 i = 0; i < count; ++i) {  // each as plain white: only where it covers matters
+            MeshDraw d = draws[i];
+            d.unlit = true;
+            d.wireframe = false;
+            d.alpha_cutoff = 0.0f;
+            d.base_color_texture = {};
+            d.color[0] = d.color[1] = d.color[2] = d.color[3] = 1.0f;
+            draw_mesh(d);
+        }
+        f32 k[48] = {};
+        k[0] = 1.0f / static_cast<f32>(w);
+        k[1] = 1.0f / static_cast<f32>(h);
+        for (int c = 0; c < 4; ++c) k[8 + c] = color[c];
+        post_pass(kOutline, {}, viewport, outline_mask_, {}, {}, k);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+
+    // Post-processing targets: the bloom chain, the FXAA input and the effects', one set per scene size (a few kept).
+    struct PostChain {
+        u32 width = 0, height = 0;
+        TextureHandle down[5], up[4], ldr;
+        TextureHandle ao, lit, dof, motion, taa[2], ssr;
+        TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
+        u32 exposure_index = 0;
+        bool exposure_valid = false;
+        u32 taa_index = 0;
+        bool history_valid = false;  // shortcut: one TAA history per size; two same-size views would share it
+    };
+    PostChain& post_chain(u32 width, u32 height) {
+        for (PostChain& c : post_chains_) {
+            if (c.width == width && c.height == height) return c;
+        }
+        PostChain& c = post_chains_[post_chain_next_++ % 4];
+        for (TextureHandle& t : c.down) destroy_texture(t);
+        for (TextureHandle& t : c.up) destroy_texture(t);
+        for (TextureHandle& t : c.taa) destroy_texture(t);
+        for (TextureHandle& t : c.exposure) destroy_texture(t);
+        for (TextureHandle t : {c.ao, c.lit, c.dof, c.motion, c.ssr, c.ldr, c.exposed}) destroy_texture(t);
+        c = PostChain{};
+        c.width = width;
+        c.height = height;
+        for (u32 i = 0; i < 5; ++i) {
+            const u32 w = (width >> (i + 1)) ? (width >> (i + 1)) : 1u, h = (height >> (i + 1)) ? (height >> (i + 1)) : 1u;
+            c.down[i] = create_render_target(w, h);
+            if (i < 4) c.up[i] = create_render_target(w, h);
+        }
+        c.ldr = create_render_target(width, height);
+        c.ao = create_render_target(width, height);  // shortcut: full-size effect targets even when unused; make them lazily if memory gets tight
+        c.lit = create_render_target(width, height);
+        c.dof = create_render_target(width, height);
+        c.motion = create_render_target(width, height);
+        c.ssr = create_render_target(width, height);
+        c.taa[0] = create_render_target(width, height);
+        c.taa[1] = create_render_target(width, height);
+        c.exposure[0] = create_render_target(1, 1);
+        c.exposure[1] = create_render_target(1, 1);
+        c.exposed = create_render_target(width, height);
+        return c;
+    }
+
+    // The view post.hlsl reads for one input: a render target's colour (or, as t2 of a target, its
+    // depth once readable), an ordinary texture (the Color Grading LUT), else white.
+    VkImageView post_input(TextureHandle handle, bool depth) {
+        const Texture* t = lookup_texture(handle);
+        if (t && depth && t->depth_image) return t->depth_readable ? t->depth_view : lookup_texture(white_)->view;
+        if (t && !t->shadow_size) return t->view;
+        return lookup_texture(white_)->view;
+    }
+
+    // One full-screen pass into `target` (invalid: the window, in `window_rect`).
+    void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48]) {
+        const f32 black[4] = {0, 0, 0, 1};
+        if (lookup_texture(target)) {
+            set_render_target(target, black);
+        } else {
+            set_render_target({}, nullptr);
+            set_viewport(window_rect[0], window_rect[1], window_rect[2], window_rect[3]);
+        }
+        Frame& f = frames_[frame_];
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.post_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &post_set_layout_;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!f.post_pool || vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) {
+            if (!warned_post_) LSD_LOG_WARN("vulkan", "Too many post-process passes this frame: some are skipped.");
+            warned_post_ = true;
+            return;
+        }
+        const VkDescriptorImageInfo images[3] = {{VK_NULL_HANDLE, post_input(in0, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                 {VK_NULL_HANDLE, post_input(in1, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                 {VK_NULL_HANDLE, post_input(in2, true), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.descriptorCount = 3;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = images;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        const VkCommandBuffer cmd = f.cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipelines_[pass]);
+        vkCmdPushConstants(cmd, post_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes, constants);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_layout_, 0, 1, &set, 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
+    // post.hlsl's resources: t0-t2 (bindings 0-2) and the clamped linear sampler s2 (binding 18,
+    // immutable); a descriptor pool per frame for the passes' sets; one pipeline per pass.
+    bool create_post_pipelines() {
+        VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sampler.magFilter = VK_FILTER_LINEAR;
+        sampler.minFilter = VK_FILTER_LINEAR;
+        sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler.maxLod = VK_LOD_CLAMP_NONE;
+        if (!check(vkCreateSampler(device_, &sampler, nullptr, &post_sampler_), "vkCreateSampler (post)")) return false;
+        const VkDescriptorSetLayoutBinding bindings[4] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                         {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                         {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+                                                         {18, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, &post_sampler_}};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 4;
+        layout.pBindings = bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &post_set_layout_), "vkCreateDescriptorSetLayout (post)")) return false;
+        const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes};
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = 1;
+        pipeline_layout.pSetLayouts = &post_set_layout_;
+        pipeline_layout.pushConstantRangeCount = 1;
+        pipeline_layout.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &post_layout_), "vkCreatePipelineLayout (post)")) return false;
+        const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kPostSetsPerFrame * 3}, {VK_DESCRIPTOR_TYPE_SAMPLER, kPostSetsPerFrame}};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.maxSets = kPostSetsPerFrame;
+        pool.poolSizeCount = 2;
+        pool.pPoolSizes = sizes;
+        for (Frame& f : frames_) {
+            if (!check(vkCreateDescriptorPool(device_, &pool, nullptr, &f.post_pool), "vkCreateDescriptorPool (post)")) return false;
+        }
+#if LSD_VULKAN_HAVE_SPIRV
+        struct Entry {
+            const u32* code;
+            usize size;
+        };
+        const Entry entries[kPostPasses] = {
+            {kPostPrefilterSpirv, sizeof kPostPrefilterSpirv}, {kPostDownSpirv, sizeof kPostDownSpirv}, {kPostUpSpirv, sizeof kPostUpSpirv},
+            {kPostCompositeSpirv, sizeof kPostCompositeSpirv}, {kPostFxaaSpirv, sizeof kPostFxaaSpirv}, {kPostSsrSpirv, sizeof kPostSsrSpirv},
+            {kPostAoSpirv, sizeof kPostAoSpirv}, {kPostAoApplySpirv, sizeof kPostAoApplySpirv}, {kPostTaaSpirv, sizeof kPostTaaSpirv},
+            {kPostDofSpirv, sizeof kPostDofSpirv}, {kPostMotionSpirv, sizeof kPostMotionSpirv}, {kPostMeterSpirv, sizeof kPostMeterSpirv},
+            {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv},
+        };
+        for (u32 i = 0; i < kPostPasses; ++i) {  // the outline is painted over the image; the rest replace it
+            if (!make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, post_pipelines_[i], false, false, false,
+                               i == kOutline ? Blend::Alpha : Blend::Opaque)) return false;
+        }
+#endif
+        return true;
+    }
+    bool read_render_target(TextureHandle handle, u8* rgba) override {
+        Texture* t = lookup_texture(handle);
+        if (!t || !t->depth_image || !rgba) return false;
+        vkDeviceWaitIdle(device_);
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(t->width) * t->height * 4;
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = bytes;
+        info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VkBuffer readback = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        bool ok = check(vkCreateBuffer(device_, &info, nullptr, &readback), "vkCreateBuffer (readback)");
+        if (ok) {
+            VkMemoryRequirements need;
+            vkGetBufferMemoryRequirements(device_, readback, &need);
+            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            alloc.allocationSize = need.size;
+            alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            ok = alloc.memoryTypeIndex != UINT32_MAX && check(vkAllocateMemory(device_, &alloc, nullptr, &memory), "vkAllocateMemory (readback)") &&
+                 check(vkBindBufferMemory(device_, readback, memory, 0), "vkBindBufferMemory (readback)");
+        }
+        const VkCommandBuffer cmd = ok ? begin_upload() : VK_NULL_HANDLE;
+        ok = ok && cmd != VK_NULL_HANDLE;
+        if (ok) {
+            transition(cmd, t->image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                       VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            VkBufferImageCopy region{};
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageExtent = {t->width, t->height, 1};
+            vkCmdCopyImageToBuffer(cmd, t->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1, &region);
+            transition(cmd, t->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, 0,
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            ok = end_upload(cmd);
+        }
+        void* mapped = nullptr;
+        if (ok && check(vkMapMemory(device_, memory, 0, bytes, 0, &mapped), "vkMapMemory (readback)")) {
+            const u8* src = static_cast<const u8*>(mapped);
+            const bool bgra = format_.format == VK_FORMAT_B8G8R8A8_UNORM || format_.format == VK_FORMAT_B8G8R8A8_SRGB;
+            for (VkDeviceSize i = 0; i < bytes; i += 4) {  // rows top to bottom, as the target holds them; RGBA
+                rgba[i] = src[i + (bgra ? 2 : 0)];
+                rgba[i + 1] = src[i + 1];
+                rgba[i + 2] = src[i + (bgra ? 0 : 2)];
+                rgba[i + 3] = src[i + 3];
+            }
+            vkUnmapMemory(device_, memory);
+        } else {
+            ok = false;
+        }
+        if (readback) vkDestroyBuffer(device_, readback, nullptr);
+        if (memory) vkFreeMemory(device_, memory, nullptr);
+        return ok;
+    }
+    // Soft particles: the target's depth goes read-only (tested and sampled at once) for a draw, then back.
+    void target_depth_read_only(bool read_only) {
+        Texture& t = *target_;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdEndRendering(cmd);
+        const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        const VkAccessFlags2 rw = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        if (read_only) {
+            transition(cmd, t.depth_image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, tests, rw,
+                       tests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                       VK_IMAGE_ASPECT_DEPTH_BIT);
+        } else {
+            transition(cmd, t.depth_image, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, tests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                       0, tests, rw, VK_IMAGE_ASPECT_DEPTH_BIT);
+        }
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = t.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = t.depth_view;
+        depth.imageLayout = read_only ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = read_only ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea.extent = {t.width, t.height};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        set_viewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
+    }
+
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
+        const VkPipeline pipeline = particle_pipelines_[additive ? 1 : 0];
+        if (skip_frame_ || shadow_pass_ || !pipeline || !vertex_count) return;
+        Frame& f = frames_[frame_];
+        VkDeviceSize at = 0;
+        if (!stream_write(f, vertices, static_cast<VkDeviceSize>(vertex_count) * sizeof(ParticleVertex), at)) return;
+        f32 push[kParticlePushBytes / sizeof(f32)] = {};
+        std::memcpy(push, view_proj, sizeof(f32) * 16);
+        push[16] = lights_.output[0];  // into a scene target: range-compressed
+        const Texture* t = lookup_texture(texture);
+        if (!t || t->shadow_size) t = lookup_texture(white_);
+        if (!t) return;
+        const bool soft_fade = soft && soft[0] > 0.0f && in_pass_ && target_ && target_->depth_image;
+        if (soft_fade) std::memcpy(push + 20, soft, 4 * sizeof(f32));
+        // Set 1: the depth to fade against (white when not soft: the shader does not read it then).
+        const Texture* white = lookup_texture(white_);
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &particle_depth_layout_;
+        VkDescriptorSet sets[2] = {t->set, VK_NULL_HANDLE};
+        if (!white || !f.draw_pool || vkAllocateDescriptorSets(device_, &info, &sets[1]) != VK_SUCCESS) return;
+        const VkDescriptorImageInfo image{VK_NULL_HANDLE, soft_fade ? target_->depth_view : white->view,
+                                          soft_fade ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = sets[1];
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = &image;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        if (soft_fade) target_depth_read_only(true);
+        const VkCommandBuffer cmd = f.cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdPushConstants(cmd, particle_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kParticlePushBytes, push);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particle_layout_, 0, 2, sets, 0, nullptr);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &at);
+        vkCmdDraw(cmd, vertex_count, 1, 0, 0);
+        if (soft_fade) target_depth_read_only(false);
+    }
+    // Material Graph code built into the lit pipelines (static and skinned; opaque, translucent, additive),
+    // as D3D12's: shaders/mesh.hlsl with the prelude and the code at //@MATERIAL, compiled by the Vulkan
+    // SDK's DXC. Without the SDK it is invalid and the built-in material draws (the log says so once).
+    MaterialShaderHandle create_material_shader(const char* code) override {
+        if (!code || !mesh_layout_) return {};
+        u32 slot = 0;
+        while (slot < kMaxMaterialShaders && material_shaders_[slot].pipelines[0][0]) ++slot;
+        if (slot == kMaxMaterialShaders) return {};
+        std::string source = kMeshHlsl;
+        source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
+        std::vector<u32> spirv[2][2];  // [static, skinned][vertex, pixel]
+        for (u32 k = 0; k < 2; ++k) {
+            for (u32 st = 0; st < 2; ++st) {
+                if (!compile_spirv(source, st == 0 ? "vs" : "ps", k == 1 ? "SKINNED" : nullptr, spirv[k][st])) return {};
+            }
+        }
+        MaterialShader& m = material_shaders_[slot];
+        const Blend modes[3] = {Blend::Opaque, Blend::MeshTranslucent, Blend::MeshAdditive};
+        bool ok = true;
+        for (u32 k = 0; k < 2 && ok; ++k) {
+            for (u32 b = 0; b < 3 && ok; ++b) {
+                ok = make_pipeline(spirv[k][0].data(), spirv[k][0].size() * 4, spirv[k][1].data(), spirv[k][1].size() * 4, k ? kSkinnedAttributes : kMeshAttributes,
+                                   k ? 5u : 4u, k ? static_cast<u32>(sizeof(SkinnedVertex)) : static_cast<u32>(sizeof(MeshVertex)), VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                                   kMeshPushBytes, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, mesh_layout_, m.pipelines[k][b], false, true, false, modes[b]);
+            }
+        }
+        if (!ok) {
+            release_material(m);
+            return {};
+        }
+        return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    void destroy_material_shader(MaterialShaderHandle handle) override {
+        MaterialShader* m = lookup_material(handle);
+        if (!m) return;
+        vkDeviceWaitIdle(device_);  // shortcut: stalls; fine for edits in the editor, defer when materials churn
+        release_material(*m);
+        ++m->generation;
+    }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         if (skip_frame_) return;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
-        const VkViewport viewport{x, y + height, width, -height, 0.0f, 1.0f};  // flipped like begin_frame
+        viewport_[0] = x;
+        viewport_[1] = y;
+        viewport_[2] = width;
+        viewport_[3] = height;
+        const VkViewport viewport{x, y + height, width, -height, 0.0f, 1.0f};  // negative height flips Y: clip space as D3D12 and OpenGL (+Y up)
         const VkRect2D scissor{{static_cast<i32>(x), static_cast<i32>(y)}, {static_cast<u32>(width), static_cast<u32>(height)}};
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
@@ -244,13 +1710,67 @@ public:
         vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
+    // GPU timings (stat dump), as D3D12's: a timestamp per slot in this frame, read when the frame is done.
+    void gpu_timestamp(u32 slot) override {
+        if (skip_frame_ || !timestamp_pool_ || slot >= kGpuTimestamps) return;
+        vkCmdWriteTimestamp2(frames_[frame_].cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timestamp_pool_, frame_ * kGpuTimestamps + slot);
+        timestamps_set_[frame_] |= 1u << slot;
+    }
+
+    bool gpu_timings(f64 out_ms[kGpuTimestamps]) override {
+        if (!have_timings_) return false;
+        for (u32 i = 0; i < kGpuTimestamps; ++i) out_ms[i] = gpu_ms_[i];
+        return true;
+    }
+
+    // The screenshot command: the frame is copied out at end_frame and written as a BMP once it is done.
+    bool capture_frame(const char* bmp_path) override {
+        if (skip_frame_) return false;
+        std::snprintf(capture_path_, sizeof capture_path_, "%s", bmp_path);
+        return true;
+    }
+
     void end_frame() override {
         if (skip_frame_) return;
         Frame& f = frames_[frame_];
-        vkCmdEndRendering(f.cmd);
-        transition(f.cmd, images_[image_], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                   VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+        end_pass();
+        VkBuffer capture = VK_NULL_HANDLE;
+        VkDeviceMemory capture_memory = VK_NULL_HANDLE;
+        if (capture_path_[0]) {  // swapchain image -> a host-visible buffer
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = static_cast<VkDeviceSize>(extent_.width) * extent_.height * 4;
+            info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            VkMemoryRequirements need{};
+            if (check(vkCreateBuffer(device_, &info, nullptr, &capture), "vkCreateBuffer (capture)")) {
+                vkGetBufferMemoryRequirements(device_, capture, &need);
+                VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                alloc.allocationSize = need.size;
+                alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &capture_memory), "vkAllocateMemory (capture)") ||
+                    !check(vkBindBufferMemory(device_, capture, capture_memory, 0), "vkBindBufferMemory (capture)")) {
+                    vkDestroyBuffer(device_, capture, nullptr);
+                    if (capture_memory) vkFreeMemory(device_, capture_memory, nullptr);
+                    capture = VK_NULL_HANDLE;
+                    capture_memory = VK_NULL_HANDLE;
+                }
+            }
+            if (capture) {
+                transition(f.cmd, images_[image_], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                           VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+                VkBufferImageCopy region{};
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageExtent = {extent_.width, extent_.height, 1};
+                vkCmdCopyImageToBuffer(f.cmd, images_[image_], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, capture, 1, &region);
+                transition(f.cmd, images_[image_], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                           VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+            }
+        }
+        if (!capture) {
+            transition(f.cmd, images_[image_], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                       VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+        }
         vkEndCommandBuffer(f.cmd);
 
         VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
@@ -269,6 +1789,44 @@ public:
         submit.signalSemaphoreInfoCount = 1;
         submit.pSignalSemaphoreInfos = &signal;
         vkQueueSubmit2(queue_, 1, &submit, f.fence);
+        if (capture) {  // wait for this frame, then write the BMP (bottom-up rows, BGR)
+            vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX);
+            void* mapped = nullptr;
+            bool ok = false;
+            if (check(vkMapMemory(device_, capture_memory, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory (capture)")) {
+                const u32 w = extent_.width, h = extent_.height, row_bytes = (w * 3 + 3) & ~3u;
+                const bool bgra = format_.format == VK_FORMAT_B8G8R8A8_UNORM || format_.format == VK_FORMAT_B8G8R8A8_SRGB;
+                u8 header[54] = {'B', 'M'};
+                auto put32 = [&](int at, u32 v) { for (int i = 0; i < 4; ++i) header[at + i] = static_cast<u8>(v >> (8 * i)); };
+                put32(2, 54 + row_bytes * h);
+                put32(10, 54);
+                put32(14, 40);
+                put32(18, w);
+                put32(22, h);
+                header[26] = 1;
+                header[28] = 24;
+                put32(34, row_bytes * h);
+                if (FILE* file = std::fopen(capture_path_, "wb")) {
+                    ok = std::fwrite(header, 1, sizeof header, file) == sizeof header;
+                    std::vector<u8> row(static_cast<usize>(row_bytes), 0);
+                    for (u32 y = 0; ok && y < h; ++y) {
+                        const u8* src = static_cast<const u8*>(mapped) + static_cast<usize>(h - 1 - y) * w * 4;
+                        for (u32 x = 0; x < w; ++x) {
+                            row[x * 3] = src[x * 4 + (bgra ? 0 : 2)];
+                            row[x * 3 + 1] = src[x * 4 + 1];
+                            row[x * 3 + 2] = src[x * 4 + (bgra ? 2 : 0)];
+                        }
+                        ok = std::fwrite(row.data(), 1, row_bytes, file) == row_bytes;
+                    }
+                    ok = std::fclose(file) == 0 && ok;
+                }
+                vkUnmapMemory(device_, capture_memory);
+            }
+            LSD_LOG_INFO("vulkan", ok ? "Saved %s" : "Could not write %s", capture_path_);
+            vkDestroyBuffer(device_, capture, nullptr);
+            vkFreeMemory(device_, capture_memory, nullptr);
+            capture_path_[0] = '\0';
+        }
 
         VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         present.waitSemaphoreCount = 1;
@@ -289,13 +1847,14 @@ public:
         init.Device = device_;
         init.QueueFamily = gpu_.queue_family;
         init.Queue = queue_;
-        init.DescriptorPoolSize = 64;  // backend creates its own pool
+        init.DescriptorPoolSize = 4096;  // backend creates its own pool: fonts plus every texture ImGui shows (thumbnails)
         init.MinImageCount = 2;
         init.ImageCount = image_count_;
         init.UseDynamicRendering = true;
         init.PipelineInfoMain.PipelineRenderingCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         init.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
         init.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &format_.format;
+        init.PipelineInfoMain.PipelineRenderingCreateInfo.depthAttachmentFormat = kDepthFormat;  // the pass has a depth buffer
         debug_ui_ = ImGui_ImplVulkan_Init(&init);
         return debug_ui_;
     }
@@ -307,12 +1866,378 @@ public:
     }
 
 private:
+    struct Buffer {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        u64 size = 0;
+        u32 generation = 0;
+    };
+
+    Buffer* lookup(BufferHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxBuffers) return nullptr;
+        Buffer& b = buffers_[handle.index()];
+        if (!b.buffer || (b.generation & BufferHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &b;
+    }
+
+    struct Texture {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkDescriptorSet set = VK_NULL_HANDLE;     // the mesh shader's
+        VkDescriptorSet ui_set = VK_NULL_HANDLE;  // ImGui's (debug_ui_texture)
+        u32 shadow_size = 0;                      // a shadow map (create_shadow_map): its size; 0 = a colour texture
+        VkImage depth_image = VK_NULL_HANDLE;     // a render target's depth (create_render_target)
+        VkDeviceMemory depth_memory = VK_NULL_HANDLE;
+        VkImageView depth_view = VK_NULL_HANDLE;
+        u32 width = 0, height = 0;                // a render target's size
+        bool depth_readable = false;              // its depth is in the shader-read layout (the post pass reads it)
+        u32 generation = 0;
+    };
+
+    struct MaterialShader {
+        VkPipeline pipelines[2][3] = {};  // [static, skinned][opaque, translucent, additive]
+        u32 generation = 0;
+    };
+
+    MaterialShader* lookup_material(MaterialShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxMaterialShaders) return nullptr;
+        MaterialShader& m = material_shaders_[handle.index()];
+        return m.pipelines[0][0] && (m.generation & MaterialShaderHandle::kGenerationMask) == handle.generation() ? &m : nullptr;
+    }
+
+    void release_material(MaterialShader& m) {
+        for (auto& kind : m.pipelines) {
+            for (VkPipeline& pipeline : kind) {
+                if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+                pipeline = VK_NULL_HANDLE;
+            }
+        }
+    }
+
+    // The Vulkan SDK's DXC ($VULKAN_SDK/Bin/dxc): only it builds SPIR-V (the Windows SDK's dxc cannot).
+    std::filesystem::path dxc_path() {
+        const char* sdk = SDL_getenv("VULKAN_SDK");
+        if (!sdk || !*sdk) return {};
+#if defined(_WIN32)
+        const std::filesystem::path dxc = std::filesystem::path(sdk) / "Bin" / "dxc.exe";
+#else
+        const std::filesystem::path dxc = std::filesystem::path(sdk) / "bin" / "dxc";
+#endif
+        std::error_code ec;
+        return std::filesystem::exists(dxc, ec) ? dxc : std::filesystem::path{};
+    }
+
+    // HLSL -> SPIR-V through DXC in a hidden process (editor-time: Material Graph edits and loads).
+    // shortcut: a process and temp files per stage (a few hundred ms a material); load dxcompiler in-process if it gets slow
+    bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out) {
+        const std::filesystem::path dxc = dxc_path();
+        if (dxc.empty()) {
+            if (!warned_dxc_) LSD_LOG_INFO("vulkan", "Material Graph materials draw with the built-in material on Vulkan: the Vulkan SDK's DXC compiles them (not installed).");
+            warned_dxc_ = true;
+            return false;
+        }
+        std::error_code ec;
+        const std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+        if (ec) return false;
+        const std::string base = "lsd_material_" + std::to_string(reinterpret_cast<uintptr_t>(this)) + "_" + std::to_string(++spirv_jobs_);
+        const std::filesystem::path hlsl = dir / (base + ".hlsl"), spv = dir / (base + ".spv"), errors = dir / (base + ".txt");
+        {
+            std::ofstream file(hlsl, std::ios::binary);
+            file << source;
+            if (!file) return false;
+        }
+        const std::string target = std::string(stage) + "_6_0", entry = std::string(stage) + "_main", dxc_s = dxc.string(), hlsl_s = hlsl.string(),
+                          spv_s = spv.string(), errors_s = errors.string(), define_s = define ? std::string("-D") + define : std::string();
+        std::vector<const char*> args = {dxc_s.c_str(), "-spirv", "-fspv-target-env=vulkan1.3", "-T", target.c_str(), "-E", entry.c_str(),
+                                         "-Fo", spv_s.c_str(), "-Fe", errors_s.c_str()};
+        if (define) args.push_back(define_s.c_str());
+        args.push_back(hlsl_s.c_str());
+        args.push_back(nullptr);
+        const SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args.data());
+        SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);  // no console window
+        SDL_Process* process = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+        if (process) {
+            SDL_WaitProcess(process, true, nullptr);
+            SDL_DestroyProcess(process);
+        } else {
+            LSD_LOG_ERROR("vulkan", "Could not run %s: %s", dxc_s.c_str(), SDL_GetError());
+        }
+        out.clear();
+        if (std::ifstream file{spv, std::ios::binary | std::ios::ate}) {
+            const std::streamoff size = file.tellg();
+            if (size > 0 && size % 4 == 0) {
+                out.resize(static_cast<usize>(size) / 4);
+                file.seekg(0);
+                file.read(reinterpret_cast<char*>(out.data()), size);
+            }
+        }
+        if (out.empty()) {  // a compile error: DXC wrote why
+            std::ifstream file(errors, std::ios::binary);
+            std::string why((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            if (why.size() > 2000) why.resize(2000);
+            LSD_LOG_ERROR("vulkan", "Material Graph shader (%s%s%s) did not compile:\n%s", stage, define ? " " : "", define ? define : "", why.c_str());
+        }
+        std::filesystem::remove(hlsl, ec);
+        std::filesystem::remove(spv, ec);
+        std::filesystem::remove(errors, ec);
+        return !out.empty();
+    }
+
+    Texture* lookup_texture(TextureHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxTextures) return nullptr;
+        Texture& t = textures_[handle.index()];
+        if (!t.image || (t.generation & TextureHandle::kGenerationMask) != handle.generation()) return nullptr;
+        return &t;
+    }
+
+    void release_texture(Texture& t) {
+        if (t.set) vkFreeDescriptorSets(device_, texture_pool_, 1, &t.set);
+        if (t.view) vkDestroyImageView(device_, t.view, nullptr);
+        if (t.image) vkDestroyImage(device_, t.image, nullptr);
+        if (t.memory) vkFreeMemory(device_, t.memory, nullptr);
+        t.set = VK_NULL_HANDLE;
+        t.view = VK_NULL_HANDLE;
+        t.image = VK_NULL_HANDLE;
+        t.memory = VK_NULL_HANDLE;
+        t.shadow_size = 0;
+        if (t.depth_view) vkDestroyImageView(device_, t.depth_view, nullptr);
+        if (t.depth_image) vkDestroyImage(device_, t.depth_image, nullptr);
+        if (t.depth_memory) vkFreeMemory(device_, t.depth_memory, nullptr);
+        t.depth_view = VK_NULL_HANDLE;
+        t.depth_image = VK_NULL_HANDLE;
+        t.depth_memory = VK_NULL_HANDLE;
+        t.width = t.height = 0;
+        t.depth_readable = false;
+    }
+
+    // One-off command buffers for uploads, run at once (shortcut: waits for the queue).
+    VkCommandBuffer begin_upload() {
+        VkCommandBufferAllocateInfo info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        info.commandPool = upload_pool_;
+        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        info.commandBufferCount = 1;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        if (!upload_pool_ || !check(vkAllocateCommandBuffers(device_, &info, &cmd), "vkAllocateCommandBuffers (upload)")) return VK_NULL_HANDLE;
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &begin);
+        return cmd;
+    }
+
+    bool end_upload(VkCommandBuffer cmd) {
+        vkEndCommandBuffer(cmd);
+        VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+        cmd_info.commandBuffer = cmd;
+        VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+        submit.commandBufferInfoCount = 1;
+        submit.pCommandBufferInfos = &cmd_info;
+        const bool ok = check(vkQueueSubmit2(queue_, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit2 (upload)") && check(vkQueueWaitIdle(queue_), "vkQueueWaitIdle (upload)");
+        vkFreeCommandBuffers(device_, upload_pool_, 1, &cmd);
+        return ok;
+    }
+
+    // The sampler, the texture descriptor layout and pool, the upload pool and a white texture (for
+    // meshes without one), made once.
+    bool create_texture_support() {
+        VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sampler.magFilter = VK_FILTER_LINEAR;
+        sampler.minFilter = VK_FILTER_LINEAR;
+        sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler.maxLod = VK_LOD_CLAMP_NONE;
+        if (!check(vkCreateSampler(device_, &sampler, nullptr, &sampler_), "vkCreateSampler")) return false;
+        VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 1;
+        layout.pBindings = &binding;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &texture_set_layout_), "vkCreateDescriptorSetLayout")) return false;
+        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        pool.maxSets = kMaxTextures;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &size;
+        if (!check(vkCreateDescriptorPool(device_, &pool, nullptr, &texture_pool_), "vkCreateDescriptorPool")) return false;
+        VkCommandPoolCreateInfo upload{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        upload.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        upload.queueFamilyIndex = gpu_.queue_family;
+        if (!check(vkCreateCommandPool(device_, &upload, nullptr, &upload_pool_), "vkCreateCommandPool (upload)")) return false;
+        const u8 white[4] = {255, 255, 255, 255};
+        const void* mip = white;
+        white_ = create_texture(1, 1, 1, TextureFormat::RGBA8, &mip);
+        VkSamplerCreateInfo compare{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};  // as D3D12's s1: 2x2 filtered depth compare
+        compare.magFilter = VK_FILTER_LINEAR;
+        compare.minFilter = VK_FILTER_LINEAR;
+        compare.addressModeU = compare.addressModeV = compare.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        compare.compareEnable = VK_TRUE;
+        compare.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        if (!check(vkCreateSampler(device_, &compare, nullptr, &shadow_sampler_), "vkCreateSampler (shadow)")) return false;
+        const u32 flat = 0xFFFF8080u;  // RGBA bytes (little-endian): a normal map's "straight out"
+        const void* flat_mip = &flat;
+        flat_normal_ = create_texture(1, 1, 1, TextureFormat::RGBA8, &flat_mip);
+        no_shadow_ = create_shadow_map(1);  // bound for a view without sun or local shadows (all lit)
+        return white_.valid() && flat_normal_.valid() && no_shadow_.valid();
+    }
+
+    u32 memory_type(u32 allowed, VkMemoryPropertyFlags wanted) const {
+        VkPhysicalDeviceMemoryProperties props;
+        vkGetPhysicalDeviceMemoryProperties(gpu_.handle, &props);
+        for (u32 i = 0; i < props.memoryTypeCount; ++i) {
+            if ((allowed & (1u << i)) && (props.memoryTypes[i].propertyFlags & wanted) == wanted) return i;
+        }
+        return UINT32_MAX;
+    }
+
+    static constexpr u32 kMaterialMemo = 64;  // material sets a frame remembers (draws repeat them)
+    struct MaterialMemo {
+        VkImageView views[4] = {};
+        VkDescriptorSet set = VK_NULL_HANDLE;
+    };
     struct Frame {
         VkCommandPool pool = VK_NULL_HANDLE;
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         VkSemaphore image_available = VK_NULL_HANDLE;
+        VkBuffer ring = VK_NULL_HANDLE;  // joints and instance matrices written this frame
+        VkDeviceMemory ring_memory = VK_NULL_HANDLE;
+        u8* ring_mapped = nullptr;
+        VkDeviceSize ring_used = 0;
+        VkDescriptorSet rows_set = VK_NULL_HANDLE;  // the ring as a dynamic storage buffer
+        VkBuffer stream = VK_NULL_HANDLE;  // UI and particle vertices / indices written this frame
+        VkDeviceMemory stream_memory = VK_NULL_HANDLE;
+        u8* stream_mapped = nullptr;
+        VkDeviceSize stream_used = 0;
+        VkDescriptorPool post_pool = VK_NULL_HANDLE;  // the post passes' sets, reset each frame
+        VkDescriptorPool draw_pool = VK_NULL_HANDLE;  // the lit meshes' material / view sets, reset each frame
+        VkDescriptorSet buffers_set = VK_NULL_HANDLE; // mesh.hlsl's set 2 over this frame's ring
+        VkDescriptorSet culled_set = VK_NULL_HANDLE;  // the same, its rows from the cull output (gpu_cull draws)
+        MaterialMemo memo[kMaterialMemo];
+        u32 memo_count = 0;
     };
+
+    // Copies `bytes` into the frame's vertex stream; `offset` gets where.
+    bool stream_write(Frame& f, const void* data, VkDeviceSize bytes, VkDeviceSize& offset) {
+        const VkDeviceSize at = (f.stream_used + 15) & ~VkDeviceSize{15};
+        if (!f.stream_mapped || at + bytes > kStreamBytes) {
+            if (!warned_stream_) LSD_LOG_WARN("vulkan", "Too many particles / UI vertices this frame: some are skipped.");
+            warned_stream_ = true;
+            return false;
+        }
+        std::memcpy(f.stream_mapped + at, data, bytes);
+        f.stream_used = at + bytes;
+        offset = at;
+        return true;
+    }
+
+    // Copies `bytes` into the frame's ring; `offset` gets where (for the dynamic descriptor).
+    bool ring_write(Frame& f, const void* data, VkDeviceSize bytes, u32& offset) {
+        const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+        const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
+        if (!f.ring_mapped || bytes > kRowsWindow || at + kRowsWindow > kRingBytes) {
+            if (!warned_ring_) LSD_LOG_WARN("vulkan", "This frame's joint / instance buffer is full: some skinned or instanced meshes are skipped.");
+            warned_ring_ = true;
+            return false;
+        }
+        std::memcpy(f.ring_mapped + at, data, bytes);
+        f.ring_used = at + bytes;
+        offset = static_cast<u32>(at);
+        return true;
+    }
+
+    void read_timestamps() {
+        const u32 set = timestamps_set_[frame_];
+        timestamps_set_[frame_] = 0;
+        if (!timestamp_pool_ || !(set & 1u)) return;  // slot 0 is where the others count from
+        u64 ticks[kGpuTimestamps] = {};
+        for (u32 i = 0; i < kGpuTimestamps; ++i) {
+            if (!((set >> i) & 1u)) continue;
+            if (vkGetQueryPoolResults(device_, timestamp_pool_, frame_ * kGpuTimestamps + i, 1, sizeof(u64), &ticks[i], sizeof(u64), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+            ticks[i] &= timestamp_mask_;
+        }
+        for (u32 i = 0; i < kGpuTimestamps; ++i) {
+            gpu_ms_[i] = (set >> i) & 1u ? static_cast<f64>((ticks[i] - ticks[0]) & timestamp_mask_) * static_cast<f64>(timestamp_period_) / 1.0e6 : -1.0;
+        }
+        have_timings_ = true;
+    }
+
+    // Each frame's ring buffer (persistently mapped) and its descriptor set (a dynamic storage buffer: set 1 rows, set 2 the Scene block).
+    bool create_rings() {
+        VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};  // rows and the Scene block
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 1;
+        layout.pBindings = &binding;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &rows_set_layout_), "vkCreateDescriptorSetLayout (rows)")) return false;
+        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, kFramesInFlight};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.maxSets = kFramesInFlight;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &size;
+        if (!check(vkCreateDescriptorPool(device_, &pool, nullptr, &rows_pool_), "vkCreateDescriptorPool (rows)")) return false;
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(gpu_.handle, &props);
+        storage_alignment_ = std::max(props.limits.minStorageBufferOffsetAlignment, props.limits.minUniformBufferOffsetAlignment);
+        u32 family_count = 0;  // timestamps: when the graphics queue keeps them (stat dump's GPU times)
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu_.handle, &family_count, nullptr);
+        VkQueueFamilyProperties families[32];
+        family_count = std::min(family_count, 32u);
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu_.handle, &family_count, families);
+        const u32 bits = gpu_.queue_family < family_count ? families[gpu_.queue_family].timestampValidBits : 0;
+        if (bits && props.limits.timestampPeriod > 0.0f) {
+            VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            query.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            query.queryCount = kFramesInFlight * kGpuTimestamps;
+            if (check(vkCreateQueryPool(device_, &query, nullptr, &timestamp_pool_), "vkCreateQueryPool")) {
+                timestamp_period_ = props.limits.timestampPeriod;
+                timestamp_mask_ = bits >= 64 ? ~u64{0} : (u64{1} << bits) - 1;
+            }
+        }
+        for (Frame& f : frames_) {
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = kRingBytes;
+            info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+            if (!check(vkCreateBuffer(device_, &info, nullptr, &f.ring), "vkCreateBuffer (ring)")) return false;
+            VkMemoryRequirements need;
+            vkGetBufferMemoryRequirements(device_, f.ring, &need);
+            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            alloc.allocationSize = need.size;
+            alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            void* mapped = nullptr;
+            if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &f.ring_memory), "vkAllocateMemory (ring)") ||
+                !check(vkBindBufferMemory(device_, f.ring, f.ring_memory, 0), "vkBindBufferMemory (ring)") ||
+                !check(vkMapMemory(device_, f.ring_memory, 0, kRingBytes, 0, &mapped), "vkMapMemory (ring)")) return false;
+            f.ring_mapped = static_cast<u8*>(mapped);
+            VkBufferCreateInfo stream{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            stream.size = kStreamBytes;
+            stream.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+            if (!check(vkCreateBuffer(device_, &stream, nullptr, &f.stream), "vkCreateBuffer (stream)")) return false;
+            VkMemoryRequirements sneed;
+            vkGetBufferMemoryRequirements(device_, f.stream, &sneed);
+            VkMemoryAllocateInfo salloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            salloc.allocationSize = sneed.size;
+            salloc.memoryTypeIndex = memory_type(sneed.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            void* smapped = nullptr;
+            if (salloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &salloc, nullptr, &f.stream_memory), "vkAllocateMemory (stream)") ||
+                !check(vkBindBufferMemory(device_, f.stream, f.stream_memory, 0), "vkBindBufferMemory (stream)") ||
+                !check(vkMapMemory(device_, f.stream_memory, 0, kStreamBytes, 0, &smapped), "vkMapMemory (stream)")) return false;
+            f.stream_mapped = static_cast<u8*>(smapped);
+            VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            set_info.descriptorPool = rows_pool_;
+            set_info.descriptorSetCount = 1;
+            set_info.pSetLayouts = &rows_set_layout_;
+            if (!check(vkAllocateDescriptorSets(device_, &set_info, &f.rows_set), "vkAllocateDescriptorSets (rows)")) return false;
+            VkDescriptorBufferInfo described{f.ring, 0, kRowsWindow};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = f.rows_set;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+            write.pBufferInfo = &described;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+        return true;
+    }
 
     bool create_instance(bool validation) {
         u32 sdl_count = 0;
@@ -451,8 +2376,17 @@ private:
         VkPhysicalDeviceVulkan13Features features13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
         features13.dynamicRendering = VK_TRUE;
         features13.synchronization2 = VK_TRUE;
+        features13.shaderDemoteToHelperInvocation = VK_TRUE;  // core in 1.3: DXC turns HLSL discard into it (Masked materials)
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         features.pNext = &features13;
+        VkPhysicalDeviceFeatures supported{};
+        vkGetPhysicalDeviceFeatures(gpu_.handle, &supported);
+        depth_clamp_ = supported.depthClamp == VK_TRUE;  // shadow casters behind the light's near plane still cast (D3D12's DepthClipEnable off)
+        features.features.depthClamp = supported.depthClamp;
+        fill_non_solid_ = supported.fillModeNonSolid == VK_TRUE;  // the Wireframe view mode's line fill
+        features.features.fillModeNonSolid = supported.fillModeNonSolid;
+        bc_ = supported.textureCompressionBC == VK_TRUE;  // BC1 / BC3 textures (every desktop GPU)
+        features.features.textureCompressionBC = supported.textureCompressionBC;
 
         const char* extensions[2] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME};
         VkDeviceCreateInfo create{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -498,7 +2432,7 @@ private:
         create.imageColorSpace = format_.colorSpace;
         create.imageExtent = extent_;
         create.imageArrayLayers = 1;
-        create.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        create.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;  // TRANSFER_SRC: capture_frame
         create.preTransform = caps.currentTransform;
         create.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         create.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // vsync, always supported
@@ -511,6 +2445,7 @@ private:
 
         image_count_ = kMaxSwapchainImages;
         vkGetSwapchainImagesKHR(device_, swapchain_, &image_count_, images_);
+        if (!create_depth()) return false;
         for (u32 i = 0; i < image_count_; ++i) {
             VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             view.image = images_[i];
@@ -534,6 +2469,39 @@ private:
         if (swapchain_) vkDestroySwapchainKHR(device_, swapchain_, nullptr);
         swapchain_ = VK_NULL_HANDLE;
         image_count_ = 0;
+        if (depth_view_) vkDestroyImageView(device_, depth_view_, nullptr);
+        if (depth_image_) vkDestroyImage(device_, depth_image_, nullptr);
+        if (depth_memory_) vkFreeMemory(device_, depth_memory_, nullptr);
+        depth_view_ = VK_NULL_HANDLE;
+        depth_image_ = VK_NULL_HANDLE;
+        depth_memory_ = VK_NULL_HANDLE;
+    }
+
+    // The window-sized depth buffer the scene draws with (made with the swapchain).
+    bool create_depth() {
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.format = kDepthFormat;
+        image.extent = {extent_.width, extent_.height, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        if (!check(vkCreateImage(device_, &image, nullptr, &depth_image_), "vkCreateImage (depth)")) return false;
+        VkMemoryRequirements need;
+        vkGetImageMemoryRequirements(device_, depth_image_, &need);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = need.size;
+        alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &depth_memory_), "vkAllocateMemory (depth)") ||
+            !check(vkBindImageMemory(device_, depth_image_, depth_memory_, 0), "vkBindImageMemory (depth)")) return false;
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = depth_image_;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = kDepthFormat;
+        view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        return check(vkCreateImageView(device_, &view, nullptr, &depth_view_), "vkCreateImageView (depth)");
     }
 
     bool create_triangle_pipeline() {
@@ -585,8 +2553,11 @@ private:
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachmentFormats = &format_.format;
+        rendering.depthAttachmentFormat = kDepthFormat;
+        VkPipelineDepthStencilStateCreateInfo no_depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
 
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        create.pDepthStencilState = &no_depth;
         create.pNext = &rendering;
         create.stageCount = 2;
         create.pStages = stages;
@@ -609,9 +2580,282 @@ private:
 #endif
     }
 
+    // A pipeline for the scene pass (colour + depth) or, `shadow`, a depth-only shadow pass (no pixel
+    // shader when ps is null, depth bias, depth clamp): vertex layout, topology, depth test, push constants.
+    bool make_pipeline(const u32* vs, usize vs_size, const u32* ps, usize ps_size, const VkVertexInputAttributeDescription* attributes, u32 attribute_count,
+                       u32 stride, VkPrimitiveTopology topology, u32 push_bytes, VkShaderStageFlags push_stages, VkPipelineLayout& layout_out, VkPipeline& out,
+                       bool textured = false, bool depth_test = true, bool shadow = false, Blend blend_mode = Blend::Opaque,
+                       VkPolygonMode polygon = VK_POLYGON_MODE_FILL) {
+        if (!layout_out) {  // pipelines sharing a layout (every mesh and shadow pipeline) make it once
+            VkPushConstantRange push{push_stages, 0, push_bytes};
+            VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layout.pushConstantRangeCount = 1;
+            layout.pPushConstantRanges = &push;
+            if (textured) {  // UI and particles: their texture (set 0)
+                layout.setLayoutCount = 1;
+                layout.pSetLayouts = &texture_set_layout_;
+            }
+            if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &layout_out), "vkCreatePipelineLayout (scene)")) return false;
+        }
+        VkShaderModule modules[2] = {};
+        const u32* code[2] = {vs, ps};
+        const usize sizes[2] = {vs_size, ps_size};
+        const u32 stage_count = ps ? 2 : 1;
+        for (u32 i = 0; i < stage_count; ++i) {
+            VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            info.codeSize = sizes[i];
+            info.pCode = code[i];
+            if (!check(vkCreateShaderModule(device_, &info, nullptr, &modules[i]), "vkCreateShaderModule (scene)")) return false;
+        }
+        VkPipelineShaderStageCreateInfo stages[2] = {{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = modules[0];
+        stages[0].pName = "vs_main";
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = modules[1];
+        stages[1].pName = "ps_main";
+        VkVertexInputBindingDescription binding{0, stride, VK_VERTEX_INPUT_RATE_VERTEX};
+        VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        vertex_input.vertexBindingDescriptionCount = attribute_count ? 1 : 0;
+        vertex_input.pVertexBindingDescriptions = &binding;
+        vertex_input.vertexAttributeDescriptionCount = attribute_count;
+        vertex_input.pVertexAttributeDescriptions = attributes;
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        input_assembly.topology = topology;
+        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        viewport.viewportCount = 1;
+        viewport.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        raster.polygonMode = polygon;
+        raster.cullMode = VK_CULL_MODE_NONE;  // as D3D12: both sides until imported winding is verified
+        raster.lineWidth = 1.0f;
+        if (shadow) {
+            raster.depthClampEnable = depth_clamp_ ? VK_TRUE : VK_FALSE;
+            raster.depthBiasEnable = VK_TRUE;
+            raster.depthBiasSlopeFactor = 2.0f;  // as D3D12's SlopeScaledDepthBias: against acne on slopes
+        }
+        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        depth.depthTestEnable = depth_test && blend_mode != Blend::MeshOverdraw ? VK_TRUE : VK_FALSE;
+        depth.depthWriteEnable = depth_test && blend_mode == Blend::Opaque ? VK_TRUE : VK_FALSE;  // blended sprites never hide each other
+        depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineColorBlendAttachmentState blend_attachment{};
+        blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        if (blend_mode != Blend::Opaque) {
+            const bool mesh = blend_mode == Blend::MeshTranslucent || blend_mode == Blend::MeshAdditive || blend_mode == Blend::MeshOverdraw;
+            const bool adds = blend_mode == Blend::Additive || blend_mode == Blend::MeshAdditive || blend_mode == Blend::MeshOverdraw;
+            blend_attachment.blendEnable = VK_TRUE;
+            blend_attachment.srcColorBlendFactor = blend_mode == Blend::Premultiplied ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
+            blend_attachment.dstColorBlendFactor = adds ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+            // Meshes: the scene target's alpha is mirror-likeness (SSR); translucent surfaces cover it by their opacity, additive ones leave it.
+            blend_attachment.srcAlphaBlendFactor = mesh ? VK_BLEND_FACTOR_ZERO : VK_BLEND_FACTOR_ONE;
+            blend_attachment.dstAlphaBlendFactor = mesh && adds ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+        blend.attachmentCount = shadow ? 0 : 1;
+        blend.pAttachments = &blend_attachment;
+        const VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynamic.dynamicStateCount = 2;
+        dynamic.pDynamicStates = dynamic_states;
+        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        rendering.colorAttachmentCount = shadow ? 0 : 1;
+        rendering.pColorAttachmentFormats = &format_.format;
+        rendering.depthAttachmentFormat = kDepthFormat;
+        VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        create.pNext = &rendering;
+        create.stageCount = stage_count;
+        create.pStages = stages;
+        create.pVertexInputState = &vertex_input;
+        create.pInputAssemblyState = &input_assembly;
+        create.pViewportState = &viewport;
+        create.pRasterizationState = &raster;
+        create.pMultisampleState = &multisample;
+        create.pDepthStencilState = &depth;
+        create.pColorBlendState = &blend;
+        create.pDynamicState = &dynamic;
+        create.layout = layout_out;
+        const bool ok = check(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &out), "vkCreateGraphicsPipelines (scene)");
+        vkDestroyShaderModule(device_, modules[0], nullptr);
+        if (modules[1]) vkDestroyShaderModule(device_, modules[1], nullptr);
+        return ok;
+    }
+
+    // The lit meshes' descriptor set layouts (mesh.hlsl's VK_BIND): 0 the material (t0-t2, s0, t8), 1 the
+    // view (t3-t7, s1 compare, s2 clamped), 2 the Lights / rows / material parameter blocks (dynamic
+    // uniform buffers over the frame's ring); a descriptor pool per frame and each frame's set 2.
+    bool create_mesh_layouts() {
+        const VkShaderStageFlags fragment = VK_SHADER_STAGE_FRAGMENT_BIT, both = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        const VkDescriptorSetLayoutBinding material[5] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                          {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                          {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                          {3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &sampler_},
+                                                          {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr}};  // t8 emissive
+        const VkDescriptorSetLayoutBinding view[7] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+                                                      {5, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &shadow_sampler_},
+                                                      {6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &post_sampler_}};
+        const VkDescriptorSetLayoutBinding buffers[3] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr},
+                                                         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr},
+                                                         {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr}};
+        const struct {
+            const VkDescriptorSetLayoutBinding* bindings;
+            u32 count;
+            VkDescriptorSetLayout* out;
+        } layouts[3] = {{material, 5, &material_set_layout_}, {view, 7, &view_set_layout_}, {buffers, 3, &buffers_set_layout_}};
+        for (const auto& l : layouts) {
+            VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            info.bindingCount = l.count;
+            info.pBindings = l.bindings;
+            if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
+        }
+        const VkDescriptorPoolSize draw_sizes[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
+                                                    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3}};
+        VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        draw_pool.maxSets = kDrawSetsPerFrame;
+        draw_pool.poolSizeCount = 3;
+        draw_pool.pPoolSizes = draw_sizes;
+        const VkDescriptorPoolSize buffer_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kFramesInFlight * 6};
+        VkDescriptorPoolCreateInfo buffer_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        buffer_pool.maxSets = kFramesInFlight * 2;  // set 2 over the ring, and its culled twin (rows from the cull output)
+        buffer_pool.poolSizeCount = 1;
+        buffer_pool.pPoolSizes = &buffer_size;
+        if (!check(vkCreateDescriptorPool(device_, &buffer_pool, nullptr, &buffers_pool_), "vkCreateDescriptorPool (mesh buffers)")) return false;
+        for (Frame& f : frames_) {
+            if (!check(vkCreateDescriptorPool(device_, &draw_pool, nullptr, &f.draw_pool), "vkCreateDescriptorPool (mesh)")) return false;
+            VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            info.descriptorPool = buffers_pool_;
+            info.descriptorSetCount = 1;
+            info.pSetLayouts = &buffers_set_layout_;
+            if (!check(vkAllocateDescriptorSets(device_, &info, &f.buffers_set), "vkAllocateDescriptorSets (mesh buffers)")) return false;
+            const VkDescriptorBufferInfo ranges[3] = {{f.ring, 0, sizeof(LightSetup)}, {f.ring, 0, kRowsBytes}, {f.ring, 0, kParamsBytes}};
+            VkWriteDescriptorSet writes[3] = {};
+            for (u32 i = 0; i < 3; ++i) {
+                writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                writes[i].dstSet = f.buffers_set;
+                writes[i].dstBinding = i;
+                writes[i].descriptorCount = 1;
+                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                writes[i].pBufferInfo = &ranges[i];
+            }
+            vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        }
+        const VkPushConstantRange push{both, 0, kMeshPushBytes};
+        VkPipelineLayoutCreateInfo mesh{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        const VkDescriptorSetLayout mesh_sets[3] = {material_set_layout_, view_set_layout_, buffers_set_layout_};
+        mesh.setLayoutCount = 3;
+        mesh.pSetLayouts = mesh_sets;
+        mesh.pushConstantRangeCount = 1;
+        mesh.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &mesh, nullptr, &mesh_layout_), "vkCreatePipelineLayout (mesh)")) return false;
+        // Shadow casters (shadow.hlsl): the Masked cut-out's texture (set 0) and the rows (set 1, storage).
+        const VkPushConstantRange shadow_push{both, 0, kShadowPushBytes};
+        const VkDescriptorSetLayout shadow_sets[2] = {texture_set_layout_, rows_set_layout_};
+        VkPipelineLayoutCreateInfo shadow{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        shadow.setLayoutCount = 2;
+        shadow.pSetLayouts = shadow_sets;
+        shadow.pushConstantRangeCount = 1;
+        shadow.pPushConstantRanges = &shadow_push;
+        return check(vkCreatePipelineLayout(device_, &shadow, nullptr, &shadow_layout_), "vkCreatePipelineLayout (shadow)");
+    }
+
+    bool create_scene_pipelines() {
+#if LSD_VULKAN_HAVE_SPIRV
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(gpu_.handle, &props);
+        if (props.limits.maxPushConstantsSize < kMeshPushBytes || props.limits.maxUniformBufferRange < sizeof(LightSetup)) {
+            LSD_LOG_WARN("vulkan", "This GPU offers %u bytes of push constants and %u-byte uniform buffers (meshes need %u and %u): meshes are not drawn.",
+                         props.limits.maxPushConstantsSize, props.limits.maxUniformBufferRange, kMeshPushBytes, static_cast<u32>(sizeof(LightSetup)));
+            return true;
+        }
+        if (!create_texture_support() || !create_rings() || !create_post_pipelines() || !create_mesh_layouts()) return false;
+        if (!create_culling()) LSD_LOG_WARN("vulkan", "GPU culling is off: its compute passes could not be made (gpu_cull draws draw every copy).");
+        const auto& skinned_attributes = kSkinnedAttributes;
+        const auto& mesh_attributes = kMeshAttributes;
+        // Shadow casters read only the position and UV (and the skinning attributes).
+        const VkVertexInputAttributeDescription shadow_attributes[2] = {mesh_attributes[0], mesh_attributes[2]};
+        const VkVertexInputAttributeDescription shadow_skinned_attributes[4] = {skinned_attributes[0], skinned_attributes[2], skinned_attributes[3], skinned_attributes[4]};
+        const VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        const VkPrimitiveTopology triangles = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        const VkVertexInputAttributeDescription ui_attributes[3] = {
+            {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(UiVertex, position)},
+            {1, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(UiVertex, color)},
+            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(UiVertex, uv)},
+        };
+        const VkVertexInputAttributeDescription particle_attributes[3] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleVertex, position)},
+            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(ParticleVertex, color)},
+            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ParticleVertex, uv)},
+        };
+        const VkVertexInputAttributeDescription line_attributes[2] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(LineVertex, position)},
+            {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(LineVertex, color)},
+        };
+        // The lit meshes: [static, skinned, instanced] x [opaque, wireframe, translucent, additive, overdraw], as D3D12's.
+        struct Kind {
+            const u32 *vs, *ps;
+            usize vs_size, ps_size;
+            const VkVertexInputAttributeDescription* attributes;
+            u32 attribute_count, stride;
+        };
+        const Kind kinds[3] = {{kMeshVsSpirv, kMeshPsSpirv, sizeof kMeshVsSpirv, sizeof kMeshPsSpirv, mesh_attributes, 4, sizeof(MeshVertex)},
+                               {kMeshSkinnedVsSpirv, kMeshSkinnedPsSpirv, sizeof kMeshSkinnedVsSpirv, sizeof kMeshSkinnedPsSpirv, skinned_attributes, 5, sizeof(SkinnedVertex)},
+                               {kMeshInstancedVsSpirv, kMeshInstancedPsSpirv, sizeof kMeshInstancedVsSpirv, sizeof kMeshInstancedPsSpirv, mesh_attributes, 3, sizeof(MeshVertex)}};  // copies are not lightmapped: no lightmap UV
+        const Blend modes[5] = {Blend::Opaque, Blend::Opaque, Blend::MeshTranslucent, Blend::MeshAdditive, Blend::MeshOverdraw};
+        for (u32 k = 0; k < 3; ++k) {
+            for (u32 m = 0; m < 5; ++m) {
+                const VkPolygonMode polygon = m == 1 && fill_non_solid_ ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
+                if (!make_pipeline(kinds[k].vs, kinds[k].vs_size, kinds[k].ps, kinds[k].ps_size, kinds[k].attributes, kinds[k].attribute_count, kinds[k].stride, triangles,
+                                   kMeshPushBytes, stages, mesh_layout_, mesh_pipelines_[k][m], false, true, false, modes[m], polygon)) return false;
+            }
+        }
+        if (!particle_layout_) {  // the sprite (set 0) and the depth soft particles fade against (set 1)
+            const VkDescriptorSetLayoutBinding depth_binding{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+            VkDescriptorSetLayoutCreateInfo depth_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            depth_info.bindingCount = 1;
+            depth_info.pBindings = &depth_binding;
+            if (!check(vkCreateDescriptorSetLayout(device_, &depth_info, nullptr, &particle_depth_layout_), "vkCreateDescriptorSetLayout (particle depth)")) return false;
+            const VkPushConstantRange push{stages, 0, kParticlePushBytes};
+            const VkDescriptorSetLayout sets[2] = {texture_set_layout_, particle_depth_layout_};
+            VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layout.setLayoutCount = 2;
+            layout.pSetLayouts = sets;
+            layout.pushConstantRangeCount = 1;
+            layout.pPushConstantRanges = &push;
+            if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &particle_layout_), "vkCreatePipelineLayout (particles)")) return false;
+        }
+        return make_pipeline(kSkyVsSpirv, sizeof kSkyVsSpirv, kSkyPsSpirv, sizeof kSkyPsSpirv, nullptr, 0, 0, triangles, kMeshPushBytes, stages, mesh_layout_,
+                             sky_pipeline_, false, false) &&  // behind everything: drawn first, depth untouched
+               make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles, kShadowPushBytes, stages,
+                             shadow_layout_, shadow_pipelines_[0], false, true, true) &&
+               make_pipeline(kShadowSkinnedVsSpirv, sizeof kShadowSkinnedVsSpirv, nullptr, 0, shadow_skinned_attributes, 4, sizeof(SkinnedVertex), triangles,
+                             kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[1], false, true, true) &&
+               make_pipeline(kShadowInstancedVsSpirv, sizeof kShadowInstancedVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles,
+                             kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[2], false, true, true) &&
+               make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, kShadowPsSpirv, sizeof kShadowPsSpirv, shadow_attributes, 2, sizeof(MeshVertex), triangles,
+                             kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[3], false, true, true) &&
+               make_pipeline(kUiVsSpirv, sizeof kUiVsSpirv, kUiPsSpirv, sizeof kUiPsSpirv, ui_attributes, 3, sizeof(UiVertex), triangles, kUiPushBytes, stages,
+                             ui_layout_, ui_pipeline_, true, false, false, Blend::Premultiplied) &&
+               make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
+                             triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[0], true, true, false, Blend::Alpha) &&
+               make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
+                             triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[1], true, true, false, Blend::Additive) &&
+               make_pipeline(kLinesVsSpirv, sizeof kLinesVsSpirv, kLinesPsSpirv, sizeof kLinesPsSpirv, line_attributes, 2, sizeof(LineVertex),
+                             VK_PRIMITIVE_TOPOLOGY_LINE_LIST, sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT, line_layout_, line_pipeline_);
+#else
+        return true;
+#endif
+    }
+
     static void transition(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
                            VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
-                           VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+                           VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT, u32 mips = 1) {
         VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
         barrier.srcStageMask = src_stage;
         barrier.srcAccessMask = src_access;
@@ -620,7 +2864,7 @@ private:
         barrier.oldLayout = from;
         barrier.newLayout = to;
         barrier.image = image;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.subresourceRange = {aspect, 0, mips, 0, 1};
         VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         dependency.imageMemoryBarrierCount = 1;
         dependency.pImageMemoryBarriers = &barrier;
@@ -649,7 +2893,70 @@ private:
     VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     bool debug_ui_ = false;
-    bool warned_no_meshes_ = false;
+    Buffer buffers_[kMaxBuffers];
+    VkImage depth_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
+    VkImageView depth_view_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE, line_layout_ = VK_NULL_HANDLE, shadow_layout_ = VK_NULL_HANDLE;
+    VkPipeline mesh_pipelines_[3][5] = {};  // [static, skinned, instanced][opaque, wireframe, translucent, additive, overdraw]
+    VkPipeline line_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout material_set_layout_ = VK_NULL_HANDLE, view_set_layout_ = VK_NULL_HANDLE, buffers_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool buffers_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet view_set_ = VK_NULL_HANDLE;  // this frame's set 1 (made again when a shadow map or atlas changes)
+    LightSetup lights_ = default_lights();
+    bool lights_in_ring_ = false;  // written into this frame's ring since the last set_lights
+    u32 lights_at_ = 0;
+    TextureHandle local_shadow_, decal_atlas_, reflection_atlas_, lightmap_atlas_, flat_normal_;
+    bool fill_non_solid_ = false;
+    bool bc_ = false;  // textureCompressionBC: BC1 / BC3 textures
+    bool warned_sets_ = false;
+    MaterialShader material_shaders_[kMaxMaterialShaders];
+    u32 spirv_jobs_ = 0;
+    VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout cull_layout_ = VK_NULL_HANDLE;
+    VkPipeline cull_pipelines_[3] = {};  // reset, cull, arguments
+    Buffer cull_out_, cull_args_;        // the visible rows; the count + one indirect draw per batch
+    VkQueryPool timestamp_pool_ = VK_NULL_HANDLE;  // kGpuTimestamps per frame in flight
+    u32 timestamps_set_[kFramesInFlight] = {};
+    f64 gpu_ms_[kGpuTimestamps] = {};
+    f32 timestamp_period_ = 0.0f;  // nanoseconds a tick
+    u64 timestamp_mask_ = 0;
+    bool have_timings_ = false;
+    bool warned_dxc_ = false;
+    TextureHandle sun_shadow_, no_shadow_;
+    Texture* shadow_pass_ = nullptr;   // the shadow map being drawn (between begin / end_shadow_pass)
+    VkSampler shadow_sampler_ = VK_NULL_HANDLE;
+    VkPipeline shadow_pipelines_[4] = {};  // static, skinned, instanced, Masked
+    bool depth_clamp_ = false;
+    f32 viewport_[4] = {};  // the last set_viewport (draw_ui puts it back)
+    VkPipelineLayout ui_layout_ = VK_NULL_HANDLE, particle_layout_ = VK_NULL_HANDLE;
+    VkPipeline ui_pipeline_ = VK_NULL_HANDLE, particle_pipelines_[2] = {};  // alpha, additive
+    bool warned_stream_ = false;
+    bool in_pass_ = false;               // between vkCmdBeginRendering and vkCmdEndRendering
+    Texture* target_ = nullptr;          // the render target being drawn into (null: the window or a shadow map)
+    Texture* resume_target_ = nullptr;   // the target a shadow pass interrupted
+    VkSampler post_sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout post_set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout post_layout_ = VK_NULL_HANDLE;
+    VkPipeline post_pipelines_[kPostPasses] = {};
+    PostChain post_chains_[4];
+    u32 post_chain_next_ = 0;
+    TextureHandle outline_mask_;
+    u32 outline_size_[2] = {};
+    bool warned_post_ = false;
+    char capture_path_[260] = "";
+    Texture textures_[kMaxTextures];
+    TextureHandle white_;
+    VkSampler sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout texture_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout particle_depth_layout_ = VK_NULL_HANDLE;  // particle.hlsl's set 1
+    VkDescriptorPool texture_pool_ = VK_NULL_HANDLE;
+    VkCommandPool upload_pool_ = VK_NULL_HANDLE;
+    VkPipeline sky_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout rows_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool rows_pool_ = VK_NULL_HANDLE;
+    VkDeviceSize storage_alignment_ = 0;
+    bool warned_ring_ = false;
 };
 
 } // namespace

@@ -13,6 +13,10 @@ struct Builder {
     ai::BehaviorTree& out;
     char* error;
     usize capacity;
+    BtResolver resolve = nullptr;
+    void* user = nullptr;
+    u32 depth = 0;        // Run Behavior nesting
+    u32 id_override = 0;  // inside a subtree: its nodes glow as the Run Behavior node that brought them in
     u32 visited[ai::kMaxBtNodes] = {};  // graph node ids already in the tree
     u32 visited_count = 0;
 
@@ -32,9 +36,10 @@ struct Builder {
         index = out.count++;
         ai::BtNode& n = out.nodes[index];
         n = ai::BtNode{};
-        n.id = node.id;
+        n.id = id_override ? id_override : node.id;
         const char* t = node.type;
         using ai::BtType;
+        if (std::strcmp(t, "BtRunBehavior") == 0) return add_subtree(node, index);
         n.type = std::strcmp(t, "BtRoot") == 0             ? BtType::Root
                  : std::strcmp(t, "BtSelector") == 0       ? BtType::Selector
                  : std::strcmp(t, "BtSequence") == 0       ? BtType::Sequence
@@ -87,7 +92,29 @@ struct Builder {
             }
             default: break;
         }
-        // Children: the Child pins left to right.
+        return add_children(node, index);
+    }
+
+    // Unreal's Run Behavior: the other tree's Root branch under a one-child Sequence (same result).
+    bool add_subtree(const script::GraphNode& node, u32 index) {
+        out.nodes[index].type = ai::BtType::Sequence;
+        const char* name = node.values[1];
+        char path[300];
+        if (!resolve || !resolve(user, name, path, sizeof path)) return fail("Run Behavior: no Behavior Tree with that name", &node);
+        if (depth >= 4) return fail("Run Behavior nested more than 4 deep (does a tree run itself?)", &node);
+        script::Graph sub(default_allocator());
+        if (!script::load_graph_file(sub, path)) return fail("Run Behavior: could not read the tree", &node);
+        const script::GraphNode* sub_root = nullptr;
+        for (const script::GraphNode& n : sub.nodes) {
+            if (std::strcmp(n.type, "BtRoot") == 0) sub_root = &n;
+        }
+        if (!sub_root) return fail("Run Behavior: that tree has no Root", &node);
+        Builder inner{sub, out, error, capacity, resolve, user, depth + 1, id_override ? id_override : node.id};
+        return inner.add_children(*sub_root, index);
+    }
+
+    // The node's children (the Child pins left to right) under out.nodes[index].
+    bool add_children(const script::GraphNode& node, u32 index) {
         const script::NodeDef* def = script::find_node_def(node.type);
         for (u32 pin = 0; def && pin < def->output_count; ++pin) {
             for (const script::GraphLink& l : graph.links) {
@@ -107,7 +134,7 @@ struct Builder {
 
 } // namespace
 
-bool build_behavior_tree(const script::Graph& graph, ai::BehaviorTree& out, char* error, usize capacity) {
+bool build_behavior_tree(const script::Graph& graph, ai::BehaviorTree& out, char* error, usize capacity, BtResolver resolve, void* user) {
     out.count = 0;
     const script::GraphNode* root = nullptr;
     for (const script::GraphNode& n : graph.nodes) {
@@ -122,18 +149,18 @@ bool build_behavior_tree(const script::Graph& graph, ai::BehaviorTree& out, char
         std::snprintf(error, capacity, "No Root node");
         return false;
     }
-    Builder b{graph, out, error, capacity};
+    Builder b{graph, out, error, capacity, resolve, user};
     u32 index = 0;
     return b.add(*root, index);
 }
 
-bool load_behavior_tree(const char* path, ai::BehaviorTree& out, char* error, usize capacity) {
+bool load_behavior_tree(const char* path, ai::BehaviorTree& out, char* error, usize capacity, BtResolver resolve, void* user) {
     script::Graph graph(default_allocator());
     if (!script::load_graph_file(graph, path)) {
         std::snprintf(error, capacity, "Could not read %s", path);
         return false;
     }
-    return build_behavior_tree(graph, out, error, capacity);
+    return build_behavior_tree(graph, out, error, capacity, resolve, user);
 }
 
 } // namespace lsd::editor

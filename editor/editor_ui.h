@@ -11,6 +11,10 @@
 
 #include <string>
 
+namespace lsd {
+struct DetailsStyle;  // lsd/debug_ui/details_panel.h
+}
+
 namespace lsd::rhi {
 class Device;
 }
@@ -25,7 +29,8 @@ enum class ViewType : u8 { Perspective, Top, Front, Right };  // ortho views loo
 // Normals: world normals as colour; Lighting Only: every surface grey, lit as usual; Collision: unlit,
 // with what blocks in Play drawn on top (Unreal's Player Collision view).
 // Overdraw: every layer adds a little light; bright spots are where many surfaces stack up.
-enum class ViewMode : u8 { Lit, Unlit, Wireframe, Normals, LightingOnly, Collision, Overdraw };
+// Lightmap Density: a checker of the baked lightmap's texels (green: lightmapped, grey: not).
+enum class ViewMode : u8 { Lit, Unlit, Wireframe, Normals, LightingOnly, Collision, Overdraw, LightmapDensity };
 
 // Unreal-style viewport camera: a position and a look direction. In the orthographic views
 // `position` is the centre of the view and `ortho_height` how many metres fit vertically.
@@ -62,12 +67,14 @@ struct EditorState {
     bool show_preferences = false;
     bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
     bool show_audio_stats = false;  // `stat audio`: active voices
+    bool show_audio_mixer = false;  // Window > Audio Mixer: the Sound Class / Submix graph with live meters
     bool view_mode_unlit_or_wire() const { return (!playing || ejected) && view_mode != ViewMode::Lit && view_mode != ViewMode::LightingOnly; }  // no shadows, sky or post
     class SoundPlayer* sounds = nullptr;  // set by main.cpp
     u32 preview_voice = 0;  // Content Browser sound preview
     u32 stat_draws = 0;       // set by main.cpp after drawing
     u32 stat_triangles = 0;
     u32 stat_culled = 0;      // outside the view: not drawn
+    u32 stat_occluded = 0;    // of those, hidden behind nearer meshes (r.OcclusionCulling)
     f32 stat_game_ms = 0.0f, stat_render_ms = 0.0f, stat_ui_ms = 0.0f;  // stat unit (CPU)
     f32 stat_wait_ms = 0.0f;  // waiting for the GPU / vsync at the frame's start (not CPU work)
     f32 stat_panel_ms[5] = {};  // stat dump: Outliner, Details, Content Browser, viewports, the rest of the UI
@@ -150,8 +157,11 @@ struct EditorState {
     bool quit_confirmed = false;
     bool package_requested = false;  // File > Package Project
     bool build_lighting_requested = false;  // Build > Build Lighting
+    bool capture_reflections = true;        // Build > Build Reflection Captures (and when a level opens)
     bool import_requested = false;          // File > Import...
     f32 build_lighting_progress = -1.0f;    // 0..1 while baking, -1 otherwise
+    f32 material_import_progress = -1.0f;   // 0..1 while Import Materials and Textures runs (update_mesh_materials), -1 otherwise
+    char material_import_label[160] = "";
     bool game_mode = false;          // a packaged game (or -game): Play only, no editor
     bool quit_after_save = false;
     char recovery_path[260] = "";  // autosave left by a crash: the UI offers to restore it
@@ -162,6 +172,7 @@ struct EditorState {
     bool ejected = false;         // Play: F8 frees the editor camera (select and inspect) while the game runs
     Vec3 player_feet;             // Play: where the player is, for the ejected view
     bool show_world_settings = false;
+    bool show_template_picker = false;  // the New Project template picker (first launch, File > New from Template)
     bool show_message_log = false;
     bool show_remote_console = false;  // Tools > Remote Console
     bool show_memory = false;          // Window > Memory (memreport)
@@ -174,7 +185,20 @@ struct EditorState {
     bool play_window_open = false;       // set by main.cpp while that window runs
     GameUserSettings* user_settings = nullptr;  // the menu bar's quality dropdown edits them (set by main.cpp)
     bool user_settings_changed = false;         // main.cpp applies and saves them
+    bool auto_detect_quality = false;           // Settings > Auto-detect: main.cpp picks the quality for this PC again
     bool show_debugger = false;        // Tools > Lua Debugger
+    // The Multiplayer workspace's panel. main.cpp fills `net` each frame while playing; the panel asks
+    // for join codes (`net_codes_wanted`: the router forward starts) and for Play as a client (`net_join`).
+    bool show_multiplayer = false;
+    struct NetView {
+        int mode = 0;  // 0 standalone, 1 server, 2 client
+        u32 player = 0, players = 0, replicated = 0;
+        bool connected = false;
+        f32 ping_ms = 0, in_kbs = 0, out_kbs = 0;
+        char codes[1024] = "";  // PlaySession::join_codes lines
+    } net;
+    bool net_codes_wanted = false;
+    char net_join[64] = "";  // the next Play joins this address ("" = host)
     bool show_assistant = false;       // Tools > LSD Assistant
     bool new_script_popup = false;     // Tools > New C / C++ Script asks for a name and language
     static constexpr u32 kMaxKept = 64;
@@ -197,6 +221,8 @@ struct EditorState {
 void set_view(EditorState& state, ViewType view);
 // Creates IA_Move, IA_Look, IA_Jump and IMC_Default in the open Content Browser folder.
 void create_input_setup(EditorState& state);
+// Mesh > Create Prefab from Parts: a prefab with a child per mesh part, the file's node tree kept.
+void create_parts_prefab(EditorState& state, const asset::AssetRecord& mesh);
 // Reloads every prefab instance in the level from its asset (after opening a level).
 u32 refresh_prefabs(EditorState& state);
 // Selects the first asset whose name matches (for scripted screenshots and the console).
@@ -204,10 +230,18 @@ bool select_asset(EditorState& state, const char* name);
 // The Details panel's working copy of a data asset (unsaved edits included) if it is showing that
 // asset as `type`, else nullptr. Editor windows preview from it (the Particle Editor).
 void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type);
-bool asset_matches(const asset::AssetRecord& record, const char* type);  // "Mesh", "Material", a data type name...
+void mark_data_asset_edited();  // a change made to edited_data_asset's object elsewhere (saved like a Details edit)
+bool asset_matches(const asset::AssetRecord& record, const char* type);
+// The Details panel's look and widgets (asset pickers, choices) for draw_details / draw_properties elsewhere.
+DetailsStyle editor_details_style(EditorState& state);  // "Mesh", "Material", a data type name...
 
 // 1 viewport, 2 side by side (perspective + top) or 4 (perspective, top, front, right).
 void set_layout(EditorState& state, u32 panes);
+// Window > Viewports: which views the level shows side by side, framed around the camera's pivot.
+// 2D: orthographic, looking along +Y (a side-on 2D game). 2.5D: perspective from the side with a
+// narrow lens. 3D: the free perspective view. Remembered in the editor settings.
+constexpr u32 kViewport2D = 1, kViewport2_5D = 2, kViewport3D = 4;
+void set_viewport_kinds(EditorState& state, u32 kinds);
 
 Vec3 camera_forward(const EditorCamera& camera);
 Mat4 camera_view(const EditorCamera& camera);

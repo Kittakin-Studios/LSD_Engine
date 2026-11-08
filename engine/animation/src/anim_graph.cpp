@@ -34,7 +34,7 @@ i32 find_state(const AnimGraph& g, const char* name) {
     return -1;
 }
 
-const Clip* clip_at(const Clip* clips, u32 count, u32 index) { return index < count ? &clips[index] : nullptr; }
+const Clip* clip_at(const Clip* const* clips, u32 count, u32 index) { return index < count ? clips[index] : nullptr; }
 
 // 2D blend space weights at (x, y), up to 3 samples: barycentric in the smallest triangle of samples
 // around the point; outside them all, the nearest point on a segment between two samples (or the
@@ -83,7 +83,7 @@ u32 weights_2d(const List<BlendSample, 8>& s, f32 x, f32 y, u32 which[3], f32 we
 
 // A state's clips and weights at its parameter value (a 1D blend space: the two samples around
 // the value, linearly), and its length in seconds for advancing the phase.
-u32 state_inputs(const AnimState& s, const Clip* clips, u32 count, const GraphState& gs, f32 phase, f32 weight, BlendInput* out, f32* length) {
+u32 state_inputs(const AnimState& s, const Clip* const* clips, u32 count, const GraphState& gs, f32 phase, f32 weight, BlendInput* out, f32* length) {
     if (!s.blend_parameter[0] || s.samples.count == 0) {
         const Clip* c = clip_at(clips, count, s.clip);
         out[0] = {c, phase, weight};
@@ -173,6 +173,13 @@ f32 advance(f32 phase, f32 dt, f32 rate, f32 length, bool looping, bool* finishe
 } // namespace
 
 u32 step_graph(const AnimGraph& g, const Clip* clips, u32 clip_count, GraphState& gs, f32 dt, BlendInput* out) {
+    const Clip* table[64];
+    const u32 n = clip_count < 64 ? clip_count : 64;
+    for (u32 i = 0; i < n; ++i) table[i] = &clips[i];
+    return step_graph(g, table, n, gs, dt, out);
+}
+
+u32 step_graph(const AnimGraph& g, const Clip* const* clips, u32 clip_count, GraphState& gs, f32 dt, BlendInput* out) {
     if (g.states.count == 0) return 0;
     if (gs.current < 0 || gs.current >= static_cast<i32>(g.states.count)) {
         const i32 entry = g.entry_state[0] ? find_state(g, g.entry_state) : 0;
@@ -217,6 +224,28 @@ u32 step_graph(const AnimGraph& g, const Clip* clips, u32 clip_count, GraphState
     u32 n = state_inputs(current, clips, clip_count, gs, gs.phase, gs.previous >= 0 ? gs.fade : 1.0f, out, nullptr);
     if (gs.previous >= 0) n += state_inputs(g.states[static_cast<u32>(gs.previous)], clips, clip_count, gs, gs.previous_phase, 1.0f - gs.fade, out + n, nullptr);
     return n;
+}
+
+void rename_state(AnimGraph& g, const char* from, const char* to) {
+    if (!from[0] || std::strcmp(from, to) == 0) return;
+    char old[32];
+    std::snprintf(old, sizeof old, "%s", from);  // `from` may be the state's own name, being changed
+    for (AnimTransition& t : g.transitions) {
+        if (std::strcmp(t.from, old) == 0) std::snprintf(t.from, sizeof t.from, "%s", to);
+        if (std::strcmp(t.to, old) == 0) std::snprintf(t.to, sizeof t.to, "%s", to);
+    }
+    if (std::strcmp(g.entry_state, old) == 0) std::snprintf(g.entry_state, sizeof g.entry_state, "%s", to);
+}
+
+void remove_state(AnimGraph& g, u32 index) {
+    if (index >= g.states.count) return;
+    char name[32];
+    std::snprintf(name, sizeof name, "%s", g.states[index].name);
+    g.states.remove(index);
+    for (u32 i = g.transitions.count; i-- > 0;) {
+        if (std::strcmp(g.transitions[i].from, name) == 0 || std::strcmp(g.transitions[i].to, name) == 0) g.transitions.remove(i);
+    }
+    if (std::strcmp(g.entry_state, name) == 0) g.entry_state[0] = '\0';
 }
 
 const char* state_name(const AnimGraph& g, const GraphState& gs) {
