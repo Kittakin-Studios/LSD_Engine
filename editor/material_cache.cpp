@@ -46,8 +46,8 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
                 jobs_.erase(jobs_.begin());
             }
             auto* data = new asset::TextureData(default_allocator());
-            // Colour maps only are compressed (BC1 / BC3 cost normal and data maps too much), once, into DerivedData.
-            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, job.srgb && compress_, "DerivedData/Textures", *data)) {
+            // Colour maps (BC1 / BC3) and normal maps (BC5) are compressed, once, into DerivedData; masks (ORM) stay RGBA8.
+            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map)) {
                 delete data;
                 data = nullptr;
             }
@@ -88,6 +88,7 @@ void TextureCache::upload(Entry& e, const asset::TextureData& data) {
     rhi::TextureFormat format = e.srgb ? rhi::TextureFormat::RGBA8_sRGB : rhi::TextureFormat::RGBA8;
     if (data.encoding == asset::TextureEncoding::BC1) format = e.srgb ? rhi::TextureFormat::BC1_sRGB : rhi::TextureFormat::BC1;
     if (data.encoding == asset::TextureEncoding::BC3) format = e.srgb ? rhi::TextureFormat::BC3_sRGB : rhi::TextureFormat::BC3;
+    if (data.encoding == asset::TextureEncoding::BC5) format = rhi::TextureFormat::BC5;
     const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, data.mip_count, format, mips);
     if (!texture.valid()) return;  // keeps the old one, if any
     if (e.texture.valid()) device_.destroy_texture(e.texture);
@@ -103,7 +104,7 @@ bool TextureCache::load(Entry& e) {
         return false;
     }
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture_cached(path, e.srgb, max_size, e.srgb && compress_, "DerivedData/Textures", data)) {
+    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map)) {
         e.failed = !e.texture.valid();
         return false;
     }
@@ -113,7 +114,7 @@ bool TextureCache::load(Entry& e) {
 
 void TextureCache::queue(u32 index) {
     Entry& e = entries_[index];
-    Job job{index, "", e.srgb, 0};
+    Job job{index, "", e.srgb, 0, e.normal_map};
     if (!prepare(e, job.path, sizeof job.path, job.max_size)) {
         e.failed = true;
         return;
@@ -149,16 +150,20 @@ u32 TextureCache::streaming() const {
     return n;
 }
 
-rhi::TextureHandle TextureCache::get(const char* guid, bool srgb) {
+rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_map) {
     if (!guid || !guid[0]) return {};
-    const i64 slot = index_.find(guid, srgb ? 1u : 0u, [&](u32 i) { return entries_[i].srgb == srgb && std::strcmp(entries_[i].guid, guid) == 0; });
+    const u32 use = srgb ? 1u : normal_map ? 2u : 0u;
+    const i64 slot = index_.find(guid, use, [&](u32 i) {
+        return entries_[i].srgb == srgb && entries_[i].normal_map == normal_map && std::strcmp(entries_[i].guid, guid) == 0;
+    });
     if (slot >= 0) return entries_[slot].texture;
     if (count_ == sizeof entries_ / sizeof entries_[0]) return {};
-    index_.add(guid, srgb ? 1u : 0u, count_);
+    index_.add(guid, use, count_);
     Entry& e = entries_[count_++];
     e = Entry{};
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);
     e.srgb = srgb;
+    e.normal_map = normal_map && !srgb;
     if (stream) queue(count_ - 1);  // drawn without it for a few frames
     else load(e);
     return e.texture;
@@ -335,7 +340,7 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
     draw.emissive[1] = m.emissive.g * m.emissive_strength;
     draw.emissive[2] = m.emissive.b * m.emissive_strength;
     draw.base_color_texture = textures_.get(m.base_color_texture, true);
-    draw.normal_texture = textures_.get(m.normal_texture, false);
+    draw.normal_texture = textures_.get(m.normal_texture, false, true);
     draw.orm_texture = textures_.get(m.orm_texture, false);
     // Blend Mode: Opaque, Masked (cut-outs), Translucent, Additive; Opacity scales the alpha.
     if (m.blend_mode != 0) draw.color[3] *= m.opacity;

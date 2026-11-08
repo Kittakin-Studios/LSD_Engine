@@ -30,7 +30,8 @@ public:
 
     // `srgb` is how the use wants it (colour vs data); the same file may be loaded both ways.
     // Invalid if the asset is missing or not an image, and while it is still streaming in.
-    rhi::TextureHandle get(const char* guid, bool srgb);
+    // `normal_map`: a normal map (linear), compressed to BC5 when compressing.
+    rhi::TextureHandle get(const char* guid, bool srgb, bool normal_map = false);
     void check_files();
     // Once a frame: uploads up to `budget` textures the worker finished.
     void update(u32 budget = 4);
@@ -42,10 +43,11 @@ public:
     void set_size_cap(u32 size) { size_cap_ = size; }
 
 private:
-    const bool compress_;  // colour textures as BC1 / BC3 (the device takes them): 4 to 8 times less video memory
+    const bool compress_;  // colour textures as BC1 / BC3, normal maps as BC5 (the device takes them): 4 to 8 times less video memory
     struct Entry {
         char guid[33];
         bool srgb;
+        bool normal_map;
         rhi::TextureHandle texture;
         i64 modified;
         bool failed;
@@ -62,6 +64,7 @@ private:
         char path[300];
         bool srgb;
         u32 max_size;
+        bool normal_map;
     };
     struct Finished {
         u32 entry;

@@ -399,7 +399,10 @@ void main() {
     vec4 base = u_color * (pixel_art ? textureLod(base_tex, (floor(v_uv * texel_size) + 0.5) / texel_size, 0.0) : texture(base_tex, v_uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (u_flags.x > 0.5 && u_flags.x < 1.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
-    if (has_normal_map) n = perturb_normal(n, v_wpos, v_uv, texture(normal_tex, v_uv).xyz * 2.0 - 1.0);
+    if (has_normal_map) {  // Z from X and Y: BC5 maps have none, RGBA8 ones give the same
+        vec2 nxy = texture(normal_tex, v_uv).xy * 2.0 - 1.0;
+        n = perturb_normal(n, v_wpos, v_uv, vec3(nxy, sqrt(clamp(1.0 - dot(nxy, nxy), 0.0, 1.0))));
+    }
     vec3 orm = texture(orm_tex, v_uv).rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
@@ -1229,6 +1232,7 @@ public:
             case TextureFormat::BC1_sRGB: internal = 0x8C4D; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
             case TextureFormat::BC3: internal = 0x83F3; break;       // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
             case TextureFormat::BC3_sRGB: internal = 0x8C4F; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+            case TextureFormat::BC5: internal = 0x8DBD; break;       // GL_COMPRESSED_RG_RGTC2 (core since 3.0)
             default: break;
         }
         gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), internal, static_cast<GLsizei>(width), static_cast<GLsizei>(height));

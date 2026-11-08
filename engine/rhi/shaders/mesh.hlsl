@@ -380,7 +380,10 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     float4 base = color * (pixel_art ? base_tex.SampleLevel(samp, (floor(i.uv * texel_size) + 0.5) / texel_size, 0) : base_tex.Sample(samp, i.uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
-    if (has_normal_map) n = perturb_normal(n, i.wpos, i.uv, normal_tex.Sample(samp, i.uv).xyz * 2.0 - 1.0);
+    if (has_normal_map) {  // Z from X and Y: BC5 maps have none, RGBA8 ones give the same
+        const float2 nxy = normal_tex.Sample(samp, i.uv).xy * 2.0 - 1.0;
+        n = perturb_normal(n, i.wpos, i.uv, float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy)))));
+    }
     const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
     const float metallic = saturate(mat0.x * orm.b);
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);

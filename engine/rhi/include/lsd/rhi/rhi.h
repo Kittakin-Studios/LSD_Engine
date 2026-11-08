@@ -43,7 +43,8 @@ using MaterialShaderHandle = Handle<MaterialShaderTag>;
 enum class BufferUsage : u8 { Vertex, Index };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
 // BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
-enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB };
+// BC5: two channels (a normal map's X and Y; it reads back Z = 0 and the shader rebuilds it), 16 bytes a block.
+enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB, BC5 };
 inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1; }
 inline bool is_srgb(TextureFormat f) { return f == TextureFormat::RGBA8_sRGB || f == TextureFormat::BC1_sRGB || f == TextureFormat::BC3_sRGB; }
 // The bytes of one mip `w` x `h` (blocks round up: a 2x2 mip is one block).

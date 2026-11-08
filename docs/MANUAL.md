@@ -402,7 +402,7 @@ like Unreal's asset metadata): the Content Browser search box matches tags as we
 | You drop / create | It becomes | Opens in | Unreal |
 | --- | --- | --- | --- |
 | `.fbx`, `.gltf`, `.glb` | Mesh (a skinned mesh if it has bones) | Details (import scale) | Static / Skeletal Mesh |
-| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept linear in data slots and sRGB-encoded in colour slots, values above 1 clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal and data maps stay uncompressed | Details (max size) | Texture |
+| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept linear in data slots and sRGB-encoded in colour slots, values above 1 clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal maps become BC5 (their X and Y; the shader rebuilds Z, as Unreal's TC_Normalmap), masks (ORM) stay uncompressed | Details (max size) | Texture |
 | `.wav .ogg .flac .mp3` | Sound | Details (volume, class...); double-click plays | Sound Wave |
 | `.csv` | Data Table | Data Table window | Data Table |
 | `.lua` | Lua Script | your text editor | — |

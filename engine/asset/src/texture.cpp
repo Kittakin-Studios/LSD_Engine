@@ -181,11 +181,11 @@ bool encode_png(const char* path, u32 max_side, Array<u8>& png) {
     return stbi_write_png_to_func(append, &png, static_cast<int>(image.width), static_cast<int>(image.height), 4, image.mip(0), static_cast<int>(image.width * 4)) != 0;
 }
 
-bool compress_texture(TextureData& data) {
+bool compress_texture(TextureData& data, bool normal_map) {
     if (data.encoding != TextureEncoding::RGBA8 || !data.mip_count || data.width % 4 || data.height % 4) return false;
     bool opaque = true;
-    for (usize i = 3; i < static_cast<usize>(data.width) * data.height * 4 && opaque; i += 4) opaque = data.mip(0)[i] == 255;
-    const usize block_bytes = opaque ? 8 : 16;
+    for (usize i = 3; i < static_cast<usize>(data.width) * data.height * 4 && opaque && !normal_map; i += 4) opaque = data.mip(0)[i] == 255;
+    const usize block_bytes = opaque && !normal_map ? 8 : 16;
     Array<u8> blocks(data.pixels.allocator());
     usize offsets[kMaxTextureMips] = {};
     u32 w = data.width, h = data.height;
@@ -203,7 +203,17 @@ bool compress_texture(TextureData& data) {
                         std::memcpy(block + (y * 4 + x) * 4, src + (static_cast<usize>(sy) * w + sx) * 4, 4);
                     }
                 }
-                stb_compress_dxt_block(blocks.data() + offsets[m] + (static_cast<usize>(by) * bw + bx) * block_bytes, block, opaque ? 0 : 1, STB_DXT_HIGHQUAL);
+                u8* dest = blocks.data() + offsets[m] + (static_cast<usize>(by) * bw + bx) * block_bytes;
+                if (normal_map) {
+                    u8 rg[32];
+                    for (u32 p = 0; p < 16; ++p) {
+                        rg[p * 2] = block[p * 4];
+                        rg[p * 2 + 1] = block[p * 4 + 1];
+                    }
+                    stb_compress_bc5_block(dest, rg);
+                } else {
+                    stb_compress_dxt_block(dest, block, opaque ? 0 : 1, STB_DXT_HIGHQUAL);
+                }
             }
         }
         w = w > 1 ? w / 2 : 1;
@@ -212,7 +222,7 @@ bool compress_texture(TextureData& data) {
     data.pixels.resize(blocks.size());
     std::memcpy(data.pixels.data(), blocks.data(), blocks.size());
     for (u32 m = 0; m < data.mip_count; ++m) data.mip_offset[m] = offsets[m];
-    data.encoding = opaque ? TextureEncoding::BC1 : TextureEncoding::BC3;
+    data.encoding = normal_map ? TextureEncoding::BC5 : opaque ? TextureEncoding::BC1 : TextureEncoding::BC3;
     return true;
 }
 
@@ -229,7 +239,7 @@ struct TextureCacheHeader {
 };
 } // namespace
 
-bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out) {
+bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out, bool normal_map) {
     if (!compress || !cache_dir) return load_texture(path, srgb, max_size, out);
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -238,7 +248,7 @@ bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compres
     if (ec) return load_texture(path, srgb, max_size, out);
     u64 hash = 1469598103934665603ull;  // which cached file: the source's path, colour or data, the size cap
     for (const char* p = path; *p; ++p) hash = (hash ^ static_cast<u8>(*p == '\\' ? '/' : *p)) * 1099511628211ull;
-    hash = (hash ^ (srgb ? 1u : 0u) ^ (static_cast<u64>(max_size) << 8)) * 1099511628211ull;
+    hash = (hash ^ (srgb ? 1u : 0u) ^ (normal_map ? 2u : 0u) ^ (static_cast<u64>(max_size) << 8)) * 1099511628211ull;
     char name[32];
     std::snprintf(name, sizeof name, "%016llx.lsdtex", static_cast<unsigned long long>(hash));
     const fs::path cached = fs::path(cache_dir) / name;
@@ -261,7 +271,7 @@ bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compres
         std::fclose(f);
     }
     if (!load_texture(path, srgb, max_size, out)) return false;
-    compress_texture(out);  // stays RGBA8 when its size is not a multiple of 4 (cached that way too)
+    compress_texture(out, normal_map);  // stays RGBA8 when its size is not a multiple of 4 (cached that way too)
     fs::create_directories(cache_dir, ec);
     if (FILE* f = std::fopen(cached.string().c_str(), "wb")) {  // a failed write only means encoding again next time
         TextureCacheHeader h{};

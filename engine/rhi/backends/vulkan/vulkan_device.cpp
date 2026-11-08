@@ -572,6 +572,7 @@ public:
             case TextureFormat::BC1_sRGB: image.format = VK_FORMAT_BC1_RGBA_SRGB_BLOCK; break;
             case TextureFormat::BC3: image.format = VK_FORMAT_BC3_UNORM_BLOCK; break;
             case TextureFormat::BC3_sRGB: image.format = VK_FORMAT_BC3_SRGB_BLOCK; break;
+            case TextureFormat::BC5: image.format = VK_FORMAT_BC5_UNORM_BLOCK; break;
             default: image.format = VK_FORMAT_R8G8B8A8_UNORM; break;
         }
         if (is_block_compressed(format) && !bc_) return {};

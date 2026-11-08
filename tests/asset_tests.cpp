@@ -292,6 +292,13 @@ static void test_texture(const fs::path& root) {
         rgba[3] = 0;  // one see-through pixel
         asset::TextureData a(default_allocator());
         CHECK(asset::build_texture(rgba.data(), 8, 8, true, 4096, a) && asset::compress_texture(a) && a.encoding == asset::TextureEncoding::BC3 && a.mip_offset[1] == 4 * 16);
+        {  // a normal map: BC5, X and Y kept (a flat one: both 128, its two endpoints in each channel's 8 bytes)
+            std::vector<u8> flat(8 * 8 * 4);
+            for (usize i = 0; i < flat.size(); i += 4) { flat[i] = 128; flat[i + 1] = 128; flat[i + 2] = 255; flat[i + 3] = 255; }
+            asset::TextureData nm(default_allocator());
+            CHECK(asset::build_texture(flat.data(), 8, 8, false, 4096, nm) && asset::compress_texture(nm, true) && nm.encoding == asset::TextureEncoding::BC5);
+            CHECK(nm.mip_offset[1] == 4 * 16 && nm.pixels[0] == 128 && nm.pixels[8] == 128);
+        }
         // Cached: the first load encodes and writes the file, the second reads it back the same; a newer source is encoded again.
         const fs::path cache = root / "TexCache";
         fs::remove_all(cache);
