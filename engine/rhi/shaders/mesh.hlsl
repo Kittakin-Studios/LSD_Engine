@@ -136,18 +136,42 @@ void area_point(Light L, float3 wpos, float3 rv, float roughness, inout float3 l
     norm = (a / wide) * (a / wide);
 }
 
-float fog_light(float3 wpos, float3 cam) {
-    if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
+// What lights the fog along the view ray (Volumetric): the sun where its shadow lets it through, and the Point
+// and Spot Lights near the ray (their glow and cones in the fog; shortcut: unshadowed). Multiplies the fog colour.
+float3 fog_light(float3 wpos, float3 cam) {
+    if (volumetric.x <= 0.0) return float3(1.0, 1.0, 1.0);
     const float3 to = wpos - cam;
     const float len = min(length(to), volumetric.z);
     const float3 dir = to / max(length(to), 1e-4);
     const uint steps = (uint)max(volumetric.w, 1.0);
-    float vis = 0.0;
-    for (uint k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * ((float)k + 0.5) / (float)steps), cam);
-    vis /= (float)steps;
-    const float g = volumetric.y, cosv = dot(dir, -lights[(uint)shadow_info.y].dir_range.xyz);
-    const float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
-    return lerp(1.0, min(vis * phase, 4.0), volumetric.x);
+    const float g = volumetric.y;
+    float sun = 1.0;
+    if (shadow_info.y >= 0.0 && shadow_info.x >= 0.5) {
+        float vis = 0.0;
+        for (uint k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * ((float)k + 0.5) / (float)steps), cam);
+        vis /= (float)steps;
+        const float cosv = dot(dir, -lights[(uint)shadow_info.y].dir_range.xyz);
+        const float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+        sun = lerp(1.0, min(vis * phase, 4.0), volumetric.x);
+    }
+    float3 local = float3(0.0, 0.0, 0.0);
+    for (uint k = 0; k < steps; ++k) {
+        const float3 p = cam + dir * (len * ((float)k + 0.5) / (float)steps);
+        for (uint li = 0; li < light_count; ++li) {
+            const Light L = lights[li];
+            if (L.pos_type.w < 0.5 || L.pos_type.w > 2.5) continue;  // point and spot lights
+            const float3 d = L.pos_type.xyz - p;
+            const float dist2 = max(dot(d, d), 1e-2);
+            const float r = dist2 / (L.dir_range.w * L.dir_range.w);
+            const float window = saturate(1.0 - r * r);
+            float atten = window * window / dist2;
+            const float3 l = d * rsqrt(dist2);
+            if (L.pos_type.w > 1.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
+            const float cosv = dot(dir, -l);
+            local += L.color_inner.xyz * atten * (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+        }
+    }
+    return sun + local * (exposure * volumetric.x * 0.25 / (float)steps);
 }
 // Spot / point light shadow: the light's tile (a point light's cube face by the major axis).
 float local_shadow(Light L, float3 wpos, float3 n) {
@@ -311,7 +335,7 @@ float3 to_srgb(float3 c) { c = saturate(c); return lerp(1.055 * pow(c, 1.0 / 2.4
 // Fog and post-processing on an exposed colour (see rhi::LightSetup): tint, filmic tonemap, height
 // fog, saturation, contrast, vignette. `pixel` is SV_Position.xy.
 float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)); }
-float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel, float fog_lit) {
+float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel, float3 fog_lit) {
     c *= tint.rgb;
     if (post.w > 0.5) c = aces(c);
     if (fog.w > 0.0) {  // exponential height fog: density falls off with height, integrated along the view ray
@@ -331,7 +355,7 @@ float3 finish(float3 c, float3 wpos, float3 cam, float2 pixel, float fog_lit) {
 }
 // Scene targets for the post pass (LightSetup.output): exposed colour, fog applied, range-compressed.
 float3 hdr_encode(float3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel, float fog_lit) {
+float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel, float3 fog_lit) {
     if (hdr_out.x > 0.5) {
         if (fog.w > 0.0) {
             const float d = max(length(wpos - cam) - fog_color.w, 0.0);
@@ -465,7 +489,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
     lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
-    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(i.wpos, mat1.yzw) : 1.0), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
+    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(i.wpos, mat1.yzw) : float3(1.0, 1.0, 1.0)), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 
 // The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
@@ -486,5 +510,5 @@ float4 ps_sky(SkyOut i) : SV_Target {
         const float s = dot(d, w0.xyz);
         c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));  // disc + glow + the wide haze around the sun (Mie)
     }
-    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy, 1.0), 1.0);
+    return float4(scene_out(c, mat1.yzw + d * 5000.0, mat1.yzw, i.pos.xy, float3(1.0, 1.0, 1.0)), 1.0);
 }

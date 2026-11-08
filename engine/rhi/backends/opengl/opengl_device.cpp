@@ -218,18 +218,40 @@ void area_point(Light L, vec3 wpos, vec3 rv, float roughness, inout vec3 ls, ino
     norm = (a / wide) * (a / wide);
 }
 
-float fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the fog along the view ray
-    if (volumetric.x <= 0.0 || shadow_info.y < 0.0 || shadow_info.x < 0.5) return 1.0;
+vec3 fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the fog along the view ray, and the local lights' glow
+    if (volumetric.x <= 0.0) return vec3(1.0);
     vec3 to = wpos - cam;
     float len = min(length(to), volumetric.z);
     vec3 dir = to / max(length(to), 1e-4);
     int steps = int(max(volumetric.w, 1.0));
-    float vis = 0.0;
-    for (int k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * (float(k) + 0.5) / float(steps)), cam);
-    vis /= float(steps);
-    float g = volumetric.y, cosv = dot(dir, -lights[int(shadow_info.y)].dir_range.xyz);
-    float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
-    return mix(1.0, min(vis * phase, 4.0), volumetric.x);
+    float g = volumetric.y;
+    float sun = 1.0;
+    if (shadow_info.y >= 0.0 && shadow_info.x >= 0.5) {
+        float vis = 0.0;
+        for (int k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * (float(k) + 0.5) / float(steps)), cam);
+        vis /= float(steps);
+        float cosv = dot(dir, -lights[int(shadow_info.y)].dir_range.xyz);
+        float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+        sun = mix(1.0, min(vis * phase, 4.0), volumetric.x);
+    }
+    vec3 local = vec3(0.0);
+    for (int k = 0; k < steps; ++k) {
+        vec3 p = cam + dir * (len * (float(k) + 0.5) / float(steps));
+        for (uint li = 0u; li < light_count; ++li) {
+            Light L = lights[li];
+            if (L.pos_type.w < 0.5 || L.pos_type.w > 2.5) continue;
+            vec3 d = L.pos_type.xyz - p;
+            float dist2 = max(dot(d, d), 1e-2);
+            float r = dist2 / (L.dir_range.w * L.dir_range.w);
+            float window = clamp(1.0 - r * r, 0.0, 1.0);
+            float atten = window * window / dist2;
+            vec3 l = d * inversesqrt(dist2);
+            if (L.pos_type.w > 1.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
+            float cosv = dot(dir, -l);
+            local += L.color_inner.xyz * atten * (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
+        }
+    }
+    return vec3(sun) + local * (exposure * volumetric.x * 0.25 / float(steps));
 }
 float local_shadow(Light L, vec3 wpos, vec3 n) {
     int tile = int(L.spot.y);
@@ -333,7 +355,7 @@ vec2 env_brdf(float ndv, float roughness) {
 }
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
-vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
+vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, vec3 fog_lit) {
     c *= tint.rgb;
     if (post.w > 0.5) c = aces(c);
     if (fog.w > 0.0) {
@@ -352,7 +374,7 @@ vec3 finish(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
     return c;
 }
 vec3 hdr_encode(vec3 c) { c = max(c, 0.0); return sqrt(c / (1.0 + c)); }
-vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, float fog_lit) {
+vec3 scene_out(vec3 c, vec3 wpos, vec3 cam, vec2 pixel, vec3 fog_lit) {
     if (hdr_out.x > 0.5) {
         if (fog.w > 0.0) {
             float d = max(length(wpos - cam) - fog_color.w, 0.0);
@@ -482,7 +504,7 @@ void main() {
     float horizon = clamp(1.0 + 1.2 * dot(r, geometric_n), 0.0, 1.0);
     lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
-    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy, fog.w > 0.0 ? fog_light(v_wpos, u_mat[1].yzw) : 1.0), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
+    o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy, fog.w > 0.0 ? fog_light(v_wpos, u_mat[1].yzw) : vec3(1.0)), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 #else
 // The sky (see the HLSL): u_sky = zenith, horizon, ground, sun direction + size, sun colour, camera.
@@ -495,7 +517,7 @@ void main() {
         float s = dot(d, u_sky[3].xyz);
         c += u_sky[4].rgb * (smoothstep(u_sky[3].w, u_sky[3].w + (1.0 - u_sky[3].w) * 0.3, s) + 0.25 * pow(clamp(s, 0.0, 1.0), 64.0) + 0.06 * pow(clamp(s, 0.0, 1.0), 6.0));
     }
-    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy, 1.0), 1.0);
+    o_color = vec4(scene_out(c, u_sky[5].xyz + d * 5000.0, u_sky[5].xyz, gl_FragCoord.xy, vec3(1.0)), 1.0);
 }
 #endif
 )";
