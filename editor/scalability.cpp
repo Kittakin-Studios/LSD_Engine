@@ -11,7 +11,8 @@ u32 level(u32 group, u32 overall) { return group ? (group - 1 < 3 ? group - 1 : 
 } // namespace
 
 Scalability resolve_scalability(const GameUserSettings& s) {
-    return {level(s.shadow_quality, s.quality), level(s.post_quality, s.quality), level(s.view_distance_quality, s.quality), level(s.effects_quality, s.quality)};
+    return {level(s.shadow_quality, s.quality), level(s.post_quality, s.quality), level(s.view_distance_quality, s.quality), level(s.effects_quality, s.quality),
+            level(0, s.quality)};
 }
 
 f32 view_distance_scale(u32 quality) {
@@ -39,6 +40,11 @@ void apply_profile(const DeviceProfile& p, GameUserSettings& s) {
     s.post_quality = p.post_quality;
     s.view_distance_quality = p.view_distance_quality;
     s.effects_quality = p.effects_quality;
+}
+
+f32 texture_detail_scale(u32 quality) {
+    static const f32 kScale[] = {0.25f, 0.5f, 1.0f, 2.0f};
+    return kScale[quality < 3 ? quality : 3];
 }
 
 f32 effects_scale(u32 quality) {

@@ -144,7 +144,7 @@ bool shadow_cutout(const char* material, const lsd::LinearColor& tint, lsd::rhi:
     lsd::rhi::MeshDraw look{};
     look.color[0] = look.color[1] = look.color[2] = 1.0f;
     look.color[3] = tint.a;
-    g_materials->apply(material, look);
+    g_materials->apply(material, look, 0);  // 0: only reading it, the draws say how sharp
     if (look.alpha_cutoff <= 0.0f || look.blend != 0 || !look.base_color_texture.valid()) return false;
     out.texture = look.base_color_texture;
     out.cutoff = look.alpha_cutoff;
@@ -228,6 +228,7 @@ bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only =
 lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fog, fog_color), for the particles
 lsd::rhi::LightSetup g_view_lights;  // the last drawn view's lights, for Lit particles
 lsd::rhi::BufferHandle g_nav_buffer;  // the navmesh overlay's lines (P)
+const lsd::editor::TextureCache* g_texture_cache_stats = nullptr;  // stat dump's texture line
 lsd::u32 g_nav_vertex_count = 0;
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
@@ -838,7 +839,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, candidates[k].index));
             lsd::rhi::MeshDraw look{};
             to_rgba(component->color, look.color);
-            materials.apply(component->material, look);
+            materials.apply(component->material, look, 0);  // only its blend mode is read
             if (look.blend != 0 || look.alpha_cutoff > 0.0f || look.color[3] < 0.999f) continue;  // see-through: hides nothing
             const lsd::editor::MeshCache::Triangles* tris = meshes.triangles(component->mesh);
             if (!tris || tris->indices.empty() || tris->indices.size() > 3 * 4096) continue;  // heavy meshes are not worth it on the CPU
@@ -889,7 +890,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.camera_position[2] = eye.z;
             to_rgba(component->color, draw.color);
             draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
-            materials.apply(material, draw);  // base colour x tint, textures, metallic / roughness, emissive
+            // Texture streaming by distance: about as many texels as the object covers pixels on screen.
+            const lsd::Vec3 extent = lsd::transform_vector(pm, (part_mesh.bounds_max - part_mesh.bounds_min) * 0.5f);
+            const lsd::f32 away = std::max(lsd::length(lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f) - eye), 0.05f);
+            const lsd::f32 pixels = lsd::length(extent) / away * viewport[3] * 1.8f;
+            materials.apply(material, draw, static_cast<lsd::u32>(std::min(pixels, 16384.0f)));  // base colour x tint, textures, metallic / roughness, emissive
             if (std::strncmp(component->mesh, "Landscape:", 10) == 0) {  // painted layers, blended
                 if (const lsd::rhi::TextureHandle t = lsd::editor::landscape_texture(component->mesh); t.valid()) {
                     draw.base_color_texture = t;
@@ -1119,6 +1124,10 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                          : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
         const lsd::u32 lod = skinned_lod(*model, m, eye);  // auto LODs, as static meshes
+        // Texture streaming by distance, as for static meshes: about as many texels as it covers pixels.
+        const lsd::f32 away = std::max(lsd::length(lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f) - eye), 0.05f);
+        const lsd::f32 pixels = lsd::length(lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f)) / away * viewport[3] * 1.8f;
+        const lsd::u32 want = static_cast<lsd::u32>(std::min(pixels, 16384.0f));
         // One draw per material slot (Unreal's mesh sections), each with its slot's material.
         for (lsd::u32 s = 0; s < model->section_count; ++s) {
             lsd::rhi::MeshDraw section = draw;
@@ -1126,7 +1135,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const char* material = lsd::editor::section_material(*component, *model, s);
             if (material[0]) section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;  // the material's own colours
             else to_rgba(component->color, section.color);
-            materials.apply(material, section);
+            materials.apply(material, section, want);
             if (editor_view && stats.is_selected(e)) {
                 section.color[0] = 1.0f;
                 section.color[1] = 0.85f;
@@ -1183,6 +1192,14 @@ void register_console(EditorState& s) {
                           g_shadow_tiles_cached_frame);
             lsd::editor::remote::print(line);
             LSD_LOG_INFO("stat", "%s", line);
+            if (g_texture_cache_stats) {  // texture streaming: what is on the GPU and how much of it is streamed down
+                lsd::u32 textures = 0, reduced = 0;
+                lsd::u64 texels = 0;
+                g_texture_cache_stats->stats(textures, reduced, texels);
+                std::snprintf(line, sizeof line, "textures %u (%u streamed smaller), %.1f M texels", textures, reduced, static_cast<double>(texels) / 1e6);
+                lsd::editor::remote::print(line);
+                LSD_LOG_INFO("stat", "%s", line);
+            }
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
                           st.stat_panel_ms[2], st.stat_panel_ms[3], st.stat_panel_ms[4]);
             lsd::editor::remote::print(line);
@@ -2152,6 +2169,7 @@ int main(int argc, char** argv) {
     auto* mesh_memory = allocator.allocate(sizeof(lsd::editor::MeshCache), alignof(lsd::editor::MeshCache));
     lsd::editor::MeshCache& meshes = *new (mesh_memory) lsd::editor::MeshCache(*device, allocator, registry, kDataDir);
     auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
+    g_texture_cache_stats = texture_cache;
     // Video memory: smaller textures and shadow atlases on cards with little of it (instead of failing).
     {
         const lsd::u64 budget = vram_arg > 0 ? static_cast<lsd::u64>(vram_arg) * 1024ull * 1024ull : device->query_memory_budget().budget_bytes;
@@ -2317,6 +2335,7 @@ int main(int argc, char** argv) {
     auto apply_user_settings = [&] {
         const lsd::editor::Scalability scalability = lsd::editor::resolve_scalability(user_settings);
         lsd::editor::set_shadow_quality(scalability.shadows);
+        texture_cache->set_detail_scale(lsd::editor::texture_detail_scale(scalability.textures));
         lsd::editor::set_post_quality(scalability.post);
         g_view_distance_scale = lsd::editor::view_distance_scale(scalability.view_distance);
         lsd::particles::set_spawn_scale(lsd::editor::effects_scale(scalability.effects));
@@ -3291,6 +3310,7 @@ int main(int argc, char** argv) {
     delete skinned_cache;
     g_decals = nullptr;
     delete decal_atlas;
+    g_texture_cache_stats = nullptr;
     delete texture_cache;
     device->destroy_texture(shadow_atlas);
     device->destroy_texture(local_shadow_atlas);

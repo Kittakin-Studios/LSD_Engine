@@ -2047,6 +2047,11 @@ in the project folder, the splash too).
   read and decoded on a worker thread the first time something needs it, and a few finished ones go
   onto the GPU each frame. Levels open without waiting for their images: a material draws in its
   plain colour for a moment, then its textures appear. Changed texture files reload the same way.
+  It also streams by distance: each object asks for about as many texels as it covers on screen, so a
+  character far away holds a small copy of its 4K maps and gets them sharp again as you walk up (about
+  half a second later). Textures only far objects use go smaller and free their memory. The Quality
+  setting scales it (Low a quarter of the detail .. Epic double). `stat dump` lists the textures on the
+  GPU, how many are streamed down and the texels they hold.
 - **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static and skeletal meshes, and each copy of an Instanced Static Mesh, hidden
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`
