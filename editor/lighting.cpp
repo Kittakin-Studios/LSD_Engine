@@ -172,7 +172,7 @@ void ShadowCells::give(f32 x, f32 y, u32 side) {
     }
 }
 
-Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
+Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal, f32 sun_visible) {
     const f32 up = normal.z * 0.5f + 0.5f;
     Vec3 light{s.ground[0] + (s.sky[0] - s.ground[0]) * up, s.ground[1] + (s.sky[1] - s.ground[1]) * up, s.ground[2] + (s.sky[2] - s.ground[2]) * up};
     for (u32 i = 0; i < s.count && i < rhi::kMaxLights; ++i) {
@@ -193,6 +193,7 @@ Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
             if (L.type > 2.5f) atten *= std::clamp(cos_to, 0.0f, 1.0f);  // rect / disc: in front only
         }
         const f32 wrap = dot(normal, l) * 0.5f + 0.5f;  // half-Lambert: a sprite stands for a volume, not a card
+        if (static_cast<f32>(i) == s.shadow_info[1]) atten *= sun_visible;  // the shadowed sun, behind a wall or not
         const f32 k = wrap * atten / kPi;
         light = light + Vec3{L.color[0], L.color[1], L.color[2]} * k;
     }

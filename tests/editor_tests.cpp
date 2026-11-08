@@ -927,6 +927,13 @@ void test_particle_light() {
     const f32 ambient = 2.0f * (0.1f + 0.4f * 0.5f);
     CHECK(std::fabs(facing.x - (ambient + 2.0f * 4.0f * window / 4.0f)) < 1e-4f);  // wrap 1: 4 pi / pi / 4 m2 times the window, times exposure
     CHECK(std::fabs(away.x - ambient) < 1e-4f && facing.x > away.x);  // from behind: wrap 0
+    s.lights[0].type = 0.0f;  // a sun shining down, the shadowed one: behind a wall only the ambient is left
+    s.lights[0].direction[0] = 0.0f;
+    s.lights[0].direction[2] = -1.0f;
+    s.shadow_info[1] = 0.0f;
+    const Vec3 up_n{0, 0, 1};
+    CHECK(editor::particle_light(s, {0, 0, 0}, up_n, 1.0f).x > editor::particle_light(s, {0, 0, 0}, up_n, 0.0f).x);
+    CHECK(std::fabs(editor::particle_light(s, {0, 0, 0}, up_n, 0.0f).x - 2.0f * 0.5f) < 1e-4f);
 }
 
 int main() {

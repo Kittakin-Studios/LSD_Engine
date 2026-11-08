@@ -103,6 +103,8 @@ void ParticlePlayer::reset() {
 
 void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
     collider_.budget = 1024;  // World collision rays this frame, for every effect together
+    shadow_rays_ = 0;         // lit particles' sun rays, likewise
+    playing_ = playing;
     for (Effect& e : effects_) {  // objects deleted or without the component any more
         if (e.used && (!world.alive(e.entity) || !world.get<world::ParticleEffect>(e.entity))) {
             e.used = false;
@@ -164,12 +166,24 @@ void ParticlePlayer::apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 ey
 
 void ParticlePlayer::apply_lighting(rhi::ParticleVertex* vertices, u32 count, Vec3 eye) const {
     if (!lights_) return;
+    // In Play, the sun's shadow: a ray toward the sun from each sprite (every 6 vertices: one quad), against what physics
+    // collides with, as World collision does. shortcut: a sharp yes / no per sprite, no soft edge; at most 2048 a frame
+    const i32 sun = static_cast<i32>(lights_->shadow_info[1]);
+    const bool shadows = playing_ && collider_.segment && sun >= 0 && static_cast<u32>(sun) < lights_->count;
+    f32 visible = 1.0f;
     for (u32 i = 0; i < count; ++i) {
         rhi::ParticleVertex& v = vertices[i];
         const Vec3 p{v.position[0], v.position[1], v.position[2]};
+        if (shadows && i % 6 == 0 && shadow_rays_ < 2048) {
+            ++shadow_rays_;
+            const rhi::GpuLight& L = lights_->lights[sun];
+            const Vec3 to_sun{-L.direction[0], -L.direction[1], -L.direction[2]};
+            Vec3 hit, n;
+            visible = collider_.segment(collider_.user, p + to_sun * 0.05f, p + to_sun * 60.0f, hit, n) ? 0.0f : 1.0f;
+        }
         const Vec3 to_eye = eye - p;
         const f32 d = length(to_eye);
-        const Vec3 light = particle_light(*lights_, p, d > 1e-4f ? to_eye * (1.0f / d) : Vec3{0.0f, 0.0f, 1.0f});
+        const Vec3 light = particle_light(*lights_, p, d > 1e-4f ? to_eye * (1.0f / d) : Vec3{0.0f, 0.0f, 1.0f}, shadows ? visible : 1.0f);
         v.color[0] *= light.x;
         v.color[1] *= light.y;
         v.color[2] *= light.z;

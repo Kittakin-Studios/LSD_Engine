@@ -46,6 +46,8 @@ private:
     f32 fog_[4] = {}, fog_color_[4] = {};
     void apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 eye, bool additive) const;
     const rhi::LightSetup* lights_ = nullptr;
+    mutable u32 shadow_rays_ = 0;  // this frame's sun rays for lit particles
+    bool playing_ = false;         // physics is there to ray-test against
     void apply_lighting(rhi::ParticleVertex* vertices, u32 count, Vec3 eye) const;
     struct System {
         char guid[33];

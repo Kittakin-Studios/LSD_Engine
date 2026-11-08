@@ -1648,7 +1648,8 @@ the particles stay where they were born and the ribbon joins them.
 **Lit** (Renderer, Alpha sprites and ribbons; Niagara's lit sprite material): the particles take the
 level's light instead of showing their colour as it is: the sky and ground ambient, the sun and the
 Point / Spot Lights near them, soft enough that light from behind still shows through. Use it for
-smoke, dust and snow; leave fire and sparks unlit and Additive. Lit particles do not catch shadows yet.
+smoke, dust and snow; leave fire and sparks unlit and Additive. In Play, lit particles in the sun's shadow (under a roof, behind a wall) lose its light; local lights do
+not cast shadows on them.
 
 **Soft Distance** (Renderer; Niagara's soft particles / Unreal's DepthFade): sprites fade out over this many
 metres where they meet a surface, instead of showing a hard line where they cut through the floor or a

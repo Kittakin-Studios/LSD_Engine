@@ -41,7 +41,8 @@ struct ShadowCells {
 // `normal` (towards the camera): the sky / ground ambient plus each light's diffuse, wrapped so light from behind still
 // shows through smoke, times exposure (the same scale the lit meshes write).
 // shortcut: no shadows or baked probes; per vertex on the CPU, fine for hundreds of sprites, a GPU path for thousands
-Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal);
+// `sun_visible`: how much of the shadowed sun (LightSetup::shadow_info[1]) reaches it, 0..1 (lit particles in Play ray-test it).
+Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal, f32 sun_visible = 1.0f);
 // The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
 void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count);  // boxes: half size, fade (w 0 = sphere)
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
