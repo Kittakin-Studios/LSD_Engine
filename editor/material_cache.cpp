@@ -47,7 +47,7 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
             }
             auto* data = new asset::TextureData(default_allocator());
             // Colour maps (BC1 / BC3) and normal maps (BC5) are compressed, once, into DerivedData; masks (ORM) stay RGBA8.
-            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map)) {
+            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map, true)) {
                 delete data;
                 data = nullptr;
             }
@@ -89,6 +89,7 @@ void TextureCache::upload(Entry& e, const asset::TextureData& data) {
     if (data.encoding == asset::TextureEncoding::BC1) format = e.srgb ? rhi::TextureFormat::BC1_sRGB : rhi::TextureFormat::BC1;
     if (data.encoding == asset::TextureEncoding::BC3) format = e.srgb ? rhi::TextureFormat::BC3_sRGB : rhi::TextureFormat::BC3;
     if (data.encoding == asset::TextureEncoding::BC5) format = rhi::TextureFormat::BC5;
+    if (data.encoding == asset::TextureEncoding::RGBA16F) format = rhi::TextureFormat::RGBA16F;  // HDR images: linear, above 1 kept
     const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, data.mip_count, format, mips);
     if (!texture.valid()) return;  // keeps the old one, if any
     if (e.texture.valid()) device_.destroy_texture(e.texture);
@@ -104,7 +105,7 @@ bool TextureCache::load(Entry& e) {
         return false;
     }
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map)) {
+    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map, true)) {
         e.failed = !e.texture.valid();
         return false;
     }

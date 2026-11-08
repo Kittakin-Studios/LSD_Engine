@@ -44,11 +44,13 @@ enum class BufferUsage : u8 { Vertex, Index };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
 // BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
 // BC5: two channels (a normal map's X and Y; it reads back Z = 0 and the shader rebuilds it), 16 bytes a block.
-enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB, BC5 };
-inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1; }
+// RGBA16F: half floats, linear, values above 1 kept (HDR images: bright emissive, HDR skies), 8 bytes a texel.
+enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB, BC5, RGBA16F };
+inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1 && f <= TextureFormat::BC5; }
 inline bool is_srgb(TextureFormat f) { return f == TextureFormat::RGBA8_sRGB || f == TextureFormat::BC1_sRGB || f == TextureFormat::BC3_sRGB; }
 // The bytes of one mip `w` x `h` (blocks round up: a 2x2 mip is one block).
 inline u64 texture_bytes(TextureFormat f, u32 w, u32 h) {
+    if (f == TextureFormat::RGBA16F) return static_cast<u64>(w) * h * 8;
     if (!is_block_compressed(f)) return static_cast<u64>(w) * h * 4;
     return static_cast<u64>((w + 3) / 4) * ((h + 3) / 4) * (f == TextureFormat::BC1 || f == TextureFormat::BC1_sRGB ? 8 : 16);
 }

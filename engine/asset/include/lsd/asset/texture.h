@@ -11,7 +11,7 @@ namespace lsd::asset {
 constexpr u32 kMaxTextureMips = 16;
 
 // How a TextureData's mips are stored: RGBA8 pixels, or BC1 / BC3 blocks (compress_texture).
-enum class TextureEncoding : u8 { RGBA8, BC1, BC3, BC5 };
+enum class TextureEncoding : u8 { RGBA8, BC1, BC3, BC5, RGBA16F };  // RGBA16F: half floats, linear (HDR images kept)
 
 struct TextureData {
     explicit TextureData(Allocator& allocator) : pixels(allocator) {}
@@ -24,14 +24,16 @@ struct TextureData {
 
 // Reads an image, halves it until it fits `max_size`, and builds mips down to 1x1 (averaged in
 // linear light when `srgb`). False if the file is missing or not an image.
-bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out);
+// `keep_float`: an HDR / EXR image stays half float (RGBA16F, linear, values above 1 kept) instead of clipped bytes.
+bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out, bool keep_float = false);
 // Block-compresses the mips in place (stb_dxt, high quality): BC1 when every pixel is opaque, BC3 when any is not
 // (4 / 8 bits a pixel instead of 32). A `normal_map` becomes BC5 (its X and Y only, 8 bits a pixel, far better than BC1
 // for normals). False, and nothing changes, when the size is not a multiple of 4 or it is already.
 bool compress_texture(TextureData& data, bool normal_map = false);
 // load_texture, then compress_texture when `compress`, the compressed result kept in `cache_dir` (DerivedData/Textures):
 // later loads read it back while it matches the source (its write time and size) and max_size, instead of encoding again.
-bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out, bool normal_map = false);
+bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out, bool normal_map = false,
+                         bool keep_float = false);
 // The image's size from its header only (no decoding); false if it is not a readable image.
 bool texture_size(const char* path, u32& width, u32& height);
 // An image's grey (its first channel) at 16 bits, rows top to bottom (16-bit PNGs keep theirs; 8-bit ones are

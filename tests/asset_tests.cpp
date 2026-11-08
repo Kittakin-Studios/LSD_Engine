@@ -311,6 +311,19 @@ static void test_texture(const fs::path& root) {
         CHECK(asset::load_texture_cached(big.string().c_str(), true, 4096, true, cache.string().c_str(), again) && again.encoding == first.encoding && again.pixels.size() == first.pixels.size() &&
               std::memcmp(again.pixels.data(), first.pixels.data(), first.pixels.size()) == 0 && again.mip_offset[2] == first.mip_offset[2]);
         fs::remove_all(cache);
+        {  // float textures: an HDR image kept as half floats, a value of 4 stays 4 (not clipped to 1)
+            std::vector<f32> bright(4 * 4 * 4, 4.0f);
+            const fs::path hdr = root / "bright.exr";
+            const char* exr_error = nullptr;
+            CHECK(SaveEXR(bright.data(), 4, 4, 4, 0, hdr.string().c_str(), &exr_error) == TINYEXR_SUCCESS);
+            asset::TextureData half(default_allocator()), clipped(default_allocator());
+            CHECK(asset::load_texture(hdr.string().c_str(), false, 4096, half, true) && half.encoding == asset::TextureEncoding::RGBA16F && half.mip_count == 3);
+            u16 h0;
+            std::memcpy(&h0, half.mip(0), 2);
+            CHECK(h0 == 0x4400);  // 4.0 in half
+            CHECK(half.mip_offset[1] == 4 * 4 * 8);
+            CHECK(asset::load_texture(hdr.string().c_str(), false, 4096, clipped) && clipped.encoding == asset::TextureEncoding::RGBA8 && clipped.mip(0)[0] == 255);
+        }
         asset::TextureData odd(default_allocator());
         CHECK(asset::build_texture(rgba.data(), 6, 6, true, 4096, odd) && !asset::compress_texture(odd) && odd.encoding == asset::TextureEncoding::RGBA8);  // not a multiple of 4
     }

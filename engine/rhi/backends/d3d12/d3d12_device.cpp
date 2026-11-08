@@ -418,6 +418,7 @@ public:
             case TextureFormat::BC3: desc.Format = DXGI_FORMAT_BC3_UNORM; break;
             case TextureFormat::BC3_sRGB: desc.Format = DXGI_FORMAT_BC3_UNORM_SRGB; break;
             case TextureFormat::BC5: desc.Format = DXGI_FORMAT_BC5_UNORM; break;
+            case TextureFormat::RGBA16F: desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
             default: desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; break;
         }
         if (is_block_compressed(format) && (width % 4 || height % 4)) {

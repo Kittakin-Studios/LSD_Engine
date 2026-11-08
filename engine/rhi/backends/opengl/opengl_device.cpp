@@ -1279,6 +1279,7 @@ public:
             case TextureFormat::BC3: internal = 0x83F3; break;       // GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
             case TextureFormat::BC3_sRGB: internal = 0x8C4F; break;  // GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
             case TextureFormat::BC5: internal = 0x8DBD; break;       // GL_COMPRESSED_RG_RGTC2 (core since 3.0)
+            case TextureFormat::RGBA16F: internal = GL_RGBA16F; break;
             default: break;
         }
         gl_.glTextureStorage2D(t.id, static_cast<GLsizei>(mip_count), internal, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
@@ -1289,7 +1290,8 @@ public:
                 gl_.glCompressedTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), internal,
                                                   static_cast<GLsizei>(texture_bytes(format, w, h)), mips[m]);
             } else {
-                gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA, GL_UNSIGNED_BYTE, mips[m]);
+                gl_.glTextureSubImage2D(t.id, static_cast<GLint>(m), 0, 0, static_cast<GLsizei>(w), static_cast<GLsizei>(h), GL_RGBA,
+                                        format == TextureFormat::RGBA16F ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE, mips[m]);
             }
         }
         gl_.glTextureParameteri(t.id, GL_TEXTURE_MIN_FILTER, mip_count > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);

@@ -7,9 +7,11 @@
 #include <stb_dxt.h>
 #include <tinyexr.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <vector>
 #include <cstdlib>
 #include <cstring>
 
@@ -122,7 +124,70 @@ static void float_to_rgba8(const f32* in, usize pixels, bool srgb, u8* out) {
     }
 }
 
-bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out) {
+namespace {
+u16 to_half(f32 f) {  // round to nearest; NaN and negatives black (light), above 65504 clamped; tiny values flush to 0
+    if (!(f > 0.0f)) return 0;
+    if (f >= 65504.0f) return 0x7BFF;
+    u32 bits;
+    std::memcpy(&bits, &f, 4);
+    const i32 exponent = static_cast<i32>((bits >> 23) & 0xFF) - 127 + 15;
+    if (exponent <= 0) return 0;
+    const u32 mantissa = (bits & 0x7FFFFF) + 0x1000;  // rounding
+    return static_cast<u16>((static_cast<u32>(exponent) << 10) + (mantissa >> 13));
+}
+
+// Half-float mips from linear float RGBA (box filter); halved first until it fits max_size.
+bool build_texture_float(const f32* rgba, u32 width, u32 height, u32 max_size, TextureData& out) {
+    std::vector<f32> level(rgba, rgba + static_cast<usize>(width) * height * 4);
+    auto halve = [](const std::vector<f32>& in, u32 w, u32 h, std::vector<f32>& next) {
+        const u32 nw = w > 1 ? w / 2 : 1, nh = h > 1 ? h / 2 : 1;
+        next.assign(static_cast<usize>(nw) * nh * 4, 0.0f);
+        for (u32 y = 0; y < nh; ++y)
+            for (u32 x = 0; x < nw; ++x)
+                for (u32 c = 0; c < 4; ++c) {
+                    f32 sum = 0.0f;
+                    for (u32 k = 0; k < 4; ++k) {
+                        const u32 sx = std::min(x * 2 + (k & 1), w - 1), sy = std::min(y * 2 + (k >> 1), h - 1);
+                        sum += in[(static_cast<usize>(sy) * w + sx) * 4 + c];
+                    }
+                    next[(static_cast<usize>(y) * nw + x) * 4 + c] = sum * 0.25f;
+                }
+    };
+    std::vector<f32> next;
+    max_size = max_size ? max_size : 1;
+    while (width > max_size || height > max_size) {
+        halve(level, width, height, next);
+        level.swap(next);
+        width = width > 1 ? width / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+    }
+    out.width = width;
+    out.height = height;
+    out.mip_count = 0;
+    out.encoding = TextureEncoding::RGBA16F;
+    usize total = 0;
+    for (u32 w = width, h = height;; w = w > 1 ? w / 2 : 1, h = h > 1 ? h / 2 : 1) {
+        out.mip_offset[out.mip_count++] = total;
+        total += static_cast<usize>(w) * h * 8;
+        if ((w == 1 && h == 1) || out.mip_count == kMaxTextureMips) break;
+    }
+    out.pixels.resize(total);
+    u32 w = width, h = height;
+    for (u32 m = 0; m < out.mip_count; ++m) {
+        u16* dst = reinterpret_cast<u16*>(out.pixels.data() + out.mip_offset[m]);
+        for (usize i = 0; i < level.size(); ++i) dst[i] = to_half(level[i]);
+        if (m + 1 < out.mip_count) {
+            halve(level, w, h, next);
+            level.swap(next);
+            w = w > 1 ? w / 2 : 1;
+            h = h > 1 ? h / 2 : 1;
+        }
+    }
+    return true;
+}
+} // namespace
+
+bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out, bool keep_float) {
     int w = 0, h = 0, channels = 0;
     if (bool exr; is_float_image(path, exr)) {
         f32* rgba = nullptr;
@@ -139,6 +204,11 @@ bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out) {
                 LSD_LOG_WARN("asset", "Could not read HDR %s: %s", path, stbi_failure_reason());
                 return false;
             }
+        }
+        if (keep_float) {
+            const bool ok = build_texture_float(rgba, static_cast<u32>(w), static_cast<u32>(h), max_size, out);
+            free(rgba);
+            return ok;
         }
         Array<u8> bytes(out.pixels.allocator());
         bytes.resize(static_cast<usize>(w) * static_cast<usize>(h) * 4);
@@ -239,16 +309,17 @@ struct TextureCacheHeader {
 };
 } // namespace
 
-bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out, bool normal_map) {
-    if (!compress || !cache_dir) return load_texture(path, srgb, max_size, out);
+bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out, bool normal_map,
+                         bool keep_float) {
+    if (!compress || !cache_dir) return load_texture(path, srgb, max_size, out, keep_float);
     namespace fs = std::filesystem;
     std::error_code ec;
     const i64 time = static_cast<i64>(fs::last_write_time(path, ec).time_since_epoch().count());
     const u64 size = ec ? 0 : static_cast<u64>(fs::file_size(path, ec));
-    if (ec) return load_texture(path, srgb, max_size, out);
+    if (ec) return load_texture(path, srgb, max_size, out, keep_float);
     u64 hash = 1469598103934665603ull;  // which cached file: the source's path, colour or data, the size cap
     for (const char* p = path; *p; ++p) hash = (hash ^ static_cast<u8>(*p == '\\' ? '/' : *p)) * 1099511628211ull;
-    hash = (hash ^ (srgb ? 1u : 0u) ^ (normal_map ? 2u : 0u) ^ (static_cast<u64>(max_size) << 8)) * 1099511628211ull;
+    hash = (hash ^ (srgb ? 1u : 0u) ^ (normal_map ? 2u : 0u) ^ (keep_float ? 4u : 0u) ^ (static_cast<u64>(max_size) << 8)) * 1099511628211ull;
     char name[32];
     std::snprintf(name, sizeof name, "%016llx.lsdtex", static_cast<unsigned long long>(hash));
     const fs::path cached = fs::path(cache_dir) / name;
@@ -270,7 +341,7 @@ bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compres
         }
         std::fclose(f);
     }
-    if (!load_texture(path, srgb, max_size, out)) return false;
+    if (!load_texture(path, srgb, max_size, out, keep_float)) return false;
     compress_texture(out, normal_map);  // stays RGBA8 when its size is not a multiple of 4 (cached that way too)
     fs::create_directories(cache_dir, ec);
     if (FILE* f = std::fopen(cached.string().c_str(), "wb")) {  // a failed write only means encoding again next time
