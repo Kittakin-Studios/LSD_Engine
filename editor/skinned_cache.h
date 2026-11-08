@@ -34,6 +34,17 @@ struct SkinnedEntry {
         while (lod + 1 < lod_count && radius_over_distance < lod_screen_size[lod + 1]) ++lod;
         return lod;
     }
+    // Section `s` at `lod`: that LOD's indices, or the nearest finer one the section has (LOD 0: its own).
+    void section_at(u32 s, u32 lod, rhi::BufferHandle& out, u32& count) const {
+        out = sections[s].indices;
+        count = sections[s].index_count;
+        for (u32 l = lod; l > 0; --l) {
+            if (!sections[s].lod_index_count[l]) continue;
+            out = sections[s].lod_indices[l];
+            count = sections[s].lod_index_count[l];
+            return;
+        }
+    }
     Section sections[asset::kMaxMaterialSlots];
     u32 section_count = 0;
     i64 meta_modified = 0;

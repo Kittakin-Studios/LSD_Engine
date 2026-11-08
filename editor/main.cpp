@@ -229,7 +229,18 @@ lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fo
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
 
-void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range) {
+extern lsd::f32 g_view_distance_scale;  // below (Engine Scalability > View Distance)
+// The LOD a skeletal mesh is drawn at seen from `eye`: by how big it looks (its bind bounds, grown by half for the pose).
+lsd::u32 skinned_lod(const lsd::editor::SkinnedEntry& model, const lsd::Mat4& m, lsd::Vec3 eye) {
+    if (model.lod_count <= 1) return 0;
+    const lsd::Vec3 centre = lsd::transform_point(m, (model.model->bounds_min + model.model->bounds_max) * 0.5f);
+    const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
+    const lsd::f32 scale = lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+    return model.pick_lod(lsd::length((model.model->bounds_max - model.model->bounds_min) * 0.5f) * scale / distance);
+}
+
+// `eye`: the camera, so shadows use the LOD it sees (as static meshes' do).
+void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::world::World& world, bool skip_hidden, const lsd::Vec3* light, lsd::f32 range, lsd::Vec3 eye) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const lsd::world::Entity e = world.owner(type, i);
@@ -255,12 +266,16 @@ void draw_skinned_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::wo
         lsd::rhi::ShadowCutout cut[lsd::asset::kMaxMaterialSlots];
         bool masked[lsd::asset::kMaxMaterialSlots] = {}, any = false;
         for (lsd::u32 k = 0; k < model->section_count; ++k) any |= masked[k] = shadow_cutout(lsd::editor::section_material(*component, *model, k), component->color, cut[k]);
-        if (!any) {
+        const lsd::u32 lod = skinned_lod(*model, m, eye);
+        if (!any && lod == 0) {  // full detail, nothing cut out: one draw
             device.draw_shadow_caster(vertices, model->indices, model->index_count, mvp.m, pose->joint_rows(), pose->joint_count());
             continue;
         }
         for (lsd::u32 k = 0; k < model->section_count; ++k) {
-            device.draw_shadow_caster(vertices, model->sections[k].indices, model->sections[k].index_count, mvp.m, pose->joint_rows(), pose->joint_count(), masked[k] ? &cut[k] : nullptr);
+            lsd::rhi::BufferHandle indices;
+            lsd::u32 count = 0;
+            model->section_at(k, lod, indices, count);
+            device.draw_shadow_caster(vertices, indices, count, mvp.m, pose->joint_rows(), pose->joint_count(), masked[k] ? &cut[k] : nullptr);
         }
     }
 }
@@ -512,7 +527,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
         }
         add_flat_casters(world, meshes, skip_hidden, casters);
         draw_casters(device, vp, casters);
-        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f);
+        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f, eye);
         draw_instanced_casters(device, vp, world, meshes, skip_hidden);
     }
     device.end_shadow_pass();
@@ -555,7 +570,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
             }
             add_flat_casters(world, meshes, skip_hidden, casters);
             draw_casters(device, vp, casters);
-            draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range);
+            draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range, eye);
             draw_instanced_casters(device, vp, world, meshes, skip_hidden);
         }
     }
@@ -946,25 +961,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
         draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
-        // Auto LODs: by how big it looks (bind bounds' radius over distance), as static meshes.
-        lsd::u32 lod = 0;
-        if (model->lod_count > 1) {
-            const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
-            const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
-            const lsd::f32 scale = lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
-            lod = model->pick_lod(lsd::length(grow) * scale / distance);
-        }
+        const lsd::u32 lod = skinned_lod(*model, m, eye);  // auto LODs, as static meshes
         // One draw per material slot (Unreal's mesh sections), each with its slot's material.
         for (lsd::u32 s = 0; s < model->section_count; ++s) {
             lsd::rhi::MeshDraw section = draw;
-            section.indices = model->sections[s].indices;
-            section.index_count = model->sections[s].index_count;
-            for (lsd::u32 l = lod; l > 0; --l) {  // that LOD, or the nearest finer one this section has
-                if (!model->sections[s].lod_index_count[l]) continue;
-                section.indices = model->sections[s].lod_indices[l];
-                section.index_count = model->sections[s].lod_index_count[l];
-                break;
-            }
+            model->section_at(s, lod, section.indices, section.index_count);
             const char* material = lsd::editor::section_material(*component, *model, s);
             if (material[0]) section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;  // the material's own colours
             else to_rgba(component->color, section.color);

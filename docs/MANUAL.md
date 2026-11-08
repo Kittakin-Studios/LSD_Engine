@@ -1383,7 +1383,7 @@ up to three simpler LODs; **LOD 1 / 2 / 3 Screen Size** (Unreal's LOD Screen Siz
 mesh must look before each takes over (larger = sooner). Shadows use the LOD the camera sees.
 Rigged (skeletal) meshes get them too, per material section, with the same settings: the simpler
 triangles reuse the mesh's own vertices, so skinning, morph targets and clothes following the body
-behave as at full detail (their shadows keep full detail for now). A
+behave as at full detail; their shadows use the LOD the camera sees too. A
 Static Mesh's **Max Draw Distance** hides it (and its shadow) beyond that distance; a **Cull Distance
 Volume** (Place tab) does it for every static mesh inside by size (Size / Distance rules: pebbles
 vanish sooner than houses). For rigged meshes: the bone
