@@ -921,7 +921,7 @@ void main() {
         vec3 v = view_pos(v_uv + offset) - p;
         float vv = dot(v, v);
         float f = max(radius * radius - vv, 0.0);
-        sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
+        sum += f * f * f * max((dot(v, n) - 0.3 * sqrt(vv) - 0.01 * radius) / (0.7 * (vv + 0.01)), 0.0);  // near-plane samples ignored (post.hlsl)
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
     // Contact shadows (u_post[8]: toward the sun in view space, w = length), as the HLSL.

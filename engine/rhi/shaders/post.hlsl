@@ -70,7 +70,9 @@ float4 ps_ao(VsOut i) : SV_Target {
         const float3 v = view_pos(i.uv + offset) - p;
         const float vv = dot(v, v);
         const float f = max(radius * radius - vv, 0.0);
-        sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
+        // Samples within ~17 degrees of the surface's plane count for nothing: the normal is the flat triangle's, and on a
+        // low-poly mesh shaded smooth those flip in and out triangle by triangle (facets, a stepped band on a sphere).
+        sum += f * f * f * max((dot(v, n) - 0.3 * sqrt(vv) - 0.01 * radius) / (0.7 * (vv + 0.01)), 0.0);
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
     // Contact shadows (reproject[0]: toward the sun in view space, w = length): a short ray through the
