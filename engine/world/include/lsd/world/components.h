@@ -825,6 +825,9 @@ struct PointLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color (warm bulbs, cold daylight)") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
+                 Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
+    u32 shadow_resolution = 1;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the bulb's size; bigger gives softer, wider highlights (a sphere light)") f32 source_radius = 0.0f;
 };
 
@@ -840,6 +843,9 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
+                 Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
+    u32 shadow_resolution = 1;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the lamp's size; bigger gives softer, wider highlights") f32 source_radius = 0.0f;
 };
 

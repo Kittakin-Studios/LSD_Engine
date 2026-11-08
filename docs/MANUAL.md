@@ -2042,6 +2042,10 @@ in the project folder, the splash too).
   are kept the same way while the camera stands still (or moves less than a shadow texel) and nothing
   in them moves. Local light
   shadows need Shadows quality High or Epic. `stat dump` shows how many tiles were kept.
+- **Shadow Resolution** (Point / Spot Light; Unreal's Shadow Resolution Scale): **Medium** is the usual
+  tile, **High** four times the texels (a hero light's crisp shadow), **Low** a quarter (fill lights; more
+  of them fit). A light whose tiles do not fit gets the next size down; a High point light (six views)
+  usually ends up Medium.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
 - **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU

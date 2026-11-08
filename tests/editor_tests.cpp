@@ -814,6 +814,43 @@ void test_post_blend() {
     CHECK(editor::blend_post_volumes(w, {0, 0, 1}, false, out) && std::fabs(out.saturation - 0.5f) < 1e-5f && out.filmic_tonemapper);  // a quarter in: switches stay
 }
 
+void test_shadow_cells() {  // Shadow Resolution: aligned squares in the 8 x 8 cell atlas
+    editor::ShadowCells cells;
+    f32 x = -1, y = -1;
+    CHECK(cells.take(4, x, y) && x == 0.0f && y == 0.0f);   // High: a quarter of the atlas
+    CHECK(cells.take(4, x, y) && x == 0.5f && y == 0.0f);
+    CHECK(cells.take(2, x, y) && x == 0.0f && y == 0.5f);   // Medium: the old quarter-size tiles
+    CHECK(cells.take(1, x, y) && x == 0.25f && y == 0.5f);  // Low
+    CHECK(cells.take(4, x, y) && x == 0.5f && y == 0.5f);
+    CHECK(!cells.take(4, x, y));                            // full for High
+    cells.give(0.5f, 0.5f, 4);
+    CHECK(cells.take(4, x, y) && x == 0.5f && y == 0.5f);   // given back, taken again
+    // Through world_lights: a High spot gets a half-atlas tile, a Low one an eighth, and a High point light (six views
+    // of half the atlas cannot fit) falls back to Medium quarters.
+    editor::set_shadow_quality(2);
+    world::World w(default_allocator());
+    auto spot = [&](const char* name, u32 resolution, Vec3 at) {
+        const world::Entity e = w.create(name);
+        w.get<world::Transform>(e)->position = at;
+        w.add<world::SpotLight>(e)->shadow_resolution = resolution;
+    };
+    spot("High", 2, {0, 0, 2});
+    spot("Low", 0, {1, 0, 2});
+    const world::Entity point = w.create("Point");
+    w.get<world::Transform>(point)->position = {2, 0, 2};
+    w.add<world::PointLight>(point)->shadow_resolution = 2;
+    editor::LightView view;
+    view.eye = {0, -5, 2};
+    const rhi::LightSetup s = editor::world_lights(w, view, false);
+    f32 sizes[3] = {};
+    for (u32 i = 0; i < s.count; ++i) {
+        if (s.lights[i].shadow_tile < 0.0f) continue;
+        const f32 size = s.local_tiles[static_cast<u32>(s.lights[i].shadow_tile)][2];
+        sizes[s.lights[i].type == static_cast<f32>(rhi::LightType::Point) ? 2 : s.lights[i].position[0] < 0.5f ? 0 : 1] = size;
+    }
+    CHECK(sizes[0] == 0.5f && sizes[1] == 0.125f && sizes[2] == 0.25f && s.local_tiles[0][3] == 8.0f);  // 1 + 1 + 6 tiles
+}
+
 void test_particle_light() {
     rhi::LightSetup s;
     s.exposure = 2.0f;
@@ -856,6 +893,7 @@ int main() {
     test_rml_anchor();
     test_sound_cue();
     test_particle_light();
+    test_shadow_cells();
     test_post_blend();
     if (g_failures == 0) std::printf("All editor tests passed.\n");
     return g_failures == 0 ? 0 : 1;

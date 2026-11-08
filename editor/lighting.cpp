@@ -146,6 +146,32 @@ u32 g_atlas_size = 4096;
 
 } // namespace
 
+bool ShadowCells::take(u32 side, f32& x, f32& y) {
+    for (u32 cy = 0; cy + side <= 8; cy += side) {
+        for (u32 cx = 0; cx + side <= 8; cx += side) {
+            bool free = true;
+            for (u32 j = 0; j < side && free; ++j) {
+                for (u32 i = 0; i < side && free; ++i) free = !used[cy + j][cx + i];
+            }
+            if (!free) continue;
+            for (u32 j = 0; j < side; ++j) {
+                for (u32 i = 0; i < side; ++i) used[cy + j][cx + i] = true;
+            }
+            x = static_cast<f32>(cx) / 8.0f;
+            y = static_cast<f32>(cy) / 8.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
+void ShadowCells::give(f32 x, f32 y, u32 side) {
+    const u32 cx = static_cast<u32>(x * 8.0f + 0.5f), cy = static_cast<u32>(y * 8.0f + 0.5f);
+    for (u32 j = 0; j < side && cy + j < 8; ++j) {
+        for (u32 i = 0; i < side && cx + i < 8; ++i) used[cy + j][cx + i] = false;
+    }
+}
+
 Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
     const f32 up = normal.z * 0.5f + 0.5f;
     Vec3 light{s.ground[0] + (s.sky[0] - s.ground[0]) * up, s.ground[1] + (s.sky[1] - s.ground[1]) * up, s.ground[2] + (s.sky[2] - s.ground[2]) * up};
@@ -480,15 +506,30 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
     };
     // Local shadow tiles: a perspective view per spot light, six 90-degree views per point light.
     u32 tiles_used = 0;
-    auto add_tile = [&](Vec3 from, Vec3 dir, Vec3 up, f32 fov, f32 range) {
+    ShadowCells cells;
+    // `count` tiles of `side` cells (Shadow Resolution: 1 Low, 2 Medium, 4 High), smaller when they do not fit;
+    // 0 when not even Low fits. Their places go to local_tiles[tiles_used...].
+    auto place_tiles = [&](u32 count, u32 side) -> u32 {
+        if (tiles_used + count > rhi::kMaxShadowTiles) return 0;
+        for (; side >= 1; side /= 2) {
+            u32 placed = 0;
+            for (; placed < count; ++placed) {
+                f32* tile = s.local_tiles[tiles_used + placed];
+                if (!cells.take(side, tile[0], tile[1])) break;
+                tile[2] = static_cast<f32>(side) / 8.0f;
+            }
+            if (placed == count) return side;
+            for (u32 k = 0; k < placed; ++k) cells.give(s.local_tiles[tiles_used + k][0], s.local_tiles[tiles_used + k][1], side);  // undo, try smaller
+        }
+        return 0;
+    };
+    auto add_tile = [&](Vec3 from, Vec3 dir, Vec3 up, f32 fov, f32 range) {  // its place already set by place_tiles
         const u32 t = tiles_used++;
         const Mat4 vp = perspective(fov, 1.0f, 0.05f, range) * look_at(from, from + dir, up);
         for (int k = 0; k < 16; ++k) s.local_matrices[t][k] = vp.m[k];
-        s.local_tiles[t][0] = static_cast<f32>(t % 4) * 0.25f;
-        s.local_tiles[t][1] = static_cast<f32>(t / 4) * 0.25f;
-        s.local_tiles[t][2] = 0.25f;
     };
-    const f32 tile_texels = static_cast<f32>(shadow_atlas_size()) * 0.25f;
+    auto side_of = [](u32 resolution) { return resolution == 0 ? 1u : resolution >= 2 ? 4u : 2u; };
+    const f32 cell_texels = static_cast<f32>(shadow_atlas_size()) / 8.0f;
     for (u32 i = 0; i < w.count(dir_type) && s.count < rhi::kMaxLights; ++i) {
         const world::Entity e = w.owner(dir_type, i);
         if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
@@ -534,10 +575,11 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
             s.lights[s.count - 1].source_radius = light->source_radius;
-            if (light->cast_shadows && g_quality >= 2 && tiles_used + 6 <= rhi::kMaxShadowTiles) {
+            const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(6, side_of(light->shadow_resolution)) : 0u;
+            if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 l.shadow_tile = static_cast<f32>(tiles_used);
-                l.shadow_offset = 2.0f / tile_texels * 1.5f;  // texel size per metre for a 90 degree view
+                l.shadow_offset = 2.0f / (cell_texels * static_cast<f32>(side)) * 1.5f;  // texel size per metre for a 90 degree view
                 const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
                 for (int f = 0; f < 6; ++f) add_tile(position, dirs[f], f < 4 ? Vec3{0, 0, 1} : Vec3{1, 0, 0}, kPi * 0.5f, light->attenuation_radius);
             }
@@ -554,11 +596,12 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
             s.lights[s.count - 1].source_radius = light->source_radius;
-            if (light->cast_shadows && g_quality >= 2 && tiles_used + 1 <= rhi::kMaxShadowTiles) {
+            const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
+            if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
                 const f32 fov = radians(outer) * 2.0f + 0.1f;  // the cone, plus a little for the filter
                 l.shadow_tile = static_cast<f32>(tiles_used);
-                l.shadow_offset = 2.0f * std::tan(fov * 0.5f) / tile_texels * 1.5f;
+                l.shadow_offset = 2.0f * std::tan(fov * 0.5f) / (cell_texels * static_cast<f32>(side)) * 1.5f;
                 add_tile(position, dir, std::fabs(dir.z) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 0, 1}, fov, light->attenuation_radius);
             }
         }

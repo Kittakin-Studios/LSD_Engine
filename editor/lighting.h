@@ -30,6 +30,13 @@ void set_baked_lighting(const BakedLighting* lighting);
 rhi::LightSetup level_lights(const world::World& world, const LightView& view);
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
+// The local shadow atlas as 8 x 8 cells for Shadow Resolution: a tile is an aligned square 1 (Low), 2 (Medium,
+// the old fixed quarter) or 4 (High) cells across. take() finds a free one (x, y in 0..1); give() frees it.
+struct ShadowCells {
+    bool used[8][8] = {};
+    bool take(u32 side, f32& x, f32& y);
+    void give(f32 x, f32 y, u32 side);
+};
 // Lit particles (Niagara's lit sprite material): what multiplies a particle's colour at `position` whose sprite faces
 // `normal` (towards the camera): the sky / ground ambient plus each light's diffuse, wrapped so light from behind still
 // shows through smoke, times exposure (the same scale the lit meshes write).
