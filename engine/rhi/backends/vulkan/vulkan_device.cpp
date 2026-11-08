@@ -748,7 +748,18 @@ public:
     }
 
     // Leaves the window pass, draws depth into the shadow map (set_viewport picks its tiles); end_shadow_pass returns.
-    void begin_shadow_pass(TextureHandle handle) override {
+    void clear_shadow_viewport() override {
+        if (skip_frame_ || !shadow_pass_ || !in_pass_) return;
+        VkClearAttachment clear{};
+        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clear.clearValue.depthStencil.depth = 1.0f;
+        VkClearRect rect{};
+        rect.rect = {{static_cast<i32>(viewport_[0]), static_cast<i32>(viewport_[1])}, {static_cast<u32>(viewport_[2]), static_cast<u32>(viewport_[3])}};
+        rect.layerCount = 1;
+        vkCmdClearAttachments(frames_[frame_].cmd, 1, &clear, 1, &rect);
+    }
+
+    void begin_shadow_pass(TextureHandle handle, bool clear) override {
         Texture* t = lookup_texture(handle);
         if (skip_frame_ || shadow_pass_ || !t || !t->shadow_size) return;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
@@ -761,7 +772,7 @@ public:
         VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         depth.imageView = t->view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil.depth = 1.0f;
         VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};

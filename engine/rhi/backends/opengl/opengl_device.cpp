@@ -1530,7 +1530,14 @@ public:
         return TextureHandle::make(kMaxTargets + kMaxTextures + slot, m.generation);
     }
 
-    void begin_shadow_pass(TextureHandle handle) override {
+    void clear_shadow_viewport() override {
+        if (!in_shadow_pass_) return;
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClear(GL_DEPTH_BUFFER_BIT);  // set_viewport's scissor keeps it to the tile
+    }
+
+    void begin_shadow_pass(TextureHandle handle, bool clear) override {
         const ShadowMap* m = lookup_shadow(handle);
         if (!m) return;
         gl_.glBindFramebuffer(GL_FRAMEBUFFER, m->fbo);
@@ -1539,7 +1546,7 @@ public:
         glViewport(0, 0, static_cast<GLsizei>(m->size), static_cast<GLsizei>(m->size));
         glDepthMask(GL_TRUE);
         glClearDepth(1.0);
-        glClear(GL_DEPTH_BUFFER_BIT);
+        if (clear) glClear(GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(2.0f, 1.0f);  // against shadow acne on slopes; the shader adds a normal offset

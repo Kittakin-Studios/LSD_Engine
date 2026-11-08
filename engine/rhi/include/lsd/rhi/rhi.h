@@ -373,7 +373,9 @@ public:
     // to the window. set_shadow_map binds the sun's and the local lights' atlases for the following
     // draw_mesh calls (the lights say which tiles they use); begin_frame unbinds them.
     virtual TextureHandle create_shadow_map(u32 size) = 0;
-    virtual void begin_shadow_pass(TextureHandle shadow_map) = 0;
+    // `clear` false keeps what the atlas holds (cached tiles); clear_shadow_viewport then clears just the tile redrawn.
+    virtual void begin_shadow_pass(TextureHandle shadow_map, bool clear = true) = 0;
+    virtual void clear_shadow_viewport() = 0;  // depth back to far inside the current viewport (in a shadow pass)
     // `cutout`: a Masked material's shadow, its base colour texture's alpha (times `alpha`) below `cutoff` casts none.
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
                                     const f32* joint_rows = nullptr, u32 joint_count = 0, const struct ShadowCutout* cutout = nullptr) = 0;  // joints: a skinned caster

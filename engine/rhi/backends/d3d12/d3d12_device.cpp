@@ -824,15 +824,22 @@ public:
         return TextureHandle::make(kMaxTargets + kMaxTextures + slot, m.generation);
     }
 
-    void begin_shadow_pass(TextureHandle handle) override {
+    void begin_shadow_pass(TextureHandle handle, bool clear) override {
         ShadowMap* m = lookup_shadow(handle);
         if (!m) return;
         if (current_target_ >= 0) set_render_target({}, nullptr);
         transition(m->resource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-        list_->ClearDepthStencilView(m->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        if (clear) list_->ClearDepthStencilView(m->dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
         list_->OMSetRenderTargets(0, nullptr, FALSE, &m->dsv);
         set_viewport(0.0f, 0.0f, static_cast<f32>(m->size), static_cast<f32>(m->size));
         shadow_pass_ = static_cast<i32>(handle.index() - kMaxTargets - kMaxTextures);
+    }
+
+    void clear_shadow_viewport() override {
+        if (shadow_pass_ < 0) return;
+        const D3D12_RECT rect{static_cast<LONG>(viewport_[0]), static_cast<LONG>(viewport_[1]), static_cast<LONG>(viewport_[0] + viewport_[2]),
+                              static_cast<LONG>(viewport_[1] + viewport_[3])};
+        list_->ClearDepthStencilView(shadow_maps_[shadow_pass_].dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &rect);
     }
 
     void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16], const f32* joint_rows,

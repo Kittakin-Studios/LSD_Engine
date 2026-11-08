@@ -533,11 +533,77 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
     device.end_shadow_pass();
 }
 
+// Shadow caching (Unreal's cached shadow maps for static lights): a local light's tile is kept from the
+// last frame while what it would draw is the same (its matrix, the atlas, every caster's mesh, LOD,
+// matrix and cut-out, the Instanced Static Meshes); a skeletal mesh in range redraws it every frame.
+bool g_shadow_caching = true;
+lsd::u32 g_shadow_tiles_cached = 0, g_shadow_tiles_cached_frame = 0;  // this frame's / the last frame's (stat dump)
+
+lsd::u64 hash_bytes(lsd::u64 h, const void* p, size_t n) {
+    for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const lsd::u8*>(p)[i]) * 1099511628211ull;
+    return h;
+}
+
+lsd::u64 hash_casters(lsd::u64 h, const std::vector<Caster>& casters) {
+    for (const Caster& c : casters) {
+        h = hash_bytes(h, &c.vertices.value, 4);
+        h = hash_bytes(h, &c.indices.value, 4);
+        h = hash_bytes(h, &c.count, 4);
+        h = hash_bytes(h, c.world.m, sizeof c.world.m);
+        if (c.masked) {
+            h = hash_bytes(h, &c.cutout.texture.value, 4);
+            h = hash_bytes(h, &c.cutout.cutoff, 4);
+            h = hash_bytes(h, &c.cutout.alpha, 4);
+        }
+    }
+    return h;
+}
+
+// The Instanced Static Meshes' copies and transforms (they are drawn into every tile).
+lsd::u64 hash_instanced(lsd::world::World& world, bool skip_hidden) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::InstancedStaticMesh>();
+    lsd::u64 h = 1469598103934665603ull;
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        const auto* ism = static_cast<const lsd::world::InstancedStaticMesh*>(world.at(type, i));
+        if (!ism->cast_shadows || (skip_hidden && world.hidden_in_hierarchy(e))) continue;
+        const lsd::Mat4 m = world.world_matrix(e);
+        h = hash_bytes(h, m.m, sizeof m.m);
+        h = hash_bytes(h, ism->mesh, std::strlen(ism->mesh));
+        for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
+            const lsd::world::MeshInstance& in = ism->instances[k];
+            h = hash_bytes(h, &in.position, sizeof in.position);
+            h = hash_bytes(h, &in.rotation, sizeof in.rotation);
+            h = hash_bytes(h, &in.scale, sizeof in.scale);
+        }
+    }
+    return h;
+}
+
+// True when a posed skeletal mesh reaches the light (it moves: the tile is never cached).
+bool skinned_in_range(lsd::world::World& world, bool skip_hidden, lsd::Vec3 light, lsd::f32 range) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i));
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
+        if (!model || !g_animations->pose(e)) continue;
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
+        const lsd::Vec3 centre = lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f);
+        const lsd::Vec3 extent = lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f);
+        if (lsd::length(centre - light) <= range + lsd::length(extent) * 2.0f) return true;  // as draw_skinned_casters
+    }
+    return false;
+}
+
 // Spot / point light shadow tiles: the meshes that reach into each light's range.
 void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                         lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
-    device.begin_shadow_pass(atlas);
+    static lsd::u64 tile_keys[lsd::rhi::kMaxShadowTiles] = {};  // what each tile of the atlas holds (0: unknown)
+    device.begin_shadow_pass(atlas, !g_shadow_caching);
+    const lsd::u64 instanced = g_shadow_caching ? hash_instanced(world, skip_hidden) : 0;
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     static std::vector<Caster> casters;
     for (lsd::u32 li = 0; li < lights.count; ++li) {
@@ -546,6 +612,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
         const lsd::u32 first = static_cast<lsd::u32>(light.shadow_tile);
         const lsd::u32 tiles = light.type == static_cast<lsd::f32>(lsd::rhi::LightType::Point) ? 6u : 1u;
         const lsd::Vec3 at{light.position[0], light.position[1], light.position[2]};
+        const bool moving = g_shadow_caching && skinned_in_range(world, skip_hidden, at, light.range);
         for (lsd::u32 t = first; t < first + tiles; ++t) {
             device.set_viewport(lights.local_tiles[t][0] * size, lights.local_tiles[t][1] * size, lights.local_tiles[t][2] * size, lights.local_tiles[t][2] * size);
             lsd::Mat4 vp;
@@ -569,6 +636,19 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
                 casters.push_back(caster);
             }
             add_flat_casters(world, meshes, skip_hidden, casters);
+            if (g_shadow_caching) {
+                lsd::u64 key = hash_bytes(instanced, &atlas.value, 4);
+                key = hash_casters(hash_bytes(key, lights.local_matrices[t], sizeof lights.local_matrices[t]), casters);
+                key = hash_bytes(key, lights.local_tiles[t], 3 * sizeof(lsd::f32));
+                if (moving) key = 0;
+                if (key && key == tile_keys[t]) {  // the same as last drawn: kept
+                    casters.clear();
+                    ++g_shadow_tiles_cached;
+                    continue;
+                }
+                tile_keys[t] = key;
+                device.clear_shadow_viewport();
+            }
             draw_casters(device, vp, casters);
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range, eye);
             draw_instanced_casters(device, vp, world, meshes, skip_hidden);
@@ -1022,6 +1102,7 @@ void register_console(EditorState& s) {
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
     console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
+    console::add_variable("r.ShadowCaching", &g_shadow_caching, "Spot / point light shadow tiles are kept while nothing they show moves (a skeletal mesh in range redraws them each frame)");
     console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
@@ -1042,8 +1123,9 @@ void register_console(EditorState& s) {
         else if (std::strcmp(args, "audio") == 0) st.show_audio_stats = !st.show_audio_stats;
         else if (std::strcmp(args, "dump") == 0) {  // the numbers as text (remote console, the MCP bridge, tests)
             char line[256];
-            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u (occluded %u), shadow casters culled %u",
-                          st.stat_game_ms, st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled, st.stat_occluded, g_casters_culled_frame);
+            std::snprintf(line, sizeof line, "game %.2f ms, render %.2f ms, ui %.2f ms, gpu wait %.2f ms, draws %u, triangles %u, culled %u (occluded %u), shadow casters culled %u, shadow tiles cached %u",
+                          st.stat_game_ms, st.stat_render_ms, st.stat_ui_ms, st.stat_wait_ms, st.stat_draws, st.stat_triangles, st.stat_culled, st.stat_occluded, g_casters_culled_frame,
+                          g_shadow_tiles_cached_frame);
             lsd::editor::remote::print(line);
             LSD_LOG_INFO("stat", "%s", line);
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
@@ -2237,6 +2319,8 @@ int main(int argc, char** argv) {
     for (long frame = 0; running && frame != max_frames;) {
         g_casters_culled_frame = g_casters_culled;
         g_casters_culled = 0;
+        g_shadow_tiles_cached_frame = g_shadow_tiles_cached;
+        g_shadow_tiles_cached = 0;
         SDL_Event event;
         if (!game_mode && remote_arg == 0) {  // -remote keeps its own listener
             const lsd::u32 port = state.settings.mcp_port;

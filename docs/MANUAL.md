@@ -2011,6 +2011,11 @@ in the project folder, the splash too).
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`
   shows how many it skipped (culled ... (occluded n)). Masked and translucent meshes do not hide anything.
+- **Shadow caching** (Unreal's cached shadow maps, on by default; `r.ShadowCaching 0` turns it off):
+  a Point or Spot Light's shadow is drawn once and kept while nothing it shows moves, so a room of
+  static lights costs nothing per frame. Moving a mesh, the light or an Instanced Static Mesh redraws
+  it the next frame; a Skeletal Mesh within the light's reach redraws it every frame. Local light
+  shadows need Shadows quality High or Epic. `stat dump` shows how many tiles were kept.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
 - **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU
