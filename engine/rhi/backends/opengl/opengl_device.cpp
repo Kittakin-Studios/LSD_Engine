@@ -912,16 +912,23 @@ void main() {
 #elif defined(DOF)
     // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
     // (a sharp object in front does not smear into the background behind it).
+    // Bokeh: bright samples weigh more, so out-of-focus lights open into discs.
     float radius = coc(view_distance(depth_at(v_uv)));
-    vec3 sum = tap(t0, v_uv);
-    float weight = 1.0;
+    vec3 centre = tap(t0, v_uv);
+    float lc = dot(centre, vec3(0.2126, 0.7152, 0.0722));
+    if (lc > 8.0) centre *= 8.0 / lc;  // hot pixels scaled down first: no dotted sample pattern
+    float weight = 1.0 + min(4.0 * max(dot(centre, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 4.0);
+    vec3 sum = centre * weight;
     if (radius > 0.5) {
-        for (int i = 0; i < 24; ++i) {
+        for (int i = 0; i < 40; ++i) {
             float a = float(i) * 2.39996323;
-            float r = sqrt((float(i) + 0.5) / 24.0) * radius;
+            float r = sqrt((float(i) + 0.5) / 40.0) * radius;
             vec2 uv = v_uv + vec2(cos(a), sin(a)) * r * texel.xy;
-            float w = clamp(coc(view_distance(depth_at(uv))) - r + 1.0, 0.0, 1.0);
-            sum += tap(t0, uv) * w;
+            vec3 c = box4(t0, uv, texel.xy * max(0.5, radius * 0.15));  // a footprint as wide as the gap between samples
+            float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            if (l > 8.0) c *= 8.0 / l;
+            float w = clamp(coc(view_distance(depth_at(uv))) - r + 1.0, 0.0, 1.0) * (1.0 + min(4.0 * max(dot(c, vec3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 4.0));
+            sum += c * w;
             weight += w;
         }
     }

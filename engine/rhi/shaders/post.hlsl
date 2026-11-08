@@ -139,18 +139,24 @@ float4 ps_motion(VsOut i) : SV_Target {
     return float4(encode(sum / 8.0), 1.0);
 }
 // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
-// (a sharp object in front does not smear into the background behind it).
+// (a sharp object in front does not smear into the background behind it). Bokeh: bright samples weigh
+// more, so out-of-focus lights open into discs (Unreal's Cinematic DOF) instead of fading into the blur.
+// Samples brighter than 8 are scaled down first (one hot pixel would print the sample pattern as dots).
+float3 tame(float3 c) { const float l = dot(c, float3(0.2126, 0.7152, 0.0722)); return l > 8.0 ? c * (8.0 / l) : c; }
+float bokeh_weight(float3 c) { return 1.0 + min(4.0 * max(dot(c, float3(0.2126, 0.7152, 0.0722)) - 1.0, 0.0), 4.0); }
 float4 ps_dof(VsOut i) : SV_Target {
     const float radius = coc(view_distance(depth_at(i.uv)));
-    float3 sum = tap(t0, i.uv);
-    float weight = 1.0;
+    const float3 centre = tame(tap(t0, i.uv));
+    float weight = bokeh_weight(centre);
+    float3 sum = centre * weight;
     if (radius > 0.5) {
-        for (int k = 0; k < 24; ++k) {
+        for (int k = 0; k < 40; ++k) {
             const float a = k * 2.39996323;
-            const float r = sqrt((k + 0.5) / 24.0) * radius;
+            const float r = sqrt((k + 0.5) / 40.0) * radius;
             const float2 uv = i.uv + float2(cos(a), sin(a)) * r * texel.xy;
-            const float w = saturate(coc(view_distance(depth_at(uv))) - r + 1.0);
-            sum += tap(t0, uv) * w;
+            const float3 c = tame(box4(t0, uv, texel.xy * max(0.5, radius * 0.15)));  // a footprint as wide as the gap between samples: a disc, not dots
+            const float w = saturate(coc(view_distance(depth_at(uv))) - r + 1.0) * bokeh_weight(c);
+            sum += c * w;
             weight += w;
         }
     }
