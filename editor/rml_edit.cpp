@@ -1,5 +1,8 @@
 #include "rml_edit.h"
 
+#include <cmath>
+#include <cstdio>
+
 #include <cctype>
 #include <cstring>
 #include <utility>
@@ -224,6 +227,33 @@ std::string rml_unique_id(const std::string& rml, const char* base) {
         size_t b, e;
         if (!rml_find_tag(rml, id.c_str(), b, e)) return id;
     }
+}
+
+RmlAnchor rml_anchor(const std::string& rml, const char* id) {
+    auto axis = [&](const char* near, const char* far) {
+        const std::string n = rml_style(rml, id, near), f = rml_style(rml, id, far);
+        if (!f.empty() && f != "auto" && (n.empty() || n == "auto")) return 2;
+        return !n.empty() && n.back() == '%' ? 1 : 0;
+    };
+    return {axis("left", "right"), axis("top", "bottom")};
+}
+
+bool rml_set_anchor(std::string& rml, const char* id, RmlAnchor anchor, const float box[4], float parent_w, float parent_h) {
+    size_t begin, end;
+    if (!rml_find_tag(rml, id, begin, end)) return false;
+    auto px = [](float v) {
+        char text[32];
+        std::snprintf(text, sizeof text, "%gpx", static_cast<double>(std::round(v)));
+        return std::string(text);
+    };
+    auto axis = [&](int a, float at, float size, float parent, const char* near, const char* far, const char* margin) {
+        rml_set_style(rml, id, near, a == 0 ? px(at).c_str() : a == 1 ? "50%" : "");
+        rml_set_style(rml, id, far, a == 2 ? px(parent - at - size).c_str() : "");
+        rml_set_style(rml, id, margin, a == 1 ? px(at - parent * 0.5f).c_str() : "");
+    };
+    axis(anchor.x, box[0], box[2], parent_w, "left", "right", "margin-left");
+    axis(anchor.y, box[1], box[3], parent_h, "top", "bottom", "margin-top");
+    return true;
 }
 
 } // namespace lsd::editor

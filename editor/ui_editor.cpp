@@ -159,6 +159,15 @@ void edited(UiWindow& w) {
     w.changed_at = SDL_GetTicks() + 300;
 }
 
+// Anchors apply to absolutely positioned elements straight under <body> (their parent is the whole screen).
+bool anchorable(const UiWindow& w, const char* id) {
+    if (rml_style(w.text, id, "position") != "absolute") return false;
+    for (const RmlNode& n : rml_outline(w.text)) {
+        if (n.id == id) return n.depth == 0;
+    }
+    return false;
+}
+
 void select_element(UiWindow& w, const std::string& id) {
     w.selected = id;
     w.show_details = !id.empty();
@@ -237,6 +246,11 @@ void draw_canvas(UiWindow& w, ImVec2 image_min, f32 image_width) {
             w.make_relative = std::strcmp(value, "static") == 0;
             w.start_left = w.context->get_property(w.document, hover_id, "left", value, sizeof value) ? pixels_of(value) : 0.0f;
             w.start_top = w.context->get_property(w.document, hover_id, "top", value, sizeof value) ? pixels_of(value) : 0.0f;
+            f32 box[4];
+            if (anchorable(w, hover_id) && w.context->element_box(w.document, hover_id, box)) {  // any anchor: moved as left / top, re-anchored when dropped
+                w.start_left = box[0];
+                w.start_top = box[1];
+            }
             w.drag_from[0] = px;
             w.drag_from[1] = py;
             w.dragging = true;
@@ -253,17 +267,30 @@ void draw_canvas(UiWindow& w, ImVec2 image_min, f32 image_width) {
         if (std::fabs(px - w.drag_from[0]) + std::fabs(py - w.drag_from[1]) > 3.0f) w.moved = true;
         if (w.moved && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {  // live, on the preview only
             if (w.make_relative) w.context->set_property(w.document, w.selected.c_str(), "position", "relative");
+            if (anchorable(w, w.selected.c_str())) {  // its anchor's offsets off while it follows the mouse
+                for (const char* p : {"right", "bottom"}) w.context->set_property(w.document, w.selected.c_str(), p, "auto");
+                for (const char* p : {"margin-left", "margin-top"}) w.context->set_property(w.document, w.selected.c_str(), p, "0px");
+            }
             w.context->set_property(w.document, w.selected.c_str(), "left", left_text);
             w.context->set_property(w.document, w.selected.c_str(), "top", top_text);
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {  // dropped: into the text
             w.dragging = false;
             if (w.moved) {
-                if (w.make_relative) rml_set_style(w.text, w.selected.c_str(), "position", "relative");
-                rml_set_style(w.text, w.selected.c_str(), "left", left_text);
-                rml_set_style(w.text, w.selected.c_str(), "top", top_text);
-                w.dirty = true;
-                w.previewed = w.text;  // the preview already shows it
+                if (anchorable(w, w.selected.c_str())) {  // where it was dropped, kept on its anchor
+                    f32 box[4];
+                    if (w.context->element_box(w.document, w.selected.c_str(), box)) {
+                        rml_set_anchor(w.text, w.selected.c_str(), rml_anchor(w.text, w.selected.c_str()), box, static_cast<f32>(kPreviewWidth),
+                                       static_cast<f32>(kPreviewHeight));
+                    }
+                    edited(w);  // the preview reloads from the text
+                } else {
+                    if (w.make_relative) rml_set_style(w.text, w.selected.c_str(), "position", "relative");
+                    rml_set_style(w.text, w.selected.c_str(), "left", left_text);
+                    rml_set_style(w.text, w.selected.c_str(), "top", top_text);
+                    w.dirty = true;
+                    w.previewed = w.text;  // the preview already shows it
+                }
             }
         }
     }
@@ -335,8 +362,32 @@ void draw_element_details(UiWindow& w) {
         edited(w);
     }
     ImGui::SetItemTooltip("The Lua function called when it is clicked: function name(self, element_id) in any script");
+    ImGui::SeparatorText("Anchor");
+    if (anchorable(w, w.selected.c_str())) {  // UMG's Anchors: which corner, edge or middle of the screen it keeps its distance to
+        const RmlAnchor now = rml_anchor(w.text, w.selected.c_str());
+        static const char* const kRow[3] = {"Top", "Middle", "Bottom"};
+        static const char* const kColumn[3] = {"Left", "Center", "Right"};
+        for (int y = 0; y < 3; ++y) {
+            for (int x = 0; x < 3; ++x) {
+                char label[48];
+                std::snprintf(label, sizeof label, "%s##anchor%d%d", now.x == x && now.y == y ? "[x]" : "[ ]", x, y);
+                if (x) ImGui::SameLine();
+                if (ImGui::SmallButton(label)) {
+                    f32 box[4];
+                    if (w.context && w.context->element_box(w.document, w.selected.c_str(), box)) {
+                        rml_set_anchor(w.text, w.selected.c_str(), RmlAnchor{x, y}, box, static_cast<f32>(kPreviewWidth), static_cast<f32>(kPreviewHeight));
+                        edited(w);
+                    }
+                }
+                ImGui::SetItemTooltip("Anchor %s %s: it keeps its distance to that point of the screen when the screen is another size (it stays where it is now)",
+                                      kRow[y], kColumn[x]);
+            }
+        }
+    } else {
+        ImGui::TextDisabled("Anchors are for elements with position: absolute straight under <body>.");
+    }
     ImGui::SeparatorText("Style (inline; empty = from the style sheet)");
-    const char* properties[] = {"position", "left", "top", "width", "height", "color", "background-color", "font-size", "font-weight",
+    const char* properties[] = {"position", "left", "top", "right", "bottom", "width", "height", "color", "background-color", "font-size", "font-weight",
                                 "text-align", "padding", "margin", "border", "border-radius", "opacity", "display"};
     for (const char* property : properties) {
         std::snprintf(buffer, sizeof buffer, "%s", rml_style(w.text, w.selected.c_str(), property).c_str());

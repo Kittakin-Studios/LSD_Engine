@@ -1762,6 +1762,11 @@ The preview is also the **designer canvas** (UMG's Designer tab):
   to select it. Elements without an `id` are greyed out (give one an id to select it).
 - The **Details** tab shows the selection's text, **On Click** (the Lua function it calls) and common
   style properties. Empty fields come from the style sheet.
+- **Anchor** (in Details; UMG's Anchors), for elements with `position: absolute` straight under `body`: nine
+  points (corners, edge middles, centre). The element keeps its distance to that point when the screen is
+  another size: a health bar anchored bottom left stays in the corner on any monitor. Picking one keeps the
+  element where it is (it writes `right` / `bottom`, or `left: 50%` with a margin for the middle); dragging
+  keeps the anchor.
 - Everything you do there is written into the code as the element's inline `style` and attributes,
   so the code and the canvas always agree; edit either.
 

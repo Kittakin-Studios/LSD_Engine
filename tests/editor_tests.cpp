@@ -126,6 +126,20 @@ static void test_sound_cue() {
     CHECK(evaluate_cue(h, env, v, 16) == 1 && v[0].looping && v[0].delay == 1.0f);
 }
 
+static void test_rml_anchor() {  // UMG anchors: re-anchoring keeps the element where it is
+    using namespace lsd::editor;
+    std::string rml = "<rml><body><div id=\"hud\" style=\"position: absolute; left: 100px; top: 50px; width: 200px; height: 40px;\"></div></body></rml>";
+    CHECK(rml_anchor(rml, "hud").x == 0 && rml_anchor(rml, "hud").y == 0);
+    const float box[4] = {100, 50, 200, 40};
+    CHECK(rml_set_anchor(rml, "hud", RmlAnchor{2, 2}, box, 1280, 720));  // bottom right
+    CHECK(rml_style(rml, "hud", "right") == "980px" && rml_style(rml, "hud", "bottom") == "630px" && rml_style(rml, "hud", "left").empty());
+    CHECK(rml_anchor(rml, "hud").x == 2 && rml_anchor(rml, "hud").y == 2);
+    CHECK(rml_set_anchor(rml, "hud", RmlAnchor{1, 0}, box, 1280, 720));  // top centre
+    CHECK(rml_style(rml, "hud", "left") == "50%" && rml_style(rml, "hud", "margin-left") == "-540px" && rml_style(rml, "hud", "right").empty() &&
+          rml_style(rml, "hud", "top") == "50px" && rml_style(rml, "hud", "bottom").empty());
+    CHECK(rml_anchor(rml, "hud").x == 1 && rml_anchor(rml, "hud").y == 0);
+}
+
 static void test_rml_edit() {  // the UI designer's writes into the document text
     using namespace lsd::editor;
     std::string rml = "<rml><body>\n<div id=\"panel\" style=\"left: 40px; color: red;\">\n  <div id=\"title\">Title</div>\n  <button id=\"play\">Play</button>\n</div>\n<img id=\"pic\" src=\"a.png\"/>\n</body></rml>";
@@ -839,6 +853,7 @@ int main() {
     test_light_bake();
     test_lightmaps();
     test_rml_edit();
+    test_rml_anchor();
     test_sound_cue();
     test_particle_light();
     test_post_blend();
