@@ -1,5 +1,6 @@
 #include "lsd/render/reflection.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace lsd::render {
@@ -41,10 +42,18 @@ void unwrap_reflection(const u8* const faces[6], const Mat4 views[6], u32 index,
                 const f32 nx = (m.at(0, 0) * d.x + m.at(0, 1) * d.y + m.at(0, 2) * d.z + m.at(0, 3)) / w;
                 const f32 ny = (m.at(1, 0) * d.x + m.at(1, 1) * d.y + m.at(1, 2) * d.z + m.at(1, 3)) / w;
                 if (std::fabs(nx) > 1.0f || std::fabs(ny) > 1.0f) continue;
-                const u32 px = static_cast<u32>(std::fmin((nx * 0.5f + 0.5f) * kReflectionFace, kReflectionFace - 1.0f));
-                const u32 py = static_cast<u32>(std::fmin((0.5f - ny * 0.5f) * kReflectionFace, kReflectionFace - 1.0f));
-                const u8* in = faces[f] + (static_cast<usize>(py) * kReflectionFace + px) * 4;
-                for (int c = 0; c < 4; ++c) out[c] = in[c];
+                // Bilinear between the face's four nearest texels (nearest stepped along hard edges: the horizon).
+                const f32 fx = std::clamp((nx * 0.5f + 0.5f) * kReflectionFace - 0.5f, 0.0f, kReflectionFace - 1.0f);
+                const f32 fy = std::clamp((0.5f - ny * 0.5f) * kReflectionFace - 0.5f, 0.0f, kReflectionFace - 1.0f);
+                const u32 x0 = static_cast<u32>(fx), y0 = static_cast<u32>(fy);
+                const u32 x1 = std::min(x0 + 1, kReflectionFace - 1), y1 = std::min(y0 + 1, kReflectionFace - 1);
+                const f32 tx = fx - static_cast<f32>(x0), ty = fy - static_cast<f32>(y0);
+                auto texel = [&](u32 px, u32 py, int c) { return static_cast<f32>(faces[f][(static_cast<usize>(py) * kReflectionFace + px) * 4 + static_cast<usize>(c)]); };
+                for (int c = 0; c < 4; ++c) {
+                    const f32 top = texel(x0, y0, c) + (texel(x1, y0, c) - texel(x0, y0, c)) * tx;
+                    const f32 bottom = texel(x0, y1, c) + (texel(x1, y1, c) - texel(x0, y1, c)) * tx;
+                    out[c] = static_cast<u8>(std::lround(top + (bottom - top) * ty));
+                }
                 break;
             }
         }

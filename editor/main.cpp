@@ -2359,6 +2359,7 @@ int main(int argc, char** argv) {
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(code.c_str())) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
+    bool travelled = false;  // lsd.open_level went to another level during this Play
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
     SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player
     char title[400] = "";
@@ -2695,7 +2696,7 @@ int main(int argc, char** argv) {
 
         // lsd.open_level: another level inside the same Play (Unreal's Open Level). Stop still reverts to the
         // level being edited (play_snapshot); game_instance / player_state travel with the scripts.
-        // shortcut: the new level's baked lighting (BuiltData) is not loaded; load it here when travel matters for looks.
+        // The new level brings its baked lighting (BuiltData) and its reflection captures, as opening it would.
         if (char travel_to[300]; state.playing && play.take_level_request(travel_to, sizeof travel_to)) {
             play.stop();
             state.kept_count = 0;  // Keep Simulation Changes names objects of the old level
@@ -2705,6 +2706,9 @@ int main(int argc, char** argv) {
                 play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch, true);
                 animations->reset();
                 effects->reset();
+                load_level_lighting(again ? state.level_path : travel_to);
+                state.capture_reflections = true;
+                travelled = !again || travelled;
                 if (again) LSD_LOG_INFO("editor", "Restarted the level (multiplayer host / join / leave)");
                 else LSD_LOG_INFO("editor", "Opened %s (open_level)", travel_to);
             } else {
@@ -2859,6 +2863,10 @@ int main(int argc, char** argv) {
             state.kept_count = 0;
             play.close_port();
             lsd::world::load_level(world, play_snapshot.data(), play_snapshot.size());  // Play changes revert, like Unreal's PIE
+            if (std::exchange(travelled, false)) {  // back from another level: the edited one's lighting and captures
+                load_level_lighting(state.level_path);
+                state.capture_reflections = true;
+            }
             lsd::u32 applied = 0;
             for (const Kept& item : kept) {  // levels reload objects at their saved ids: the same handle is the same object
                 if (!world.alive(item.entity) || item.name != world.name(item.entity)) continue;  // spawned in Play: not in the level

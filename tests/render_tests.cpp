@@ -148,6 +148,18 @@ static void test_reflection() {
     CHECK(at(0.5f, 0.01f) == 170);  // +Z, straight up
     CHECK(at(0.5f, 0.99f) == 210);  // -Z
     CHECK(atlas[0] == 0);           // other tiles untouched
+    {  // a hard edge across +X (dark above its middle, light below) comes out smooth, not stepped: values in between
+        for (u32 y = 0; y < render::kReflectionFace; ++y)
+            for (u32 x = 0; x < render::kReflectionFace; ++x)
+                for (int c = 0; c < 4; ++c) faces[0][(static_cast<usize>(y) * render::kReflectionFace + x) * 4 + static_cast<usize>(c)] = y < render::kReflectionFace / 2 ? 0 : 200;
+        render::unwrap_reflection(face_ptrs, views, 3, atlas.data());
+        u32 between = 0;
+        for (u32 y = 0; y < render::kReflectionTileH; ++y) {
+            const u8 v = atlas[(static_cast<usize>(render::kReflectionTileH + y) * render::kReflectionAtlas + render::kReflectionTileW + render::kReflectionTileW / 2) * 4];
+            between += v > 5 && v < 195 ? 1u : 0u;
+        }
+        CHECK(between >= 1);
+    }
     std::vector<std::vector<u8>> levels;
     std::vector<u8> flat(render::kReflectionAtlas * render::kReflectionAtlas * 4, 128);
     render::reflection_mips(flat.data(), levels);
