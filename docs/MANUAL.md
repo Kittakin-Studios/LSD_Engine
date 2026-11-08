@@ -635,6 +635,12 @@ Atmosphere:
   down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
   paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip
   out and import it as a texture.
+  **Post Material** (Unreal's Post Process Material): Content Browser > right-click > **New Post Process
+  Material** makes a `.hlsl` with `float3 post_main(PostIn pi)`; pick it here and it runs on every pixel
+  before tonemapping. `pi.color` is the scene there (linear), `pi.uv` its place (0..1, top-down),
+  `pi.time` seconds and `pi.params` this volume's **Post Parameters**; `scene_color(uv)` reads the scene
+  anywhere and `texel_size()` is one pixel. Write it like a shader asset (float3, lerp, saturate, frac:
+  OpenGL maps them). Saving it recompiles; compile errors go to the Output Log.
   **Motion Blur** (Amount 0 = off, Max as % of the screen's width): turning or moving the camera
   smears the picture along the movement, found the way TAA finds last frame's pixels. Only the
   camera's own movement for now: an object moving by itself in front of a still camera stays sharp.

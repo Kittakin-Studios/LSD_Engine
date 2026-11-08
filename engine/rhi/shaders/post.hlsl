@@ -267,9 +267,25 @@ float3 lut(float3 s) {  // a 256 x 16 strip: 16 tiles of 16 x 16 (red across, gr
     const float3 hi = t2.SampleLevel(clamp_linear, inner + float2(min(b0 + 1.0, 15.0) / 16.0, 0.0), 0).rgb;
     return lerp(lo, hi, b - b0);
 }
+#ifdef LSD_POST_MATERIAL  // a post-process material: the backend defines this and puts its code at the POST marker
+struct PostIn { float2 uv; float3 color; float time; float4 params; };
+float3 scene_color(float2 uv) { return tap(t0, uv); }  // the scene, linear and exposed, before tonemapping
+float2 texel_size() { return texel.xy; }
+#endif
+//@POST
 float4 ps_composite(VsOut i) : SV_Target {
     float3 c = tap(t0, i.uv);
     if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
+#ifdef LSD_POST_MATERIAL
+    {  // its time and parameters ride in proj (unused by this pass)
+        PostIn pi;
+        pi.uv = i.uv;
+        pi.color = c;
+        pi.time = proj.x;
+        pi.params = float4(proj.yzw, 0.0);
+        c = max(post_main(pi), 0.0);
+    }
+#endif
     c *= tint_tm.rgb;
     if (tint_tm.w > 0.5) c = aces(c);
     const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));

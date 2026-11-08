@@ -761,6 +761,39 @@ public:
         return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
     }
 
+    static constexpr u32 kMaxPostShaders = 16;
+    struct PostShader {
+        ComPtr<ID3D12PipelineState> pso;
+        u32 generation = 0;
+    };
+    PostShaderHandle create_post_shader(const char* code) override {
+        u32 slot = 0;
+        while (slot < kMaxPostShaders && post_shaders_[slot].pso) ++slot;
+        if (slot == kMaxPostShaders || !code) return {};
+        std::string source = std::string("#define LSD_POST_MATERIAL 1\n") + kPostHlsl;
+        source.insert(source.find("//@POST"), std::string(code) + "\n");
+        PostShader& s = post_shaders_[slot];
+        ComPtr<ID3DBlob> vs, ps;
+        if (!compile(source.c_str(), source.size(), "vs_full", "vs_5_0", vs) || !compile(source.c_str(), source.size(), "ps_composite", "ps_5_0", ps) ||
+            !make_post_pso(vs.Get(), ps.Get(), false, s.pso)) {
+            s.pso.Reset();
+            return {};
+        }
+        return PostShaderHandle::make(slot, s.generation & PostShaderHandle::kGenerationMask);
+    }
+    PostShader* lookup_post(PostShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxPostShaders) return nullptr;
+        PostShader& s = post_shaders_[handle.index()];
+        return s.pso && (s.generation & PostShaderHandle::kGenerationMask) == handle.generation() ? &s : nullptr;
+    }
+    void destroy_post_shader(PostShaderHandle handle) override {
+        PostShader* s = lookup_post(handle);
+        if (!s) return;
+        wait_for_gpu();  // shortcut: stalls; fine for edits in the editor
+        s->pso.Reset();
+        ++s->generation;
+    }
+
     void destroy_material_shader(MaterialShaderHandle handle) override {
         MaterialShader* m = lookup_material(handle);
         if (!m) return;
@@ -1301,7 +1334,13 @@ public:
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        const PostShader* custom = lookup_post(p.post_shader);
+        if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)
+            size(src, g);
+            g[16] = p.post_time;
+            for (int n = 0; n < 3; ++n) g[17 + n] = p.post_params[n];
+        }
+        post_pass(custom ? custom->pso.Get() : post_composite_.Get(), fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
@@ -1794,6 +1833,35 @@ private:
                create_ui_pipeline() && create_post_pipelines();
     }
 
+    // A post pass's pipeline: a full-screen triangle into the colour target; `over` blends it onto what is there.
+    bool make_post_pso(ID3DBlob* vs, ID3DBlob* ps, bool over, ComPtr<ID3D12PipelineState>& out) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = root_signature_.Get();
+        pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        if (over) {  // painted over the image (the outline)
+            D3D12_RENDER_TARGET_BLEND_DESC& b = pso.BlendState.RenderTarget[0];
+            b.BlendEnable = TRUE;
+            b.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            b.BlendOp = D3D12_BLEND_OP_ADD;
+            b.SrcBlendAlpha = D3D12_BLEND_ONE;
+            b.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+            b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        }
+        pso.SampleMask = UINT_MAX;
+        pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso.DepthStencilState.DepthEnable = FALSE;
+        pso.DSVFormat = kDepthFormat;
+        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso.NumRenderTargets = 1;
+        pso.RTVFormats[0] = kBackBufferFormat;
+        pso.SampleDesc.Count = 1;
+        return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(out.GetAddressOf())), "CreateGraphicsPipelineState (post)");
+    }
+
     bool create_post_pipelines() {
         ComPtr<ID3DBlob> vs;
         if (!compile(kPostHlsl, sizeof kPostHlsl - 1, "vs_full", "vs_5_0", vs, nullptr)) return false;
@@ -1807,31 +1875,7 @@ private:
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
-            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
-            pso.pRootSignature = root_signature_.Get();
-            pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
-            pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
-            pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-            if (std::strcmp(e.name, "ps_outline") == 0) {  // painted over the image
-                D3D12_RENDER_TARGET_BLEND_DESC& b = pso.BlendState.RenderTarget[0];
-                b.BlendEnable = TRUE;
-                b.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-                b.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-                b.BlendOp = D3D12_BLEND_OP_ADD;
-                b.SrcBlendAlpha = D3D12_BLEND_ONE;
-                b.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-                b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            }
-            pso.SampleMask = UINT_MAX;
-            pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-            pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-            pso.DepthStencilState.DepthEnable = FALSE;
-            pso.DSVFormat = kDepthFormat;
-            pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            pso.NumRenderTargets = 1;
-            pso.RTVFormats[0] = kBackBufferFormat;
-            pso.SampleDesc.Count = 1;
-            if (!check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(e.out->GetAddressOf())), "CreateGraphicsPipelineState (post)")) return false;
+            if (!make_post_pso(vs.Get(), ps.Get(), std::strcmp(e.name, "ps_outline") == 0, *e.out)) return false;
         }
         return true;
     }
@@ -2191,6 +2235,7 @@ private:
     ComPtr<ID3D12PipelineState> particle_alpha_pipeline_, particle_add_pipeline_;
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
+    PostShader post_shaders_[kMaxPostShaders];
     ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;

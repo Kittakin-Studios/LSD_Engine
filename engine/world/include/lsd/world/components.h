@@ -976,6 +976,11 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Motion Blur Amount (Unreal's): the camera's own movement blurs the picture along it; 0 = off") f32 motion_blur_amount = 0.0f;
     LSD_PROPERTY(Edit, Units = "%", Min = 0, Max = 20, Tooltip = "Motion Blur Max: the longest smear, as a percentage of the screen's width") f32 motion_blur_max = 5.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much of the LUT's look: 0 none, 1 all") f32 lut_intensity = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Post Material", Widget = "Asset:Material",
+                 Tooltip = "Post Process Material (Unreal's): a shader asset with float3 post_main(PostIn pi) (Content Browser > New Post Process Material) run on the whole image before tonemapping")
+    char post_material[33] = "";
+    LSD_PROPERTY(Edit, Category = "Post Material", Tooltip = "Its params.xyz (PostIn.params): what the material does with them is up to its code")
+    Vec3 post_parameters = {1, 0, 0};
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Glow around bright parts (emissive, the sun's highlights); 0 = off") f32 bloom_intensity = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How bright (after exposure) a pixel must be to glow; 1 = white") f32 bloom_threshold = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "FXAA: smooths jagged edges") bool anti_aliasing = true;

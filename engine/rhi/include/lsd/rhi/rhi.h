@@ -40,6 +40,8 @@ struct TextureTag {};
 using TextureHandle = Handle<TextureTag>;
 struct MaterialShaderTag {};
 using MaterialShaderHandle = Handle<MaterialShaderTag>;
+struct PostShaderTag {};
+using PostShaderHandle = Handle<PostShaderTag>;
 enum class BufferUsage : u8 { Vertex, Index };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
 // BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
@@ -295,6 +297,11 @@ struct PostDraw {
     f32 contact_shadow[4] = {};
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
+    // A post-process material (create_post_shader): its post_main runs on the scene's colour before tonemapping, with
+    // `post_time` (seconds) and `post_params` as PostIn.time / params.xyz. Invalid: none.
+    PostShaderHandle post_shader;
+    f32 post_time = 0.0f;
+    f32 post_params[3] = {};
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
     f32 proj[4] = {};               // projection [0][0], [1][1], [2][2], [2][3]: view distance = proj[3] / (depth + proj[2])
     f32 ao_intensity = 0.0f;        // screen-space ambient occlusion; 0 = off
@@ -408,6 +415,11 @@ public:
     // compiler's message goes to the log).
     virtual MaterialShaderHandle create_material_shader(const char* code) = 0;
     virtual void destroy_material_shader(MaterialShaderHandle shader) = 0;  // safe while the GPU may still use it
+    // Post-process material code (Unreal's Post Process Material): `float3 post_main(PostIn pi)` with PostIn { uv, color,
+    // time, params } and scene_color(uv) / texel_size(), in the HLSL subset Material Graphs use (float3, lerp, saturate...;
+    // OpenGL maps them), built into the composite pass. Invalid if it does not compile (the message goes to the log).
+    virtual PostShaderHandle create_post_shader(const char* code) = 0;
+    virtual void destroy_post_shader(PostShaderHandle shader) = 0;
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;
     // The sky over the whole viewport, without depth: draw it before the meshes (uses set_lights' fog / post).

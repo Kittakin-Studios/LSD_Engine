@@ -283,6 +283,10 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
     if (shader_asset) {  // a material written as code
         std::ifstream f(path, std::ios::binary);
         const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (text.find("post_main") != std::string::npos && text.find("material_main") == std::string::npos) {  // a post-process material: not for surfaces
+            e.failed = true;
+            return;
+        }
         ok = !text.empty() && script::parse_shader_source(text.c_str(), code, error, sizeof error);
         e.blend_mode = code.blend_mode;
     } else {

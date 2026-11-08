@@ -768,6 +768,18 @@ float coc(float z) {  // depth of field blur radius in pixels
     vec4 dof = u_post[6];
     return clamp((abs(z - dof.x) - dof.y) / max(dof.w, 1e-3), 0.0, 1.0) * dof.z;
 }
+#ifdef LSD_POST_MATERIAL  // a post-process material (post.hlsl's), its HLSL subset mapped
+#define float2 vec2
+#define float3 vec3
+#define float4 vec4
+#define lerp mix
+#define frac fract
+#define saturate(x) clamp((x), 0.0, 1.0)
+struct PostIn { vec2 uv; vec3 color; float time; vec4 params; };
+vec3 scene_color(vec2 uv) { return tap(t0, vec2(uv.x, 1.0 - uv.y)); }  // uv top-down, as in HLSL
+vec2 texel_size() { return u_post[0].xy; }
+#endif
+//@POST
 void main() {
     vec4 texel = u_post[0], bloom = u_post[1], tint_tm = u_post[2], grade = u_post[3];
 #if defined(PREFILTER)
@@ -819,6 +831,9 @@ void main() {
 #elif defined(COMPOSITE)
     vec3 c = tap(t0, v_uv);
     if (bloom.y > 0.0) c += tap(t1, v_uv) * bloom.y;
+#ifdef LSD_POST_MATERIAL
+    c = max(post_main(PostIn(vec2(v_uv.x, 1.0 - v_uv.y), c, u_post[4].x, vec4(u_post[4].yzw, 0.0))), 0.0);
+#endif
     c *= tint_tm.rgb;
     if (tint_tm.w > 0.5) c = aces(c);
     float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -1169,6 +1184,9 @@ public:
                                post_programs_[3], post_programs_[4]}) {
             if (program) gl_.glDeleteProgram(program);
         }
+        for (const PostShader& post : post_shaders_) {
+            if (post.program) gl_.glDeleteProgram(post.program);
+        }
         if (particle_vbo_) gl_.glDeleteBuffers(1, &particle_vbo_);
         if (param_ubo_) gl_.glDeleteBuffers(1, &param_ubo_);
         for (GLuint* b : {&cull_in_, &cull_out_, &cull_args_, &cull_ubo_}) {
@@ -1467,6 +1485,38 @@ public:
         locate(m.mesh);
         locate(m.skinned);
         return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    static constexpr u32 kMaxPostShaders = 16;
+    struct PostShader {
+        GLuint program = 0;
+        GLint uniform = -1;
+        u32 generation = 0;
+    };
+    PostShaderHandle create_post_shader(const char* code) override {
+        u32 slot = 0;
+        while (slot < kMaxPostShaders && post_shaders_[slot].program) ++slot;
+        if (slot == kMaxPostShaders || !code) return {};
+        std::string fragment = kPostFragmentShader;
+        fragment.insert(fragment.find("//@POST"), std::string(code) + "\n");
+        fragment.insert(fragment.find('\n') + 1, "#define COMPOSITE\n#define LSD_POST_MATERIAL 1\n");
+        PostShader& s = post_shaders_[slot];
+        s.program = link(kPostVertexShader, fragment.c_str());
+        if (!s.program) return {};
+        s.uniform = gl_.glGetUniformLocation(s.program, "u_post");
+        return PostShaderHandle::make(slot, s.generation & PostShaderHandle::kGenerationMask);
+    }
+    PostShader* lookup_post(PostShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxPostShaders) return nullptr;
+        PostShader& s = post_shaders_[handle.index()];
+        return s.program && (s.generation & PostShaderHandle::kGenerationMask) == handle.generation() ? &s : nullptr;
+    }
+    void destroy_post_shader(PostShaderHandle handle) override {
+        PostShader* s = lookup_post(handle);
+        if (!s) return;
+        gl_.glDeleteProgram(s->program);
+        s->program = 0;
+        ++s->generation;
     }
 
     void destroy_material_shader(MaterialShaderHandle handle) override {
@@ -1851,8 +1901,9 @@ public:
         return c;
     }
     // One full-screen pass into `target` (invalid: the window, in `window_rect`); `depth_of`: whose depth is t2.
+    // `custom`: a post-process material's composite instead of `program`'s.
     void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of, const f32 constants[48],
-                   bool blend = false) {
+                   bool blend = false, const PostShader* custom = nullptr) {
         const f32 black[4] = {0, 0, 0, 1};
         if (target.valid()) {
             set_render_target(target, black);
@@ -1869,9 +1920,9 @@ public:
         }
         const Target* a = lookup(in0);
         const Target* b = lookup(in1);
-        gl_.glUseProgram(post_programs_[program]);
+        gl_.glUseProgram(custom ? custom->program : post_programs_[program]);
         const Target* d = lookup(depth_of);
-        gl_.glUniform4fv(post_uniforms_[program], 12, constants);
+        gl_.glUniform4fv(custom ? custom->uniform : post_uniforms_[program], 12, constants);
         gl_.glBindTextureUnit(0, a ? a->color : textures_[white_].id);
         gl_.glBindTextureUnit(1, b ? b->color : textures_[white_].id);
         const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
@@ -2003,7 +2054,13 @@ public:
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        const PostShader* custom = lookup_post(p.post_shader);
+        if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)
+            size(src, g);
+            g[16] = p.post_time;
+            for (int n = 0; n < 3; ++n) g[17 + n] = p.post_params[n];
+        }
+        post_pass(3, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g, false, custom);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
@@ -2419,6 +2476,7 @@ private:
     const Target* bound_target_ = nullptr;  // set_render_target's (null: the window)
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
     static constexpr u32 kPostPrograms = 14;  // 13: motion blur
+    PostShader post_shaders_[kMaxPostShaders];
     GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof, ssr, meter, expose
     GLint post_uniforms_[kPostPrograms] = {};
     PostChain post_chains_[4];

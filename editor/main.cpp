@@ -1961,6 +1961,37 @@ void load_level_package(EditorState& s, const char* level_path) {
     LSD_LOG_INFO("editor", "Package %s: %u meshes loaded (%.0f ms)", package.generic_string().c_str(), loaded, static_cast<double>(SDL_GetTicksNS() - start) * 1e-6);
 }
 
+// A Post Process Volume's Post Material (a shader asset with post_main), compiled on first use and again when its file
+// changes; invalid when it is not one or does not compile (logged).
+lsd::rhi::PostShaderHandle post_material(lsd::rhi::Device& device, const lsd::asset::AssetRegistry& registry, const char* guid) {
+    struct Entry {
+        lsd::rhi::PostShaderHandle shader;
+        fs::file_time_type time;
+        bool tried = false;
+    };
+    static std::unordered_map<std::string, Entry> cache;
+    lsd::asset::Guid id;
+    const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(guid, id) ? registry.find(id) : nullptr;
+    if (!r) return {};
+    char path[300];
+    registry.source_path(*r, path, sizeof path);
+    std::error_code ignored;
+    const fs::file_time_type time = fs::last_write_time(path, ignored);
+    Entry& e = cache[guid];
+    if (e.tried && e.time == time) return e.shader;
+    if (e.shader.valid()) device.destroy_post_shader(e.shader);
+    e = Entry{{}, time, true};
+    std::ifstream file(path, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (text.find("post_main") == std::string::npos) {
+        LSD_LOG_WARN("editor", "%s: a Post Material needs float3 post_main(PostIn pi) (New Post Process Material makes one)", path);
+        return {};
+    }
+    e.shader = device.create_post_shader(text.c_str());
+    if (!e.shader.valid()) LSD_LOG_WARN("editor", "%s: the post-process material did not compile (see the messages above)", path);
+    return e.shader;
+}
+
 bool open_level(EditorState& s, const char* path) {
     s.capture_reflections = true;  // the new level's captures
     if (!lsd::world::load_level_file(*s.world, path)) {
@@ -3169,6 +3200,13 @@ int main(int argc, char** argv) {
             if (volume && volume->color_grading_lut[0]) {  // the volume's Color Grading LUT: a data texture
                 post.color_lut = texture_cache->get(volume->color_grading_lut, false);
                 post.lut_intensity = volume->lut_intensity;
+            }
+            if (use_post && volume && volume->post_material[0] && state.registry) {  // its Post Material
+                post.post_shader = post_material(*device, *state.registry, volume->post_material);
+                post.post_time = static_cast<lsd::f32>(static_cast<double>(SDL_GetTicks()) * 0.001);
+                post.post_params[0] = volume->post_parameters.x;
+                post.post_params[1] = volume->post_parameters.y;
+                post.post_params[2] = volume->post_parameters.z;
             }
             if (post.contact_shadow[3] > 0.0f) {  // toward the sun: world space -> view space
                 const lsd::Vec3 toward = lsd::normalize(lsd::transform_vector(view, {post.contact_shadow[0], post.contact_shadow[1], post.contact_shadow[2]}));

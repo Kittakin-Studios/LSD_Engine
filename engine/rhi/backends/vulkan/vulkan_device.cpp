@@ -81,6 +81,7 @@ namespace {
 
 #include "mesh_hlsl.h"              // kMeshHlsl: engine/rhi/shaders/mesh.hlsl (Material Graph shaders start from it)
 #include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl
+#include "post_hlsl.h"              // kPostHlsl: post-process materials start from it
 
 constexpr u32 kFramesInFlight = 2;
 constexpr u32 kMaxAdapters = 16;
@@ -208,6 +209,9 @@ public:
             vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
             vkDestroyPipelineLayout(device_, particle_layout_, nullptr);
             for (VkPipeline post : post_pipelines_) vkDestroyPipeline(device_, post, nullptr);
+            for (const PostShader& post : post_shaders_) {
+                if (post.pipeline) vkDestroyPipeline(device_, post.pipeline, nullptr);
+            }
             vkDestroyPipelineLayout(device_, post_layout_, nullptr);
             for (Frame& f : frames_) {
                 if (f.post_pool) vkDestroyDescriptorPool(device_, f.post_pool, nullptr);
@@ -1346,7 +1350,13 @@ public:
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        const PostShader* custom = lookup_post(p.post_shader);
+        if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)
+            size(src, g);
+            g[16] = p.post_time;
+            for (int n = 0; n < 3; ++n) g[17 + n] = p.post_params[n];
+        }
+        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g, custom ? custom->pipeline : VK_NULL_HANDLE);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
@@ -1438,7 +1448,9 @@ public:
     }
 
     // One full-screen pass into `target` (invalid: the window, in `window_rect`).
-    void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48]) {
+    // `custom`: a post-process material's composite pipeline instead of the pass's.
+    void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48],
+                   VkPipeline custom = VK_NULL_HANDLE) {
         const f32 black[4] = {0, 0, 0, 1};
         if (lookup_texture(target)) {
             set_render_target(target, black);
@@ -1467,7 +1479,7 @@ public:
         write.pImageInfo = images;
         vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
         const VkCommandBuffer cmd = f.cmd;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipelines_[pass]);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, custom ? custom : post_pipelines_[pass]);
         vkCmdPushConstants(cmd, post_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes, constants);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_layout_, 0, 1, &set, 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -1682,6 +1694,42 @@ public:
             return {};
         }
         return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    static constexpr u32 kMaxPostShaders = 16;
+    struct PostShader {
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        u32 generation = 0;
+    };
+    PostShaderHandle create_post_shader(const char* code) override {
+        if (!code || !post_layout_) return {};
+        u32 slot = 0;
+        while (slot < kMaxPostShaders && post_shaders_[slot].pipeline) ++slot;
+        if (slot == kMaxPostShaders) return {};
+        std::string source = std::string("#define LSD_POST_MATERIAL 1\n") + kPostHlsl;
+        source.insert(source.find("//@POST"), std::string(code) + "\n");
+        std::vector<u32> vs, ps;
+        if (!compile_spirv(source, "vs", nullptr, vs, "vs_full", true) || !compile_spirv(source, "ps", nullptr, ps, "ps_composite", true)) return {};
+        PostShader& s = post_shaders_[slot];
+        if (!make_pipeline(vs.data(), vs.size() * 4, ps.data(), ps.size() * 4, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, s.pipeline, false, false, false, Blend::Opaque)) {
+            s.pipeline = VK_NULL_HANDLE;
+            return {};
+        }
+        return PostShaderHandle::make(slot, s.generation & PostShaderHandle::kGenerationMask);
+    }
+    PostShader* lookup_post(PostShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxPostShaders) return nullptr;
+        PostShader& s = post_shaders_[handle.index()];
+        return s.pipeline && (s.generation & PostShaderHandle::kGenerationMask) == handle.generation() ? &s : nullptr;
+    }
+    void destroy_post_shader(PostShaderHandle handle) override {
+        PostShader* s = lookup_post(handle);
+        if (!s) return;
+        vkDeviceWaitIdle(device_);  // shortcut: stalls; fine for edits in the editor
+        vkDestroyPipeline(device_, s->pipeline, nullptr);
+        s->pipeline = VK_NULL_HANDLE;
+        ++s->generation;
     }
 
     void destroy_material_shader(MaterialShaderHandle handle) override {
@@ -1934,7 +1982,8 @@ private:
 
     // HLSL -> SPIR-V through DXC in a hidden process (editor-time: Material Graph edits and loads).
     // shortcut: a process and temp files per stage (a few hundred ms a material); load dxcompiler in-process if it gets slow
-    bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out) {
+    // `entry` (default <stage>_main) is renamed <stage>_main; `post`: post.hlsl's register shifts (t at 0, s from 16).
+    bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out, const char* entry_name = nullptr, bool post = false) {
         const std::filesystem::path dxc = dxc_path();
         if (dxc.empty()) {
             if (!warned_dxc_) LSD_LOG_INFO("vulkan", "Material Graph materials draw with the built-in material on Vulkan: the Vulkan SDK's DXC compiles them (not installed).");
@@ -1951,11 +2000,16 @@ private:
             file << source;
             if (!file) return false;
         }
-        const std::string target = std::string(stage) + "_6_0", entry = std::string(stage) + "_main", dxc_s = dxc.string(), hlsl_s = hlsl.string(),
+        const std::string target = std::string(stage) + "_6_0", entry = entry_name ? std::string(entry_name) : std::string(stage) + "_main", dxc_s = dxc.string(), hlsl_s = hlsl.string(),
                           spv_s = spv.string(), errors_s = errors.string(), define_s = define ? std::string("-D") + define : std::string();
         std::vector<const char*> args = {dxc_s.c_str(), "-spirv", "-fspv-target-env=vulkan1.3", "-T", target.c_str(), "-E", entry.c_str(),
                                          "-Fo", spv_s.c_str(), "-Fe", errors_s.c_str()};
         if (define) args.push_back(define_s.c_str());
+        const std::string rename = std::string("-fspv-entrypoint-name=") + stage + "_main";
+        if (entry_name) args.push_back(rename.c_str());
+        if (post) {
+            for (const char* a : {"-fvk-t-shift", "0", "0", "-fvk-s-shift", "16", "0"}) args.push_back(a);
+        }
         args.push_back(hlsl_s.c_str());
         args.push_back(nullptr);
         const SDL_PropertiesID props = SDL_CreateProperties();
@@ -2942,6 +2996,7 @@ private:
     VkSampler post_sampler_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout post_set_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout post_layout_ = VK_NULL_HANDLE;
+    PostShader post_shaders_[kMaxPostShaders];
     VkPipeline post_pipelines_[kPostPasses] = {};
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
