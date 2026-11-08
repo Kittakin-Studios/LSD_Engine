@@ -1524,7 +1524,9 @@ animates itself, with no Anim Graph to build. Leave it off to use your own Anima
   water and **air** off the ground by itself, and `lsd.set_motion_tag(self, "injured")` (or the **Set
   Motion Tag** node) asks for your own ("" goes back to automatic). With no clip carrying the tag asked
   for, the untagged ones play, so adding tags never leaves it without a pose. The Character's Details
-  show what it plays, the match cost and the tag (the debugger line).
+  show what it plays, the match cost and the tag (the debugger line); under it, **Pose search
+  candidates** (Unreal's Rewind Debugger pose search view) lists the six nearest frames to the last
+  search, nearest first, each cost split into pose and path, so you see why one clip beat another.
 - **Big databases**: the search groups frames 16 at a time and skips whole groups that cannot beat the
   best match so far (the same answer as checking every frame), so minutes of motion stay cheap.
 - **Tuning** (in the Motion Database): Trajectory / Facing / Pose weights (follow the input more
@@ -2000,7 +2002,7 @@ in the project folder, the splash too).
   read and decoded on a worker thread the first time something needs it, and a few finished ones go
   onto the GPU each frame. Levels open without waiting for their images: a material draws in its
   plain colour for a moment, then its textures appear. Changed texture files reload the same way.
-- **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static meshes hidden
+- **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static and skeletal meshes, and each copy of an Instanced Static Mesh, hidden
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`
   shows how many it skipped (culled ... (occluded n)). Masked and translucent meshes do not hide anything.

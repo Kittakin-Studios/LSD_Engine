@@ -395,6 +395,15 @@ static void motion_matching_tests(const std::string& data) {
         CHECK(std::fabs(fast - brute) < 1e-4f);
     }
     CHECK(!db.chunks.empty() && db.chunks.size() == db.chunk_box.size() / (2 * anim::kMotionFeatures));
+    {  // the debugger's candidates: nearest first, the first the search's pick, costs split into pose and path
+        anim::MotionCandidate near[5];
+        const f32* q = &db.features[5 * anim::kMotionFeatures];
+        const u32 n = anim::motion_candidates(db, q, nullptr, near, 5);
+        f32 cost = 0.0f;
+        const u32 pick = anim::search_motion(db, q, &cost);
+        CHECK(n == 5 && std::fabs(near[0].pose_cost + near[0].path_cost - cost) < 1e-5f && (near[0].frame == pick || cost == 0.0f));
+        for (u32 k = 1; k < n; ++k) CHECK(near[k - 1].pose_cost + near[k - 1].path_cost <= near[k].pose_cost + near[k].path_cost);
+    }
     // Tags: the same take twice, the second tagged "crouch": asked for crouch it is picked, else the untagged one.
     {
         const anim::Clip* twice[2] = {&clips[0], &clips[0]};

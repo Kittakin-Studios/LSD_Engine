@@ -254,6 +254,30 @@ bool MotionData::build(const SkinnedModel& model, const Clip* const* source, con
     return true;
 }
 
+u32 motion_candidates(const MotionData& data, const f32* query, const char* tag, MotionCandidate* out, u32 capacity) {
+    const char* want = tag ? tag : "";
+    bool tagged_exists = false;
+    for (u32 c = 0; want[0] && c < data.clip_count && !tagged_exists; ++c) tagged_exists = has_motion_tag(data.tags[c], want);
+    if (!tagged_exists) want = "";
+    u32 n = 0;
+    for (u32 i = 0; i < data.frames.size(); ++i) {  // every frame (a debugger: no hurry)
+        const u32 c = data.frames[i].clip;
+        if (want[0] ? !has_motion_tag(data.tags[c], want) : data.tags[c][0] != '\0') continue;
+        MotionCandidate m;
+        m.frame = i;
+        const f32* f = &data.features[static_cast<usize>(i) * kMotionFeatures];
+        for (u32 k = 0; k < kMotionFeatures; ++k) (k < kMotionPoseFeatures ? m.pose_cost : m.path_cost) += (f[k] - query[k]) * (f[k] - query[k]);
+        // Insert in order, keeping the `capacity` nearest.
+        u32 at = n;
+        while (at > 0 && out[at - 1].pose_cost + out[at - 1].path_cost > m.pose_cost + m.path_cost) --at;
+        if (at >= capacity) continue;
+        for (u32 j = (n < capacity ? n : capacity - 1); j > at; --j) out[j] = out[j - 1];
+        out[at] = m;
+        if (n < capacity) ++n;
+    }
+    return n;
+}
+
 bool has_motion_tag(const char* tags, const char* tag) {
     const usize n = std::strlen(tag);
     for (const char* p = tags; n && *p;) {
@@ -361,6 +385,7 @@ u32 step_motion(const MotionData& data, const MotionDatabase& settings, const Mo
             query[15 + k] = (positions[k] - data.mean[15 + k]) * data.scale[15 + k];
             query[21 + k] = (facings[k] - data.mean[21 + k]) * data.scale[21 + k];
         }
+        std::memcpy(s.query, query, sizeof query);
         const u32 best = search_motion(data, query, &s.cost, input.tag);
         std::snprintf(s.tag, sizeof s.tag, "%s", input.tag);
         const MotionFrame& f = data.frames[best];

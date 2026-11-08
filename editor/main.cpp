@@ -869,6 +869,24 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
             if (!mesh) continue;
             instance_rows(world, e, *ism, rows, &matrices);
+            if (occlusion.occluder_triangles()) {  // copies hidden behind the occluders (trees behind a hill) are left out
+                lsd::u32 kept = 0;
+                for (lsd::u32 k = 0; k < matrices.size(); ++k) {
+                    if (!occlusion.box_visible(view_proj * matrices[k], mesh->bounds_min, mesh->bounds_max)) {
+                        ++stats.stat_occluded;
+                        continue;
+                    }
+                    if (kept != k) {
+                        std::memcpy(&rows[static_cast<lsd::usize>(kept) * 12], &rows[static_cast<lsd::usize>(k) * 12], 12 * sizeof(lsd::f32));
+                        matrices[kept] = matrices[k];
+                    }
+                    ++kept;
+                }
+                rows.resize(static_cast<lsd::usize>(kept) * 12);
+                matrices.resize(kept);
+                if (!kept) continue;
+            }
+            const lsd::u32 copies = static_cast<lsd::u32>(matrices.size());
             lsd::rhi::MeshDraw draw{};
             draw.vertices = mesh->gpu.vertices;
             draw.indices = mesh->gpu.indices;
@@ -895,9 +913,9 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             if (!draw.material_shader.valid() || draw.wireframe) {
                 std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
                 draw.instance_rows = rows.data();
-                draw.instance_count = ism->instances.count;
+                draw.instance_count = copies;
                 // Many copies (foliage, crowds of props): the GPU drops those outside the view.
-                draw.gpu_cull = g_gpu_culling && ism->instances.count >= 32 && device.supports_gpu_culling();
+                draw.gpu_cull = g_gpu_culling && copies >= 32 && device.supports_gpu_culling();
                 std::memcpy(draw.local_bounds_min, &mesh->bounds_min, sizeof draw.local_bounds_min);
                 std::memcpy(draw.local_bounds_max, &mesh->bounds_max, sizeof draw.local_bounds_max);
                 device.draw_mesh(draw);
@@ -918,7 +936,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                     ++stats.stat_draws;
                 }
             }
-            stats.stat_triangles += mesh->gpu.index_count / 3 * ism->instances.count;
+            stats.stat_triangles += mesh->gpu.index_count / 3 * copies;
         }
     }
     // Skeletal meshes: same material path, skinned on the GPU with their current pose.
@@ -936,6 +954,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Vec3 grow = (model->model->bounds_max - model->model->bounds_min) * 0.5f;
         if (!in_view(mvp, model->model->bounds_min - grow, model->model->bounds_max + grow)) {
             ++stats.stat_culled;
+            continue;
+        }
+        if (!occlusion.box_visible(mvp, model->model->bounds_min - grow, model->model->bounds_max + grow)) {  // behind the occluders (with the pose's margin)
+            ++stats.stat_culled;
+            ++stats.stat_occluded;
             continue;
         }
         const lsd::Mat4 inv = lsd::affine_inverse(m);
@@ -999,7 +1022,7 @@ void register_console(EditorState& s) {
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
     console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
-    console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Static meshes hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
+    console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");

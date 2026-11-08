@@ -41,6 +41,8 @@ public:
     void set_motion_input(world::Entity character, const anim::MotionInput& input);
     // What motion matching plays on `e` ("Anim_Walk at 0.43 s"), or false if it does not run there.
     bool motion_readout(world::Entity e, char* out, usize capacity) const;
+    // The pose-search debugger: the frames nearest its last search ("Anim_Walk 0.43 s: 0.12 pose + 0.30 path"), nearest first.
+    u32 motion_candidates(world::Entity e, char (*lines)[96], u32 capacity) const;
 
     // Montages (Unreal's Play Montage on a slot): an animation file's first clip played once over
     // what `e` (or its skeletal mesh child) plays, from `from_bone` down (empty: the whole body), blended

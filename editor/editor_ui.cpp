@@ -3585,6 +3585,14 @@ void draw_skeletal_readout(EditorState& s, Entity e, world::SkeletalMesh& mesh) 
     char motion[160];
     if (s.animations && s.animations->motion_readout(e, motion, sizeof motion)) {  // the Character's Motion Matching picks the clips
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Motion Matching: %s", motion);
+        // The pose-search debugger: what else was near, and why (pose vs path cost). Lower wins.
+        if (ImGui::TreeNode("Pose search candidates")) {
+            char lines[6][96];
+            const u32 n = s.animations->motion_candidates(e, lines, 6);
+            for (u32 k = 0; k < n; ++k) ImGui::Text("%u. %s", k + 1, lines[k]);
+            if (!n) ImGui::TextDisabled("(none yet)");
+            ImGui::TreePop();
+        }
         return;
     }
     if (mesh.anim_graph[0] && s.animations) {

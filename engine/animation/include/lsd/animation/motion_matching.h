@@ -101,6 +101,13 @@ void predict_trajectory(const MotionInput& input, f32 positions[6], f32 facings[
 // The frame whose features (already normalised) are nearest `query`; `cost` gets its distance². `tag`: only clips
 // with that tag ("" or null: untagged ones); when none has it, the untagged ones (and when there are none, any).
 u32 search_motion(const MotionData& data, const f32* query, f32* cost = nullptr, const char* tag = nullptr);
+// The pose-search debugger (Unreal's Rewind Debugger pose search view): the `capacity` frames nearest `query` among the
+// clips `tag` allows, nearest first, with their cost split into the pose part and the path part. Returns how many.
+struct MotionCandidate {
+    u32 frame = 0;
+    f32 pose_cost = 0.0f, path_cost = 0.0f;
+};
+u32 motion_candidates(const MotionData& data, const f32* query, const char* tag, MotionCandidate* out, u32 capacity);
 // True when a comma-separated tag list holds `tag` (any case).
 bool has_motion_tag(const char* tags, const char* tag);
 
@@ -114,6 +121,7 @@ struct MotionState {
     f32 since_search = 1e9f;
     f32 cost = 0.0f;  // of the last pick
     char tag[32] = "";  // the tag it last searched with (MotionInput::tag)
+    f32 query[kMotionFeatures] = {};  // what it last searched for (the pose-search debugger shows the nearest frames to it)
     bool switched = false;  // Inertial: it jumped to another frame this step (Pose::inertialize takes the offset)
 };
 

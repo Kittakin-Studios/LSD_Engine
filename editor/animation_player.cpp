@@ -103,6 +103,21 @@ bool AnimationPlayer::motion_readout(world::Entity e, char* out, usize capacity)
     return false;
 }
 
+u32 AnimationPlayer::motion_candidates(world::Entity e, char (*lines)[96], u32 capacity) const {
+    for (const State& s : states_) {
+        if (!s.used || s.entity != e || !s.motion_data || s.motion.clip < 0) continue;
+        anim::MotionCandidate found[8];
+        const u32 n = anim::motion_candidates(*s.motion_data, s.motion.query, s.motion.tag, found, capacity < 8 ? capacity : 8);
+        for (u32 k = 0; k < n; ++k) {
+            const anim::MotionFrame& f = s.motion_data->frames[found[k].frame];
+            std::snprintf(lines[k], sizeof lines[k], "%s %.2f s: %.2f pose + %.2f path", s.motion_data->names[f.clip], static_cast<f64>(f.time),
+                          static_cast<f64>(found[k].pose_cost), static_cast<f64>(found[k].path_cost));
+        }
+        return n;
+    }
+    return 0;
+}
+
 namespace {
 
 bool contains_word(const char* name, std::initializer_list<const char*> words) {
