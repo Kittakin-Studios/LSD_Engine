@@ -109,6 +109,7 @@ void main() {
 // Same shading as the HLSL in the D3D12 backend (keep them in step).
 constexpr char kMeshFragmentShader[] = R"(#version 460 core
 uniform vec4 u_color;
+uniform vec4 u_normal[3];  // the vertex stage's (the velocity pass reads the last frame's matrix from it)
 uniform vec4 u_mat[2];   // metallic, roughness, emissive.rg | emissive.b, camera.xyz
 uniform vec2 u_flags;    // unlit, has normal map
 uniform float u_time;    // Material Graph Time
@@ -128,6 +129,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 light_functions[32];
     vec4 light_extra[16];
     vec4 normal_view[4];
+    vec4 velocity_view[4];
 };
 float light_profile(uint li, float c) {  // mesh.hlsl's
     float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;
@@ -425,6 +427,16 @@ vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
 }
 #ifndef SKY
 void main() {
+    if (normal_view[3].y > 0.5) {  // the velocity pass (mesh.hlsl's; GL's uv run up as its ndc do)
+        vec4 w4 = vec4(v_wpos, 1.0);
+        vec4 now = vec4(dot(velocity_view[0], w4), dot(velocity_view[1], w4), dot(velocity_view[2], w4), dot(velocity_view[3], w4));
+        vec4 was = vec4(dot(vec4(u_normal[0].xyz, u_mat[0].x), w4), dot(vec4(u_normal[1].xyz, u_mat[0].y), w4), dot(vec4(u_normal[2].xyz, u_mat[0].z), w4), dot(u_color, w4));
+        vec2 a = now.xy / now.w, b = was.xy / (abs(was.w) > 1e-6 ? was.w : 1e-6);
+        vec2 q = round(clamp((a - b) * 0.125 + 0.5, 0.0, 1.0) * 65535.0);
+        vec2 hi = floor(q / 256.0);
+        o_color = max(vec4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0), vec4(1.0, 0.0, 0.0, 0.0)) / 255.0;
+        return;
+    }
     vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
     vec3 geometric_n = n;  // before the normal map: reflections never point into the surface
     if (u_flags.x > 4.5) {  // Lightmap Density view mode: a checker of lightmap texels, green where lightmapped, grey elsewhere
@@ -763,6 +775,9 @@ vec3 box4(sampler2D t, vec2 uv, vec2 px) {
 }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+// The velocity target's movement in uv (LightSetup::velocity_view's encoding), and back.
+vec2 velocity_at(sampler2D t, vec2 uv) { vec4 e = textureLod(t, uv, 0.0) * 255.0; return (vec2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0; }
+vec4 velocity_out(vec2 move) { vec2 q = round(clamp(move * 0.25 + 0.5, 0.0, 1.0) * 65535.0); vec2 hi = floor(q / 256.0); return vec4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0) / 255.0; }
 vec2 to_ndc(vec2 uv) { return uv * 2.0 - 1.0; }
 vec2 to_uv(vec2 ndc) { return ndc * 0.5 + 0.5; }
 float depth_at(vec2 uv) { return textureLod(t2, uv, 0.0).r; }
@@ -976,25 +991,45 @@ void main() {
             hi = max(hi, s);
         }
     }
-    vec4 here = vec4(to_ndc(v_uv), depth_at(v_uv), 1.0);
+    bool moved = texel.w > 0.5;  // the velocity (t2, resolved): each pixel's own movement
+    vec4 here = vec4(to_ndc(v_uv), moved ? 0.5 : depth_at(v_uv), 1.0);
     vec4 prev = vec4(dot(u_post[8], here), dot(u_post[9], here), dot(u_post[10], here), dot(u_post[11], here));
-    vec2 prev_uv = to_uv(prev.xy / prev.w);
-    bool outside = u_post[7].y > 0.5 || prev.w <= 0.0 || any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)));
+    vec2 prev_uv = moved ? v_uv - velocity_at(t2, v_uv) : to_uv(prev.xy / prev.w);
+    bool outside = u_post[7].y > 0.5 || (!moved && prev.w <= 0.0) || any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)));
     vec3 history = clamp(textureLod(t1, prev_uv, 0.0).rgb, lo, hi);
     o_color = vec4(outside ? cur : mix(history, cur, u_post[7].x), 1.0);
+#elif defined(VELOCITY)
+    // The velocity pass's movement (t1) where a mesh was drawn; elsewhere (sky, particles) the camera's, from the depth.
+    vec4 e = textureLod(t1, v_uv, 0.0);
+    if (any(greaterThan(e, vec4(0.0)))) {
+        o_color = e;
+    } else {
+        vec4 here = vec4(to_ndc(v_uv), depth_at(v_uv), 1.0);
+        vec4 prev = vec4(dot(u_post[8], here), dot(u_post[9], here), dot(u_post[10], here), dot(u_post[11], here));
+        o_color = velocity_out(prev.w > 0.0 ? v_uv - to_uv(prev.xy / prev.w) : vec2(0.0));
+    }
 #elif defined(MOTION)
     // Motion blur (u_post[7].z amount, .w longest smear in uv): where this pixel was last frame, as TAA
-    // finds it, gives its movement on screen; 8 taps along it, centred on the pixel.
+    // finds it, gives its movement on screen; 8 taps along it, centred on the pixel. texel.w: the velocity (t1).
     vec4 here = vec4(to_ndc(v_uv), depth_at(v_uv), 1.0);
     vec4 prev = vec4(dot(u_post[8], here), dot(u_post[9], here), dot(u_post[10], here), dot(u_post[11], here));
-    vec2 move = prev.w > 0.0 ? (v_uv - to_uv(prev.xy / prev.w)) * u_post[7].z : vec2(0.0);
+    vec2 move = texel.w > 0.5 ? velocity_at(t1, v_uv) * u_post[7].z : prev.w > 0.0 ? (v_uv - to_uv(prev.xy / prev.w)) * u_post[7].z : vec2(0.0);
+    if (texel.w > 0.5) {  // the fastest nearby movement whose smear reaches here (post.hlsl)
+        for (int k = 0; k < 16; ++k) {
+            float a = float(k) * 0.785398;
+            vec2 o = vec2(cos(a), sin(a)) * (k < 8 ? 4.0 : 12.0) * texel.xy;
+            vec2 m = velocity_at(t1, v_uv + o) * u_post[7].z;
+            if (dot(m, m) > dot(move, move) && length(m) * 0.5 >= length(o)) move = m;
+        }
+    }
     float span = length(move);
     if (span > u_post[7].w) move *= u_post[7].w / span;
     if (span / texel.x < 0.5) {
         o_color = vec4(encode(tap(t0, v_uv)), 1.0);
     } else {
         vec3 sum = vec3(0.0);
-        for (int k = 0; k < 8; ++k) sum += tap(t0, v_uv + move * (float(k) / 7.0 - 0.5));
+        float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));  // staggered per pixel (post.hlsl)
+        for (int k = 0; k < 8; ++k) sum += tap(t0, v_uv + move * ((float(k) + jitter) / 8.0 - 0.5));
         o_color = vec4(encode(sum / 8.0), 1.0);
     }
 #elif defined(DOF)
@@ -1156,7 +1191,7 @@ class OpenGLDevice final : public Device {
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, motion, taa[2];  // occlusion, scene with it, depth of field, motion blur, TAA output / history
+        TextureHandle ao, lit, dof, motion, taa[2], velocity;  // occlusion, scene with it, depth of field, motion blur, TAA output / history, velocity resolved
         TextureHandle ssr;                   // the scene with reflections
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
@@ -1886,6 +1921,7 @@ public:
         destroy_texture(c.lit);
         destroy_texture(c.dof);
         destroy_texture(c.motion);
+        destroy_texture(c.velocity);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
@@ -1903,6 +1939,7 @@ public:
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
         c.motion = create_render_target(width, height);
+        c.velocity = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1914,7 +1951,7 @@ public:
     // One full-screen pass into `target` (invalid: the window, in `window_rect`); `depth_of`: whose depth is t2.
     // `custom`: a post-process material's composite instead of `program`'s.
     void post_pass(int program, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of, const f32 constants[48],
-                   bool blend = false, const PostShader* custom = nullptr) {
+                   bool blend = false, const PostShader* custom = nullptr, bool color2 = false) {  // color2: in2's colour, not its depth
         const f32 black[4] = {0, 0, 0, 1};
         if (target.valid()) {
             set_render_target(target, black);
@@ -1937,7 +1974,7 @@ public:
         gl_.glBindTextureUnit(0, a ? a->color : textures_[white_].id);
         gl_.glBindTextureUnit(1, b ? b->color : textures_[white_].id);
         const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
-        gl_.glBindTextureUnit(2, d ? d->depth : plain ? plain->id : textures_[white_].id);
+        gl_.glBindTextureUnit(2, d ? (color2 ? d->color : d->depth) : plain ? plain->id : textures_[white_].id);
         gl_.glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
@@ -2007,9 +2044,15 @@ public:
             post_pass(6, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
+        // The velocity pass (objects' own movement): resolved with the camera's where nothing was drawn, for TAA and motion blur.
+        const bool vel = (taa || motion) && lookup(p.velocity);
+        f32 kv[48];
+        std::memcpy(kv, k, sizeof kv);
+        kv[3] = 1.0f;  // texel.w: they read it
+        if (vel) post_pass(14, c.velocity, nullptr, {}, p.velocity, p.scene, k);
         if (taa) {
             const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
-            post_pass(7, out, nullptr, src, history, p.scene, k);
+            post_pass(7, out, nullptr, src, history, vel ? c.velocity : p.scene, vel ? kv : k, false, nullptr, vel);
             c.taa_index ^= 1u;
             c.history_valid = true;
             src = out;
@@ -2019,7 +2062,7 @@ public:
             src = c.dof;
         }
         if (motion) {
-            post_pass(13, c.motion, nullptr, src, {}, p.scene, k);
+            post_pass(13, c.motion, nullptr, src, vel ? c.velocity : TextureHandle{}, p.scene, vel ? kv : k);
             src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
@@ -2425,7 +2468,7 @@ private:
         particle_soft_ = gl_.glGetUniformLocation(particle_program_, "u_soft");
         const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
                                                    "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n",
-                                                   "#define METER\n", "#define EXPOSE\n", "#define OUTLINE\n", "#define MOTION\n"};
+                                                   "#define METER\n", "#define EXPOSE\n", "#define OUTLINE\n", "#define MOTION\n", "#define VELOCITY\n"};
         for (u32 i = 0; i < kPostPrograms; ++i) {
             std::string fragment = kPostFragmentShader;
             fragment.insert(fragment.find('\n') + 1, post_defines[i]);
@@ -2487,7 +2530,7 @@ private:
     GLint particle_mvp_ = -1, particle_hdr_ = -1, particle_soft_ = -1;
     const Target* bound_target_ = nullptr;  // set_render_target's (null: the window)
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
-    static constexpr u32 kPostPrograms = 14;  // 13: motion blur
+    static constexpr u32 kPostPrograms = 15;  // 13: motion blur, 14: velocity resolve
     PostShader post_shaders_[kMaxPostShaders];
     GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof, ssr, meter, expose
     GLint post_uniforms_[kPostPrograms] = {};

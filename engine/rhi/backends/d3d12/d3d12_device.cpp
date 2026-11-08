@@ -1097,7 +1097,7 @@ public:
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, motion, taa[2];  // occlusion, scene with it, depth of field, motion blur, TAA output / history
+        TextureHandle ao, lit, dof, motion, taa[2], velocity;  // occlusion, scene with it, depth of field, motion blur, TAA output / history, velocity resolved
         TextureHandle ssr;                   // the scene with reflections
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
@@ -1117,6 +1117,7 @@ public:
         destroy_texture(c.lit);
         destroy_texture(c.dof);
         destroy_texture(c.motion);
+        destroy_texture(c.velocity);
         destroy_texture(c.ssr);
         destroy_texture(c.ldr);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
@@ -1134,6 +1135,7 @@ public:
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
         c.motion = create_render_target(width, height);
+        c.velocity = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1144,7 +1146,7 @@ public:
     }
     // One full-screen pass into `target` (invalid: the window, in `window_rect`).
     void post_pass(ID3D12PipelineState* pso, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle depth_of,
-                   const f32 constants[48]) {
+                   const f32 constants[48], bool color2 = false) {  // color2: depth_of's colour, not its depth
         const f32 black[4] = {0, 0, 0, 1};
         if (target.valid()) {
             set_render_target(target, black);
@@ -1162,7 +1164,7 @@ public:
         list_->SetGraphicsRootDescriptorTable(1, (a ? a->srv_gpu : textures_[white_].srv_gpu));
         list_->SetGraphicsRootDescriptorTable(2, (b ? b->srv_gpu : textures_[white_].srv_gpu));
         const Texture* plain = d ? nullptr : lookup_texture(depth_of);  // not a target: an ordinary texture (the Color Grading LUT)
-        list_->SetGraphicsRootDescriptorTable(3, (d ? d->depth_srv_gpu : plain ? plain->srv_gpu : textures_[white_].srv_gpu));
+        list_->SetGraphicsRootDescriptorTable(3, (d ? (color2 ? d->srv_gpu : d->depth_srv_gpu) : plain ? plain->srv_gpu : textures_[white_].srv_gpu));
         list_->SetPipelineState(pso);
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->DrawInstanced(3, 1, 0, 0);
@@ -1276,9 +1278,15 @@ public:
             post_pass(post_ao_apply_.Get(), c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
+        // The velocity pass (objects' own movement): resolved with the camera's where nothing was drawn, for TAA and motion blur.
+        const bool vel = (taa || motion) && lookup(p.velocity);
+        f32 kv[48];
+        std::memcpy(kv, k, sizeof kv);
+        kv[3] = 1.0f;  // texel.w: they read it
+        if (vel) post_pass(post_velocity_.Get(), c.velocity, nullptr, {}, p.velocity, p.scene, k);
         if (taa) {
             const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
-            post_pass(post_taa_.Get(), out, nullptr, src, history, p.scene, k);
+            post_pass(post_taa_.Get(), out, nullptr, src, history, vel ? c.velocity : p.scene, vel ? kv : k, vel);
             c.taa_index ^= 1u;
             c.history_valid = true;
             src = out;
@@ -1288,7 +1296,7 @@ public:
             src = c.dof;
         }
         if (motion) {
-            post_pass(post_motion_.Get(), c.motion, nullptr, src, {}, p.scene, k);
+            post_pass(post_motion_.Get(), c.motion, nullptr, src, vel ? c.velocity : TextureHandle{}, p.scene, vel ? kv : k);
             src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
@@ -1872,7 +1880,7 @@ private:
         };
         const Entry entries[] = {{"ps_prefilter", &post_prefilter_}, {"ps_down", &post_down_}, {"ps_up", &post_up_}, {"ps_composite", &post_composite_},
                                  {"ps_fxaa", &post_fxaa_}, {"ps_ssr", &post_ssr_}, {"ps_ao", &post_ao_}, {"ps_ao_apply", &post_ao_apply_}, {"ps_taa", &post_taa_}, {"ps_dof", &post_dof_}, {"ps_motion", &post_motion_},
-                                 {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}, {"ps_outline", &post_outline_}};
+                                 {"ps_meter", &post_meter_}, {"ps_expose", &post_expose_}, {"ps_outline", &post_outline_}, {"ps_velocity", &post_velocity_}};
         for (const Entry& e : entries) {
             ComPtr<ID3DBlob> ps;
             if (!compile(kPostHlsl, sizeof kPostHlsl - 1, e.name, "ps_5_0", ps, nullptr)) return false;
@@ -2237,7 +2245,7 @@ private:
     ComPtr<ID3D12PipelineState> sky_pipeline_;
     ComPtr<ID3D12PipelineState> ui_pipeline_;
     PostShader post_shaders_[kMaxPostShaders];
-    ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_;
+    ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_, post_velocity_;
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

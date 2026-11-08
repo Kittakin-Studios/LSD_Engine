@@ -646,8 +646,9 @@ Atmosphere:
   anywhere and `texel_size()` is one pixel. Write it like a shader asset (float3, lerp, saturate, frac:
   OpenGL maps them). Saving it recompiles; compile errors go to the Output Log.
   **Motion Blur** (Amount 0 = off, Max as % of the screen's width): turning or moving the camera
-  smears the picture along the movement, found the way TAA finds last frame's pixels. Only the
-  camera's own movement for now: an object moving by itself in front of a still camera stays sharp.
+  smears the picture along the movement. Objects moving by themselves blur too (a velocity pass, Unreal's
+  velocity buffer: each mesh's movement on screen since the last frame), over what is behind them as well, and
+  TAA follows them instead of leaving a ghost. Particles and the sky take the camera's movement.
 - **Contact shadows** (Unreal's Contact Shadow Length): **Directional Light > Contact Shadow Length**
   (metres, 0 = off) sends a short ray toward the sun through the depth buffer from every surface that
   faces it, for the small shadows the shadow map misses (feet on the floor, props on a table). It runs

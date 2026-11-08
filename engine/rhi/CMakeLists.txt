@@ -156,7 +156,7 @@ if(LSD_RHI_VULKAN)
     # The shared post-process passes (shaders/post.hlsl): vs_full and one pixel shader per pass,
     # embedded as kPost<Pass>Spirv (entry points renamed vs_main / ps_main); t registers at bindings 0-2, s registers from 16 (s2 = 18).
     set(post_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl")
-    foreach(entry IN ITEMS vs_full ps_prefilter ps_down ps_up ps_composite ps_fxaa ps_ssr ps_ao ps_ao_apply ps_taa ps_dof ps_motion ps_meter ps_expose ps_outline)
+    foreach(entry IN ITEMS vs_full ps_prefilter ps_down ps_up ps_composite ps_fxaa ps_ssr ps_ao ps_ao_apply ps_taa ps_dof ps_motion ps_meter ps_expose ps_outline ps_velocity)
       string(SUBSTRING "${entry}" 0 2 stage)
       string(SUBSTRING "${entry}" 3 -1 pass)
       string(REPLACE "_" ";" words "${pass}")

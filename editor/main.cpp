@@ -2368,7 +2368,8 @@ int main(int argc, char** argv) {
             }
             return target[v];
         }
-    } scene_targets, normal_targets;  // normal_targets: the normals pass's, when SSR or AO is on
+    } scene_targets, normal_targets, velocity_targets;  // the normals pass's (SSR, AO), the velocity pass's (TAA, motion blur)
+    std::vector<std::pair<lsd::u32, lsd::Mat4>> last_worlds[4];  // the velocity pass: each kept draw's mesh and place last frame
     struct TaaHistory {  // per viewport: last frame's view-projection (TAA reprojects into it)
         lsd::Mat4 view_proj;
         lsd::u32 frame = 0;
@@ -3250,6 +3251,8 @@ int main(int argc, char** argv) {
                 post.proj[3] = proj.at(2, 3);
             }
             const bool taa = post.taa && post.proj[0] != 0.0f && v < 4;
+            const lsd::Mat4 unjittered = view_proj;  // the velocity pass: this frame's and the last one's, without jitter
+            const lsd::Mat4 last_view_proj = v < 4 && taa_history[v].valid ? taa_history[v].view_proj : view_proj;
             const bool motion_blur = post.motion_blur > 0.0f && post.proj[0] != 0.0f && v < 4;
             if (taa || motion_blur) {  // last frame's clip space from this one's (without the jitter): TAA and motion blur read it
                 post.taa_reset = !taa_history[v].valid;
@@ -3319,7 +3322,8 @@ int main(int argc, char** argv) {
             }
             // SSR / AO want the meshes' own normals: keep this view's opaque draws for the normals pass below.
             const bool normals_pass = scene.valid() && use_post && post.proj[0] != 0.0f && (post.ssr_intensity > 0.0f || post.ao_intensity > 0.0f);
-            g_normals.on = normals_pass;
+            const bool velocity_pass = scene.valid() && use_post && post.proj[0] != 0.0f && v < 4 && (taa || motion_blur);
+            g_normals.on = normals_pass || velocity_pass;
             g_normals.used = 0;
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
             g_normals.on = false;
@@ -3339,7 +3343,8 @@ int main(int argc, char** argv) {
                 const lsd::rhi::TextureHandle normals = normal_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
                 const lsd::f32 facing[4] = {0.5f, 0.5f, 1.0f, 1.0f};
                 device->set_render_target(normals, facing);
-                lsd::rhi::LightSetup flagged = g_view_lights;
+                static lsd::rhi::LightSetup flagged;  // ~31 KB: off the stack (main's frame is already large)
+                flagged = g_view_lights;
                 for (int r = 0; r < 3; ++r) {
                     for (int c = 0; c < 3; ++c) flagged.normal_view[r][c] = view.at(r, c);
                 }
@@ -3348,6 +3353,55 @@ int main(int argc, char** argv) {
                 for (lsd::usize i = 0; i < g_normals.used; ++i) device->draw_mesh(g_normals.draws[i].draw);
                 device->set_lights(g_view_lights);
                 post.normals = normals;
+            }
+            if (velocity_pass) {  // the kept draws again: each pixel's movement on screen since the last frame
+                const lsd::rhi::TextureHandle velocity = velocity_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
+                const lsd::f32 nothing[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                device->set_render_target(velocity, nothing);
+                static lsd::rhi::LightSetup flagged;  // ~31 KB: off the stack (main's frame is already large)
+                flagged = g_view_lights;
+                for (int r = 0; r < 4; ++r) {
+                    for (int c = 0; c < 4; ++c) flagged.velocity_view[r][c] = unjittered.at(r, c);
+                }
+                flagged.normal_view[3][1] = 1.0f;
+                device->set_lights(flagged);
+                // Each draw's place last frame: the same mesh's nearest draw then (no object ids; still things find themselves).
+                // shortcut: instanced copies and skinned poses move with their object only; per-instance / per-joint history for more
+                static std::vector<std::pair<lsd::u32, lsd::Mat4>> placed;
+                placed.clear();
+                for (lsd::usize i = 0; i < g_normals.used; ++i) {
+                    lsd::rhi::MeshDraw d = g_normals.draws[i].draw;
+                    lsd::Mat4 to_last = last_view_proj;
+                    if (!d.instance_rows) {
+                        lsd::Mat4 place = lsd::translation({0.0f, 0.0f, 0.0f});
+                        for (int r = 0; r < 3; ++r) {
+                            for (int c = 0; c < 4; ++c) place.at(r, c) = d.world[r * 4 + c];
+                        }
+                        const lsd::Vec3 at{place.at(0, 3), place.at(1, 3), place.at(2, 3)};
+                        const lsd::Mat4* was = nullptr;
+                        lsd::f32 best = 1e30f;
+                        for (const auto& [mesh, m] : last_worlds[v]) {
+                            const lsd::Vec3 d2 = lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - at;
+                            if (mesh == d.vertices.value && lsd::dot(d2, d2) < best) {
+                                best = lsd::dot(d2, d2);
+                                was = &m;
+                            }
+                        }
+                        if (was) to_last = last_view_proj * *was * lsd::affine_inverse(place);
+                        placed.push_back({d.vertices.value, place});
+                    }
+                    for (int r = 0; r < 3; ++r) {
+                        for (int c = 0; c < 3; ++c) d.normal_matrix[r * 4 + c] = to_last.at(r, c);
+                    }
+                    d.metallic = to_last.at(0, 3);
+                    d.roughness = to_last.at(1, 3);
+                    d.emissive[0] = to_last.at(2, 3);
+                    for (int c = 0; c < 4; ++c) d.color[c] = to_last.at(3, c);
+                    device->draw_mesh(d);
+                }
+                last_worlds[v].swap(placed);
+                device->set_lights(g_view_lights);
+                post.velocity = velocity;
             }
             if (scene.valid()) {
                 post.scene = scene;

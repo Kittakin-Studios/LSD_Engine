@@ -111,7 +111,19 @@ float4 ps_ao_apply(VsOut i) : SV_Target {
     const float ao = weight > 0.0 ? total / weight : 1.0;
     return float4(encode(tap(t0, i.uv) * ao), 1.0);
 }
-// This frame blended into the last one where this pixel was, clamped to this frame's neighbours.
+// The velocity target's movement in uv (LightSetup::velocity_view's encoding), and back.
+float2 velocity_at(Texture2D t, float2 uv) { const float4 e = t.SampleLevel(clamp_linear, uv, 0) * 255.0; return (float2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0; }
+float4 velocity_out(float2 move) { const float2 q = round(saturate(move * 0.25 + 0.5) * 65535.0); const float2 hi = floor(q / 256.0); return float4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0) / 255.0; }
+// The velocity pass's movement (t1) where a mesh was drawn; elsewhere (sky, particles) the camera's, from the depth.
+float4 ps_velocity(VsOut i) : SV_Target {
+    const float4 e = t1.SampleLevel(clamp_linear, i.uv, 0);
+    if (any(e > 0.0)) return e;
+    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
+    const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
+    return velocity_out(prev.w > 0.0 ? i.uv - to_uv(prev.xy / prev.w) : float2(0.0, 0.0));
+}
+// This frame blended into the last one where this pixel was, clamped to this frame's neighbours. texel.w: where it was
+// comes from the resolved velocity (t2) instead of the depth.
 float4 ps_taa(VsOut i) : SV_Target {
     const float3 cur = t0.SampleLevel(clamp_linear, i.uv, 0).rgb;
     float3 lo = cur, hi = cur;
@@ -122,10 +134,11 @@ float4 ps_taa(VsOut i) : SV_Target {
             hi = max(hi, s);
         }
     }
-    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
+    const bool moved = texel.w > 0.5;
+    const float4 here = float4(to_ndc(i.uv), moved ? 0.5 : depth_at(i.uv), 1.0);
     const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
-    const float2 prev_uv = to_uv(prev.xy / prev.w);
-    const bool outside = taa.y > 0.5 || prev.w <= 0.0 || any(prev_uv < 0.0) || any(prev_uv > 1.0);
+    const float2 prev_uv = moved ? i.uv - velocity_at(t2, i.uv) : to_uv(prev.xy / prev.w);
+    const bool outside = taa.y > 0.5 || (!moved && prev.w <= 0.0) || any(prev_uv < 0.0) || any(prev_uv > 1.0);
     const float3 history = clamp(t1.SampleLevel(clamp_linear, prev_uv, 0).rgb, lo, hi);
     return float4(outside ? cur : lerp(history, cur, taa.x), 1.0);
 }
@@ -134,12 +147,21 @@ float4 ps_taa(VsOut i) : SV_Target {
 float4 ps_motion(VsOut i) : SV_Target {
     const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
     const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
-    float2 move = prev.w > 0.0 ? (i.uv - to_uv(prev.xy / prev.w)) * taa.z : float2(0.0, 0.0);
+    float2 move = texel.w > 0.5 ? velocity_at(t1, i.uv) * taa.z : prev.w > 0.0 ? (i.uv - to_uv(prev.xy / prev.w)) * taa.z : float2(0.0, 0.0);  // texel.w: the velocity (t1)
+    if (texel.w > 0.5) {  // a moving object smears over what is behind it too: the fastest nearby movement whose smear reaches here
+        [unroll] for (int k = 0; k < 16; ++k) {
+            const float a = k * 0.785398;  // 8 directions, at 4 and 12 pixels
+            const float2 o = float2(cos(a), sin(a)) * (k < 8 ? 4.0 : 12.0) * texel.xy;
+            const float2 m = velocity_at(t1, i.uv + o) * taa.z;
+            if (dot(m, m) > dot(move, move) && length(m) * 0.5 >= length(o)) move = m;
+        }
+    }
     const float span = length(move);
     if (span > taa.w) move *= taa.w / span;
     if (span * (1.0 / texel.x) < 0.5) return float4(encode(tap(t0, i.uv)), 1.0);
     float3 sum = 0.0;
-    [unroll] for (int k = 0; k < 8; ++k) sum += tap(t0, i.uv + move * (k / 7.0 - 0.5));
+    const float jitter = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));  // staggered per pixel: long smears show noise, not steps
+    [unroll] for (int k = 0; k < 8; ++k) sum += tap(t0, i.uv + move * ((k + jitter) / 8.0 - 0.5));
     return float4(encode(sum / 8.0), 1.0);
 }
 // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here

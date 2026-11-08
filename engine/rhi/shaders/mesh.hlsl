@@ -41,7 +41,8 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 light_profiles[64];   // IES: 16 samples of 1 - profile per light (rhi::LightSetup)
     float4 light_functions[32];  // per light: its image in the decal atlas, then scroll, repeats, on
     float4 light_extra[16];      // per light: x = its shadow mask channel + 1
-    float4 normal_view[4];       // the normals pass: the view's rotation (rows 0-2), [3].x = 1 while it draws
+    float4 normal_view[4];       // the normals pass: the view's rotation (rows 0-2), [3].x = 1 while it draws ([3].y: the velocity pass)
+    float4 velocity_view[4];     // the velocity pass: this view's view-projection without jitter
 };
 // A light's IES profile at the angle from its axis whose cosine is c (1 without one; asset::light_profile_at).
 float light_profile(uint li, float c) {
@@ -414,6 +415,15 @@ float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
     return normalize(t * inv * tn.x + b * inv * tn.y + n * tn.z);
 }
 float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
+    if (normal_view[3].y > 0.5) {  // the velocity pass (TAA, motion blur): how far this pixel moved on screen since the last frame
+        const float4 w4 = float4(i.wpos, 1.0);
+        const float4 now = float4(dot(velocity_view[0], w4), dot(velocity_view[1], w4), dot(velocity_view[2], w4), dot(velocity_view[3], w4));
+        const float4 was = float4(dot(float4(n0.xyz, mat0.x), w4), dot(float4(n1.xyz, mat0.y), w4), dot(float4(n2.xyz, mat0.z), w4), dot(color, w4));
+        const float2 a = now.xy / now.w, b = was.xy / (abs(was.w) > 1e-6 ? was.w : 1e-6);
+        const float2 q = round(saturate(float2(a.x - b.x, b.y - a.y) * 0.125 + 0.5) * 65535.0);  // uv moved (y down; ndc / 2), 16 bits over -2..2
+        const float2 hi = floor(q / 256.0);
+        return max(float4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0), float4(1.0, 0.0, 0.0, 0.0)) / 255.0;  // never all 0 (= nothing drawn)
+    }
     float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
     const float3 geometric_n = n;  // before the normal map: reflections never point into the surface
     if (n0.w > 4.5) {  // Lightmap Density view mode (Unreal's): a checker of lightmap texels, green where lightmapped, grey elsewhere

@@ -67,6 +67,7 @@
 #include "post_taa.spv.h"
 #include "post_dof.spv.h"
 #include "post_motion.spv.h"
+#include "post_velocity.spv.h"
 #include "post_meter.spv.h"
 #include "post_expose.spv.h"
 #include "post_outline.spv.h"
@@ -122,7 +123,7 @@ constexpr VkVertexInputAttributeDescription kSkinnedAttributes[5] = {
 
 enum class Blend { Opaque, Premultiplied, Alpha, Additive, MeshTranslucent, MeshAdditive, MeshOverdraw };
 constexpr u32 kPostPushBytes = 192;  // post.hlsl's Post constants (48 floats)
-enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kPostPasses };
+enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kVelocity, kPostPasses };
 constexpr u32 kPostSetsPerFrame = 512;  // post passes' descriptor sets a frame (about 16 a view)
 
 bool check(VkResult result, const char* what) {
@@ -1292,9 +1293,15 @@ public:
             post_pass(kAoApply, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
+        // The velocity pass (objects' own movement): resolved with the camera's where nothing was drawn, for TAA and motion blur.
+        const bool vel = (taa || motion) && lookup_texture(p.velocity);
+        f32 kv[48];
+        std::memcpy(kv, k, sizeof kv);
+        kv[3] = 1.0f;  // texel.w: they read it
+        if (vel) post_pass(kVelocity, c.velocity, nullptr, {}, p.velocity, p.scene, k);
         if (taa) {
             const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
-            post_pass(kTaa, out, nullptr, src, history, p.scene, k);
+            post_pass(kTaa, out, nullptr, src, history, vel ? c.velocity : p.scene, vel ? kv : k, VK_NULL_HANDLE, vel);
             c.taa_index ^= 1u;
             c.history_valid = true;
             src = out;
@@ -1304,7 +1311,7 @@ public:
             src = c.dof;
         }
         if (motion) {
-            post_pass(kMotion, c.motion, nullptr, src, {}, p.scene, k);
+            post_pass(kMotion, c.motion, nullptr, src, vel ? c.velocity : TextureHandle{}, p.scene, vel ? kv : k);
             src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
@@ -1400,7 +1407,7 @@ public:
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, motion, taa[2], ssr;
+        TextureHandle ao, lit, dof, motion, taa[2], ssr, velocity;
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
         bool exposure_valid = false;
@@ -1416,7 +1423,7 @@ public:
         for (TextureHandle& t : c.up) destroy_texture(t);
         for (TextureHandle& t : c.taa) destroy_texture(t);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
-        for (TextureHandle t : {c.ao, c.lit, c.dof, c.motion, c.ssr, c.ldr, c.exposed}) destroy_texture(t);
+        for (TextureHandle t : {c.ao, c.lit, c.dof, c.motion, c.ssr, c.ldr, c.exposed, c.velocity}) destroy_texture(t);
         c = PostChain{};
         c.width = width;
         c.height = height;
@@ -1430,6 +1437,7 @@ public:
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
         c.motion = create_render_target(width, height);
+        c.velocity = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1451,7 +1459,7 @@ public:
     // One full-screen pass into `target` (invalid: the window, in `window_rect`).
     // `custom`: a post-process material's composite pipeline instead of the pass's.
     void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48],
-                   VkPipeline custom = VK_NULL_HANDLE) {
+                   VkPipeline custom = VK_NULL_HANDLE, bool color2 = false) {  // color2: in2's colour, not its depth
         const f32 black[4] = {0, 0, 0, 1};
         if (lookup_texture(target)) {
             set_render_target(target, black);
@@ -1472,7 +1480,7 @@ public:
         }
         const VkDescriptorImageInfo images[3] = {{VK_NULL_HANDLE, post_input(in0, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                                  {VK_NULL_HANDLE, post_input(in1, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                                 {VK_NULL_HANDLE, post_input(in2, true), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+                                                 {VK_NULL_HANDLE, post_input(in2, !color2), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         write.dstSet = set;
         write.descriptorCount = 3;
@@ -1529,7 +1537,7 @@ public:
             {kPostCompositeSpirv, sizeof kPostCompositeSpirv}, {kPostFxaaSpirv, sizeof kPostFxaaSpirv}, {kPostSsrSpirv, sizeof kPostSsrSpirv},
             {kPostAoSpirv, sizeof kPostAoSpirv}, {kPostAoApplySpirv, sizeof kPostAoApplySpirv}, {kPostTaaSpirv, sizeof kPostTaaSpirv},
             {kPostDofSpirv, sizeof kPostDofSpirv}, {kPostMotionSpirv, sizeof kPostMotionSpirv}, {kPostMeterSpirv, sizeof kPostMeterSpirv},
-            {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv},
+            {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv}, {kPostVelocitySpirv, sizeof kPostVelocitySpirv},
         };
         for (u32 i = 0; i < kPostPasses; ++i) {  // the outline is painted over the image; the rest replace it
             if (!make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
