@@ -144,6 +144,38 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     return &t;
 }
 
+const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key) {
+    if (const auto it = slot_parts_.find(key); it != slot_parts_.end()) return it->second.empty() ? nullptr : &it->second;
+    std::vector<SlotPart>& out = slot_parts_[key];
+    asset::Guid guid;
+    i32 part = -1;
+    const asset::AssetRecord* record = asset::parse_mesh_key(key, guid, part) && part < 0 ? registry_.find(guid) : nullptr;
+    if (!record || record->type != asset::AssetType::Mesh) return nullptr;
+    asset::AssetMeta meta;
+    registry_.load_meta(*record, meta);
+    bool any = false;
+    for (const asset::MaterialSlot& s : meta.material_slots) any = any || s.material[0];
+    if (!any) return nullptr;
+    char source[300], error[256];
+    registry_.source_path(*record, source, sizeof source);
+    Array<asset::MeshPart> parts(allocator_);
+    if (!asset::list_mesh_parts(source, parts, error, sizeof error) || parts.empty()) return nullptr;
+    for (usize k = 0; k < parts.size(); ++k) {
+        SlotPart p{};
+        if (parts.size() == 1) {  // one part: the whole mesh as it is, with that slot's Material
+            std::snprintf(p.key, sizeof p.key, "%s", key);
+        } else {
+            std::snprintf(p.key, sizeof p.key, "%s#%zu", key, k);
+            p.local = trs(parts[k].position * meta.import_scale, parts[k].rotation, parts[k].scale);  // its mesh is scaled by import_scale too
+        }
+        for (const asset::MaterialSlot& s : meta.material_slots) {
+            if (parts[k].material[0] && std::strcmp(s.name, parts[k].material) == 0) std::snprintf(p.material, sizeof p.material, "%s", s.material);
+        }
+        out.push_back(p);
+    }
+    return &out;
+}
+
 const CachedMesh* MeshCache::get(const char* key) {
     const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
     if (slot >= 0) return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
@@ -194,6 +226,7 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
 }
 
 void MeshCache::hot_reload() {
+    slot_parts_.clear();  // Material Slots or parts may have changed
     for (CachedMesh& m : meshes_) {
         const i64 before = m.compiled_time;
         m.failed = !load(m);

@@ -839,41 +839,58 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             ++stats.stat_culled;
             continue;
         }
-        const lsd::Mat4 inv = lsd::affine_inverse(m);  // normals use the inverse transpose (correct under non-uniform scale)
-        draw.vertices = mesh->gpu.vertices;
-        std::memcpy(draw.mvp, mvp.m, sizeof draw.mvp);
-        for (int c = 0; c < 3; ++c) {
-            for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
-            draw.normal_matrix[c * 4 + 3] = 0.0f;
-        }
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
-        }
-        draw.camera_position[0] = eye.x;
-        draw.camera_position[1] = eye.y;
-        draw.camera_position[2] = eye.z;
-        to_rgba(component->color, draw.color);
-        draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
-        materials.apply(component->material, draw);  // base colour x tint, textures, metallic / roughness, emissive
-        if (std::strncmp(component->mesh, "Landscape:", 10) == 0) {  // painted layers, blended
-            if (const lsd::rhi::TextureHandle t = lsd::editor::landscape_texture(component->mesh); t.valid()) {
-                draw.base_color_texture = t;
-                draw.color[0] = draw.color[1] = draw.color[2] = 1.0f;  // the layers carry their own tints
+        // One draw of `part_mesh` at `pm` with `material` (the whole mesh, or one part of it with its Material Slot).
+        auto submit = [&](lsd::rhi::MeshDraw draw, const lsd::editor::CachedMesh& part_mesh, const lsd::Mat4& pm, const char* material) {
+            const lsd::Mat4 pmvp = view_proj * pm;
+            const lsd::Mat4 inv = lsd::affine_inverse(pm);  // normals use the inverse transpose (correct under non-uniform scale)
+            draw.vertices = part_mesh.gpu.vertices;
+            std::memcpy(draw.mvp, pmvp.m, sizeof draw.mvp);
+            for (int c = 0; c < 3; ++c) {
+                for (int r = 0; r < 3; ++r) draw.normal_matrix[c * 4 + r] = inv.at(c, r);
+                draw.normal_matrix[c * 4 + 3] = 0.0f;
             }
-        }
-        const bool editor_view = !stats.playing || stats.ejected;
-        draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
-        draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
-        if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
-        if (blend_view(stats, draw, lsd::transform_point(m, (mesh->bounds_min + mesh->bounds_max) * 0.5f), eye, translucent)) continue;
-        if (can_batch(draw, m)) {  // drawn below with the others like it
-            batch.push_back({batch_key(draw), draw, m});
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = pm.at(r, c);
+            }
+            draw.camera_position[0] = eye.x;
+            draw.camera_position[1] = eye.y;
+            draw.camera_position[2] = eye.z;
+            to_rgba(component->color, draw.color);
+            draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
+            materials.apply(material, draw);  // base colour x tint, textures, metallic / roughness, emissive
+            if (std::strncmp(component->mesh, "Landscape:", 10) == 0) {  // painted layers, blended
+                if (const lsd::rhi::TextureHandle t = lsd::editor::landscape_texture(component->mesh); t.valid()) {
+                    draw.base_color_texture = t;
+                    draw.color[0] = draw.color[1] = draw.color[2] = 1.0f;  // the layers carry their own tints
+                }
+            }
+            const bool editor_view = !stats.playing || stats.ejected;
+            draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+            draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+            draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+            if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
+            if (blend_view(stats, draw, lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f), eye, translucent)) return;
+            if (can_batch(draw, pm)) {  // drawn below with the others like it
+                batch.push_back({batch_key(draw), draw, pm});
+                return;
+            }
+            device.draw_mesh(draw);
+            ++stats.stat_draws;
+            stats.stat_triangles += draw.index_count / 3;
+        };
+        const auto* slot_parts = component->material[0] ? nullptr : meshes.slot_parts(component->mesh);
+        if (!slot_parts) {  // one Material for all (the object's, or none): the whole mesh at its LOD
+            submit(draw, *mesh, m, component->material);
             continue;
         }
-        device.draw_mesh(draw);
-        ++stats.stat_draws;
-        stats.stat_triangles += draw.index_count / 3;
+        for (const lsd::editor::MeshCache::SlotPart& part : *slot_parts) {  // each part with its Material Slot, at its own LOD
+            const lsd::editor::CachedMesh* part_mesh = meshes.get(part.key);
+            if (!part_mesh) continue;
+            const lsd::Mat4 pm = m * part.local;
+            lsd::rhi::MeshDraw part_draw{};
+            if (!pick_static_lod(*part_mesh, *component, pm, eye, stats.force_lod, part_draw.indices, part_draw.index_count)) continue;
+            submit(part_draw, *part_mesh, pm, part.material);
+        }
     }
     draw_batches(device, batch, view_proj, stats);
     // 2D (Paper2D): Sprites and Tile Maps, textured quads in the X-Z plane; unlit unless they ask

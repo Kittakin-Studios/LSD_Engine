@@ -53,6 +53,17 @@ public:
     };
     const Triangles* triangles(const char* key);
 
+    // Material Slots on a Static Mesh (Unreal's per-section materials): a whole-file mesh asset whose Material Slots are
+    // set draws as its parts (their own "<guid>#<k>" meshes, placed as Create Prefab from Parts places them), each with
+    // its slot's Material. Null when the key is not such a mesh (a shape, a part, no slots set). Kept until hot_reload.
+    // shortcut: the parts are separate meshes (more draws than one mesh with sections), sections in the compiled mesh when that matters
+    struct SlotPart {
+        char key[48];
+        Mat4 local;          // the part in the mesh's space
+        char material[33];   // its slot's Material ("" = none)
+    };
+    const std::vector<SlotPart>* slot_parts(const char* key);
+
     // Puts `data` under `key` (drawn, picked and collided like any mesh), replacing what was there.
     // Keys starting "Landscape:" are only ever generated: get() is quiet about them until then.
     void set_generated(const char* key, const render::MeshData& data);
@@ -62,6 +73,7 @@ public:
 private:
     bool load(CachedMesh& entry);
     std::unordered_map<std::string, Triangles> triangles_;  // shortcut: std containers, editor-time collision data
+    std::unordered_map<std::string, std::vector<SlotPart>> slot_parts_;  // empty: draws whole
 
     rhi::Device& device_;
     Allocator& allocator_;

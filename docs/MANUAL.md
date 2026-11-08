@@ -486,7 +486,9 @@ already in Content, right-click it > **Import Materials and Textures** (or the c
    edits) and set on the mesh's **Material Slots**.
 
 The mesh asset's Details > **Materials** lists its slots (one per material of the file, like a
-Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. Textures
+Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. A Static
+Mesh of the whole file uses them too while its own **Material** is empty (each part draws with its
+slot); set a Material on the object to paint all of it with one. Textures
 use the mesh's own UVs, so each part looks as it did in Blender, Maya or Substance. Missing textures
 are listed in the Output Log; put them next to the file and run the menu again. It works one material
 at a time while the editor keeps running: a progress bar in the menu bar names the material it is on
