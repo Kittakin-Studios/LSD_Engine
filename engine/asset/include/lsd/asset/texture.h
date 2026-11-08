@@ -28,6 +28,9 @@ bool load_texture(const char* path, bool srgb, u32 max_size, TextureData& out);
 // Block-compresses the mips in place (stb_dxt, high quality): BC1 when every pixel is opaque, BC3 when any is not
 // (4 / 8 bits a pixel instead of 32). False, and nothing changes, when the size is not a multiple of 4 or it is already.
 bool compress_texture(TextureData& data);
+// load_texture, then compress_texture when `compress`, the compressed result kept in `cache_dir` (DerivedData/Textures):
+// later loads read it back while it matches the source (its write time and size) and max_size, instead of encoding again.
+bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out);
 // The image's size from its header only (no decoding); false if it is not a readable image.
 bool texture_size(const char* path, u32& width, u32& height);
 // An image's grey (its first channel) at 16 bits, rows top to bottom (16-bit PNGs keep theirs; 8-bit ones are

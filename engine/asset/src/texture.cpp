@@ -9,6 +9,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 
@@ -212,6 +213,73 @@ bool compress_texture(TextureData& data) {
     std::memcpy(data.pixels.data(), blocks.data(), blocks.size());
     for (u32 m = 0; m < data.mip_count; ++m) data.mip_offset[m] = offsets[m];
     data.encoding = opaque ? TextureEncoding::BC1 : TextureEncoding::BC3;
+    return true;
+}
+
+namespace {
+constexpr char kTextureCacheMagic[8] = {'L', 'S', 'D', 'T', 'E', 'X', '1', '\0'};
+struct TextureCacheHeader {
+    char magic[8];
+    i64 source_time;
+    u64 source_size;
+    u32 max_size, width, height, mip_count;
+    u32 encoding, srgb;
+    u64 mip_offset[kMaxTextureMips];
+    u64 bytes;
+};
+} // namespace
+
+bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compress, const char* cache_dir, TextureData& out) {
+    if (!compress || !cache_dir) return load_texture(path, srgb, max_size, out);
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const i64 time = static_cast<i64>(fs::last_write_time(path, ec).time_since_epoch().count());
+    const u64 size = ec ? 0 : static_cast<u64>(fs::file_size(path, ec));
+    if (ec) return load_texture(path, srgb, max_size, out);
+    u64 hash = 1469598103934665603ull;  // which cached file: the source's path, colour or data, the size cap
+    for (const char* p = path; *p; ++p) hash = (hash ^ static_cast<u8>(*p == '\\' ? '/' : *p)) * 1099511628211ull;
+    hash = (hash ^ (srgb ? 1u : 0u) ^ (static_cast<u64>(max_size) << 8)) * 1099511628211ull;
+    char name[32];
+    std::snprintf(name, sizeof name, "%016llx.lsdtex", static_cast<unsigned long long>(hash));
+    const fs::path cached = fs::path(cache_dir) / name;
+    if (FILE* f = std::fopen(cached.string().c_str(), "rb")) {  // still the same source: read it back
+        TextureCacheHeader h{};
+        const bool header = std::fread(&h, sizeof h, 1, f) == 1 && std::memcmp(h.magic, kTextureCacheMagic, 8) == 0 && h.source_time == time &&
+                            h.source_size == size && h.max_size == max_size && h.srgb == (srgb ? 1u : 0u) && h.mip_count && h.mip_count <= kMaxTextureMips;
+        if (header) {
+            out.pixels.resize(h.bytes);
+            if (std::fread(out.pixels.data(), 1, h.bytes, f) == h.bytes) {
+                std::fclose(f);
+                out.width = h.width;
+                out.height = h.height;
+                out.mip_count = h.mip_count;
+                out.encoding = static_cast<TextureEncoding>(h.encoding);
+                for (u32 m = 0; m < kMaxTextureMips; ++m) out.mip_offset[m] = h.mip_offset[m];
+                return true;
+            }
+        }
+        std::fclose(f);
+    }
+    if (!load_texture(path, srgb, max_size, out)) return false;
+    compress_texture(out);  // stays RGBA8 when its size is not a multiple of 4 (cached that way too)
+    fs::create_directories(cache_dir, ec);
+    if (FILE* f = std::fopen(cached.string().c_str(), "wb")) {  // a failed write only means encoding again next time
+        TextureCacheHeader h{};
+        std::memcpy(h.magic, kTextureCacheMagic, 8);
+        h.source_time = time;
+        h.source_size = size;
+        h.max_size = max_size;
+        h.width = out.width;
+        h.height = out.height;
+        h.mip_count = out.mip_count;
+        h.encoding = static_cast<u32>(out.encoding);
+        h.srgb = srgb ? 1u : 0u;
+        for (u32 m = 0; m < kMaxTextureMips; ++m) h.mip_offset[m] = out.mip_offset[m];
+        h.bytes = out.pixels.size();
+        std::fwrite(&h, sizeof h, 1, f);
+        std::fwrite(out.pixels.data(), 1, out.pixels.size(), f);
+        std::fclose(f);
+    }
     return true;
 }
 

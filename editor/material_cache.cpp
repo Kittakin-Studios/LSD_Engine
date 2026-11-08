@@ -46,11 +46,10 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
                 jobs_.erase(jobs_.begin());
             }
             auto* data = new asset::TextureData(default_allocator());
-            if (!asset::load_texture(job.path, job.srgb, job.max_size, *data)) {
+            // Colour maps only are compressed (BC1 / BC3 cost normal and data maps too much), once, into DerivedData.
+            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, job.srgb && compress_, "DerivedData/Textures", *data)) {
                 delete data;
                 data = nullptr;
-            } else if (job.srgb && compress_) {
-                asset::compress_texture(*data);  // colour maps only: BC1 / BC3 cost normal and data maps too much
             }
             std::lock_guard<std::mutex> lock(mutex_);
             finished_.push_back({job.entry, data});
@@ -104,11 +103,10 @@ bool TextureCache::load(Entry& e) {
         return false;
     }
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture(path, e.srgb, max_size, data)) {
+    if (!asset::load_texture_cached(path, e.srgb, max_size, e.srgb && compress_, "DerivedData/Textures", data)) {
         e.failed = !e.texture.valid();
         return false;
     }
-    if (e.srgb && compress_) asset::compress_texture(data);
     upload(e, data);
     return e.texture.valid();
 }

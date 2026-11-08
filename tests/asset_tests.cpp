@@ -292,6 +292,18 @@ static void test_texture(const fs::path& root) {
         rgba[3] = 0;  // one see-through pixel
         asset::TextureData a(default_allocator());
         CHECK(asset::build_texture(rgba.data(), 8, 8, true, 4096, a) && asset::compress_texture(a) && a.encoding == asset::TextureEncoding::BC3 && a.mip_offset[1] == 4 * 16);
+        // Cached: the first load encodes and writes the file, the second reads it back the same; a newer source is encoded again.
+        const fs::path cache = root / "TexCache";
+        fs::remove_all(cache);
+        asset::TextureData first(default_allocator()), again(default_allocator()), plain(default_allocator());
+        CHECK(asset::load_texture_cached(tga.string().c_str(), true, 4096, true, cache.string().c_str(), plain) && plain.encoding == asset::TextureEncoding::RGBA8);  // 2x2: too small to compress
+        const fs::path big = root / "big.png";
+        CHECK(asset::write_png(big.string().c_str(), 8, 8, rgba.data()));
+        CHECK(asset::load_texture_cached(big.string().c_str(), true, 4096, true, cache.string().c_str(), first) && first.encoding == asset::TextureEncoding::BC3);
+        CHECK(std::distance(fs::directory_iterator(cache), fs::directory_iterator{}) == 2);
+        CHECK(asset::load_texture_cached(big.string().c_str(), true, 4096, true, cache.string().c_str(), again) && again.encoding == first.encoding && again.pixels.size() == first.pixels.size() &&
+              std::memcmp(again.pixels.data(), first.pixels.data(), first.pixels.size()) == 0 && again.mip_offset[2] == first.mip_offset[2]);
+        fs::remove_all(cache);
         asset::TextureData odd(default_allocator());
         CHECK(asset::build_texture(rgba.data(), 6, 6, true, 4096, odd) && !asset::compress_texture(odd) && odd.encoding == asset::TextureEncoding::RGBA8);  // not a multiple of 4
     }
