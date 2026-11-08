@@ -574,7 +574,7 @@ Lights use physical units, like Unreal:
 | --- | --- |
 | Directional Light | lux; its +X axis is the light's direction; Cast Shadows, Shadow Distance (cascaded shadows) |
 | Point Light | lumens, attenuation radius, shadows; **Source Radius** makes it a sphere light (softer, wider highlights); **IES** (Unreal's IES Texture): drop a photometric `.ies` file in Content and pick it, and the light takes that fixture's pattern by angle from its forward axis (rotate the light to aim it; averaged around the axis, 16 steps from front to back) |
-| Spot Light | lumens, inner / outer cone, shadows, Source Radius, IES (inside the cone) |
+| Spot Light | lumens, inner / outer cone, shadows, Source Radius, IES (inside the cone); **Light Function** (Unreal's): an image projected along the light whose brightness dims it (a window frame, leaves, a gobo), **Function Tiling** repeats it, **Function Scroll X / Y** slide it (clouds, caustics); Rect Lights have it too. Light functions share the 16 decal image slots |
 | Rect Light | lumens from its front (+X); **Shape** Rect (Source Width across Y x Height along Z) or Disc (Width across): windows, screens, softboxes, ceiling panels. Unreal's Rect Light. **Cast Shadows** (one shadow tile, a 150 degree view from its front; light leaving almost sideways is unshadowed), softer the bigger the panel. Point and Spot Lights' shadows soften with their Source Radius too |
 | Sky Light | ambient from above and below |
 

@@ -125,6 +125,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 volumetric;
     vec4 reflection_boxes[8];
     vec4 light_profiles[64];
+    vec4 light_functions[32];
 };
 float light_profile(uint li, float c) {  // mesh.hlsl's
     float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;
@@ -288,6 +289,14 @@ layout(binding = 2) uniform sampler2D orm_tex;
 // Decals: each one's box (world -> box rows) and its tile in the decal atlas; faded on surfaces that do
 // not face along the box's +Z and towards its top and bottom.
 layout(binding = 5) uniform sampler2D decal_tex;
+float light_function(uint li, vec3 f, vec3 to) {  // mesh.hlsl's
+    float z = dot(to, f);
+    if (z <= 1e-3) return 0.0;
+    vec3 right = normalize(cross(f, abs(f.z) > 0.99 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0))), up = cross(right, f);
+    vec4 rect = light_functions[li * 2u], extra = light_functions[li * 2u + 1u];
+    vec2 uv = fract(vec2(dot(to, right), -dot(to, up)) / z * extra.z + 0.5 + extra.xy);
+    return dot(textureLod(decal_tex, rect.xy + uv * rect.zw, 0.0).rgb, vec3(0.2126, 0.7152, 0.0722));
+}
 layout(binding = 6) uniform sampler2D reflection_tex;  // reflection captures (lat-long tiles, mipmapped)
 layout(binding = 7) uniform sampler2D lightmap_tex;    // the level's lightmaps (Build Lighting)
 layout(binding = 8) uniform sampler2D emissive_tex;    // the emissive map (white without one)
@@ -484,6 +493,7 @@ void main() {
             if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= clamp((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4), 0.0, 1.0);
             if (L.pos_type.w > 2.5) atten *= clamp(dot(-l, L.dir_range.xyz), 0.0, 1.0);  // rect / disc: lights only in front
             else atten *= light_profile(li, dot(-l, L.dir_range.xyz));
+            if (light_functions[li * 2u + 1u].w > 0.5) atten *= light_function(li, L.dir_range.xyz, -l);
         }
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;

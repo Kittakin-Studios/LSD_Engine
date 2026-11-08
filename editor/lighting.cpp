@@ -262,12 +262,27 @@ void put_profile(rhi::LightSetup& s, u32 index, const char* guid, Vec3 axis) {
     s.lights[index].direction[2] = axis.z;
 }
 
+struct LightFunction {
+    const char* guid;  // the component's own (valid until the world changes; read right after world_lights)
+    f32 tiling, scroll[2];
+};
+LightFunction g_functions[rhi::kMaxLights] = {};
+
 bool g_hdri_on = false;
 u32 g_hdri_tile = 0;
 Vec3 g_hdri_averages[3] = {};
 } // namespace
 
 void set_light_profile_registry(const asset::AssetRegistry* registry) { g_profile_registry = registry; }
+
+bool light_function_of(u32 index, const char*& guid, f32& tiling, f32 scroll[2]) {
+    if (index >= rhi::kMaxLights || !g_functions[index].guid || !g_functions[index].guid[0]) return false;
+    guid = g_functions[index].guid;
+    tiling = g_functions[index].tiling;
+    scroll[0] = g_functions[index].scroll[0];
+    scroll[1] = g_functions[index].scroll[1];
+    return true;
+}
 
 void set_sky_hdri(bool on, u32 tile, const Vec3 averages[3]) {
     g_hdri_on = on;
@@ -526,6 +541,7 @@ namespace {
 
 rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden, bool with_static, u32* static_lights) {
     if (static_lights) *static_lights = 0;
+    for (LightFunction& f : g_functions) f.guid = nullptr;
     const Vec3 eye = view.eye;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
@@ -670,6 +686,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
                 light->attenuation_radius, disc ? light->source_width * 0.5f : light->source_width, light->source_height);
             s.lights[s.count - 1].source_radius = std::max(light->source_width, disc ? 0.0f : light->source_height) * 0.5f;  // softens its shadow only
+            g_functions[s.count - 1] = {light->light_function, light->function_tiling * 0.5f / std::tan(radians(75.0f)), {light->function_scroll_x, light->function_scroll_y}};  // over its 150 degrees
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
             if (side) {  // shortcut: one 150 degree view, so light leaving almost sideways is unshadowed; a cube's 5 faces for that
                 rhi::GpuLight& l = s.lights[s.count - 1];
@@ -688,6 +705,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
             s.lights[s.count - 1].source_radius = light->source_radius;
             put_profile(s, s.count - 1, light->ies, dir);
+            g_functions[s.count - 1] = {light->light_function, light->function_tiling * 0.5f / std::tan(radians(outer)), {light->function_scroll_x, light->function_scroll_y}};  // once across the cone
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
             if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];

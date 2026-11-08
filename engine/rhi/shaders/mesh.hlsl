@@ -39,6 +39,7 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 volumetric;
     float4 reflection_boxes[8];  // box captures: half size, w = fade-in distance (0: a sphere)
     float4 light_profiles[64];   // IES: 16 samples of 1 - profile per light (rhi::LightSetup)
+    float4 light_functions[32];  // per light: its image in the decal atlas, then scroll, repeats, on
 };
 // A light's IES profile at the angle from its axis whose cosine is c (1 without one; asset::light_profile_at).
 float light_profile(uint li, float c) {
@@ -214,6 +215,15 @@ VK_BIND(2, 1) Texture2D decal_tex : register(t5);
 VK_BIND(3, 1) Texture2D reflection_tex : register(t6);  // reflection captures (lat-long tiles, mipmapped)
 VK_BIND(4, 1) Texture2D lightmap_tex : register(t7);    // the level's lightmaps (Build Lighting)
 VK_BIND(6, 1) SamplerState decal_samp : register(s2);
+// A light function: its image projected along the light's axis `f` (up is world up), toward the pixel `to`; its brightness.
+float light_function(uint li, float3 f, float3 to) {
+    const float z = dot(to, f);
+    if (z <= 1e-3) return 0.0;
+    const float3 right = normalize(cross(f, abs(f.z) > 0.99 ? float3(1.0, 0.0, 0.0) : float3(0.0, 0.0, 1.0))), up = cross(right, f);
+    const float4 rect = light_functions[li * 2], extra = light_functions[li * 2 + 1];
+    const float2 uv = frac(float2(dot(to, right), -dot(to, up)) / z * extra.z + 0.5 + extra.xy);
+    return dot(decal_tex.SampleLevel(decal_samp, rect.xy + uv * rect.zw, 0).rgb, float3(0.2126, 0.7152, 0.0722));
+}
 float3 apply_decals(float3 c, float3 wpos, float3 n) {
     const uint count = (uint)decal_info.x;
     for (uint d = 0; d < count; ++d) {
@@ -469,6 +479,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
             if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
             if (L.pos_type.w > 2.5) atten *= saturate(dot(-l, L.dir_range.xyz));  // rect / disc: lights only in front
             else atten *= light_profile(li, dot(-l, L.dir_range.xyz));
+            if (light_functions[li * 2 + 1].w > 0.5) atten *= light_function(li, L.dir_range.xyz, -l);
         }
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;

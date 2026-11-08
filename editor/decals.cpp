@@ -1,9 +1,13 @@
 #include "decals.h"
 
+#include "lighting.h"
+
 #include "lsd/asset/texture.h"
 #include "lsd/world/components.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -26,18 +30,23 @@ void DecalAtlas::update(const world::World& world) {
     char wanted[kTiles * kTiles][33] = {};
     i64 times[kTiles * kTiles] = {};
     u32 n = 0;
-    const reflect::TypeInfo& type = reflect::type_of<world::Decal>();
-    for (u32 i = 0; i < world.count(type) && n < kTiles * kTiles; ++i) {
-        const auto* d = static_cast<const world::Decal*>(world.at(type, i));
+    auto want = [&](const char* texture) {
         asset::Guid g;
-        const asset::AssetRecord* r = asset::parse_guid(d->texture, g) ? registry_.find(g) : nullptr;
-        if (!r || r->type != asset::AssetType::Texture) continue;
-        bool seen = false;
-        for (u32 k = 0; k < n && !seen; ++k) seen = std::strcmp(wanted[k], d->texture) == 0;
-        if (seen) continue;
-        std::snprintf(wanted[n], sizeof wanted[n], "%s", d->texture);
+        const asset::AssetRecord* r = asset::parse_guid(texture, g) ? registry_.find(g) : nullptr;
+        if (!r || r->type != asset::AssetType::Texture || n == kTiles * kTiles) return;
+        for (u32 k = 0; k < n; ++k) {
+            if (std::strcmp(wanted[k], texture) == 0) return;
+        }
+        std::snprintf(wanted[n], sizeof wanted[n], "%s", texture);
         times[n++] = r->source_time;
-    }
+    };
+    const reflect::TypeInfo& type = reflect::type_of<world::Decal>();
+    for (u32 i = 0; i < world.count(type); ++i) want(static_cast<const world::Decal*>(world.at(type, i))->texture);
+    // light functions share the tiles
+    const reflect::TypeInfo& spot_type = reflect::type_of<world::SpotLight>();
+    for (u32 i = 0; i < world.count(spot_type); ++i) want(static_cast<const world::SpotLight*>(world.at(spot_type, i))->light_function);
+    const reflect::TypeInfo& rect_type = reflect::type_of<world::RectLight>();
+    for (u32 i = 0; i < world.count(rect_type); ++i) want(static_cast<const world::RectLight*>(world.at(rect_type, i))->light_function);
     bool same = n == count_;
     for (u32 i = 0; i < n && same; ++i) same = std::strcmp(wanted[i], keys_[i]) == 0 && times[i] == times_[i];
     if (same) return;
@@ -115,6 +124,23 @@ void DecalAtlas::apply(const world::World& world, bool skip_hidden, Vec3 eye, rh
         ++count;
     }
     lights.decal_info[0] = static_cast<f32>(count);
+    // Light functions: their tiles, and how far they have scrolled by now.
+    const f64 seconds = std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    for (u32 li = 0; li < lights.count; ++li) {
+        const char* guid = nullptr;
+        f32 tiling = 1.0f, scroll[2] = {};
+        const i32 tile = light_function_of(li, guid, tiling, scroll) ? tile_of(guid) : -1;
+        if (tile < 0) continue;
+        f32* rect = lights.light_functions[li * 2];
+        f32* extra = lights.light_functions[li * 2 + 1];
+        rect[0] = static_cast<f32>(tile % static_cast<i32>(kTiles)) / kTiles;
+        rect[1] = static_cast<f32>(tile / static_cast<i32>(kTiles)) / kTiles;
+        rect[2] = rect[3] = 1.0f / kTiles;
+        extra[0] = static_cast<f32>(std::fmod(seconds * scroll[0], 1.0));
+        extra[1] = static_cast<f32>(std::fmod(seconds * scroll[1], 1.0));
+        extra[2] = tiling;
+        extra[3] = 1.0f;
+    }
 }
 
 } // namespace lsd::editor

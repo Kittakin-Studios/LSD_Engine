@@ -249,9 +249,12 @@ struct LightSetup {
     // IES profiles (asset::light_profile.h): per light, 16 samples (4 rows) of 1 - its profile from its axis (dir_range)
     // to straight behind; all zero (the default) is no profile.
     f32 light_profiles[kMaxLights * 4][4] = {};
+    // Light functions (Spot / Rect): per light, its image's rectangle in the decal atlas (x, y, w, h), then the scroll
+    // offset (u, v), how many repeats per unit of the view's tangent (z), and 1 when it has one (w).
+    f32 light_functions[kMaxLights * 2][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with

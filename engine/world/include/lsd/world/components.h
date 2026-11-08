@@ -863,6 +863,12 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Widget = "Asset:LightProfile",
                  Tooltip = "IES Profile (Unreal's IES Texture): a photometric .ies file shapes the light by angle from its forward axis (a real fixture's pattern of rings and falloff)")
     char ies[33] = "";
+    LSD_PROPERTY(Edit, Category = "Light Function", Widget = "Asset:Texture",
+                 Tooltip = "Light Function (Unreal's): an image projected from the light along its forward axis whose brightness dims the light (a gobo, leaves, a window frame, moving clouds); uses one of the 16 decal texture slots")
+    char light_function[33] = "";
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = 0.01, Max = 100, Tooltip = "How many times the image repeats across the light") f32 function_tiling = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image widths per second it slides sideways (clouds, caustics)") f32 function_scroll_x = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image heights per second it slides up") f32 function_scroll_y = 0.0f;
 };
 
 // An area light (Unreal's Rect Light): a glowing panel or disc lighting what is in front of it (+X), with soft
@@ -883,6 +889,12 @@ struct RectLight {
     LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
     u32 shadow_resolution = 1;
+    LSD_PROPERTY(Edit, Category = "Light Function", Widget = "Asset:Texture",
+                 Tooltip = "Light Function (Unreal's): an image projected from the light along its forward axis whose brightness dims the light (a gobo, leaves, a window frame, moving clouds); uses one of the 16 decal texture slots")
+    char light_function[33] = "";
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = 0.01, Max = 100, Tooltip = "How many times the image repeats across the light") f32 function_tiling = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image widths per second it slides sideways (clouds, caustics)") f32 function_scroll_x = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image heights per second it slides up") f32 function_scroll_y = 0.0f;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).

@@ -46,6 +46,9 @@ struct ShadowCells {
 // shortcut: no shadows or baked probes; per vertex on the CPU, fine for hundreds of sprites, a GPU path for thousands
 // `sun_visible`: how much of the shadowed sun (LightSetup::shadow_info[1]) reaches it, 0..1 (lit particles in Play ray-test it).
 Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal, f32 sun_visible = 1.0f);
+// The light function of light `index` in the last world_lights: its texture GUID, repeats per unit of tangent and
+// scroll per second (u, v); false when it has none.
+bool light_function_of(u32 index, const char*& guid, f32& tiling, f32 scroll[2]);
 // Where Point / Spot Lights' IES profiles are looked up (their .ies files, read once each).
 void set_light_profile_registry(const asset::AssetRegistry* registry);
 // The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
