@@ -366,14 +366,21 @@ Mat4 gltf_up() {
 bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* error, usize error_capacity, u32 normals, f32 smoothing_angle) {
     cgltf_data* data = load_gltf(path, error, error_capacity);
     if (!data) return false;
-    const cgltf_skin* skin = data->skins_count ? &data->skins[0] : nullptr;
-    if (!skin || !skin->joints_count) {
+    const cgltf_skin* skin = data->skins_count && data->skins[0].joints_count ? &data->skins[0] : nullptr;
+    // No skeleton but morph targets (a face, a blend-shape prop): a Root-only skeleton, so its morphs play
+    // like any Skeletal Mesh's (each mesh node rigid at its place).
+    bool morphs = false;
+    for (cgltf_size n = 0; n < data->nodes_count && !skin && !morphs; ++n) {
+        const cgltf_mesh* mesh = data->nodes[n].mesh;
+        for (cgltf_size p = 0; mesh && p < mesh->primitives_count; ++p) morphs = morphs || mesh->primitives[p].targets_count > 0;
+    }
+    if (!skin && !morphs) {
         std::snprintf(error, error_capacity, "No skinned mesh (no skeleton) in %s", path);
         cgltf_free(data);
         return false;
     }
     std::vector<bool> needed(data->nodes_count, false);
-    for (cgltf_size i = 0; i < skin->joints_count; ++i) {
+    for (cgltf_size i = 0; skin && i < skin->joints_count; ++i) {
         for (const cgltf_node* n = skin->joints[i]; n; n = n->parent) needed[cgltf_node_index(data, n)] = true;
     }
     ozz::animation::offline::RawSkeleton raw;
@@ -414,7 +421,7 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
         cgltf_node_transform_world(&data->nodes[i], world.m);
         out.inverse_bind[static_cast<u32>(joint_of[i])] = affine_inverse(world) * down;
     }
-    if (skin->inverse_bind_matrices) {
+    if (skin && skin->inverse_bind_matrices) {
         for (cgltf_size k = 0; k < skin->joints_count; ++k) {
             const i32 j = joint_of[cgltf_node_index(data, skin->joints[k])];
             Mat4 ibm;
@@ -445,6 +452,8 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
             LSD_LOG_WARN("anim", "%s: mesh '%s' is not on the first skin and is left out", path, node.mesh->name ? node.mesh->name : "");
             continue;
         }
+        Mat4 rigid;  // without a skin each mesh node stays where the file places it, on the Root
+        if (!skin) cgltf_node_transform_world(&node, rigid.m);
         for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p) {
             const cgltf_primitive& prim = node.mesh->primitives[p];
             if (prim.type != cgltf_primitive_type_triangles) continue;
@@ -475,13 +484,13 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
                 }
                 u32 joint_ids[4] = {};
                 for (int k = 0; k < 4; ++k) {
-                    const i32 j = ji[k] < skin->joints_count ? joint_of[cgltf_node_index(data, skin->joints[ji[k]])] : -1;
+                    const i32 j = skin && ji[k] < skin->joints_count ? joint_of[cgltf_node_index(data, skin->joints[ji[k]])] : -1;
                     if (j < 0) w[k] = 0.0f;
                     else joint_ids[k] = static_cast<u32>(j);
                 }
                 rhi::SkinnedVertex out_v{};
-                const Vec3 p3 = transform_point(up, {lp[0], lp[1], lp[2]});
-                Vec3 n3 = transform_vector(up, {ln[0], ln[1], ln[2]});
+                const Vec3 p3 = transform_point(up, transform_point(rigid, {lp[0], lp[1], lp[2]}));
+                Vec3 n3 = transform_vector(up, transform_vector(rigid, {ln[0], ln[1], ln[2]}));  // renormalised below (Import normals only: non-uniform node scale bends them slightly)
                 const f32 len = length(n3);
                 n3 = len > 0.0f ? n3 * (1.0f / len) : Vec3{0, 0, 1};
                 out_v.position[0] = p3.x, out_v.position[1] = p3.y, out_v.position[2] = p3.z;
@@ -509,7 +518,7 @@ bool import_skinned_gltf(const char* path, f32 scale, SkinnedModel& out, char* e
                     cgltf_float d[3] = {0, 0, 0};
                     cgltf_accessor_read_float(offsets, v, d, 3);
                     if (d[0] == 0.0f && d[1] == 0.0f && d[2] == 0.0f) continue;
-                    const Vec3 e = transform_vector(up, {d[0], d[1], d[2]});
+                    const Vec3 e = transform_vector(up, transform_vector(rigid, {d[0], d[1], d[2]}));
                     out.morph_deltas.push_back({first_vertex + static_cast<u32>(i), {e.x, e.y, e.z}});
                 }
                 target.count = static_cast<u32>(out.morph_deltas.size()) - target.first;
@@ -705,7 +714,11 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
             for (const ufbx_node* n = cluster->bone_node; n; n = n->parent) needed[n->typed_id] = true;
         }
     }
-    if (!skinned_mesh) {
+    // No skin but blend shapes (a face, a blend-shape prop): a Root-only skeleton, every mesh rigid on it,
+    // so its morphs play like any Skeletal Mesh's.
+    bool morph_only = false;
+    for (usize m = 0; m < scene->meshes.count && !skinned_mesh && !morph_only; ++m) morph_only = scene->meshes.data[m]->blend_deformers.count > 0;
+    if (!skinned_mesh && !morph_only) {
         std::snprintf(error, error_capacity, "No skinned mesh (no skeleton) in %s", path);
         ufbx_free_scene(scene);
         return false;
@@ -736,7 +749,8 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
     out.inverse_bind.resize(joints);  // Array does not construct: start every joint at identity
     for (u32 j = 0; j < joints; ++j) out.inverse_bind[j] = Mat4{};
     std::vector<bool> has_bind(joints, false);
-    const ufbx_skin_deformer* main_skin = skinned_mesh->skin_deformers.data[0];
+    static const ufbx_skin_deformer no_skin{};
+    const ufbx_skin_deformer* main_skin = skinned_mesh ? skinned_mesh->skin_deformers.data[0] : &no_skin;
     for (const ufbx_skin_cluster* c : main_skin->clusters) {
         const i32 j = c->bone_node ? joint_of(c->bone_node) : -1;
         if (j < 0 || has_bind[j]) continue;
@@ -765,14 +779,14 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
     out.bounds_max = {-1e30f, -1e30f, -1e30f};
     for (usize m = 0; m < scene->meshes.count; ++m) {
         const ufbx_mesh* mesh = scene->meshes.data[m];
-        if (!mesh->skin_deformers.count) {
+        if (!mesh->skin_deformers.count && !morph_only) {
             LSD_LOG_WARN("anim", "%s: mesh '%s' has no skin and is left out (shortcut: parent it to a bone in the DCC)", path, mesh->name.data);
             continue;
         }
-        const ufbx_skin_deformer* skin = mesh->skin_deformers.data[0];
+        const ufbx_skin_deformer* skin = mesh->skin_deformers.count ? mesh->skin_deformers.data[0] : nullptr;  // null: rigid on the Root
         // This mesh into the main mesh's space, through a bone both know (none needed for the main mesh).
         Mat4 into_main;
-        if (mesh != skinned_mesh) {
+        if (skin && mesh != skinned_mesh) {
             for (const ufbx_skin_cluster* c : skin->clusters) {
                 const i32 j = c->bone_node ? joint_of(c->bone_node) : -1;
                 if (j >= 0 && has_bind[j]) {
@@ -820,7 +834,7 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
                 const ufbx_vec3 n = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, index) : ufbx_vec3{{{0, 0, 1}}};
                 const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, index) : ufbx_vec2{{{0, 0}}};
                 rhi::SkinnedVertex v{};
-                const bool weighted = skin->vertices.data[mesh->vertex_indices.data[index]].num_weights > 0;
+                const bool weighted = skin && skin->vertices.data[mesh->vertex_indices.data[index]].num_weights > 0;
                 const Vec3 pos = transform_point(weighted ? into_main : unweighted, {static_cast<f32>(p.x), static_cast<f32>(p.y), static_cast<f32>(p.z)});
                 Vec3 nrm = transform_vector(weighted ? normal_into_main : normal_unweighted, {static_cast<f32>(n.x), static_cast<f32>(n.y), static_cast<f32>(n.z)});
                 const f32 len = length(nrm);
@@ -834,7 +848,7 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
                 v.uv[0] = static_cast<f32>(uv.x);
                 v.uv[1] = 1.0f - static_cast<f32>(uv.y);  // FBX UVs start at the bottom; textures at the top
                 // Up to 4 influences (ufbx sorts them strongest first), renormalised to bytes summing to 255.
-                const ufbx_skin_vertex& sv = skin->vertices.data[mesh->vertex_indices.data[index]];
+                const ufbx_skin_vertex sv = skin ? skin->vertices.data[mesh->vertex_indices.data[index]] : ufbx_skin_vertex{};
                 f32 weights[4] = {};
                 u32 joints_of[4] = {};
                 f32 total = 0.0f;
@@ -861,9 +875,9 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
                 out.indices.push_back(static_cast<u32>(out.vertices.size()));  // shortcut: no welding for skinned meshes yet
                 out.vertices.push_back(v);
                 // Bounds at rest: the strongest bone's current pose.
-                const ufbx_skin_cluster* top = sv.num_weights ? skin->clusters.data[skin->weights.data[sv.weight_begin].cluster_index] : nullptr;
-                if (top && top->bone_node) {
-                    const ufbx_vec3 world = ufbx_transform_position(&top->geometry_to_world, p);
+                const ufbx_skin_cluster* top = skin && sv.num_weights ? skin->clusters.data[skin->weights.data[sv.weight_begin].cluster_index] : nullptr;
+                if ((top && top->bone_node) || (!skin && instance)) {  // rigid: where the file places the mesh
+                    const ufbx_vec3 world = ufbx_transform_position(top ? &top->geometry_to_world : &instance->geometry_to_world, p);
                     const Vec3 wp{static_cast<f32>(world.x) * scale, static_cast<f32>(world.y) * scale, static_cast<f32>(world.z) * scale};
                     out.bounds_min = vmin(out.bounds_min, wp);
                     out.bounds_max = vmax(out.bounds_max, wp);
@@ -881,7 +895,7 @@ bool import_skinned(const char* path, f32 scale, SkinnedModel& out, char* error,
                 for (usize k = 0; k < corner_vertex.size(); ++k) {
                     const ufbx_vec3 o = ufbx_get_blend_shape_vertex_offset(shape, corner_vertex[k]);
                     if (o.x == 0.0 && o.y == 0.0 && o.z == 0.0) continue;
-                    const bool weighted = skin->vertices.data[corner_vertex[k]].num_weights > 0;
+                    const bool weighted = skin && skin->vertices.data[corner_vertex[k]].num_weights > 0;
                     const Vec3 d = transform_vector(weighted ? into_main : unweighted, {static_cast<f32>(o.x), static_cast<f32>(o.y), static_cast<f32>(o.z)});
                     out.morph_deltas.push_back({first_vertex + static_cast<u32>(k), {d.x, d.y, d.z}});
                 }

@@ -555,8 +555,29 @@ static void gltf_skin_tests() {
         std::fclose(f);
     }
     auto near = [](Vec3 a, Vec3 b) { return std::fabs(a.x - b.x) < 1e-3f && std::fabs(a.y - b.y) < 1e-3f && std::fabs(a.z - b.z) < 1e-3f; };
-    anim::SkinnedModel model(default_allocator());
     char error[256] = "";
+    {  // morphs without a skeleton: the same triangle and "Smile" on a plain node 1 m up imports with a Root-only skeleton
+        const char* face = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+"nodes":[{"name":"face","mesh":0,"translation":[0,1,0]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0},"targets":[{"POSITION":1}]}],"weights":[0],"extras":{"targetNames":["Smile"]}}],
+"buffers":[{"uri":"rig.bin","byteLength":300}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":256,"byteLength":36}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,2,0],"max":[1,2,1]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}]})";
+        const std::string face_path = (dir / "face.gltf").string();
+        if (FILE* f = std::fopen(face_path.c_str(), "wb")) {
+            std::fwrite(face, 1, std::strlen(face), f);
+            std::fclose(f);
+        }
+        anim::SkinnedModel rigid(default_allocator());
+        CHECK(anim::import_skinned(face_path.c_str(), 1.0f, rigid, error, sizeof error) && rigid.joint_count() == 1 && rigid.morphs.size() == 1);
+        if (rigid.vertices.size() == 3) {
+            CHECK(near({rigid.vertices[0].position[0], rigid.vertices[0].position[1], rigid.vertices[0].position[2]}, {0, 0, 3}));  // 2 m + the node's 1 m
+            anim::Pose still;
+            still.sample(rigid, nullptr, 0.0f, false);
+            CHECK(near(skin(still, rigid.vertices[0]), {0, 0, 3}));  // on the Root: stays put
+        }
+    }
+    anim::SkinnedModel model(default_allocator());
     CHECK(anim::import_skinned(path.c_str(), 1.0f, model, error, sizeof error));
     CHECK(model.joint_count() == 3 && model.find_joint("Root") >= 0 && model.find_joint("hip") >= 0 && model.find_joint("arm") >= 0);
     CHECK(model.vertices.size() == 3 && model.indices.size() == 3 && model.sections.size() == 1);

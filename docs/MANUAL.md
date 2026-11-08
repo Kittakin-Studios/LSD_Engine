@@ -1558,7 +1558,8 @@ plays no animation of its own. A rigid mesh is attached to the area's bone. Scri
 Leader Pose** works on its own too: name the body object and the mesh follows it.
 
 **Morph targets** (Unreal's Morph Targets; Blender shape keys, Maya blend shapes): export them
-with the rigged FBX or glTF. The shading follows the shape: each target's normals are worked out at
+with the rigged FBX or glTF. A mesh with shape keys and no armature works too: it imports as a
+Skeletal Mesh with a single Root bone (drop it in and its Morphs play), each part where the file puts it. The shading follows the shape: each target's normals are worked out at
 import the way the mesh's are (its Normals setting), so a puffed cheek or a raised brow lights correctly. The Mesh Editor lists them under **Morph Targets**: click one to preview it
 (the slider sets the preview weight) and its name is copied. On the Skeletal Mesh, add rows to
 **Morphs** (name + weight 0..1), or from a script `lsd.set_morph(e, "Smile", 0.7)` / the **Set Morph
