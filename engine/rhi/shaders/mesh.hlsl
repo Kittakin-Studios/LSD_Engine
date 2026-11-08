@@ -119,38 +119,16 @@ float sun_visibility(float3 p, float3 cam) {
 }
 // Volumetric fog: how lit the fog toward wpos is (1 = plain height fog). The sun's light reaching
 // points along the view ray (its shadow sampled at each step), shaped by a Henyey-Greenstein phase.
-// Area lights (Karis 2013, UE4's representative point): `ls` becomes the direction to the point of the light's shape
-// nearest the reflection ray `rv`, the roughness (sa2 = alpha^2) widens by the shape's size, and `norm` keeps the energy.
-// Sphere: a point / spot light with spot.w = radius. Rect (type 3): color_inner.w x spot.x metres; disc (type 4): radius
-// color_inner.w; both face dir_range.xyz. shortcut: a rect's roll follows world up, add an axis when lights need to turn.
+// Sphere lights (Karis 2013, UE4's representative point): a point / spot light with spot.w = radius. `ls` becomes the
+// direction to the sphere's point nearest the reflection ray `rv`, the roughness (sa2 = alpha^2) widens by its size,
+// and `norm` keeps the energy. shortcut: not exact like the panels' LTC, fit a sphere table when big spheres look off.
+// Rect / Disc Lights face dir_range.xyz; a rect's roll follows world up (shortcut: add an axis when lights need to turn).
 void area_point(Light L, float3 wpos, float3 rv, float roughness, inout float3 ls, inout float sa2, inout float norm) {
     const float3 to = L.pos_type.xyz - wpos;
-    float3 p = to;
-    float size = 0.0;
-    if (L.pos_type.w > 2.5) {
-        const float3 ln = L.dir_range.xyz;
-        const float3 right = normalize(cross(abs(ln.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0), ln));
-        const float3 up = cross(ln, right);
-        const float denom = dot(rv, ln);
-        const float t = abs(denom) > 1e-4 ? dot(to, ln) / denom : -1.0;
-        const float3 on_plane = rv * t - to;
-        float2 uv = t > 0.0 ? float2(dot(on_plane, right), dot(on_plane, up)) : float2(0.0, 0.0);
-        if (L.pos_type.w < 3.5) {
-            const float2 extent = float2(L.color_inner.w, L.spot.x) * 0.5;
-            uv = clamp(uv, -extent, extent);
-            size = length(extent);
-        } else {
-            const float len = length(uv);
-            if (len > L.color_inner.w) uv *= L.color_inner.w / len;
-            size = L.color_inner.w;
-        }
-        p = to + right * uv.x + up * uv.y;
-    } else if (L.spot.w > 0.0) {
-        const float3 c = dot(to, rv) * rv - to;
-        p = to + c * saturate(L.spot.w / max(length(c), 1e-4));
-        size = L.spot.w;
-    }
-    if (size <= 0.0) return;
+    if (L.spot.w <= 0.0) return;
+    const float3 c = dot(to, rv) * rv - to;
+    const float3 p = to + c * saturate(L.spot.w / max(length(c), 1e-4));
+    const float size = L.spot.w;
     ls = normalize(p);
     const float a = roughness * roughness, wide = saturate(a + size / (2.0 * max(length(to), 1e-3)));
     sa2 = wide * wide;
@@ -367,6 +345,310 @@ float2 env_brdf(float ndv, float roughness) {
     const float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
     return float2(-1.04, 1.04) * a004 + r.zw;
 }
+
+// Rect / Disc Lights, exact (linearly transformed cosines, Heitz et al. 2016): GGX's lobe for a roughness and view
+// angle is a clamped cosine bent by a 3x3 matrix, so the light's outline taken through its inverse gives the
+// specular share, and the outline itself the diffuse one (Lambert's edge formula). The table: tools/ltc_fit.py.
+// ltc table begin
+static const float4 ltc_table[256] = {
+    float4(49.99845, 0.00000, 49.99845, 0.00000),
+    float4(49.99556, 4.72940, 50.44307, -0.09402),
+    float4(49.96408, 9.54906, 51.78899, -0.18741),
+    float4(49.82514, 14.53214, 54.06319, -0.27878),
+    float4(49.43561, 19.71005, 57.29316, -0.36598),
+    float4(48.59503, 25.04428, 61.50064, -0.44644),
+    float4(47.02467, 30.37299, 66.64056, -0.51540),
+    float4(103177828613803.54688, 80979461430970.18750, 839752134714545.37500, -13695019493230.37695),
+    float4(40.38907, 39.42377, 78.86979, -0.59161),
+    float4(34.85166, 41.83318, 85.06787, -0.58433),
+    float4(27.95155, 41.81973, 90.53253, -0.54172),
+    float4(20.23764, 38.80371, 94.67432, -0.46573),
+    float4(12.61125, 32.64905, 97.22362, -0.36438),
+    float4(6.14234, 23.84769, 98.97527, -0.25141),
+    float4(0.40701, 3.03324, 25.88229, 0.06612),
+    float4(0.50353, 4.12402, 3765.71430, -0.64685),
+    float4(49.99845, 0.00000, 49.99845, 0.00000),
+    float4(49.99557, 4.72940, 50.44308, -0.09402),
+    float4(49.96408, 9.54906, 51.78899, -0.18741),
+    float4(49.82514, 14.53214, 54.06319, -0.27878),
+    float4(49.43561, 19.71005, 57.29315, -0.36598),
+    float4(48.59503, 25.04428, 61.50064, -0.44644),
+    float4(47.02467, 30.37299, 66.64056, -0.51540),
+    float4(1462107014016350.50000, 1147539562373020.00000, 11899921486665904.00000, -194068685883340.62500),
+    float4(40.38903, 39.42373, 78.86971, -0.59161),
+    float4(34.85169, 41.83320, 85.06792, -0.58433),
+    float4(27.95156, 41.81974, 90.53256, -0.54172),
+    float4(20.23762, 38.80367, 94.67421, -0.46573),
+    float4(12.61125, 32.64905, 97.22363, -0.36438),
+    float4(6.14234, 23.84768, 98.97524, -0.25140),
+    float4(0.40701, 3.03324, 25.88229, 0.06612),
+    float4(0.50353, 4.12402, 3765.60638, -0.64685),
+    float4(28.12226, 0.00000, 28.12226, 0.00000),
+    float4(28.12020, 2.66006, 28.37205, -0.09390),
+    float4(28.10224, 5.37079, 29.12854, -0.18728),
+    float4(28.02428, 8.17341, 30.40733, -0.27868),
+    float4(27.80471, 11.08518, 32.22252, -0.36580),
+    float4(27.32618, 14.08175, 34.58033, -0.44573),
+    float4(26.44962, 17.08129, 37.47754, -0.51500),
+    float4(24.96887, 19.88028, 40.79445, -0.56584),
+    float4(22.71747, 22.16750, 44.34746, -0.59111),
+    float4(19.62563, 23.54585, 47.88086, -0.58520),
+    float4(15.74104, 23.53358, 50.94852, -0.54230),
+    float4(11.42325, 21.87653, 53.38220, -0.46796),
+    float4(520120075636923.25000, 1315529410153189.00000, 10323923084238206.00000, -110093311112985.68750),
+    float4(126818424376200.89062, 468360659027535.93750, 9885170994856972.00000, -62836426424616.76562),
+    float4(14599409869139.90820, 61788912659507.96875, 6990613597673320.00000, -16454478064671.91211),
+    float4(168.93857, 714.62217, 352912.33187, -191.14469),
+    float4(12.50408, 0.00000, 12.50408, 0.00000),
+    float4(12.50091, 1.18250, 12.61302, -0.09370),
+    float4(12.49265, 2.38736, 12.94832, -0.18700),
+    float4(12.45816, 3.63284, 13.51558, -0.27831),
+    float4(12.35949, 4.92589, 14.31896, -0.36533),
+    float4(12.14474, 6.25503, 15.36034, -0.44437),
+    float4(11.74822, 7.58064, 16.63243, -0.51236),
+    float4(11.09920, 8.82603, 18.11094, -0.56397),
+    float4(10.10332, 9.84012, 19.68603, -0.58942),
+    float4(8.74705, 10.46463, 21.28177, -0.58537),
+    float4(7.05479, 10.50146, 22.74112, -0.54711),
+    float4(5.19095, 9.87181, 24.10441, -0.48232),
+    float4(3.30970, 8.44315, 25.19123, -0.38891),
+    float4(1.70116, 6.39800, 26.65056, -0.28473),
+    float4(0.43451, 2.89235, 22.96882, -0.09792),
+    float4(0.37645, 2.62593, 290.88852, -0.46596),
+    float4(7.04507, 0.00000, 7.04507, 0.00000),
+    float4(7.04383, 0.66622, 7.10701, -0.09337),
+    float4(7.03984, 1.34498, 7.29551, -0.18647),
+    float4(7.02021, 2.04607, 7.61287, -0.27753),
+    float4(6.96338, 2.77272, 8.06057, -0.36412),
+    float4(6.84321, 3.51918, 8.64209, -0.44248),
+    float4(6.62673, 4.26611, 9.35999, -0.51114),
+    float4(6.26876, 4.96791, 10.19370, -0.56350),
+    float4(5.73185, 5.55468, 11.11186, -0.59314),
+    float4(4.98301, 5.91714, 12.03389, -0.59130),
+    float4(4.07463, 5.99753, 12.98905, -0.56295),
+    float4(3.03724, 5.67294, 13.85566, -0.49940),
+    float4(1.94968, 4.81371, 14.37043, -0.39246),
+    float4(0.90321, 3.12575, 13.09637, -0.20547),
+    float4(0.27867, 1.36782, 11.14508, -0.05136),
+    float4(0.31357, 1.46794, 42.75887, -0.19609),
+    float4(4.52104, 0.00000, 4.52104, 0.00000),
+    float4(4.51869, 0.42708, 4.55934, -0.09173),
+    float4(4.51670, 0.86209, 4.67930, -0.18365),
+    float4(4.50692, 1.31159, 4.88291, -0.27343),
+    float4(4.47315, 1.77678, 5.16804, -0.35721),
+    float4(4.39575, 2.25209, 5.53274, -0.43319),
+    float4(4.26562, 2.73194, 5.99550, -0.50401),
+    float4(4.05689, 3.19203, 6.54859, -0.56201),
+    float4(3.71106, 3.55809, 7.11514, -0.58632),
+    float4(3.24606, 3.79453, 7.71003, -0.58417),
+    float4(2.63765, 3.78796, 8.19525, -0.53742),
+    float4(1.90535, 3.40989, 8.32931, -0.42845),
+    float4(1.14298, 2.58768, 7.77631, -0.25920),
+    float4(0.57971, 1.66351, 7.09996, -0.11682),
+    float4(0.28302, 0.94171, 7.35292, -0.04570),
+    float4(0.28820, 0.98523, 15.93707, -0.12504),
+    float4(3.17014, 0.00000, 3.17014, 0.00000),
+    float4(3.16867, 0.29815, 3.19672, -0.08633),
+    float4(3.16288, 0.60077, 3.27410, -0.17300),
+    float4(3.14701, 0.91015, 3.40252, -0.25521),
+    float4(3.10796, 1.22336, 3.57473, -0.32489),
+    float4(3.02590, 1.53000, 3.77847, -0.37775),
+    float4(2.92374, 1.84409, 4.06616, -0.44191),
+    float4(2.75700, 2.12643, 4.38150, -0.48255),
+    float4(2.52173, 2.35566, 4.72384, -0.50444),
+    float4(2.17983, 2.45418, 4.99751, -0.47897),
+    float4(1.72509, 2.33491, 5.07141, -0.39297),
+    float4(1.24268, 2.01989, 4.96881, -0.27876),
+    float4(0.81478, 1.57588, 4.78823, -0.16732),
+    float4(0.51015, 1.12973, 4.79485, -0.09144),
+    float4(0.34285, 0.78975, 5.47982, -0.05908),
+    float4(0.35313, 0.80524, 8.55580, -0.10858),
+    float4(2.36224, 0.00000, 2.36224, 0.00000),
+    float4(2.36097, 0.21804, 2.38111, -0.07371),
+    float4(2.35282, 0.43766, 2.43083, -0.14506),
+    float4(2.33135, 0.65772, 2.50762, -0.20813),
+    float4(2.28959, 0.87556, 2.60919, -0.26084),
+    float4(2.22373, 1.09079, 2.74419, -0.31344),
+    float4(2.12265, 1.28937, 2.89878, -0.35115),
+    float4(1.97512, 1.45209, 3.05291, -0.36527),
+    float4(1.79783, 1.58258, 3.22615, -0.37306),
+    float4(1.55394, 1.61699, 3.33967, -0.33959),
+    float4(1.26327, 1.53645, 3.37643, -0.27288),
+    float4(0.97663, 1.37311, 3.39421, -0.20417),
+    float4(0.72504, 1.14848, 3.42856, -0.14200),
+    float4(0.53467, 0.90877, 3.56927, -0.09308),
+    float4(0.42342, 0.70955, 4.13269, -0.07559),
+    float4(0.41884, 0.71856, 4.80324, -0.09157),
+    float4(1.85506, 0.00000, 1.85506, 0.00000),
+    float4(1.85173, 0.16212, 1.86593, -0.05375),
+    float4(1.84009, 0.32455, 1.89414, -0.10810),
+    float4(1.81618, 0.48462, 1.93833, -0.15595),
+    float4(1.77763, 0.64174, 2.00077, -0.19997),
+    float4(1.72236, 0.79380, 2.08471, -0.24126),
+    float4(1.64098, 0.92792, 2.17416, -0.26595),
+    float4(1.53193, 1.03575, 2.26206, -0.27315),
+    float4(1.39175, 1.10419, 2.33629, -0.26187),
+    float4(1.23218, 1.13313, 2.40719, -0.24189),
+    float4(1.05841, 1.11232, 2.47152, -0.21346),
+    float4(0.88494, 1.04203, 2.53360, -0.17810),
+    float4(0.72090, 0.91962, 2.59000, -0.13360),
+    float4(0.59867, 0.79244, 2.77215, -0.10854),
+    float4(0.51302, 0.65729, 3.12410, -0.09335),
+    float4(0.50646, 0.64774, 3.76622, -0.11592),
+    float4(1.52321, 0.00000, 1.52321, 0.00000),
+    float4(1.51906, 0.12205, 1.52905, -0.03982),
+    float4(1.50651, 0.24265, 1.54454, -0.07793),
+    float4(1.48513, 0.36171, 1.57098, -0.11568),
+    float4(1.45436, 0.47783, 1.60918, -0.15160),
+    float4(1.40810, 0.58385, 1.65493, -0.17590),
+    float4(1.34520, 0.67594, 1.70587, -0.18913),
+    float4(1.27037, 0.75502, 1.76054, -0.19776),
+    float4(1.18099, 0.81448, 1.81643, -0.20058),
+    float4(1.08051, 0.85028, 1.87128, -0.19628),
+    float4(0.97155, 0.85487, 1.91863, -0.18308),
+    float4(0.85936, 0.82584, 1.96517, -0.15998),
+    float4(0.75451, 0.77046, 2.03509, -0.13696),
+    float4(0.67073, 0.69981, 2.17174, -0.12232),
+    float4(0.60181, 0.60742, 2.37615, -0.10992),
+    float4(0.58001, 0.58330, 2.92190, -0.14357),
+    float4(1.29552, 0.00000, 1.29552, 0.00000),
+    float4(1.29284, 0.09135, 1.29989, -0.03009),
+    float4(1.28489, 0.18203, 1.31113, -0.06013),
+    float4(1.26924, 0.26936, 1.32857, -0.08503),
+    float4(1.24446, 0.35249, 1.35127, -0.10677),
+    float4(1.20987, 0.42852, 1.37818, -0.12265),
+    float4(1.16932, 0.50011, 1.41002, -0.14066),
+    float4(1.12098, 0.56270, 1.44411, -0.15513),
+    float4(1.06258, 0.61029, 1.47746, -0.16051),
+    float4(1.00029, 0.64574, 1.51250, -0.16263),
+    float4(0.92995, 0.65963, 1.54561, -0.15393),
+    float4(0.85933, 0.65671, 1.58218, -0.14488),
+    float4(0.79239, 0.63657, 1.63692, -0.13672),
+    float4(0.72985, 0.59562, 1.71004, -0.12403),
+    float4(0.67424, 0.53542, 1.81668, -0.11580),
+    float4(0.64320, 0.50755, 2.00655, -0.13258),
+    float4(1.14117, 0.00000, 1.14117, 0.00000),
+    float4(1.14050, 0.06623, 1.14515, -0.02161),
+    float4(1.13544, 0.13123, 1.15261, -0.04115),
+    float4(1.12408, 0.19418, 1.16307, -0.05879),
+    float4(1.10754, 0.25514, 1.17702, -0.07692),
+    float4(1.08471, 0.31108, 1.19273, -0.09121),
+    float4(1.05598, 0.36098, 1.20956, -0.10194),
+    float4(1.02505, 0.40750, 1.22930, -0.11463),
+    float4(0.98912, 0.44496, 1.24798, -0.12113),
+    float4(0.95112, 0.47596, 1.26834, -0.12672),
+    float4(0.90454, 0.49084, 1.28625, -0.12141),
+    float4(0.86068, 0.50127, 1.31354, -0.12246),
+    float4(0.81442, 0.49447, 1.33718, -0.11796),
+    float4(0.76872, 0.47566, 1.36896, -0.11333),
+    float4(0.72572, 0.44347, 1.40874, -0.11346),
+    float4(0.72589, 0.44390, 1.43904, -0.15250),
+    float4(1.03765, 0.00000, 1.03765, 0.00000),
+    float4(1.03722, 0.04496, 1.03972, -0.01410),
+    float4(1.03299, 0.08905, 1.04303, -0.02706),
+    float4(1.02542, 0.13217, 1.04782, -0.04013),
+    float4(1.01479, 0.17355, 1.05467, -0.05235),
+    float4(0.99981, 0.21125, 1.06226, -0.06139),
+    float4(0.98398, 0.24846, 1.07309, -0.07407),
+    float4(0.96366, 0.27906, 1.08324, -0.07976),
+    float4(0.94162, 0.30607, 1.09356, -0.08471),
+    float4(0.91709, 0.32900, 1.10356, -0.08931),
+    float4(0.88906, 0.34551, 1.11220, -0.09219),
+    float4(0.85932, 0.35582, 1.12160, -0.09467),
+    float4(0.82640, 0.35769, 1.12937, -0.09395),
+    float4(0.78788, 0.34680, 1.12733, -0.09082),
+    float4(0.74114, 0.32257, 1.10526, -0.08714),
+    float4(0.68570, 0.29200, 1.05814, -0.09767),
+    float4(0.96639, 0.00000, 0.96639, 0.00000),
+    float4(0.96515, 0.02710, 0.96633, -0.00819),
+    float4(0.96246, 0.05412, 0.96734, -0.01697),
+    float4(0.95757, 0.07982, 0.96869, -0.02423),
+    float4(0.95118, 0.10491, 0.97100, -0.03197),
+    float4(0.94358, 0.12918, 0.97463, -0.04007),
+    float4(0.93386, 0.15051, 0.97879, -0.04469),
+    float4(0.92277, 0.17054, 0.98354, -0.04994),
+    float4(0.90888, 0.18746, 0.98778, -0.05255),
+    float4(0.89299, 0.20263, 0.99074, -0.05633),
+    float4(0.87482, 0.21496, 0.99109, -0.06053),
+    float4(0.85335, 0.22227, 0.98754, -0.06226),
+    float4(0.82642, 0.22374, 0.98070, -0.05977),
+    float4(0.79217, 0.21754, 0.96237, -0.05562),
+    float4(0.75026, 0.20713, 0.92221, -0.06093),
+    float4(0.68683, 0.18181, 0.84009, -0.04744),
+    float4(0.91819, 0.00000, 0.91819, 0.00000),
+    float4(0.91668, 0.01224, 0.91712, -0.00325),
+    float4(0.91443, 0.02458, 0.91647, -0.00742),
+    float4(0.91161, 0.03668, 0.91613, -0.01172),
+    float4(0.90851, 0.04818, 0.91635, -0.01540),
+    float4(0.90428, 0.05900, 0.91646, -0.01853),
+    float4(0.89927, 0.06917, 0.91664, -0.02135),
+    float4(0.89288, 0.07828, 0.91637, -0.02333),
+    float4(0.88412, 0.08648, 0.91450, -0.02528),
+    float4(0.87310, 0.09333, 0.91085, -0.02651),
+    float4(0.85979, 0.09898, 0.90471, -0.02786),
+    float4(0.84305, 0.10231, 0.89440, -0.02774),
+    float4(0.82094, 0.10321, 0.87819, -0.02662),
+    float4(0.79002, 0.10056, 0.85328, -0.02290),
+    float4(0.74282, 0.09355, 0.80375, -0.02118),
+    float4(0.66254, 0.08048, 0.71253, -0.02318),
+    float4(0.88675, 0.00000, 0.88675, 0.00000),
+    float4(0.88551, 0.00014, 0.88557, 0.00056),
+    float4(0.88371, 0.00024, 0.88396, 0.00053),
+    float4(0.88162, 0.00045, 0.88202, 0.00012),
+    float4(0.87937, 0.00063, 0.87974, -0.00036),
+    float4(0.87708, 0.00064, 0.87727, -0.00051),
+    float4(0.87330, 0.00049, 0.87342, -0.00021),
+    float4(0.86830, 0.00029, 0.86841, 0.00003),
+    float4(0.86217, 0.00025, 0.86222, -0.00012),
+    float4(0.85364, 0.00011, 0.85375, 0.00008),
+    float4(0.84205, -0.00000, 0.84221, 0.00015),
+    float4(0.82685, -0.00011, 0.82682, 0.00033),
+    float4(0.80542, -0.00024, 0.80493, 0.00080),
+    float4(0.77459, -0.00028, 0.77477, 0.00092),
+    float4(0.72193, 0.00117, 0.72147, -0.00148),
+    float4(0.62626, 0.00541, 0.62715, -0.00835),
+};
+// ltc table end
+float4 ltc_inverse(float roughness, float ndv) {  // (m00, m02, m11, m20), m22 = 1; bilinear over the 16 x 16 table
+    const float2 p = float2(sqrt(1.0 - ndv), roughness) * 15.0;
+    const float2 c = min(floor(p), 14.0), f = p - c;
+    const uint k = (uint)c.y * 16 + (uint)c.x;
+    return lerp(lerp(ltc_table[k], ltc_table[k + 1], f.x), lerp(ltc_table[k + 16], ltc_table[k + 17], f.x), f.y);
+}
+// The cosine-weighted share of the hemisphere (0..1) a polygon covers; corners relative to the point, z along the normal.
+float polygon_share(float3 p[8], uint count) {
+    float3 c[9];
+    uint n = 0;
+    for (uint e = 0; e < count; ++e) {  // clipped to the horizon
+        const float3 a = p[e], b = p[(e + 1) % count];
+        if (a.z >= 0.0) c[n++] = a;
+        if ((a.z >= 0.0) != (b.z >= 0.0)) c[n++] = lerp(a, b, a.z / (a.z - b.z));
+    }
+    float sum = 0.0;
+    for (uint k = 0; k < n; ++k) {
+        const float3 a = normalize(c[k]), b = normalize(c[(k + 1) % n]);
+        const float x = clamp(dot(a, b), -0.9999, 0.9999);
+        sum += cross(a, b).z * acos(x) * rsqrt(1.0 - x * x);
+    }
+    return abs(sum) / (2.0 * PI);
+}
+// A Rect (type 3: color_inner.w x spot.x metres) or Disc Light's (radius color_inner.w; an octagon of the same area)
+// outline seen from wpos in the frame (t1, t2, n). Returns its corner count; `area` its size in square metres.
+uint panel_corners(Light L, float3 wpos, float3 t1, float3 t2, float3 n, out float3 p[8], out float area) {
+    const float3 ln = L.dir_range.xyz;
+    const float3 right = normalize(cross(abs(ln.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0), ln)), up = cross(ln, right);
+    const float3 to = L.pos_type.xyz - wpos;
+    const bool rect = L.pos_type.w < 3.5;
+    const float2 e = float2(L.color_inner.w, L.spot.x) * 0.5;
+    area = rect ? 4.0 * e.x * e.y : PI * L.color_inner.w * L.color_inner.w;
+    for (uint k = 0; k < 8; ++k) {
+        const float angle = k * (PI * 0.25);
+        const float2 o = rect ? e * float2(k == 1 || k == 2 ? 1.0 : -1.0, k >= 2 ? 1.0 : -1.0) : float2(cos(angle), sin(angle)) * (L.color_inner.w * 1.0539);
+        const float3 q = to + right * o.x + up * o.y;
+        p[k] = float3(dot(q, t1), dot(q, t2), dot(q, n));
+    }
+    return rect ? 4 : 8;
+}
 float3 to_srgb(float3 c) { c = saturate(c); return lerp(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, step(c, 0.0031308)); }  // no vector ?: (SPIR-V)
 // Fog and post-processing on an exposed colour (see rhi::LightSetup): tint, filmic tonemap, height
 // fog, saturation, contrast, vignette. `pixel` is SV_Position.xy.
@@ -478,6 +760,12 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float a2 = roughness * roughness * roughness * roughness;
     const float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     float3 lit = 0;
+    const float2 ab = env_brdf(ndv, roughness);
+    const float3 env_spec = f0 * ab.x + ab.y;  // GGX's whole reflectance (split sum): ambient and the panels' scale
+    const float4 ltc = ltc_inverse(roughness, ndv);
+    float3 t1 = v - n * dot(n, v);  // the panels' frame: the view in the x-z plane
+    t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : normalize(cross(n, abs(n.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0)));
+    const float3 t2 = cross(n, t1);
     // Lightmap (Build Lighting): its RGB is this texel's ambient light (sky and bounces), A how much
     // of the sun reached it (baked shadows, sharp beyond the shadow distance too).
     const bool lightmapped = lightmap_info.y > 0.5 && i.lightmap_uv.x > 0.0;
@@ -508,16 +796,27 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
             const float window = saturate(1.0 - r * r);
             atten = window * window / dist2;
             if (L.pos_type.w > 1.5 && L.pos_type.w < 2.5) atten *= saturate((dot(-l, L.dir_range.xyz) - L.spot.x) / max(L.color_inner.w - L.spot.x, 1e-4));
-            if (L.pos_type.w > 2.5) atten *= saturate(dot(-l, L.dir_range.xyz));  // rect / disc: lights only in front
+            if (L.pos_type.w > 2.5) atten = dot(-to, L.dir_range.xyz) > 0.0 ? window * window : 0.0;  // rect / disc: in front only, the outline does the rest
             else atten *= light_profile(li, dot(-l, L.dir_range.xyz));
             if (light_functions[li * 2 + 1].w > 0.5) atten *= light_function(li, L.dir_range.xyz, -l);
         }
         const float ndl = saturate(dot(n, l));
-        if (ndl <= 0.0 || atten <= 0.0) continue;
+        const bool panel = L.pos_type.w > 2.5;  // a Rect / Disc Light can light a point its centre is below the horizon of
+        if ((ndl <= 0.0 && !panel) || atten <= 0.0) continue;
         if ((float)li == shadow_info.y) atten *= lightmapped ? min(sun_shadow(i.wpos, n, mat1.yzw), baked.a) : sun_shadow(i.wpos, n, mat1.yzw);
         else if (lightmapped && light_extra[li].x > 0.5) atten *= shadow_mask[(uint)light_extra[li].x - 1];  // Stationary: its baked shadow
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
-        float3 ls = l;  // specular's direction: an area light's nearest point (the centre otherwise)
+        if (panel) {  // exact: the outline's share of the diffuse and (through the LTC) the specular lobe, times its radiance
+            float3 p[8];
+            float area;
+            const uint count = panel_corners(L, i.wpos, t1, t2, n, p, area);
+            const float diffuse_share = polygon_share(p, count);
+            for (uint c = 0; c < count; ++c) p[c] = float3(ltc.x * p[c].x + ltc.y * p[c].z, ltc.z * p[c].y, ltc.w * p[c].x + p[c].z);
+            const float3 fc = f0 + (1.0 - f0) * pow(1.0 - saturate(dot(v, normalize(v + l))), 5.0);
+            lit += ((1.0 - fc) * (1.0 - metallic) * base.rgb * diffuse_share + env_spec * polygon_share(p, count)) * L.color_inner.xyz / max(area, 1e-4) * atten;
+            continue;
+        }
+        float3 ls = l;  // specular's direction: a sphere light's nearest point (the centre otherwise)
         float sa2 = a2, spec_norm = 1.0;
         if (L.pos_type.w > 0.5) area_point(L, i.wpos, reflect(-v, n), roughness, ls, sa2, spec_norm);
         const float ndls = saturate(dot(n, ls));
@@ -539,8 +838,6 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float open_sky = saturate(dot(sky, lum) / max(dot(lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4));
     const float3 environment = reflection_info.y > 0.5 ? capture_sample((uint)reflection_info.z, r, roughness, i.wpos) : sky_radiance(r);  // the Sky's HDRI, or its gradient
     const float3 reflected = capture_reflection(lerp(environment * open_sky, sky, roughness * roughness), r, roughness, i.wpos);
-    const float2 ab = env_brdf(ndv, roughness);
-    const float3 env_spec = f0 * ab.x + ab.y;
     const float spec_ao = saturate(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
     const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
     const float3 ambient = base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
