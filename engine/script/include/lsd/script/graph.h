@@ -11,11 +11,13 @@
 namespace lsd::script {
 
 // Any: a wildcard (reroutes, function arguments, variables) that wires to every data type.
-enum class PinType : u8 { Exec, Float, Bool, String, Vector, Entity, Audio, Any };
+// Points: a PCG graph's points (editor/pcg_graph.h).
+enum class PinType : u8 { Exec, Float, Bool, String, Vector, Entity, Audio, Any, Points };
 
 // Which node library a graph uses: visual scripts, Sound Cues or Material Graphs (same canvas, same
 // file format). Material nodes are compiled to shader code by engine/render/material_graph.h.
-enum class GraphKind : u8 { Script, SoundCue, Material, BehaviorTree };
+// Pcg: a PCG Volume's rules (editor/pcg_graph.h runs them).
+enum class GraphKind : u8 { Script, SoundCue, Material, BehaviorTree, Pcg };
 
 struct PinDef {
     const char* name;

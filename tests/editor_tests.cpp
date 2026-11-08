@@ -23,6 +23,7 @@
 #include "scalability.h"
 #include "template_levels.h"
 #include "paper2d_core.h"
+#include "pcg_graph.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -987,7 +988,59 @@ void test_particle_light() {
     CHECK(std::fabs(editor::particle_light(s, {0, 0, 0}, up_n, 0.0f).x - 2.0f * 0.5f) < 1e-4f);
 }
 
+// PCG Graphs: a 10 x 10 m box over flat ground (x < 0) and a 45 degree slope (x > 0); the Slope Filter keeps the flat
+// half, the Density Filter about half of that, an exclusion box empties a quarter of the box, the seed repeats a layout.
+static void test_pcg_graph() {
+    using namespace lsd;
+    script::Graph graph(default_allocator());
+    const u32 sample = graph.add("PcgSurface", 0, 0)->id;
+    const u32 slope = graph.add("PcgSlope", 0, 0)->id;
+    const u32 thin = graph.add("PcgDensity", 0, 0)->id;
+    const u32 vary = graph.add("PcgTransform", 0, 0)->id;
+    const u32 spawn = graph.add("PcgSpawn", 0, 0)->id;
+    const u32 rocks = graph.add("PcgSpawn", 0, 0)->id;
+    std::snprintf(graph.find(sample)->values[0], 64, "400");  // per 100 square metres: 400 points in the box
+    CHECK(graph.connect(sample, 0, slope, 0) && graph.connect(slope, 0, vary, 0) && graph.connect(vary, 0, spawn, 0));
+    CHECK(graph.connect(slope, 0, thin, 0) && graph.connect(thin, 0, rocks, 0));
+    CHECK(!graph.connect(sample, 0, spawn, 1));  // points never go into a text input
+    std::snprintf(graph.find(rocks)->values[1], 64, "Cube");
+    editor::PcgInputs in;
+    in.box = scaling(Vec3{10, 10, 10}) * translation(Vec3{0, 0, -0.5f});  // z from -5 to 5
+    in.surface = [](Vec3 top, Vec3 down, f32 reach, Vec3& hit) {  // ground: z = 0 for x < 0, z = x beyond
+        const f32 ground = top.x < 0.0f ? 0.0f : top.x;
+        const f32 t = (top.z - ground) / -down.z;
+        if (t < 0.0f || t > reach) return false;
+        hit = top + down * t;
+        return true;
+    };
+    std::vector<editor::PcgSpawn> out;
+    char error[256];
+    CHECK(editor::run_pcg_graph(graph, in, out, error, sizeof error) && out.size() == 2);
+    if (out.size() == 2) {
+        const usize flat = out[0].points.size(), thinned = out[1].points.size();
+        CHECK(flat > 140 && flat < 260);  // about half of 400 (the slope's half is filtered out)
+        bool on_flat = true, varied = false;
+        for (const editor::PcgPoint& p : out[0].points) {
+            on_flat = on_flat && p.position.x < 0.3f && std::fabs(p.position.z) < 1e-3f;
+            varied = varied || std::fabs(p.scale - 1.0f) > 1e-3f;
+        }
+        CHECK(on_flat && varied);
+        CHECK(thinned > flat / 4 && thinned < flat * 3 / 4);  // Keep 0.5
+        CHECK(std::strcmp(out[1].mesh, "Cube") == 0 && std::strcmp(out[0].mesh, "Sphere") == 0);
+        std::vector<editor::PcgSpawn> again;
+        editor::run_pcg_graph(graph, in, again, error, sizeof error);
+        CHECK(again.size() == 2 && again[0].points.size() == flat && std::fabs(again[0].points[0].position.y - out[0].points[0].position.y) < 1e-6f);
+        in.excluded.push_back(affine_inverse(translation(Vec3{-2.5f, -2.5f, -5.0f}) * scaling(Vec3{5, 5, 10})));  // x, y in -5..0
+        editor::run_pcg_graph(graph, in, again, error, sizeof error);
+        CHECK(again.size() == 2 && again[0].points.size() < flat * 3 / 4 && again[0].points.size() > flat / 4);
+    }
+    const u32 merge = graph.add("PcgMerge", 0, 0)->id, back = graph.add("PcgMerge", 0, 0)->id;  // a loop is an error, not a hang
+    CHECK(graph.connect(merge, 0, back, 0) && graph.connect(back, 0, merge, 0) && graph.connect(merge, 0, spawn, 0));
+    CHECK(!editor::run_pcg_graph(graph, in, out, error, sizeof error) && std::strstr(error, "loop"));
+}
+
 int main() {
+    test_pcg_graph();
     test_paper2d();
     test_templates();
     test_scalability();

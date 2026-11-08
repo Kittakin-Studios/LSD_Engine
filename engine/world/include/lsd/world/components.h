@@ -562,6 +562,9 @@ struct PcgVolume {
     LSD_PROPERTY(Edit, Min = 0, Tooltip = "How often the main mesh is picked against More Meshes' weights") f32 weight = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Other meshes scattered with it, each picked by its weight (several kinds of plants, rocks)") List<PcgMesh, 8> more_meshes;
     LSD_PROPERTY(Edit, Tooltip = "An exclusion box: it scatters nothing, and the other PCG Volumes leave its box empty (paths, clearings, buildings)") bool exclude = false;
+    LSD_PROPERTY(Edit, Widget = "Asset:PcgGraph",
+                 Tooltip = "PCG Graph (Unreal's): rules as nodes (samplers, filters, Transform Points, a Spawn Mesh per mesh) instead of the settings above; double-click it to edit")
+    char graph[33] = "";
     LSD_PROPERTY(Visible, Tooltip = "The object holding the copies") char output[64] = "";
 };
 

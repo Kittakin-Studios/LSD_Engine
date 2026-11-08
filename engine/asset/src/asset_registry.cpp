@@ -57,6 +57,7 @@ const char* to_string(AssetType type) {
         case AssetType::UiDocument: return "UI Document";
         case AssetType::UiStyle: return "UI Style";
         case AssetType::LightProfile: return "Light Profile";
+        case AssetType::PcgGraph: return "PCG Graph";
         case AssetType::Unknown: break;
     }
     return "Unknown";
@@ -79,6 +80,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".rml") == 0) return AssetType::UiDocument;
     if (std::strcmp(lower, ".rcss") == 0) return AssetType::UiStyle;
     if (std::strcmp(lower, ".ies") == 0) return AssetType::LightProfile;
+    if (std::strcmp(lower, ".lsdpcg") == 0) return AssetType::PcgGraph;
     for (const char* image : {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd", ".hdr", ".exr"}) {
         if (std::strcmp(lower, image) == 0) return AssetType::Texture;
     }
