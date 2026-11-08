@@ -1520,9 +1520,8 @@ void register_console(EditorState& s) {
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
             const lsd::asset::AssetRecord r = st.registry->get(i);
             if (r.type != lsd::asset::AssetType::Mesh || std::strcmp(r.name, args) != 0) continue;
-            lsd::editor::MaterialImportReport report;
-            lsd::editor::import_mesh_materials(*st.registry, r, "", false, report, st.status, sizeof st.status);
-            lsd::editor::remote::print(st.status);
+            lsd::editor::queue_mesh_materials(r, "", false);  // the frame loop steps it (progress bar); the result goes to the status line
+            lsd::editor::remote::print("Importing materials and textures (see the status line / Output Log)");
             return;
         }
         lsd::editor::remote::print("no mesh with that name (asset.List)");
@@ -1615,15 +1614,12 @@ std::vector<std::pair<std::string, std::string>> g_pending_material_imports;
 
 // After the registry scan that follows an import: each new mesh's materials and textures (only when
 // its textures are found, so animation-only files bring nothing).
-void import_pending_materials(lsd::asset::AssetRegistry& registry, char* status, lsd::usize capacity) {
+void import_pending_materials(lsd::asset::AssetRegistry& registry) {
     for (const auto& [path, from] : g_pending_material_imports) {
         const std::string relative = fs::relative(path, kContentDir).generic_string();
         for (lsd::usize i = 0; i < registry.count(); ++i) {
             if (relative != registry.get(i).path) continue;
-            const lsd::asset::AssetRecord mesh = registry.get(i);
-            lsd::editor::MaterialImportReport report;
-            char message[256];
-            if (lsd::editor::import_mesh_materials(registry, mesh, from.c_str(), true, report, message, sizeof message)) std::snprintf(status, capacity, "%s", message);
+            lsd::editor::queue_mesh_materials(registry.get(i), from.c_str(), true);  // stepped by the frame loop, with a progress bar
             break;
         }
     }
@@ -2060,7 +2056,7 @@ int main(int argc, char** argv) {
     }, &registry);
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
-    import_pending_materials(registry, state.status, sizeof state.status);
+    import_pending_materials(registry);
     register_script_nodes(registry);
     // Material Function nodes find their graph by name (a Material Graph asset).
     lsd::script::set_material_function_resolver([](void* user, const char* name, char* out, lsd::usize capacity) {
@@ -2379,7 +2375,7 @@ int main(int argc, char** argv) {
                 case SDL_EVENT_DROP_FILE:
                     if (import_file(event.drop.data, state.content_folder, state.status, sizeof state.status)) {
                         registry.scan();
-                        import_pending_materials(registry, state.status, sizeof state.status);
+                        import_pending_materials(registry);
                     }
                     break;
                 default: break;
@@ -2472,13 +2468,16 @@ int main(int argc, char** argv) {
             if (chosen.size() > 1) std::snprintf(state.status, sizeof state.status, "Imported %u of %zu files", imported, chosen.size());
             if (imported) {
                 registry.scan();
-                import_pending_materials(registry, state.status, sizeof state.status);
+                import_pending_materials(registry);
             }
         }
         if (state.package_requested) {
             state.package_requested = false;
             lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
         }
+        // Import Materials and Textures: one material's textures a frame, so the editor keeps drawing (progress in the menu bar).
+        lsd::editor::update_mesh_materials(registry, state.status, sizeof state.status, state.material_import_progress, state.material_import_label,
+                                           sizeof state.material_import_label);
         if (state.build_lighting_requested) {  // Build > Build Lighting: gather here, trace on a thread
             state.build_lighting_requested = false;
             if (!state.level_path[0]) {

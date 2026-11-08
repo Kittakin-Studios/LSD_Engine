@@ -158,6 +158,8 @@ struct EditorState {
     bool capture_reflections = true;        // Build > Build Reflection Captures (and when a level opens)
     bool import_requested = false;          // File > Import...
     f32 build_lighting_progress = -1.0f;    // 0..1 while baking, -1 otherwise
+    f32 material_import_progress = -1.0f;   // 0..1 while Import Materials and Textures runs (update_mesh_materials), -1 otherwise
+    char material_import_label[160] = "";
     bool game_mode = false;          // a packaged game (or -game): Play only, no editor
     bool quit_after_save = false;
     char recovery_path[260] = "";  // autosave left by a crash: the UI offers to restore it

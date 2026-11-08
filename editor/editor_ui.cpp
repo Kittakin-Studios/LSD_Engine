@@ -4775,8 +4775,7 @@ void draw_asset_grid(EditorState& s) {
             if (r.type == asset::AssetType::Mesh &&
                 with_tip(ImGui::MenuItem("Import Materials and Textures"),
                          "A Material per material of the file, with its texture maps copied into Textures/ (metallic / roughness packed into ORM, opacity into the colour's alpha), set on the mesh's Material Slots (Unreal's Import Materials / Import Textures)")) {
-                MaterialImportReport report;
-                import_mesh_materials(*s.registry, r, "", false, report, s.status, sizeof s.status);
+                queue_mesh_materials(r, "", false);  // stepped by the frame loop, with a progress bar
             }
             if (r.type == asset::AssetType::Prefab && with_tip(ImGui::MenuItem("Edit Prefab"), "Opens the Prefab Editor")) open_prefab_editor(s, r);
             if (with_tip(ImGui::MenuItem("Reference Viewer..."), "Shows what this asset uses and what uses it")) open_reference_viewer(s, r.guid);
@@ -5417,6 +5416,12 @@ void draw_menu_bar(EditorState& s) {
         ImGui::PushStyleColor(ImGuiCol_Text, g_unread_errors ? ImVec4(1.0f, 0.42f, 0.38f, 1) : ImVec4(1.0f, 0.82f, 0.35f, 1));
         if (ImGui::MenuItem(badge)) s.show_message_log = true;
         ImGui::PopStyleColor();
+    }
+    const f32 progress = s.material_import_progress >= 0.0f ? s.material_import_progress : s.build_lighting_progress;
+    if (progress >= 0.0f) {  // long jobs: Import Materials and Textures, Build Lighting
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::ProgressBar(progress, ImVec2(260.0f, 0.0f), s.material_import_progress >= 0.0f ? s.material_import_label : "Building lighting");
+        if (s.material_import_progress >= 0.0f) ImGui::SetItemTooltip("%s", s.material_import_label);
     }
     const char* level = s.level_path[0] ? s.level_path : "Untitled level";
     char right[320];

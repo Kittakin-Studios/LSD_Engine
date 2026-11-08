@@ -24,4 +24,18 @@ struct MaterialImportReport {
 bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRecord& mesh, const char* original_folder, bool only_with_textures,
                            MaterialImportReport& report, char* status, usize status_capacity);
 
+// The same in steps, one material's textures per step, so the editor keeps drawing (and shows a progress bar):
+// begin (null when there is nothing to do: `status` says why), then step until it returns true (`report` and
+// `status` filled, the import freed). progress() is 0..1 with the material being worked on.
+struct MaterialImport;
+MaterialImport* begin_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRecord& mesh, const char* original_folder, bool only_with_textures,
+                                     char* status, usize status_capacity);
+bool step_mesh_materials(MaterialImport* import, MaterialImportReport& report, char* status, usize status_capacity);
+f32 mesh_materials_progress(const MaterialImport* import, char* label, usize label_capacity);
+
+// The editor's queue (the Content Browser menu, asset.ImportMaterials, imports): queue one, and once a frame
+// update_mesh_materials does a step of the first; `progress` is 0..1 while one runs (with `label`), -1 when idle.
+void queue_mesh_materials(const asset::AssetRecord& mesh, const char* original_folder, bool only_with_textures);
+void update_mesh_materials(asset::AssetRegistry& registry, char* status, usize status_capacity, f32& progress, char* label, usize label_capacity);
+
 } // namespace lsd::editor

@@ -488,7 +488,9 @@ already in Content, right-click it > **Import Materials and Textures** (or the c
 The mesh asset's Details > **Materials** lists its slots (one per material of the file, like a
 Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. Textures
 use the mesh's own UVs, so each part looks as it did in Blender, Maya or Substance. Missing textures
-are listed in the Output Log; put them next to the file and run the menu again.
+are listed in the Output Log; put them next to the file and run the menu again. It works one material
+at a time while the editor keeps running: a progress bar in the menu bar names the material it is on
+(Build Lighting shows its progress there too).
 
 **References**: right-click an asset > **Reference Viewer** lists what uses it and what it uses
 (click to follow, double-click to find in the Content Browser). Deleting warns about anything that
