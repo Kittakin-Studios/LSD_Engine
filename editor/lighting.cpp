@@ -156,6 +156,33 @@ u32 g_atlas_size = 4096;
 
 } // namespace
 
+Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
+    const f32 up = normal.z * 0.5f + 0.5f;
+    Vec3 light{s.ground[0] + (s.sky[0] - s.ground[0]) * up, s.ground[1] + (s.sky[1] - s.ground[1]) * up, s.ground[2] + (s.sky[2] - s.ground[2]) * up};
+    for (u32 i = 0; i < s.count && i < rhi::kMaxLights; ++i) {
+        const rhi::GpuLight& L = s.lights[i];
+        Vec3 l;
+        f32 atten = 1.0f;
+        if (L.type < 0.5f) {  // directional
+            l = {-L.direction[0], -L.direction[1], -L.direction[2]};
+        } else {  // as the mesh shader: inverse square with a smooth window to zero at the range, spot cones
+            const Vec3 to = Vec3{L.position[0], L.position[1], L.position[2]} - position;
+            const f32 dist2 = std::max(dot(to, to), 1e-4f);
+            l = to * (1.0f / std::sqrt(dist2));
+            const f32 r = dist2 / (L.range * L.range);
+            const f32 window = std::clamp(1.0f - r * r, 0.0f, 1.0f);
+            atten = window * window / dist2;
+            const f32 cos_to = -dot(l, Vec3{L.direction[0], L.direction[1], L.direction[2]});
+            if (L.type > 1.5f && L.type < 2.5f) atten *= std::clamp((cos_to - L.spot_outer_cos) / std::max(L.spot_inner_cos - L.spot_outer_cos, 1e-4f), 0.0f, 1.0f);
+            if (L.type > 2.5f) atten *= std::clamp(cos_to, 0.0f, 1.0f);  // rect / disc: in front only
+        }
+        const f32 wrap = dot(normal, l) * 0.5f + 0.5f;  // half-Lambert: a sprite stands for a volume, not a card
+        const f32 k = wrap * atten / kPi;
+        light = light + Vec3{L.color[0], L.color[1], L.color[2]} * k;
+    }
+    return light * s.exposure;
+}
+
 void set_shadow_quality(u32 quality) { g_quality = quality < 3 ? quality : 3; }
 u32 g_post_quality = 3;
 void set_post_quality(u32 quality) { g_post_quality = quality; }

@@ -1,6 +1,7 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
 #include "light_bake.h"
+#include "lighting.h"
 #include "lsd/render/mesh.h"
 #include "references.h"
 
@@ -778,6 +779,27 @@ static void test_paper2d() {
     CHECK(editor::flipbook_frame(fb, 5.0f) == 2);   // held on the last frame
 }
 
+void test_particle_light() {
+    rhi::LightSetup s;
+    s.exposure = 2.0f;
+    s.count = 0;
+    for (int c = 0; c < 3; ++c) s.sky[c] = 0.5f, s.ground[c] = 0.1f;
+    const Vec3 up = editor::particle_light(s, {0, 0, 0}, {0, 0, 1});
+    CHECK(std::fabs(up.x - 1.0f) < 1e-5f);  // the sky's ambient times exposure
+    s.count = 1;  // a point light 2 m away along +X, range 10, colour 4 pi
+    s.lights[0] = rhi::GpuLight{};
+    s.lights[0].type = 1.0f;
+    s.lights[0].position[0] = 2.0f;
+    s.lights[0].range = 10.0f;
+    for (int c = 0; c < 3; ++c) s.lights[0].color[c] = 4.0f * kPi;
+    const Vec3 facing = editor::particle_light(s, {0, 0, 0}, {1, 0, 0});
+    const Vec3 away = editor::particle_light(s, {0, 0, 0}, {-1, 0, 0});
+    const f32 r = 4.0f / 100.0f, window = (1.0f - r * r) * (1.0f - r * r);
+    const f32 ambient = 2.0f * (0.1f + 0.4f * 0.5f);
+    CHECK(std::fabs(facing.x - (ambient + 2.0f * 4.0f * window / 4.0f)) < 1e-4f);  // wrap 1: 4 pi / pi / 4 m2 times the window, times exposure
+    CHECK(std::fabs(away.x - ambient) < 1e-4f && facing.x > away.x);  // from behind: wrap 0
+}
+
 int main() {
     test_paper2d();
     test_templates();
@@ -797,6 +819,7 @@ int main() {
     test_lightmaps();
     test_rml_edit();
     test_sound_cue();
+    test_particle_light();
     if (g_failures == 0) std::printf("All editor tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

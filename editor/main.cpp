@@ -226,6 +226,7 @@ const lsd::editor::CachedMesh* lightmapped_mesh(lsd::editor::MeshCache& meshes, 
 // Skinned shadow casters (within `range` of `light` when range > 0).
 bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only = false);  // below
 lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fog, fog_color), for the particles
+lsd::rhi::LightSetup g_view_lights;  // the last drawn view's lights, for Lit particles
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
 
@@ -768,6 +769,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
     device.set_lights(lights);
     std::memcpy(g_view_fog, lights.fog, sizeof lights.fog);
+    g_view_lights = lights;
     std::memcpy(g_view_fog + 4, lights.fog_color, sizeof lights.fog_color);
     lsd::rhi::SkyDraw sky;
     if (!stats.view_mode_unlit_or_wire() && lsd::editor::world_sky(world, view_proj, eye, skip_hidden, sky)) device.draw_sky(sky);  // behind everything
@@ -2111,6 +2113,7 @@ int main(int argc, char** argv) {
     auto* skinned_cache = new lsd::editor::SkinnedCache(*device, registry);  // deleted before the device
     auto* animations = new lsd::editor::AnimationPlayer(*device);  // deleted before the device (morphed vertex buffers)
     auto* effects = new lsd::editor::ParticlePlayer(*device, allocator, registry, *texture_cache);  // deleted before the textures
+    effects->set_lights(&g_view_lights);
     g_skinned = skinned_cache;
     g_materials = &materials;
     auto* decal_atlas = new lsd::editor::DecalAtlas(*device, allocator, registry);  // deleted before the device

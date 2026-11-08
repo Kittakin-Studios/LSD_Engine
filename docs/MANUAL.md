@@ -1632,6 +1632,11 @@ it has played out (**Auto Destroy** on the Particle Effect, for non-looping syst
 For a trail, give a Ribbon emitter a steady spawn rate, speed 0 and world space, and move the object:
 the particles stay where they were born and the ribbon joins them.
 
+**Lit** (Renderer, Alpha sprites and ribbons; Niagara's lit sprite material): the particles take the
+level's light instead of showing their colour as it is: the sky and ground ambient, the sun and the
+Point / Spot Lights near them, soft enough that light from behind still shows through. Use it for
+smoke, dust and snow; leave fire and sparks unlit and Additive. Lit particles do not catch shadows yet.
+
 **Collision** (Niagara's Collision module), world-space emitters only: **Floor** bounces off a flat
 floor at **Floor Height** (also in the editor); **World** hits whatever physics collides with (in
 Play; up to 1024 rays a frame for all effects together). **Bounce** is the speed kept off the

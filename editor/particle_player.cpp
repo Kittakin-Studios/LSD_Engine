@@ -1,5 +1,6 @@
 #include "particle_player.h"
 
+#include "lighting.h"
 #include "mesh_cache.h"
 
 #include "lsd/asset/data_asset.h"
@@ -161,6 +162,20 @@ void ParticlePlayer::apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 ey
     }
 }
 
+void ParticlePlayer::apply_lighting(rhi::ParticleVertex* vertices, u32 count, Vec3 eye) const {
+    if (!lights_) return;
+    for (u32 i = 0; i < count; ++i) {
+        rhi::ParticleVertex& v = vertices[i];
+        const Vec3 p{v.position[0], v.position[1], v.position[2]};
+        const Vec3 to_eye = eye - p;
+        const f32 d = length(to_eye);
+        const Vec3 light = particle_light(*lights_, p, d > 1e-4f ? to_eye * (1.0f / d) : Vec3{0.0f, 0.0f, 1.0f});
+        v.color[0] *= light.x;
+        v.color[1] *= light.y;
+        v.color[2] *= light.z;
+    }
+}
+
 void ParticlePlayer::draw_instance(rhi::Device& device, const particles::ParticleInstance& instance, const particles::ParticleSystem& system,
                                    const Mat4& world, const Mat4& view_proj, const Mat4& view, Vec3 eye) {
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
@@ -212,6 +227,7 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
         const u32 n = emitter.renderer == 2 ? instance.build_ribbon(system, k, world, eye, vertices_, kMaxVertices)
                                              : instance.build_sprites(system, k, world, eye, right, up, vertices_, kMaxVertices);
         if (!n) continue;
+        if (emitter.lit && emitter.blend == 0) apply_lighting(vertices_, n, eye);  // before the fog, as the meshes
         apply_fog(vertices_, n, eye, emitter.blend == 1);
         const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
         device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);
