@@ -76,6 +76,7 @@ float4 ps_ao(VsOut i) : SV_Target {
         sum += f * f * f * max((dot(v, n) - 0.3 * sqrt(vv) - 0.01 * radius) / (0.7 * (vv + 0.01)), 0.0);
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    if (texel.z > 0.5) ao = 1.0 - (1.0 - ao) * t1.SampleLevel(clamp_linear, i.uv, 0).a;  // the normals pass: only the ambient share darkens (direct light stays)
     // Contact shadows (reproject[0]: toward the sun in view space, w = length): a short ray through the
     // depth; a point behind what the camera sees there, but not far behind (thickness), is in shadow.
     if (reproject[0].w > 0.0 && dot(n, reproject[0].xyz) > 0.05) {  // faces the sun (else the sun does not light it anyway)

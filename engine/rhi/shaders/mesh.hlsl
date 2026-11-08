@@ -459,8 +459,6 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float ao = orm.r;
     const float3 emissive = float3(mat0.zw, mat1.x) * emissive_tex.Sample(samp, i.uv).rgb;
 #endif
-    if (normal_view[3].x > 0.5)  // the normals pass (SSR / AO): the normal as shaded, in view space
-        return float4(normalize(float3(dot(normal_view[0].xyz, n), dot(normal_view[1].xyz, n), dot(normal_view[2].xyz, n))) * 0.5 + 0.5, 1.0);
     if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
     base.rgb = apply_decals(base.rgb, i.wpos, n);
     if (n0.w > 2.5) base.rgb = float3(0.5, 0.5, 0.5);  // Lighting Only view mode: every surface a neutral grey
@@ -535,8 +533,14 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 env_spec = f0 * ab.x + ab.y;
     const float spec_ao = saturate(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
     const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
-    lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
+    const float3 ambient = base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
+    lit += ambient;
     lit += emissive;
+    if (normal_view[3].x > 0.5) {  // the normals pass (SSR / AO): the normal as shaded, in view space; alpha: how much of the light is ambient (AO darkens only that)
+        const float total = dot(lit, lum);
+        return float4(normalize(float3(dot(normal_view[0].xyz, n), dot(normal_view[1].xyz, n), dot(normal_view[2].xyz, n))) * 0.5 + 0.5,
+                      total > 1e-5 ? saturate(dot(ambient, lum) / total) : 1.0);
+    }
     return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(i.wpos, mat1.yzw, i.pos.xy) : float3(1.0, 1.0, 1.0)), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 

@@ -470,10 +470,6 @@ void main() {
     float ao = orm.r;
     vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, v_uv).rgb;
 #endif
-    if (normal_view[3].x > 0.5) {  // the normals pass (mesh.hlsl)
-        o_color = vec4(normalize(vec3(dot(normal_view[0].xyz, n), dot(normal_view[1].xyz, n), dot(normal_view[2].xyz, n))) * 0.5 + 0.5, 1.0);
-        return;
-    }
     if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
     base.rgb = apply_decals(base.rgb, v_wpos, n);
     if (u_flags.x > 2.5) base.rgb = vec3(0.5);  // Lighting Only view mode: every surface a neutral grey
@@ -545,8 +541,15 @@ void main() {
     vec3 env_spec = f0 * ab.x + ab.y;
     float spec_ao = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
     float horizon = clamp(1.0 + 1.2 * dot(r, geometric_n), 0.0, 1.0);
-    lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
+    vec3 ambient = base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
+    lit += ambient;
     lit += emissive;
+    if (normal_view[3].x > 0.5) {  // the normals pass (mesh.hlsl): view-space normal, ambient share
+        float total = dot(lit, lum);
+        o_color = vec4(normalize(vec3(dot(normal_view[0].xyz, n), dot(normal_view[1].xyz, n), dot(normal_view[2].xyz, n))) * 0.5 + 0.5,
+                       total > 1e-5 ? clamp(dot(ambient, lum) / total, 0.0, 1.0) : 1.0);
+        return;
+    }
     o_color = vec4(scene_out(lit * exposure, v_wpos, u_mat[1].yzw, gl_FragCoord.xy, fog.w > 0.0 ? fog_light(v_wpos, u_mat[1].yzw) : vec3(1.0)), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 #else
@@ -931,6 +934,7 @@ void main() {
         sum += f * f * f * max((dot(v, n) - 0.3 * sqrt(vv) - 0.01 * radius) / (0.7 * (vv + 0.01)), 0.0);  // near-plane samples ignored (post.hlsl)
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    if (texel.z > 0.5) ao = 1.0 - (1.0 - ao) * textureLod(t1, v_uv, 0.0).a;  // the normals pass: only the ambient share darkens (direct light stays)
     // Contact shadows (u_post[8]: toward the sun in view space, w = length), as the HLSL.
     vec4 ray = u_post[8];
     if (ray.w > 0.0 && dot(n, ray.xyz) > 0.05) {  // faces the sun (else the sun does not light it anyway)

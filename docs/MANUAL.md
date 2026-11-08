@@ -633,7 +633,8 @@ Atmosphere:
   needs Post Processing quality High or Epic). Reflections and Ambient Occlusion take each pixel's normal from a
   normals pass (the opaque meshes drawn once more, their smooth normals into a texture, like Unreal's GBuffer World
   Normal), so a low-poly mesh shaded smooth reflects and darkens smoothly instead of triangle by triangle. It runs
-  only while one of them is on.
+  only while one of them is on. Ambient Occlusion darkens only the ambient light (sky, bounces, reflections), as
+  Unreal's does: a sunlit surface stays bright, the same crease in shade goes dark.
   **Color Grading LUT** (Unreal's): a 256 x 16 texture strip (16 tiles of 16 x 16; red across, green
   down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
   paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip
