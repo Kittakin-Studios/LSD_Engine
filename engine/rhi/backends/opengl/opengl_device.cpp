@@ -648,22 +648,46 @@ void main() { if (texture(base_tex, v_uv).a * u_cut.y < u_cut.x) discard; }
 // instance's box against the frustum (the same test as rhi::instance_visible) and packs the visible
 // rows, pass 2 writes one indirect draw per batch of 256 (the instanced shader's uniform block size).
 constexpr char kCullComputeShader[] = R"(#version 460 core
+// cull.hlsl's (frustum, Hi-Z, LOD), GL's way: uv run up as its ndc do; LOD l's rows start l * 65536 copies in.
 layout(local_size_x = 64) in;
-layout(std140, binding = 4) uniform Cull { vec4 planes[6]; vec4 box_min; vec4 box_max; uvec4 info; };  // info: count, index count, batches
+layout(std140, binding = 4) uniform Cull { vec4 planes[6]; vec4 box_min; vec4 box_max; uvec4 info; uvec4 index_counts; vec4 lod; vec4 camera; vec4 hiz_vp[4]; };
 layout(std430, binding = 0) readonly buffer RowsIn { vec4 rows_in[]; };
 layout(std430, binding = 1) writeonly buffer RowsOut { vec4 rows_out[]; };
-layout(std430, binding = 2) buffer Args { uint visible; uint pad0, pad1, pad2; uint args[]; };  // then 5 uints per batch
+layout(std430, binding = 2) buffer Args { uint counts[4]; uint args[]; };  // 5 uints per (LOD, batch)
+layout(binding = 9) uniform sampler2D hiz;
 uniform int u_pass;
+bool occluded(vec3 wc, vec3 we) {
+    vec2 lo = vec2(1.0), hi = vec2(-1.0);
+    float nearest = 1.0;
+    for (uint k = 0u; k < 8u; ++k) {
+        vec3 p = wc + we * vec3((k & 1u) != 0u ? 1.0 : -1.0, (k & 2u) != 0u ? 1.0 : -1.0, (k & 4u) != 0u ? 1.0 : -1.0);
+        vec4 c = vec4(dot(hiz_vp[0].xyz, p) + hiz_vp[0].w, dot(hiz_vp[1].xyz, p) + hiz_vp[1].w, dot(hiz_vp[2].xyz, p) + hiz_vp[2].w, dot(hiz_vp[3].xyz, p) + hiz_vp[3].w);
+        if (c.w <= 1e-4) return false;
+        vec3 n = c.xyz / c.w;
+        lo = min(lo, n.xy);
+        hi = max(hi, n.xy);
+        nearest = min(nearest, n.z);
+    }
+    if (any(lessThan(lo, vec2(-1.0))) || any(greaterThan(hi, vec2(1.0)))) return false;
+    vec2 size = vec2(box_min.w, box_max.w);
+    vec2 span = (hi - lo) * 0.5 * size;
+    int mip = min(int(ceil(log2(max(max(span.x, span.y), 1.0)))), int(camera.w) - 1);
+    ivec2 dims = max(ivec2(size) >> mip, ivec2(1));
+    ivec2 a = min(ivec2((lo * 0.5 + 0.5) * vec2(dims)), dims - 1), b = min(ivec2((hi * 0.5 + 0.5) * vec2(dims)), dims - 1);
+    float farthest = max(max(texelFetch(hiz, a, mip).r, texelFetch(hiz, ivec2(b.x, a.y), mip).r), max(texelFetch(hiz, ivec2(a.x, b.y), mip).r, texelFetch(hiz, b, mip).r));
+    return nearest > farthest;  // depth 0..1 (glClipControl ZERO_TO_ONE), as the other backends
+}
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (u_pass == 0) {
-        if (i == 0u) visible = 0u;
+        if (i == 0u) { counts[0] = 0u; counts[1] = 0u; counts[2] = 0u; counts[3] = 0u; }
         return;
     }
     if (u_pass == 2) {
-        if (i >= info.z) return;
-        int n = clamp(int(visible) - int(i * 256u), 0, 256);
-        args[i * 5u] = info.y;
+        if (i >= info.y * 4u) return;
+        uint l = i / info.y, batch = i % info.y;
+        int n = clamp(int(counts[l]) - int(batch * 256u), 0, 256);
+        args[i * 5u] = index_counts[l];
         args[i * 5u + 1u] = uint(n);
         args[i * 5u + 2u] = 0u;
         args[i * 5u + 3u] = 0u;
@@ -678,10 +702,37 @@ void main() {
     for (int p = 0; p < 6; ++p) {
         if (dot(planes[p].xyz, wc) + planes[p].w < -dot(abs(planes[p].xyz), we)) return;
     }
-    uint slot = atomicAdd(visible, 1u);
-    rows_out[slot * 3u] = r0;
-    rows_out[slot * 3u + 1u] = r1;
-    rows_out[slot * 3u + 2u] = r2;
+    if ((info.z & 1u) != 0u && occluded(wc, we)) return;
+    uint lods = (info.z >> 1) & 7u;
+    float size = length(we) * lod.w / max(length(wc - camera.xyz), 1e-3);
+    uint l = 0u;
+    for (uint k = 1u; k < 4u; ++k) {
+        if (k < lods && size < lod[k - 1u]) l = k;
+    }
+    uint slot = atomicAdd(counts[l], 1u);
+    uint at = (l * 65536u + slot) * 3u;
+    rows_out[at] = r0;
+    rows_out[at + 1u] = r1;
+    rows_out[at + 2u] = r2;
+}
+)";
+
+// The Hi-Z (cull.hlsl's hiz_down): each texel the farthest of 2 x 2 of the level before (or of the depth).
+constexpr char kHizComputeShader[] = R"(#version 460 core
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;
+layout(r32f, binding = 0) writeonly uniform image2D dst;
+uniform ivec4 u_size;  // dst's size, src's size
+uniform int u_level;   // src's level
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(id, u_size.xy))) return;
+    ivec2 s = id * 2, last = u_size.zw - 1;
+    float d = max(max(texelFetch(src, min(s, last), u_level).r, texelFetch(src, min(s + ivec2(1, 0), last), u_level).r),
+                  max(texelFetch(src, min(s + ivec2(0, 1), last), u_level).r, texelFetch(src, min(s + ivec2(1, 1), last), u_level).r));
+    if (s.x + 2 == last.x) d = max(d, texelFetch(src, min(s + ivec2(2, 0), last), u_level).r);
+    if (s.y + 2 == last.y) d = max(d, texelFetch(src, min(s + ivec2(0, 2), last), u_level).r);
+    imageStore(dst, id, vec4(d));
 }
 )";
 
@@ -1153,6 +1204,8 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLVERTEXARRAYATTRIBIFORMATPROC, glVertexArrayAttribIFormat) \
     X(PFNGLDISPATCHCOMPUTEPROC, glDispatchCompute) \
     X(PFNGLMEMORYBARRIERPROC, glMemoryBarrier) \
+    X(PFNGLBINDIMAGETEXTUREPROC, glBindImageTexture) \
+    X(PFNGLUNIFORM4IPROC, glUniform4i) \
     X(PFNGLBINDBUFFERRANGEPROC, glBindBufferRange) \
     X(PFNGLDRAWELEMENTSINDIRECTPROC, glDrawElementsIndirect) \
     X(PFNGLUNIFORM1IPROC, glUniform1i) \
@@ -1239,6 +1292,8 @@ public:
             if (*b) gl_.glDeleteBuffers(1, b);
         }
         if (cull_program_) gl_.glDeleteProgram(cull_program_);
+        if (hiz_program_) gl_.glDeleteProgram(hiz_program_);
+        if (hiz_texture_) glDeleteTextures(1, &hiz_texture_);
         if (ui_ibo_) gl_.glDeleteBuffers(1, &ui_ibo_);
         if (ui_vao_) gl_.glDeleteVertexArrays(1, &ui_vao_);
         for (MaterialShader& m : material_shaders_) {
@@ -1485,6 +1540,7 @@ public:
 
     bool render_targets_flipped() const override { return true; }  // GL textures start at the bottom row
     bool supports_gpu_culling() const override { return cull_program_ != 0; }
+    bool culls_shadow_instances() const override { return cull_program_ != 0; }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
         // GL's window origin is bottom-left; the RHI's is top-left.
@@ -1583,37 +1639,8 @@ public:
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         // GPU culling: the instances go through the compute passes first; the draw below reads what they keep.
-        const bool culled = instanced && draw.gpu_cull && cull_program_ && draw.instance_count <= kMaxCulledInstances;
-        const u32 batches = culled ? (draw.instance_count + kMaxJoints - 1) / kMaxJoints : 0;
-        if (culled) {
-            struct {
-                f32 planes[6][4];
-                f32 box_min[4], box_max[4];
-                u32 info[4];
-            } cull{};
-            frustum_planes(draw.mvp, cull.planes);
-            std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
-            std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
-            cull.info[0] = draw.instance_count;
-            cull.info[1] = draw.index_count;
-            cull.info[2] = batches;
-            gl_.glNamedBufferSubData(cull_ubo_, 0, sizeof cull, &cull);
-            gl_.glNamedBufferSubData(cull_in_, 0, static_cast<GLsizeiptr>(draw.instance_count) * 48, draw.instance_rows);
-            gl_.glUseProgram(cull_program_);
-            gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 4, cull_ubo_);
-            gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, cull_in_);
-            gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cull_out_);
-            gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cull_args_);
-            gl_.glUniform1i(cull_pass_, 0);
-            gl_.glDispatchCompute(1, 1, 1);
-            gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-            gl_.glUniform1i(cull_pass_, 1);
-            gl_.glDispatchCompute((draw.instance_count + 63) / 64, 1, 1);
-            gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-            gl_.glUniform1i(cull_pass_, 2);
-            gl_.glDispatchCompute((batches + 63) / 64, 1, 1);
-            gl_.glMemoryBarrier(GL_UNIFORM_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
-        }
+        const u32 batches = (draw.instance_count + kMaxJoints - 1) / kMaxJoints;
+        const bool culled = instanced && draw.gpu_cull && run_culling(draw, batches);
         const MaterialShader* graph = draw.wireframe || instanced ? nullptr : lookup_material(draw.material_shader);
         const MeshProgram& program = instanced ? instanced_program_ : graph ? (skinned ? graph->skinned : graph->mesh) : skinned ? skinned_program_ : mesh_;
         if (skinned) upload_joints(draw.joint_rows, draw.joint_count);
@@ -1661,14 +1688,8 @@ public:
         gl_.glVertexArrayVertexBuffer(vao, 0, vb->id, 0, skinned ? sizeof(SkinnedVertex) : sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(vao, ib->id);
         gl_.glBindVertexArray(vao);
-        if (culled) {  // each batch's visible rows as the instanced uniform block, its count from the GPU
-            gl_.glBindBuffer(GL_DRAW_INDIRECT_BUFFER, cull_args_);
-            for (u32 b = 0; b < batches; ++b) {
-                gl_.glBindBufferRange(GL_UNIFORM_BUFFER, 2, cull_out_, static_cast<GLintptr>(b) * kMaxJoints * 48, kMaxJoints * 48);
-                gl_.glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, reinterpret_cast<const void*>(static_cast<uintptr_t>(16 + b * 20)));
-            }
-            gl_.glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-            gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 2, joint_ubo_);
+        if (culled) {  // each LOD and batch's visible rows as the instanced uniform block, its count from the GPU
+            draw_culled(draw, batches, vao);
         } else if (instanced) {  // batches of kMaxJoints instances through the joint buffer
             for (u32 first = 0; first < draw.instance_count; first += kMaxJoints) {
                 const u32 n = draw.instance_count - first < kMaxJoints ? draw.instance_count - first : kMaxJoints;
@@ -1762,15 +1783,32 @@ public:
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_INT, nullptr);
     }
 
-    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count,
+                               const f32* bounds_min, const f32* bounds_max) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || !in_shadow_pass_ || !rows || !count) return;
+        MeshDraw cull;  // with bounds, culled against the light's view on the GPU
+        cull.indices = indices;
+        cull.index_count = index_count;
+        std::memcpy(cull.mvp, view_proj, sizeof cull.mvp);
+        cull.instance_rows = rows;
+        cull.instance_count = count;
+        if (bounds_min && bounds_max) {
+            std::memcpy(cull.local_bounds_min, bounds_min, sizeof cull.local_bounds_min);
+            std::memcpy(cull.local_bounds_max, bounds_max, sizeof cull.local_bounds_max);
+        }
+        const u32 batches = (count + kMaxJoints - 1) / kMaxJoints;
+        const bool culled = bounds_min && bounds_max && run_culling(cull, batches);
         gl_.glUseProgram(instanced_shadow_program_);
         gl_.glUniformMatrix4fv(instanced_shadow_mvp_, 1, GL_FALSE, view_proj);
         gl_.glVertexArrayVertexBuffer(mesh_vao_, 0, vb->id, 0, sizeof(MeshVertex));
         gl_.glVertexArrayElementBuffer(mesh_vao_, ib->id);
         gl_.glBindVertexArray(mesh_vao_);
+        if (culled) {
+            draw_culled(cull, batches, mesh_vao_);
+            return;
+        }
         for (u32 first = 0; first < count; first += kMaxJoints) {  // the rows' buffer holds 256 copies a call
             const u32 n = count - first < kMaxJoints ? count - first : kMaxJoints;
             upload_joints(rows + first * 12, n);
@@ -1996,7 +2034,39 @@ public:
         return true;
     }
 
+    // The Hi-Z from a scene target's depth: half its size, then halving to 1 x 1 (each the farthest of 2 x 2).
+    void build_hiz(GLuint scene_depth, u32 scene_width, u32 scene_height, const f32 view_proj[16]) {
+        if (!hiz_program_) return;
+        const u32 w = scene_width > 1 ? (scene_width + 1) / 2 : 1, h = scene_height > 1 ? (scene_height + 1) / 2 : 1;
+        u32 mips = 1;
+        while ((std::max(w, h) >> mips) > 0) ++mips;
+        if (!hiz_texture_ || hiz_size_[0] != w || hiz_size_[1] != h) {
+            if (hiz_texture_) glDeleteTextures(1, &hiz_texture_);
+            gl_.glCreateTextures(GL_TEXTURE_2D, 1, &hiz_texture_);
+            gl_.glTextureStorage2D(hiz_texture_, static_cast<GLsizei>(mips), GL_R32F, static_cast<GLsizei>(w), static_cast<GLsizei>(h));
+            hiz_size_[0] = w;
+            hiz_size_[1] = h;
+            hiz_mips_ = mips;
+        }
+        gl_.glUseProgram(hiz_program_);
+        u32 sw = scene_width, sh = scene_height;
+        for (u32 m = 0; m < mips; ++m) {
+            const u32 dw = std::max(w >> m, 1u), dh = std::max(h >> m, 1u);
+            gl_.glBindTextureUnit(0, m ? hiz_texture_ : scene_depth);
+            gl_.glBindImageTexture(0, hiz_texture_, static_cast<GLint>(m), GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
+            gl_.glUniform4i(hiz_size_location_, static_cast<GLint>(dw), static_cast<GLint>(dh), static_cast<GLint>(sw), static_cast<GLint>(sh));
+            gl_.glUniform1i(hiz_level_location_, m ? static_cast<GLint>(m - 1) : 0);
+            gl_.glDispatchCompute((dw + 7) / 8, (dh + 7) / 8, 1);
+            gl_.glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            sw = dw;
+            sh = dh;
+        }
+        std::memcpy(hiz_view_proj_, view_proj, sizeof hiz_view_proj_);
+        hiz_valid_ = true;
+    }
+
     void draw_post(const PostDraw& p) override {
+        if (const Target* depth_of = lookup(p.scene); depth_of && p.build_hiz) build_hiz(depth_of->depth, depth_of->width, depth_of->height, p.hiz_view_proj);  // the next frame's occlusion test
         Target* scene = lookup(p.scene);
         if (!scene) return;
         PostChain& c = post_chain(scene->width, scene->height);
@@ -2373,6 +2443,20 @@ private:
             }
             cull_pass_ = cull_program_ ? gl_.glGetUniformLocation(cull_program_, "u_pass") : -1;
         }
+        if (const GLuint cs = cull_program_ ? compile(GL_COMPUTE_SHADER, kHizComputeShader) : 0) {  // the Hi-Z (optional: without it no occlusion test)
+            hiz_program_ = gl_.glCreateProgram();
+            gl_.glAttachShader(hiz_program_, cs);
+            gl_.glLinkProgram(hiz_program_);
+            gl_.glDeleteShader(cs);
+            GLint linked = 0;
+            gl_.glGetProgramiv(hiz_program_, GL_LINK_STATUS, &linked);
+            if (!linked) {
+                gl_.glDeleteProgram(hiz_program_);
+                hiz_program_ = 0;
+            }
+            hiz_size_location_ = hiz_program_ ? gl_.glGetUniformLocation(hiz_program_, "u_size") : -1;
+            hiz_level_location_ = hiz_program_ ? gl_.glGetUniformLocation(hiz_program_, "u_level") : -1;
+        }
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
         shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
@@ -2435,11 +2519,11 @@ private:
         gl_.glCreateBuffers(1, &cull_in_);
         gl_.glNamedBufferStorage(cull_in_, kMaxCulledInstances * 48, nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateBuffers(1, &cull_out_);
-        gl_.glNamedBufferStorage(cull_out_, kMaxCulledInstances * 48, nullptr, 0);
+        gl_.glNamedBufferStorage(cull_out_, 4 * kMaxCulledInstances * 48, nullptr, 0);  // each LOD's rows
         gl_.glCreateBuffers(1, &cull_args_);
-        gl_.glNamedBufferStorage(cull_args_, 16 + (kMaxCulledInstances / kMaxJoints) * 20, nullptr, 0);
+        gl_.glNamedBufferStorage(cull_args_, 16 + 4 * (kMaxCulledInstances / kMaxJoints) * 20, nullptr, 0);
         gl_.glCreateBuffers(1, &cull_ubo_);
-        gl_.glNamedBufferStorage(cull_ubo_, 160, nullptr, GL_DYNAMIC_STORAGE_BIT);
+        gl_.glNamedBufferStorage(cull_ubo_, sizeof(CullConstants), nullptr, GL_DYNAMIC_STORAGE_BIT);
         gl_.glCreateVertexArrays(1, &line_vao_);
         attribute(line_vao_, 0, 3, offsetof(LineVertex, position));
         attribute(line_vao_, 1, 4, offsetof(LineVertex, color));
@@ -2517,6 +2601,56 @@ private:
     GLint instanced_shadow_mvp_ = -1;
     GLuint joint_ubo_ = 0;
     GLuint cull_program_ = 0, cull_in_ = 0, cull_out_ = 0, cull_args_ = 0, cull_ubo_ = 0;
+    // The Hi-Z (PostDraw::build_hiz): R32F, the farthest depth of each 2 x 2 down its mips; its view-projection.
+    GLuint hiz_program_ = 0, hiz_texture_ = 0;
+    GLint hiz_size_location_ = -1, hiz_level_location_ = -1;
+    u32 hiz_size_[2] = {}, hiz_mips_ = 0;
+    f32 hiz_view_proj_[16] = {};
+    bool hiz_valid_ = false;
+
+    // The cull pass for an instanced draw (gpu_cull): false (nothing run) if it cannot; LOD l batch b's rows are at
+    // (l * kMaxCulledInstances + b * kMaxJoints) * 48 in cull_out_, its arguments at 16 + (l * batches + b) * 20.
+    bool run_culling(const MeshDraw& draw, u32 batches) {
+        if (!cull_program_ || draw.instance_count > kMaxCulledInstances) return false;
+        CullConstants cull;
+        cull_constants(draw, batches, hiz_valid_ ? hiz_view_proj_ : nullptr, hiz_size_, hiz_mips_, cull);
+        gl_.glNamedBufferSubData(cull_ubo_, 0, sizeof cull, &cull);
+        gl_.glNamedBufferSubData(cull_in_, 0, static_cast<GLsizeiptr>(draw.instance_count) * 48, draw.instance_rows);
+        gl_.glUseProgram(cull_program_);
+        gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 4, cull_ubo_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, cull_in_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cull_out_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cull_args_);
+        gl_.glBindTextureUnit(9, hiz_texture_ ? hiz_texture_ : textures_[white_].id);
+        gl_.glUniform1i(cull_pass_, 0);
+        gl_.glDispatchCompute(1, 1, 1);
+        gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        gl_.glUniform1i(cull_pass_, 1);
+        gl_.glDispatchCompute((draw.instance_count + 63) / 64, 1, 1);
+        gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        gl_.glUniform1i(cull_pass_, 2);
+        gl_.glDispatchCompute((batches * 4 + 63) / 64, 1, 1);
+        gl_.glMemoryBarrier(GL_UNIFORM_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+        return true;
+    }
+    // The culled copies drawn per LOD and batch (the bound program reads the rows from uniform block 2).
+    void draw_culled(const MeshDraw& draw, u32 batches, GLuint vao) {
+        CullConstants c;
+        cull_constants(draw, batches, nullptr, hiz_size_, 0, c);
+        const u32 lods = (c.info[2] >> 1) & 7u;
+        gl_.glBindBuffer(GL_DRAW_INDIRECT_BUFFER, cull_args_);
+        for (u32 l = 0; l < lods; ++l) {
+            const Buffer* lib = lookup(l ? draw.lod_indices[l - 1] : draw.indices);
+            if (!lib) continue;
+            gl_.glVertexArrayElementBuffer(vao, lib->id);
+            for (u32 b = 0; b < batches; ++b) {
+                gl_.glBindBufferRange(GL_UNIFORM_BUFFER, 2, cull_out_, static_cast<GLintptr>(l * kMaxCulledInstances + b * kMaxJoints) * 48, kMaxJoints * 48);
+                gl_.glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, reinterpret_cast<const void*>(static_cast<uintptr_t>(16 + (l * batches + b) * 20)));
+            }
+        }
+        gl_.glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 2, joint_ubo_);
+    }
     GLint cull_pass_ = -1;
     GLuint param_ubo_ = 0;
     GLuint sky_program_ = 0;

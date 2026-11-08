@@ -74,6 +74,7 @@
 #include "cull_reset.spv.h"
 #include "cull_main.spv.h"
 #include "cull_args.spv.h"
+#include "hiz_down.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -97,7 +98,8 @@ constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 f
 constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
 constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / Instances block: 3 float4 rows each
 constexpr VkDeviceSize kParamsBytes = 256;            // its MaterialParams block (16 float4)
-constexpr u32 kCullPushBytes = 144;                   // cull.hlsl's constants
+constexpr u32 kCullPushBytes = sizeof(CullConstants);  // cull.hlsl's constants (256: the device must allow that many)
+constexpr u32 kMaxHizMips = 14;
 constexpr u32 kCullSetsPerFrame = 256;                // gpu_cull draws a frame
 constexpr u32 kMaxTextures = 4096;
 constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
@@ -192,6 +194,11 @@ public:
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
             for (MaterialShader& m : material_shaders_) release_material(m);
             for (VkPipeline pipeline : cull_pipelines_) vkDestroyPipeline(device_, pipeline, nullptr);
+            release_hiz();
+            if (hiz_pipeline_) vkDestroyPipeline(device_, hiz_pipeline_, nullptr);
+            if (hiz_layout_) vkDestroyPipelineLayout(device_, hiz_layout_, nullptr);
+            if (hiz_set_layout_) vkDestroyDescriptorSetLayout(device_, hiz_set_layout_, nullptr);
+            if (hiz_pool_) vkDestroyDescriptorPool(device_, hiz_pool_, nullptr);
             vkDestroyPipelineLayout(device_, cull_layout_, nullptr);
             if (cull_set_layout_) vkDestroyDescriptorSetLayout(device_, cull_set_layout_, nullptr);
             for (Buffer* b : {&cull_out_, &cull_args_}) {
@@ -809,7 +816,10 @@ public:
                     masked ? cutout->cutoff : 0.0f, masked ? cutout->alpha : 1.0f);
     }
 
-    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+    // shortcut: no GPU culling in shadow passes here (culls_shadow_instances false: the caller culls on the CPU); run_culling
+    // pauses colour passes only, a shadow pass's resume for that
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count,
+                               const f32*, const f32*) override {
         if (rows && count) draw_shadow(vertices, indices, index_count, view_proj, 2, rows, count, VK_NULL_HANDLE, 0.0f, 1.0f);
     }
 
@@ -906,11 +916,19 @@ public:
             vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
             return;
         }
-        if (culled) {  // each batch's visible rows from the cull output, its count from the GPU
-            for (u32 b = 0; b < cull_batches; ++b) {
-                offsets[1] = b * static_cast<u32>(kRowsBytes);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.culled_set, 3, offsets);
-                vkCmdDrawIndexedIndirect(cmd, cull_args_.buffer, 16 + static_cast<VkDeviceSize>(b) * 20, 1, 20);
+        if (culled) {  // each LOD (its own index buffer) and batch's visible rows from the cull output, its count from the GPU
+            CullConstants counts;
+            cull_constants(draw, cull_batches, nullptr, hiz_size_, 0, counts);
+            const u32 lods = (counts.info[2] >> 1) & 7u;
+            for (u32 l = 0; l < lods; ++l) {
+                const Buffer* lib = lookup(l ? draw.lod_indices[l - 1] : draw.indices);
+                if (!lib) continue;
+                vkCmdBindIndexBuffer(cmd, lib->buffer, 0, VK_INDEX_TYPE_UINT32);
+                for (u32 b = 0; b < cull_batches; ++b) {
+                    offsets[1] = (l * kMaxCulledInstances + b * kMaxJoints) * 48;
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.culled_set, 3, offsets);
+                    vkCmdDrawIndexedIndirect(cmd, cull_args_.buffer, 16 + (static_cast<VkDeviceSize>(l) * cull_batches + b) * 20, 1, 20);
+                }
             }
             return;
         }
@@ -932,18 +950,8 @@ public:
     // run inside one); false (nothing recorded) if it cannot run: the draw draws every copy.
     bool run_culling(Frame& f, const MeshDraw& draw, u32 batches) {
         if (!cull_pipelines_[2] || draw.instance_count > kMaxCulledInstances) return false;
-        struct {
-            f32 planes[6][4];
-            f32 box_min[4], box_max[4];
-            u32 info[4];
-        } cull{};
-        static_assert(sizeof cull == kCullPushBytes, "cull.hlsl's constants");
-        frustum_planes(draw.mvp, cull.planes);
-        std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
-        std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
-        cull.info[0] = draw.instance_count;
-        cull.info[1] = draw.index_count;
-        cull.info[2] = batches;
+        CullConstants cull;
+        cull_constants(draw, batches, hiz_valid_ ? hiz_view_proj_ : nullptr, hiz_size_, hiz_mips_, cull);
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(draw.instance_count) * 48;
         const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
         const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
@@ -957,12 +965,20 @@ public:
         VkDescriptorSet set = VK_NULL_HANDLE;
         if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) return false;
         const VkDescriptorBufferInfo buffers[3] = {{f.ring, at, bytes}, {cull_out_.buffer, 0, VK_WHOLE_SIZE}, {cull_args_.buffer, 0, VK_WHOLE_SIZE}};
-        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = set;
-        write.descriptorCount = 3;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo = buffers;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        // The Hi-Z (kept in GENERAL), else white: read only when the constants say so.
+        const VkDescriptorImageInfo hiz{VK_NULL_HANDLE, hiz_valid_ ? hiz_view_ : lookup_texture(white_)->view,
+                                        hiz_valid_ ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        writes[0].dstSet = set;
+        writes[0].descriptorCount = 3;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[0].pBufferInfo = buffers;
+        writes[1].dstSet = set;
+        writes[1].dstBinding = 3;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[1].pImageInfo = &hiz;
+        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
         const VkCommandBuffer cmd = f.cmd;
         Texture* resume = target_;
         const f32 viewport[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
@@ -973,7 +989,7 @@ public:
                        VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_layout_, 0, 1, &set, 0, nullptr);
         vkCmdPushConstants(cmd, cull_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes, &cull);
-        const u32 groups[3] = {1, (draw.instance_count + 63) / 64, (batches + 63) / 64};
+        const u32 groups[3] = {1, (draw.instance_count + 63) / 64, (batches * 4 + 63) / 64};
         for (u32 k = 0; k < 3; ++k) {
             if (k) memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -1005,11 +1021,18 @@ public:
     // draws draw every copy.
     bool create_culling() {
 #if LSD_VULKAN_HAVE_SPIRV
-        const VkDescriptorSetLayoutBinding bindings[3] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        VkPhysicalDeviceProperties limits;
+        vkGetPhysicalDeviceProperties(gpu_.handle, &limits);
+        if (limits.limits.maxPushConstantsSize < kCullPushBytes) {
+            LSD_LOG_INFO("vulkan", "GPU culling off: the device allows %u bytes of push constants (it needs %u).", limits.limits.maxPushConstantsSize, kCullPushBytes);
+            return true;
+        }
+        const VkDescriptorSetLayoutBinding bindings[4] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
                                                          {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-                                                         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+                                                         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                         {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
         VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layout.bindingCount = 3;
+        layout.bindingCount = 4;
         layout.pBindings = bindings;
         if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &cull_set_layout_), "vkCreateDescriptorSetLayout (cull)")) return false;
         const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes};
@@ -1020,8 +1043,8 @@ public:
         pipeline_layout.pPushConstantRanges = &push;
         if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &cull_layout_), "vkCreatePipelineLayout (cull)")) return false;
         const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-        if (!make_device_buffer(static_cast<VkDeviceSize>(kMaxCulledInstances) * 48, usage, cull_out_) ||
-            !make_device_buffer(16 + static_cast<VkDeviceSize>(kMaxCulledInstances / kMaxJoints) * 20, usage, cull_args_)) return false;
+        if (!make_device_buffer(4 * static_cast<VkDeviceSize>(kMaxCulledInstances) * 48, usage, cull_out_) ||  // each LOD's rows
+            !make_device_buffer(16 + 4 * static_cast<VkDeviceSize>(kMaxCulledInstances / kMaxJoints) * 20, usage, cull_args_)) return false;
         for (Frame& f : frames_) {
             VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             info.descriptorPool = buffers_pool_;
@@ -1058,8 +1081,153 @@ public:
             vkDestroyShaderModule(device_, module, nullptr);
             if (!ok) return false;
         }
+        // The Hi-Z builder (cull.hlsl's hiz_down): its source (sampled) and destination (storage) per dispatch, 16 bytes of sizes.
+        const VkDescriptorSetLayoutBinding hiz_bindings[2] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                             {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+        VkDescriptorSetLayoutCreateInfo hiz_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        hiz_layout.bindingCount = 2;
+        hiz_layout.pBindings = hiz_bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &hiz_layout, nullptr, &hiz_set_layout_), "vkCreateDescriptorSetLayout (Hi-Z)")) return true;
+        const VkPushConstantRange hiz_push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16};
+        VkPipelineLayoutCreateInfo hiz_pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        hiz_pipeline_layout.setLayoutCount = 1;
+        hiz_pipeline_layout.pSetLayouts = &hiz_set_layout_;
+        hiz_pipeline_layout.pushConstantRangeCount = 1;
+        hiz_pipeline_layout.pPushConstantRanges = &hiz_push;
+        if (!check(vkCreatePipelineLayout(device_, &hiz_pipeline_layout, nullptr, &hiz_layout_), "vkCreatePipelineLayout (Hi-Z)")) return true;
+        const VkDescriptorPoolSize hiz_sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kFramesInFlight * kMaxHizMips}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kFramesInFlight * kMaxHizMips}};
+        VkDescriptorPoolCreateInfo hiz_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        hiz_pool.maxSets = kFramesInFlight * kMaxHizMips;
+        hiz_pool.poolSizeCount = 2;
+        hiz_pool.pPoolSizes = hiz_sizes;
+        if (!check(vkCreateDescriptorPool(device_, &hiz_pool, nullptr, &hiz_pool_), "vkCreateDescriptorPool (Hi-Z)")) return true;
+        VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        module_info.codeSize = sizeof kHizDownSpirv;
+        module_info.pCode = kHizDownSpirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (Hi-Z)")) return true;
+        VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = hiz_layout_;
+        check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &hiz_pipeline_), "vkCreateComputePipelines (Hi-Z)");
+        vkDestroyShaderModule(device_, module, nullptr);
 #endif
         return true;
+    }
+
+    void release_hiz() {
+        if (hiz_image_) vkDeviceWaitIdle(device_);
+        for (VkImageView& v : hiz_mip_views_) {
+            if (v) vkDestroyImageView(device_, v, nullptr);
+            v = VK_NULL_HANDLE;
+        }
+        if (hiz_view_) vkDestroyImageView(device_, hiz_view_, nullptr);
+        if (hiz_image_) vkDestroyImage(device_, hiz_image_, nullptr);
+        if (hiz_memory_) vkFreeMemory(device_, hiz_memory_, nullptr);
+        hiz_view_ = VK_NULL_HANDLE;
+        hiz_image_ = VK_NULL_HANDLE;
+        hiz_memory_ = VK_NULL_HANDLE;
+        hiz_valid_ = false;
+    }
+
+    // The Hi-Z (PostDraw::build_hiz) from a scene target's readable depth: half its size, halving to 1 x 1, each texel the
+    // farthest of 2 x 2. The image stays in GENERAL (written by these dispatches, read by the cull pass). Outside a pass.
+    void build_hiz(Texture& scene, const f32 view_proj[16]) {
+        if (!hiz_pipeline_ || !scene.depth_readable) return;
+        const u32 w = scene.width > 1 ? (scene.width + 1) / 2 : 1, h = scene.height > 1 ? (scene.height + 1) / 2 : 1;
+        u32 mips = 1;
+        while ((std::max(w, h) >> mips) > 0 && mips < kMaxHizMips) ++mips;
+        if (!hiz_image_ || hiz_size_[0] != w || hiz_size_[1] != h) {
+            release_hiz();
+            vkResetDescriptorPool(device_, hiz_pool_, 0);
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = VK_FORMAT_R32_SFLOAT;
+            info.extent = {w, h, 1};
+            info.mipLevels = mips;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            if (!check(vkCreateImage(device_, &info, nullptr, &hiz_image_), "vkCreateImage (Hi-Z)")) return;
+            VkMemoryRequirements need;
+            vkGetImageMemoryRequirements(device_, hiz_image_, &need);
+            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            alloc.allocationSize = need.size;
+            alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &hiz_memory_), "vkAllocateMemory (Hi-Z)") ||
+                !check(vkBindImageMemory(device_, hiz_image_, hiz_memory_, 0), "vkBindImageMemory (Hi-Z)")) {
+                release_hiz();
+                return;
+            }
+            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            view.image = hiz_image_;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format = VK_FORMAT_R32_SFLOAT;
+            view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+            check(vkCreateImageView(device_, &view, nullptr, &hiz_view_), "vkCreateImageView (Hi-Z)");
+            for (u32 m = 0; m < mips; ++m) {
+                view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, m, 1, 0, 1};
+                check(vkCreateImageView(device_, &view, nullptr, &hiz_mip_views_[m]), "vkCreateImageView (Hi-Z mip)");
+            }
+            for (u32 fi = 0; fi < kFramesInFlight; ++fi) {
+                for (u32 m = 0; m < mips; ++m) {
+                    VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                    set_info.descriptorPool = hiz_pool_;
+                    set_info.descriptorSetCount = 1;
+                    set_info.pSetLayouts = &hiz_set_layout_;
+                    if (vkAllocateDescriptorSets(device_, &set_info, &hiz_sets_[fi][m]) != VK_SUCCESS) {
+                        release_hiz();
+                        return;
+                    }
+                }
+            }
+            const VkCommandBuffer up = begin_upload();
+            if (!up) {
+                release_hiz();
+                return;
+            }
+            transition(up, hiz_image_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, mips);
+            end_upload(up);
+            hiz_size_[0] = w;
+            hiz_size_[1] = h;
+            hiz_mips_ = mips;
+        }
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        // The last frame's cull reads before these writes; each mip's writes before the next reads them.
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline_);
+        u32 sw = scene.width, sh = scene.height;
+        for (u32 m = 0; m < hiz_mips_; ++m) {
+            const u32 dw = std::max(hiz_size_[0] >> m, 1u), dh = std::max(hiz_size_[1] >> m, 1u);
+            const VkDescriptorSet set = hiz_sets_[frame_][m];
+            const VkDescriptorImageInfo src{VK_NULL_HANDLE, m ? hiz_mip_views_[m - 1] : scene.depth_view, m ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorImageInfo dst{VK_NULL_HANDLE, hiz_mip_views_[m], VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+            writes[0].dstSet = writes[1].dstSet = set;
+            writes[0].descriptorCount = writes[1].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[0].pImageInfo = &src;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &dst;
+            vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+            const u32 size[4] = {dw, dh, sw, sh};
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_layout_, 0, 1, &set, 0, nullptr);
+            vkCmdPushConstants(cmd, hiz_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, size);
+            vkCmdDispatch(cmd, (dw + 7) / 8, (dh + 7) / 8, 1);
+            memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            sw = dw;
+            sh = dh;
+        }
+        std::memcpy(hiz_view_proj_, view_proj, sizeof hiz_view_proj_);
+        hiz_valid_ = true;
     }
 
     bool make_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& out) {
@@ -1282,12 +1450,14 @@ public:
         size(p.scene, k);
         k[2] = lookup_texture(p.normals) ? 1.0f : 0.0f;  // SSR / AO: normals from the normals pass (t1)
         end_pass();  // the scene's colour (and depth below) become readable
-        if ((ao || dof || taa || ssr || motion) && !scene->depth_readable) {
+        if ((ao || dof || taa || ssr || motion || p.build_hiz) && !scene->depth_readable) {
             const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
             transition(frames_[frame_].cmd, scene->depth_image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tests,
-                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
             scene->depth_readable = true;
         }
+        if (p.build_hiz) build_hiz(*scene, p.hiz_view_proj);  // the next frame's occlusion test
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
             post_pass(kSsr, c.ssr, nullptr, p.scene, p.normals, p.scene, k);
@@ -2802,7 +2972,7 @@ private:
             info.pBindings = l.bindings;
             if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
         }
-        const VkDescriptorPoolSize draw_sizes[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
+        const VkDescriptorPoolSize draw_sizes[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5 + kCullSetsPerFrame}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
                                                     {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3}};
         VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         draw_pool.maxSets = kDrawSetsPerFrame;
@@ -3004,6 +3174,18 @@ private:
     MaterialShader material_shaders_[kMaxMaterialShaders];
     u32 spirv_jobs_ = 0;
     VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
+    // The Hi-Z (build_hiz): R32F in GENERAL, its views (all mips; each mip), per-frame sets per mip, its view-projection.
+    VkDescriptorSetLayout hiz_set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout hiz_layout_ = VK_NULL_HANDLE;
+    VkPipeline hiz_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorPool hiz_pool_ = VK_NULL_HANDLE;
+    VkImage hiz_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory hiz_memory_ = VK_NULL_HANDLE;
+    VkImageView hiz_view_ = VK_NULL_HANDLE, hiz_mip_views_[kMaxHizMips] = {};
+    VkDescriptorSet hiz_sets_[kFramesInFlight][kMaxHizMips] = {};
+    u32 hiz_size_[2] = {}, hiz_mips_ = 0;
+    f32 hiz_view_proj_[16] = {};
+    bool hiz_valid_ = false;
     VkPipelineLayout cull_layout_ = VK_NULL_HANDLE;
     VkPipeline cull_pipelines_[3] = {};  // reset, cull, arguments
     Buffer cull_out_, cull_args_;        // the visible rows; the count + one indirect draw per batch

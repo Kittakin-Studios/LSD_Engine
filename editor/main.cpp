@@ -86,6 +86,7 @@
 #include <string>
 
 bool g_gpu_culling = true;  // r.GPUCulling
+bool g_main_view = false;    // draw_world is drawing the first viewport (its Hi-Z: gpu_cull's occlusion test)
 bool g_occlusion_culling = true;  // r.OcclusionCulling
 bool g_texture_streaming = true;  // r.TextureStreaming
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
@@ -320,6 +321,11 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
         const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
         if (!mesh) continue;
         instance_rows(world, e, *ism, rows, &matrices);
+        if (g_gpu_culling && ism->instances.count >= 32 && device.culls_shadow_instances()) {  // the GPU drops the copies outside the light's view
+            device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), ism->instances.count,
+                                         &mesh->bounds_min.x, &mesh->bounds_max.x);
+            continue;
+        }
         lsd::u32 kept = 0;  // only the copies whose bounds reach this view (a forest's far side casts into another cascade)
         for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
             if (!in_view(vp * matrices[k], mesh->bounds_min, mesh->bounds_max, true)) {
@@ -788,6 +794,10 @@ void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const
             std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
             draw.instance_rows = rows.data();
             draw.instance_count = static_cast<lsd::u32>(end - i);
+            // Ordinary static meshes alike (props, rocks, fence posts) batched by 32 or more: culled on the GPU as Instanced
+            // Static Meshes are (frustum, the Hi-Z occlusion test, LODs).
+            draw.gpu_cull = g_gpu_culling && draw.instance_count >= 32 && device.supports_gpu_culling();
+            draw.occlusion_cull = g_main_view;
             submit_mesh(device, draw);
         }
         ++stats.stat_draws;
@@ -944,6 +954,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
             if (blend_view(stats, draw, lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f), eye, translucent)) return;
             if (can_batch(draw, pm)) {  // drawn below with the others like it
+                std::memcpy(draw.local_bounds_min, &part_mesh.bounds_min, sizeof draw.local_bounds_min);  // for GPU culling of big batches
+                std::memcpy(draw.local_bounds_max, &part_mesh.bounds_max, sizeof draw.local_bounds_max);
                 batch.push_back({batch_key(draw), draw, pm});
                 return;
             }
@@ -1089,6 +1101,15 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 draw.instance_count = copies;
                 // Many copies (foliage, crowds of props): the GPU drops those outside the view.
                 draw.gpu_cull = g_gpu_culling && copies >= 32 && device.supports_gpu_culling();
+                if (draw.gpu_cull) {  // each copy's LOD on the GPU (as pick_lod), and the Hi-Z test in the main view
+                    for (lsd::u32 k = 1; k < mesh->lod_count && k < lsd::editor::CachedMesh::kMaxLods; ++k) {
+                        draw.lod_indices[k - 1] = mesh->lod_indices[k];
+                        draw.lod_index_counts[k - 1] = mesh->lod_index_count[k];
+                        draw.lod_screen_size[k - 1] = mesh->lod_screen_size[k];
+                    }
+                    draw.lod_distance_scale = g_view_distance_scale;
+                    draw.occlusion_cull = g_main_view;
+                }
                 std::memcpy(draw.local_bounds_min, &mesh->bounds_min, sizeof draw.local_bounds_min);
                 std::memcpy(draw.local_bounds_max, &mesh->bounds_max, sizeof draw.local_bounds_max);
                 submit_mesh(device, draw);
@@ -3332,8 +3353,14 @@ int main(int argc, char** argv) {
             const bool velocity_pass = scene.valid() && use_post && post.proj[0] != 0.0f && v < 4 && (taa || motion_blur);
             g_normals.on = normals_pass || velocity_pass;
             g_normals.used = 0;
+            g_main_view = v == 0;
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
+            g_main_view = false;
             g_normals.on = false;
+            if (v == 0 && g_gpu_culling && device->supports_gpu_culling()) {  // its depth becomes next frame's Hi-Z
+                post.build_hiz = true;
+                std::memcpy(post.hiz_view_proj, unjittered.m, sizeof post.hiz_view_proj);
+            }
             if (state.show_grid && !state.game_view && !state.playing) {
                 // Side views see the floor edge-on, so they get the grid stood up on their own plane (XZ / YZ).
                 const lsd::Mat4 grid_proj = lens.view == lsd::editor::ViewType::Front ? view_proj * lsd::rotation_x(lsd::radians(90.0f))

@@ -155,8 +155,36 @@ struct MeshDraw {
     bool gpu_cull = false;
     f32 local_bounds_min[3] = {};
     f32 local_bounds_max[3] = {};
+    // LODs picked on the GPU (gpu_cull): a visible copy whose bounding radius over its distance from camera_position
+    // (times lod_distance_scale) is below lod_screen_size[k] draws with LOD k + 1's lod_indices[k] / lod_index_counts[k]
+    // (MeshCache::pick_lod's rule); unset LODs: none.
+    BufferHandle lod_indices[3];
+    u32 lod_index_counts[3] = {};
+    f32 lod_screen_size[3] = {};
+    f32 lod_distance_scale = 1.0f;
+    // Also the Hi-Z occlusion test (gpu_cull, the main view): copies hidden behind what the last frame's depth held
+    // there (PostDraw::build_hiz) are dropped; copies off screen or behind the camera then are kept.
+    // shortcut: last frame's depth: a copy coming out from behind a wall shows a frame late; a two-phase test for that
+    bool occlusion_cull = false;
 };
-constexpr u32 kMaxCulledInstances = 65536;  // per gpu_cull draw (256 batches of 256)
+constexpr u32 kMaxCulledInstances = 65536;  // per gpu_cull draw and LOD (256 batches of 256)
+
+// The GPU cull pass's constants (cull.hlsl's Cull; 256 bytes, Vulkan's push constants).
+struct CullConstants {
+    f32 planes[6][4];
+    f32 box_min[4], box_max[4];  // w: the Hi-Z's width and height (mip 0)
+    u32 info[4];                 // copies, batches per LOD, flags (1: Hi-Z test; LOD count << 1), 0
+    u32 index_counts[4];         // per LOD
+    f32 lod[4];                  // LOD 1..3 screen sizes, distance scale
+    f32 camera[4];               // xyz; w: the Hi-Z's mip count
+    f32 hiz_view_proj[4][4];     // rows
+};
+static_assert(sizeof(CullConstants) == 256, "cull.hlsl's Cull");
+// The constants for a gpu_cull draw of `batches` batches per LOD; `hiz_view_proj` (column-major; nullptr: no Hi-Z
+// test) the Hi-Z's view-projection, `hiz_size` its mip 0 width and height, `hiz_mips` its mip count.
+void cull_constants(const struct MeshDraw& draw, u32 batches, const f32* hiz_view_proj, const u32 hiz_size[2], u32 hiz_mips, CullConstants& out);
+// The LOD the cull pass picks for a copy (3 rows of 4) that passed its tests (the CPU mirror, for the tests).
+u32 instance_lod(const CullConstants& c, const f32 rows[12]);
 
 // The six frustum planes (a, b, c, d with a*x + b*y + c*z + d >= 0 inside) of a column-major
 // view-projection, normalised; the near plane is the looser of the GL and D3D conventions.
@@ -316,6 +344,10 @@ struct PostDraw {
     // The velocity pass's target (LightSetup::velocity_view): TAA and motion blur take each pixel's own movement from it
     // (objects moving by themselves too); where it is empty (sky, particles), the camera's from the depth. Invalid: camera only.
     TextureHandle velocity;
+    // Build the Hi-Z (gpu_cull's occlusion test, next frame) from this scene's depth, seen through `hiz_view_proj`
+    // (column-major, without TAA's jitter): the main view only.
+    bool build_hiz = false;
+    f32 hiz_view_proj[16] = {};
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
     f32 proj[4] = {};               // projection [0][0], [1][1], [2][2], [2][3]: view distance = proj[3] / (depth + proj[2])
     f32 ao_intensity = 0.0f;        // screen-space ambient occlusion; 0 = off
@@ -413,8 +445,11 @@ public:
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
                                     const f32* joint_rows = nullptr, u32 joint_count = 0, const struct ShadowCutout* cutout = nullptr) = 0;  // joints: a skinned caster
     // Many copies of one caster in one call: `rows` holds each copy's world matrix as 3 rows (12 floats);
-    // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it.
-    virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) = 0;
+    // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it. With the mesh's local bounds,
+    // a device that culls_shadow_instances() drops the copies outside the light's view on the GPU.
+    virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count,
+                                       const f32* bounds_min = nullptr, const f32* bounds_max = nullptr) = 0;
+    virtual bool culls_shadow_instances() const { return false; }
     virtual void end_shadow_pass() = 0;
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     // The decal atlas the LightSetup's decal rectangles point into (an sRGB texture); for draw_mesh.

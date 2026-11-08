@@ -139,13 +139,17 @@ if(LSD_RHI_VULKAN)
     endforeach()
     # The shared GPU culling passes (shaders/cull.hlsl): kCull<Pass>Spirv, entry points renamed main.
     set(cull_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cull.hlsl")
-    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs")
+    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs" "hiz_down;HizDown")
       list(GET pair 0 entry)
       list(GET pair 1 name)
+      set(cull_defines "")
+      if(entry STREQUAL "hiz_down")
+        set(cull_defines -D HIZ_PASS)  # the Hi-Z builder: its own constants and resources
+      endif()
       add_custom_command(
         OUTPUT "${spirv_dir}/${entry}.spv.h"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
-        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T cs_6_0 -E ${entry} -fspv-entrypoint-name=main -Fo "${spirv_dir}/${entry}.spv" "${cull_hlsl}"
+        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T cs_6_0 -E ${entry} -fspv-entrypoint-name=main ${cull_defines} -Fo "${spirv_dir}/${entry}.spv" "${cull_hlsl}"
         COMMAND "${CMAKE_COMMAND}" -DINPUT=${spirv_dir}/${entry}.spv -DOUTPUT=${spirv_dir}/${entry}.spv.h -DNAME=k${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
         DEPENDS "${cull_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
         COMMENT "Compiling cull.hlsl (${entry}) to SPIR-V"

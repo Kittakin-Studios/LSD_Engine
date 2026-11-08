@@ -311,6 +311,7 @@ public:
 
     Backend backend() const override { return Backend::D3D12; }
     bool supports_gpu_culling() const override { return cull_signature_ != nullptr; }
+    bool culls_shadow_instances() const override { return cull_signature_ != nullptr; }
     const AdapterInfo& adapter() const override { return info_; }
 
     MemoryBudget query_memory_budget() const override {
@@ -684,13 +685,8 @@ public:
             const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
             list_->IASetVertexBuffers(0, 1, &vbv);
             list_->IASetIndexBuffer(&ibv);
-            if (culled) {  // each batch's visible rows as the instance constants, its count from the GPU
-                for (u32 b = 0; b < cull_batches; ++b) {
-                    list_->SetGraphicsRootConstantBufferView(7, cull_out_->GetGPUVirtualAddress() + static_cast<u64>(b) * kMaxJoints * 48);
-                    list_->ExecuteIndirect(cull_signature_.Get(), 1, cull_args_.Get(), 16 + static_cast<u64>(b) * 20, nullptr, 0);
-                }
-                transition(cull_out_.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                transition(cull_args_.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            if (culled) {  // each LOD and batch's visible rows as the instance constants, its count from the GPU
+                draw_culled(draw, cull_batches);
                 return;
             }
             for (u32 first = 0; first < draw.instance_count; first += kMaxJoints) {
@@ -917,10 +913,23 @@ public:
         list_->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
     }
 
-    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count,
+                               const f32* bounds_min, const f32* bounds_max) override {
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
         if (!vb || !ib || shadow_pass_ < 0 || !rows || !count) return;
+        MeshDraw cull;  // with bounds: culled against the light's view on the GPU
+        cull.indices = indices;
+        cull.index_count = index_count;
+        std::memcpy(cull.mvp, view_proj, sizeof cull.mvp);
+        cull.instance_rows = rows;
+        cull.instance_count = count;
+        if (bounds_min && bounds_max) {
+            std::memcpy(cull.local_bounds_min, bounds_min, sizeof cull.local_bounds_min);
+            std::memcpy(cull.local_bounds_max, bounds_max, sizeof cull.local_bounds_max);
+        }
+        const u32 batches = (count + kMaxJoints - 1) / kMaxJoints;
+        const bool culled = bounds_min && bounds_max && run_culling(cull, batches);
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 16, view_proj, 0);
         list_->SetPipelineState(instanced_shadow_pipeline_.Get());
@@ -929,6 +938,10 @@ public:
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->IASetIndexBuffer(&ibv);
+        if (culled) {
+            draw_culled(cull, batches);
+            return;
+        }
         for (u32 first = 0; first < count; first += kMaxJoints) {  // the rows' buffer holds 256 copies a call
             const u32 n = count - first < kMaxJoints ? count - first : kMaxJoints;
             const D3D12_GPU_VIRTUAL_ADDRESS buffer = upload_joints(rows + first * 12, n);
@@ -1245,6 +1258,7 @@ public:
     void draw_post(const PostDraw& p) override {
         Target* scene = lookup(p.scene);
         if (!scene) return;
+        if (p.build_hiz) build_hiz(*scene, p.hiz_view_proj);  // the next frame's occlusion test
         PostChain& c = post_chain(scene->width, scene->height);
         auto size = [&](TextureHandle t, f32* out) {
             const Target* target = lookup(t);
@@ -2076,15 +2090,18 @@ private:
     // per batch of 256 (the instanced shader's constant buffer holds 256). Optional: if it fails to
     // build, gpu_cull draws simply draw every instance.
     bool create_culling() {
-        D3D12_ROOT_PARAMETER params[4]{};
+        D3D12_ROOT_PARAMETER params[5]{};
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
         params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
         params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
         params[3].Descriptor.ShaderRegister = 1;
+        static const D3D12_DESCRIPTOR_RANGE hiz_range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};  // t1: the Hi-Z
+        params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[4].DescriptorTable = {1, &hiz_range};
         for (D3D12_ROOT_PARAMETER& p : params) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         D3D12_ROOT_SIGNATURE_DESC rs{};
-        rs.NumParameters = 4;
+        rs.NumParameters = 5;
         rs.pParameters = params;
         ComPtr<ID3DBlob> blob, error;
         if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &error)) ||
@@ -2108,9 +2125,9 @@ private:
         desc.SampleDesc.Count = 1;
         desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        desc.Width = static_cast<u64>(kMaxCulledInstances) * 48;  // buffers start in COMMON and promote to UAV on first use
+        desc.Width = 4 * static_cast<u64>(kMaxCulledInstances) * 48;  // each LOD's rows; buffers start in COMMON and promote to UAV on first use
         if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cull_out_)))) return false;
-        desc.Width = 16 + (kMaxCulledInstances / kMaxJoints) * 20;
+        desc.Width = 16 + 4 * (kMaxCulledInstances / kMaxJoints) * 20;
         if (FAILED(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cull_args_)))) return false;
         D3D12_INDIRECT_ARGUMENT_DESC argument{};
         argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
@@ -2118,7 +2135,115 @@ private:
         signature.ByteStride = 20;
         signature.NumArgumentDescs = 1;
         signature.pArgumentDescs = &argument;
-        return SUCCEEDED(device_->CreateCommandSignature(&signature, nullptr, IID_PPV_ARGS(&cull_signature_)));
+        if (FAILED(device_->CreateCommandSignature(&signature, nullptr, IID_PPV_ARGS(&cull_signature_)))) return false;
+        // The Hi-Z builder (optional: without it no occlusion test): 4 constants, its source (t0) and destination (u0).
+        D3D12_ROOT_PARAMETER hiz[3]{};
+        hiz[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        hiz[0].Constants.Num32BitValues = 4;
+        static const D3D12_DESCRIPTOR_RANGE src{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+        static const D3D12_DESCRIPTOR_RANGE dst{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+        hiz[1].ParameterType = hiz[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        hiz[1].DescriptorTable = {1, &src};
+        hiz[2].DescriptorTable = {1, &dst};
+        for (D3D12_ROOT_PARAMETER& p : hiz) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_ROOT_SIGNATURE_DESC hrs{};
+        hrs.NumParameters = 3;
+        hrs.pParameters = hiz;
+        ComPtr<ID3DBlob> hiz_blob, hiz_error, hiz_cs;
+        static const D3D_SHADER_MACRO hiz_defines[] = {{"HIZ_PASS", "1"}, {nullptr, nullptr}};
+        if (SUCCEEDED(D3D12SerializeRootSignature(&hrs, D3D_ROOT_SIGNATURE_VERSION_1, &hiz_blob, &hiz_error)) &&
+            SUCCEEDED(device_->CreateRootSignature(0, hiz_blob->GetBufferPointer(), hiz_blob->GetBufferSize(), IID_PPV_ARGS(&hiz_root_))) &&
+            compile(kCullHlsl, sizeof kCullHlsl - 1, "hiz_down", "cs_5_0", hiz_cs, hiz_defines)) {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature = hiz_root_.Get();
+            pso.CS = {hiz_cs->GetBufferPointer(), hiz_cs->GetBufferSize()};
+            if (FAILED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&hiz_pso_)))) hiz_root_.Reset();
+        }
+        return true;
+    }
+
+    // The Hi-Z (PostDraw::build_hiz) from a scene target's depth: half its size, halving to 1 x 1, each texel the farthest
+    // of 2 x 2. Between builds every mip is a non-pixel shader resource (the cull pass reads it).
+    void build_hiz(const Target& scene, const f32 view_proj[16]) {
+        if (!hiz_pso_) return;
+        const u32 w = scene.width > 1 ? (scene.width + 1) / 2 : 1, h = scene.height > 1 ? (scene.height + 1) / 2 : 1;
+        u32 mips = 1;
+        while ((std::max(w, h) >> mips) > 0 && mips < kMaxHizMips) ++mips;
+        if (!hiz_ || hiz_size_[0] != w || hiz_size_[1] != h) {
+            wait_for_gpu();
+            if (hiz_) {
+                free_srv(hiz_all_cpu_);
+                for (u32 m = 0; m < hiz_mips_; ++m) {
+                    free_srv(hiz_srv_cpu_[m]);
+                    free_srv(hiz_uav_cpu_[m]);
+                }
+                hiz_.Reset();
+            }
+            D3D12_HEAP_PROPERTIES heap{};
+            heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            desc.Width = w;
+            desc.Height = h;
+            desc.DepthOrArraySize = 1;
+            desc.MipLevels = static_cast<UINT16>(mips);
+            desc.Format = DXGI_FORMAT_R32_FLOAT;
+            desc.SampleDesc.Count = 1;
+            desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&hiz_)),
+                       "CreateCommittedResource (Hi-Z)")) return;
+            alloc_srv(hiz_all_cpu_, hiz_all_gpu_);
+            device_->CreateShaderResourceView(hiz_.Get(), nullptr, hiz_all_cpu_);
+            for (u32 m = 0; m < mips; ++m) {
+                D3D12_SHADER_RESOURCE_VIEW_DESC one{};
+                one.Format = DXGI_FORMAT_R32_FLOAT;
+                one.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                one.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                one.Texture2D.MostDetailedMip = m;
+                one.Texture2D.MipLevels = 1;
+                alloc_srv(hiz_srv_cpu_[m], hiz_srv_gpu_[m]);
+                device_->CreateShaderResourceView(hiz_.Get(), &one, hiz_srv_cpu_[m]);
+                D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+                uav.Format = DXGI_FORMAT_R32_FLOAT;
+                uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+                uav.Texture2D.MipSlice = m;
+                alloc_srv(hiz_uav_cpu_[m], hiz_uav_gpu_[m]);
+                device_->CreateUnorderedAccessView(hiz_.Get(), nullptr, &uav, hiz_uav_cpu_[m]);
+            }
+            hiz_size_[0] = w;
+            hiz_size_[1] = h;
+            hiz_mips_ = mips;
+        }
+        auto sub = [&](u32 m, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
+            D3D12_RESOURCE_BARRIER b{};
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource = hiz_.Get();
+            b.Transition.Subresource = m;
+            b.Transition.StateBefore = from;
+            b.Transition.StateAfter = to;
+            list_->ResourceBarrier(1, &b);
+        };
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
+        transition(scene.depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        list_->SetComputeRootSignature(hiz_root_.Get());
+        list_->SetPipelineState(hiz_pso_.Get());
+        u32 sw = scene.width, sh = scene.height;
+        for (u32 m = 0; m < hiz_mips_; ++m) {  // mip m written, then readable for the next
+            const u32 dw = std::max(hiz_size_[0] >> m, 1u), dh = std::max(hiz_size_[1] >> m, 1u);
+            const u32 size[4] = {dw, dh, sw, sh};
+            sub(m, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            list_->SetComputeRoot32BitConstants(0, 4, size, 0);
+            list_->SetComputeRootDescriptorTable(1, m ? hiz_srv_gpu_[m - 1] : scene.depth_srv_gpu);
+            list_->SetComputeRootDescriptorTable(2, hiz_uav_gpu_[m]);
+            list_->Dispatch((dw + 7) / 8, (dh + 7) / 8, 1);
+            sub(m, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            sw = dw;
+            sh = dh;
+        }
+        transition(scene.depth.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        std::memcpy(hiz_view_proj_, view_proj, sizeof hiz_view_proj_);
+        hiz_valid_ = true;
     }
 
     void uav_barrier(ID3D12Resource* resource) {
@@ -2128,20 +2253,31 @@ private:
         list_->ResourceBarrier(1, &b);
     }
 
+    // The culled copies, per LOD (its own index buffer) and batch: rows at (LOD * kMaxCulledInstances + batch * kMaxJoints)
+    // * 48 in cull_out_, arguments at 16 + (LOD * batches + batch) * 20; the vertex buffer and pipeline are bound.
+    void draw_culled(const MeshDraw& draw, u32 batches) {
+        CullConstants c;
+        cull_constants(draw, batches, nullptr, hiz_size_, 0, c);
+        const u32 lods = (c.info[2] >> 1) & 7u;
+        for (u32 l = 0; l < lods; ++l) {
+            const Buffer* lib = lookup(l ? draw.lod_indices[l - 1] : draw.indices);
+            if (!lib) continue;
+            const D3D12_INDEX_BUFFER_VIEW ibv{lib->resource->GetGPUVirtualAddress(), static_cast<UINT>(lib->size), DXGI_FORMAT_R32_UINT};
+            list_->IASetIndexBuffer(&ibv);
+            for (u32 b = 0; b < batches; ++b) {
+                list_->SetGraphicsRootConstantBufferView(7, cull_out_->GetGPUVirtualAddress() + (static_cast<u64>(l) * kMaxCulledInstances + static_cast<u64>(b) * kMaxJoints) * 48);
+                list_->ExecuteIndirect(cull_signature_.Get(), 1, cull_args_.Get(), 16 + (static_cast<u64>(l) * batches + b) * 20, nullptr, 0);
+            }
+        }
+        transition(cull_out_.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        transition(cull_args_.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
     // The compute passes for a gpu_cull draw; false (nothing recorded) if it cannot run: draw all.
     bool run_culling(const MeshDraw& draw, u32 batches) {
         if (!cull_signature_ || draw.instance_count > kMaxCulledInstances) return false;
-        struct {
-            f32 planes[6][4];
-            f32 box_min[4], box_max[4];
-            u32 info[4];
-        } cull{};
-        frustum_planes(draw.mvp, cull.planes);
-        std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
-        std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
-        cull.info[0] = draw.instance_count;
-        cull.info[1] = draw.index_count;
-        cull.info[2] = batches;
+        CullConstants cull;
+        cull_constants(draw, batches, hiz_valid_ ? hiz_view_proj_ : nullptr, hiz_size_, hiz_mips_, cull);
         const D3D12_GPU_VIRTUAL_ADDRESS constants = upload_constants(&cull, sizeof cull);
         const D3D12_GPU_VIRTUAL_ADDRESS rows = constants ? upload_constants(draw.instance_rows, draw.instance_count * 48) : 0;
         if (!rows) return false;
@@ -2150,6 +2286,9 @@ private:
         list_->SetComputeRootShaderResourceView(1, rows);
         list_->SetComputeRootUnorderedAccessView(2, cull_out_->GetGPUVirtualAddress());
         list_->SetComputeRootUnorderedAccessView(3, cull_args_->GetGPUVirtualAddress());
+        ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
+        list_->SetDescriptorHeaps(1, heaps);
+        list_->SetComputeRootDescriptorTable(4, hiz_valid_ ? hiz_all_gpu_ : textures_[white_].srv_gpu);  // read only when the constants say so
         list_->SetPipelineState(cull_pso_[0].Get());
         list_->Dispatch(1, 1, 1);
         uav_barrier(cull_args_.Get());
@@ -2157,7 +2296,7 @@ private:
         list_->Dispatch((draw.instance_count + 63) / 64, 1, 1);
         uav_barrier(cull_args_.Get());
         list_->SetPipelineState(cull_pso_[2].Get());
-        list_->Dispatch((batches + 63) / 64, 1, 1);
+        list_->Dispatch((batches * 4 + 63) / 64, 1, 1);
         transition(cull_out_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
         transition(cull_args_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
         return true;
@@ -2261,6 +2400,15 @@ private:
     ComPtr<ID3D12RootSignature> cull_root_;  // GPU culling (create_culling)
     ComPtr<ID3D12PipelineState> cull_pso_[3];
     ComPtr<ID3D12Resource> cull_out_, cull_args_;
+    static constexpr u32 kMaxHizMips = 14;
+    ComPtr<ID3D12RootSignature> hiz_root_;
+    ComPtr<ID3D12PipelineState> hiz_pso_;
+    ComPtr<ID3D12Resource> hiz_;  // R32F; every mip a non-pixel shader resource between builds
+    D3D12_CPU_DESCRIPTOR_HANDLE hiz_all_cpu_{}, hiz_srv_cpu_[kMaxHizMips]{}, hiz_uav_cpu_[kMaxHizMips]{};
+    D3D12_GPU_DESCRIPTOR_HANDLE hiz_all_gpu_{}, hiz_srv_gpu_[kMaxHizMips]{}, hiz_uav_gpu_[kMaxHizMips]{};
+    u32 hiz_size_[2] = {}, hiz_mips_ = 0;
+    f32 hiz_view_proj_[16] = {};
+    bool hiz_valid_ = false;
     ComPtr<ID3D12CommandSignature> cull_signature_;
     u8* joint_mapped_[kBackBufferCount] = {};
     u32 joint_offset_ = 0;

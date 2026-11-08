@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -97,6 +98,39 @@ static void test_culling() {
     CHECK(!at(150, 0, 0));    // past the far plane
     CHECK(at(10, 9.0f, 0, 4.0f));  // outside by its centre, but a big box reaching into the view
     CHECK(at(0.2f, 0, 0));    // right at the camera, partly in front of the near plane
+    {  // the cull pass's constants and its LOD pick (as MeshCache::pick_lod): smaller on screen, a simpler LOD
+        rhi::MeshDraw draw;
+        std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+        draw.index_count = 36;
+        draw.instance_count = 600;
+        for (int k = 0; k < 3; ++k) {
+            draw.local_bounds_min[k] = -0.5f;
+            draw.local_bounds_max[k] = 0.5f;
+        }
+        draw.lod_indices[0] = rhi::BufferHandle::make(1, 0);
+        draw.lod_index_counts[0] = 18;
+        draw.lod_screen_size[0] = 0.1f;
+        draw.lod_indices[1] = rhi::BufferHandle::make(2, 0);
+        draw.lod_index_counts[1] = 9;
+        draw.lod_screen_size[1] = 0.02f;
+        draw.occlusion_cull = true;
+        rhi::CullConstants c;
+        const u32 hiz[2] = {960, 540};
+        rhi::cull_constants(draw, 3, nullptr, hiz, 0, c);  // no Hi-Z: no occlusion test
+        CHECK(c.info[0] == 600 && c.info[1] == 3 && c.info[2] == (3u << 1) && c.index_counts[1] == 18 && c.index_counts[2] == 9 && c.index_counts[3] == 0);
+        rhi::cull_constants(draw, 3, view_proj.m, hiz, 10, c);
+        CHECK((c.info[2] & 1u) && c.box_min[3] == 960.0f && c.camera[3] == 10.0f && c.hiz_view_proj[3][2] == view_proj.at(3, 2));
+        auto lod_at = [&](f32 x) {
+            const f32 rows[12] = {1, 0, 0, x, 0, 1, 0, 0, 0, 0, 1, 0};
+            return rhi::instance_lod(c, rows);
+        };
+        CHECK(lod_at(3) == 0);    // radius 0.87 at 3 m: 0.29
+        CHECK(lod_at(20) == 1);   // 0.043
+        CHECK(lod_at(80) == 2);   // 0.011
+        draw.lod_distance_scale = 10.0f;  // View Distance: things count as 10 times nearer
+        rhi::cull_constants(draw, 3, nullptr, hiz, 0, c);
+        CHECK(lod_at(20) == 0);
+    }
 }
 
 // Occlusion: a wall 10 m ahead (4 x 4 m) hides a small box behind it; boxes beside it, in front of it,
