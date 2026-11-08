@@ -252,6 +252,9 @@ const f32* light_profile(const char* guid) {
     return p.ok ? p.samples : nullptr;
 }
 
+// A Stationary light's shadow mask channel in the bake (by where it is, within 1 cm), into light_extra.
+void put_mask_channel(rhi::LightSetup& s, u32 index, Vec3 position);
+
 // Writes `profile` (when there is one) into light `index`'s rows, inverted (zero is none), its axis along `axis`.
 void put_profile(rhi::LightSetup& s, u32 index, const char* guid, Vec3 axis) {
     const f32* profile = light_profile(guid);
@@ -274,6 +277,19 @@ Vec3 g_hdri_averages[3] = {};
 } // namespace
 
 void set_light_profile_registry(const asset::AssetRegistry* registry) { g_profile_registry = registry; }
+
+namespace {
+void put_mask_channel(rhi::LightSetup& s, u32 index, Vec3 position) {
+    if (!g_baked || g_baked->shadow_mask.empty()) return;
+    for (u32 k = 0; k < g_baked->mask_count; ++k) {
+        const Vec3 at{g_baked->mask_lights[k][0], g_baked->mask_lights[k][1], g_baked->mask_lights[k][2]};
+        if (length(at - position) < 0.01f) {
+            s.light_extra[index][0] = static_cast<f32>(k + 1);
+            return;
+        }
+    }
+}
+} // namespace
 
 bool light_function_of(u32 index, const char*& guid, f32& tiling, f32 scroll[2]) {
     if (index >= rhi::kMaxLights || !g_functions[index].guid || !g_functions[index].guid[0]) return false;
@@ -669,6 +685,8 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
             if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
+            if (static_lights && light->mobility == 2) *static_lights |= 1u << (16 + s.count - 1);
+            if (light->mobility == 2) put_mask_channel(s, s.count - 1, position);
             s.lights[s.count - 1].source_radius = light->source_radius;
             put_profile(s, s.count - 1, light->ies, forward_of(m));  // a point light's profile hangs off its forward axis
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(6, side_of(light->shadow_resolution)) : 0u;
@@ -703,6 +721,8 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
             if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
+            if (static_lights && light->mobility == 2) *static_lights |= 1u << (16 + s.count - 1);
+            if (light->mobility == 2) put_mask_channel(s, s.count - 1, position);
             s.lights[s.count - 1].source_radius = light->source_radius;
             put_profile(s, s.count - 1, light->ies, dir);
             g_functions[s.count - 1] = {light->light_function, light->function_tiling * 0.5f / std::tan(radians(outer)), {light->function_scroll_x, light->function_scroll_y}};  // once across the cone

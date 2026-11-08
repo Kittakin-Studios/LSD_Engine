@@ -29,7 +29,8 @@ void set_shadow_atlas_size(u32 size);
 // The level's baked light probes (Build Lighting), used by world_lights; nullptr: none.
 void set_baked_lighting(const BakedLighting* lighting);
 // Just the light list, sky and ground (what Build Lighting bakes with).
-// `static_lights` (optional): a bit per light index set for the Static ones (Build Lighting bakes their direct light).
+// `static_lights` (optional): a bit per light index set for the Static ones (Build Lighting bakes their direct light),
+// and bit 16 + index for the Stationary ones (it bakes their shadow masks).
 rhi::LightSetup level_lights(const world::World& world, const LightView& view, u32* static_lights = nullptr);
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);

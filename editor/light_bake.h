@@ -44,6 +44,11 @@ struct BakedLighting {
     // Directional lightmaps: per texel, where its baked light mostly comes from (RGB: the luminance-weighted mean
     // direction * 0.5 + 0.5, its length how one-sided the light is; normal maps shade by it). Empty: older bakes.
     std::vector<u8> lightmap_dir;
+    // Shadow masks (Unreal's, for Stationary lights): per texel, how much of each of up to 4 such lights reaches it
+    // (RGBA, one light per channel), and where those lights were (the run time finds its channel by place).
+    u32 mask_count = 0;
+    f32 mask_lights[4][3] = {};
+    std::vector<u8> shadow_mask;
     std::vector<LightmapObject> objects;
     bool valid() const { return !sh.empty(); }
     bool has_lightmap() const { return lightmap_size && !objects.empty(); }
@@ -55,7 +60,7 @@ struct BakeScene {
     std::vector<Vec3> positions;  // 3 per triangle, world space
     std::vector<Vec3> albedo;     // 1 per triangle
     rhi::LightSetup lights;       // the level's lights, sky and ground colours
-    u32 static_lights = 0;        // a bit per light: Static (its direct light is baked too)
+    u32 static_lights = 0;        // a bit per light: Static (its direct light is baked too); bit 16 + i: Stationary (its shadow mask)
     Vec3 lo, hi;                  // where probes go (a Lightmass Importance Volume, or the meshes' bounds)
     f32 spacing = 0.0f;           // metres between probes; 0: as fine as rhi::kMaxProbes allows
     // The objects to lightmap (World Settings > Lightmap Resolution; 0 = none) and their meshes.

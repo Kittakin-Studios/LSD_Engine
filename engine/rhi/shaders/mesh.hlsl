@@ -40,6 +40,7 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 reflection_boxes[8];  // box captures: half size, w = fade-in distance (0: a sphere)
     float4 light_profiles[64];   // IES: 16 samples of 1 - profile per light (rhi::LightSetup)
     float4 light_functions[32];  // per light: its image in the decal atlas, then scroll, repeats, on
+    float4 light_extra[16];      // per light: x = its shadow mask channel + 1
 };
 // A light's IES profile at the angle from its axis whose cosine is c (1 without one; asset::light_profile_at).
 float light_profile(uint li, float c) {
@@ -457,14 +458,16 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     // Lightmap (Build Lighting): its RGB is this texel's ambient light (sky and bounces), A how much
     // of the sun reached it (baked shadows, sharp beyond the shadow distance too).
     const bool lightmapped = lightmap_info.y > 0.5 && i.lightmap_uv.x > 0.0;
-    float4 baked = float4(0, 0, 0, 1);
+    float4 baked = float4(0, 0, 0, 1), shadow_mask = float4(1, 1, 1, 1);
     if (lightmapped) {
-        const float2 at = lightmap_info.w > 0.5 ? i.lightmap_uv * float2(1.0, 0.5) : i.lightmap_uv;
+        const float segments = max(lightmap_info.w, 1.0);  // light, then directions, then shadow masks
+        const float2 at = i.lightmap_uv * float2(1.0, 1.0 / segments);
         baked = lightmap_tex.SampleLevel(samp, at, 0);
         const float3 c = min(baked.rgb, 0.999);
         baked.rgb = c / (1.0 - c) * lightmap_info.x;
-        if (lightmap_info.w > 0.5) {  // directional: the normal-mapped normal against the one it was baked for
-            const float3 d = lightmap_tex.SampleLevel(samp, at + float2(0.0, 0.5), 0).xyz * 2.0 - 1.0;
+        if (segments > 2.5) shadow_mask = lightmap_tex.SampleLevel(samp, at + float2(0.0, 2.0 / segments), 0);
+        if (segments > 1.5) {  // directional: the normal-mapped normal against the one it was baked for
+            const float3 d = lightmap_tex.SampleLevel(samp, at + float2(0.0, 1.0 / segments), 0).xyz * 2.0 - 1.0;
             baked.rgb *= (dot(n, d) * 0.5 + 0.5) / max(dot(geometric_n, d) * 0.5 + 0.5, 0.1);
         }
     }
@@ -489,6 +492,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         const float ndl = saturate(dot(n, l));
         if (ndl <= 0.0 || atten <= 0.0) continue;
         if ((float)li == shadow_info.y) atten *= lightmapped ? min(sun_shadow(i.wpos, n, mat1.yzw), baked.a) : sun_shadow(i.wpos, n, mat1.yzw);
+        else if (lightmapped && light_extra[li].x > 0.5) atten *= shadow_mask[(uint)light_extra[li].x - 1];  // Stationary: its baked shadow
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, i.wpos, n);
         float3 ls = l;  // specular's direction: an area light's nearest point (the centre otherwise)
         float sa2 = a2, spec_norm = 1.0;

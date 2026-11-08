@@ -126,6 +126,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 reflection_boxes[8];
     vec4 light_profiles[64];
     vec4 light_functions[32];
+    vec4 light_extra[16];
 };
 float light_profile(uint li, float c) {  // mesh.hlsl's
     float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;
@@ -471,14 +472,16 @@ void main() {
     vec3 lit = vec3(0.0);
     // Lightmap (as the HLSL): RGB the ambient light, A the sun's baked visibility.
     bool lightmapped = lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0;
-    vec4 baked = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 baked = vec4(0.0, 0.0, 0.0, 1.0), shadow_mask = vec4(1.0);
     if (lightmapped) {
-        vec2 at = lightmap_info.w > 0.5 ? v_lightmap_uv * vec2(1.0, 0.5) : v_lightmap_uv;
+        float segments = max(lightmap_info.w, 1.0);  // mesh.hlsl's
+        vec2 at = v_lightmap_uv * vec2(1.0, 1.0 / segments);
         baked = textureLod(lightmap_tex, at, 0.0);
         vec3 c = min(baked.rgb, vec3(0.999));
         baked.rgb = c / (1.0 - c) * lightmap_info.x;
-        if (lightmap_info.w > 0.5) {  // directional (mesh.hlsl)
-            vec3 d = textureLod(lightmap_tex, at + vec2(0.0, 0.5), 0.0).xyz * 2.0 - 1.0;
+        if (segments > 2.5) shadow_mask = textureLod(lightmap_tex, at + vec2(0.0, 2.0 / segments), 0.0);
+        if (segments > 1.5) {  // directional (mesh.hlsl)
+            vec3 d = textureLod(lightmap_tex, at + vec2(0.0, 1.0 / segments), 0.0).xyz * 2.0 - 1.0;
             baked.rgb *= (dot(n, d) * 0.5 + 0.5) / max(dot(geometric_n, d) * 0.5 + 0.5, 0.1);
         }
     }
@@ -503,6 +506,7 @@ void main() {
         float ndl = clamp(dot(n, l), 0.0, 1.0);
         if (ndl <= 0.0 || atten <= 0.0) continue;
         if (float(li) == shadow_info.y) atten *= lightmapped ? min(sun_shadow(v_wpos, n, u_mat[1].yzw), baked.a) : sun_shadow(v_wpos, n, u_mat[1].yzw);
+        else if (lightmapped && light_extra[li].x > 0.5) atten *= shadow_mask[int(light_extra[li].x) - 1];  // Stationary: its baked shadow
         else if (L.spot.y >= 0.0) atten *= local_shadow(L, v_wpos, n);
         vec3 ls = l;  // specular's direction: an area light's nearest point (the centre otherwise)
         float sa2 = a2, spec_norm = 1.0;

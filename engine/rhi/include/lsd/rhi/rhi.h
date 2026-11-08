@@ -236,8 +236,8 @@ struct LightSetup {
     f32 reflection_info[4] = {};
     f32 reflections[kMaxReflectionProbes][4] = {};
     // Lightmaps (set_lightmap_atlas): x = how bright a stored 1 is (texels hold c / (1 + c), c in units
-    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker), w = 1 when it is
-    // directional (the texture twice as tall: the light in the top half, each texel's direction in the bottom).
+    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker), w = how many
+    // segments the texture has, top to bottom (0 or 1: the light; 2: then each texel's direction; 3: then the shadow masks).
     // Its RGB replaces the ambient light, A is the sun's baked visibility.
     f32 lightmap_info[4] = {};
     // Volumetric fog (Height Fog > Volumetric): x = strength (0: off), y = anisotropy (-0.9..0.9, how
@@ -253,9 +253,11 @@ struct LightSetup {
     // Light functions (Spot / Rect): per light, its image's rectangle in the decal atlas (x, y, w, h), then the scroll
     // offset (u, v), how many repeats per unit of the view's tangent (z), and 1 when it has one (w).
     f32 light_functions[kMaxLights * 2][4] = {};
+    // Per light: x = its shadow mask channel + 1 in the lightmap (Stationary lights; 0: none).
+    f32 light_extra[kMaxLights][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32 + kMaxLights * 16,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with

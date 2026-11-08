@@ -829,8 +829,8 @@ struct PointLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color (warm bulbs, cold daylight)") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
-    LSD_PROPERTY(Edit, Widget = "Choice:Movable,Static",
-                 Tooltip = "Mobility (Unreal's): Movable lights and shadows every frame; Static is baked by Build Lighting into the lightmaps and probes (free at run time, never moves, no light on moving objects but what bounces); before a bake it lights as Movable")
+    LSD_PROPERTY(Edit, Widget = "Choice:Movable,Static,Stationary",
+                 Tooltip = "Mobility (Unreal's): Movable lights and shadows every frame; Static is baked by Build Lighting into the lightmaps and probes (free at run time, never moves, no light on moving objects but what bounces); Stationary lights every frame (its colour and brightness can change) but its shadows on lightmapped surfaces are baked, soft and beyond any shadow distance (4 per level; moving objects still use a shadow tile); before a bake both light as Movable")
     u32 mobility = 0;
     LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
@@ -853,8 +853,8 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
-    LSD_PROPERTY(Edit, Widget = "Choice:Movable,Static",
-                 Tooltip = "Mobility (Unreal's): Movable lights and shadows every frame; Static is baked by Build Lighting into the lightmaps and probes (free at run time, never moves, no light on moving objects but what bounces); before a bake it lights as Movable")
+    LSD_PROPERTY(Edit, Widget = "Choice:Movable,Static,Stationary",
+                 Tooltip = "Mobility (Unreal's): Movable lights and shadows every frame; Static is baked by Build Lighting into the lightmaps and probes (free at run time, never moves, no light on moving objects but what bounces); Stationary lights every frame (its colour and brightness can change) but its shadows on lightmapped surfaces are baked, soft and beyond any shadow distance (4 per level; moving objects still use a shadow tile); before a bake both light as Movable")
     u32 mobility = 0;
     LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")

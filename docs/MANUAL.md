@@ -892,6 +892,11 @@ dark contact under the statue's feet come from the lightmap.*
 - **Point / Spot Light > Mobility: Static** (Unreal's Static lights): Build Lighting bakes its light and shadows into
   the lightmaps and probes, and once the level is baked it costs nothing at run time. It never moves, and moving
   objects (characters) get only what the probes saw of it. Before a bake it lights like a Movable one.
+- **Mobility: Stationary** (Unreal's Stationary lights, with shadow masks): it lights every frame (change its colour
+  or brightness in play), but Build Lighting bakes its shadows on lightmapped surfaces, soft by its Source Radius
+  and at any quality (at Medium, where local lights have no shadow tiles, they still show). Moving objects still
+  take a shadow tile when one is free. Up to 4 per level (the bake's shadow mask has 4 channels); move it and
+  build again.
 - **Static Mesh > Static Lighting** (on by default, Unreal's Mobility: Static): untick it for
   objects that move; objects with a Rigid Body, Mover, Vehicle or Transport never get a lightmap.
   Moving objects, skeletal meshes and Instanced Static Meshes use the probes.

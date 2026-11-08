@@ -270,6 +270,26 @@ static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor unde
         if (baked.lightmap[i] && baked.lightmap[i + 3] >= 128) up += (baked.lightmap_dir[i + 2] / 255.0) * 2.0 - 1.0;
     }
     CHECK(covered > shadowed && up / static_cast<f64>(covered - shadowed) > 0.4);
+    {  // a Stationary point light above the roof: its shadow mask is dark in the roof's shadow, about 12 m across
+        editor::BakeScene lamp = scene;
+        lamp.lights.count = 2;
+        lamp.lights.lights[1] = rhi::GpuLight{};
+        lamp.lights.lights[1].type = 1.0f;
+        lamp.lights.lights[1].position[2] = 3.0f;
+        lamp.lights.lights[1].range = 40.0f;
+        lamp.static_lights = 1u << (16 + 1);
+        editor::BakedLighting masked;
+        editor::bake_lighting(lamp, masked);
+        CHECK(masked.mask_count == 1 && masked.shadow_mask.size() == masked.lightmap.size() && std::fabs(masked.mask_lights[0][2] - 3.0f) < 1e-4f);
+        u32 dark = 0, cells = 0;
+        for (usize i = 0; i < masked.lightmap.size() && masked.shadow_mask.size() == masked.lightmap.size(); i += 4) {
+            if (!masked.lightmap[i]) continue;
+            ++cells;
+            dark += masked.shadow_mask[i] < 128 ? 1u : 0u;
+        }
+        const f32 masked_share = cells ? static_cast<f32>(dark) / static_cast<f32>(cells) : 0.0f;
+        CHECK(masked_share > 0.28f && masked_share < 0.44f);  // 12 x 12 of 20 x 20 m
+    }
     const f32 share = covered ? static_cast<f32>(shadowed) / static_cast<f32>(covered) : 0.0f;
     CHECK(covered > 1000 && share > 0.02f && share < 0.08f);  // 16 of 400 square metres under the roof
     CHECK(shadowed && covered > shadowed && dark_sum / shadowed < lit_sum / (covered - shadowed));  // and less sky there

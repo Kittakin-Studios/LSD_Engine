@@ -15,6 +15,7 @@
 #include <xatlas.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -417,7 +418,8 @@ bool chart_lightmaps(const BakeScene& s, u32 size, std::vector<LightmapObject>& 
 // The light a texel gets: from the sky and one bounce over its hemisphere (as the probes), and how
 // much of the sun reaches it (a few rays over the sun's disc: soft edges).
 // `direction`: the luminance-weighted mean direction the light arrives from (length 1 all from one side, 0 even).
-void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 seed, Vec3& ambient, Vec3& direction, f32& sun, const ProbeGrid* indirect) {
+void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 seed, Vec3& ambient, Vec3& direction, f32& sun, const ProbeGrid* indirect,
+                const u32* mask_lights, u32 mask_count, f32* mask) {
     auto lum = [](Vec3 c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; };
     Vec3 toward{};
     f32 weight = 0.0f;
@@ -458,6 +460,23 @@ void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 
         weight += lum(arriving) * kRays;
     }
     direction = weight > 0.0f ? toward * (1.0f / weight) : Vec3{};
+    for (u32 k = 0; k < mask_count; ++k) {  // Stationary lights: how much of each reaches it (rays over its Source Radius: soft edges)
+        const rhi::GpuLight& light = s.lights.lights[mask_lights[k]];
+        const Vec3 at{light.position[0], light.position[1], light.position[2]};
+        const Vec3 to = normalize(at - origin);
+        const Vec3 sx = normalize(cross(std::fabs(to.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0}, to)), sy = cross(to, sx);
+        constexpr u32 kMaskRays = 8;
+        u32 lit = 0;
+        for (u32 r = 0; r < kMaskRays; ++r) {
+            const f32 phi = static_cast<f32>(r) * 2.39996323f, spread = light.source_radius * std::sqrt((static_cast<f32>(r) + 0.5f) / kMaskRays);
+            const Vec3 target = at + sx * (spread * std::cos(phi)) + sy * (spread * std::sin(phi));
+            const f32 distance = length(target - origin);
+            u32 tri;
+            f32 hit;
+            if (distance < 1e-3f || !bvh.trace(origin, (target - origin) * (1.0f / distance), distance - 0.02f, tri, hit, true)) ++lit;
+        }
+        mask[k] = static_cast<f32>(lit) / kMaskRays;
+    }
     sun = 1.0f;
     for (u32 i = 0; i < s.lights.count; ++i) {
         const rhi::GpuLight& light = s.lights.lights[i];
@@ -495,10 +514,16 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
     if (total) *total += static_cast<u32>(todo.size());
     std::vector<Vec3> ambient(texels.size()), direction(texels.size());
     std::vector<f32> sun(texels.size(), 1.0f);
+    // Shadow masks: the first 4 Stationary lights, a channel each.
+    u32 mask_lights[4] = {}, mask_count = 0;
+    for (u32 li = 0; li < s.lights.count && mask_count < 4; ++li) {
+        if (s.static_lights >> (16 + li) & 1u) mask_lights[mask_count++] = li;
+    }
+    std::vector<std::array<f32, 4>> mask(texels.size(), std::array<f32, 4>{1.0f, 1.0f, 1.0f, 1.0f});
     std::atomic<u32> next{0};
     auto worker = [&] {
         for (u32 k = next++; k < todo.size(); k = next++) {
-            bake_texel(bvh, s, texels[todo[k]], todo[k], ambient[todo[k]], direction[todo[k]], sun[todo[k]], indirect);
+            bake_texel(bvh, s, texels[todo[k]], todo[k], ambient[todo[k]], direction[todo[k]], sun[todo[k]], indirect, mask_lights, mask_count, mask[todo[k]].data());
             if (done) ++*done;
         }
     };
@@ -518,7 +543,7 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
                 const usize i = static_cast<usize>(y) * size + x;
                 if (set[i]) continue;
                 Vec3 a{}, dir{};
-                f32 b = 0.0f;
+                f32 b = 0.0f, m[4] = {};
                 u32 count = 0;
                 for (int o = 0; o < 4; ++o) {
                     const i32 nx = static_cast<i32>(x) + (o == 0 ? 1 : o == 1 ? -1 : 0), ny = static_cast<i32>(y) + (o == 2 ? 1 : o == 3 ? -1 : 0);
@@ -528,11 +553,13 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
                     a = a + ambient[j];
                     dir = dir + direction[j];
                     b += sun[j];
+                    for (int c = 0; c < 4; ++c) m[c] += mask[j][static_cast<usize>(c)];
                     ++count;
                 }
                 if (!count) continue;
                 ambient[i] = a * (1.0f / static_cast<f32>(count));
                 direction[i] = dir * (1.0f / static_cast<f32>(count));
+                for (int c = 0; c < 4; ++c) mask[i][static_cast<usize>(c)] = m[c] / static_cast<f32>(count);
                 sun[i] = b / static_cast<f32>(count);
                 next_set[i] = 1;
             }
@@ -546,6 +573,11 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
     out.lightmap_size = size;
     out.lightmap.assign(static_cast<usize>(size) * size * 4, 0);
     out.lightmap_dir.assign(static_cast<usize>(size) * size * 4, 128);
+    out.mask_count = mask_count;
+    for (u32 k = 0; k < mask_count; ++k) {
+        for (int a = 0; a < 3; ++a) out.mask_lights[k][a] = s.lights.lights[mask_lights[k]].position[a];
+    }
+    if (mask_count) out.shadow_mask.assign(static_cast<usize>(size) * size * 4, 255);
     for (usize i = 0; i < texels.size(); ++i) {
         u8* p = &out.lightmap[i * 4];
         const f32 c[3] = {ambient[i].x / out.lightmap_scale, ambient[i].y / out.lightmap_scale, ambient[i].z / out.lightmap_scale};
@@ -555,6 +587,7 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
         const f32 dv[3] = {direction[i].x, direction[i].y, direction[i].z};
         for (int k = 0; k < 3; ++k) q[k] = static_cast<u8>(std::lround(std::clamp(dv[k] * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f));
         q[3] = 255;
+        for (u32 k = 0; k < mask_count; ++k) out.shadow_mask[i * 4 + k] = static_cast<u8>(std::lround(std::clamp(mask[i][k], 0.0f, 1.0f) * 255.0f));
     }
 }
 
@@ -787,18 +820,24 @@ namespace {
 constexpr char kMagic[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '1'};   // probes only
 constexpr char kMagic2[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '2'};  // probes, then the lightmap and its objects
 constexpr char kMagic3[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '3'};  // as 2, the lightmap's directions after it
+constexpr char kMagic4[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '4'};  // as 3, then the shadow masks
 }
 
 bool save_baked_lighting(const char* path, const BakedLighting& l) {
     FILE* f = std::fopen(path, "wb");
     if (!f) return false;
     const bool directional = l.has_lightmap() && l.lightmap_dir.size() == l.lightmap.size();
-    bool ok = std::fwrite(directional ? kMagic3 : kMagic2, sizeof kMagic2, 1, f) == 1 && std::fwrite(l.origin, sizeof l.origin, 1, f) == 1 && std::fwrite(l.cell, sizeof l.cell, 1, f) == 1 &&
+    bool ok = std::fwrite(directional ? kMagic4 : kMagic2, sizeof kMagic2, 1, f) == 1 && std::fwrite(l.origin, sizeof l.origin, 1, f) == 1 && std::fwrite(l.cell, sizeof l.cell, 1, f) == 1 &&
               std::fwrite(l.dims, sizeof l.dims, 1, f) == 1 && std::fwrite(l.sh.data(), sizeof(f32), l.sh.size(), f) == l.sh.size();
     const u32 size = l.has_lightmap() ? l.lightmap_size : 0, objects = size ? static_cast<u32>(l.objects.size()) : 0;
     ok = ok && std::fwrite(&size, sizeof size, 1, f) == 1 && std::fwrite(&l.lightmap_scale, sizeof l.lightmap_scale, 1, f) == 1 && std::fwrite(&objects, sizeof objects, 1, f) == 1;
     if (size) ok = ok && std::fwrite(l.lightmap.data(), 1, l.lightmap.size(), f) == l.lightmap.size();
-    if (directional) ok = ok && std::fwrite(l.lightmap_dir.data(), 1, l.lightmap_dir.size(), f) == l.lightmap_dir.size();
+    if (directional) {
+        const u32 masks = l.shadow_mask.size() == l.lightmap.size() ? l.mask_count : 0u;
+        ok = ok && std::fwrite(l.lightmap_dir.data(), 1, l.lightmap_dir.size(), f) == l.lightmap_dir.size() && std::fwrite(&masks, sizeof masks, 1, f) == 1 &&
+             std::fwrite(l.mask_lights, sizeof l.mask_lights, 1, f) == 1;
+        if (masks) ok = ok && std::fwrite(l.shadow_mask.data(), 1, l.shadow_mask.size(), f) == l.shadow_mask.size();
+    }
     for (u32 i = 0; ok && i < objects; ++i) {
         const LightmapObject& o = l.objects[i];
         const u32 counts[2] = {static_cast<u32>(o.vertices.size()), static_cast<u32>(o.indices.size())};
@@ -816,7 +855,8 @@ bool load_baked_lighting(const char* path, BakedLighting& l) {
     if (!f) return false;
     char magic[8];
     bool ok = std::fread(magic, sizeof magic, 1, f) == 1;
-    const bool v3 = ok && std::memcmp(magic, kMagic3, sizeof magic) == 0;
+    const bool v4 = ok && std::memcmp(magic, kMagic4, sizeof magic) == 0;
+    const bool v3 = ok && (v4 || std::memcmp(magic, kMagic3, sizeof magic) == 0);
     const bool v2 = ok && (v3 || std::memcmp(magic, kMagic2, sizeof magic) == 0);
     ok = ok && (v2 || std::memcmp(magic, kMagic, sizeof magic) == 0) && std::fread(l.origin, sizeof l.origin, 1, f) == 1 &&
          std::fread(l.cell, sizeof l.cell, 1, f) == 1 && std::fread(l.dims, sizeof l.dims, 1, f) == 1;
@@ -836,6 +876,13 @@ bool load_baked_lighting(const char* path, BakedLighting& l) {
         if (ok && v3) {
             l.lightmap_dir.resize(l.lightmap.size());
             ok = std::fread(l.lightmap_dir.data(), 1, l.lightmap_dir.size(), f) == l.lightmap_dir.size();
+        }
+        if (ok && v4) {
+            ok = std::fread(&l.mask_count, sizeof l.mask_count, 1, f) == 1 && l.mask_count <= 4 && std::fread(l.mask_lights, sizeof l.mask_lights, 1, f) == 1;
+            if (ok && l.mask_count) {
+                l.shadow_mask.resize(l.lightmap.size());
+                ok = std::fread(l.shadow_mask.data(), 1, l.shadow_mask.size(), f) == l.shadow_mask.size();
+            }
         }
     }
     for (u32 i = 0; ok && i < objects; ++i) {  // never trust file data: counts capped, indices checked
@@ -870,7 +917,8 @@ void apply_baked_lighting(const BakedLighting& l, rhi::LightSetup& setup) {
         setup.lightmap_info[0] = l.lightmap_scale;
         setup.lightmap_info[1] = 1.0f;
         setup.lightmap_info[2] = static_cast<f32>(l.lightmap_size);
-        setup.lightmap_info[3] = l.lightmap_dir.size() == l.lightmap.size() ? 1.0f : 0.0f;  // the atlas is twice as tall: directions below
+        const bool directional = l.lightmap_dir.size() == l.lightmap.size();  // the atlas's segments: light, directions, shadow masks
+        setup.lightmap_info[3] = !directional ? 1.0f : l.shadow_mask.size() == l.lightmap.size() ? 3.0f : 2.0f;
     }
 }
 
