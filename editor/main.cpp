@@ -503,42 +503,9 @@ bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only) 
     return true;
 }
 
-// Shadow casters use the LOD the camera sees (a far tree casts its simple shape), not the light's view.
-void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
-                  lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
-    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
-    device.begin_shadow_pass(atlas);
-    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
-    static std::vector<Caster> casters;
-    for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]); ++c) {
-        device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
-        lsd::Mat4 vp;
-        std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
-        for (lsd::u32 i = 0; i < world.count(type) && i < g_frame_meshes.mesh.size(); ++i) {
-            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
-            const lsd::editor::CachedMesh* mesh = g_frame_meshes.mesh[i];  // null: hidden or missing
-            if (!mesh) continue;
-            const lsd::Mat4& m = g_frame_meshes.world[i];
-            lsd::rhi::BufferHandle indices;
-            lsd::u32 count = 0;
-            const lsd::Mat4 mvp = vp * m;
-            if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
-            if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
-            Caster caster{mesh->gpu.vertices, indices, count, m, false, {}};
-            caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
-            casters.push_back(caster);
-        }
-        add_flat_casters(world, meshes, skip_hidden, casters);
-        draw_casters(device, vp, casters);
-        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f, eye);
-        draw_instanced_casters(device, vp, world, meshes, skip_hidden);
-    }
-    device.end_shadow_pass();
-}
-
-// Shadow caching (Unreal's cached shadow maps for static lights): a local light's tile is kept from the
+// Shadow caching (Unreal's cached shadow maps): a local light's tile, or a sun cascade, is kept from the
 // last frame while what it would draw is the same (its matrix, the atlas, every caster's mesh, LOD,
-// matrix and cut-out, the Instanced Static Meshes); a skeletal mesh in range redraws it every frame.
+// matrix and cut-out, the Instanced Static Meshes); a skeletal mesh in it redraws it every frame.
 bool g_shadow_caching = true;
 lsd::u32 g_shadow_tiles_cached = 0, g_shadow_tiles_cached_frame = 0;  // this frame's / the last frame's (stat dump)
 
@@ -598,6 +565,69 @@ bool skinned_in_range(lsd::world::World& world, bool skip_hidden, lsd::Vec3 ligh
         if (lsd::length(centre - light) <= range + lsd::length(extent) * 2.0f) return true;  // as draw_skinned_casters
     }
     return false;
+}
+
+// True when a posed skeletal mesh may cast into this shadow view (as draw_skinned_casters culls them): it moves.
+bool skinned_in_view(lsd::world::World& world, bool skip_hidden, const lsd::Mat4& vp) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::SkeletalMesh>();
+    for (lsd::u32 i = 0; i < world.count(type); ++i) {
+        const lsd::world::Entity e = world.owner(type, i);
+        if (skip_hidden && world.hidden_in_hierarchy(e)) continue;
+        const auto* component = static_cast<const lsd::world::SkeletalMesh*>(world.at(type, i));
+        const lsd::editor::SkinnedEntry* model = g_skinned->get(component->mesh);
+        if (!model || !g_animations->pose(e)) continue;
+        const lsd::Mat4 m = lsd::editor::skeletal_matrix(world, e, *component, model);
+        const lsd::Vec3 half = (model->model->bounds_max - model->model->bounds_min) * 0.5f;
+        if (in_view(vp * m, model->model->bounds_min - half, model->model->bounds_max + half, true)) return true;
+    }
+    return false;
+}
+
+// Shadow casters use the LOD the camera sees (a far tree casts its simple shape), not the light's view.
+void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
+                  lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
+    const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
+    static lsd::u64 cascade_keys[4] = {};  // what each cascade's tile holds (shadow caching; 0: unknown)
+    device.begin_shadow_pass(atlas, !g_shadow_caching);
+    const lsd::u64 instanced = g_shadow_caching ? hash_instanced(world, skip_hidden) : 0;
+    const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
+    static std::vector<Caster> casters;
+    for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]) && c < 4; ++c) {
+        device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
+        lsd::Mat4 vp;
+        std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
+        for (lsd::u32 i = 0; i < world.count(type) && i < g_frame_meshes.mesh.size(); ++i) {
+            const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
+            const lsd::editor::CachedMesh* mesh = g_frame_meshes.mesh[i];  // null: hidden or missing
+            if (!mesh) continue;
+            const lsd::Mat4& m = g_frame_meshes.world[i];
+            lsd::rhi::BufferHandle indices;
+            lsd::u32 count = 0;
+            const lsd::Mat4 mvp = vp * m;
+            if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max, true)) continue;  // beside this cascade: its shadow falls elsewhere
+            if (!pick_static_lod(*mesh, *component, m, eye, force_lod, indices, count)) continue;
+            Caster caster{mesh->gpu.vertices, indices, count, m, false, {}};
+            caster.masked = shadow_cutout(component->material, component->color, caster.cutout);
+            casters.push_back(caster);
+        }
+        add_flat_casters(world, meshes, skip_hidden, casters);
+        if (g_shadow_caching) {  // kept while the camera has not moved it and nothing in it moved (a still view, a far cascade)
+            lsd::u64 key = hash_casters(hash_bytes(hash_bytes(instanced, &atlas.value, 4), vp.m, sizeof vp.m), casters);
+            key = hash_bytes(key, lights.shadow_tiles[c], 3 * sizeof(lsd::f32));
+            if (skinned_in_view(world, skip_hidden, vp)) key = 0;
+            if (key && key == cascade_keys[c]) {
+                casters.clear();
+                ++g_shadow_tiles_cached;
+                continue;
+            }
+            cascade_keys[c] = key;
+            device.clear_shadow_viewport();
+        }
+        draw_casters(device, vp, casters);
+        draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f, eye);
+        draw_instanced_casters(device, vp, world, meshes, skip_hidden);
+    }
+    device.end_shadow_pass();
 }
 
 // Spot / point light shadow tiles: the meshes that reach into each light's range.

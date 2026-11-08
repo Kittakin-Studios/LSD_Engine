@@ -2038,7 +2038,9 @@ in the project folder, the splash too).
 - **Shadow caching** (Unreal's cached shadow maps, on by default; `r.ShadowCaching 0` turns it off):
   a Point or Spot Light's shadow is drawn once and kept while nothing it shows moves, so a room of
   static lights costs nothing per frame. Moving a mesh, the light or an Instanced Static Mesh redraws
-  it the next frame; a Skeletal Mesh within the light's reach redraws it every frame. Local light
+  it the next frame; a Skeletal Mesh within the light's reach redraws it every frame. The sun's cascades
+  are kept the same way while the camera stands still (or moves less than a shadow texel) and nothing
+  in them moves. Local light
   shadows need Shadows quality High or Epic. `stat dump` shows how many tiles were kept.
 - **stat unit** (console): frame rate, game / render / UI CPU time, draw calls, triangles, culled
   meshes, memory. **stat audio**: playing sounds.
