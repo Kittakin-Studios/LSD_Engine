@@ -183,7 +183,7 @@ Select. `presets_folder` changes where the presets come from.
 | ![File menu](images/menu_file.jpg) | **File**: new / open / save levels, recent levels, Validate Assets, Import, Package Project. |
 | ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
 | ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console. |
-| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Validate Assets, Package Project. |
+| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Build Release Engine, Validate Assets, Package Project. |
 | ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic), and per group: Shadows, Post Processing, View Distance, Effects. |
 | ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
 
@@ -1973,9 +1973,13 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 1. **Edit > Project Settings**: project name, company, **Game Default Level**, icon, splash, Steam App ID.
 2. Build the Release engine once: `cmake --build --preset windows-msvc --config Release` (it also
    refreshes `lsd_editor.exe` in the project folder).
-3. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
+3. **Build > Build Release Engine** first if the editor says so (the package copies the Release engine, which
+   runs without Visual Studio): it builds it from the engine's source with CMake in the background, the
+   status bar shows the progress, `Saved/Logs/ReleaseBuild.log` the whole output. Close any running copy of
+   the root `lsd_editor.exe` first (the build replaces it).
+4. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
-4. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
+5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
 
 **Cooking** (Unreal's cook): tick **Project Settings > Packaging > Cook Used Assets Only** and the

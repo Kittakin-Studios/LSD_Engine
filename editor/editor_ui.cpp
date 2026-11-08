@@ -5341,6 +5341,10 @@ void draw_menu_bar(EditorState& s) {
         if (with_tip(ImGui::MenuItem("Build Reflection Captures"), "Captures what each Reflection Capture sees again (after moving things)")) s.capture_reflections = true;
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
         if (ImGui::MenuItem("Build Navigation", command_text(Command::ToggleNavigation))) s.show_navigation = true;  // the navmesh rebuilds while it is shown
+        if (with_tip(ImGui::MenuItem("Build Release Engine"), "Builds the Release engine Package Project copies (it runs on PCs without Visual Studio), from the engine's source with CMake; the menu bar shows its progress")) {
+            start_release_build(s.status, sizeof s.status);
+            LSD_LOG_INFO("editor", "%s", s.status);
+        }
         ImGui::SetItemTooltip("Builds and shows the navmesh (it keeps rebuilding while shown)");
         if (with_tip(ImGui::MenuItem("Validate Assets"), "Checks every asset for problems and lists them in the Message Log")) {
             const u32 n = validate_assets(s.project, *s.registry);

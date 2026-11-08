@@ -16,6 +16,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <thread>
+#include <mutex>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -218,6 +221,112 @@ struct VersionNode {
         finish(at);
     }
 };
+
+#endif  // _WIN32 (Build Release Engine below is on every platform)
+
+namespace {
+// The build's thread; quitting while it runs lets it finish on its own (a std::thread still joinable at exit would abort).
+struct ReleaseThread {
+    std::thread thread;
+    ~ReleaseThread() {
+        if (thread.joinable()) thread.detach();
+    }
+} g_release;
+std::thread& g_release_thread = g_release.thread;
+std::mutex g_release_mutex;
+std::string g_release_line;
+std::atomic<bool> g_release_running{false}, g_release_finished{false}, g_release_ok{false};
+
+#ifdef _WIN32
+// The engine's source tree: the first folder above the running exe with CMakePresets.json and engine/.
+bool engine_source(fs::path& out) {
+    std::error_code error;
+    for (fs::path p = fs::current_path(error); !p.empty(); p = p.parent_path()) {
+        if (fs::exists(p / "CMakePresets.json", error) && fs::exists(p / "engine", error)) {
+            out = p;
+            return true;
+        }
+        if (p == p.parent_path()) break;
+    }
+    return false;
+}
+#endif
+} // namespace
+
+} // namespace (reopened below)
+
+bool start_release_build(char* message, usize capacity) {
+    if (g_release_running) {
+        std::snprintf(message, capacity, "The Release build is already running");
+        return false;
+    }
+#ifdef _WIN32
+    fs::path source;
+    if (!engine_source(source)) {
+        std::snprintf(message, capacity, "No engine source tree above this folder (CMakePresets.json): build Release with CMake where the source is");
+        return false;
+    }
+    // Visual Studio's environment through vswhere (the installer always puts it here), as a developer prompt would.
+    std::string vs;
+    const char* program_files = std::getenv("ProgramFiles(x86)");
+    const std::string vswhere = std::string(program_files ? program_files : "C:\\Program Files (x86)") + "\\Microsoft Visual Studio\\Installer\\vswhere.exe";
+    // cmd /c drops the first and last quote of a line that starts with one: the whole line goes in one more pair.
+    const std::string find_vs = "\"\"" + vswhere + "\" -latest -property installationPath\"";
+    if (FILE* p = _popen(find_vs.c_str(), "r")) {
+        char line[512];
+        if (std::fgets(line, sizeof line, p)) vs = line;
+        _pclose(p);
+    }
+    while (!vs.empty() && (vs.back() == '\n' || vs.back() == '\r')) vs.pop_back();
+    const fs::path vcvars = fs::path(vs) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat";
+    std::error_code error;
+    if (vs.empty() || !fs::exists(vcvars, error)) {
+        std::snprintf(message, capacity, "Visual Studio (with C++) was not found: install it, or build Release with CMake by hand");
+        return false;
+    }
+    if (g_release_thread.joinable()) g_release_thread.join();
+    g_release_running = true;
+    g_release_finished = false;
+    fs::create_directories("Saved/Logs", error);
+    const std::string command = "cmd /s /c \"\"" + vcvars.string() + "\" >nul 2>nul && cd /d \"" + source.string() +
+                                "\" && cmake --build --preset windows-msvc --config Release 2>&1\"";
+    g_release_thread = std::thread([command] {
+        std::FILE* log = std::fopen("Saved/Logs/ReleaseBuild.log", "wb");
+        bool ok = false;
+        if (FILE* p = _popen(command.c_str(), "r")) {
+            char line[1024];
+            while (std::fgets(line, sizeof line, p)) {
+                if (log) std::fputs(line, log);
+                std::lock_guard<std::mutex> lock(g_release_mutex);
+                g_release_line = line;
+                while (!g_release_line.empty() && (g_release_line.back() == '\n' || g_release_line.back() == '\r')) g_release_line.pop_back();
+            }
+            ok = _pclose(p) == 0;
+        }
+        if (log) std::fclose(log);
+        g_release_ok = ok;
+        g_release_finished = true;
+        g_release_running = false;
+    });
+    std::snprintf(message, capacity, "Building the Release engine in %s (Saved/Logs/ReleaseBuild.log)", source.generic_string().c_str());
+    return true;
+#else
+    std::snprintf(message, capacity, "Build Release with CMake (cmake --build --preset linux-clang --config Release)");
+    return false;
+#endif
+}
+
+bool release_build_running(char* line, usize capacity, bool& finished, bool& ok) {
+    finished = g_release_finished.exchange(false);
+    ok = g_release_ok;
+    if (finished && g_release_thread.joinable()) g_release_thread.join();
+    std::lock_guard<std::mutex> lock(g_release_mutex);
+    std::snprintf(line, capacity, "%s", g_release_line.c_str());
+    return g_release_running;
+}
+
+namespace {
+#ifdef _WIN32
 
 // The project's icon and file details written into the packaged exe's resources.
 void brand_exe(const ProjectSettings& project, const asset::AssetRegistry& registry, const fs::path& exe_path) {
@@ -441,8 +550,8 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     char validated[64] = "";
     if (problems) std::snprintf(validated, sizeof validated, " (%u asset problem%s: see the Message Log)", problems, problems == 1 ? "" : "s");
     std::snprintf(message, capacity, "Packaged %s%s%s", out.generic_string().c_str(), validated,
-                  !release ? " (Debug build: other PCs need Visual Studio; build Release first: cmake --build --preset windows-msvc --config Release)"
-                  : stale  ? " (the Release build is older than this editor: rebuild it for the latest engine)"
+                  !release ? " (Debug build: other PCs need Visual Studio; build Release first: Build > Build Release Engine)"
+                  : stale  ? " (the Release build is older than this editor: Build > Build Release Engine for the latest engine)"
                            : "");
     LSD_LOG_INFO("editor", "%s", message);
     return true;

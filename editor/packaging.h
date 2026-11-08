@@ -29,6 +29,15 @@ constexpr char kGameMarker[] = "game.json";
 SDL_Window* open_splash();
 void close_splash(SDL_Window* splash);
 
+// Build > Build Release Engine: the Release build packaging copies, made from the engine's own source tree
+// (found above the running exe: CMakePresets.json) with `cmake --build --preset windows-msvc --config Release`,
+// on a background thread; output in Saved/Logs/ReleaseBuild.log. False with the reason when it cannot start
+// (no source tree, no Visual Studio, one already running).
+bool start_release_build(char* message, usize capacity);
+// While one runs: true, `line` the build's latest output line. Once done: false, and `finished` / `ok` say how it went
+// (reported once: the next call returns finished = false).
+bool release_build_running(char* line, usize capacity, bool& finished, bool& ok);
+
 // Writes the package; false with the reason in `message` (also the output folder on success).
 // Validates the assets first (problems go to the Message Log; they do not stop the package).
 bool package_project(const ProjectSettings& project, const asset::AssetRegistry& registry, char* message, usize capacity);

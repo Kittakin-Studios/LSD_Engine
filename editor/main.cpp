@@ -1295,6 +1295,11 @@ void register_console(EditorState& s) {
         const lsd::u32 n = lsd::editor::validate_assets(st.project, *st.registry);
         std::snprintf(st.status, sizeof st.status, "Asset validation: %u problem%s (Message Log)", n, n == 1 ? "" : "s");
     }, &s, "Validate Assets: missing references, oversize textures, naming");
+    console::add_command("BuildRelease", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::editor::start_release_build(st.status, sizeof st.status);
+        lsd::editor::remote::print(st.status);
+    }, &s, "Build > Build Release Engine: the Release build Package Project copies, with CMake in the background");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
     console::add_command("debug.Crash", [](void*, const char* args) {  // tests the crash reporter
@@ -2553,6 +2558,17 @@ int main(int argc, char** argv) {
         if (state.package_requested) {
             state.package_requested = false;
             lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
+        }
+        {  // Build > Build Release Engine: its latest output line in the status bar while it runs, the result once
+            char line[200];
+            bool finished = false, ok = false;
+            if (lsd::editor::release_build_running(line, sizeof line, finished, ok)) {
+                std::snprintf(state.status, sizeof state.status, "Building Release: %s", line);
+            } else if (finished) {
+                std::snprintf(state.status, sizeof state.status, ok ? "Release engine built: Package Project uses it" : "The Release build failed: see Saved/Logs/ReleaseBuild.log");
+                if (ok) LSD_LOG_INFO("editor", "%s", state.status);
+                else LSD_LOG_ERROR("editor", "%s", state.status);
+            }
         }
         // Import Materials and Textures: one material's textures a frame, so the editor keeps drawing (progress in the menu bar).
         lsd::editor::update_mesh_materials(registry, state.status, sizeof state.status, state.material_import_progress, state.material_import_label,
