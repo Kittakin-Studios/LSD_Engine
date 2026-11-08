@@ -928,7 +928,7 @@ from a pin to wire. The preview on the right (sphere or cube) updates 0.3 s afte
 | Utility | Break Vector, Make Vector |
 | Functions | Material Function (calls another graph by name, with A / B / C inputs), Function Input, Function Output |
 
-Numbers and colours connect freely (a number becomes a grey colour). Up to 3 textures and 16
+Numbers and colours connect freely (a number becomes a grey colour). Up to 4 textures and 16
 parameters per material. **Save** to update the level. A Material Instance whose parent is a graph
 lists the graph's parameters (button **Add the graph's parameters**) to set per instance.
 
@@ -937,7 +937,7 @@ node): Content Browser right-click > **New Shader** makes `SH_New.hlsl`; double-
 code editor, and saving recompiles it. It writes the function a Material Graph compiles to:
 
 ```hlsl
-// texture: T_Rock color        (color, normal or data: lsd_tex0, lsd_tex1, lsd_tex2 in this order)
+// texture: T_Rock color        (color, normal or data: lsd_tex0 .. lsd_tex3 in this order)
 // param: Tint 1, 0.45, 0.2     (lsd_params[0]; Material Instances change it by name)
 // param: Pulse 2               (lsd_params[1].x)
 // blend: translucent           (optional: masked, translucent, additive)

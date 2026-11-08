@@ -528,6 +528,7 @@ vec3 lsd_v3(float x) { return vec3(x); }
 vec4 lsd_tex0(vec3 uv) { return texture(base_tex, uv.xy); }
 vec4 lsd_tex1(vec3 uv) { return texture(normal_tex, uv.xy); }
 vec4 lsd_tex2(vec3 uv) { return texture(orm_tex, uv.xy); }
+vec4 lsd_tex3(vec3 uv) { return texture(emissive_tex, uv.xy); }
 layout(std140, binding = 3) uniform MaterialParams { vec4 lsd_params[16]; };
 )";
 

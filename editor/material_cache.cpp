@@ -321,7 +321,7 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
         draw.material_shader = graph->shader;
         draw.material_params = &e->params[0][0];
         draw.material_param_count = e->param_count;
-        rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
+        rhi::TextureHandle* slots[4] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture, &draw.emissive_texture};
         for (u32 i = 0; i < graph->texture_count; ++i) {
             *slots[i] = graph->texture_guids[i][0] ? textures_.get(graph->texture_guids[i], graph->texture_srgb[i]) : rhi::TextureHandle{};
         }

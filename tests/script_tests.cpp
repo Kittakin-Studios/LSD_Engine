@@ -1101,6 +1101,11 @@ static void test_material_graph() {
     CHECK(code.param_count == 2 && code.params[0].vector && code.params[0].value[2] == 0.25f && !code.params[1].vector && code.params[1].value[1] == 2.0f);
     CHECK(code.blend_mode == 2 && std::strcmp(code.code.data(), shader) == 0);
     CHECK(!parse_shader_source("float4 main() { return 1; }", code, error, sizeof error) && std::strstr(error, "material_main"));
+    // Four textures fit (the fourth in the emissive slot); a fifth does not.
+    CHECK(parse_shader_source("// texture: A color\n// texture: B normal\n// texture: C data\n// texture: D color\nSurface material_main(MaterialIn mi) { Surface s; return s; }\n",
+                              code, error, sizeof error) && code.texture_count == 4);
+    CHECK(!parse_shader_source("// texture: A color\n// texture: B color\n// texture: C color\n// texture: D color\n// texture: E color\nSurface material_main(MaterialIn mi) { Surface s; return s; }\n",
+                               code, error, sizeof error) && std::strstr(error, "More than 4"));
 }
 
 static void test_data_table() {

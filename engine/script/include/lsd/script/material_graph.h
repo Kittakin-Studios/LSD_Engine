@@ -12,7 +12,7 @@
 namespace lsd::script {
 
 constexpr char kMaterialGraphExtension[] = ".lsdmatgraph";
-constexpr u32 kMaxMaterialTextures = 3;  // the lit-mesh shader's three texture slots
+constexpr u32 kMaxMaterialTextures = 4;  // the lit-mesh shader's texture slots: base colour, normal, ORM and emissive (t0 t1 t2 t8)
 constexpr u32 kMaxMaterialParams = 16;   // rhi::kMaxMaterialParams
 
 struct MaterialTextureSlot {

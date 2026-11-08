@@ -133,8 +133,8 @@ struct MeshDraw {
     const f32* joint_rows = nullptr;
     u32 joint_count = 0;
     // Material Graph: when valid, its code shades the surface (colour is a tint on its base colour;
-    // metallic / roughness / emissive above are unused) and base_color / normal / orm_texture are its
-    // textures 0 / 1 / 2. `time` feeds its Time node.
+    // metallic / roughness / emissive above are unused) and base_color / normal / orm / emissive_texture are its
+    // textures 0 / 1 / 2 / 3. `time` feeds its Time node.
     MaterialShaderHandle material_shader;
     f32 time = 0.0f;
     const f32* material_params = nullptr;  // its parameters, 4 floats each (copied; unset ones are 0)

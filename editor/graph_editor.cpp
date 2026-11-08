@@ -80,8 +80,8 @@ struct GraphWindow {
     rhi::Device* device = nullptr;
     rhi::MaterialShaderHandle preview_shader;
     rhi::TextureHandle preview_target;
-    char preview_textures[3][33] = {};
-    bool preview_srgb[3] = {};
+    char preview_textures[4][33] = {};
+    bool preview_srgb[4] = {};
     u32 preview_texture_count = 0;
     f32 preview_params[16][4] = {};
     u32 preview_param_count = 0;
@@ -1063,7 +1063,7 @@ void render_graph_preview(EditorState& s, const f32 background[4]) {
     draw.time = time;
     draw.material_params = &w.preview_params[0][0];  // parameters at their defaults
     draw.material_param_count = w.preview_param_count;
-    rhi::TextureHandle* slots[3] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture};
+    rhi::TextureHandle* slots[4] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture, &draw.emissive_texture};
     for (u32 i = 0; i < w.preview_texture_count; ++i) *slots[i] = w.preview_textures[i][0] && s.textures ? s.textures->get(w.preview_textures[i], w.preview_srgb[i]) : rhi::TextureHandle{};
     device.draw_mesh(draw);
     device.set_render_target({}, nullptr);

@@ -112,7 +112,7 @@ struct Compiler {
         for (slot = 0; slot < out.texture_count; ++slot) {
             if (std::strcmp(out.textures[slot].name, node.values[1]) == 0 && out.textures[slot].srgb == srgb) return true;
         }
-        if (out.texture_count == kMaxMaterialTextures) return fail("More than 3 different textures in one material", &node);
+        if (out.texture_count == kMaxMaterialTextures) return fail("More than 4 different textures in one material", &node);
         std::snprintf(out.textures[slot].name, sizeof out.textures[slot].name, "%s", node.values[1]);
         out.textures[slot].srgb = srgb;
         ++out.texture_count;
@@ -213,7 +213,7 @@ bool parse_shader_source(const char* text, MaterialCode& out, char* error, usize
             char name[64] = "", kind[16] = "color";
             if (std::sscanf(l.c_str() + tex + 11, " %63s %15s", name, kind) < 1) continue;
             if (out.texture_count == kMaxMaterialTextures) {
-                std::snprintf(error, error_capacity, "More than 3 textures in one shader");
+                std::snprintf(error, error_capacity, "More than 4 textures in one shader");
                 return false;
             }
             MaterialTextureSlot& t = out.textures[out.texture_count++];

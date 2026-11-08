@@ -105,9 +105,9 @@ private:
         i64 parent_modified;
         bool failed;
         rhi::MaterialShaderHandle shader;  // Material Graphs
-        char textures[3][64];              // their texture asset names, and the GUIDs found for them
-        char texture_guids[3][33];
-        bool texture_srgb[3];
+        char textures[4][64];              // their texture asset names, and the GUIDs found for them
+        char texture_guids[4][33];
+        bool texture_srgb[4];
         u32 texture_count;
         u32 blend_mode;  // a graph's Material Output Blend Mode
         // Graphs: their parameters' defaults; instances of a graph: those with the instance's values.

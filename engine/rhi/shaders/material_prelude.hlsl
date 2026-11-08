@@ -7,4 +7,5 @@ float3 lsd_v3(float x) { return float3(x, x, x); }
 float4 lsd_tex0(float3 uv) { return base_tex.Sample(samp, uv.xy); }
 float4 lsd_tex1(float3 uv) { return normal_tex.Sample(samp, uv.xy); }
 float4 lsd_tex2(float3 uv) { return orm_tex.Sample(samp, uv.xy); }
+float4 lsd_tex3(float3 uv) { return emissive_tex.Sample(samp, uv.xy); }  // the emissive slot (a graph has no emissive map of its own)
 VK_BIND(2, 2) cbuffer MaterialParams : register(b3) { float4 lsd_params[16]; };
