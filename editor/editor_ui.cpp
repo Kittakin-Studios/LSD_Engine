@@ -3965,6 +3965,61 @@ void request_save(EditorState& s, bool save_as) {
     g_open_save_as = true;
 }
 
+// Window > Audio Mixer (Unreal's submix graph with meters): every Sound Class from Master down, the
+// Submix effects it runs through on the way to its parent, and how loud it is right now.
+void draw_audio_mixer(EditorState& s) {
+    if (!s.show_audio_mixer) return;
+    ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Audio Mixer", &s.show_audio_mixer)) {
+        ImGui::End();
+        return;
+    }
+    audio::AudioSystem* a = s.sounds ? s.sounds->audio() : nullptr;
+    if (!a || !a->class_count()) {
+        ImGui::TextDisabled("No audio (started with -nosound, or no device).");
+        ImGui::End();
+        return;
+    }
+    static f32 shown[audio::AudioSystem::kMaxClasses] = {};  // the meters fall back slowly, like a VU's
+    static const char* const kEffects[] = {"Reverb", "Low Pass", "High Pass", "EQ Band", "Echo", "Compressor"};
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Each Sound Class, the Submix effects it goes through, and its level (after its volume, before its effects).");
+    ImGui::PopStyleColor();
+    const u32 count = a->class_count();
+    auto row = [&](auto&& self, u32 c, int depth) -> void {
+        const f32 peak = a->take_class_peak(c);
+        shown[c] = std::fmax(peak, shown[c] * 0.9f);
+        ImGui::Indent(static_cast<f32>(depth) * 16.0f);
+        ImGui::TextUnformatted(a->class_name(c));
+        ImGui::SameLine(200.0f);
+        const f32 db = 20.0f * std::log10(std::fmax(shown[c], 1e-4f));
+        const f32 fill = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);  // -60 dB .. 0 dB
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, db > -1.0f ? ImVec4(0.9f, 0.25f, 0.2f, 1) : db > -12.0f ? ImVec4(0.95f, 0.8f, 0.2f, 1) : ImVec4(0.35f, 0.85f, 0.35f, 1));
+        char label[32];
+        std::snprintf(label, sizeof label, shown[c] > 1e-4f ? "%.0f dB" : "-inf", static_cast<f64>(db));
+        ImGui::ProgressBar(fill, ImVec2(160.0f, 0.0f), label);
+        ImGui::PopStyleColor();
+        ImGui::SetItemTooltip("Peak level of %s: green is comfortable, yellow loud, red at or over full scale (clipping)", a->class_name(c));
+        if (const u32 effects = a->class_effect_count(c)) {
+            std::string chain = "-> ";
+            for (u32 k = 0; k < effects; ++k) {
+                const u32 type = a->class_effect_type(c, k);
+                chain += type < 6 ? kEffects[type] : "?";
+                chain += " -> ";
+            }
+            chain += a->class_name(a->class_parent(c));
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", chain.c_str());
+        }
+        ImGui::Unindent(static_cast<f32>(depth) * 16.0f);
+        for (u32 k = 1; k < count; ++k) {
+            if (k != c && a->class_parent(k) == c) self(self, k, depth + 1);
+        }
+    };
+    row(row, 0, 0);
+    ImGui::End();
+}
+
 // Window > Memory (Unreal's memreport / stat memory): every allocator, the process and the GPU.
 void draw_memory_window(EditorState& s) {
     if (!s.show_memory) return;
@@ -5339,6 +5394,7 @@ void draw_menu_bar(EditorState& s) {
         with_tip(ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings), "This level's settings: gravity, Kill Z, Game Mode, Level Script, navigation");
         with_tip(ImGui::MenuItem("Message Log", nullptr, &s.show_message_log), "Warnings and errors from imports, validation and packaging");
         with_tip(ImGui::MenuItem("Memory", nullptr, &s.show_memory), "Memory used: RAM, video memory and each allocator");
+        with_tip(ImGui::MenuItem("Audio Mixer", nullptr, &s.show_audio_mixer), "The Sound Classes with their Submix effects and live level meters (Unreal's submix graph)");
         if (with_tip(ImGui::BeginMenu("Viewports"), "2D, 2.5D and 3D views of the level, side by side (a 2D game previewed in 3D)")) {
             const u32 kinds = s.settings.viewport_kinds ? s.settings.viewport_kinds : kViewport3D;
             const struct {
@@ -5978,6 +6034,7 @@ void draw_editor(EditorState& s) {
     debugger::draw_window(s, &s.show_debugger);
     assistant::draw_window(s, &s.show_assistant);
     draw_memory_window(s);
+    draw_audio_mixer(s);
     draw_ui_editor(s);
     took(4);
     handle_shortcuts(s);

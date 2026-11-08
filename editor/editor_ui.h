@@ -67,6 +67,7 @@ struct EditorState {
     bool show_preferences = false;
     bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
     bool show_audio_stats = false;  // `stat audio`: active voices
+    bool show_audio_mixer = false;  // Window > Audio Mixer: the Sound Class / Submix graph with live meters
     bool view_mode_unlit_or_wire() const { return (!playing || ejected) && view_mode != ViewMode::Lit && view_mode != ViewMode::LightingOnly; }  // no shadows, sky or post
     class SoundPlayer* sounds = nullptr;  // set by main.cpp
     u32 preview_voice = 0;  // Content Browser sound preview

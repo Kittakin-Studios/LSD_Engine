@@ -1587,6 +1587,9 @@ Stream and Looping in their import settings.
   the class and its children, for pause menus and underwater), **Attenuation**, **Concurrency**.
   **Project Settings > Audio > Base Sound Mix** is pushed whenever the game starts (Unreal's Base
   Sound Mix).
+- **Window > Audio Mixer** (Unreal's submix graph with meters; `show.AudioMixer 1`): every Sound Class
+  under Master, the Submix effects it runs through on the way to its parent, and a live peak meter in
+  dB (green, yellow when loud, red at full scale: clipping). Leave it open while playing to balance the mix.
 - **Audio Volume**: reverb while the listener is inside; sounds through its walls are muffled.
   Where volumes overlap, the higher **Priority** wins (a small room inside a big cave).
 - **Occlusion** (Sound Attenuation > Occlusion, Unreal's Enable Occlusion): a sound with it on is

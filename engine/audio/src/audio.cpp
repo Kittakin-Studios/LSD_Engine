@@ -6,6 +6,7 @@
 #include <miniaudio.h>
 #include <extras/nodes/ma_reverb_node/ma_reverb_node.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -45,6 +46,28 @@ void compressor_process(ma_node* node, const float** in, ma_uint32* in_frames, f
 
 ma_node_vtable g_compressor_vtable = {compressor_process, nullptr, 1, 1, 0};
 
+// A meter: passes the sound through and keeps the loudest sample since the editor last read it.
+struct MeterNode {
+    ma_node_base base;
+    std::atomic<f32> peak{0.0f};
+};
+
+void meter_process(ma_node* node, const float** in, ma_uint32* in_frames, float** out, ma_uint32* out_frames) {
+    auto& m = *static_cast<MeterNode*>(node);
+    const ma_uint32 frames = *out_frames < *in_frames ? *out_frames : *in_frames;
+    f32 peak = 0.0f;
+    for (ma_uint32 i = 0; i < frames * 2; ++i) {
+        out[0][i] = in[0][i];
+        peak = std::fmax(peak, std::fabs(in[0][i]));
+    }
+    f32 seen = m.peak.load(std::memory_order_relaxed);
+    while (peak > seen && !m.peak.compare_exchange_weak(seen, peak, std::memory_order_relaxed)) {
+    }
+    *out_frames = frames;
+}
+
+ma_node_vtable g_meter_vtable = {meter_process, nullptr, 1, 1, 0};
+
 // ma_reverb_node_init ignores its config's levels, and verblib starts with no dry signal: set them here.
 // verblib scales dry by 2, so 0.5 passes the sound through unchanged.
 void set_reverb(verblib& reverb, f32 amount, f32 room_size) {
@@ -72,6 +95,24 @@ struct AudioSystem::Impl {
         u32 count;
     };
     Chain chains[kMaxClasses];  // a class's Submix
+    MeterNode* meters[kMaxClasses] = {};  // after each class (and Master): the mixer window's meters
+    MeterNode* make_meter() {
+        auto* m = new MeterNode();
+        ma_node_config c = ma_node_config_init();
+        c.vtable = &g_meter_vtable;
+        const ma_uint32 channels[1] = {2};
+        c.pInputChannels = channels;
+        c.pOutputChannels = channels;
+        if (ma_node_init(ma_engine_get_node_graph(&engine), &c, nullptr, &m->base) == MA_SUCCESS) return m;
+        delete m;
+        return nullptr;
+    }
+    void destroy_meter(u32 i) {
+        if (!meters[i]) return;
+        ma_node_uninit(&meters[i]->base, nullptr);
+        delete meters[i];
+        meters[i] = nullptr;
+    }
     char class_names[kMaxClasses][32];
     f32 class_volume[kMaxClasses];  // as set, before mixes
     u32 class_parent[kMaxClasses];  // 0 (Master) for top-level classes
@@ -218,6 +259,7 @@ struct AudioSystem::Impl {
     void release_classes() {
         for (u32 i = 1; i < class_count; ++i) ma_sound_group_uninit(&groups[i]);
         for (u32 i = 1; i < class_count; ++i) {
+            destroy_meter(i);
             for (u32 k = 0; k < chains[i].count; ++k) destroy_effect(chains[i].effects[k]);
             chains[i].count = 0;
         }
@@ -269,7 +311,13 @@ bool AudioSystem::init(bool use_device) {
     const ma_reverb_node_config reverb = ma_reverb_node_config_init(2, ma_engine_get_sample_rate(&impl_->engine));
     ma_reverb_node_init(ma_engine_get_node_graph(&impl_->engine), &reverb, nullptr, &impl_->environment);
     set_reverb(impl_->environment.reverb, 0.0f, 0.5f);
-    ma_node_attach_output_bus(&impl_->master, 0, &impl_->environment, 0);
+    impl_->meters[0] = impl_->make_meter();  // master -> meter -> environment
+    if (impl_->meters[0]) {
+        ma_node_attach_output_bus(&impl_->master, 0, &impl_->meters[0]->base, 0);
+        ma_node_attach_output_bus(&impl_->meters[0]->base, 0, &impl_->environment, 0);
+    } else {
+        ma_node_attach_output_bus(&impl_->master, 0, &impl_->environment, 0);
+    }
     ma_node_attach_output_bus(&impl_->environment, 0, ma_engine_get_endpoint(&impl_->engine), 0);
     impl_->voices = new Impl::Voice[kMaxVoices]();
     impl_->class_count = 1;
@@ -288,6 +336,7 @@ void AudioSystem::shutdown() {
     impl_->release_classes();
     impl_->class_count = 0;
     ma_sound_group_uninit(&impl_->master);
+    impl_->destroy_meter(0);
     ma_reverb_node_uninit(&impl_->environment, nullptr);
     delete[] impl_->voices;
     impl_->voices = nullptr;
@@ -303,10 +352,15 @@ u32 AudioSystem::add_class(const char* name, u32 parent, f32 volume, f32 pitch, 
     const u32 index = m.class_count;
     ma_sound_group* parent_group = parent > 0 && parent < index ? &m.groups[parent] : &m.master;
     if (ma_sound_group_init(&m.engine, 0, parent_group, &m.groups[index]) != MA_SUCCESS) return kMasterClass;
-    // Submix: class -> effect -> effect -> ... -> parent.
+    // Submix: class -> meter -> effect -> effect -> ... -> parent.
     Impl::Chain& chain = m.chains[index];
     chain.count = 0;
     ma_node* previous = &m.groups[index];
+    m.meters[index] = m.make_meter();
+    if (m.meters[index]) {
+        ma_node_attach_output_bus(previous, 0, &m.meters[index]->base, 0);
+        previous = &m.meters[index]->base;
+    }
     for (u32 i = 0; i < effect_count && chain.count < 8; ++i) {
         void* node = m.create_effect(effects[i]);
         if (!node) continue;
@@ -314,10 +368,8 @@ u32 AudioSystem::add_class(const char* name, u32 parent, f32 volume, f32 pitch, 
         ma_node_attach_output_bus(previous, 0, static_cast<ma_node*>(node), 0);
         previous = static_cast<ma_node*>(node);
     }
-    if (chain.count) {
-        ma_node_attach_output_bus(previous, 0, parent_group, 0);
-        ma_node_set_output_bus_volume(previous, 0, submix_volume);
-    }
+    if (previous != &m.groups[index]) ma_node_attach_output_bus(previous, 0, parent_group, 0);  // the chain's (or the meter's) end
+    if (chain.count) ma_node_set_output_bus_volume(previous, 0, submix_volume);
     ma_sound_group_set_volume(&impl_->groups[index], volume);
     ma_sound_group_set_pitch(&impl_->groups[index], pitch);
     impl_->class_volume[index] = volume;
@@ -342,6 +394,15 @@ void apply_class_volume(ma_engine& engine, ma_sound_group* groups, u32 sound_cla
 } // namespace
 
 u32 AudioSystem::class_count() const { return impl_->class_count; }
+u32 AudioSystem::class_parent(u32 sound_class) const { return sound_class > 0 && sound_class < impl_->class_count ? impl_->class_parent[sound_class] : 0; }
+u32 AudioSystem::class_effect_count(u32 sound_class) const { return sound_class > 0 && sound_class < impl_->class_count ? impl_->chains[sound_class].count : 0; }
+u32 AudioSystem::class_effect_type(u32 sound_class, u32 effect) const {
+    return effect < class_effect_count(sound_class) ? impl_->chains[sound_class].effects[effect].type : 0;
+}
+f32 AudioSystem::take_class_peak(u32 sound_class) {
+    if (sound_class >= impl_->class_count || !impl_->meters[sound_class]) return 0.0f;
+    return impl_->meters[sound_class]->peak.exchange(0.0f, std::memory_order_relaxed);
+}
 const char* AudioSystem::class_name(u32 sound_class) const { return sound_class < impl_->class_count ? impl_->class_names[sound_class] : ""; }
 
 void AudioSystem::reset_classes() {

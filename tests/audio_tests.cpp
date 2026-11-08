@@ -47,8 +47,29 @@ static f32 loudness(AudioSystem& a, u32 frames = 4800) {
     return got ? static_cast<f32>(std::sqrt(sum / (got * 2))) : 0.0f;
 }
 
+// The meters: a sound through a class shows on its meter and on Master's; reading resets them.
+static void test_meters() {
+    AudioSystem a;
+    CHECK(a.init(false));
+    SubmixEffect lowpass;
+    lowpass.type = 1;
+    lowpass.frequency = 2000.0f;
+    const u32 sfx = a.add_class("SFX", 0, 1.0f, 1.0f, &lowpass, 1);
+    CHECK(sfx == 1 && a.class_parent(sfx) == 0 && a.class_effect_count(sfx) == 1 && a.class_effect_type(sfx, 0) == 1);
+    PlayDesc d;
+    d.path = kTone;
+    d.sound_class = sfx;
+    CHECK(a.play(d) != 0);
+    loudness(a);
+    const f32 class_peak = a.take_class_peak(sfx), master_peak = a.take_class_peak(0);
+    CHECK(class_peak > 0.3f && class_peak < 0.7f && master_peak > 0.05f);  // the tone peaks near 0.49; Master hears it after the low-pass
+    CHECK(a.take_class_peak(sfx) == 0.0f);                                  // read: reset
+    a.shutdown();
+}
+
 int main() {
     write_tone();
+    test_meters();
     AudioSystem a;
     CHECK(a.init(false) && !a.has_device());
     CHECK(loudness(a) == 0.0f);  // nothing playing: silence

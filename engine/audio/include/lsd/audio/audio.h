@@ -64,6 +64,13 @@ public:
     void set_class_volume(u32 sound_class, f32 volume);  // settings sliders and mixes
     u32 class_count() const;
     const char* class_name(u32 sound_class) const;
+    u32 class_parent(u32 sound_class) const;  // 0 (Master) for top-level classes and Master itself
+    // Its Submix chain: how many effects and each one's SubmixEffect::type (the mixer window's graph).
+    u32 class_effect_count(u32 sound_class) const;
+    u32 class_effect_type(u32 sound_class, u32 effect) const;
+    // Live meter (Unreal's submix meters): the loudest sample through the class since the last call
+    // (0..1+, after its volume, before its effects); Master: everything heard. Resets it.
+    f32 take_class_peak(u32 sound_class);
     void reset_classes();  // back to only Master (stops every voice)
 
     u32 add_concurrency(u32 max_voices, u32 when_full);
