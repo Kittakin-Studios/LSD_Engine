@@ -2051,7 +2051,8 @@ in the project folder, the splash too).
   character far away holds a small copy of its 4K maps and gets them sharp again as you walk up (about
   half a second later). Textures only far objects use go smaller and free their memory. The Quality
   setting scales it (Low a quarter of the detail .. Epic double). `stat dump` lists the textures on the
-  GPU, how many are streamed down and the texels they hold.
+  GPU, how many are streamed down and the texels they hold. When video memory runs short while playing
+  (over 90% of what the system allows), the detail halves until it fits, and comes back when there is room.
 - **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static and skeletal meshes, and each copy of an Instanced Static Mesh, hidden
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`

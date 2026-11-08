@@ -206,7 +206,7 @@ u32 TextureCache::streaming() const {
 
 rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_map, u32 want) {
     if (!guid || !guid[0]) return {};
-    if (want != kFull) want = static_cast<u32>(static_cast<f32>(want) * detail_scale_);
+    if (want != kFull) want = static_cast<u32>(static_cast<f32>(want) * detail_scale_ * memory_scale_);
     const u32 use = srgb ? 1u : normal_map ? 2u : 0u;
     const i64 slot = index_.find(guid, use, [&](u32 i) {
         return entries_[i].srgb == srgb && entries_[i].normal_map == normal_map && std::strcmp(entries_[i].guid, guid) == 0;

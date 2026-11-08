@@ -2526,6 +2526,23 @@ int main(int argc, char** argv) {
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
         texture_cache->stream = g_texture_streaming;
         texture_cache->update();  // streamed textures the worker finished go on the GPU
+        {  // Video memory while running: near the budget the streamed detail halves (down to an eighth), with room it comes back
+            static lsd::u64 last_check = 0;
+            if (SDL_GetTicks() - last_check > 2000) {
+                last_check = SDL_GetTicks();
+                const lsd::rhi::MemoryBudget mem = device->query_memory_budget();
+                const lsd::u64 budget = vram_arg > 0 ? static_cast<lsd::u64>(vram_arg) * 1024ull * 1024ull : mem.budget_bytes;
+                if (budget && mem.usage_bytes) {
+                    const double used = static_cast<double>(mem.usage_bytes) / static_cast<double>(budget);
+                    const lsd::f32 scale = texture_cache->memory_scale();
+                    const lsd::f32 next = used > 0.9 ? std::max(scale * 0.5f, 0.125f) : used < 0.6 ? std::min(scale * 2.0f, 1.0f) : scale;
+                    if (next != scale) {
+                        texture_cache->set_memory_scale(next);
+                        LSD_LOG_INFO("editor", "Video memory %.0f%% of the budget: texture detail x%.3g", used * 100.0, static_cast<double>(next));
+                    }
+                }
+            }
+        }
         lsd::editor::update_landscapes(world, meshes);  // landscape meshes follow their heights (rebuilt on change)
         if (state.world != &world) lsd::editor::update_landscapes(*state.world, meshes);  // Play's copy
         lsd::editor::update_editable_meshes(world, meshes);

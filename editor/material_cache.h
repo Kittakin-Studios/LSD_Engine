@@ -46,6 +46,10 @@ public:
     void set_size_cap(u32 size) { size_cap_ = size; }
     // Texture quality: times what get() is asked for (scalability's texture_detail_scale).
     void set_detail_scale(f32 scale) { detail_scale_ = scale; }
+    // Video memory pressure while running (1 = none): times the detail too, halved when the budget runs short.
+    void set_memory_scale(f32 scale) { memory_scale_ = scale; }
+    f32 memory_scale() const { return memory_scale_; }
+    f32 memory_scale_ = 1.0f;
     u32 loaded_size(rhi::TextureHandle texture) const;  // the largest side it was loaded at (0: unknown); tests and stat
     // stat dump: textures on the GPU, how many are loaded smaller than their file (streamed down), the texels they hold.
     void stats(u32& textures, u32& reduced, u64& texels) const;
