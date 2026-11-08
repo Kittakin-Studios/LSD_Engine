@@ -122,7 +122,7 @@ struct MeshDraw {
     TextureHandle emissive_texture;  // multiplies `emissive` (white when invalid)
     bool unlit = false;      // colour only, no lighting (Unlit view mode)
     bool wireframe = false;  // triangle edges only (Wireframe view mode)
-    u32 debug_view = 0;      // 2 = world normals as colour, 3 = lighting only (grey surfaces), 4 = overdraw; 0 = lit
+    u32 debug_view = 0;      // 2 = world normals as colour, 3 = lighting only (grey surfaces), 4 = overdraw, 5 = lightmap density; 0 = lit
     // 0 opaque; 1 translucent (alpha blended, no depth write: draw after opaque, far to near); 2 additive
     // (glows, fire); 3 overdraw (additive, no depth test: the Overdraw view mode).
     u32 blend = 0;
@@ -234,7 +234,8 @@ struct LightSetup {
     f32 reflection_info[4] = {};
     f32 reflections[kMaxReflectionProbes][4] = {};
     // Lightmaps (set_lightmap_atlas): x = how bright a stored 1 is (texels hold c / (1 + c), c in units
-    // of x), y = 1 when the atlas is there. Its RGB replaces the ambient light, A is the sun's baked visibility.
+    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker).
+    // Its RGB replaces the ambient light, A is the sun's baked visibility.
     f32 lightmap_info[4] = {};
     // Volumetric fog (Height Fog > Volumetric): x = strength (0: off), y = anisotropy (-0.9..0.9, how
     // much light scatters forward), z = how far the march reaches (m), w = steps. The fog is marched

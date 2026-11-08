@@ -2371,8 +2371,8 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
     if (ImGui::Begin(window_name, nullptr, overlay)) {
         static const char* const kViews[] = {"Perspective", "Top", "Front", "Right"};
         static const char* const kViewKeys[] = {"Alt+G", "Alt+J", "Alt+H", "Alt+K"};
-        static const char* const kModes[] = {"Lit", "Unlit", "Wireframe", "Normals", "Lighting Only", "Collision", "Overdraw"};
-        static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2", "", "Alt+6", "Alt+C", "Alt+0"};
+        static const char* const kModes[] = {"Lit", "Unlit", "Wireframe", "Normals", "Lighting Only", "Collision", "Overdraw", "Lightmap Density"};
+        static const char* const kModeKeys[] = {"Alt+4", "Alt+3", "Alt+2", "", "Alt+6", "Alt+C", "Alt+0", ""};
         if (with_tip(ImGui::Button(kViews[static_cast<int>(s.camera.view)]), "Camera view: Perspective, or flat Top / Front / Right views (keys in the menu)")) ImGui::OpenPopup("ViewMenu");
         if (ImGui::BeginPopup("ViewMenu")) {
             for (int v = 0; v < 4; ++v) {
@@ -2381,9 +2381,9 @@ void draw_viewport(EditorState& s, int index, ImVec2 pos, ImVec2 size) {
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (with_tip(ImGui::Button(kModes[static_cast<int>(s.view_mode)]), "View mode: Lit, Unlit, Wireframe, Normals, Lighting Only, Collision shapes, Overdraw (how often each pixel is drawn)")) ImGui::OpenPopup("ModeMenu");
+        if (with_tip(ImGui::Button(kModes[static_cast<int>(s.view_mode)]), "View mode: Lit, Unlit, Wireframe, Normals, Lighting Only, Collision shapes, Overdraw (how often each pixel is drawn), Lightmap Density (the baked lightmap's texels)")) ImGui::OpenPopup("ModeMenu");
         if (ImGui::BeginPopup("ModeMenu")) {
-            for (int m = 0; m < 7; ++m) {
+            for (int m = 0; m < 8; ++m) {
                 if (ImGui::MenuItem(kModes[m], kModeKeys[m], static_cast<int>(s.view_mode) == m)) s.view_mode = static_cast<ViewMode>(m);
             }
             ImGui::EndPopup();

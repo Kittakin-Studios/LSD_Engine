@@ -317,7 +317,9 @@ can be previewed in 3D next to its game view. The choice is remembered.
 the grid, axis gizmo, navigation (P), **Bounds** (yellow mesh boxes) and **Collision** (cyan: what blocks in Play).
 **Alt+4 / 3 / 2**: Lit / Unlit / Wireframe; the view mode button also has **Normals**, **Lighting Only**
 (Alt+6: every surface grey), **Collision** (Alt+C: what blocks in Play) and **Overdraw** (Alt+0: bright where
-many surfaces stack). **G**: game view (hides editor icons).
+many surfaces stack) and **Lightmap Density** (after Build Lighting: a checker of the lightmap's texels on
+lightmapped surfaces, grey on the rest; bigger squares, blurrier baked shadows; console `viewmode lightmapdensity`).
+**G**: game view (hides editor icons).
 
 ### Selecting and transforming
 

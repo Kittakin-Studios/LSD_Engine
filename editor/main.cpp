@@ -866,7 +866,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             }
             const bool editor_view = !stats.playing || stats.ejected;
             draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-            draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+            draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
+                         : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
             if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
             if (blend_view(stats, draw, lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f), eye, translucent)) return;
@@ -998,7 +999,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             materials.apply(ism->material, draw);
             const bool editor_view = !stats.playing || stats.ejected;
             draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
+                         : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
             draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
             if (editor_view && stats.is_selected(e)) {
                 draw.color[0] = 1.0f;
@@ -1081,7 +1083,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
         const bool editor_view = !stats.playing || stats.ejected;
         draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
-        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+        draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
+                         : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
         const lsd::u32 lod = skinned_lod(*model, m, eye);  // auto LODs, as static meshes
         // One draw per material slot (Unreal's mesh sections), each with its slot's material.
@@ -1235,15 +1238,15 @@ void register_console(EditorState& s) {
                          "Build > Build Lighting: bake the level's light probes");
     console::add_command("viewmode", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        static const char* const names[] = {"lit", "unlit", "wireframe", "normals", "lightingonly", "collision", "overdraw"};
-        for (int m = 0; m < 7; ++m) {
+        static const char* const names[] = {"lit", "unlit", "wireframe", "normals", "lightingonly", "collision", "overdraw", "lightmapdensity"};
+        for (int m = 0; m < 8; ++m) {
             if (std::strcmp(args, names[m]) == 0) {
                 st.view_mode = static_cast<lsd::editor::ViewMode>(m);
                 return;
             }
         }
-        LSD_LOG_WARN("console", "viewmode: lit, unlit, wireframe, normals, lightingonly, collision or overdraw");
-    }, &s, "viewmode lit|unlit|wireframe|normals|lightingonly|collision|overdraw");
+        LSD_LOG_WARN("console", "viewmode: lit, unlit, wireframe, normals, lightingonly, collision, overdraw or lightmapdensity");
+    }, &s, "viewmode lit|unlit|wireframe|normals|lightingonly|collision|overdraw|lightmapdensity");
     console::add_command("HighResShot", [](void* user, const char* args) {
         const int n = std::atoi(args);
         static_cast<EditorState*>(user)->high_res_shot = static_cast<lsd::u32>(n >= 1 && n <= 8 ? n : 2);

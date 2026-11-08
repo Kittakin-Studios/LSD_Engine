@@ -377,6 +377,16 @@ vec3 perturb_normal(vec3 n, vec3 wpos, vec2 uv, vec3 tn) {
 void main() {
     vec3 n = normalize(v_normal) * (gl_FrontFacing ? 1.0 : -1.0);
     vec3 geometric_n = n;  // before the normal map: reflections never point into the surface
+    if (u_flags.x > 4.5) {  // Lightmap Density view mode: a checker of lightmap texels, green where lightmapped, grey elsewhere
+        vec3 c = vec3(0.3);
+        if (lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0) {
+            vec2 cell = floor(v_lightmap_uv * lightmap_info.z);
+            c = mod(cell.x + cell.y, 2.0) > 0.5 ? vec3(0.15, 0.55, 0.2) : vec3(0.08, 0.32, 0.12);
+        }
+        c *= 0.55 + 0.45 * clamp(dot(n, normalize(vec3(0.4, 0.3, 0.85))), 0.0, 1.0);
+        o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(c) : to_srgb(c), 1.0);
+        return;
+    }
     if (u_flags.x > 3.5) { o_color = vec4(0.06, 0.025, 0.01, 1.0); return; }  // Overdraw view mode
     // u_flags.y packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     bool has_normal_map = mod(u_flags.y, 2.0) > 0.5;

@@ -357,6 +357,15 @@ float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
 float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     float3 n = normalize(i.normal) * (front ? 1.0 : -1.0);
     const float3 geometric_n = n;  // before the normal map: reflections never point into the surface
+    if (n0.w > 4.5) {  // Lightmap Density view mode (Unreal's): a checker of lightmap texels, green where lightmapped, grey elsewhere
+        float3 c = float3(0.3, 0.3, 0.3);
+        if (lightmap_info.y > 0.5 && i.lightmap_uv.x > 0.0) {
+            const float2 cell = floor(i.lightmap_uv * lightmap_info.z);
+            c = fmod(cell.x + cell.y, 2.0) > 0.5 ? float3(0.15, 0.55, 0.2) : float3(0.08, 0.32, 0.12);
+        }
+        c *= 0.55 + 0.45 * saturate(dot(n, normalize(float3(0.4, 0.3, 0.85))));
+        return float4(hdr_out.x > 0.5 ? hdr_encode(c) : to_srgb(c), 1.0);
+    }
     if (n0.w > 3.5) return float4(0.06, 0.025, 0.01, 1.0);  // Overdraw view mode: each layer drawn adds a little
     // n1.w packs: 1 has a normal map, 2 blended (translucent / additive), 4 x the masked cutoff (0..255).
     const bool has_normal_map = fmod(n1.w, 2.0) > 0.5;

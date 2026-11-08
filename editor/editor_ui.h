@@ -29,7 +29,8 @@ enum class ViewType : u8 { Perspective, Top, Front, Right };  // ortho views loo
 // Normals: world normals as colour; Lighting Only: every surface grey, lit as usual; Collision: unlit,
 // with what blocks in Play drawn on top (Unreal's Player Collision view).
 // Overdraw: every layer adds a little light; bright spots are where many surfaces stack up.
-enum class ViewMode : u8 { Lit, Unlit, Wireframe, Normals, LightingOnly, Collision, Overdraw };
+// Lightmap Density: a checker of the baked lightmap's texels (green: lightmapped, grey: not).
+enum class ViewMode : u8 { Lit, Unlit, Wireframe, Normals, LightingOnly, Collision, Overdraw, LightmapDensity };
 
 // Unreal-style viewport camera: a position and a look direction. In the orthographic views
 // `position` is the centre of the view and `ortho_height` how many metres fit vertically.

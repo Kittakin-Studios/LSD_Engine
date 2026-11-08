@@ -713,6 +713,7 @@ void apply_baked_lighting(const BakedLighting& l, rhi::LightSetup& setup) {
     if (l.has_lightmap()) {  // main.cpp uploads the atlas (set_lightmap_atlas) with the lighting
         setup.lightmap_info[0] = l.lightmap_scale;
         setup.lightmap_info[1] = 1.0f;
+        setup.lightmap_info[2] = static_cast<f32>(l.lightmap_size);
     }
 }
 
