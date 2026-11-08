@@ -139,7 +139,7 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
     s.tint[2] = best->tint.b;
 }
 
-rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden);
+rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden, bool with_static = true, u32* static_lights = nullptr);
 
 u32 g_quality = 2;
 u32 g_atlas_size = 4096;
@@ -206,7 +206,7 @@ void set_post_quality(u32 quality) { g_post_quality = quality; }
 const BakedLighting* g_baked = nullptr;
 u32 shadow_atlas_size() { return g_atlas_size; }
 void set_baked_lighting(const BakedLighting* lighting) { g_baked = lighting; }
-rhi::LightSetup level_lights(const world::World& w, const LightView& view) { return lights_only(w, view, true); }
+rhi::LightSetup level_lights(const world::World& w, const LightView& view, u32* static_lights) { return lights_only(w, view, true, true, static_lights); }
 void set_shadow_atlas_size(u32 size) { g_atlas_size = size; }
 
 namespace {
@@ -226,7 +226,7 @@ void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 co
 }
 
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
-    rhi::LightSetup s = lights_only(w, view, skip_hidden);
+    rhi::LightSetup s = lights_only(w, view, skip_hidden, g_baked == nullptr);  // Static lights are in the bake once there is one
     s.reflection_info[0] = static_cast<f32>(g_reflection_count);
     for (u32 k = 0; k < g_reflection_count; ++k) {
         for (int c = 0; c < 4; ++c) {
@@ -451,7 +451,8 @@ bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip
 
 namespace {
 
-rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden) {
+rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden, bool with_static, u32* static_lights) {
+    if (static_lights) *static_lights = 0;
     const Vec3 eye = view.eye;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
@@ -553,6 +554,9 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         for (u32 i = 0; i < w.count(*type) && n < 512; ++i) {
             const world::Entity e = w.owner(*type, i);
             if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
+            const bool is_static = (type == &point_type && static_cast<const world::PointLight*>(w.at(*type, i))->mobility == 1) ||
+                                   (type == &spot_type && static_cast<const world::SpotLight*>(w.at(*type, i))->mobility == 1);
+            if (is_static && !with_static) continue;  // baked: nothing to do at run time
             const Mat4 m = w.world_matrix(e);
             const Vec3 d = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - eye;
             candidates[n++] = {type, i, dot(d, d)};
@@ -575,6 +579,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const auto* light = static_cast<const world::PointLight*>(w.at(point_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
+            if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
             s.lights[s.count - 1].source_radius = light->source_radius;
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(6, side_of(light->shadow_resolution)) : 0u;
             if (side) {
@@ -596,6 +601,7 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const Vec3 dir = forward_of(m);
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
+            if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
             s.lights[s.count - 1].source_radius = light->source_radius;
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
             if (side) {

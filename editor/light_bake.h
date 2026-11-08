@@ -52,6 +52,7 @@ struct BakeScene {
     std::vector<Vec3> positions;  // 3 per triangle, world space
     std::vector<Vec3> albedo;     // 1 per triangle
     rhi::LightSetup lights;       // the level's lights, sky and ground colours
+    u32 static_lights = 0;        // a bit per light: Static (its direct light is baked too)
     Vec3 lo, hi;                  // where probes go (a Lightmass Importance Volume, or the meshes' bounds)
     f32 spacing = 0.0f;           // metres between probes; 0: as fine as rhi::kMaxProbes allows
     // The objects to lightmap (World Settings > Lightmap Resolution; 0 = none) and their meshes.

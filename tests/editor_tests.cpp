@@ -192,6 +192,30 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
 }
 
+static void test_static_light_bake() {  // Mobility Static: a point light's direct light ends up in the probes (only when Static)
+    using namespace lsd;
+    editor::BakeScene scene;
+    const Vec3 a{-10, -10, 0}, b{10, -10, 0}, c{10, 10, 0}, d{-10, 10, 0};
+    scene.positions = {a, b, c, a, c, d};
+    scene.albedo = {Vec3{}, Vec3{}};  // a black floor: no bounce to confuse it
+    for (int i = 0; i < 3; ++i) scene.lights.sky[i] = scene.lights.ground[i] = 0.0f;
+    scene.lights.count = 1;
+    scene.lights.lights[0] = rhi::GpuLight{};
+    scene.lights.lights[0].type = 1.0f;
+    scene.lights.lights[0].position[2] = 3.0f;
+    scene.lights.lights[0].range = 10.0f;
+    for (int i = 0; i < 3; ++i) scene.lights.lights[0].color[i] = 10.0f;
+    scene.lo = {-1, -1, 1};
+    scene.hi = {1, 1, 2};
+    scene.spacing = 1.0f;
+    editor::BakedLighting movable, baked;
+    editor::bake_lighting(scene, movable);
+    scene.static_lights = 1;
+    editor::bake_lighting(scene, baked);
+    CHECK(!movable.sh.empty() && !baked.sh.empty() && std::fabs(movable.sh[0]) < 1e-4f && baked.sh[0] > 0.1f);
+    CHECK(baked.sh[3] > 0.0f);  // red L1 along +Z: it comes from above
+}
+
 static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor under a 4 m roof, the sun straight down
     using namespace lsd;
     editor::BakeScene scene;
@@ -959,6 +983,7 @@ int main() {
     test_particle_light();
     test_shadow_cells();
     test_landscape_tiles();
+    test_static_light_bake();
     test_push_helpers();
     test_bake_texture_albedo();
     test_post_blend();

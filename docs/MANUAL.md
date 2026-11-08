@@ -879,6 +879,9 @@ dark contact under the statue's feet come from the lightmap.*
   probes there: corners, contact under objects, colour from neighbours; a red carpet bounces red, its
   material's texture taken into account) and how much of the **sun**
   reaches it: the sun's shadows are baked too, so they stay beyond the real-time Shadow Distance.
+- **Point / Spot Light > Mobility: Static** (Unreal's Static lights): Build Lighting bakes its light and shadows into
+  the lightmaps and probes, and once the level is baked it costs nothing at run time. It never moves, and moving
+  objects (characters) get only what the probes saw of it. Before a bake it lights like a Movable one.
 - **Static Mesh > Static Lighting** (on by default, Unreal's Mobility: Static): untick it for
   objects that move; objects with a Rigid Body, Mover, Vehicle or Transport never get a lightmap.
   Moving objects, skeletal meshes and Instanced Static Meshes use the probes.

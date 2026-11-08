@@ -177,6 +177,23 @@ Vec3 grid_irradiance(const ProbeGrid& g, Vec3 p, Vec3 n) {
 
 // Light leaving a surface point towards the probe: its colour times the light reaching it: the lights
 // (direct), and either half the sky (the first pass) or what an earlier probe grid saw there (more bounces).
+// A Static light's direct light arriving at `p` (unoccluded, before any facing): its colour times the
+// falloff and the spot cone, zero in its shadow; `to` gets the direction toward it.
+Vec3 static_light_at(const Bvh& bvh, const rhi::GpuLight& light, Vec3 p, Vec3& to) {
+    const Vec3 d = Vec3{light.position[0], light.position[1], light.position[2]} - p;
+    const f32 dist2 = std::max(dot(d, d), 1e-4f), distance = std::sqrt(dist2);
+    to = d * (1.0f / distance);
+    const f32 r = dist2 / (light.range * light.range);
+    const f32 window = std::clamp(1.0f - r * r, 0.0f, 1.0f);
+    f32 atten = window * window / dist2;
+    const f32 c = dot(to * -1.0f, Vec3{light.direction[0], light.direction[1], light.direction[2]});
+    if (light.type > 1.5f && light.type < 2.5f) atten *= std::clamp((c - light.spot_outer_cos) / std::max(light.spot_inner_cos - light.spot_outer_cos, 1e-4f), 0.0f, 1.0f);
+    u32 tri;
+    f32 t;
+    if (atten <= 0.0f || bvh.trace(p, to, distance - 0.02f, tri, t, true)) return {};
+    return Vec3{light.color[0], light.color[1], light.color[2]} * atten;
+}
+
 Vec3 bounce(const Bvh& bvh, const BakeScene& s, Vec3 p, Vec3 n, Vec3 albedo, const ProbeGrid* indirect) {
     Vec3 irradiance{};
     const rhi::LightSetup& l = s.lights;
@@ -243,6 +260,16 @@ bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh, c
     }
     const f32 weight = 4.0f * 3.14159265f / kRays;
     for (int i = 0; i < 12; ++i) sh[i] *= weight;
+    for (u32 li = 0; li < s.lights.count; ++li) {  // Static lights: their direct light, from their direction (a point source in SH)
+        if (!(s.static_lights >> li & 1u)) continue;
+        Vec3 to;
+        const Vec3 e = static_light_at(bvh, s.lights.lights[li], p, to);
+        const f32 basis[4] = {0.282095f, 0.488603f * to.x, 0.488603f * to.y, 0.488603f * to.z};
+        const f32 rgb[3] = {e.x, e.y, e.z};
+        for (int ch = 0; ch < 3; ++ch) {
+            for (int k = 0; k < 4; ++k) sh[ch * 4 + k] += rgb[ch] * basis[k];
+        }
+    }
     return back_hits < kRays / 4;
 }
 
@@ -410,6 +437,12 @@ void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 
         }
     }
     ambient = sum * (1.0f / kRays);  // irradiance / pi: what the shader's ambient term is in
+    for (u32 li = 0; li < s.lights.count; ++li) {  // Static lights: their direct light, baked (irradiance / pi too)
+        if (!(s.static_lights >> li & 1u)) continue;
+        Vec3 to;
+        const Vec3 e = static_light_at(bvh, s.lights.lights[li], origin, to);
+        ambient = ambient + e * (std::max(dot(n, to), 0.0f) / 3.14159265f);
+    }
     sun = 1.0f;
     for (u32 i = 0; i < s.lights.count; ++i) {
         const rhi::GpuLight& light = s.lights.lights[i];
@@ -632,7 +665,7 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
     if (!out.lightmap_size) out.lightmap_sources.clear();
     LightView view;
     view.eye = (lo + hi) * 0.5f;
-    out.lights = level_lights(w, view);
+    out.lights = level_lights(w, view, &out.static_lights);
     return true;
 }
 
