@@ -129,8 +129,10 @@ float4 ps_main(VsOut i) : SV_Target { return i.color; }
 )";
 
 constexpr char kParticleHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 view_proj; float4 mode; };  // mode.x = 1: into a scene target (post pass)
+cbuffer Draw : register(b0) { float4x4 view_proj; float4 mode; float4 soft; };  // mode.x = 1: into a scene target (post pass); soft: see draw_particles
 Texture2D sprite : register(t0);
+Texture2D<float> scene_depth : register(t1);  // the target's depth (soft particles)
+float view_distance(float d) { return soft.w > 0.5 ? (soft.z - d) / soft.y : soft.z / (d + soft.y); }
 SamplerState linear_wrap : register(s0);
 struct VsIn { float3 pos : POSITION; float4 color : COLOR; float2 uv : TEXCOORD; };
 struct VsOut { float4 pos : SV_Position; float4 color : COLOR; float2 uv : TEXCOORD; };
@@ -138,6 +140,7 @@ VsOut vs_main(VsIn i) { VsOut o; o.pos = mul(view_proj, float4(i.pos, 1)); o.col
 float3 to_srgb(float3 c) { c = saturate(c); return lerp(c * 12.92, 1.055 * pow(c, 1.0 / 2.4) - 0.055, step(0.0031308, c)); }
 float4 ps_main(VsOut i) : SV_Target {
     float4 c = i.color * sprite.Sample(linear_wrap, i.uv);
+    if (soft.x > 0.0) c.a *= saturate((view_distance(scene_depth.Load(int3(i.pos.xy, 0))) - view_distance(i.pos.z)) / soft.x);  // fades into surfaces
     const float3 lin = max(c.rgb, 0.0);
     return float4(mode.x > 0.5 ? sqrt(lin / (1.0 + lin)) : to_srgb(c.rgb), saturate(c.a));
 }
@@ -288,8 +291,9 @@ public:
         heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         heap_desc.NumDescriptors = 1;
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&dsv_heap_)), "CreateDescriptorHeap (DSV)")) return false;
-        heap_desc.NumDescriptors = kMaxTargets;
+        heap_desc.NumDescriptors = kMaxTargets * 2;  // each target's DSV, then its read-only one (soft particles)
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_dsv_heap_)), "CreateDescriptorHeap (target DSV)")) return false;
+        heap_desc.NumDescriptors = kMaxTargets;
         heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_rtv_heap_)), "CreateDescriptorHeap (target RTV)")) return false;
         dsv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
@@ -528,6 +532,8 @@ public:
         dsv_desc.Format = kDepthFormat;
         dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
         device_->CreateDepthStencilView(t.depth.Get(), &dsv_desc, target_dsv(slot));
+        dsv_desc.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+        device_->CreateDepthStencilView(t.depth.Get(), &dsv_desc, target_dsv(slot + kMaxTargets));
         alloc_srv(t.srv_cpu, t.srv_gpu);
         device_->CreateShaderResourceView(t.color.Get(), nullptr, t.srv_cpu);
         alloc_srv(t.depth_srv_cpu, t.depth_srv_gpu);
@@ -955,7 +961,7 @@ public:
         list_->DrawInstanced(vertex_count, 1, 0, 0);
     }
 
-    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
         const u32 bytes = vertex_count * static_cast<u32>(sizeof(ParticleVertex));
         if (!vertex_count || particle_offset_ + bytes > kParticleRingBytes) {
             if (vertex_count) LSD_LOG_WARN("d3d12", "Too many particles this frame: some are skipped");
@@ -968,15 +974,31 @@ public:
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
-        f32 particle_constants[20] = {};
+        f32 particle_constants[24] = {};
         std::memcpy(particle_constants, view_proj, 16 * sizeof(f32));
         particle_constants[16] = hdr_output_ ? 1.0f : 0.0f;
-        list_->SetGraphicsRoot32BitConstants(0, 20, particle_constants, 0);
+        const Target* target = current_target_ >= 0 ? &targets_[current_target_] : nullptr;
+        const bool soft_fade = soft && soft[0] > 0.0f && target;
+        if (soft_fade) std::memcpy(particle_constants + 20, soft, 4 * sizeof(f32));
+        list_->SetGraphicsRoot32BitConstants(0, 24, particle_constants, 0);
         list_->SetGraphicsRootDescriptorTable(1, (t ? t : &textures_[white_])->srv_gpu);
+        list_->SetGraphicsRootDescriptorTable(2, soft_fade ? target->depth_srv_gpu : textures_[white_].srv_gpu);
+        if (soft_fade) {  // the depth read by the shader and tested read-only at once
+            transition(target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(static_cast<u32>(current_target_));
+            const D3D12_CPU_DESCRIPTOR_HANDLE dsv = target_dsv(static_cast<u32>(current_target_) + kMaxTargets);
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        }
         list_->SetPipelineState(additive ? particle_add_pipeline_.Get() : particle_alpha_pipeline_.Get());
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->DrawInstanced(vertex_count, 1, 0, 0);
+        if (soft_fade) {
+            transition(target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(static_cast<u32>(current_target_));
+            const D3D12_CPU_DESCRIPTOR_HANDLE dsv = target_dsv(static_cast<u32>(current_target_));
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        }
     }
 
     void draw_sky(const SkyDraw& sky) override {

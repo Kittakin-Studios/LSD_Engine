@@ -179,6 +179,7 @@ void ParticlePlayer::apply_lighting(rhi::ParticleVertex* vertices, u32 count, Ve
 void ParticlePlayer::draw_instance(rhi::Device& device, const particles::ParticleInstance& instance, const particles::ParticleSystem& system,
                                    const Mat4& world, const Mat4& view_proj, const Mat4& view, Vec3 eye) {
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
+    const Mat4 projection = view_proj * inverse(view);  // soft particles turn depth back into distance with it
     const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
     for (u32 k = 0; k < system.emitters.count; ++k) {
         const particles::ParticleEmitter emitter = particles::active_modules(system.emitters[k]);
@@ -230,7 +231,8 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
         if (emitter.lit && emitter.blend == 0) apply_lighting(vertices_, n, eye);  // before the fog, as the meshes
         apply_fog(vertices_, n, eye, emitter.blend == 1);
         const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
-        device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1);
+        f32 soft[4] = {emitter.soft_distance, projection.at(2, 2), projection.at(2, 3), projection.at(3, 3) > 0.5f ? 1.0f : 0.0f};
+        device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1, emitter.soft_distance > 0.0f ? soft : nullptr);
     }
 }
 

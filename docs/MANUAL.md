@@ -1637,6 +1637,11 @@ level's light instead of showing their colour as it is: the sky and ground ambie
 Point / Spot Lights near them, soft enough that light from behind still shows through. Use it for
 smoke, dust and snow; leave fire and sparks unlit and Additive. Lit particles do not catch shadows yet.
 
+**Soft Distance** (Renderer; Niagara's soft particles / Unreal's DepthFade): sprites fade out over this many
+metres where they meet a surface, instead of showing a hard line where they cut through the floor or a
+wall (ground fog, smoke, dust). 0 = off. It needs the post-process path (on by default in the viewport
+and in the game).
+
 **Collision** (Niagara's Collision module), world-space emitters only: **Floor** bounces off a flat
 floor at **Floor Height** (also in the editor); **World** hits whatever physics collides with (in
 Play; up to 1024 rays a frame for all effects together). **Bounce** is the speed kept off the

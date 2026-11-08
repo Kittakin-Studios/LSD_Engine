@@ -100,7 +100,7 @@ constexpr VkDeviceSize kRowsWindow = 64u << 10;    // what one draw may read fro
 constexpr u32 kInstancesPerDraw = static_cast<u32>(kRowsWindow / 48);  // 3 float4 rows per copy
 constexpr u32 kShadowPushBytes = 80;  // shadow.hlsl's Push
 constexpr u32 kUiPushBytes = 16;      // ui.hlsl's Push
-constexpr u32 kParticlePushBytes = 80;  // particle.hlsl's Push
+constexpr u32 kParticlePushBytes = 96;  // particle.hlsl's Push
 constexpr VkDeviceSize kStreamBytes = kParticleRingBytes;  // per frame in flight: UI and particle vertices
 // make_pipeline's colour blending: UI (premultiplied), particles / outline (alpha, additive) and the
 // lit meshes' MeshDraw::blend modes, which keep the scene target's alpha (SSR) as D3D12 does.
@@ -235,6 +235,7 @@ public:
             if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
             if (texture_pool_) vkDestroyDescriptorPool(device_, texture_pool_, nullptr);
             if (texture_set_layout_) vkDestroyDescriptorSetLayout(device_, texture_set_layout_, nullptr);
+            if (particle_depth_layout_) vkDestroyDescriptorSetLayout(device_, particle_depth_layout_, nullptr);
             if (upload_pool_) vkDestroyCommandPool(device_, upload_pool_, nullptr);
             for (Buffer& b : buffers_) {
                 if (b.buffer) vkDestroyBuffer(device_, b.buffer, nullptr);
@@ -1572,7 +1573,42 @@ public:
         if (memory) vkFreeMemory(device_, memory, nullptr);
         return ok;
     }
-    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+    // Soft particles: the target's depth goes read-only (tested and sampled at once) for a draw, then back.
+    void target_depth_read_only(bool read_only) {
+        Texture& t = *target_;
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        vkCmdEndRendering(cmd);
+        const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        const VkAccessFlags2 rw = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        if (read_only) {
+            transition(cmd, t.depth_image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, tests, rw,
+                       tests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                       VK_IMAGE_ASPECT_DEPTH_BIT);
+        } else {
+            transition(cmd, t.depth_image, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, tests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                       0, tests, rw, VK_IMAGE_ASPECT_DEPTH_BIT);
+        }
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = t.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = t.depth_view;
+        depth.imageLayout = read_only ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = read_only ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea.extent = {t.width, t.height};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &rendering);
+        set_viewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
+    }
+
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
         const VkPipeline pipeline = particle_pipelines_[additive ? 1 : 0];
         if (skip_frame_ || shadow_pass_ || !pipeline || !vertex_count) return;
         Frame& f = frames_[frame_];
@@ -1584,12 +1620,32 @@ public:
         const Texture* t = lookup_texture(texture);
         if (!t || t->shadow_size) t = lookup_texture(white_);
         if (!t) return;
+        const bool soft_fade = soft && soft[0] > 0.0f && in_pass_ && target_ && target_->depth_image;
+        if (soft_fade) std::memcpy(push + 20, soft, 4 * sizeof(f32));
+        // Set 1: the depth to fade against (white when not soft: the shader does not read it then).
+        const Texture* white = lookup_texture(white_);
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &particle_depth_layout_;
+        VkDescriptorSet sets[2] = {t->set, VK_NULL_HANDLE};
+        if (!white || !f.draw_pool || vkAllocateDescriptorSets(device_, &info, &sets[1]) != VK_SUCCESS) return;
+        const VkDescriptorImageInfo image{VK_NULL_HANDLE, soft_fade ? target_->depth_view : white->view,
+                                          soft_fade ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = sets[1];
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = &image;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        if (soft_fade) target_depth_read_only(true);
         const VkCommandBuffer cmd = f.cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdPushConstants(cmd, particle_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kParticlePushBytes, push);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particle_layout_, 0, 1, &t->set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particle_layout_, 0, 2, sets, 0, nullptr);
         vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &at);
         vkCmdDraw(cmd, vertex_count, 1, 0, 0);
+        if (soft_fade) target_depth_read_only(false);
     }
     // Material Graph code built into the lit pipelines (static and skinned; opaque, translucent, additive),
     // as D3D12's: shaders/mesh.hlsl with the prelude and the code at //@MATERIAL, compiled by the Vulkan
@@ -2759,6 +2815,21 @@ private:
                                    kMeshPushBytes, stages, mesh_layout_, mesh_pipelines_[k][m], false, true, false, modes[m], polygon)) return false;
             }
         }
+        if (!particle_layout_) {  // the sprite (set 0) and the depth soft particles fade against (set 1)
+            const VkDescriptorSetLayoutBinding depth_binding{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+            VkDescriptorSetLayoutCreateInfo depth_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            depth_info.bindingCount = 1;
+            depth_info.pBindings = &depth_binding;
+            if (!check(vkCreateDescriptorSetLayout(device_, &depth_info, nullptr, &particle_depth_layout_), "vkCreateDescriptorSetLayout (particle depth)")) return false;
+            const VkPushConstantRange push{stages, 0, kParticlePushBytes};
+            const VkDescriptorSetLayout sets[2] = {texture_set_layout_, particle_depth_layout_};
+            VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layout.setLayoutCount = 2;
+            layout.pSetLayouts = sets;
+            layout.pushConstantRangeCount = 1;
+            layout.pPushConstantRanges = &push;
+            if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &particle_layout_), "vkCreatePipelineLayout (particles)")) return false;
+        }
         return make_pipeline(kSkyVsSpirv, sizeof kSkyVsSpirv, kSkyPsSpirv, sizeof kSkyPsSpirv, nullptr, 0, 0, triangles, kMeshPushBytes, stages, mesh_layout_,
                              sky_pipeline_, false, false) &&  // behind everything: drawn first, depth untouched
                make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, nullptr, 0, shadow_attributes, 2, sizeof(MeshVertex), triangles, kShadowPushBytes, stages,
@@ -2878,6 +2949,7 @@ private:
     TextureHandle white_;
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout texture_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout particle_depth_layout_ = VK_NULL_HANDLE;  // particle.hlsl's set 1
     VkDescriptorPool texture_pool_ = VK_NULL_HANDLE;
     VkCommandPool upload_pool_ = VK_NULL_HANDLE;
     VkPipeline sky_pipeline_ = VK_NULL_HANDLE;

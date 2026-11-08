@@ -618,13 +618,17 @@ void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); v_color = a_color; v_uv = 
 
 constexpr char kParticleFragmentShader[] = R"(#version 460 core
 layout(binding = 0) uniform sampler2D u_sprite;
+layout(binding = 1) uniform sampler2D u_scene_depth;  // the target's depth (soft particles)
 uniform float u_hdr;  // 1: into a scene target (post pass)
+uniform vec4 u_soft;  // see draw_particles
 in vec4 v_color;
 in vec2 v_uv;
 out vec4 o_color;
 vec3 to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+float view_distance(float d) { return u_soft.w > 0.5 ? (u_soft.z - d) / u_soft.y : u_soft.z / (d + u_soft.y); }
 void main() {
     vec4 c = v_color * texture(u_sprite, v_uv);
+    if (u_soft.x > 0.0) c.a *= clamp((view_distance(texelFetch(u_scene_depth, ivec2(gl_FragCoord.xy), 0).r) - view_distance(gl_FragCoord.z)) / u_soft.x, 0.0, 1.0);
     vec3 lin = max(c.rgb, 0.0);
     o_color = vec4(u_hdr > 0.5 ? sqrt(lin / (1.0 + lin)) : to_srgb(c.rgb), clamp(c.a, 0.0, 1.0));
 }
@@ -994,6 +998,7 @@ constexpr GLenum kTextureFreeMemoryAti = 0x87FC;
     X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer)                  \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)          \
     X(PFNGLTEXTURESUBIMAGE2DPROC, glTextureSubImage2D)              \
+    X(PFNGLTEXTUREBARRIERPROC, glTextureBarrier)                    \
     X(PFNGLCOMPRESSEDTEXTURESUBIMAGE2DPROC, glCompressedTextureSubImage2D) \
     X(PFNGLBINDTEXTUREUNITPROC, glBindTextureUnit)                  \
     X(PFNGLUNIFORM2FPROC, glUniform2f)                              \
@@ -1310,6 +1315,7 @@ public:
 
     void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
         const Target* t = lookup(handle);
+        bound_target_ = t;
         glDisable(GL_SCISSOR_TEST);
         if (!t) {
             gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1642,7 +1648,7 @@ public:
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertex_count));
     }
 
-    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) override {
+    void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
         const u32 bytes = vertex_count * static_cast<u32>(sizeof(ParticleVertex));
         if (!vertex_count || bytes > kParticleRingBytes) return;
         if (particle_offset_ + bytes > kParticleRingBytes) particle_offset_ = 0;  // GL keeps earlier draws' data (it syncs the update)
@@ -1655,6 +1661,11 @@ public:
         gl_.glUseProgram(particle_program_);
         gl_.glUniformMatrix4fv(particle_mvp_, 1, GL_FALSE, view_proj);
         gl_.glUniform1f(particle_hdr_, hdr_output_ ? 1.0f : 0.0f);
+        const bool soft_fade = soft && soft[0] > 0.0f && bound_target_;
+        const f32 no_soft[4] = {};
+        gl_.glUniform4fv(particle_soft_, 1, soft_fade ? soft : no_soft);
+        if (soft_fade) gl_.glTextureBarrier();  // its depth is read while attached: defined since nothing writes it from here on
+        gl_.glBindTextureUnit(1, soft_fade ? bound_target_->depth : textures_[white_].id);
         gl_.glBindTextureUnit(0, t ? t->id : textures_[white_].id);
         gl_.glVertexArrayVertexBuffer(particle_vao_, 0, particle_vbo_, particle_offset_, sizeof(ParticleVertex));
         gl_.glBindVertexArray(particle_vao_);
@@ -2257,6 +2268,7 @@ private:
         if (!particle_program_) return false;
         particle_mvp_ = gl_.glGetUniformLocation(particle_program_, "u_mvp");
         particle_hdr_ = gl_.glGetUniformLocation(particle_program_, "u_hdr");
+        particle_soft_ = gl_.glGetUniformLocation(particle_program_, "u_soft");
         const char* post_defines[kPostPrograms] = {"#define PREFILTER\n", "#define DOWN\n", "#define UP\n", "#define COMPOSITE\n", "#define FXAA\n",
                                                    "#define AO\n", "#define AO_APPLY\n", "#define TAA\n", "#define DOF\n", "#define SSR\n",
                                                    "#define METER\n", "#define EXPOSE\n", "#define OUTLINE\n", "#define MOTION\n"};
@@ -2318,7 +2330,8 @@ private:
     GLint sky_mvp_ = -1, sky_camera_ = -1, sky_values_ = -1;
     f32 viewport_[4] = {};  // the last set_viewport (top-left origin), for the shaders' vignette
     GLuint particle_program_ = 0, particle_vbo_ = 0, particle_vao_ = 0;
-    GLint particle_mvp_ = -1, particle_hdr_ = -1;
+    GLint particle_mvp_ = -1, particle_hdr_ = -1, particle_soft_ = -1;
+    const Target* bound_target_ = nullptr;  // set_render_target's (null: the window)
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target
     static constexpr u32 kPostPrograms = 14;  // 13: motion blur
     GLuint post_programs_[kPostPrograms] = {};  // prefilter, down, up, composite, fxaa, ao, ao apply, taa, dof, ssr, meter, expose

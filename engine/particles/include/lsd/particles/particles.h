@@ -56,6 +56,8 @@ struct ParticleEmitter {
     LSD_PROPERTY(Edit, Category = "Renderer", Widget = "Choice:Alpha,Additive", Tooltip = "Additive: glows, adds light (fire, sparks, magic); Alpha: smoke, dust") u32 blend = 0;
     LSD_PROPERTY(Edit, Category = "Renderer", Tooltip = "Lit by the level's sky and lights (smoke, dust, snow) instead of showing its colour as it is; Alpha sprites and ribbons")
     bool lit = false;
+    LSD_PROPERTY(Edit, Category = "Renderer", Units = "m", Min = 0, Tooltip = "Soft particles: sprites fade over this distance where they meet surfaces, instead of showing a hard line (smoke on the ground); 0 = off")
+    f32 soft_distance = 0.0f;
     LSD_PROPERTY(Edit, Category = "Color", Tooltip = "Colour and opacity at birth (values above 1 glow brighter when Additive)") LinearColor color_start = {1.0f, 1.0f, 1.0f, 1.0f};
     LSD_PROPERTY(Edit, Category = "Color", Tooltip = "Colour and opacity at death (0 alpha fades out)") LinearColor color_end = {1.0f, 1.0f, 1.0f, 0.0f};
     LSD_PROPERTY(Edit, Category = "Size", Units = "m", Min = 0, Tooltip = "Size when born") f32 size_start = 0.2f;

@@ -414,7 +414,11 @@ public:
     // Particle sprites: unlit colour x texture (invalid: white), depth-tested without writing depth,
     // blended over (alpha) or added (additive). The vertices are copied; draw after opaque meshes.
     // shortcut: unlit and not exposure-scaled (display colours); add lit / soft particles later.
-    virtual void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive) = 0;
+    // `soft` (Niagara's soft particles; null = off): x the fade distance in metres, y / z the projection's [2][2] / [2][3],
+    // w 1 when orthographic. Sprites fade out as they near what is behind them, while drawing into a render target
+    // (its depth is read: the scene target); elsewhere they draw hard as before.
+    virtual void draw_particles(const ParticleVertex* vertices, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive,
+                                const f32* soft = nullptr) = 0;
     virtual void draw_test_triangle(f32 scale, f32 rotation_radians) = 0;
     virtual void end_frame() = 0;  // presents
     // GPU timings (stat dump): a timestamp at `slot` in this frame's GPU work; gpu_timings gives the
