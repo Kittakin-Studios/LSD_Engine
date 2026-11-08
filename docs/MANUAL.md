@@ -1981,6 +1981,8 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
    the root `lsd_editor.exe` first (the build replaces it).
 4. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
+   It also writes `Packages/`: one list per level of the assets it uses (Bitsquid's resource packages); the game
+   loads a level's meshes from it while the level opens, so they do not load in the middle of play.
 5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
 

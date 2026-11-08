@@ -1930,6 +1930,30 @@ void new_level(EditorState& s) {
     s.history->commit(*s.world, "Default objects");  // so the untitled level counts as unsaved
 }
 
+// A packaged game's resource package for a level (Packages/<level>.package, written by Package Project): its meshes are
+// loaded now, while the level opens (behind the splash), instead of the first time each is drawn in play.
+// shortcut: meshes only; textures stream by distance anyway, sounds load when first played
+void load_level_package(EditorState& s, const char* level_path) {
+    std::error_code ignored;
+    if (!s.meshes || !s.registry || !fs::exists("Packages", ignored)) return;
+    fs::path package = fs::path("Packages") / fs::relative(level_path, kContentDir, ignored);
+    package.replace_extension(".package");
+    FILE* f = std::fopen(package.generic_string().c_str(), "rb");
+    if (!f) return;
+    const lsd::u64 start = SDL_GetTicksNS();
+    char line[400];
+    lsd::u32 loaded = 0;
+    while (std::fgets(line, sizeof line, f)) {
+        char guid[33] = "";
+        if (std::sscanf(line, "%32s", guid) != 1) continue;
+        lsd::asset::Guid id;
+        const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(guid, id) ? s.registry->find(id) : nullptr;
+        if (r && r->type == lsd::asset::AssetType::Mesh && s.meshes->get(guid)) ++loaded;
+    }
+    std::fclose(f);
+    LSD_LOG_INFO("editor", "Package %s: %u meshes loaded (%.0f ms)", package.generic_string().c_str(), loaded, static_cast<double>(SDL_GetTicksNS() - start) * 1e-6);
+}
+
 bool open_level(EditorState& s, const char* path) {
     s.capture_reflections = true;  // the new level's captures
     if (!lsd::world::load_level_file(*s.world, path)) {
@@ -1940,6 +1964,7 @@ bool open_level(EditorState& s, const char* path) {
     }
     std::snprintf(s.level_path, sizeof s.level_path, "%s", fs::path(path).generic_string().c_str());
     load_level_lighting(s.level_path);
+    load_level_package(s, s.level_path);
     s.selected = {};
     lsd::editor::refresh_prefabs(s);  // prefabs edited since the level was saved show their latest version
     s.history->reset(*s.world, "Open Level");
@@ -2596,7 +2621,8 @@ int main(int argc, char** argv) {
         }
         if (state.package_requested) {
             state.package_requested = false;
-            lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
+            if (lsd::editor::package_project(state.project, registry, state.status, sizeof state.status)) LSD_LOG_INFO("editor", "%s", state.status);
+            else LSD_LOG_ERROR("editor", "Package Project: %s", state.status);
         }
         {  // Build > Build Release Engine: its latest output line in the status bar while it runs, the result once
             char line[200];
@@ -2743,6 +2769,7 @@ int main(int argc, char** argv) {
                 animations->reset();
                 effects->reset();
                 load_level_lighting(again ? state.level_path : travel_to);
+                if (!again) load_level_package(state, travel_to);
                 state.capture_reflections = true;
                 travelled = !again || travelled;
                 if (again) LSD_LOG_INFO("editor", "Restarted the level (multiplayer host / join / leave)");
