@@ -162,14 +162,17 @@ vec3 ambient_light(vec3 wpos, vec3 n) {
 layout(binding = 3) uniform sampler2DShadow shadow_tex;
 layout(binding = 4) uniform sampler2DShadow local_shadow_tex;
 float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
-    float dist = length(wpos - cam);
     int count = int(shadow_info.x);
-    int c = 0;
-    while (c + 1 < count && dist > shadow_split[c]) ++c;
-    if (dist > shadow_split[count - 1]) return 1.0;
-    vec4 s = shadow_vp[c] * vec4(wpos + n * shadow_info.w * (1.0 + float(c)), 1.0);
-    vec2 uv = s.xy * 0.5 + 0.5;  // GL textures start at the bottom row
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0) return 1.0;
+    if (length(wpos - cam) > shadow_split[count - 1]) return 1.0;
+    int c = 0;  // the first cascade holding the point (mesh.hlsl)
+    vec4 s = vec4(0.0, 0.0, 2.0, 1.0);
+    vec2 uv = vec2(0.0);  // GL textures start at the bottom row
+    for (; c < count; ++c) {
+        s = shadow_vp[c] * vec4(wpos + n * shadow_info.w * (1.0 + float(c)), 1.0);
+        uv = s.xy * 0.5 + 0.5;
+        if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))) && s.z <= 1.0) break;
+    }
+    if (c >= count) return 1.0;
     // Tiles are given top-left; in GL the atlas's rows run bottom-up.
     vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
     uv = origin + uv * shadow_tile[c].z;
@@ -182,12 +185,16 @@ float sun_shadow(vec3 wpos, vec3 n, vec3 cam) {
 float sun_visibility(vec3 p, vec3 cam) {  // one tap of the sun's shadow in the air (volumetric fog)
     float dist = length(p - cam);
     int count = int(shadow_info.x);
-    int c = 0;
-    while (c + 1 < count && dist > shadow_split[c]) ++c;
     if (dist > shadow_split[count - 1]) return 1.0;
-    vec4 s = shadow_vp[c] * vec4(p, 1.0);
-    vec2 uv = s.xy * 0.5 + 0.5;
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || s.z > 1.0) return 1.0;
+    int c = 0;  // the first cascade holding the point (mesh.hlsl)
+    vec4 s = vec4(0.0, 0.0, 2.0, 1.0);
+    vec2 uv = vec2(0.0);
+    for (; c < count; ++c) {
+        s = shadow_vp[c] * vec4(p, 1.0);
+        uv = s.xy * 0.5 + 0.5;
+        if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))) && s.z <= 1.0) break;
+    }
+    if (c >= count) return 1.0;
     vec2 origin = vec2(shadow_tile[c].x, 1.0 - shadow_tile[c].y - shadow_tile[c].z);
     float last = shadow_split[count - 1];  // faded to lit over the last fifth: no hard edge where the shadows end
     return mix(texture(shadow_tex, vec3(origin + uv * shadow_tile[c].z, s.z)), 1.0, clamp((dist - last * 0.8) / (last * 0.2), 0.0, 1.0));
@@ -228,6 +235,7 @@ void area_point(Light L, vec3 wpos, vec3 rv, float roughness, inout vec3 ls, ino
 }
 
 vec3 fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the fog along the view ray, and the local lights' glow
+    float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));  // staggered steps per pixel
     if (volumetric.x <= 0.0) return vec3(1.0);
     vec3 to = wpos - cam;
     float len = min(length(to), volumetric.z);
@@ -237,7 +245,7 @@ vec3 fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the f
     float sun = 1.0;
     if (shadow_info.y >= 0.0 && shadow_info.x >= 0.5) {
         float vis = 0.0;
-        for (int k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * (float(k) + 0.5) / float(steps)), cam);
+        for (int k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * (float(k) + jitter) / float(steps)), cam);
         vis /= float(steps);
         float cosv = dot(dir, -lights[int(shadow_info.y)].dir_range.xyz);
         float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
@@ -245,7 +253,7 @@ vec3 fog_light(vec3 wpos, vec3 cam) {  // as mesh.hlsl's: the sun reaching the f
     }
     vec3 local = vec3(0.0);
     for (int k = 0; k < steps; ++k) {
-        vec3 p = cam + dir * (len * (float(k) + 0.5) / float(steps));
+        vec3 p = cam + dir * (len * (float(k) + jitter) / float(steps));
         for (uint li = 0u; li < light_count; ++li) {
             Light L = lights[li];
             if (L.pos_type.w < 0.5 || L.pos_type.w > 2.5) continue;

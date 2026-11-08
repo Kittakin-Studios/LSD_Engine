@@ -80,13 +80,18 @@ VK_BIND(5, 1) SamplerComparisonState shadow_samp : register(s1);
 // Sun shadow: the cascade by distance from the camera, pushed out along the normal against acne,
 // 3x3 hardware-filtered taps (soft edges).
 float sun_shadow(float3 wpos, float3 n, float3 cam) {
-    const float dist = length(wpos - cam);
+    if (length(wpos - cam) > shadow_split[(uint)shadow_info.x - 1]) return 1.0;
+    // The first (sharpest) cascade whose map holds the point: by distance alone, points near the screen's corners
+    // can fall outside a cascade's sphere and show lit (arcs where its split is).
     uint c = 0;
-    while (c + 1 < (uint)shadow_info.x && dist > shadow_split[c]) ++c;
-    if (dist > shadow_split[(uint)shadow_info.x - 1]) return 1.0;
-    const float4 s = mul(shadow_vp[c], float4(wpos + n * shadow_info.w * (1.0 + c), 1.0));
-    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
-    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0) return 1.0;
+    float4 s = float4(0.0, 0.0, 2.0, 1.0);
+    float2 uv = float2(0.0, 0.0);
+    for (; c < (uint)shadow_info.x; ++c) {
+        s = mul(shadow_vp[c], float4(wpos + n * shadow_info.w * (1.0 + c), 1.0));
+        uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
+        if (all(uv >= 0.0) && all(uv <= 1.0) && s.z <= 1.0) break;
+    }
+    if (c >= (uint)shadow_info.x) return 1.0;
     uv = shadow_tile[c].xy + uv * shadow_tile[c].z;
     const float2 lo = shadow_tile[c].xy + shadow_info.z, hi = shadow_tile[c].xy + shadow_tile[c].z - shadow_info.z;
     float lit = 0.0;
@@ -97,12 +102,16 @@ float sun_shadow(float3 wpos, float3 n, float3 cam) {
 // One hardware-filtered tap of the sun's shadow at a point in the air (volumetric fog).
 float sun_visibility(float3 p, float3 cam) {
     const float dist = length(p - cam);
-    uint c = 0;
-    while (c + 1 < (uint)shadow_info.x && dist > shadow_split[c]) ++c;
     if (dist > shadow_split[(uint)shadow_info.x - 1]) return 1.0;
-    const float4 s = mul(shadow_vp[c], float4(p, 1.0));
-    float2 uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
-    if (any(uv < 0.0) || any(uv > 1.0) || s.z > 1.0) return 1.0;
+    uint c = 0;  // the first cascade holding the point (as sun_shadow)
+    float4 s = float4(0.0, 0.0, 2.0, 1.0);
+    float2 uv = float2(0.0, 0.0);
+    for (; c < (uint)shadow_info.x; ++c) {
+        s = mul(shadow_vp[c], float4(p, 1.0));
+        uv = float2(s.x * 0.5 + 0.5, 0.5 - s.y * 0.5);
+        if (all(uv >= 0.0) && all(uv <= 1.0) && s.z <= 1.0) break;
+    }
+    if (c >= (uint)shadow_info.x) return 1.0;
     const float last = shadow_split[(uint)shadow_info.x - 1];  // faded to lit over the last fifth: no hard edge where the shadows end
     return lerp(shadow_tex.SampleCmpLevelZero(shadow_samp, shadow_tile[c].xy + uv * shadow_tile[c].z, s.z), 1.0, saturate((dist - last * 0.8) / (last * 0.2)));
 }
@@ -148,7 +157,10 @@ void area_point(Light L, float3 wpos, float3 rv, float roughness, inout float3 l
 
 // What lights the fog along the view ray (Volumetric): the sun where its shadow lets it through, and the Point
 // and Spot Lights near the ray (their glow and cones in the fog; shortcut: unshadowed). Multiplies the fog colour.
-float3 fog_light(float3 wpos, float3 cam) {
+// `pixel` (SV_Position.xy) staggers where the steps fall per pixel (interleaved gradient noise): with the same
+// distances everywhere, shadow edges show as arcs where each step's sphere meets them.
+float3 fog_light(float3 wpos, float3 cam, float2 pixel) {
+    const float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
     if (volumetric.x <= 0.0) return float3(1.0, 1.0, 1.0);
     const float3 to = wpos - cam;
     const float len = min(length(to), volumetric.z);
@@ -158,7 +170,7 @@ float3 fog_light(float3 wpos, float3 cam) {
     float sun = 1.0;
     if (shadow_info.y >= 0.0 && shadow_info.x >= 0.5) {
         float vis = 0.0;
-        for (uint k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * ((float)k + 0.5) / (float)steps), cam);
+        for (uint k = 0; k < steps; ++k) vis += sun_visibility(cam + dir * (len * ((float)k + jitter) / (float)steps), cam);
         vis /= (float)steps;
         const float cosv = dot(dir, -lights[(uint)shadow_info.y].dir_range.xyz);
         const float phase = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosv, 1e-3), 1.5);
@@ -166,7 +178,7 @@ float3 fog_light(float3 wpos, float3 cam) {
     }
     float3 local = float3(0.0, 0.0, 0.0);
     for (uint k = 0; k < steps; ++k) {
-        const float3 p = cam + dir * (len * ((float)k + 0.5) / (float)steps);
+        const float3 p = cam + dir * (len * ((float)k + jitter) / (float)steps);
         for (uint li = 0; li < light_count; ++li) {
             const Light L = lights[li];
             if (L.pos_type.w < 0.5 || L.pos_type.w > 2.5) continue;  // point and spot lights
@@ -522,7 +534,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float horizon = saturate(1.0 + 1.2 * dot(r, geometric_n));
     lit += base.rgb * (1.0 - metallic) * (1.0 - env_spec) * sky * ao + env_spec * reflected * spec_ao * horizon * horizon;
     lit += emissive;
-    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(i.wpos, mat1.yzw) : float3(1.0, 1.0, 1.0)), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
+    return float4(scene_out(lit * exposure, i.wpos, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(i.wpos, mat1.yzw, i.pos.xy) : float3(1.0, 1.0, 1.0)), hdr_out.x > 0.5 && !blended ? (1.0 - roughness) * (1.0 - roughness) : base.a);  // scene target: how mirror-like (SSR); blended: opacity
 }
 
 // The sky (rhi::SkyDraw through the Draw constants: mvp = inverse view-projection, n0 zenith, n1
@@ -545,5 +557,5 @@ float4 ps_sky(SkyOut i) : SV_Target {
         c += w1.rgb * (smoothstep(w0.w, w0.w + (1.0 - w0.w) * 0.3, s) + 0.25 * pow(saturate(s), 64.0) + 0.06 * pow(saturate(s), 6.0));  // disc + glow + the wide haze around the sun (Mie)
     }
     const float3 far_point = mat1.yzw + d * 5000.0;  // volumetric fog marches its View Distance even with nothing behind it
-    return float4(scene_out(c, far_point, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(far_point, mat1.yzw) : float3(1.0, 1.0, 1.0)), 1.0);
+    return float4(scene_out(c, far_point, mat1.yzw, i.pos.xy, fog.w > 0.0 ? fog_light(far_point, mat1.yzw, i.pos.xy) : float3(1.0, 1.0, 1.0)), 1.0);
 }
