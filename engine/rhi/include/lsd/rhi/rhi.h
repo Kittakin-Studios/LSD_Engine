@@ -236,7 +236,8 @@ struct LightSetup {
     f32 reflection_info[4] = {};
     f32 reflections[kMaxReflectionProbes][4] = {};
     // Lightmaps (set_lightmap_atlas): x = how bright a stored 1 is (texels hold c / (1 + c), c in units
-    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker).
+    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker), w = 1 when it is
+    // directional (the texture twice as tall: the light in the top half, each texel's direction in the bottom).
     // Its RGB replaces the ambient light, A is the sun's baked visibility.
     f32 lightmap_info[4] = {};
     // Volumetric fog (Height Fog > Volumetric): x = strength (0: off), y = anisotropy (-0.9..0.9, how

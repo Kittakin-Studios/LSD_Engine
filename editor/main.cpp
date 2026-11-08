@@ -189,8 +189,13 @@ void upload_lightmaps(lsd::rhi::Device& device, lsd::editor::MeshCache& meshes) 
     g_lightmap_names.clear();
     const lsd::editor::BakedLighting& l = g_level_lighting;
     if (!l.has_lightmap()) return;
-    const void* mips[1] = {l.lightmap.data()};
-    g_lightmap_atlas = device.create_texture(l.lightmap_size, l.lightmap_size, 1, lsd::rhi::TextureFormat::RGBA8, mips);
+    std::vector<lsd::u8> both;  // directional: the light, then its directions, one texture twice as tall (no extra binding)
+    if (l.lightmap_dir.size() == l.lightmap.size()) {
+        both = l.lightmap;
+        both.insert(both.end(), l.lightmap_dir.begin(), l.lightmap_dir.end());
+    }
+    const void* mips[1] = {both.empty() ? l.lightmap.data() : both.data()};
+    g_lightmap_atlas = device.create_texture(l.lightmap_size, both.empty() ? l.lightmap_size : l.lightmap_size * 2, 1, lsd::rhi::TextureFormat::RGBA8, mips);
     device.set_lightmap_atlas(g_lightmap_atlas);
     for (lsd::usize k = 0; k < l.objects.size(); ++k) {
         const lsd::editor::LightmapObject& o = l.objects[k];

@@ -41,6 +41,9 @@ struct BakedLighting {
     u32 lightmap_size = 0;
     f32 lightmap_scale = 1.0f;
     std::vector<u8> lightmap;
+    // Directional lightmaps: per texel, where its baked light mostly comes from (RGB: the luminance-weighted mean
+    // direction * 0.5 + 0.5, its length how one-sided the light is; normal maps shade by it). Empty: older bakes.
+    std::vector<u8> lightmap_dir;
     std::vector<LightmapObject> objects;
     bool valid() const { return !sh.empty(); }
     bool has_lightmap() const { return lightmap_size && !objects.empty(); }

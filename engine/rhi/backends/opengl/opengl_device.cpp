@@ -473,9 +473,14 @@ void main() {
     bool lightmapped = lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0;
     vec4 baked = vec4(0.0, 0.0, 0.0, 1.0);
     if (lightmapped) {
-        baked = textureLod(lightmap_tex, v_lightmap_uv, 0.0);
+        vec2 at = lightmap_info.w > 0.5 ? v_lightmap_uv * vec2(1.0, 0.5) : v_lightmap_uv;
+        baked = textureLod(lightmap_tex, at, 0.0);
         vec3 c = min(baked.rgb, vec3(0.999));
         baked.rgb = c / (1.0 - c) * lightmap_info.x;
+        if (lightmap_info.w > 0.5) {  // directional (mesh.hlsl)
+            vec3 d = textureLod(lightmap_tex, at + vec2(0.0, 0.5), 0.0).xyz * 2.0 - 1.0;
+            baked.rgb *= (dot(n, d) * 0.5 + 0.5) / max(dot(geometric_n, d) * 0.5 + 0.5, 0.1);
+        }
     }
     for (uint li = 0u; li < light_count; ++li) {
         Light L = lights[li];

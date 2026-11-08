@@ -874,7 +874,9 @@ Static and moving objects use it for their ambient light: rooms get darker, colo
 neighbours. Rebuild after moving walls or lights.
 
 **Lightmaps** (Unreal's lightmaps from Lightmass): static meshes also get a lightmap texture,
-detailed per surface where the probes are coarse:
+detailed per surface where the probes are coarse. They are directional (Unreal's directional lightmaps):
+each texel also keeps where its light mostly comes from, so normal maps still show their bumps under
+baked light. Lighting built before this keeps working, flat, until you build it again.
 
 ![Lighting Only view after Build Lighting](images/lightmap_lighting_only.jpg)
 *Lighting Only view (Alt+6) after Build Lighting: the sky light, the blue floor's bounce, and the

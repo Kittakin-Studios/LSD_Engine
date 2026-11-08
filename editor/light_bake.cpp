@@ -416,7 +416,11 @@ bool chart_lightmaps(const BakeScene& s, u32 size, std::vector<LightmapObject>& 
 
 // The light a texel gets: from the sky and one bounce over its hemisphere (as the probes), and how
 // much of the sun reaches it (a few rays over the sun's disc: soft edges).
-void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 seed, Vec3& ambient, f32& sun, const ProbeGrid* indirect) {
+// `direction`: the luminance-weighted mean direction the light arrives from (length 1 all from one side, 0 even).
+void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 seed, Vec3& ambient, Vec3& direction, f32& sun, const ProbeGrid* indirect) {
+    auto lum = [](Vec3 c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; };
+    Vec3 toward{};
+    f32 weight = 0.0f;
     const Vec3 n = t.normal;
     const Vec3 helper = std::fabs(n.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
     const Vec3 tx = normalize(cross(helper, n)), ty = cross(n, tx);
@@ -430,22 +434,30 @@ void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 
         const Vec3 d = tx * (radius * std::cos(phi)) + ty * (radius * std::sin(phi)) + n * std::sqrt(std::max(0.0f, 1.0f - u));
         u32 tri;
         f32 dist;
+        Vec3 got;
         if (!bvh.trace(origin, d, 1e4f, tri, dist)) {
-            sum = sum + sky_radiance(s.lights, d);
+            got = sky_radiance(s.lights, d);
         } else {
             const Vec3 a = s.positions[tri * 3], b = s.positions[tri * 3 + 1], c = s.positions[tri * 3 + 2];
             Vec3 hn = normalize(cross(b - a, c - a));
             if (dot(hn, d) > 0.0f) hn = hn * -1.0f;
-            sum = sum + bounce(bvh, s, origin + d * dist, hn, s.albedo[tri], indirect);
+            got = bounce(bvh, s, origin + d * dist, hn, s.albedo[tri], indirect);
         }
+        sum = sum + got;
+        toward = toward + d * lum(got);
+        weight += lum(got);
     }
     ambient = sum * (1.0f / kRays);  // irradiance / pi: what the shader's ambient term is in
     for (u32 li = 0; li < s.lights.count; ++li) {  // Static lights: their direct light, baked (irradiance / pi too)
         if (!(s.static_lights >> li & 1u)) continue;
         Vec3 to;
         const Vec3 e = static_light_at(bvh, s.lights.lights[li], &s.lights.light_profiles[li * 4], origin, to);
-        ambient = ambient + e * (std::max(dot(n, to), 0.0f) / 3.14159265f);
+        const Vec3 arriving = e * (std::max(dot(n, to), 0.0f) / 3.14159265f);
+        ambient = ambient + arriving;
+        toward = toward + to * (lum(arriving) * kRays);  // in the rays' units (each ray's share is 1 / kRays)
+        weight += lum(arriving) * kRays;
     }
+    direction = weight > 0.0f ? toward * (1.0f / weight) : Vec3{};
     sun = 1.0f;
     for (u32 i = 0; i < s.lights.count; ++i) {
         const rhi::GpuLight& light = s.lights.lights[i];
@@ -481,12 +493,12 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
         if (texels[i].set) todo.push_back(i);
     }
     if (total) *total += static_cast<u32>(todo.size());
-    std::vector<Vec3> ambient(texels.size());
+    std::vector<Vec3> ambient(texels.size()), direction(texels.size());
     std::vector<f32> sun(texels.size(), 1.0f);
     std::atomic<u32> next{0};
     auto worker = [&] {
         for (u32 k = next++; k < todo.size(); k = next++) {
-            bake_texel(bvh, s, texels[todo[k]], todo[k], ambient[todo[k]], sun[todo[k]], indirect);
+            bake_texel(bvh, s, texels[todo[k]], todo[k], ambient[todo[k]], direction[todo[k]], sun[todo[k]], indirect);
             if (done) ++*done;
         }
     };
@@ -505,7 +517,7 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
             for (u32 x = 0; x < size; ++x) {
                 const usize i = static_cast<usize>(y) * size + x;
                 if (set[i]) continue;
-                Vec3 a{};
+                Vec3 a{}, dir{};
                 f32 b = 0.0f;
                 u32 count = 0;
                 for (int o = 0; o < 4; ++o) {
@@ -514,11 +526,13 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
                     const usize j = static_cast<usize>(ny) * size + static_cast<usize>(nx);
                     if (!set[j]) continue;
                     a = a + ambient[j];
+                    dir = dir + direction[j];
                     b += sun[j];
                     ++count;
                 }
                 if (!count) continue;
                 ambient[i] = a * (1.0f / static_cast<f32>(count));
+                direction[i] = dir * (1.0f / static_cast<f32>(count));
                 sun[i] = b / static_cast<f32>(count);
                 next_set[i] = 1;
             }
@@ -531,11 +545,16 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
     out.lightmap_scale = std::max(static_cast<f32>(sum / static_cast<f64>(std::max<usize>(todo.size(), 1))), 1e-6f);
     out.lightmap_size = size;
     out.lightmap.assign(static_cast<usize>(size) * size * 4, 0);
+    out.lightmap_dir.assign(static_cast<usize>(size) * size * 4, 128);
     for (usize i = 0; i < texels.size(); ++i) {
         u8* p = &out.lightmap[i * 4];
         const f32 c[3] = {ambient[i].x / out.lightmap_scale, ambient[i].y / out.lightmap_scale, ambient[i].z / out.lightmap_scale};
         for (int k = 0; k < 3; ++k) p[k] = static_cast<u8>(std::lround(std::clamp(c[k] / (1.0f + c[k]), 0.0f, 1.0f) * 255.0f));
         p[3] = static_cast<u8>(std::lround(std::clamp(set[i] ? sun[i] : 1.0f, 0.0f, 1.0f) * 255.0f));
+        u8* q = &out.lightmap_dir[i * 4];
+        const f32 dv[3] = {direction[i].x, direction[i].y, direction[i].z};
+        for (int k = 0; k < 3; ++k) q[k] = static_cast<u8>(std::lround(std::clamp(dv[k] * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f));
+        q[3] = 255;
     }
 }
 
@@ -767,16 +786,19 @@ std::string baked_lighting_path(const char* level_path) {
 namespace {
 constexpr char kMagic[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '1'};   // probes only
 constexpr char kMagic2[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '2'};  // probes, then the lightmap and its objects
+constexpr char kMagic3[8] = {'L', 'S', 'D', 'L', 'I', 'G', 'H', '3'};  // as 2, the lightmap's directions after it
 }
 
 bool save_baked_lighting(const char* path, const BakedLighting& l) {
     FILE* f = std::fopen(path, "wb");
     if (!f) return false;
-    bool ok = std::fwrite(kMagic2, sizeof kMagic2, 1, f) == 1 && std::fwrite(l.origin, sizeof l.origin, 1, f) == 1 && std::fwrite(l.cell, sizeof l.cell, 1, f) == 1 &&
+    const bool directional = l.has_lightmap() && l.lightmap_dir.size() == l.lightmap.size();
+    bool ok = std::fwrite(directional ? kMagic3 : kMagic2, sizeof kMagic2, 1, f) == 1 && std::fwrite(l.origin, sizeof l.origin, 1, f) == 1 && std::fwrite(l.cell, sizeof l.cell, 1, f) == 1 &&
               std::fwrite(l.dims, sizeof l.dims, 1, f) == 1 && std::fwrite(l.sh.data(), sizeof(f32), l.sh.size(), f) == l.sh.size();
     const u32 size = l.has_lightmap() ? l.lightmap_size : 0, objects = size ? static_cast<u32>(l.objects.size()) : 0;
     ok = ok && std::fwrite(&size, sizeof size, 1, f) == 1 && std::fwrite(&l.lightmap_scale, sizeof l.lightmap_scale, 1, f) == 1 && std::fwrite(&objects, sizeof objects, 1, f) == 1;
     if (size) ok = ok && std::fwrite(l.lightmap.data(), 1, l.lightmap.size(), f) == l.lightmap.size();
+    if (directional) ok = ok && std::fwrite(l.lightmap_dir.data(), 1, l.lightmap_dir.size(), f) == l.lightmap_dir.size();
     for (u32 i = 0; ok && i < objects; ++i) {
         const LightmapObject& o = l.objects[i];
         const u32 counts[2] = {static_cast<u32>(o.vertices.size()), static_cast<u32>(o.indices.size())};
@@ -794,7 +816,8 @@ bool load_baked_lighting(const char* path, BakedLighting& l) {
     if (!f) return false;
     char magic[8];
     bool ok = std::fread(magic, sizeof magic, 1, f) == 1;
-    const bool v2 = ok && std::memcmp(magic, kMagic2, sizeof magic) == 0;
+    const bool v3 = ok && std::memcmp(magic, kMagic3, sizeof magic) == 0;
+    const bool v2 = ok && (v3 || std::memcmp(magic, kMagic2, sizeof magic) == 0);
     ok = ok && (v2 || std::memcmp(magic, kMagic, sizeof magic) == 0) && std::fread(l.origin, sizeof l.origin, 1, f) == 1 &&
          std::fread(l.cell, sizeof l.cell, 1, f) == 1 && std::fread(l.dims, sizeof l.dims, 1, f) == 1;
     const u64 count = ok ? static_cast<u64>(l.dims[0]) * l.dims[1] * l.dims[2] : 0;
@@ -810,6 +833,10 @@ bool load_baked_lighting(const char* path, BakedLighting& l) {
         l.lightmap_size = size;
         l.lightmap.resize(static_cast<usize>(size) * size * 4);
         ok = std::fread(l.lightmap.data(), 1, l.lightmap.size(), f) == l.lightmap.size();
+        if (ok && v3) {
+            l.lightmap_dir.resize(l.lightmap.size());
+            ok = std::fread(l.lightmap_dir.data(), 1, l.lightmap_dir.size(), f) == l.lightmap_dir.size();
+        }
     }
     for (u32 i = 0; ok && i < objects; ++i) {  // never trust file data: counts capped, indices checked
         LightmapObject o;
@@ -843,6 +870,7 @@ void apply_baked_lighting(const BakedLighting& l, rhi::LightSetup& setup) {
         setup.lightmap_info[0] = l.lightmap_scale;
         setup.lightmap_info[1] = 1.0f;
         setup.lightmap_info[2] = static_cast<f32>(l.lightmap_size);
+        setup.lightmap_info[3] = l.lightmap_dir.size() == l.lightmap.size() ? 1.0f : 0.0f;  // the atlas is twice as tall: directions below
     }
 }
 

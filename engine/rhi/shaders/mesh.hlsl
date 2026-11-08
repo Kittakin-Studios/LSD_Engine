@@ -459,9 +459,14 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const bool lightmapped = lightmap_info.y > 0.5 && i.lightmap_uv.x > 0.0;
     float4 baked = float4(0, 0, 0, 1);
     if (lightmapped) {
-        baked = lightmap_tex.SampleLevel(samp, i.lightmap_uv, 0);
+        const float2 at = lightmap_info.w > 0.5 ? i.lightmap_uv * float2(1.0, 0.5) : i.lightmap_uv;
+        baked = lightmap_tex.SampleLevel(samp, at, 0);
         const float3 c = min(baked.rgb, 0.999);
         baked.rgb = c / (1.0 - c) * lightmap_info.x;
+        if (lightmap_info.w > 0.5) {  // directional: the normal-mapped normal against the one it was baked for
+            const float3 d = lightmap_tex.SampleLevel(samp, at + float2(0.0, 0.5), 0).xyz * 2.0 - 1.0;
+            baked.rgb *= (dot(n, d) * 0.5 + 0.5) / max(dot(geometric_n, d) * 0.5 + 0.5, 0.1);
+        }
     }
     for (uint li = 0; li < light_count; ++li) {
         const Light L = lights[li];

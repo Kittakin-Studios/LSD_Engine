@@ -263,6 +263,13 @@ static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor unde
             lit_sum += baked.lightmap[i];
         }
     }
+    // Directional: the light comes mostly from above in the open (the sky), so the stored directions point up.
+    CHECK(baked.lightmap_dir.size() == baked.lightmap.size());
+    f64 up = 0.0;
+    for (usize i = 0; i < baked.lightmap.size(); i += 4) {
+        if (baked.lightmap[i] && baked.lightmap[i + 3] >= 128) up += (baked.lightmap_dir[i + 2] / 255.0) * 2.0 - 1.0;
+    }
+    CHECK(covered > shadowed && up / static_cast<f64>(covered - shadowed) > 0.4);
     const f32 share = covered ? static_cast<f32>(shadowed) / static_cast<f32>(covered) : 0.0f;
     CHECK(covered > 1000 && share > 0.02f && share < 0.08f);  // 16 of 400 square metres under the roof
     CHECK(shadowed && covered > shadowed && dark_sum / shadowed < lit_sum / (covered - shadowed));  // and less sky there
