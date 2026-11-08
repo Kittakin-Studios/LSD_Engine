@@ -23,6 +23,11 @@ void reflection_views(Vec3 eye, Mat4 out[6]);
 // reflection_views) into tile `index` of `atlas` (RGBA8, kReflectionAtlas square). Tile texel (u, v):
 // longitude u * 2pi - pi around +Z from +X, v = 0 straight up (+Z), v = 1 straight down.
 void unwrap_reflection(const u8* const faces[6], const Mat4 views[6], u32 index, u8* atlas);
+// An HDRI (latitude-longitude, half-float RGBA rows top to bottom: straight up first, its middle column along +X, the
+// same layout as a tile) resampled into tile `index`, times `scale`, stored like a capture (as it shows on screen).
+// `averages` gets its colour overhead (within 30 degrees of straight up), at the horizon (the 15 degrees above it) and
+// below the horizon, unscaled.
+void hdri_to_tile(const u16* half_rgba, u32 width, u32 height, f32 scale, u32 index, u8* atlas, Vec3 averages[3]);
 // Levels 1.. of the atlas's mip chain (each half the last), averaged in decoded colour.
 void reflection_mips(const u8* atlas, std::vector<std::vector<u8>>& levels);
 

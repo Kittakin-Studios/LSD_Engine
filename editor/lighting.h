@@ -46,6 +46,12 @@ struct ShadowCells {
 Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal, f32 sun_visible = 1.0f);
 // The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
 void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count);  // boxes: half size, fade (w 0 = sphere)
+// The Sky's HDRI as the environment (`on` false: none): its tile in the reflection atlas, which reflections outside
+// every capture sample instead of the sky gradient, and its zenith / horizon / ground averages (hdri_to_tile), which
+// the drawn sky and the ambient take instead of their own colours.
+void set_sky_hdri(bool on, u32 tile, const Vec3 averages[3]);
+// The level's Sky's HDRI texture GUID ("" when none) and its Brightness.
+const char* sky_hdri(const world::World& w, bool skip_hidden, f32& brightness);
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
 // casts them further.
 void set_shadow_quality(u32 quality);

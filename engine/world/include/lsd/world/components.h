@@ -897,6 +897,9 @@ struct Sky {
     LSD_PROPERTY(Edit, Tooltip = "Draw the sun where the Directional Light shines from") bool sun_disc = true;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0.1, Max = 10, Tooltip = "How big the sun disc looks") f32 sun_size = 0.8f;
     LSD_PROPERTY(Edit, Tooltip = "Colour of the sun disc") LinearColor sun_color = LinearColor::hex(0xFFF2D6);
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture",
+                 Tooltip = "An HDRI (Unreal's Sky Light cubemap / HDRI Backdrop): a latitude-longitude .hdr or .exr. Reflections outside every Reflection Capture show it, and the sky's colours and the ambient light take its averages (times Brightness)")
+    char hdri[33] = "";
 };
 
 // Exponential height fog (Unreal's Exponential Height Fog): thicker low down, thinning with height.

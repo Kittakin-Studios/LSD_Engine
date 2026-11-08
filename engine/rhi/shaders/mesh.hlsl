@@ -482,7 +482,8 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float3 r = reflect(-v, n);
     const float3 lum = float3(0.2126, 0.7152, 0.0722);
     const float open_sky = saturate(dot(sky, lum) / max(dot(lerp(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4));
-    const float3 reflected = capture_reflection(lerp(sky_radiance(r) * open_sky, sky, roughness * roughness), r, roughness, i.wpos);
+    const float3 environment = reflection_info.y > 0.5 ? capture_sample((uint)reflection_info.z, r, roughness, i.wpos) : sky_radiance(r);  // the Sky's HDRI, or its gradient
+    const float3 reflected = capture_reflection(lerp(environment * open_sky, sky, roughness * roughness), r, roughness, i.wpos);
     const float2 ab = env_brdf(ndv, roughness);
     const float3 env_spec = f0 * ab.x + ab.y;
     const float spec_ao = saturate(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);

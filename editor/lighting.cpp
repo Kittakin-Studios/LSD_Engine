@@ -213,7 +213,16 @@ namespace {
 f32 g_reflection_probes[rhi::kMaxReflectionProbes][4] = {};
 f32 g_reflection_boxes[rhi::kMaxReflectionProbes][4] = {};
 u32 g_reflection_count = 0;
+bool g_hdri_on = false;
+u32 g_hdri_tile = 0;
+Vec3 g_hdri_averages[3] = {};
 } // namespace
+
+void set_sky_hdri(bool on, u32 tile, const Vec3 averages[3]) {
+    g_hdri_on = on;
+    g_hdri_tile = tile;
+    for (int b = 0; b < 3; ++b) g_hdri_averages[b] = on ? averages[b] : Vec3{};
+}
 
 void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count) {
     g_reflection_count = count < rhi::kMaxReflectionProbes ? count : rhi::kMaxReflectionProbes;
@@ -228,6 +237,8 @@ void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 co
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
     rhi::LightSetup s = lights_only(w, view, skip_hidden, g_baked == nullptr);  // Static lights are in the bake once there is one
     s.reflection_info[0] = static_cast<f32>(g_reflection_count);
+    s.reflection_info[1] = g_hdri_on ? 1.0f : 0.0f;  // the environment is the HDRI's tile, z
+    s.reflection_info[2] = static_cast<f32>(g_hdri_tile);
     for (u32 k = 0; k < g_reflection_count; ++k) {
         for (int c = 0; c < 4; ++c) {
             s.reflections[k][c] = g_reflection_probes[k][c];
@@ -366,7 +377,7 @@ struct SkyColors {
     Vec3 sun_direction{0, 0, 1};  // toward the sun
     bool has_sun = false;
 };
-SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
+SkyColors gradient_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
     SkyColors c;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     for (u32 i = 0; i < w.count(dir_type); ++i) {
@@ -393,6 +404,18 @@ SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hid
     const Vec3 tint{sky.sun_color.r, sky.sun_color.g, sky.sun_color.b};
     const Vec3 reddened = mix({1.0f, 0.35f, 0.08f}, {1.0f, 1.0f, 1.0f}, smooth(0.0f, 0.3f, height));
     c.sun = Vec3{tint.x * reddened.x, tint.y * reddened.y, tint.z * reddened.z} * smooth(-0.05f, 0.02f, height);
+    return c;
+}
+
+// With an HDRI: its averages instead of the gradient's colours (the sun stays the light's).
+// shortcut: the drawn backdrop is the gradient of those averages, not the image; draw the tile in the sky pass for that
+SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
+    SkyColors c = gradient_colors(w, sky, skip_hidden);
+    if (g_hdri_on && sky.hdri[0]) {
+        c.zenith = g_hdri_averages[0];
+        c.horizon = g_hdri_averages[1];
+        c.ground = g_hdri_averages[2];
+    }
     return c;
 }
 
@@ -618,5 +641,11 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
 }
 
 } // namespace
+
+const char* sky_hdri(const world::World& w, bool skip_hidden, f32& brightness) {
+    const world::Sky* sky = find_sky(w, skip_hidden);
+    brightness = sky ? sky->brightness : 1.0f;
+    return sky ? sky->hdri : "";
+}
 
 } // namespace lsd::editor

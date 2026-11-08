@@ -18,7 +18,46 @@ u8 encode(f32 c) {
     return static_cast<u8>(std::lround(std::fmin(std::fmax(x, 0.0f), 1.0f) * 255.0f));
 }
 
+f32 from_half(u16 h) {
+    const u32 exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu;
+    const f32 m = static_cast<f32>(mantissa) / 1024.0f;
+    const f32 v = exponent == 0 ? std::ldexp(m, -14) : exponent == 31 ? 65504.0f : std::ldexp(1.0f + m, static_cast<int>(exponent) - 15);
+    return (h & 0x8000u) ? -v : v;
+}
+
 } // namespace
+
+void hdri_to_tile(const u16* half_rgba, u32 width, u32 height, f32 scale, u32 index, u8* atlas, Vec3 averages[3]) {
+    auto texel = [&](u32 x, u32 y, int c) { return std::fmax(from_half(half_rgba[(static_cast<usize>(y) * width + x) * 4 + static_cast<usize>(c)]), 0.0f); };
+    const u32 col = index % 2, row = index / 2;
+    for (u32 y = 0; y < kReflectionTileH; ++y) {
+        const f32 fy = std::clamp((static_cast<f32>(y) + 0.5f) / kReflectionTileH * static_cast<f32>(height) - 0.5f, 0.0f, static_cast<f32>(height - 1));
+        const u32 y0 = static_cast<u32>(fy), y1 = std::min(y0 + 1, height - 1);
+        for (u32 x = 0; x < kReflectionTileW; ++x) {
+            const f32 fx = (static_cast<f32>(x) + 0.5f) / kReflectionTileW * static_cast<f32>(width) - 0.5f;
+            const u32 x0 = fx < 0.0f ? width - 1 : static_cast<u32>(fx) % width, x1 = (x0 + 1) % width;  // wraps around
+            const f32 tx = fx - std::floor(fx), ty = fy - static_cast<f32>(y0);
+            u8* out = atlas + ((static_cast<usize>(row) * kReflectionTileH + y) * kReflectionAtlas + col * kReflectionTileW + x) * 4;
+            for (int c = 0; c < 3; ++c) {
+                const f32 top = texel(x0, y0, c) + (texel(x1, y0, c) - texel(x0, y0, c)) * tx;
+                const f32 bottom = texel(x0, y1, c) + (texel(x1, y1, c) - texel(x0, y1, c)) * tx;
+                out[c] = encode((top + (bottom - top) * ty) * scale);
+            }
+            out[3] = 255;
+        }
+    }
+    Vec3 sum[3] = {};
+    f32 weight[3] = {};
+    for (u32 y = 0; y < height; ++y) {
+        const f32 theta = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(height) * kPi, deg = theta * 180.0f / kPi;
+        const int band = deg < 30.0f ? 0 : deg >= 75.0f && deg < 90.0f ? 1 : deg >= 90.0f ? 2 : -1;
+        if (band < 0) continue;
+        const f32 area = std::sin(theta);  // rows near the poles cover less of the sphere
+        for (u32 x = 0; x < width; ++x) sum[band] = sum[band] + Vec3{texel(x, y, 0), texel(x, y, 1), texel(x, y, 2)} * area;
+        weight[band] += area * static_cast<f32>(width);
+    }
+    for (int b = 0; b < 3; ++b) averages[b] = weight[b] > 0.0f ? sum[b] * (1.0f / weight[b]) : Vec3{};
+}
 
 void reflection_views(Vec3 eye, Mat4 out[6]) {
     const Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};

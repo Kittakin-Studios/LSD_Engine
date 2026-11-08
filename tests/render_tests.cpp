@@ -165,6 +165,23 @@ static void test_reflection() {
     render::reflection_mips(flat.data(), levels);
     CHECK(levels.size() == render::kReflectionMips - 1 && levels.back().size() == 16u * 16u * 4u);
     CHECK(levels[0][0] >= 127 && levels[0][0] <= 129 && levels.back()[5] >= 127 && levels.back()[5] <= 129);  // a flat colour stays flat
+    {  // an HDRI: sky 1.0 above the horizon, ground 0.25 below, into tile 2 at twice the brightness
+        std::vector<u16> hdri(16 * 8 * 4);
+        for (u32 y = 0; y < 8; ++y)
+            for (u32 x = 0; x < 16; ++x)
+                for (u32 c = 0; c < 4; ++c) hdri[(y * 16 + x) * 4 + c] = y < 4 ? 0x3C00 : 0x3400;  // half 1.0 / 0.25
+        std::fill(atlas.begin(), atlas.end(), u8{0});
+        Vec3 averages[3];
+        render::hdri_to_tile(hdri.data(), 16, 8, 2.0f, 2, atlas.data(), averages);
+        auto tile2 = [&](f32 u, f32 v) {  // column 0, row 1
+            const u32 x = static_cast<u32>(u * render::kReflectionTileW), y = render::kReflectionTileH + static_cast<u32>(v * render::kReflectionTileH);
+            return atlas[(static_cast<usize>(y) * render::kReflectionAtlas + x) * 4];
+        };
+        CHECK(tile2(0.3f, 0.1f) >= 207 && tile2(0.3f, 0.1f) <= 209);  // 2.0 stored like a capture: sqrt(2 / 3)
+        CHECK(tile2(0.9f, 0.9f) >= 146 && tile2(0.9f, 0.9f) <= 148);  // 0.5
+        CHECK(atlas[0] == 0);                                         // tile 0 untouched
+        CHECK(std::fabs(averages[0].x - 1.0f) < 1e-3f && std::fabs(averages[1].y - 1.0f) < 1e-3f && std::fabs(averages[2].z - 0.25f) < 1e-3f);
+    }
 }
 
 int main() {

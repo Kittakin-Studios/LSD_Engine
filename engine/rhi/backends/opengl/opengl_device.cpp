@@ -497,7 +497,8 @@ void main() {
     vec3 r = reflect(-v, n);
     vec3 lum = vec3(0.2126, 0.7152, 0.0722);
     float open_sky = clamp(dot(sky, lum) / max(dot(mix(ground.rgb, sky_color.rgb, n.z * 0.5 + 0.5), lum), 1e-4), 0.0, 1.0);
-    vec3 reflected = capture_reflection(mix(sky_radiance(r) * open_sky, sky, roughness * roughness), r, roughness, v_wpos);
+    vec3 environment = reflection_info.y > 0.5 ? capture_sample(uint(reflection_info.z), r, roughness, v_wpos) : sky_radiance(r);
+    vec3 reflected = capture_reflection(mix(environment * open_sky, sky, roughness * roughness), r, roughness, v_wpos);
     vec2 ab = env_brdf(ndv, roughness);
     vec3 env_spec = f0 * ab.x + ab.y;
     float spec_ao = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
