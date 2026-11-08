@@ -873,8 +873,9 @@ dark contact under the statue's feet come from the lightmap.*
 - **World Settings > Lightmap Resolution** (Off, 256 ... 4096, default 1024): the size of the
   level's lightmap atlas. Every lightmapped object shares it, at one texel density (the bake log
   says how many texels per metre it got): raise it for sharper baked light, lower it to bake faster.
-- Each texel stores the light from the sky and one bounce reaching that spot (it replaces the
-  probes there: corners, contact under objects, colour from neighbours) and how much of the **sun**
+- Each texel stores the light from the sky and three bounces reaching that spot (it replaces the
+  probes there: corners, contact under objects, colour from neighbours; a red carpet bounces red, its
+  material's texture taken into account) and how much of the **sun**
   reaches it: the sun's shadows are baked too, so they stay beyond the real-time Shadow Distance.
 - **Static Mesh > Static Lighting** (on by default, Unreal's Mobility: Static): untick it for
   objects that move; objects with a Rigid Body, Mover, Vehicle or Transport never get a lightmap.

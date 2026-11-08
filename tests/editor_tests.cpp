@@ -1,6 +1,7 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
 #include "light_bake.h"
+#include "lsd/asset/texture.h"
 #include "lighting.h"
 #include "lsd/render/mesh.h"
 #include "references.h"
@@ -814,6 +815,38 @@ void test_post_blend() {
     CHECK(editor::blend_post_volumes(w, {0, 0, 1}, false, out) && std::fabs(out.saturation - 0.5f) < 1e-5f && out.filmic_tonemapper);  // a quarter in: switches stay
 }
 
+void test_bake_texture_albedo() {  // Build Lighting: a triangle's albedo takes its material's base colour texture
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(LSD_TEST_TEMP_DIR) / "BakeAlbedo";
+    std::error_code error;
+    fs::remove_all(dir, error);
+    fs::create_directories(dir, error);
+    u8 red[4 * 4 * 4];
+    for (int i = 0; i < 16; ++i) red[i * 4] = 255, red[i * 4 + 1] = 0, red[i * 4 + 2] = 0, red[i * 4 + 3] = 255;
+    CHECK(asset::write_png((dir / "T_Red.png").string().c_str(), 4, 4, red));
+    asset::AssetRegistry registry(default_allocator(), dir.generic_string().c_str());
+    registry.scan();
+    char texture[33] = "";
+    for (usize i = 0; i < registry.count(); ++i) {
+        if (std::strcmp(registry.get(i).name, "T_Red") == 0) asset::to_string(registry.get(i).guid, texture);
+    }
+    std::ofstream(dir / "M_Red.lsdasset") << "{\"type\": \"Material\", \"data\": {\"base_color_texture\": \"" << texture << "\"}}";
+    registry.scan();
+    char material[33] = "";
+    for (usize i = 0; i < registry.count(); ++i) {
+        if (std::strcmp(registry.get(i).name, "M_Red") == 0) asset::to_string(registry.get(i).guid, material);
+    }
+    world::World w(default_allocator());
+    auto* mesh = w.add<world::StaticMesh>(w.create("Box"));
+    std::snprintf(mesh->mesh, sizeof mesh->mesh, "Cube");
+    std::snprintf(mesh->material, sizeof mesh->material, "%s", material);
+    mesh->color = LinearColor::hex(0xFFFFFF);  // no tint: the texture's own colour
+    editor::BakeScene scene;
+    CHECK(texture[0] && material[0] && editor::gather_bake_scene(w, registry, dir.generic_string().c_str(), default_allocator(), scene) && !scene.albedo.empty());
+    if (!scene.albedo.empty()) CHECK(scene.albedo[0].x > 0.9f && scene.albedo[0].y < 0.05f && scene.albedo[0].z < 0.05f);
+    fs::remove_all(dir, error);
+}
+
 void test_shadow_cells() {  // Shadow Resolution: aligned squares in the 8 x 8 cell atlas
     editor::ShadowCells cells;
     f32 x = -1, y = -1;
@@ -894,6 +927,7 @@ int main() {
     test_sound_cue();
     test_particle_light();
     test_shadow_cells();
+    test_bake_texture_albedo();
     test_post_blend();
     if (g_failures == 0) std::printf("All editor tests passed.\n");
     return g_failures == 0 ? 0 : 1;

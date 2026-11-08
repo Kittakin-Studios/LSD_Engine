@@ -3,6 +3,7 @@
 #include "lighting.h"
 
 #include "lsd/asset/data_asset.h"
+#include "lsd/asset/material_import.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/log.h"
 #include "lsd/render/material.h"
@@ -16,6 +17,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <string>
 #include <thread>
 
 namespace lsd::editor {
@@ -141,8 +145,39 @@ Vec3 sky_radiance(const rhi::LightSetup& l, Vec3 d) {
     return Vec3{l.ground[0], l.ground[1], l.ground[2]} * (1.0f - t) + Vec3{l.sky[0], l.sky[1], l.sky[2]} * t;
 }
 
-// Light leaving a surface point towards the probe: its colour times the light reaching it (one bounce).
-Vec3 bounce(const Bvh& bvh, const BakeScene& s, Vec3 p, Vec3 n, Vec3 albedo) {
+// A probe grid baked earlier, read as an irradiance cache: the light already bounced around (more bounces).
+struct ProbeGrid {
+    f32 origin[3], cell[3];
+    u32 dims[3];
+    const f32* sh = nullptr;  // 12 per probe (r, g, b: L0, L1x, L1y, L1z)
+};
+
+// Irradiance at `p` facing `n` from the grid (trilinear over the 8 probes around it; L1 SH).
+Vec3 grid_irradiance(const ProbeGrid& g, Vec3 p, Vec3 n) {
+    f32 f[3];
+    i32 c0[3];
+    const f32 at[3] = {p.x, p.y, p.z};
+    for (int a = 0; a < 3; ++a) {
+        const f32 x = std::clamp((at[a] - g.origin[a]) / g.cell[a], 0.0f, static_cast<f32>(g.dims[a] - 1));
+        c0[a] = std::min(static_cast<i32>(x), static_cast<i32>(g.dims[a]) - 2);
+        c0[a] = std::max(c0[a], 0);
+        f[a] = x - static_cast<f32>(c0[a]);
+    }
+    f32 sh[12] = {};
+    for (int k = 0; k < 8; ++k) {
+        const u32 x = static_cast<u32>(c0[0] + (k & 1)), y = static_cast<u32>(c0[1] + ((k >> 1) & 1)), z = static_cast<u32>(c0[2] + ((k >> 2) & 1));
+        const f32 w = ((k & 1) ? f[0] : 1.0f - f[0]) * (((k >> 1) & 1) ? f[1] : 1.0f - f[1]) * (((k >> 2) & 1) ? f[2] : 1.0f - f[2]);
+        const f32* probe = g.sh + (static_cast<usize>(x) + static_cast<usize>(y) * g.dims[0] + static_cast<usize>(z) * g.dims[0] * g.dims[1]) * 12;
+        for (int i = 0; i < 12; ++i) sh[i] += probe[i] * w;
+    }
+    f32 rgb[3];
+    for (int c = 0; c < 3; ++c) rgb[c] = std::max(0.0f, 0.886227f * sh[c * 4] + 1.023328f * (sh[c * 4 + 1] * n.x + sh[c * 4 + 2] * n.y + sh[c * 4 + 3] * n.z));
+    return {rgb[0], rgb[1], rgb[2]};
+}
+
+// Light leaving a surface point towards the probe: its colour times the light reaching it: the lights
+// (direct), and either half the sky (the first pass) or what an earlier probe grid saw there (more bounces).
+Vec3 bounce(const Bvh& bvh, const BakeScene& s, Vec3 p, Vec3 n, Vec3 albedo, const ProbeGrid* indirect) {
     Vec3 irradiance{};
     const rhi::LightSetup& l = s.lights;
     for (u32 i = 0; i < l.count; ++i) {
@@ -170,13 +205,13 @@ Vec3 bounce(const Bvh& bvh, const BakeScene& s, Vec3 p, Vec3 n, Vec3 albedo) {
         if (bvh.trace(p + n * 0.01f, to, distance, tri, t, true)) continue;  // in shadow
         irradiance = irradiance + Vec3{light.color[0], light.color[1], light.color[2]} * (ndl * atten);
     }
-    // shortcut: the sky at a hit point counts half (no second ray for its own occlusion)
-    irradiance = irradiance + sky_radiance(l, n) * (3.14159265f * 0.5f);
+    if (indirect) irradiance = irradiance + grid_irradiance(*indirect, p, n);  // sky and bounces, occluded as the probes saw them
+    else irradiance = irradiance + sky_radiance(l, n) * (3.14159265f * 0.5f);  // first pass: half the sky (no ray for its occlusion)
     return Vec3{albedo.x * irradiance.x, albedo.y * irradiance.y, albedo.z * irradiance.z} * (1.0f / 3.14159265f);
 }
 
 // Returns false if the probe is inside geometry (most of its rays hit the back of a surface).
-bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh) {
+bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh, const ProbeGrid* indirect) {
     u32 back_hits = 0;
     constexpr u32 kRays = 256;
     for (int i = 0; i < 12; ++i) sh[i] = 0.0f;
@@ -198,7 +233,7 @@ bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh) {
                 n = n * -1.0f;
                 ++back_hits;
             }
-            radiance = bounce(bvh, s, p + d * t, n, s.albedo[tri]);
+            radiance = bounce(bvh, s, p + d * t, n, s.albedo[tri], indirect);
         }
         const f32 basis[4] = {0.282095f, 0.488603f * d.x, 0.488603f * d.y, 0.488603f * d.z};
         const f32 rgb[3] = {radiance.x, radiance.y, radiance.z};
@@ -351,7 +386,7 @@ bool chart_lightmaps(const BakeScene& s, u32 size, std::vector<LightmapObject>& 
 
 // The light a texel gets: from the sky and one bounce over its hemisphere (as the probes), and how
 // much of the sun reaches it (a few rays over the sun's disc: soft edges).
-void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 seed, Vec3& ambient, f32& sun) {
+void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 seed, Vec3& ambient, f32& sun, const ProbeGrid* indirect) {
     const Vec3 n = t.normal;
     const Vec3 helper = std::fabs(n.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
     const Vec3 tx = normalize(cross(helper, n)), ty = cross(n, tx);
@@ -371,7 +406,7 @@ void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 
             const Vec3 a = s.positions[tri * 3], b = s.positions[tri * 3 + 1], c = s.positions[tri * 3 + 2];
             Vec3 hn = normalize(cross(b - a, c - a));
             if (dot(hn, d) > 0.0f) hn = hn * -1.0f;
-            sum = sum + bounce(bvh, s, origin + d * dist, hn, s.albedo[tri]);
+            sum = sum + bounce(bvh, s, origin + d * dist, hn, s.albedo[tri], indirect);
         }
     }
     ambient = sum * (1.0f / kRays);  // irradiance / pi: what the shader's ambient term is in
@@ -396,7 +431,7 @@ void bake_texel(const Bvh& bvh, const BakeScene& s, const LightmapTexel& t, u32 
     }
 }
 
-void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std::atomic<u32>* done, std::atomic<u32>* total) {
+void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std::atomic<u32>* done, std::atomic<u32>* total, const ProbeGrid* indirect) {
     if (!s.lightmap_size || s.lightmap_sources.empty()) return;
     const u32 size = s.lightmap_size;
     std::vector<LightmapTexel> texels;
@@ -415,7 +450,7 @@ void bake_lightmaps(const Bvh& bvh, const BakeScene& s, BakedLighting& out, std:
     std::atomic<u32> next{0};
     auto worker = [&] {
         for (u32 k = next++; k < todo.size(); k = next++) {
-            bake_texel(bvh, s, texels[todo[k]], todo[k], ambient[todo[k]], sun[todo[k]]);
+            bake_texel(bvh, s, texels[todo[k]], todo[k], ambient[todo[k]], sun[todo[k]], indirect);
             if (done) ++*done;
         }
     };
@@ -483,6 +518,33 @@ i32 find_lightmap_object(const BakedLighting& l, const char* name, const char* m
 bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& registry, const char* data_dir, Allocator& allocator, BakeScene& out) {
     out = BakeScene{};
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    // Base colour textures (each read once): a triangle's albedo takes their colour where it lies, so a red
+    // carpet bounces red light (Lightmass's diffuse from the material's texture).
+    std::map<std::string, std::unique_ptr<asset::Image>> images;
+    auto image_of = [&](const char* guid) -> const asset::Image* {
+        auto& slot = images[guid];
+        if (!slot) {
+            slot = std::make_unique<asset::Image>();
+            asset::Guid g;
+            const asset::AssetRecord* r = asset::parse_guid(guid, g) ? registry.find(g) : nullptr;
+            char path[300];
+            if (r) registry.source_path(*r, path, sizeof path);
+            if (!r || !asset::load_image(path, *slot)) slot->pixels = nullptr;
+        }
+        return slot->pixels ? slot.get() : nullptr;
+    };
+    auto texel = [](const asset::Image& image, f32 u, f32 v) {  // wrapped, nearest, sRGB to linear
+        u -= std::floor(u);
+        v -= std::floor(v);
+        const u32 x = std::min(image.width - 1, static_cast<u32>(u * static_cast<f32>(image.width)));
+        const u32 y = std::min(image.height - 1, static_cast<u32>(v * static_cast<f32>(image.height)));
+        const u8* p = image.pixels + (static_cast<usize>(y) * image.width + x) * 4;
+        auto lin = [](u8 c) {
+            const f32 f = static_cast<f32>(c) / 255.0f;
+            return f <= 0.04045f ? f / 12.92f : std::pow((f + 0.055f) / 1.055f, 2.4f);
+        };
+        return Vec3{lin(p[0]), lin(p[1]), lin(p[2])};
+    };
     const reflect::TypeInfo& mesh_type = reflect::type_of<world::StaticMesh>();
     for (u32 i = 0; i < w.count(mesh_type); ++i) {
         const world::Entity e = w.owner(mesh_type, i);
@@ -491,13 +553,17 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
         render::MeshData data;
         if (!load_mesh(m->mesh, registry, data_dir, allocator, data)) continue;
         Vec3 albedo{m->color.r, m->color.g, m->color.b};
+        const asset::Image* texture = nullptr;
         asset::Guid material_guid;
         if (m->material[0] && asset::parse_guid(m->material, material_guid)) {
             if (const asset::AssetRecord* r = registry.find(material_guid)) {
                 char path[300];
                 registry.source_path(*r, path, sizeof path);
                 render::Material material;
-                if (asset::load_data_asset(path, material)) albedo = Vec3{albedo.x * material.base_color.r, albedo.y * material.base_color.g, albedo.z * material.base_color.b};
+                if (asset::load_data_asset(path, material)) {
+                    albedo = Vec3{albedo.x * material.base_color.r, albedo.y * material.base_color.g, albedo.z * material.base_color.b};
+                    if (material.base_color_texture[0]) texture = image_of(material.base_color_texture);
+                }
             }
         }
         const Mat4 world_matrix = w.world_matrix(e);
@@ -528,7 +594,16 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
                 lo = {std::min(lo.x, wp.x), std::min(lo.y, wp.y), std::min(lo.z, wp.z)};
                 hi = {std::max(hi.x, wp.x), std::max(hi.y, wp.y), std::max(hi.z, wp.z)};
             }
-            out.albedo.push_back(albedo);
+            Vec3 a = albedo;
+            if (texture) {  // the texture at the triangle's corners and centre, averaged
+                const f32* t0 = data.vertices[data.indices[k]].uv;
+                const f32* t1 = data.vertices[data.indices[k + 1]].uv;
+                const f32* t2 = data.vertices[data.indices[k + 2]].uv;
+                const Vec3 c = texel(*texture, t0[0], t0[1]) + texel(*texture, t1[0], t1[1]) + texel(*texture, t2[0], t2[1]) +
+                               texel(*texture, (t0[0] + t1[0] + t2[0]) / 3.0f, (t0[1] + t1[1] + t2[1]) / 3.0f);
+                a = Vec3{a.x * c.x, a.y * c.y, a.z * c.z} * 0.25f;
+            }
+            out.albedo.push_back(a);
         }
         render::free_mesh(allocator, data);
     }
@@ -561,6 +636,8 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
     return true;
 }
 
+constexpr u32 kProbePasses = 2;  // probe bakes: the second reads the first (two bounces in probes, three in lightmaps)
+
 void bake_lighting(const BakeScene& s, BakedLighting& out, std::atomic<u32>* done, std::atomic<u32>* total) {
     out = BakedLighting{};
     const Vec3 size = s.hi - s.lo;
@@ -583,50 +660,66 @@ void bake_lighting(const BakeScene& s, BakedLighting& out, std::atomic<u32>* don
     out.origin[1] = s.lo.y;
     out.origin[2] = s.lo.z;
     const u32 count = out.probe_count();
-    if (total) *total = count;
+    if (total) *total = count * kProbePasses;
     std::vector<f32> sh(static_cast<usize>(count) * 12);
     std::vector<u8> valid(count, 0);
     Bvh bvh;
     bvh.build(s);
-    std::atomic<u32> next{0};
-    auto worker = [&] {
-        for (u32 i = next++; i < count; i = next++) {
-            const u32 x = i % dims[0], y = (i / dims[0]) % dims[1], z = i / (dims[0] * dims[1]);
-            const Vec3 p{out.origin[0] + out.cell[0] * x, out.origin[1] + out.cell[1] * y, out.origin[2] + out.cell[2] * z};
-            valid[i] = bake_probe(bvh, s, p, i, &sh[static_cast<usize>(i) * 12]) ? 1 : 0;
-            if (done) ++*done;
-        }
-    };
     const u32 threads = std::max(1u, std::thread::hardware_concurrency());
-    std::vector<std::thread> pool;
-    for (u32 t = 1; t < threads; ++t) pool.emplace_back(worker);
-    worker();
-    for (std::thread& t : pool) t.join();
-    bake_lightmaps(bvh, s, out, done, total);
     // Probes inside walls would read black and darken the rooms beside them: fill each from its
     // valid neighbours (Unreal's invalid-sample fix), spreading a few cells into solid regions.
-    for (int pass = 0; pass < 4; ++pass) {
-        std::vector<u8> next_valid = valid;
-        for (u32 i = 0; i < count; ++i) {
-            if (valid[i]) continue;
-            const i32 x = static_cast<i32>(i % dims[0]), y = static_cast<i32>((i / dims[0]) % dims[1]), z = static_cast<i32>(i / (dims[0] * dims[1]));
-            f32 sum[12] = {};
-            u32 n = 0;
-            const i32 offsets[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-            for (const auto& o : offsets) {
-                const i32 nx = x + o[0], ny = y + o[1], nz = z + o[2];
-                if (nx < 0 || ny < 0 || nz < 0 || nx >= static_cast<i32>(dims[0]) || ny >= static_cast<i32>(dims[1]) || nz >= static_cast<i32>(dims[2])) continue;
-                const u32 j = static_cast<u32>(nx) + static_cast<u32>(ny) * dims[0] + static_cast<u32>(nz) * dims[0] * dims[1];
-                if (!valid[j]) continue;
-                for (int k = 0; k < 12; ++k) sum[k] += sh[static_cast<usize>(j) * 12 + static_cast<usize>(k)];
-                ++n;
+    auto fill_invalid = [&] {
+        for (int pass = 0; pass < 4; ++pass) {
+            std::vector<u8> next_valid = valid;
+            for (u32 i = 0; i < count; ++i) {
+                if (valid[i]) continue;
+                const i32 x = static_cast<i32>(i % dims[0]), y = static_cast<i32>((i / dims[0]) % dims[1]), z = static_cast<i32>(i / (dims[0] * dims[1]));
+                f32 sum[12] = {};
+                u32 n = 0;
+                const i32 offsets[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+                for (const auto& o : offsets) {
+                    const i32 nx = x + o[0], ny = y + o[1], nz = z + o[2];
+                    if (nx < 0 || ny < 0 || nz < 0 || nx >= static_cast<i32>(dims[0]) || ny >= static_cast<i32>(dims[1]) || nz >= static_cast<i32>(dims[2])) continue;
+                    const u32 j = static_cast<u32>(nx) + static_cast<u32>(ny) * dims[0] + static_cast<u32>(nz) * dims[0] * dims[1];
+                    if (!valid[j]) continue;
+                    for (int k = 0; k < 12; ++k) sum[k] += sh[static_cast<usize>(j) * 12 + static_cast<usize>(k)];
+                    ++n;
+                }
+                if (!n) continue;
+                for (int k = 0; k < 12; ++k) sh[static_cast<usize>(i) * 12 + static_cast<usize>(k)] = sum[k] / static_cast<f32>(n);
+                next_valid[i] = 1;
             }
-            if (!n) continue;
-            for (int k = 0; k < 12; ++k) sh[static_cast<usize>(i) * 12 + static_cast<usize>(k)] = sum[k] / static_cast<f32>(n);
-            next_valid[i] = 1;
+            valid.swap(next_valid);
         }
-        valid.swap(next_valid);
+    };
+    // Pass 1: direct light and the sky, one bounce. Pass 2 again, each hit lit by pass 1's grid: a second
+    // bounce (light around corners into rooms). The lightmaps then read pass 2's grid: a third.
+    std::vector<f32> previous;
+    ProbeGrid grid{{out.origin[0], out.origin[1], out.origin[2]}, {out.cell[0], out.cell[1], out.cell[2]}, {dims[0], dims[1], dims[2]}, nullptr};
+    for (u32 pass = 0; pass < kProbePasses; ++pass) {
+        const ProbeGrid* indirect = pass ? &grid : nullptr;
+        if (pass) {
+            previous = sh;
+            grid.sh = previous.data();
+        }
+        std::atomic<u32> next{0};
+        auto worker = [&] {
+            for (u32 i = next++; i < count; i = next++) {
+                const u32 x = i % dims[0], y = (i / dims[0]) % dims[1], z = i / (dims[0] * dims[1]);
+                const Vec3 p{out.origin[0] + out.cell[0] * x, out.origin[1] + out.cell[1] * y, out.origin[2] + out.cell[2] * z};
+                valid[i] = bake_probe(bvh, s, p, i, &sh[static_cast<usize>(i) * 12], indirect) ? 1 : 0;
+                if (done) ++*done;
+            }
+        };
+        std::vector<std::thread> pool;
+        for (u32 t = 1; t < threads; ++t) pool.emplace_back(worker);
+        worker();
+        for (std::thread& t : pool) t.join();
+        fill_invalid();
     }
+    previous = sh;
+    grid.sh = previous.data();
+    bake_lightmaps(bvh, s, out, done, total, &grid);
     out.sh = std::move(sh);
 }
 
