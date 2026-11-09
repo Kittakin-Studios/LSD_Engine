@@ -69,6 +69,20 @@ const char* rig_name(Rig rig);  // "UE5 Manny", "UE5 Manny (Simple)", "UE4 Manne
 const char* rig_source_bone(Rig target, Rig source, const char* bone);
 Rig model_rig(const SkinnedModel& model);
 
+// Retargeting between any humanoids (Unreal's IK Retargeter chains): the part a bone plays, from its name in any
+// common naming (Unreal pelvis / thigh_l, Mixamo mixamorig:LeftUpLeg, Blender DEF-thigh.L, Character Creator
+// CC_Base_L_Thigh, Hips / LeftUpLeg ...). Fingers, twist bones and end markers are None.
+enum class HumanBone : u8 {
+    None, Pelvis, Spine, Chest, UpperChest, Neck, Head,
+    ClavicleL, UpperArmL, LowerArmL, HandL, ThighL, CalfL, FootL, ToeL,
+    ClavicleR, UpperArmR, LowerArmR, HandR, ThighR, CalfR, FootR, ToeR,
+};
+HumanBone human_bone(const char* name);  // by name alone (every spine bone is Spine)
+// Every bone's part, the spine bones (parents first) spread over Spine, Chest and Upper Chest from the pelvis up.
+void human_bones(const char* const* names, u32 count, HumanBone* out);
+// Whether a rig has the parts retargeting needs (pelvis, head, both thighs and upper arms).
+bool is_humanoid(const HumanBone* parts, u32 count);
+
 // Reads an FBX with a skinned mesh. Meshes without a skin follow the root. False + `error` if the
 // file has no skeleton or cannot be read.
 // `normals` / `smoothing_angle`: as the mesh import settings (asset::MeshNormals; 1 = smooth).

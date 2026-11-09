@@ -367,6 +367,27 @@ static void rig_tests() {
 // own features finding it again, and playback that keeps returning a clip.
 // Ragdolls: a capsule per big bone of a humanoid, parents first, every body but the root hanging from one; a pose set
 // from model-space joints skins like the sampled one.
+// Retargeting between humanoids named their own ways: the part each bone plays.
+static void human_bone_tests() {
+    using H = anim::HumanBone;
+    struct Case { const char* name; H part; };
+    const Case cases[] = {{"pelvis", H::Pelvis}, {"Hips", H::Pelvis}, {"mixamorig:Hips", H::Pelvis}, {"thigh_l", H::ThighL}, {"mixamorig:LeftUpLeg", H::ThighL},
+                          {"DEF-thigh.R", H::ThighR}, {"CC_Base_L_Thigh", H::ThighL}, {"LeftLeg", H::CalfL}, {"calf_r", H::CalfR}, {"LeftFoot", H::FootL},
+                          {"LeftToeBase", H::ToeL}, {"LeftArm", H::UpperArmL}, {"upperarm_r", H::UpperArmR}, {"LeftForeArm", H::LowerArmL},
+                          {"lowerarm_l", H::LowerArmL}, {"RightHand", H::HandR}, {"clavicle_l", H::ClavicleL}, {"LeftShoulder", H::ClavicleL},
+                          {"neck_01", H::Neck}, {"Head", H::Head}, {"HeadTop_End", H::None}, {"LeftHandIndex1", H::None}, {"upperarm_twist_01_l", H::None},
+                          {"Armature", H::None}, {"spine_02", H::Spine}};
+    for (const Case& c : cases) {
+        const bool ok = anim::human_bone(c.name) == c.part;
+        if (!ok) std::printf("  human_bone(%s) = %d\n", c.name, static_cast<int>(anim::human_bone(c.name)));
+        CHECK(ok);
+    }
+    const char* spine[] = {"Hips", "Spine", "Spine1", "Spine2", "Neck"};
+    anim::HumanBone parts[5];
+    anim::human_bones(spine, 5, parts);
+    CHECK(parts[1] == H::Spine && parts[2] == H::Chest && parts[3] == H::UpperChest && parts[4] == H::Neck);
+}
+
 static void ragdoll_tests(const std::string& data) {
     anim::SkinnedModel model(default_allocator());
     char error[256] = "";
@@ -698,6 +719,7 @@ int main() {
     const std::string data = LSD_UFBX_DATA_DIR;
     motion_matching_tests(data);
     ragdoll_tests(data);
+    human_bone_tests();
     morph_tests(data);
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
     u32 tested_animation = 0;

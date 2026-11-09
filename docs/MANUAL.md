@@ -1515,6 +1515,13 @@ pose, UE4's three spine bones drive UE5's five (and back), bones with no driver 
 stay at rest under their parent, and the pelvis's movement is scaled by the height difference. The
 Output Log says when a clip is retargeted. Same-rig animations play unchanged.
 
+Other humanoids retarget too (Unreal's IK Retargeter between any two characters): when an FBX's bone names do not
+match the character's, each bone is driven by the file's bone playing the same part, worked out from the names in
+any common naming (Unreal `thigh_l`, Mixamo `mixamorig:LeftUpLeg`, Blender `DEF-thigh.L`, Character Creator
+`CC_Base_L_Thigh`, `Hips` / `LeftUpLeg`...): pelvis, spine (spread over spine, chest and upper chest from the pelvis
+up), neck, head, shoulders, arms, hands, legs, feet and toes. Fingers, twist and end bones stay at rest. So a Mixamo
+animation plays on a UE5 character and back. For now this is done for FBX files (glTF animations need matching names).
+
 **Facing** (Skeletal Mesh): Unreal characters face sideways in their files (Unreal's Character
 Blueprint turns the mesh -90). **Auto** turns recognised Unreal rigs to face the object's forward
 (+X: where a Character walks and its camera looks); pick +X / +Y / -X / -Y for other files whose

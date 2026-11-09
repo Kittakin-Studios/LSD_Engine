@@ -147,6 +147,70 @@ const char* rig_source_bone(Rig target, Rig source, const char* bone) {
     return bone;
 }
 
+HumanBone human_bone(const char* name) {
+    char n[96];  // lower case, without separators; the side found separately
+    usize len = 0;
+    for (const char* c = name; *c && len + 1 < sizeof n; ++c) {
+        if (*c == ':' ) len = 0;  // a namespace (mixamorig:Hips): only what follows it
+        else if (std::isalnum(static_cast<unsigned char>(*c))) n[len++] = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
+        else n[len++] = ' ';
+    }
+    n[len] = '\0';
+    const std::string s = std::string(" ") + n + " ";
+    auto has = [&](const char* w) { return s.find(w) != std::string::npos; };
+    for (const char* skip : {"index", "middle", "ring", "pinky", "little", "thumb", "twist", "roll", "end", "top", "nub", "ik", "eye", "jaw", "tongue", "toe1", "toe2", "toe3", "toe4"}) {
+        if (has(skip)) return HumanBone::None;  // fingers, helpers, end markers
+    }
+    bool left = false, right = false;  // a word "l" / "r", or one starting "left" / "right"
+    for (usize a = 0, b = 0; a < s.size(); a = b + 1) {
+        b = s.find(' ', a);
+        if (b == std::string::npos) b = s.size();
+        const std::string word = s.substr(a, b - a);
+        left = left || word == "l" || word.rfind("left", 0) == 0;
+        right = right || word == "r" || word.rfind("right", 0) == 0;
+    }
+    auto sided = [&](HumanBone l, HumanBone r) { return left ? l : right ? r : HumanBone::None; };
+    if (has("forearm") || has("lowerarm") || has("lower arm") || has("elbow")) return sided(HumanBone::LowerArmL, HumanBone::LowerArmR);
+    if (has("upperarm") || has("upper arm") || has("uparm") || (has("arm") && !has("forearm"))) return sided(HumanBone::UpperArmL, HumanBone::UpperArmR);
+    if (has("shoulder") || has("clavicle") || has("collar")) return sided(HumanBone::ClavicleL, HumanBone::ClavicleR);
+    if (has("hand") || has("wrist")) return sided(HumanBone::HandL, HumanBone::HandR);
+    if (has("upleg") || has("thigh") || has("upperleg") || has("upper leg")) return sided(HumanBone::ThighL, HumanBone::ThighR);
+    if (has("toe") || has("ball")) return sided(HumanBone::ToeL, HumanBone::ToeR);
+    if (has("foot") || has("ankle")) return sided(HumanBone::FootL, HumanBone::FootR);
+    if (has("calf") || has("shin") || has("lowerleg") || has("lower leg") || has("knee") || has("leg")) return sided(HumanBone::CalfL, HumanBone::CalfR);
+    if (left || right) return HumanBone::None;
+    if (has("hips") || has("pelvis") || has(" hip ")) return HumanBone::Pelvis;
+    if (has("head")) return HumanBone::Head;
+    if (has("neck")) return HumanBone::Neck;
+    if (has("spine") || has("chest") || has("torso") || has("abdomen")) return HumanBone::Spine;
+    return HumanBone::None;
+}
+
+void human_bones(const char* const* names, u32 count, HumanBone* out) {
+    std::vector<u32> spine;
+    for (u32 i = 0; i < count; ++i) {
+        out[i] = names[i] ? human_bone(names[i]) : HumanBone::None;
+        if (out[i] == HumanBone::Spine) spine.push_back(i);
+    }
+    // From the pelvis up: the first Spine, the last Upper Chest, the ones between Chest.
+    for (usize k = 0; k < spine.size(); ++k) {
+        out[spine[k]] = k == 0 ? HumanBone::Spine : k + 1 == spine.size() ? HumanBone::UpperChest : HumanBone::Chest;
+    }
+}
+
+bool is_humanoid(const HumanBone* parts, u32 count) {
+    u32 found = 0;
+    for (HumanBone need : {HumanBone::Pelvis, HumanBone::Head, HumanBone::ThighL, HumanBone::ThighR, HumanBone::UpperArmL, HumanBone::UpperArmR}) {
+        for (u32 i = 0; i < count; ++i) {
+            if (parts[i] == need) {
+                ++found;
+                break;
+            }
+        }
+    }
+    return found == 6;
+}
+
 u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f32 ratio, u32* out) {
     const usize n = model.vertices.size();
     if (!n || count < 3) return 0;
@@ -1070,9 +1134,30 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
     const Rig source_rig = detect_rig(file_names.data(), static_cast<u32>(file_names.size()));
     const Rig target_rig = model_rig(model);
     std::vector<const ufbx_node*> nodes(joints, nullptr);
+    u32 by_name = 0;
     for (u32 j = 0; j < joints; ++j) {
         if (std::strcmp(skeleton.joint_names()[j], "Root") == 0) continue;  // keeps the model's conversion and scale
         nodes[j] = ufbx_find_node(scene, rig_source_bone(target_rig, source_rig, skeleton.joint_names()[j]));
+        by_name += nodes[j] ? 1u : 0u;
+    }
+    // Another humanoid named its own way (Mixamo onto Unreal, Blender onto Character Creator...): each bone driven by the
+    // file's bone playing the same part; the Chest takes the nearest spine part the file has.
+    std::vector<HumanBone> target_parts(joints), source_parts(file_names.size());
+    human_bones(skeleton.joint_names().data(), joints, target_parts.data());
+    human_bones(file_names.data(), static_cast<u32>(file_names.size()), source_parts.data());
+    bool by_part = false;
+    if (by_name * 2 < joints && is_humanoid(target_parts.data(), joints) && is_humanoid(source_parts.data(), static_cast<u32>(source_parts.size()))) {
+        by_part = true;
+        for (u32 j = 0; j < joints; ++j) {
+            nodes[j] = nullptr;
+            HumanBone want = target_parts[j];
+            for (int attempt = 0; attempt < 3 && want != HumanBone::None && !nodes[j]; ++attempt) {
+                for (usize i = 0; i < source_parts.size() && !nodes[j]; ++i) {
+                    if (source_parts[i] == want) nodes[j] = scene->nodes.data[i];
+                }
+                want = want == HumanBone::Chest ? (attempt == 0 ? HumanBone::UpperChest : HumanBone::Spine) : HumanBone::None;
+            }
+        }
     }
     // Retarget when the rigs differ or a driving bone rests differently (another character's
     // animation): copy each bone's world-space change from its rest pose instead of its local values.
@@ -1097,8 +1182,8 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
         for (const ufbx_node* n = node; n; n = n->parent) r = to_ozz(anim ? ufbx_evaluate_transform(anim, n, time) : n->local_transform).rotation * r;
         return r;
     };
-    bool retarget = source_rig != target_rig && source_rig != Rig::Other && target_rig != Rig::Other &&
-                    !((source_rig == Rig::UE5Manny || source_rig == Rig::UE5MannySimple) && (target_rig == Rig::UE5Manny || target_rig == Rig::UE5MannySimple));
+    bool retarget = by_part || (source_rig != target_rig && source_rig != Rig::Other && target_rig != Rig::Other &&
+                    !((source_rig == Rig::UE5Manny || source_rig == Rig::UE5MannySimple) && (target_rig == Rig::UE5Manny || target_rig == Rig::UE5MannySimple)));
     std::vector<om::Quaternion> source_rest_world(joints, om::Quaternion::identity());
     for (u32 j = 0; j < joints; ++j) {
         if (!nodes[j]) continue;
@@ -1111,13 +1196,14 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
     f32 height_ratio = 1.0f;
     i32 pelvis = -1;
     for (u32 j = 0; j < joints && pelvis < 0; ++j) {
-        if (std::strcmp(skeleton.joint_names()[j], "pelvis") == 0) pelvis = static_cast<i32>(j);
+        if (std::strcmp(skeleton.joint_names()[j], "pelvis") == 0 || target_parts[j] == HumanBone::Pelvis) pelvis = static_cast<i32>(j);
     }
     if (pelvis >= 0 && nodes[static_cast<u32>(pelvis)]) {
         const f64 source_height = nodes[static_cast<u32>(pelvis)]->node_to_world.m23;
         if (source_height > 1e-3) height_ratio = target_rest_position[static_cast<u32>(pelvis)].z / static_cast<f32>(source_height);
     }
-    if (retarget) LSD_LOG_INFO("anim", "%s: retargeting %s animation onto a %s", path, rig_name(source_rig), rig_name(target_rig));
+    if (by_part) LSD_LOG_INFO("anim", "%s: retargeting another humanoid's animation by bone parts", path);
+    else if (retarget) LSD_LOG_INFO("anim", "%s: retargeting %s animation onto a %s", path, rig_name(source_rig), rig_name(target_rig));
     u32 written = 0;
     for (usize s = 0; s < scene->anim_stacks.count && written < capacity; ++s) {
         const ufbx_anim_stack* stack = scene->anim_stacks.data[s];
