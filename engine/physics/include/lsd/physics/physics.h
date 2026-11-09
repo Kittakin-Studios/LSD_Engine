@@ -176,6 +176,10 @@ public:
     // Live edits of a body: friction / bounciness, and its mass (dynamic bodies).
     void set_body_material(u32 body, f32 friction, f32 restitution);
     void set_body_mass(u32 body, f32 mass);
+    // Water for the next step: the part of a dynamic body's shape below the plane through `surface`
+    // (facing `normal`) pushes it up, `buoyancy` times its weight's worth (1 neither floats nor sinks),
+    // and drag (about 0.5 linear, 0.05 angular) slows it there. False when it is not in the water.
+    bool apply_buoyancy(u32 body, Vec3 surface, Vec3 normal, f32 buoyancy, f32 linear_drag, f32 angular_drag, f32 dt);
     // A dynamic body made kinematic (another machine simulates it: it follows move_kinematic) or
     // dynamic again; a vehicle on it stops / starts driving it.
     void set_body_kinematic(u32 body, bool kinematic);

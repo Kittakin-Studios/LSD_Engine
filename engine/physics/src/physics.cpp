@@ -695,6 +695,15 @@ void PhysicsWorld::set_body_mass(u32 body, f32 mass) {
     lock.GetBody().GetMotionProperties()->ScaleToMass(mass);
 }
 
+bool PhysicsWorld::apply_buoyancy(u32 body, Vec3 surface, Vec3 normal, f32 buoyancy, f32 linear_drag, f32 angular_drag, f32 dt) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid() || dt <= 0.0f) return false;
+    JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
+    if (bodies.GetMotionType(impl_->bodies[body]) != JPH::EMotionType::Dynamic) return false;
+    // Wakes a sleeping body when it is in the water (a wave may lift it).
+    return bodies.ApplyBuoyancyImpulse(impl_->bodies[body], JPH::RVec3(surface.x, surface.y, surface.z), JPH::Vec3(normal.x, normal.y, normal.z), buoyancy,
+                                       linear_drag, angular_drag, JPH::Vec3::sZero(), impl_->system.GetGravity(), dt);
+}
+
 void PhysicsWorld::set_body_kinematic(u32 body, bool kinematic) {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();

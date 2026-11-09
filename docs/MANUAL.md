@@ -703,6 +703,32 @@ indoors. Screen-space reflections add what is on screen on top.
 Quality (the player's setting, Low → Epic) scales shadows: Low has none, Medium sun only, Epic
 casts further.
 
+### Water (lakes, oceans, rivers)
+
+Place tab > **Water Body** (Unreal's Water plugin: Water Body Lake / Ocean / River). Pick its
+**Kind** in Details:
+
+- **Lake**: a rectangle of **Size X** x **Size Y** metres around the object, at the object's height.
+- **Ocean**: water to the horizon at the object's height (drawn around the camera wherever it goes).
+- **River**: give the same object a **Spline** (Details > Add Component, or start from a Spline):
+  the water follows the curve, **River Width** across, at the curve's height.
+
+**Waves**: **Wave Height** (trough to crest of the biggest wave), **Wavelength**, **Wave Speed**
+and **Wave Direction** (degrees, 0 = +X). Three smaller waves cross the main one so the pattern
+never looks like stripes. **Look**: **Color** (shallow) and **Deep Color**; the water reads the
+depth of what is under it on screen, so it gets darker and more opaque over **Depth Fade** metres
+and you see the floor through the shallows (**Clarity**). It reflects the sky and Reflection
+Captures, more at grazing angles (fresnel), with sun glints. **Depth** is how far below the surface
+swimming and floating reach.
+
+In Play the Character swims when its chest is under a Water Body (as in a Water Volume: Swim
+Speed, Jump rises, Crouch dives), and Rigid Bodies float on the waves you see (**Buoyancy**: 1
+neither floats nor sinks, higher floats higher; 0 = off), slowed by the water's drag.
+
+Limits for now: the waves move the surface's points on the CPU each frame (fine for a few water
+bodies); rivers do not flow along their curve; no foam, caustics or underwater fog; the depth tint
+needs the post-process view (the editor viewport and the game have it) and a perspective camera.
+
 ### Sub-levels and streaming
 
 Place tab > **Sub Level** (Unreal's Level Instance / level streaming): pick a **Level** in Details and
@@ -1081,7 +1107,7 @@ The player is the first object with a **Character** component; without one, a de
 appears at the Player Start (or the camera). A Character walks, jumps, climbs steps and slopes, and
 can have a third-person camera (**Camera Distance**). Give it a **Crouch Action** (an Input Action,
 held) to crouch to **Crouch Height** at **Crouch Speed**; it stands up again only where there is room.
-Inside a **Water Volume** (Place tab) it swims at **Swim Speed** where you look, Jump rising and Crouch diving. Animation
+Inside a **Water Volume** or under a **Water Body**'s surface (Place tab) it swims at **Swim Speed** where you look, Jump rising and Crouch diving. Animation
 Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Speed, VerticalSpeed and InAir.
 
 **The player's camera** (Unreal's Camera + Spring Arm on the Character): add a child object to the

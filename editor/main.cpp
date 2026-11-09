@@ -43,6 +43,7 @@
 #include "source_control.h"
 #include "thumbnails.h"
 #include "transactions.h"
+#include "water.h"
 
 #include "lsd/asset/data_asset.h"
 #include "lsd/core/console.h"
@@ -847,6 +848,15 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         device.set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     }
     device.set_shadow_map(sun_shadows ? shadow_atlas : lsd::rhi::TextureHandle{}, local_shadows ? local_atlas : lsd::rhi::TextureHandle{});
+    {  // the projection's depth terms, from clip z one and two metres ahead (water reads depth back as distance)
+        auto clip = [&](lsd::f32 d, int row) {
+            const lsd::Vec3 p = eye + light_view.forward * d;
+            return view_proj.at(row, 0) * p.x + view_proj.at(row, 1) * p.y + view_proj.at(row, 2) * p.z + view_proj.at(row, 3);
+        };
+        const bool perspective = std::fabs(clip(2.0f, 3) - 2.0f * clip(1.0f, 3)) < 1e-3f;  // w grows with distance
+        lights.depth_proj[0] = perspective ? clip(1.0f, 2) - clip(2.0f, 2) : 0.0f;
+        lights.depth_proj[1] = perspective ? 2.0f * clip(1.0f, 2) - clip(2.0f, 2) : 0.0f;
+    }
     device.set_lights(lights);
     std::memcpy(g_view_fog, lights.fog, sizeof lights.fog);
     g_view_lights = lights;
@@ -1214,6 +1224,21 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             submit_mesh(device, section);
             ++stats.stat_draws;
             stats.stat_triangles += section.index_count / 3;
+        }
+    }
+    // Water Bodies: their surfaces wait with the translucent meshes.
+    {
+        static lsd::editor::WaterDraw water[32];  // kept: the queued draws point at their parameters
+        const bool editor_view = !stats.playing || stats.ejected;
+        const lsd::u32 count = lsd::editor::water_draws(device, world, view_proj, eye, lsd::editor::water_time(), skip_hidden, water, 32);
+        for (lsd::u32 k = 0; k < count; ++k) {
+            lsd::rhi::MeshDraw& draw = water[k].draw;
+            draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+            draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+            if (editor_view && stats.is_selected(water[k].entity)) g_outline.push_back(draw);
+            if (blend_view(stats, draw, water[k].centre, eye, translucent)) continue;
+            device.draw_mesh(draw);  // wireframe or the Overdraw view
+            ++stats.stat_draws;
         }
     }
     // Translucent and additive meshes last, far to near, over everything opaque (they do not write depth).

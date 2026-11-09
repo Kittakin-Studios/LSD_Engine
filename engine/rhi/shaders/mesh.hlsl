@@ -28,7 +28,7 @@ cbuffer Draw : register(b0) {
 #endif
 struct Light { float4 pos_type; float4 dir_range; float4 color_inner; float4 spot; };
 VK_BIND(0, 2) cbuffer Lights : register(b1) {
-    float exposure; uint light_count; float2 pad0; float4 sky_color; float4 ground; Light lights[16];
+    float exposure; uint light_count; float2 depth_proj; float4 sky_color; float4 ground; Light lights[16];
     float4x4 shadow_vp[4]; float4 shadow_tile[4]; float4 shadow_split; float4 shadow_info;
     float4x4 local_vp[16]; float4 local_tile[16];
     float4 fog; float4 fog_color; float4 post; float4 tint; float4 viewport_px; float4 hdr_out;
@@ -217,6 +217,14 @@ float light_function(uint li, float3 f, float3 to) {
     const float4 rect = light_functions[li * 2], extra = light_functions[li * 2 + 1];
     const float2 uv = frac(float2(dot(to, right), -dot(to, up)) / z * extra.z + 0.5 + extra.xy);
     return dot(decal_tex.SampleLevel(decal_samp, rect.xy + uv * rect.zw, 0).rgb, float3(0.2126, 0.7152, 0.0722));
+}
+
+VK_BIND(7, 1) Texture2D<float> scene_depth_tex : register(t9);  // MeshDraw::scene_depth: the target's depth (white: none)
+// Metres of the view from this pixel to what is drawn behind it (far without a depth to read).
+float scene_depth_m(float4 pos) {
+    const float behind = scene_depth_tex.Load(int3(pos.xy, 0));
+    if (depth_proj.y == 0.0 || behind >= 1.0) return 1e4;
+    return depth_proj.y / (behind + depth_proj.x) - depth_proj.y / (pos.z + depth_proj.x);
 }
 float3 apply_decals(float3 c, float3 wpos, float3 n) {
     const uint count = (uint)decal_info.x;
@@ -726,7 +734,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const bool pixel_art = n1.w > 1023.5;  // 1024: whole texels of the base colour texture
 #ifdef LSD_MATERIAL
     MaterialIn mi;
-    mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w;
+    mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w; mi.depth = scene_depth_m(i.pos);
     const Surface surf = material_main(mi);
     float4 base = float4(surf.base_color * color.rgb, color.a * surf.opacity);
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked

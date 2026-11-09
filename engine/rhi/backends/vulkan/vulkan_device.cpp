@@ -257,6 +257,7 @@ public:
                 if (layout) vkDestroyDescriptorSetLayout(device_, layout, nullptr);
             }
             for (Frame& f : frames_) {
+                free_retired(f);
                 if (f.ring) vkDestroyBuffer(device_, f.ring, nullptr);
                 if (f.ring_memory) vkFreeMemory(device_, f.ring_memory, nullptr);
                 if (f.stream) vkDestroyBuffer(device_, f.stream, nullptr);
@@ -354,6 +355,7 @@ public:
         if (skip_frame_) return;
         Frame& f = frames_[frame_];
         vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        free_retired(f);
         VkResult result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, f.image_available, VK_NULL_HANDLE, &image_);
         if (result == VK_ERROR_OUT_OF_DATE_KHR) {
             resize_swapchain(extent_.width, extent_.height);
@@ -538,9 +540,15 @@ public:
     void destroy_buffer(BufferHandle handle) override {
         Buffer* b = lookup(handle);
         if (!b) return;
-        vkDeviceWaitIdle(device_);  // shortcut: stalls; deferred release (per frame in flight) when buffers churn
-        vkDestroyBuffer(device_, b->buffer, nullptr);
-        vkFreeMemory(device_, b->memory, nullptr);
+        Frame& f = frames_[frame_];
+        if (f.retired_count < kMaxRetired) {  // the frame being recorded may use it: freed after its fence (buffers made per frame, water)
+            f.retired[f.retired_count] = b->buffer;
+            f.retired_memory[f.retired_count++] = b->memory;
+        } else {
+            vkDeviceWaitIdle(device_);
+            vkDestroyBuffer(device_, b->buffer, nullptr);
+            vkFreeMemory(device_, b->memory, nullptr);
+        }
         b->buffer = VK_NULL_HANDLE;
         b->memory = VK_NULL_HANDLE;
         ++b->generation;
@@ -911,14 +919,12 @@ public:
         c[47] = draw.emissive[1];
         c[48] = draw.emissive[2];
         std::memcpy(c + 49, draw.camera_position, sizeof draw.camera_position);
+        // Water's depth tint: the target's depth, read-only (tested and sampled at once) for this draw, as soft particles.
+        const bool depth_read = draw.scene_depth && material && draw.blend == 1 && !skinned && !instanced && in_pass_ && target_ && target_->depth_image;
         const VkDescriptorSet sets[2] = {material_set(f, view_of(draw.base_color_texture, white_), normal ? normal->view : view_of({}, flat_normal_),
                                                       view_of(draw.orm_texture, white_), view_of(draw.emissive_texture, white_)),
-                                         view_set(f)};
+                                         view_set(f, depth_read ? target_->depth_view : VK_NULL_HANDLE)};
         if (!sets[0] || !sets[1]) return;
-        const VkCommandBuffer cmd = f.cmd;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 2, sets, 0, nullptr);
         u32 offsets[3] = {lights_at_, lights_at_, lights_at_};  // Lights, rows, material parameters (unused: any valid offset)
         if (material) {  // its parameters: 16 float4, unset ones 0
             f32 values[kParamsBytes / sizeof(f32)] = {};
@@ -926,12 +932,18 @@ public:
             if (draw.material_params) std::memcpy(values, draw.material_params, count * 16);
             if (!ring_write(f, values, sizeof values, offsets[2])) return;
         }
+        if (depth_read) target_depth_read_only(true);  // before binding: it restarts the rendering
+        const VkCommandBuffer cmd = f.cmd;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 2, sets, 0, nullptr);
         const VkDeviceSize zero = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb->buffer, &zero);
         vkCmdBindIndexBuffer(cmd, ib->buffer, 0, VK_INDEX_TYPE_UINT32);
         if (!skinned && !instanced) {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
             vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
+            if (depth_read) target_depth_read_only(false);
             return;
         }
         if (culled) {  // each LOD (its own index buffer) and batch's visible rows from the cull output, its count from the GPU
@@ -1437,8 +1449,9 @@ public:
     }
 
     // Set 1: the view's shadow maps (the far 1x1 one for a missing one), decal, reflection and lightmap atlases (white when unset).
-    VkDescriptorSet view_set(Frame& f) {
-        if (view_set_) return view_set_;
+    // `depth`: the target's depth at binding 7 (read-only, a scene_depth draw; not kept), else white.
+    VkDescriptorSet view_set(Frame& f, VkImageView depth = VK_NULL_HANDLE) {
+        if (view_set_ && !depth) return view_set_;
         auto shadow_view = [&](TextureHandle h) {
             const Texture* t = lookup_texture(h);
             if (!t || !t->shadow_size) t = lookup_texture(no_shadow_);
@@ -1449,8 +1462,19 @@ public:
         for (VkImageView v : views) {
             if (!v) return VK_NULL_HANDLE;
         }
-        view_set_ = allocate_set(f, view_set_layout_, views, 5);
-        return view_set_;
+        const VkDescriptorSet set = allocate_set(f, view_set_layout_, views, 5);
+        const VkImageView white = view_of({}, white_);
+        if (!set || !white) return VK_NULL_HANDLE;
+        const VkDescriptorImageInfo image{VK_NULL_HANDLE, depth ? depth : white, depth ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.dstBinding = 7;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = &image;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        if (!depth) view_set_ = set;
+        return set;
     }
 
     // A set from the frame's pool with `count` sampled images at bindings 0.. (its samplers are immutable).
@@ -2596,6 +2620,7 @@ private:
     }
 
     static constexpr u32 kMaterialMemo = 64;  // material sets a frame remembers (draws repeat them)
+    static constexpr u32 kMaxRetired = 64;    // buffers a frame can release late (more: the old stall)
     struct MaterialMemo {
         VkImageView views[4] = {};
         VkDescriptorSet set = VK_NULL_HANDLE;
@@ -2620,7 +2645,18 @@ private:
         VkDescriptorSet culled_set = VK_NULL_HANDLE;  // the same, its rows from the cull output (gpu_cull draws)
         MaterialMemo memo[kMaterialMemo];
         u32 memo_count = 0;
+        // Buffers destroyed while this frame was recorded: freed once its fence says the GPU is done.
+        VkBuffer retired[kMaxRetired] = {};
+        VkDeviceMemory retired_memory[kMaxRetired] = {};
+        u32 retired_count = 0;
     };
+    void free_retired(Frame& f) {
+        for (u32 i = 0; i < f.retired_count; ++i) {
+            vkDestroyBuffer(device_, f.retired[i], nullptr);
+            vkFreeMemory(device_, f.retired_memory[i], nullptr);
+        }
+        f.retired_count = 0;
+    }
 
     // Copies `bytes` into the frame's vertex stream; `offset` gets where.
     bool stream_write(Frame& f, const void* data, VkDeviceSize bytes, VkDeviceSize& offset) {
@@ -3198,13 +3234,14 @@ private:
                                                           {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                           {3, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &sampler_},
                                                           {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr}};  // t8 emissive
-        const VkDescriptorSetLayoutBinding view[7] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
+        const VkDescriptorSetLayoutBinding view[8] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {4, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr},
                                                       {5, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &shadow_sampler_},
-                                                      {6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &post_sampler_}};
+                                                      {6, VK_DESCRIPTOR_TYPE_SAMPLER, 1, fragment, &post_sampler_},
+                                                      {7, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, fragment, nullptr}};  // t9 the target's depth (scene_depth)
         const VkDescriptorSetLayoutBinding buffers[3] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr},
                                                          {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr},
                                                          {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, both, nullptr}};
@@ -3212,14 +3249,14 @@ private:
             const VkDescriptorSetLayoutBinding* bindings;
             u32 count;
             VkDescriptorSetLayout* out;
-        } layouts[3] = {{material, 5, &material_set_layout_}, {view, 7, &view_set_layout_}, {buffers, 3, &buffers_set_layout_}};
+        } layouts[3] = {{material, 5, &material_set_layout_}, {view, 8, &view_set_layout_}, {buffers, 3, &buffers_set_layout_}};
         for (const auto& l : layouts) {
             VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             info.bindingCount = l.count;
             info.pBindings = l.bindings;
             if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
         }
-        const VkDescriptorPoolSize draw_sizes[4] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5 + kCullSetsPerFrame}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
+        const VkDescriptorPoolSize draw_sizes[4] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 6 + kCullSetsPerFrame}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
                                                     {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3 + kComputeSetsPerFrame * 4},
                                                     {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kComputeSetsPerFrame}};
         VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};

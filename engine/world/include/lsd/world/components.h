@@ -195,6 +195,29 @@ struct WaterVolume {
     LSD_PROPERTY(Edit, Tooltip = "Off: no swimming here") bool enabled = true;
 };
 
+// A lake, ocean or river (Unreal's Water Body Lake / Ocean / River): a translucent surface with
+// waves, darker and more opaque where the floor is far below; the Character swims in it and rigid
+// bodies float on it (lsd/world/water.h has the wave maths both use).
+LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Water with waves: a lake, an ocean or a river along the object's Spline; swum in and floated on in Play")
+struct WaterBody {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Lake,Ocean,River", Tooltip = "Lake: a rectangle of Size around the object. Ocean: to the horizon around the camera. River: along this object's Spline (add one), River Width across")
+    u32 kind = 0;
+    LSD_PROPERTY(Edit, Units = "m", Min = 1, Tooltip = "Lake: its length (X) and width (Y), centred on the object") f32 size_x = 20.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 1, Tooltip = "Lake: its width (Y)") f32 size_y = 20.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "River: how wide the water is across the Spline") f32 river_width = 4.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Tooltip = "How far below the surface swimming and floating reach (the water's bottom for gameplay)") f32 depth = 10.0f;
+    LSD_PROPERTY(Edit, Category = "Waves", Units = "m", Min = 0, Tooltip = "Height of the biggest wave, trough to crest (0 = flat)") f32 wave_height = 0.3f;
+    LSD_PROPERTY(Edit, Category = "Waves", Units = "m", Min = 0.5, Tooltip = "Distance between crests of the biggest wave (smaller ones ride on it)") f32 wavelength = 8.0f;
+    LSD_PROPERTY(Edit, Category = "Waves", Units = "m/s", Min = 0, Tooltip = "How fast the biggest wave travels (smaller ones go slower)") f32 wave_speed = 1.5f;
+    LSD_PROPERTY(Edit, Category = "Waves", Units = "deg", Tooltip = "Where the waves travel: 0 = +X, 90 = +Y") f32 wave_direction = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Look", Tooltip = "Colour of shallow water (over a floor close below)") LinearColor color = LinearColor::hex(0x2E8C8A);
+    LSD_PROPERTY(Edit, Category = "Look", Tooltip = "Colour of deep water") LinearColor deep_color = LinearColor::hex(0x06233A);
+    LSD_PROPERTY(Edit, Category = "Look", Units = "m", Min = 0.1, Tooltip = "Metres of water until it looks fully deep and opaque (clear water: more)") f32 depth_fade = 4.0f;
+    LSD_PROPERTY(Edit, Category = "Look", Min = 0, Max = 1, Tooltip = "How much you see through shallow water (1 = the floor shows clearly at the shore)") f32 clarity = 0.6f;
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 0, Max = 5, Tooltip = "How strongly rigid bodies float: 1 neither floats nor sinks, more floats higher, 0 = no floating") f32 buoyancy = 1.6f;
+};
+
 // A camera the game can look through (Unreal's Camera Component / Camera Actor): along its +X.
 // Auto Activate: Play starts looking through it instead of the player's head; lsd.set_view(e)
 // switches to any camera (0: back to the player), Timelines use them for camera cuts.
