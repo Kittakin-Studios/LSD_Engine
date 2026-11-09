@@ -738,7 +738,8 @@ void main() {
     bool has_normal_map = mod(u_flags.y, 2.0) > 0.5;
     bool blended = mod(floor(u_flags.y * 0.5), 2.0) > 0.5;
     float cutoff = mod(floor(u_flags.y * 0.25), 256.0) / 255.0;
-    bool pixel_art = u_flags.y > 1023.5;  // 1024: whole texels of the base colour texture
+    bool pixel_art = mod(floor(u_flags.y / 1024.0), 2.0) > 0.5;  // 1024: whole texels of the base colour texture
+    bool hair = u_flags.y > 2047.5;  // 2048: the Hair shading model
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time; mi.depth = scene_depth_m();
@@ -796,6 +797,14 @@ void main() {
             baked.rgb *= (dot(n, d) * 0.5 + 0.5) / max(dot(geometric_n, d) * 0.5 + 0.5, 0.1);
         }
     }
+    vec3 strand = vec3(0.0, 0.0, 1.0);  // Hair: along the texture's V (mesh.hlsl)
+    if (hair) {
+        vec3 dp1 = dFdx(v_wpos), dp2 = dFdy(v_wpos);
+        vec2 duv1 = dFdx(v_uv), duv2 = dFdy(v_uv);
+        vec3 along = dp2 * duv1.x - dp1 * duv2.x;
+        vec3 across = along - n * dot(along, n);
+        if (dot(across, across) > 1e-12) strand = normalize(across);
+    }
     for (uint li = 0u; li < light_count; ++li) {
         Light L = lights[li];
         vec3 l;
@@ -828,6 +837,16 @@ void main() {
             for (int c = 0; c < count; ++c) p[c] = vec3(ltc.x * p[c].x + ltc.y * p[c].z, ltc.z * p[c].y, ltc.w * p[c].x + p[c].z);
             vec3 fc = f0 + (1.0 - f0) * pow(1.0 - clamp(dot(v, normalize(v + l)), 0.0, 1.0), 5.0);
             lit += ((1.0 - fc) * (1.0 - metallic) * base.rgb * diffuse_share + env_spec * polygon_share(p, count)) * L.color_inner.xyz / max(area, 1e-4) * atten;
+            continue;
+        }
+        if (hair) {  // Kajiya-Kay (mesh.hlsl)
+            vec3 hh = normalize(v + l);
+            float sharp = mix(300.0, 20.0, roughness);
+            vec3 t1 = normalize(strand + n * 0.12), t2 = normalize(strand - n * 0.12);
+            float d1 = dot(t1, hh), d2 = dot(t2, hh);
+            float s1 = pow(sqrt(clamp(1.0 - d1 * d1, 0.0, 1.0)), sharp), s2 = pow(sqrt(clamp(1.0 - d2 * d2, 0.0, 1.0)), sharp * 0.25);
+            float wrap = clamp((dot(n, l) + 0.5) / 1.5, 0.0, 1.0);
+            lit += (base.rgb / PI * wrap + (s1 * 0.2 + s2 * base.rgb * 0.4) * clamp(dot(n, l) + 0.3, 0.0, 1.0)) * L.color_inner.xyz * atten;
             continue;
         }
         vec3 ls = l;  // specular's direction: a sphere light's nearest point (the centre otherwise)
@@ -2131,7 +2150,7 @@ public:
         const Texture* orm = lookup_texture(draw.orm_texture);
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;  // packed as in the shader
         gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view),
-                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f));
+                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f));
         if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
         if (graph) {
             f32 values[kMaxMaterialParams * 4] = {};

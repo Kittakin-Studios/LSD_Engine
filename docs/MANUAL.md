@@ -1008,6 +1008,10 @@ shadows have the same holes, on static and skeletal meshes, for every light);
 
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 
+**Shading Model: Hair** (Unreal's Hair shading model, for hair cards): two highlights run along the strands (a
+white one and a hair-coloured one, Roughness sets how sharp) and light wraps softly round into the shadow side. Lay the
+strands along the texture's V, use Blend Mode Masked with the hair texture's alpha; cards are drawn from both sides.
+
 **Global material parameters** (Unreal's Material Parameter Collection): **Project Settings > Materials > Material
 Parameters** names up to 16 values every material can read, each with a starting value (Wind, Wetness, SnowAmount,
 TimeOfDay). In a Material Graph the **Global Parameter** node (Parameters) gives one by name (a colour, or a number in

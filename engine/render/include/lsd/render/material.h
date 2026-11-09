@@ -25,6 +25,9 @@ struct Material {
     u32 blend_mode = 0;
     LSD_PROPERTY(Edit, Category = "Blending", Min = 0, Max = 1, Tooltip = "Times the base colour texture's alpha (Translucent, Additive, Masked)") f32 opacity = 1.0f;
     LSD_PROPERTY(Edit, Category = "Blending", Min = 0, Max = 1, Tooltip = "Masked: alpha below this is not drawn") f32 opacity_mask_clip = 0.333f;
+    LSD_PROPERTY(Edit, Widget = "Choice:Default Lit,Hair",
+                 Tooltip = "Hair (Unreal's Hair shading model, for hair cards): two highlights running along the strand (lay the strands along the texture's V), soft light through the hair; Roughness sets how sharp they are. Use with Masked and an alpha texture")
+    u32 shading_model = 0;
 };
 
 // One Scalar / Vector Parameter of a Material Graph set by an instance (scalars use X).

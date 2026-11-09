@@ -731,7 +731,8 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const bool has_normal_map = fmod(n1.w, 2.0) > 0.5;
     const bool blended = fmod(floor(n1.w * 0.5), 2.0) > 0.5;
     const float cutoff = fmod(floor(n1.w * 0.25), 256.0) / 255.0;
-    const bool pixel_art = n1.w > 1023.5;  // 1024: whole texels of the base colour texture
+    const bool pixel_art = fmod(floor(n1.w / 1024.0), 2.0) > 0.5;  // 1024: whole texels of the base colour texture
+    const bool hair = n1.w > 2047.5;  // 2048: the Hair shading model
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w; mi.depth = scene_depth_m(i.pos);
@@ -791,6 +792,15 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
             baked.rgb *= (dot(n, d) * 0.5 + 0.5) / max(dot(geometric_n, d) * 0.5 + 0.5, 0.1);
         }
     }
+    // Hair (shading model): the strand runs along the texture's V; its direction from how the UVs change across the pixel.
+    float3 strand = float3(0.0, 0.0, 1.0);
+    if (hair) {
+        const float3 dp1 = ddx(i.wpos), dp2 = ddy(i.wpos);
+        const float2 duv1 = ddx(i.uv), duv2 = ddy(i.uv);
+        const float3 along = dp2 * duv1.x - dp1 * duv2.x;
+        const float3 across = along - n * dot(along, n);
+        strand = dot(across, across) > 1e-12 ? normalize(across) : strand;
+    }
     for (uint li = 0; li < light_count; ++li) {
         const Light L = lights[li];
         float3 l;
@@ -823,6 +833,16 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
             for (uint c = 0; c < count; ++c) p[c] = float3(ltc.x * p[c].x + ltc.y * p[c].z, ltc.z * p[c].y, ltc.w * p[c].x + p[c].z);
             const float3 fc = f0 + (1.0 - f0) * pow(1.0 - saturate(dot(v, normalize(v + l))), 5.0);
             lit += ((1.0 - fc) * (1.0 - metallic) * base.rgb * diffuse_share + env_spec * polygon_share(p, count)) * L.color_inner.xyz / max(area, 1e-4) * atten;
+            continue;
+        }
+        if (hair) {  // Kajiya-Kay: a white highlight shifted toward the tip, a tinted one toward the root, soft wrap-around diffuse
+            const float3 hh = normalize(v + l);
+            const float sharp = lerp(300.0, 20.0, roughness);
+            const float3 t1 = normalize(strand + n * 0.12), t2 = normalize(strand - n * 0.12);
+            const float d1 = dot(t1, hh), d2 = dot(t2, hh);
+            const float s1 = pow(sqrt(saturate(1.0 - d1 * d1)), sharp), s2 = pow(sqrt(saturate(1.0 - d2 * d2)), sharp * 0.25);
+            const float wrap = saturate((dot(n, l) + 0.5) / 1.5);
+            lit += (base.rgb / PI * wrap + (s1 * 0.2 + s2 * base.rgb * 0.4) * saturate(dot(n, l) + 0.3)) * L.color_inner.xyz * atten;
             continue;
         }
         float3 ls = l;  // specular's direction: a sphere light's nearest point (the centre otherwise)

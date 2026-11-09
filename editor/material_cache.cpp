@@ -401,6 +401,7 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
     draw.color[3] *= m.base_color.a;
     draw.metallic = m.metallic;
     draw.roughness = m.roughness;
+    draw.hair = m.shading_model == 1;
     draw.emissive[0] = m.emissive.r * m.emissive_strength;
     draw.emissive[1] = m.emissive.g * m.emissive_strength;
     draw.emissive[2] = m.emissive.b * m.emissive_strength;
