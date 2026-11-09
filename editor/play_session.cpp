@@ -3017,8 +3017,10 @@ void PlaySession::add_physics_vehicle(const world::World& world, world::Entity e
     const SkinnedEntry* skin = skeletal && skinned_ ? skinned_->get(skeletal->mesh) : nullptr;
     const anim::SkinnedModel* model = skin ? skin->model : nullptr;
     const Mat4 skin_to_world = model ? skeletal_matrix(world, skeleton, *skeletal, skin) : Mat4{};
-    // A skinned vertex where it is drawn now (the pose's skinning, else as stored), and the bone moving it most.
-    const anim::Pose* pose = model && animations_ ? animations_->pose(skeleton) : nullptr;
+    // A skinned vertex where its rest pose draws it (files in centimetres are scaled by the skinning), and the bone moving it most.
+    anim::Pose rest_pose;
+    if (model) rest_pose.sample(*model, nullptr, 0.0f, false);
+    const anim::Pose* pose = model ? &rest_pose : nullptr;
     auto skinned_point = [&](const rhi::SkinnedVertex& sv, u32& joint) {
         u32 best = 0;
         for (u32 n = 1; n < 4; ++n) best = sv.weights[n] > sv.weights[best] ? n : best;
