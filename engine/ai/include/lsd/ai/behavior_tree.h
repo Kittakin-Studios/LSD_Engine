@@ -29,6 +29,8 @@ enum class BtType : u8 {
     TimeLimit,       // fails the child if it runs longer than `value` seconds
     ForceSuccess,    // the child's failure counts as success
     Service,         // text: a Lua function called every `value` seconds while the child runs (its result ignored)
+    UseSmartObject,  // text: activity tag ("" any); value: search radius. Claims a free slot, walks there, uses it, releases it
+    RunQuery,        // text: an Environment Query asset; key: where the best point goes
 };
 
 constexpr u32 kMaxBtChildren = 4;
@@ -96,12 +98,21 @@ struct BtHost {
     bool (*random_point)(void* user, Vec3 around, f32 radius, Vec3& out) = nullptr;
     // A Lua function on the agent: 1 success, 0 failure, 2 running, -1 missing.
     int (*run_script)(void* user, const char* function, f32 dt) = nullptr;
+    // Smart Objects: a free slot (tag "" = any activity) within radius, claimed: its id and where to stand; -1 if none.
+    i32 (*claim_smart_object)(void* user, const char* tag, f32 radius, Vec3& slot) = nullptr;
+    // Called every tick while it uses the claimed slot (seconds 0: it just arrived): 2 still using, 1 done, 0 failed.
+    int (*use_smart_object)(void* user, i32 claim, f32 seconds) = nullptr;
+    void (*release_smart_object)(void* user, i32 claim) = nullptr;
+    bool (*run_query)(void* user, const char* query, Vec3& out) = nullptr;  // an Environment Query's best point
 };
+
+// Compare / Condition / State Tree transitions: key <op> value (op: 0 >, 1 <, 2 ==, 3 !=, 4 is set, 5 not set).
+bool test_key(const Blackboard& board, const char* key, u32 op, f32 value);
 
 // One agent running a tree.
 class BtRunner {
 public:
-    void tick(const BehaviorTree& tree, Blackboard& board, const BtHost& host, f32 dt);
+    BtStatus tick(const BehaviorTree& tree, Blackboard& board, const BtHost& host, f32 dt);  // the root's result
     void reset(const BtHost& host);  // stops whatever was running
     // The ids of the nodes that ran this tick without failing (the active branch, root first), for
     // the graph window's highlight.
@@ -114,6 +125,8 @@ private:
         Vec3 target;        // MoveTo: where it was sent
         bool running = false;
         bool ok = false;    // ran this tick and did not fail
+        i32 claim = -1;     // UseSmartObject: the slot it holds
+        f32 used = -1.0f;   // UseSmartObject: seconds spent using it (-1: still walking there)
     };
     BtStatus run(const BehaviorTree& tree, u32 index, Blackboard& board, const BtHost& host, f32 dt);
     void abort(const BehaviorTree& tree, u32 index, const BtHost& host);
