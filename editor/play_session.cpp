@@ -1115,7 +1115,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (!sounds) return;
         if (what == 0) sounds->play_music(name, fade);
         else if (what == 1) sounds->stop_music(fade);
+        else if (what == 3) sounds->set_music_intensity(volume);
+        else if (what == 4) sounds->set_music_segment(name);
         else sounds->set_music_layer(name, volume, fade);
+    };
+    host.trigger_audio = [](void* user, const char* name) {
+        if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->trigger(name);
     };
     host.input = [](void* user, const char* action) {
         const auto& self = *static_cast<const PlaySession*>(user);

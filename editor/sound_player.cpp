@@ -76,9 +76,83 @@ u32 SoundPlayer::concurrency_index(const char* guid) {
     return index;
 }
 
+const asset::AssetRecord* SoundPlayer::find_data(const char* name, const char* data_type) const {
+    usize hits[16];
+    const usize n = registry_ ? registry_->search(name, asset::AssetType::Data, nullptr, hits, 16) : 0;
+    for (usize i = 0; i < n; ++i) {
+        const asset::AssetRecord& r = registry_->get(hits[i]);
+        if (std::strcmp(r.name, name) == 0 && std::strcmp(r.data_type, data_type) == 0) return &r;
+    }
+    return nullptr;
+}
+
+// A Music segment's track and its stems, `delay` seconds from now (sample-accurate), looping.
+void SoundPlayer::start_segment(u32 index, f32 delay, f32 fade_in) {
+    MusicPlay& m = music_play_;
+    const audio::MusicSegment& segment = m.asset.segments[index];
+    auto start = [&](const char* sound, f32 volume) -> u32 {
+        const asset::AssetRecord* r = find(sound, false);
+        if (!r) {
+            LSD_LOG_WARN("audio", "Music: no sound '%s'", sound);
+            return 0;
+        }
+        const u32 voice = play_file(*r, nullptr, false, {}, 1.0f, 1.0f, true, delay, 0);
+        audio_->fade_voice(voice, fade_in > 0.0f ? 0.0f : volume, 0.0f);
+        if (fade_in > 0.0f) audio_->fade_voice(voice, volume, fade_in);
+        return voice;
+    };
+    m.segment = index;
+    m.start = audio_->time_seconds() + delay;
+    m.base = segment.sound[0] ? start(segment.sound, 1.0f) : 0;
+    for (u32 i = 0; i < m.asset.stems.count; ++i) {
+        const audio::MusicStem& stem = m.asset.stems[i];
+        const bool here = !stem.segment[0] || std::strcmp(stem.segment, segment.name) == 0;
+        m.stems[i] = here && stem.sound[0] ? start(stem.sound, audio::music_stem_gain(m.intensity, stem.from, stem.full)) : 0;
+    }
+}
+
+void SoundPlayer::set_music_intensity(f32 intensity) {
+    MusicPlay& m = music_play_;
+    m.intensity = intensity;
+    if (!audio_ || !m.active) return;
+    for (u32 i = 0; i < m.asset.stems.count; ++i) {
+        if (m.stems[i]) audio_->fade_voice(m.stems[i], audio::music_stem_gain(intensity, m.asset.stems[i].from, m.asset.stems[i].full), m.asset.intensity_fade);
+    }
+}
+
+void SoundPlayer::set_music_segment(const char* name) {
+    MusicPlay& m = music_play_;
+    if (!audio_ || !m.active || !name) return;
+    for (u32 i = 0; i < m.asset.segments.count; ++i) {
+        if (std::strcmp(m.asset.segments[i].name, name) != 0) continue;
+        if (i == m.segment) return;
+        const f32 wait = audio::music_next_boundary(audio_->time_seconds() - m.start, m.asset.tempo, m.asset.beats_per_bar, m.asset.quantize == 1);
+        if (m.base) audio_->stop_at(m.base, wait, m.asset.switch_fade);
+        for (u32 k = 0; k < m.asset.stems.count; ++k) {
+            if (m.stems[k]) audio_->stop_at(m.stems[k], wait, m.asset.switch_fade);
+        }
+        start_segment(i, wait, m.asset.switch_fade);
+        return;
+    }
+    LSD_LOG_WARN("audio", "Music: no segment '%s'", name);
+}
+
 void SoundPlayer::play_music(const char* name, f32 fade) {
     if (!audio_ || !name || std::strcmp(name, music_) == 0) return;
     stop_music(fade);
+    if (const asset::AssetRecord* r = find_data(name, "Music")) {  // a Music asset: segments and stems
+        char path[300];
+        registry_->source_path(*r, path, sizeof path);
+        MusicPlay& m = music_play_;
+        if (!asset::load_data_asset(path, m.asset) || m.asset.segments.count == 0) {
+            LSD_LOG_WARN("audio", "Music '%s' has no segments", name);
+            return;
+        }
+        m.active = true;
+        start_segment(0, 0.0f, fade);
+        std::snprintf(music_, sizeof music_, "%s", name);
+        return;
+    }
     music_voice_ = play(name, false, {});
     if (!music_voice_) return;
     std::snprintf(music_, sizeof music_, "%s", name);
@@ -95,6 +169,12 @@ void SoundPlayer::stop_music(f32 fade) {
     music_voice_ = 0;
     music_[0] = '\0';
     layer_count_ = 0;
+    MusicPlay& m = music_play_;
+    if (m.active && m.base) audio_->stop_with_fade(m.base, fade);
+    for (u32 i = 0; m.active && i < m.asset.stems.count; ++i) {
+        if (m.stems[i]) audio_->stop_with_fade(m.stems[i], fade);
+    }
+    m.active = false;
 }
 
 void SoundPlayer::set_music_layer(const char* name, f32 volume, f32 fade) {
@@ -123,7 +203,13 @@ u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position) {
         LSD_LOG_WARN("audio", "No sound asset '%s'", sound);
         return 0;
     }
-    if (r->type == asset::AssetType::Cue) return play_cue(*r, spatial, position);
+    if (r->type == asset::AssetType::Cue) {
+        char path[300];
+        registry_->source_path(*r, path, sizeof path);
+        const usize length = std::strlen(path), ext = sizeof kSynthExtension - 1;
+        if (length > ext && std::strcmp(path + length - ext, kSynthExtension) == 0) return play_synth(*r, path, spatial, position);
+        return play_cue(*r, spatial, position);
+    }
     asset::AssetMeta meta;
     registry_->load_meta(*r, meta);
     return play_file(*r, nullptr, spatial, position, 1.0f, 1.0f, meta.looping, 0.0f, 0);
@@ -169,6 +255,50 @@ const char* SoundPlayer::subtitle() {
     return subtitle_;
 }
 
+// A Sound Synth: compiled from its graph at every play (small, and edits are heard at once), its
+// parameters starting from the values scripts set last.
+u32 SoundPlayer::play_synth(const asset::AssetRecord& record, const char* path, bool spatial, Vec3 position) {
+    script::Graph graph(default_allocator());
+    auto* program = new audio::SynthProgram();  // a few KB: kept off the stack
+    char problem[160];
+    const bool loaded = script::load_graph_file(graph, path);
+    if (!loaded || !compile_synth(graph, *program, problem, sizeof problem)) {
+        LSD_LOG_WARN("audio", "%s: %s", record.name, loaded ? problem : "could not read it");
+        delete program;
+        return 0;
+    }
+    for (u32 i = 0; i < program->param_count; ++i) {
+        for (u32 k = 0; k < param_count_; ++k) {
+            if (std::strcmp(params_[k].name, program->params[i]) == 0) program->param_defaults[i] = params_[k].value;
+        }
+    }
+    asset::AssetMeta settings;
+    registry_->load_meta(record, settings);
+    audio::PlayDesc d;
+    d.name = record.name;
+    d.synth = program;
+    char waves[audio::kSynthMaxWaves][300] = {};
+    for (u32 i = 0; i < program->wave_count; ++i) {
+        const asset::AssetRecord* wave = find(program->waves[i], false);
+        if (!wave) {
+            LSD_LOG_WARN("audio", "%s: Wave Player names no sound asset '%s'", record.name, program->waves[i]);
+            continue;
+        }
+        registry_->source_path(*wave, waves[i], sizeof waves[i]);
+        d.synth_waves[i] = waves[i];
+    }
+    d.spatial = spatial;
+    d.position = position;
+    load_by_guid(*registry_, settings.attenuation, d.attenuation);
+    d.volume = settings.volume;
+    d.pitch = settings.pitch;
+    d.sound_class = class_index(settings.sound_class);
+    d.concurrency = concurrency_index(settings.concurrency);
+    const u32 voice = audio_->play(d);
+    delete program;
+    return voice;
+}
+
 u32 SoundPlayer::play_cue(const asset::AssetRecord& cue, bool spatial, Vec3 position) {
     char path[300];
     registry_->source_path(cue, path, sizeof path);
@@ -203,13 +333,7 @@ u32 SoundPlayer::play_cue(const asset::AssetRecord& cue, bool spatial, Vec3 posi
 
 void SoundPlayer::push_mix(const char* name) {
     if (!audio_ || mix_count_ == sizeof mixes_ / sizeof mixes_[0]) return;
-    usize hits[16];
-    const usize n = registry_->search(name, asset::AssetType::Data, nullptr, hits, 16);
-    const asset::AssetRecord* r = nullptr;
-    for (usize i = 0; i < n && !r; ++i) {
-        const asset::AssetRecord& candidate = registry_->get(hits[i]);
-        if (std::strcmp(candidate.name, name) == 0 && std::strcmp(candidate.data_type, "SoundMix") == 0) r = &candidate;
-    }
+    const asset::AssetRecord* r = find_data(name, "SoundMix");
     char path[300];
     audio::SoundMix mix;
     if (r) registry_->source_path(*r, path, sizeof path);
@@ -249,7 +373,10 @@ void SoundPlayer::set_class_volume(const char* name, f32 volume, bool warn) {
     else if (warn) LSD_LOG_WARN("audio", "No Sound Class '%s'", name);
 }
 
+void SoundPlayer::trigger(const char* name) { set_param(name, param(name) + 1.0f); }  // a Trigger fires on any change
+
 void SoundPlayer::set_param(const char* name, f32 value) {
+    if (audio_) audio_->set_synth_param(name, value);
     for (u32 i = 0; i < param_count_; ++i) {
         if (std::strcmp(params_[i].name, name) == 0) {
             params_[i].value = value;
@@ -274,6 +401,7 @@ void SoundPlayer::stop_all_and_forget() {
     music_[0] = '\0';
     music_voice_ = 0;
     layer_count_ = 0;
+    music_play_.active = false;
 }
 
 } // namespace lsd::editor

@@ -970,6 +970,21 @@ struct Api {
         if (host.music) host.music(host.user, 2, luaL_checkstring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)), static_cast<f32>(luaL_optnumber(L, 3, 1.0)));
         return 0;
     }
+    static int music_intensity(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.music) host.music(host.user, 3, "", static_cast<f32>(luaL_checknumber(L, 1)), 0.0f);
+        return 0;
+    }
+    static int music_segment(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.music) host.music(host.user, 4, luaL_checkstring(L, 1), 0.0f, 0.0f);
+        return 0;
+    }
+    static int trigger_audio(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.trigger_audio) host.trigger_audio(host.user, luaL_checkstring(L, 1));
+        return 0;
+    }
     static int ik(lua_State* L, bool aim) {
         const ScriptHost& host = system(L).host_;
         const world::Entity e = live_entity(L, 1);
@@ -2327,7 +2342,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow}, {"ui_style", Api::ui_style}, {"ui_rml", Api::ui_rml}, {"_ui_open_text", Api::ui_open_text},
         {"ui_play_animation", Api::ui_play_animation}, {"ui_animate", Api::ui_animate},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
-        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
+        {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"music_intensity", Api::music_intensity}, {"music_segment", Api::music_segment}, {"trigger_audio", Api::trigger_audio}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},

@@ -117,4 +117,143 @@ u32 evaluate_cue(const script::Graph& cue, CueEnv& env, CueVoice* out, u32 capac
     return e.count;
 }
 
+namespace {
+
+struct SynthCompiler {
+    const script::Graph& g;
+    audio::SynthProgram& p;
+    char* error;
+    usize capacity;
+    u32 ids[audio::kSynthMaxNodes] = {};  // graph node id of each program node
+    u32 visiting[64] = {};
+    u32 visiting_count = 0;
+    bool ok = true;
+
+    SynthCompiler(const script::Graph& graph, audio::SynthProgram& program, char* error_out, usize error_capacity)
+        : g(graph), p(program), error(error_out), capacity(error_capacity) {}
+    void fail(const char* what, const script::GraphNode& n) {
+        if (ok) std::snprintf(error, capacity, "%s (node %u): %s", n.type, n.id, what);
+        ok = false;
+    }
+    static f32 number(const script::GraphNode& n, u32 pin) { return static_cast<f32>(std::atof(n.values[pin])); }
+    u32 slot(char (*names)[64], u32& count, u32 max, const char* name) {  // waves by name, shared
+        for (u32 i = 0; i < count; ++i) {
+            if (std::strcmp(names[i], name) == 0) return i;
+        }
+        if (count == max) return max;
+        std::snprintf(names[count], sizeof names[0], "%s", name);
+        return count++;
+    }
+    u32 param(const char* name, f32 default_value) {
+        for (u32 i = 0; i < p.param_count; ++i) {
+            if (std::strcmp(p.params[i], name) == 0) return i;
+        }
+        if (p.param_count == audio::kSynthMaxParams) return audio::kSynthMaxParams;
+        std::snprintf(p.params[p.param_count], sizeof p.params[0], "%s", name);
+        p.param_defaults[p.param_count] = default_value;
+        return p.param_count++;
+    }
+    // A data input: the program index of the node wired into it, or its typed number.
+    audio::SynthInput input(const script::GraphNode& n, u32 pin) {
+        audio::SynthInput in;
+        in.value = number(n, pin);
+        if (const script::GraphLink* link = g.link_into(n.id, pin)) in.node = visit(link->from_node);
+        return in;
+    }
+    // Inputs first, then the node: the program's order is the order to compute in.
+    i32 visit(u32 id) {
+        for (u32 i = 0; i < p.count; ++i) {
+            if (ids[i] == id) return static_cast<i32>(i);
+        }
+        const script::GraphNode* found = g.find(id);
+        if (!found || !ok) return -1;
+        const script::GraphNode& n = *found;
+        for (u32 i = 0; i < visiting_count; ++i) {
+            if (visiting[i] == id) {
+                fail("feedback loop: a node feeds itself", n);
+                return -1;
+            }
+        }
+        if (visiting_count == 64) {
+            fail("the graph is too deep", n);
+            return -1;
+        }
+        visiting[visiting_count++] = id;
+        audio::SynthNode node;
+        const char* t = n.type;
+        if (std::strcmp(t, "SynOscillator") == 0) {
+            node.op = audio::SynthOp::Oscillator;
+            node.in[0] = input(n, 0);
+            node.in[1] = input(n, 1);
+            const char* shape = n.values[2];
+            node.mode = static_cast<u8>(std::strcmp(shape, "Saw") == 0      ? audio::SynthShape::Saw
+                                        : std::strcmp(shape, "Square") == 0 ? audio::SynthShape::Square
+                                        : std::strcmp(shape, "Noise") == 0  ? audio::SynthShape::Noise
+                                                                            : audio::SynthShape::Sine);
+        } else if (std::strcmp(t, "SynEnvelope") == 0) {
+            // shortcut: Attack..Release are the typed numbers (not modulated), wire them when a patch needs it
+            node.op = audio::SynthOp::Envelope;
+            node.in[0] = input(n, 0);
+            node.a = number(n, 1);
+            node.b = number(n, 2);
+            node.c = number(n, 3);
+            node.d = number(n, 4);
+        } else if (std::strcmp(t, "SynFilter") == 0) {
+            node.op = audio::SynthOp::Filter;
+            for (u32 k = 0; k < 3; ++k) node.in[k] = input(n, k);
+            node.mode = std::strcmp(n.values[3], "true") == 0 ? 1 : 0;
+        } else if (std::strcmp(t, "SynGain") == 0) {
+            node.op = audio::SynthOp::Gain;
+            node.in[0] = input(n, 0);
+            node.in[1] = input(n, 1);
+        } else if (std::strcmp(t, "SynMix") == 0) {
+            node.op = audio::SynthOp::Mix;
+            for (u32 k = 0; k < 4; ++k) node.in[k] = input(n, k);
+        } else if (std::strcmp(t, "SynParam") == 0 || std::strcmp(t, "SynTrigger") == 0) {
+            const bool trigger = t[3] == 'T';
+            node.op = trigger ? audio::SynthOp::Trigger : audio::SynthOp::Param;
+            const u32 index = param(n.values[0], trigger ? 0.0f : number(n, 1));
+            if (index == audio::kSynthMaxParams) fail("too many parameters (16)", n);
+            node.slot = static_cast<u8>(index);
+            node.b = trigger ? number(n, 1) : 0.0f;
+        } else if (std::strcmp(t, "SynWave") == 0) {
+            node.op = audio::SynthOp::Wave;
+            const u32 index = slot(p.waves, p.wave_count, audio::kSynthMaxWaves, n.values[0]);
+            if (index == audio::kSynthMaxWaves) fail("too many Wave Players (8)", n);
+            node.slot = static_cast<u8>(index);
+            node.mode = std::strcmp(n.values[1], "true") == 0 ? 1 : 0;
+            node.in[0] = input(n, 2);
+            node.b = g.link_into(n.id, 2) ? 1.0f : 0.0f;
+        } else {
+            fail("not a Sound Synth node", n);
+        }
+        --visiting_count;
+        if (!ok) return -1;
+        if (p.count == audio::kSynthMaxNodes) {
+            fail("too many nodes (64)", n);
+            return -1;
+        }
+        ids[p.count] = id;
+        p.nodes[p.count] = node;
+        return static_cast<i32>(p.count++);
+    }
+};
+
+} // namespace
+
+bool compile_synth(const script::Graph& graph, audio::SynthProgram& out, char* error, usize error_capacity) {
+    out = audio::SynthProgram();
+    if (error_capacity) error[0] = '\0';
+    SynthCompiler c(graph, out, error, error_capacity);
+    for (const script::GraphNode& n : graph.nodes) {
+        if (std::strcmp(n.type, "SynOutput") != 0) continue;
+        out.output = c.input(n, 0);
+        out.volume = SynthCompiler::number(n, 1);
+        out.duration = SynthCompiler::number(n, 2);
+        return c.ok;
+    }
+    std::snprintf(error, error_capacity, "No Output node");
+    return false;
+}
+
 } // namespace lsd::editor

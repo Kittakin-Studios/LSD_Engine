@@ -4980,6 +4980,15 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("AI decisions as a tree (Selector, Sequence, Move To, Wait, conditions...). Pick it on an AI Controller");
+        if (with_tip(ImGui::MenuItem("New Sound Synth"), "Makes a Sound Synth here: audio made live by nodes (oscillators, envelope, filters, parameters set from scripts), Unreal's MetaSound")) {
+            const std::string path = create_synth_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SS_New");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
         if (with_tip(ImGui::MenuItem("New Sound Cue"), "Makes a Sound Cue (sounds mixed by nodes: random, modulate, concatenate) here")) {
             const std::string path = create_cue_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "SC_New");
             s.registry->scan();

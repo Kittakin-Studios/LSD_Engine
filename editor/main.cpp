@@ -2309,6 +2309,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundConcurrency>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::SoundMix>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::Submix>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::audio::Music>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::anim::AnimGraph>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::anim::MotionDatabase>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::particles::ParticleSystem>());

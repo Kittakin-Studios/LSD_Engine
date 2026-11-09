@@ -40,7 +40,7 @@ add_executable(lsd_editor_tests editor_tests.cpp ${PROJECT_SOURCE_DIR}/editor/as
   ${PROJECT_SOURCE_DIR}/editor/references.cpp ${PROJECT_SOURCE_DIR}/editor/keymap.cpp ${PROJECT_SOURCE_DIR}/editor/landscape_paint.cpp ${PROJECT_SOURCE_DIR}/editor/template_levels.cpp ${PROJECT_SOURCE_DIR}/editor/paper2d_core.cpp ${PROJECT_SOURCE_DIR}/editor/scalability.cpp ${PROJECT_SOURCE_DIR}/editor/behavior.cpp ${PROJECT_SOURCE_DIR}/editor/loc_gather.cpp ${PROJECT_SOURCE_DIR}/editor/landscape_core.cpp ${PROJECT_SOURCE_DIR}/editor/mesh_edit.cpp ${PROJECT_SOURCE_DIR}/editor/pcg_graph.cpp)
 target_compile_definitions(lsd_editor_tests PRIVATE LSD_TEST_TEMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(lsd_editor_tests PRIVATE ${PROJECT_SOURCE_DIR}/editor)
-target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script lsd_ai lsd_asset lsd_render lsd_rhi imgui xatlas)
+target_link_libraries(lsd_editor_tests PRIVATE lsd_world lsd_script lsd_ai lsd_asset lsd_audio lsd_render lsd_rhi imgui xatlas)
 lsd_configure_target(lsd_editor_tests)
 add_test(NAME editor COMMAND lsd_editor_tests)
 

@@ -28,11 +28,14 @@
 //   lsd.spline_length(e)                  metres
 //   lsd.play_sound(name [, x, y, z]) -> id   a sound asset by name, 2D or at a position; 0 if none
 //   lsd.stop_sound(id)
-//   lsd.play_music(name [, fade = 1])     crossfades from the current track (seconds); same track: nothing
+//   lsd.play_music(name [, fade = 1])     crossfades from the current track (seconds); same track: nothing. A Music asset plays its segments and stems
 //   lsd.stop_music([fade = 1])
 //   lsd.music_layer(name, volume [, fade = 1])   a stem in step with the track, faded to volume (0..1)
 //   lsd.push_mix(name), lsd.pop_mix(name)   Sound Mix data assets by name
-//   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
+//   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes and Sound Synth Parameter nodes
+//   lsd.trigger_audio(name)               fires Sound Synth Trigger nodes of that name
+//   lsd.music_intensity(value)            0..1: a Music asset's stems fade to their gains at it
+//   lsd.music_segment(name)               a Music asset switches segment on its next beat / bar
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_morph(e, name, weight)        a morph target (blend shape) weight on e's skeletal mesh (or its child's)
 //   lsd.ragdoll(e, on)                     e's skeletal mesh (or its child's) becomes a ragdoll (true) or animates again (false)
@@ -310,7 +313,8 @@ struct ScriptHost {
     Vec3 (*camera_location)(void* user) = nullptr;
     Vec3 (*camera_forward)(void* user) = nullptr;
     void (*ik)(void* user, world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward) = nullptr;
-    void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer
+    void (*music)(void* user, int what, const char* name, f32 volume, f32 fade) = nullptr;  // 0 play, 1 stop, 2 layer, 3 intensity (volume), 4 segment (name)
+    void (*trigger_audio)(void* user, const char* name) = nullptr;
     bool (*timeline)(void* user, int what, const char* name, bool loop) = nullptr;           // 0 play, 1 stop
     bool (*socket)(void* user, world::Entity e, const char* name, Vec3& position, Vec3& forward) = nullptr;
     bool (*data_path)(void* user, const char* data_type, const char* name, char* out, usize capacity) = nullptr;  // a data asset by type and name

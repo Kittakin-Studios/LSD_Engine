@@ -153,8 +153,14 @@ NodeDef g_defs[] = {
      {kExecOut}, 0, "lsd.pop_mix($1)", {}},
     {"SetClassVolume", "Set Sound Class Volume", "Audio", "A Sound Class's volume by name (Master, Music, SFX...): settings sliders",
      {kExecIn, {"Class", PinType::String, "Master"}, {"Volume", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_class_volume($1, $2)", {}},
-    {"SetAudioParam", "Set Audio Parameter", "Audio", "A value Sound Cue Switch nodes read (surface type, intensity...)",
+    {"SetAudioParam", "Set Audio Parameter", "Audio", "A value Sound Cue Switch nodes and Sound Synth Parameter nodes read (surface type, pitch, intensity...)",
      {kExecIn, {"Name", PinType::String, "Surface"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_audio_param($1, $2)", {}},
+    {"TriggerAudio", "Trigger Audio", "Audio", "Fires the Trigger nodes of that name in playing Sound Synths (a hit, a step)",
+     {kExecIn, {"Name", PinType::String, "Hit"}}, 0, {kExecOut}, 0, "lsd.trigger_audio($1)", {}},
+    {"MusicIntensity", "Set Music Intensity", "Audio", "0..1: the playing Music asset fades each stem to its gain at this intensity (calm 0, combat 1)",
+     {kExecIn, {"Intensity", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.music_intensity($1)", {}},
+    {"MusicSegment", "Switch Music Segment", "Audio", "The playing Music asset moves to another segment on its next beat or bar (its Quantize)",
+     {kExecIn, {"Segment", PinType::String, "Combat"}}, 0, {kExecOut}, 0, "lsd.music_segment($1)", {}},
     {"SetMaterialParam", "Set Global Material Parameter", "Rendering",
      "Sets a global material parameter (Project Settings > Materials; Unreal's Set Vector Parameter Value on a Collection): every material reading it follows",
      {kExecIn, {"Name", PinType::String, "Wind"}, {"Value", PinType::Vector, "1,1,1"}}, 0, {kExecOut}, 0, "lsd.set_material_parameter($1, $2.x, $2.y, $2.z)", {}},
@@ -443,6 +449,31 @@ NodeDef g_cue_defs[] = {
     {"CueSwitch", "Switch", "Sound Cue", "Picks input 0-3 by an audio parameter (lsd.set_audio_param / Set Audio Parameter)",
      {{"0", PinType::Audio, ""}, {"1", PinType::Audio, ""}, {"2", PinType::Audio, ""}, {"3", PinType::Audio, ""}, {"Parameter", PinType::String, "Surface"}}, 0,
      {kAudioOut}, 0, nullptr, {}},
+};
+
+// Sound Synth nodes (editor/sound_cue.cpp compiles them to an audio::SynthProgram rendered live,
+// Unreal's MetaSounds). Wires carry a signal, one number per sample; unwired inputs use the typed number.
+NodeDef g_synth_defs[] = {
+    {"SynOutput", "Output", "Sound Synth", "What the synth sounds like; Duration 0 plays until stopped",
+     {{"In", PinType::Float, "0"}, {"Volume", PinType::Float, "1"}, {"Duration", PinType::Float, "0"}}, 0, {}, 0, nullptr, {}},
+    {"SynOscillator", "Oscillator", "Sound Synth", "A tone: Shape is Sine, Saw, Square or Noise; Frequency in Hz (wire a Parameter or an Envelope to sweep it)",
+     {{"Frequency", PinType::Float, "440"}, {"Amplitude", PinType::Float, "1"}, {"Shape", PinType::String, "Sine"}}, 0, {{"Out", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynEnvelope", "Envelope (ADSR)", "Sound Synth", "0..1 over time while Gate is above 0.5: Attack, Decay to Sustain, then Release when the gate closes (typed seconds)",
+     {{"Gate", PinType::Float, "1"}, {"Attack", PinType::Float, "0.01"}, {"Decay", PinType::Float, "0.1"}, {"Sustain", PinType::Float, "0.7"}, {"Release", PinType::Float, "0.3"}}, 0,
+     {{"Out", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynFilter", "Filter", "Sound Synth", "Low pass (duller) or High Pass (thinner) at Cutoff Hz; Resonance 0..1 rings at the cutoff",
+     {{"In", PinType::Float, "0"}, {"Cutoff", PinType::Float, "1000"}, {"Resonance", PinType::Float, "0"}, {"High Pass", PinType::Bool, "false"}}, 0,
+     {{"Out", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynGain", "Gain", "Sound Synth", "In times Gain: a volume, or an Envelope on a tone (a VCA)",
+     {{"In", PinType::Float, "0"}, {"Gain", PinType::Float, "1"}}, 0, {{"Out", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynMix", "Mix", "Sound Synth", "Adds its inputs together",
+     {{"A", PinType::Float, "0"}, {"B", PinType::Float, "0"}, {"C", PinType::Float, "0"}, {"D", PinType::Float, "0"}}, 0, {{"Out", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynParam", "Parameter", "Sound Synth", "A number set while it plays: lsd.set_audio_param(name, value) / Set Audio Parameter",
+     {{"Name", PinType::String, "Pitch"}, {"Default", PinType::Float, "440"}}, 0, {{"Value", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynTrigger", "Trigger", "Sound Synth", "1 for Length seconds each time lsd.trigger_audio(name) / Trigger Audio fires it; feed an Envelope's Gate",
+     {{"Name", PinType::String, "Hit"}, {"Length", PinType::Float, "0.1"}}, 0, {{"Gate", PinType::Float, ""}}, 0, nullptr, {}},
+    {"SynWave", "Wave Player", "Sound Synth", "A sound asset (by name) as a signal; plays at the start, or from the start each time Play rises above 0.5 when wired",
+     {{"Sound", PinType::String, ""}, {"Looping", PinType::Bool, "false"}, {"Play", PinType::Float, "0"}}, 0, {{"Out", PinType::Float, ""}}, 0, nullptr, {}},
 };
 
 // PCG Graph nodes (editor/pcg_graph.cpp runs them): samplers make points, filters keep some, Spawn Mesh places a mesh on them.
@@ -904,6 +935,10 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
             d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
+        for (NodeDef& d : g_synth_defs) {
+            d.input_count = count_pins(d.inputs, kMaxNodeInputs);
+            d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
+        }
         for (NodeDef& d : g_pcg_defs) {
             d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
@@ -924,6 +959,10 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
         count = static_cast<u32>(sizeof g_cue_defs / sizeof g_cue_defs[0]);
         return g_cue_defs;
     }
+    if (kind == GraphKind::Synth) {
+        count = static_cast<u32>(sizeof g_synth_defs / sizeof g_synth_defs[0]);
+        return g_synth_defs;
+    }
     if (kind == GraphKind::Material) {
         count = static_cast<u32>(sizeof g_material_defs / sizeof g_material_defs[0]);
         return g_material_defs;
@@ -941,7 +980,7 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
 }
 
 const NodeDef* find_node_def(const char* id) {
-    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material, GraphKind::BehaviorTree, GraphKind::Pcg}) {
+    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material, GraphKind::BehaviorTree, GraphKind::Pcg, GraphKind::Synth}) {
         u32 count = 0;
         const NodeDef* defs = node_defs(count, kind);
         for (u32 i = 0; i < count; ++i) {

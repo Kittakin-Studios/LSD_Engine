@@ -186,6 +186,7 @@ ImU32 header_color(const NodeDef& def) {
         if (std::strcmp(def.category, "Constants") == 0) return IM_COL32(110, 100, 40, 255);
         return IM_COL32(50, 110, 60, 255);
     }
+    if (std::strcmp(def.category, "Sound Synth") == 0) return std::strcmp(def.id, "SynOutput") == 0 ? IM_COL32(150, 40, 40, 255) : IM_COL32(40, 110, 120, 255);
     if (std::strcmp(def.category, "Sound Cue") == 0) return std::strcmp(def.id, "CueOutput") == 0 ? IM_COL32(150, 40, 40, 255) : IM_COL32(95, 60, 150, 255);
     if (script::is_event(def)) return IM_COL32(160, 30, 30, 255);
     if (script::is_pure(def)) return IM_COL32(50, 110, 60, 255);
@@ -370,6 +371,16 @@ void save_and_compile(EditorState& s) {
         char problem[256] = "";
         const bool ok = build_behavior_tree(*w.graph, tree, problem, sizeof problem);
         std::snprintf(w.message, sizeof w.message, "%s", ok ? "Saved: used from the next Play" : problem);
+        w.message_is_error = !ok;
+        std::snprintf(s.status, sizeof s.status, "%s: %s", w.name, w.message);
+        return;
+    }
+    if (w.kind == script::GraphKind::Synth) {  // compiled again at every play: here only to show problems
+        auto* program = new audio::SynthProgram();
+        char problem[160] = "";
+        const bool ok = compile_synth(*w.graph, *program, problem, sizeof problem);
+        delete program;
+        std::snprintf(w.message, sizeof w.message, "%s", ok ? "Saved" : problem);
         w.message_is_error = !ok;
         std::snprintf(s.status, sizeof s.status, "%s: %s", w.name, w.message);
         return;
@@ -861,6 +872,27 @@ std::string create_graph_file(const char* folder_path, const char* base) {
     return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
 }
 
+std::string create_synth_file(const char* folder_path, const char* base) {
+    const std::filesystem::path folder(folder_path);
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    std::filesystem::path path = folder / (std::string(base) + kSynthExtension);
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + kSynthExtension);
+    Graph graph(default_allocator());  // a one-second tone: Pitch -> Oscillator, shaped by an Envelope, -> Output
+    const u32 pitch = graph.add("SynParam", 0, 260)->id;
+    const u32 envelope = graph.add("SynEnvelope", 240, 40)->id;
+    const u32 oscillator = graph.add("SynOscillator", 240, 260)->id;
+    const u32 gain = graph.add("SynGain", 520, 120)->id;
+    GraphNode* out = graph.add("SynOutput", 760, 120);
+    const u32 output = out->id;
+    std::snprintf(out->values[2], sizeof out->values[2], "1");  // Duration: the preview ends by itself
+    graph.connect(pitch, 0, oscillator, 0);
+    graph.connect(oscillator, 0, gain, 0);
+    graph.connect(envelope, 0, gain, 1);
+    graph.connect(gain, 0, output, 0);
+    return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
+}
+
 std::string create_cue_file(const char* folder_path, const char* base) {
     const std::filesystem::path folder(folder_path);
     std::error_code error;
@@ -971,7 +1003,10 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
         return;
     }
     w.guid = record.guid;
-    w.kind = record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue
+    const usize path_length = std::strlen(w.path), synth_length = sizeof kSynthExtension - 1;
+    const bool synth = path_length > synth_length && std::strcmp(w.path + path_length - synth_length, kSynthExtension) == 0;
+    w.kind = synth                                   ? script::GraphKind::Synth
+             : record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue
              : record.type == asset::AssetType::MaterialGraph ? script::GraphKind::Material
              : record.type == asset::AssetType::BehaviorTree  ? script::GraphKind::BehaviorTree
              : record.type == asset::AssetType::PcgGraph      ? script::GraphKind::Pcg
@@ -1109,6 +1144,7 @@ void draw_graph_editor(EditorState& s) {
     g_registry = s.registry;
     std::snprintf(title, sizeof title, "%s%s - %s###VisualScript", w.name, w.dirty ? "*" : "",
                   w.kind == script::GraphKind::SoundCue        ? "Sound Cue"
+                  : w.kind == script::GraphKind::Synth         ? "Sound Synth"
                   : w.kind == script::GraphKind::Material      ? "Material Graph"
                   : w.kind == script::GraphKind::BehaviorTree ? "Behavior Tree"
                   : w.kind == script::GraphKind::Pcg          ? "PCG Graph"
@@ -1122,7 +1158,7 @@ void draw_graph_editor(EditorState& s) {
         if (w.dirty) save_and_compile(s);
         w.open = false;
     }
-    const bool cue = w.kind == script::GraphKind::SoundCue;
+    const bool cue = w.kind == script::GraphKind::SoundCue || w.kind == script::GraphKind::Synth;
     if (ImGui::Button(w.kind == script::GraphKind::Script ? "Save + Compile" : "Save")) save_and_compile(s);
     ImGui::SetItemTooltip(cue ? "Ctrl+S" : "Ctrl+S. Playing objects pick the change up within half a second");
     ImGui::SameLine();
