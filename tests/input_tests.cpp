@@ -201,11 +201,64 @@ static void test_data_asset() {
     std::filesystem::remove(path);
 }
 
+// Recording: what update() gave is saved, loaded and replayed: same values and the same triggers firing.
+static void test_recording() {
+    InputMappingContext walk;
+    walk.mappings.push_back(map(kMove, "W", 1));
+    walk.mappings.push_back(map(kJump, "Space"));
+    walk.mappings.push_back(map(kLook, "Mouse XY"));
+    InputSystem live;
+    live.add_context(walk);
+    InputAction tap;
+    tap.trigger = static_cast<u32>(Trigger::Tap);
+    tap.trigger_time = 0.2f;
+    live.configure(kJump, tap);
+    static bool keys[SDL_SCANCODE_COUNT];
+    InputFrame frame;
+    frame.keys = keys;
+    frame.key_count = SDL_SCANCODE_COUNT;
+    InputRecording recording;
+    Value moves[6];
+    bool fired[6];
+    for (u32 i = 0; i < 6; ++i) {
+        keys[SDL_SCANCODE_W] = i >= 1 && i <= 3;
+        keys[SDL_SCANCODE_SPACE] = i == 2;  // a tap: fires on frame 3
+        frame.mouse_dx = static_cast<f32>(i) * 0.37f;
+        const f32 dt = 1.0f / 60.0f + static_cast<f32>(i) * 0.001f;
+        live.update(frame, dt);
+        live.record(recording, dt);
+        moves[i] = live.value(kMove);
+        fired[i] = live.fired(kJump);
+    }
+    CHECK(fired[3] && !fired[2]);
+    const char* path = LSD_TEST_TEMP_DIR "/test.inputrec";
+    CHECK(save_recording(path, recording));
+    InputRecording loaded;
+    CHECK(load_recording(path, loaded));
+    CHECK(loaded.frame_count() == 6 && loaded.action_count == recording.action_count);
+    CHECK(loaded.data == recording.data);  // exact floats
+    InputSystem replay;
+    replay.add_context(walk);
+    replay.configure(kJump, tap);
+    for (u32 i = 0; i < loaded.frame_count(); ++i) {
+        replay.replay(loaded, i);
+        CHECK(replay.value(kMove).x == moves[i].x && replay.value(kMove).y == moves[i].y);
+        CHECK(replay.fired(kJump) == fired[i]);
+        CHECK(replay.value(kLook).x == static_cast<f32>(i) * 0.37f);
+    }
+    std::FILE* bad = std::fopen(path, "w");
+    std::fputs("lsd_input_recording 1\nactions 1\nshort\n", bad);
+    std::fclose(bad);
+    CHECK(!load_recording(path, loaded) && loaded.frame_count() == 0);
+    std::remove(path);
+}
+
 int main() {
     test_mappings();
     test_held_key();
     test_modifiers();
     test_data_asset();
+    test_recording();
     if (g_failures == 0) std::printf("All input tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

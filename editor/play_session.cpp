@@ -450,6 +450,8 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
 }
 
 void PlaySession::stop() {
+    // A recording or playback asked for before Play (no frame yet) waits for it; one under way ends here.
+    if ((recording_on_ && recording_.frame_count() > 0) || (replaying_ && replay_frame_ > 0)) input_stop();
     prefab_text_.clear();  // edits between sessions are read again
     net_.shutdown();  // tells the others first
     voice_.stop();
@@ -658,7 +660,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
             const world::Entity e = world.owner(sub_type, i);
             const auto* sub = static_cast<const world::SubLevel*>(world.at(sub_type, i));
             const Mat4 m = world.world_matrix(e);
-            const bool near = sub->load_distance <= 0.0f || length(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - feet_) < sub->load_distance;
+            const world::StreamWant want = world::streaming_volumes_want(world, world.name(e), feet_, false);
+            const bool near = want != world::StreamWant::None ? want == world::StreamWant::Load
+                                                               : sub->load_distance <= 0.0f || length(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - feet_) < sub->load_distance;
             if (!sub->load_at_start || !near) world::unload_sublevel(world, e);
             else if (!world::sublevel_loaded(world, e)) {
                 asset::Guid guid;
@@ -954,6 +958,11 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.sublevel = [](void* user, world::Entity e, bool load) {
         auto& self = *static_cast<PlaySession*>(user);
         return self.world_ && self.stream_sublevel(*self.world_, e, load);
+    };
+    host.input_recording = [](void* user, int what, const char* file) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (what == 2) self.input_stop();
+        return what == 2 || (what == 0 ? self.input_record(file) : self.input_play(file));
     };
     host.ride = [](void* user, int what, world::Entity e) {
         auto& self = *static_cast<PlaySession*>(user);
@@ -1761,7 +1770,14 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     if (!physics_) return;
     apply_live_edits(world);  // Details edits made while playing apply now
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
-    input_.update(frame, dt);
+    if (replaying_ && replay_frame_ < recording_.frame_count()) {
+        dt = recording_.dt(replay_frame_);  // the recorded frame times: physics and scripts step as they did
+        input_.replay(recording_, replay_frame_++);
+        if (replay_frame_ == recording_.frame_count()) input_stop();
+    } else {
+        input_.update(frame, dt);
+        if (recording_on_) input_.record(recording_, dt);
+    }
     char held[32] = "";
     input::held_key(frame, held, sizeof held);
     std::snprintf(key_pressed_, sizeof key_pressed_, "%s", held[0] && std::strcmp(held, key_held_) != 0 ? held : "");
@@ -2479,6 +2495,48 @@ void PlaySession::update_triggers(world::World& world) {
     }
 }
 
+// ---- Input recording ----
+
+namespace {
+// Saved/<file>: a plain relative name (scripts pass it), its folders made.
+bool saved_file(const char* file, char* out, usize capacity) {
+    if (!file || !file[0] || std::strstr(file, "..") || std::strchr(file, ':') || file[0] == '/' || file[0] == '\\') {
+        LSD_LOG_WARN("input", "Input recordings are files under Saved/: '%s' is not a plain relative name", file ? file : "");
+        return false;
+    }
+    std::snprintf(out, capacity, "Saved/%s", file);
+    std::error_code ignored;
+    std::filesystem::create_directories(std::filesystem::path(out).parent_path(), ignored);
+    return true;
+}
+} // namespace
+
+bool PlaySession::input_record(const char* file) {
+    input_stop();
+    if (!saved_file(file, recording_path_, sizeof recording_path_)) return false;
+    recording_ = {};
+    recording_on_ = true;
+    LSD_LOG_INFO("input", "Recording input to %s", recording_path_);
+    return true;
+}
+
+bool PlaySession::input_play(const char* file) {
+    input_stop();
+    char path[300];
+    if (!saved_file(file, path, sizeof path) || !input::load_recording(path, recording_)) return false;
+    replaying_ = true;
+    replay_frame_ = 0;
+    LSD_LOG_INFO("input", "Playing input from %s (%u frames)", path, recording_.frame_count());
+    return true;
+}
+
+void PlaySession::input_stop() {
+    if (recording_on_ && input::save_recording(recording_path_, recording_)) LSD_LOG_INFO("input", "Recorded %u frames of input to %s", recording_.frame_count(), recording_path_);
+    if (replaying_) LSD_LOG_INFO("input", "Input playback ended after %u frames", replay_frame_);
+    recording_on_ = replaying_ = false;
+    recording_ = {};
+}
+
 // ---- Sub Levels (level streaming) ----
 
 bool PlaySession::stream_sublevel(world::World& world, world::Entity root, bool load) {
@@ -2507,16 +2565,23 @@ bool PlaySession::stream_sublevel(world::World& world, world::Entity root, bool 
     return true;
 }
 
-// Streaming by distance: in within Load Distance, out past 1.2 times it (no flicker at the edge).
+// Streaming by Level Streaming Volumes listing the Sub Level, else by distance: in within Load
+// Distance, out past 1.2 times it (no flicker at the edge).
 void PlaySession::update_sublevels(world::World& world) {
     const reflect::TypeInfo& type = reflect::type_of<world::SubLevel>();
     for (u32 i = 0; i < world.count(type); ++i) {
         const world::Entity e = world.owner(type, i);
         const auto* sub = static_cast<const world::SubLevel*>(world.at(type, i));
-        if (sub->load_distance <= 0.0f || world.transient(world.parent(e))) continue;
+        if (world.transient(world.parent(e))) continue;
+        const bool loaded = world::sublevel_loaded(world, e);
+        const world::StreamWant want = world::streaming_volumes_want(world, world.name(e), feet_, loaded);
+        if (want != world::StreamWant::None) {
+            if (loaded != (want == world::StreamWant::Load)) stream_sublevel(world, e, !loaded);
+            continue;
+        }
+        if (sub->load_distance <= 0.0f) continue;
         const Mat4 m = world.world_matrix(e);
         const f32 d = length(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - feet_);
-        const bool loaded = world::sublevel_loaded(world, e);
         if (!loaded && d < sub->load_distance) stream_sublevel(world, e, true);
         else if (loaded && d > sub->load_distance * 1.2f) stream_sublevel(world, e, false);
     }

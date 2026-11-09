@@ -2358,6 +2358,12 @@ int main(int argc, char** argv) {
         }
         if (!static_cast<lsd::editor::PlaySession*>(user)->run_lua(code.c_str())) LSD_LOG_WARN("script", "lua: runs while playing (see the Output Log for errors)");
     }, &play, "Run Lua while playing, e.g. lua lsd.log(lsd.time())");
+    lsd::console::add_command("input.Record", [](void* user, const char* args) { static_cast<lsd::editor::PlaySession*>(user)->input_record(args); }, &play,
+                              "Record the Input Actions each frame of Play to Saved/<file> (ends with input.StopRecord or Stop), e.g. input.Record walk.inputrec");
+    lsd::console::add_command("input.StopRecord", [](void* user, const char*) { static_cast<lsd::editor::PlaySession*>(user)->input_stop(); }, &play,
+                              "Stop recording (saves the file) or playing back input");
+    lsd::console::add_command("input.Play", [](void* user, const char* args) { static_cast<lsd::editor::PlaySession*>(user)->input_play(args); }, &play,
+                              "Play back an input recording from Saved/<file> in place of the keys, with its frame times, e.g. input.Play walk.inputrec");
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
     bool travelled = false;  // lsd.open_level went to another level during this Play
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
