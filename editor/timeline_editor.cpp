@@ -312,7 +312,9 @@ void draw_timeline_editor(EditorState& s) {
         g_tl.movie.active = false;
         return;
     }
-    if (g_tl.movie.active) {  // Movie Render Queue: pose this frame's moment; main.cpp renders and saves it this frame
+    // Movie Render Queue: pose the next moment once main.cpp has rendered and saved the last one (it
+    // waits while the level is not on screen, e.g. behind this editor's tab).
+    if (g_tl.movie.active && !s.high_res_shot) {
         MovieRender& m = g_tl.movie;
         if (m.frame < m.frames) {
             g_tl.playhead = std::fmin(static_cast<f32>(m.frame) / m.fps, tl.length);
