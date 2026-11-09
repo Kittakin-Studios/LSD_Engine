@@ -36,4 +36,11 @@ bool load_sublevel(World& world, Entity root, const char* path);
 void unload_sublevel(World& world, Entity root);  // destroys the transient objects under `root`
 bool sublevel_loaded(const World& world, Entity root);
 
+// Level Streaming Volumes: what `point` (the player) wants for the Sub Level object named `name`.
+// None: no enabled volume lists it (Load Distance decides). A loaded one stays loaded until the point
+// is kStreamingMargin outside every volume listing it (no flicker at the edge).
+enum class StreamWant { None, Load, Unload };
+constexpr f32 kStreamingMargin = 1.0f;  // metres
+StreamWant streaming_volumes_want(const World& world, const char* name, Vec3 point, bool loaded);
+
 } // namespace lsd::world
