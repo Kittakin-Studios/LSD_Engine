@@ -64,6 +64,10 @@
 //   lsd.bb_set(e, key, number | x, y, z), lsd.bb_get(e, key) -> number | x, y, z | nil, lsd.bb_clear(e, key)
 //                                         an AI Controller's blackboard (what its behaviour tree reads)
 //   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
+//   lsd.claim_smart_object(e [, activity [, radius = 15]]) -> object, x, y, z | nil   the nearest free Smart Object
+//                                         slot (activity "" = any), held for e until lsd.release_smart_object(e)
+//   lsd.release_smart_object(e)           frees every slot e holds
+//   lsd.run_query(e, query) -> x, y, z | nil   an Environment Query asset (by name) run for e: its best point
 //   lsd.rebuild_navmesh() -> ok           builds the navmesh again now (after moving walls or doors); agents keep walking
 //   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
 //   lsd.ui_open(name) -> doc              a UI document (.rml) by asset name over the game; nil if none
@@ -262,6 +266,9 @@ struct ScriptHost {
     int (*bb_get)(void* user, world::Entity e, const char* key, f32* value) = nullptr;
     void (*bb_clear)(void* user, world::Entity e, const char* key) = nullptr;
     void (*report_noise)(void* user, Vec3 at, f32 loudness) = nullptr;
+    world::Entity (*claim_smart_object)(void* user, world::Entity e, const char* activity, f32 radius, Vec3& slot) = nullptr;  // invalid: none free
+    void (*release_smart_object)(void* user, world::Entity e) = nullptr;
+    bool (*run_query)(void* user, world::Entity e, const char* query, Vec3& out) = nullptr;
     void (*damaged)(void* user, world::Entity target, f32 amount, world::Entity instigator) = nullptr;  // AI damage sense
     bool (*rebuild_navmesh)(void* user) = nullptr;
     i32 (*ui_open)(void* user, const char* name) = nullptr;  // -1 if none

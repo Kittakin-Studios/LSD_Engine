@@ -11,6 +11,8 @@
 #include "sound_player.h"
 
 #include "lsd/ai/behavior_tree.h"
+#include "lsd/ai/smart_object.h"
+#include "lsd/ai/state_tree.h"
 #include "lsd/ai/navigation.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/localization.h"
@@ -349,6 +351,8 @@ private:
         const ai::BehaviorTree* tree;  // nullptr: no (valid) tree, perception only
         u32 tree_version = 0;
         ai::BtRunner runner;
+        const ai::StateTree* state_tree = nullptr;  // set: runs instead of the behaviour tree
+        ai::StRunner state_runner;
         ai::Blackboard board;
         ai::BlackboardSchema schema;  // from the AI Controller's Blackboard asset (empty: untyped)
         f32 dt;
@@ -377,6 +381,26 @@ private:
     Noise noises_[16];
     u32 noise_count_ = 0;
     Brain* brain_of(world::Entity e);  // adds it on first use if it has an AI Controller
+    // State Trees and Environment Queries by asset, read on first use.
+    // shortcut: not reloaded while playing, watch their files like trees_ if live editing them matters.
+    struct StateTreeEntry {
+        char guid[33];
+        ai::StateTree tree;
+        bool ok;
+    };
+    std::vector<std::unique_ptr<StateTreeEntry>> state_trees_;
+    const ai::StateTree* state_tree_for(const char* guid);
+    struct QueryEntry {
+        std::string name;
+        bool ok;
+        world::EnvQueryData data;
+    };
+    std::vector<std::unique_ptr<QueryEntry>> queries_;
+    bool run_query(world::Entity e, const char* name, Vec3& out);  // its best point, false if none passed
+    // Smart Objects: slots held by users (one each: a new claim lets go of the old).
+    ai::SmartClaims smart_claims_;
+    world::Entity claim_smart_object(world::Entity user, const char* activity, f32 radius, Vec3& slot, i32& claim);
+    int use_smart_object(world::Entity user, i32 claim, f32 seconds, f32 dt);  // 2 using, 1 done, 0 failed
     const ai::BehaviorTree* tree_for(const char* guid);
     void update_brains(world::World& world, f32 dt);
     struct Emitter {

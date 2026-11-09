@@ -215,7 +215,8 @@ PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
     b.session = this;
     b.entity = e;
     std::snprintf(b.tree_guid, sizeof b.tree_guid, "%s", controller->behavior_tree);
-    b.tree = tree_for(b.tree_guid);
+    b.state_tree = state_tree_for(controller->state_tree);
+    b.tree = b.state_tree ? nullptr : tree_for(b.tree_guid);
     if (world::BlackboardData data; controller->blackboard[0] && registry_ && load_asset(*registry_, controller->blackboard, data)) {
         for (const world::BlackboardKey& k : data.keys) {
             if (!k.name[0] || b.schema.count == ai::kMaxBlackboardKeys) continue;
@@ -228,6 +229,137 @@ PlaySession::Brain* PlaySession::brain_of(world::Entity e) {
         ai::apply_defaults(b.schema, b.board);
     }
     return &b;
+}
+
+const ai::StateTree* PlaySession::state_tree_for(const char* guid) {
+    if (!guid[0] || !registry_) return nullptr;
+    for (const auto& t : state_trees_) {
+        if (std::strcmp(t->guid, guid) == 0) return t->ok ? &t->tree : nullptr;
+    }
+    auto entry = std::make_unique<StateTreeEntry>();
+    std::snprintf(entry->guid, sizeof entry->guid, "%s", guid);
+    char error[256] = "could not read it";
+    auto data = std::make_unique<world::StateTreeData>();  // ~13 KB: not on the stack
+    entry->ok = load_asset(*registry_, guid, *data) && build_state_tree(*data, entry->tree, error, sizeof error);
+    if (!entry->ok) LSD_LOG_ERROR("ai", "State Tree %s: %s", guid, error);
+    state_trees_.push_back(std::move(entry));
+    return state_trees_.back()->ok ? &state_trees_.back()->tree : nullptr;
+}
+
+bool PlaySession::run_query(world::Entity e, const char* name, Vec3& out) {
+    if (!world_ || !world_->alive(e)) return false;
+    QueryEntry* q = nullptr;
+    for (const auto& entry : queries_) {
+        if (entry->name == name) q = entry.get();
+    }
+    if (!q) {
+        queries_.push_back(std::make_unique<QueryEntry>());
+        q = queries_.back().get();
+        q->name = name;
+        const asset::AssetRecord* r = find_asset(asset::AssetType::Data, name);
+        char path[300];
+        if (r && std::strcmp(r->data_type, "EnvQueryData") == 0) registry_->source_path(*r, path, sizeof path);
+        q->ok = r && std::strcmp(r->data_type, "EnvQueryData") == 0 && asset::load_data_asset(path, q->data);
+        if (!q->ok) LSD_LOG_ERROR("ai", "Run Query: no Environment Query asset (EnvQueryData) named '%s'", name);
+    }
+    if (!q->ok) return false;
+    const Mat4 m = world_->world_matrix(e);
+    const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    Vec3 forward{m.at(0, 0), m.at(1, 0), 0.0f};
+    forward = length(forward) > 1e-4f ? forward * (1.0f / length(forward)) : Vec3{1, 0, 0};
+    Vec3 target = at;
+    const Brain* b = brain_of(e);
+    if (const ai::Blackboard::Entry* k = b ? b->board.find(q->data.target_key) : nullptr; k && k->vector) target = {k->value[0], k->value[1], k->value[2]};
+    ai::QueryHost host;
+    host.user = this;
+    if (nav_.valid()) {
+        host.project = [](void* user, Vec3 p, Vec3& snapped) {
+            return static_cast<PlaySession*>(user)->nav_.nearest_point(p, snapped) && std::fabs(snapped.z - p.z) < 2.0f;
+        };
+        host.reachable = [](void* user, Vec3 from, Vec3 to) {
+            Vec3 path[64];
+            const u32 n = static_cast<PlaySession*>(user)->nav_.find_path(from, to, path, 64);
+            const Vec3 gap = n ? path[n - 1] - to : Vec3{};
+            return n > 0 && gap.x * gap.x + gap.y * gap.y < 0.5f * 0.5f;
+        };
+    }
+    host.visible = [](void* user, Vec3 from, Vec3 to) {
+        auto& self = *static_cast<PlaySession*>(user);
+        const Vec3 a = from + Vec3{0, 0, 1.6f}, d = to + Vec3{0, 0, 1.6f} - a;  // eye to eye
+        const f32 len = length(d);
+        physics::RayHit hit;
+        return len < 0.5f || !self.physics_ || !self.physics_->raycast(a, d * (1.0f / len), len - 0.4f, hit);  // stop short of the target's body
+    };
+    static ai::QueryPoint points[ai::kMaxQueryPoints];  // shortcut: one scratch buffer (Play is single-threaded)
+    u32 count = 0;
+    const i32 best = ai::run_query(to_env_query(q->data), host, at, forward, target, points, ai::kMaxQueryPoints, count);
+    if (q->data.debug_draw) {
+        f32 top = 1e-6f;
+        for (u32 i = 0; i < count; ++i) top = points[i].kept && points[i].score > top ? points[i].score : top;
+        for (u32 i = 0; i < count; ++i) {
+            const f32 s = points[i].score / top;
+            const Vec3 color = static_cast<i32>(i) == best ? Vec3{0.1f, 1.0f, 0.2f} : points[i].kept ? Vec3{1.0f, s, 0.0f} : Vec3{0.4f, 0.4f, 0.4f};
+            debug_draw::sphere(points[i].at + Vec3{0, 0, 0.1f}, static_cast<i32>(i) == best ? 0.3f : 0.15f, color, 2.0f);
+        }
+    }
+    if (best < 0) return false;
+    out = points[best].at;
+    return true;
+}
+
+world::Entity PlaySession::claim_smart_object(world::Entity user, const char* activity, f32 radius, Vec3& slot, i32& claim) {
+    claim = -1;
+    if (!world_ || !world_->alive(user)) return {};
+    smart_claims_.release_user(user.value);  // one slot at a time
+    const reflect::TypeInfo& type = reflect::type_of<world::SmartObject>();
+    static Vec3 spots[256];  // shortcut: one scratch list (Play is single-threaded)
+    static bool taken[256];
+    static world::Entity owners[256];
+    static u32 slots[256];
+    u32 n = 0;
+    for (u32 i = 0; i < world_->count(type); ++i) {
+        const world::Entity e = world_->owner(type, i);
+        const auto* so = world_->get<world::SmartObject>(e);
+        if (!so || !so->enabled || (activity[0] && std::strcmp(so->activity, activity) != 0)) continue;
+        const Mat4 m = world_->world_matrix(e);
+        for (u32 k = 0; k < so->slots.count && n < 256; ++k, ++n) {
+            spots[n] = transform_point(m, so->slots[k]);
+            taken[n] = smart_claims_.taken(e.value, k);
+            owners[n] = e;
+            slots[n] = k;
+        }
+    }
+    const Mat4 um = world_->world_matrix(user);
+    const i32 best = ai::nearest_free(spots, taken, n, {um.at(0, 3), um.at(1, 3), um.at(2, 3)}, radius);
+    if (best < 0) return {};
+    claim = smart_claims_.claim(owners[best].value, slots[best], user.value);
+    if (claim < 0) return {};
+    slot = spots[best];
+    if (Vec3 on; nav_.valid() && nav_.nearest_point(slot, on)) slot = on;  // where the agent can stand
+    return owners[best];
+}
+
+int PlaySession::use_smart_object(world::Entity user, i32 claim, f32 seconds, f32 dt) {
+    const ai::SmartClaims::Claim* c = smart_claims_.get(claim);
+    world::Entity object;
+    if (c) object.value = c->object;
+    const auto* so = c && c->user == user.value && world_->alive(object) ? world_->get<world::SmartObject>(object) : nullptr;
+    if (!so || !so->enabled) return 0;  // destroyed or switched off while in use
+    if (seconds == 0.0f) {  // just arrived
+        if (so->face_object) {
+            Vec3 t, rotation, scale;
+            decompose_trs(world_->world_matrix(user), t, rotation, scale);
+            const Mat4 om = world_->world_matrix(object);
+            rotation = {0, 0, degrees(std::atan2(om.at(1, 3) - t.y, om.at(0, 3) - t.x))};
+            world_->set_world_matrix(user, trs(t, rotation, scale));
+        }
+        if (so->animation[0] && animations_ && skinned_) animations_->play_montage(*world_, *skinned_, user, so->animation, 1.0f, "", 0.2f, false, "Default");
+    }
+    if (so->script_function[0]) {
+        const int r = scripts_.call_task(user, so->script_function, dt);
+        if (r == 0 || r == 1) return r;
+    }
+    return so->duration <= 0.0f && !so->script_function[0] ? 1 : so->duration > 0.0f && seconds >= so->duration ? 1 : 2;
 }
 
 u32 PlaySession::active_bt_nodes(const char* guid, u32* out, u32 capacity) const {
@@ -271,10 +403,30 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
         Brain& b = *static_cast<Brain*>(user);
         return b.session->scripts_.call_task(b.entity, function, b.dt);
     };
+    host.claim_smart_object = [](void* user, const char* activity, f32 radius, Vec3& slot) {
+        Brain& b = *static_cast<Brain*>(user);
+        i32 claim = -1;
+        b.session->claim_smart_object(b.entity, activity, radius, slot, claim);
+        return claim;
+    };
+    host.use_smart_object = [](void* user, i32 claim, f32 seconds) {
+        Brain& b = *static_cast<Brain*>(user);
+        return b.session->use_smart_object(b.entity, claim, seconds, b.dt);
+    };
+    host.release_smart_object = [](void* user, i32 claim) {
+        Brain& b = *static_cast<Brain*>(user);
+        const ai::SmartClaims::Claim* c = b.session->smart_claims_.get(claim);
+        if (c && c->user == b.entity.value) b.session->smart_claims_.release(claim);  // not one handed on to someone else since
+    };
+    host.run_query = [](void* user, const char* query, Vec3& out) {
+        Brain& b = *static_cast<Brain*>(user);
+        return b.session->run_query(b.entity, query, out);
+    };
     for (u32 i = 0; i < brain_count_;) {
         Brain& b = brains_[i];
         const auto* controller = world.alive(b.entity) ? world.get<world::AIController>(b.entity) : nullptr;
         if (!controller) {  // destroyed by a script
+            smart_claims_.release_user(b.entity.value);
             brains_[i] = brains_[--brain_count_];
             continue;
         }
@@ -356,6 +508,13 @@ void PlaySession::update_brains(world::World& world, f32 dt) {
             if (b.board.find("Damaged") && play_clock_ - b.hurt > age) {
                 for (const char* key : {"Damaged", "DamageAmount", "Attacker", "AttackerLocation"}) b.board.clear(key);
             }
+        }
+        if (b.state_tree) {
+            b.dt = dt;
+            host.user = &b;
+            b.state_runner.tick(*b.state_tree, b.board, host, dt);
+            ++i;
+            continue;
         }
         if (!b.tree) b.tree = tree_for(b.tree_guid);  // a tree that failed to load may have been fixed
         if (b.tree) {
@@ -478,6 +637,9 @@ void PlaySession::stop() {
     brain_count_ = 0;
     for (u32 i = 0; i < tree_count_; ++i) delete trees_[i];
     tree_count_ = 0;
+    state_trees_.clear();
+    queries_.clear();
+    smart_claims_.clear();
     if (sounds_) sounds_->stop_all_and_forget();
     emitter_count_ = 0;
     delete physics_;
@@ -1223,6 +1385,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         }
         b->hurt = self.play_clock_;
     };
+    host.claim_smart_object = [](void* user, world::Entity e, const char* activity, f32 radius, Vec3& slot) {
+        i32 claim = -1;
+        return static_cast<PlaySession*>(user)->claim_smart_object(e, activity, radius, slot, claim);
+    };
+    host.release_smart_object = [](void* user, world::Entity e) { static_cast<PlaySession*>(user)->smart_claims_.release_user(e.value); };
+    host.run_query = [](void* user, world::Entity e, const char* query, Vec3& out) { return static_cast<PlaySession*>(user)->run_query(e, query, out); };
     host.report_noise = [](void* user, Vec3 at, f32 loudness) {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.noise_count_ < sizeof self.noises_ / sizeof self.noises_[0]) self.noises_[self.noise_count_++] = {at, loudness};

@@ -2238,6 +2238,8 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::input::InputMappingContext>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameMode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::BlackboardData>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::StateTreeData>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::EnvQueryData>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::editor::DeviceProfile>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::editor::FoliageType>());  // Foliage Type assets, shared by the team
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::PhysicalMaterial>());
