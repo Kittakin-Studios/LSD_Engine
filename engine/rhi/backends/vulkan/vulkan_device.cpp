@@ -67,12 +67,17 @@
 #include "post_taa.spv.h"
 #include "post_dof.spv.h"
 #include "post_motion.spv.h"
+#include "post_velocity.spv.h"
 #include "post_meter.spv.h"
 #include "post_expose.spv.h"
 #include "post_outline.spv.h"
 #include "cull_reset.spv.h"
 #include "cull_main.spv.h"
 #include "cull_args.spv.h"
+#include "hiz_down.spv.h"
+#include "morph_main.spv.h"
+#include "gpu_particle_sim.spv.h"
+#include "gpu_particle_vs.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -81,18 +86,24 @@ namespace {
 
 #include "mesh_hlsl.h"              // kMeshHlsl: engine/rhi/shaders/mesh.hlsl (Material Graph shaders start from it)
 #include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl
+#include "post_hlsl.h"              // kPostHlsl: post-process materials start from it
 
 constexpr u32 kFramesInFlight = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr u32 kMaxSwapchainImages = 8;
 constexpr u32 kMaxBuffers = 4096;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+// Render targets (scene, post chain, previews) are half float (as D3D12's): only what draws to the window uses the
+// swapchain's format.
+constexpr VkFormat kTargetFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr u32 kMaxMaterialShaders = 256;
 constexpr u32 kMeshPushBytes = 208;  // shaders/mesh.hlsl's Draw constants (52 floats, as D3D12's root constants)
 constexpr u32 kDrawSetsPerFrame = 8192;  // material / view descriptor sets a frame (a few per draw at most)
 constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / Instances block: 3 float4 rows each
 constexpr VkDeviceSize kParamsBytes = 256;            // its MaterialParams block (16 float4)
-constexpr u32 kCullPushBytes = 144;                   // cull.hlsl's constants
+constexpr u32 kCullPushBytes = sizeof(CullConstants);  // cull.hlsl's constants (256: the device must allow that many)
+constexpr u32 kMaxHizMips = 14;
+constexpr u32 kComputeSetsPerFrame = 1024;  // morph and GPU particle sets a frame
 constexpr u32 kCullSetsPerFrame = 256;                // gpu_cull draws a frame
 constexpr u32 kMaxTextures = 4096;
 constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
@@ -121,7 +132,7 @@ constexpr VkVertexInputAttributeDescription kSkinnedAttributes[5] = {
 
 enum class Blend { Opaque, Premultiplied, Alpha, Additive, MeshTranslucent, MeshAdditive, MeshOverdraw };
 constexpr u32 kPostPushBytes = 192;  // post.hlsl's Post constants (48 floats)
-enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kPostPasses };
+enum PostPass : u32 { kPrefilter, kDown, kUp, kComposite, kFxaa, kSsr, kAo, kAoApply, kTaa, kDof, kMotion, kMeter, kExpose, kOutline, kVelocity, kPostPasses };
 constexpr u32 kPostSetsPerFrame = 512;  // post passes' descriptor sets a frame (about 16 a view)
 
 bool check(VkResult result, const char* what) {
@@ -187,6 +198,23 @@ public:
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
             for (MaterialShader& m : material_shaders_) release_material(m);
             for (VkPipeline pipeline : cull_pipelines_) vkDestroyPipeline(device_, pipeline, nullptr);
+            if (morph_pipeline_) vkDestroyPipeline(device_, morph_pipeline_, nullptr);
+            for (VkPipeline pipeline : {gpu_particle_sim_, gpu_sprite_pipelines_[0], gpu_sprite_pipelines_[1]}) {
+                if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+            }
+            for (VkPipelineLayout layout : {gpu_particle_sim_layout_, gpu_sprite_layout_}) {
+                if (layout) vkDestroyPipelineLayout(device_, layout, nullptr);
+            }
+            for (VkDescriptorSetLayout layout : {gpu_particle_sim_set_layout_, gpu_sprite_set_layout_}) {
+                if (layout) vkDestroyDescriptorSetLayout(device_, layout, nullptr);
+            }
+            if (morph_layout_) vkDestroyPipelineLayout(device_, morph_layout_, nullptr);
+            if (morph_set_layout_) vkDestroyDescriptorSetLayout(device_, morph_set_layout_, nullptr);
+            release_hiz();
+            if (hiz_pipeline_) vkDestroyPipeline(device_, hiz_pipeline_, nullptr);
+            if (hiz_layout_) vkDestroyPipelineLayout(device_, hiz_layout_, nullptr);
+            if (hiz_set_layout_) vkDestroyDescriptorSetLayout(device_, hiz_set_layout_, nullptr);
+            if (hiz_pool_) vkDestroyDescriptorPool(device_, hiz_pool_, nullptr);
             vkDestroyPipelineLayout(device_, cull_layout_, nullptr);
             if (cull_set_layout_) vkDestroyDescriptorSetLayout(device_, cull_set_layout_, nullptr);
             for (Buffer* b : {&cull_out_, &cull_args_}) {
@@ -203,11 +231,17 @@ public:
             vkDestroyPipeline(device_, sky_pipeline_, nullptr);
             for (VkPipeline shadow : shadow_pipelines_) vkDestroyPipeline(device_, shadow, nullptr);
             vkDestroyPipeline(device_, ui_pipeline_, nullptr);
+            vkDestroyPipeline(device_, ui_target_pipeline_, nullptr);
+            for (VkPipeline w : post_window_) vkDestroyPipeline(device_, w, nullptr);
             vkDestroyPipeline(device_, particle_pipelines_[0], nullptr);
             vkDestroyPipeline(device_, particle_pipelines_[1], nullptr);
             vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
             vkDestroyPipelineLayout(device_, particle_layout_, nullptr);
             for (VkPipeline post : post_pipelines_) vkDestroyPipeline(device_, post, nullptr);
+            for (const PostShader& post : post_shaders_) {
+                if (post.pipeline) vkDestroyPipeline(device_, post.pipeline, nullptr);
+                if (post.pipeline_window) vkDestroyPipeline(device_, post.pipeline_window, nullptr);
+            }
             vkDestroyPipelineLayout(device_, post_layout_, nullptr);
             for (Frame& f : frames_) {
                 if (f.post_pool) vkDestroyDescriptorPool(device_, f.post_pool, nullptr);
@@ -349,6 +383,7 @@ public:
         view_set_ = VK_NULL_HANDLE;
         f.memo_count = 0;
         if (f.draw_pool) vkResetDescriptorPool(device_, f.draw_pool, 0);
+        run_morphs(f);
         shadow_pass_ = nullptr;
         target_ = nullptr;
         sun_shadow_ = {};
@@ -359,6 +394,7 @@ public:
 
     // The window pass (colour + depth). clear_color null: carries on after a shadow pass (load what is there).
     void begin_main_pass(const f32* clear_color) {
+        in_target_ = false;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
         VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         color.imageView = views_[image_];
@@ -400,6 +436,7 @@ public:
 
     // Draws into a render target: cleared to clear_color (null: carries on with what it holds).
     void begin_target_pass(Texture& t, const f32* clear_color) {
+        in_target_ = true;
         const VkCommandBuffer cmd = frames_[frame_].cmd;
         const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
         transition(cmd, t.image, clear_color ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -473,7 +510,8 @@ public:
         }
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = size;
-        info.usage = usage == BufferUsage::Index ? VK_BUFFER_USAGE_INDEX_BUFFER_BIT : VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        info.usage = usage == BufferUsage::Index ? VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+                                                  : VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;  // the morph pass reads vertices too
         Buffer& b = buffers_[slot];
         if (!check(vkCreateBuffer(device_, &info, nullptr, &b.buffer), "vkCreateBuffer")) return {};
         VkMemoryRequirements need;
@@ -518,7 +556,7 @@ public:
             return {};
         }
         Texture& t = textures_[slot];
-        bool ok = make_image(width, height, format_.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        bool ok = make_image(width, height, kTargetFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                              VK_IMAGE_ASPECT_COLOR_BIT, t.image, t.memory, t.view) &&
                   make_image(width, height, kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
                              t.depth_image, t.depth_memory, t.depth_view);
@@ -574,6 +612,7 @@ public:
             case TextureFormat::BC3: image.format = VK_FORMAT_BC3_UNORM_BLOCK; break;
             case TextureFormat::BC3_sRGB: image.format = VK_FORMAT_BC3_SRGB_BLOCK; break;
             case TextureFormat::BC5: image.format = VK_FORMAT_BC5_UNORM_BLOCK; break;
+            case TextureFormat::RGBA16F: image.format = VK_FORMAT_R16G16B16A16_SFLOAT; break;
             default: image.format = VK_FORMAT_R8G8B8A8_UNORM; break;
         }
         if (is_block_compressed(format) && !bc_) return {};
@@ -795,7 +834,10 @@ public:
                     masked ? cutout->cutoff : 0.0f, masked ? cutout->alpha : 1.0f);
     }
 
-    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) override {
+    // shortcut: no GPU culling in shadow passes here (culls_shadow_instances false: the caller culls on the CPU); run_culling
+    // pauses colour passes only, a shadow pass's resume for that
+    void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count,
+                               const f32*, const f32*) override {
         if (rows && count) draw_shadow(vertices, indices, index_count, view_proj, 2, rows, count, VK_NULL_HANDLE, 0.0f, 1.0f);
     }
 
@@ -892,11 +934,19 @@ public:
             vkCmdDrawIndexed(cmd, draw.index_count, 1, 0, 0, 0);
             return;
         }
-        if (culled) {  // each batch's visible rows from the cull output, its count from the GPU
-            for (u32 b = 0; b < cull_batches; ++b) {
-                offsets[1] = b * static_cast<u32>(kRowsBytes);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.culled_set, 3, offsets);
-                vkCmdDrawIndexedIndirect(cmd, cull_args_.buffer, 16 + static_cast<VkDeviceSize>(b) * 20, 1, 20);
+        if (culled) {  // each LOD (its own index buffer) and batch's visible rows from the cull output, its count from the GPU
+            CullConstants counts;
+            cull_constants(draw, cull_batches, nullptr, hiz_size_, 0, counts);
+            const u32 lods = (counts.info[2] >> 1) & 7u;
+            for (u32 l = 0; l < lods; ++l) {
+                const Buffer* lib = lookup(l ? draw.lod_indices[l - 1] : draw.indices);
+                if (!lib) continue;
+                vkCmdBindIndexBuffer(cmd, lib->buffer, 0, VK_INDEX_TYPE_UINT32);
+                for (u32 b = 0; b < cull_batches; ++b) {
+                    offsets[1] = (l * kMaxCulledInstances + b * kMaxJoints) * 48;
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.culled_set, 3, offsets);
+                    vkCmdDrawIndexedIndirect(cmd, cull_args_.buffer, 16 + (static_cast<VkDeviceSize>(l) * cull_batches + b) * 20, 1, 20);
+                }
             }
             return;
         }
@@ -913,23 +963,154 @@ public:
     }
 
     bool supports_gpu_culling() const override { return cull_pipelines_[2] != VK_NULL_HANDLE; }
+    bool supports_gpu_morphs() const override { return morph_pipeline_ != VK_NULL_HANDLE; }
+    BufferHandle create_morph_output(u32 vertex_count) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].buffer) ++slot;
+        if (slot == kMaxBuffers || vertex_count == 0) return {};
+        Buffer& b = buffers_[slot];
+        const VkDeviceSize size = static_cast<VkDeviceSize>(vertex_count) * sizeof(SkinnedVertex);
+        if (!make_device_buffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, b)) return {};
+        b.size = size;
+        return BufferHandle::make(slot, b.generation);
+    }
+    void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) override {
+        MorphJob* job = nullptr;  // one job per output: a later change this frame replaces it
+        for (MorphJob& j : pending_morphs_) {
+            if (j.out.value == out.value) job = &j;
+        }
+        if (!job) job = &pending_morphs_.emplace_back();
+        morph_job(*job, out, base, morphs, vertex_count, weights, weight_count);
+    }
+    // GPU particles: the compute pass (set 0: parameters, particles) and the sprites (the particle layout's sets plus
+    // set 2: parameters and particles for the vertex shader; no vertex input).
+    bool create_gpu_particles(VkShaderStageFlags stages, VkPrimitiveTopology triangles) {
+#if LSD_VULKAN_HAVE_SPIRV
+        auto set_layout = [&](VkShaderStageFlags stage, VkDescriptorSetLayout& out) {
+            const VkDescriptorSetLayoutBinding bindings[2] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stage, nullptr},
+                                                              {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stage, nullptr}};
+            VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            info.bindingCount = 2;
+            info.pBindings = bindings;
+            return check(vkCreateDescriptorSetLayout(device_, &info, nullptr, &out), "vkCreateDescriptorSetLayout (GPU particles)");
+        };
+        if (!set_layout(VK_SHADER_STAGE_COMPUTE_BIT, gpu_particle_sim_set_layout_) || !set_layout(VK_SHADER_STAGE_VERTEX_BIT, gpu_sprite_set_layout_)) return false;
+        VkPipelineLayoutCreateInfo sim_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        sim_layout.setLayoutCount = 1;
+        sim_layout.pSetLayouts = &gpu_particle_sim_set_layout_;
+        if (!check(vkCreatePipelineLayout(device_, &sim_layout, nullptr, &gpu_particle_sim_layout_), "vkCreatePipelineLayout (GPU particles)")) return false;
+        VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        module_info.codeSize = sizeof kGpuParticleSimSpirv;
+        module_info.pCode = kGpuParticleSimSpirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (GPU particles)")) return false;
+        VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = gpu_particle_sim_layout_;
+        const bool ok = check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &gpu_particle_sim_), "vkCreateComputePipelines (GPU particles)");
+        vkDestroyShaderModule(device_, module, nullptr);
+        if (!ok) return false;
+        const VkPushConstantRange push{stages, 0, kParticlePushBytes};
+        const VkDescriptorSetLayout sets[3] = {texture_set_layout_, particle_depth_layout_, gpu_sprite_set_layout_};
+        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layout.setLayoutCount = 3;
+        layout.pSetLayouts = sets;
+        layout.pushConstantRangeCount = 1;
+        layout.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &gpu_sprite_layout_), "vkCreatePipelineLayout (GPU sprites)")) return false;
+        if (make_pipeline(kGpuParticleVsSpirv, sizeof kGpuParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, nullptr, 0, 0, triangles, kParticlePushBytes, stages,
+                          gpu_sprite_layout_, gpu_sprite_pipelines_[0], true, true, false, Blend::Alpha) &&
+            make_pipeline(kGpuParticleVsSpirv, sizeof kGpuParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, nullptr, 0, 0, triangles, kParticlePushBytes, stages,
+                          gpu_sprite_layout_, gpu_sprite_pipelines_[1], true, true, false, Blend::Additive)) return true;
+        gpu_sprite_pipelines_[0] = gpu_sprite_pipelines_[1] = VK_NULL_HANDLE;
+        return false;
+#else
+        (void)stages, (void)triangles;
+        return false;
+#endif
+    }
+    // Morph targets (cull.hlsl's morph_main): four storage buffers (base, packed targets, weights in the ring, output).
+    bool create_morphs() {
+#if LSD_VULKAN_HAVE_SPIRV
+        VkDescriptorSetLayoutBinding bindings[4];
+        for (u32 k = 0; k < 4; ++k) bindings[k] = {k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 4;
+        layout.pBindings = bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &morph_set_layout_), "vkCreateDescriptorSetLayout (morph)")) return false;
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = 1;
+        pipeline_layout.pSetLayouts = &morph_set_layout_;
+        if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &morph_layout_), "vkCreatePipelineLayout (morph)")) return false;
+        VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        module_info.codeSize = sizeof kMorphMainSpirv;
+        module_info.pCode = kMorphMainSpirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (morph)")) return false;
+        VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = morph_layout_;
+        const bool ok = check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &morph_pipeline_), "vkCreateComputePipelines (morph)");
+        vkDestroyShaderModule(device_, module, nullptr);
+        return ok;
+#else
+        return false;
+#endif
+    }
+    // The morphs queued since the last frame, before its first pass; the outputs' last reads before, the draws' after.
+    void run_morphs(Frame& f) {
+        if (pending_morphs_.empty()) return;
+        bool barrier = false;
+        for (const MorphJob& j : pending_morphs_) {
+            const Buffer* out = lookup(j.out);
+            const Buffer* base = lookup(j.base);
+            const Buffer* morphs = lookup(j.morphs);
+            if (!morph_pipeline_ || !out || !base || !morphs) continue;
+            const VkDeviceSize bytes = j.word_count * 4;
+            const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+            const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
+            if (!f.ring_mapped || at + bytes > kRingBytes) break;
+            std::memcpy(f.ring_mapped + at, j.words, bytes);
+            f.ring_used = at + bytes;
+            VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            info.descriptorPool = f.draw_pool;
+            info.descriptorSetCount = 1;
+            info.pSetLayouts = &morph_set_layout_;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) break;
+            const VkDescriptorBufferInfo buffers[4] = {{base->buffer, 0, VK_WHOLE_SIZE}, {morphs->buffer, 0, VK_WHOLE_SIZE}, {f.ring, at, bytes}, {out->buffer, 0, VK_WHOLE_SIZE}};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = set;
+            write.descriptorCount = 4;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.pBufferInfo = buffers;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            if (!barrier) {  // earlier frames' vertex reads of the outputs before these writes
+                memory_barrier(f.cmd, VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                               VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+                vkCmdBindPipeline(f.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, morph_pipeline_);
+                barrier = true;
+            }
+            vkCmdBindDescriptorSets(f.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, morph_layout_, 0, 1, &set, 0, nullptr);
+            vkCmdDispatch(f.cmd, (j.vertex_count + 63) / 64, 1, 1);
+        }
+        if (barrier) memory_barrier(f.cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT,
+                                    VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
+        pending_morphs_.clear();
+    }
 
     // The compute passes for a gpu_cull draw, between a pause and a resume of the pass (compute cannot
     // run inside one); false (nothing recorded) if it cannot run: the draw draws every copy.
     bool run_culling(Frame& f, const MeshDraw& draw, u32 batches) {
         if (!cull_pipelines_[2] || draw.instance_count > kMaxCulledInstances) return false;
-        struct {
-            f32 planes[6][4];
-            f32 box_min[4], box_max[4];
-            u32 info[4];
-        } cull{};
-        static_assert(sizeof cull == kCullPushBytes, "cull.hlsl's constants");
-        frustum_planes(draw.mvp, cull.planes);
-        std::memcpy(cull.box_min, draw.local_bounds_min, sizeof draw.local_bounds_min);
-        std::memcpy(cull.box_max, draw.local_bounds_max, sizeof draw.local_bounds_max);
-        cull.info[0] = draw.instance_count;
-        cull.info[1] = draw.index_count;
-        cull.info[2] = batches;
+        CullConstants cull;
+        cull_constants(draw, batches, hiz_valid_ ? hiz_view_proj_ : nullptr, hiz_size_, hiz_mips_, cull);
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(draw.instance_count) * 48;
         const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
         const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
@@ -943,12 +1124,20 @@ public:
         VkDescriptorSet set = VK_NULL_HANDLE;
         if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) return false;
         const VkDescriptorBufferInfo buffers[3] = {{f.ring, at, bytes}, {cull_out_.buffer, 0, VK_WHOLE_SIZE}, {cull_args_.buffer, 0, VK_WHOLE_SIZE}};
-        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = set;
-        write.descriptorCount = 3;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo = buffers;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        // The Hi-Z (kept in GENERAL), else white: read only when the constants say so.
+        const VkDescriptorImageInfo hiz{VK_NULL_HANDLE, hiz_valid_ ? hiz_view_ : lookup_texture(white_)->view,
+                                        hiz_valid_ ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        writes[0].dstSet = set;
+        writes[0].descriptorCount = 3;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[0].pBufferInfo = buffers;
+        writes[1].dstSet = set;
+        writes[1].dstBinding = 3;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[1].pImageInfo = &hiz;
+        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
         const VkCommandBuffer cmd = f.cmd;
         Texture* resume = target_;
         const f32 viewport[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
@@ -959,7 +1148,7 @@ public:
                        VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_layout_, 0, 1, &set, 0, nullptr);
         vkCmdPushConstants(cmd, cull_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes, &cull);
-        const u32 groups[3] = {1, (draw.instance_count + 63) / 64, (batches + 63) / 64};
+        const u32 groups[3] = {1, (draw.instance_count + 63) / 64, (batches * 4 + 63) / 64};
         for (u32 k = 0; k < 3; ++k) {
             if (k) memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -991,11 +1180,18 @@ public:
     // draws draw every copy.
     bool create_culling() {
 #if LSD_VULKAN_HAVE_SPIRV
-        const VkDescriptorSetLayoutBinding bindings[3] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        VkPhysicalDeviceProperties limits;
+        vkGetPhysicalDeviceProperties(gpu_.handle, &limits);
+        if (limits.limits.maxPushConstantsSize < kCullPushBytes) {
+            LSD_LOG_INFO("vulkan", "GPU culling off: the device allows %u bytes of push constants (it needs %u).", limits.limits.maxPushConstantsSize, kCullPushBytes);
+            return true;
+        }
+        const VkDescriptorSetLayoutBinding bindings[4] = {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
                                                          {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-                                                         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+                                                         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                         {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
         VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layout.bindingCount = 3;
+        layout.bindingCount = 4;
         layout.pBindings = bindings;
         if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &cull_set_layout_), "vkCreateDescriptorSetLayout (cull)")) return false;
         const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, kCullPushBytes};
@@ -1006,8 +1202,8 @@ public:
         pipeline_layout.pPushConstantRanges = &push;
         if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &cull_layout_), "vkCreatePipelineLayout (cull)")) return false;
         const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-        if (!make_device_buffer(static_cast<VkDeviceSize>(kMaxCulledInstances) * 48, usage, cull_out_) ||
-            !make_device_buffer(16 + static_cast<VkDeviceSize>(kMaxCulledInstances / kMaxJoints) * 20, usage, cull_args_)) return false;
+        if (!make_device_buffer(4 * static_cast<VkDeviceSize>(kMaxCulledInstances) * 48, usage, cull_out_) ||  // each LOD's rows
+            !make_device_buffer(16 + 4 * static_cast<VkDeviceSize>(kMaxCulledInstances / kMaxJoints) * 20, usage, cull_args_)) return false;
         for (Frame& f : frames_) {
             VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             info.descriptorPool = buffers_pool_;
@@ -1044,8 +1240,153 @@ public:
             vkDestroyShaderModule(device_, module, nullptr);
             if (!ok) return false;
         }
+        // The Hi-Z builder (cull.hlsl's hiz_down): its source (sampled) and destination (storage) per dispatch, 16 bytes of sizes.
+        const VkDescriptorSetLayoutBinding hiz_bindings[2] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+                                                             {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+        VkDescriptorSetLayoutCreateInfo hiz_layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        hiz_layout.bindingCount = 2;
+        hiz_layout.pBindings = hiz_bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &hiz_layout, nullptr, &hiz_set_layout_), "vkCreateDescriptorSetLayout (Hi-Z)")) return true;
+        const VkPushConstantRange hiz_push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16};
+        VkPipelineLayoutCreateInfo hiz_pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        hiz_pipeline_layout.setLayoutCount = 1;
+        hiz_pipeline_layout.pSetLayouts = &hiz_set_layout_;
+        hiz_pipeline_layout.pushConstantRangeCount = 1;
+        hiz_pipeline_layout.pPushConstantRanges = &hiz_push;
+        if (!check(vkCreatePipelineLayout(device_, &hiz_pipeline_layout, nullptr, &hiz_layout_), "vkCreatePipelineLayout (Hi-Z)")) return true;
+        const VkDescriptorPoolSize hiz_sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kFramesInFlight * kMaxHizMips}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kFramesInFlight * kMaxHizMips}};
+        VkDescriptorPoolCreateInfo hiz_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        hiz_pool.maxSets = kFramesInFlight * kMaxHizMips;
+        hiz_pool.poolSizeCount = 2;
+        hiz_pool.pPoolSizes = hiz_sizes;
+        if (!check(vkCreateDescriptorPool(device_, &hiz_pool, nullptr, &hiz_pool_), "vkCreateDescriptorPool (Hi-Z)")) return true;
+        VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        module_info.codeSize = sizeof kHizDownSpirv;
+        module_info.pCode = kHizDownSpirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (Hi-Z)")) return true;
+        VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = hiz_layout_;
+        check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &hiz_pipeline_), "vkCreateComputePipelines (Hi-Z)");
+        vkDestroyShaderModule(device_, module, nullptr);
 #endif
         return true;
+    }
+
+    void release_hiz() {
+        if (hiz_image_) vkDeviceWaitIdle(device_);
+        for (VkImageView& v : hiz_mip_views_) {
+            if (v) vkDestroyImageView(device_, v, nullptr);
+            v = VK_NULL_HANDLE;
+        }
+        if (hiz_view_) vkDestroyImageView(device_, hiz_view_, nullptr);
+        if (hiz_image_) vkDestroyImage(device_, hiz_image_, nullptr);
+        if (hiz_memory_) vkFreeMemory(device_, hiz_memory_, nullptr);
+        hiz_view_ = VK_NULL_HANDLE;
+        hiz_image_ = VK_NULL_HANDLE;
+        hiz_memory_ = VK_NULL_HANDLE;
+        hiz_valid_ = false;
+    }
+
+    // The Hi-Z (PostDraw::build_hiz) from a scene target's readable depth: half its size, halving to 1 x 1, each texel the
+    // farthest of 2 x 2. The image stays in GENERAL (written by these dispatches, read by the cull pass). Outside a pass.
+    void build_hiz(Texture& scene, const f32 view_proj[16]) {
+        if (!hiz_pipeline_ || !scene.depth_readable) return;
+        const u32 w = scene.width > 1 ? (scene.width + 1) / 2 : 1, h = scene.height > 1 ? (scene.height + 1) / 2 : 1;
+        u32 mips = 1;
+        while ((std::max(w, h) >> mips) > 0 && mips < kMaxHizMips) ++mips;
+        if (!hiz_image_ || hiz_size_[0] != w || hiz_size_[1] != h) {
+            release_hiz();
+            vkResetDescriptorPool(device_, hiz_pool_, 0);
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = VK_FORMAT_R32_SFLOAT;
+            info.extent = {w, h, 1};
+            info.mipLevels = mips;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            if (!check(vkCreateImage(device_, &info, nullptr, &hiz_image_), "vkCreateImage (Hi-Z)")) return;
+            VkMemoryRequirements need;
+            vkGetImageMemoryRequirements(device_, hiz_image_, &need);
+            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            alloc.allocationSize = need.size;
+            alloc.memoryTypeIndex = memory_type(need.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (alloc.memoryTypeIndex == UINT32_MAX || !check(vkAllocateMemory(device_, &alloc, nullptr, &hiz_memory_), "vkAllocateMemory (Hi-Z)") ||
+                !check(vkBindImageMemory(device_, hiz_image_, hiz_memory_, 0), "vkBindImageMemory (Hi-Z)")) {
+                release_hiz();
+                return;
+            }
+            VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            view.image = hiz_image_;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format = VK_FORMAT_R32_SFLOAT;
+            view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+            check(vkCreateImageView(device_, &view, nullptr, &hiz_view_), "vkCreateImageView (Hi-Z)");
+            for (u32 m = 0; m < mips; ++m) {
+                view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, m, 1, 0, 1};
+                check(vkCreateImageView(device_, &view, nullptr, &hiz_mip_views_[m]), "vkCreateImageView (Hi-Z mip)");
+            }
+            for (u32 fi = 0; fi < kFramesInFlight; ++fi) {
+                for (u32 m = 0; m < mips; ++m) {
+                    VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                    set_info.descriptorPool = hiz_pool_;
+                    set_info.descriptorSetCount = 1;
+                    set_info.pSetLayouts = &hiz_set_layout_;
+                    if (vkAllocateDescriptorSets(device_, &set_info, &hiz_sets_[fi][m]) != VK_SUCCESS) {
+                        release_hiz();
+                        return;
+                    }
+                }
+            }
+            const VkCommandBuffer up = begin_upload();
+            if (!up) {
+                release_hiz();
+                return;
+            }
+            transition(up, hiz_image_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, mips);
+            end_upload(up);
+            hiz_size_[0] = w;
+            hiz_size_[1] = h;
+            hiz_mips_ = mips;
+        }
+        const VkCommandBuffer cmd = frames_[frame_].cmd;
+        // The last frame's cull reads before these writes; each mip's writes before the next reads them.
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline_);
+        u32 sw = scene.width, sh = scene.height;
+        for (u32 m = 0; m < hiz_mips_; ++m) {
+            const u32 dw = std::max(hiz_size_[0] >> m, 1u), dh = std::max(hiz_size_[1] >> m, 1u);
+            const VkDescriptorSet set = hiz_sets_[frame_][m];
+            const VkDescriptorImageInfo src{VK_NULL_HANDLE, m ? hiz_mip_views_[m - 1] : scene.depth_view, m ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            const VkDescriptorImageInfo dst{VK_NULL_HANDLE, hiz_mip_views_[m], VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+            writes[0].dstSet = writes[1].dstSet = set;
+            writes[0].descriptorCount = writes[1].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[0].pImageInfo = &src;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &dst;
+            vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+            const u32 size[4] = {dw, dh, sw, sh};
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_layout_, 0, 1, &set, 0, nullptr);
+            vkCmdPushConstants(cmd, hiz_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, size);
+            vkCmdDispatch(cmd, (dw + 7) / 8, (dh + 7) / 8, 1);
+            memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            sw = dw;
+            sh = dh;
+        }
+        std::memcpy(hiz_view_proj_, view_proj, sizeof hiz_view_proj_);
+        hiz_valid_ = true;
     }
 
     bool make_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& out) {
@@ -1195,8 +1536,11 @@ public:
         std::memcpy(c + 32, sky.sun_color, 16);
         std::memcpy(c + 49, sky.camera, 12);
         const u32 offsets[3] = {lights_at_, lights_at_, lights_at_};
+        const VkDescriptorSet view = view_set(f);  // the reflection atlas: an HDRI's tile
+        if (!view) return;
         const VkCommandBuffer cmd = f.cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_pipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1, &view, 0, nullptr);
         vkCmdPushConstants(cmd, mesh_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMeshPushBytes, c);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1, &f.buffers_set, 3, offsets);
         vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -1219,7 +1563,7 @@ public:
             const VkRect2D scissor{{x, y}, {static_cast<u32>(std::max(0, d.scissor[2])), static_cast<u32>(std::max(0, d.scissor[3]))}};
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         }
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, in_target_ ? ui_target_pipeline_ : ui_pipeline_);
         vkCmdPushConstants(cmd, ui_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kUiPushBytes, push);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_layout_, 0, 1, &t->set, 0, nullptr);
         vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &vat);
@@ -1263,29 +1607,38 @@ public:
             for (int col = 0; col < 4; ++col) k[32 + r * 4 + col] = p.reproject[col * 4 + r];  // rows
         }
         size(p.scene, k);
+        k[2] = lookup_texture(p.normals) ? 1.0f : 0.0f;  // SSR / AO: normals from the normals pass (t1)
         end_pass();  // the scene's colour (and depth below) become readable
-        if ((ao || dof || taa || ssr || motion) && !scene->depth_readable) {
+        if ((ao || dof || taa || ssr || motion || p.build_hiz) && !scene->depth_readable) {
             const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
             transition(frames_[frame_].cmd, scene->depth_image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tests,
-                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
             scene->depth_readable = true;
         }
+        if (p.build_hiz) build_hiz(*scene, p.hiz_view_proj);  // the next frame's occlusion test
         TextureHandle src = p.scene;
         if (ssr) {  // first: it reads the scene's alpha (reflectivity)
-            post_pass(kSsr, c.ssr, nullptr, p.scene, {}, p.scene, k);
+            post_pass(kSsr, c.ssr, nullptr, p.scene, p.normals, p.scene, k);
             src = c.ssr;
         }
         if (ao) {
             f32 ka[48];  // the AO pass reads no reprojection: its first row carries the contact shadow ray
             std::memcpy(ka, k, sizeof ka);
             std::memcpy(ka + 32, p.contact_shadow, sizeof p.contact_shadow);
-            post_pass(kAo, c.ao, nullptr, {}, {}, p.scene, ka);
+            post_pass(kAo, c.ao, nullptr, {}, p.normals, p.scene, ka);
             post_pass(kAoApply, c.lit, nullptr, src, c.ao, p.scene, k);
             src = c.lit;
         }
+        // The velocity pass (objects' own movement): resolved with the camera's where nothing was drawn, for TAA and motion blur.
+        const bool vel = (taa || motion) && lookup_texture(p.velocity);
+        f32 kv[48];
+        std::memcpy(kv, k, sizeof kv);
+        kv[3] = 1.0f;  // texel.w: they read it
+        if (vel) post_pass(kVelocity, c.velocity, nullptr, {}, p.velocity, p.scene, k);
         if (taa) {
             const TextureHandle out = c.taa[c.taa_index], history = c.taa[c.taa_index ^ 1u];
-            post_pass(kTaa, out, nullptr, src, history, p.scene, k);
+            post_pass(kTaa, out, nullptr, src, history, vel ? c.velocity : p.scene, vel ? kv : k, VK_NULL_HANDLE, vel);
             c.taa_index ^= 1u;
             c.history_valid = true;
             src = out;
@@ -1295,7 +1648,7 @@ public:
             src = c.dof;
         }
         if (motion) {
-            post_pass(kMotion, c.motion, nullptr, src, {}, p.scene, k);
+            post_pass(kMotion, c.motion, nullptr, src, vel ? c.velocity : TextureHandle{}, p.scene, vel ? kv : k);
             src = c.motion;
         }
         if (p.auto_exposure) {  // eye adaptation: meter into 1 x 1 (eased from the last frame's), then apply it
@@ -1342,11 +1695,19 @@ public:
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
         const bool fxaa = p.fxaa && !taa;
-        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
+        const PostShader* custom = lookup_post(p.post_shader);
+        if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)
+            size(src, g);
+            g[16] = p.post_time;
+            for (int n = 0; n < 3; ++n) g[17 + n] = p.post_params[n];
+        }
+        const bool to_window = !fxaa && !lookup_texture(p.output);
+        post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g,
+                  custom ? (to_window ? custom->pipeline_window : custom->pipeline) : to_window ? post_window_[0] : VK_NULL_HANDLE);
         if (fxaa) {
             f32 f[48] = {};
             size(c.ldr, f);
-            post_pass(kFxaa, p.output, p.viewport, c.ldr, {}, {}, f);
+            post_pass(kFxaa, p.output, p.viewport, c.ldr, {}, {}, f, lookup_texture(p.output) ? VK_NULL_HANDLE : post_window_[1]);
         }
         set_render_target({}, nullptr);
         set_viewport(p.viewport[0], p.viewport[1], p.viewport[2], p.viewport[3]);
@@ -1385,7 +1746,7 @@ public:
     struct PostChain {
         u32 width = 0, height = 0;
         TextureHandle down[5], up[4], ldr;
-        TextureHandle ao, lit, dof, motion, taa[2], ssr;
+        TextureHandle ao, lit, dof, motion, taa[2], ssr, velocity;
         TextureHandle exposure[2], exposed;  // eye adaptation: this / last frame's exposure (1 x 1), the scene with it
         u32 exposure_index = 0;
         bool exposure_valid = false;
@@ -1401,7 +1762,7 @@ public:
         for (TextureHandle& t : c.up) destroy_texture(t);
         for (TextureHandle& t : c.taa) destroy_texture(t);
         for (TextureHandle& t : c.exposure) destroy_texture(t);
-        for (TextureHandle t : {c.ao, c.lit, c.dof, c.motion, c.ssr, c.ldr, c.exposed}) destroy_texture(t);
+        for (TextureHandle t : {c.ao, c.lit, c.dof, c.motion, c.ssr, c.ldr, c.exposed, c.velocity}) destroy_texture(t);
         c = PostChain{};
         c.width = width;
         c.height = height;
@@ -1415,6 +1776,7 @@ public:
         c.lit = create_render_target(width, height);
         c.dof = create_render_target(width, height);
         c.motion = create_render_target(width, height);
+        c.velocity = create_render_target(width, height);
         c.ssr = create_render_target(width, height);
         c.taa[0] = create_render_target(width, height);
         c.taa[1] = create_render_target(width, height);
@@ -1434,7 +1796,9 @@ public:
     }
 
     // One full-screen pass into `target` (invalid: the window, in `window_rect`).
-    void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48]) {
+    // `custom`: a post-process material's composite pipeline instead of the pass's.
+    void post_pass(PostPass pass, TextureHandle target, const f32* window_rect, TextureHandle in0, TextureHandle in1, TextureHandle in2, const f32 constants[48],
+                   VkPipeline custom = VK_NULL_HANDLE, bool color2 = false) {  // color2: in2's colour, not its depth
         const f32 black[4] = {0, 0, 0, 1};
         if (lookup_texture(target)) {
             set_render_target(target, black);
@@ -1455,7 +1819,7 @@ public:
         }
         const VkDescriptorImageInfo images[3] = {{VK_NULL_HANDLE, post_input(in0, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                                  {VK_NULL_HANDLE, post_input(in1, false), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                                 {VK_NULL_HANDLE, post_input(in2, true), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+                                                 {VK_NULL_HANDLE, post_input(in2, !color2), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         write.dstSet = set;
         write.descriptorCount = 3;
@@ -1463,7 +1827,7 @@ public:
         write.pImageInfo = images;
         vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
         const VkCommandBuffer cmd = f.cmd;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipelines_[pass]);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, custom ? custom : post_pipelines_[pass]);
         vkCmdPushConstants(cmd, post_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kPostPushBytes, constants);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_layout_, 0, 1, &set, 0, nullptr);
         vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -1512,12 +1876,17 @@ public:
             {kPostCompositeSpirv, sizeof kPostCompositeSpirv}, {kPostFxaaSpirv, sizeof kPostFxaaSpirv}, {kPostSsrSpirv, sizeof kPostSsrSpirv},
             {kPostAoSpirv, sizeof kPostAoSpirv}, {kPostAoApplySpirv, sizeof kPostAoApplySpirv}, {kPostTaaSpirv, sizeof kPostTaaSpirv},
             {kPostDofSpirv, sizeof kPostDofSpirv}, {kPostMotionSpirv, sizeof kPostMotionSpirv}, {kPostMeterSpirv, sizeof kPostMeterSpirv},
-            {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv},
+            {kPostExposeSpirv, sizeof kPostExposeSpirv}, {kPostOutlineSpirv, sizeof kPostOutlineSpirv}, {kPostVelocitySpirv, sizeof kPostVelocitySpirv},
         };
         for (u32 i = 0; i < kPostPasses; ++i) {  // the outline is painted over the image; the rest replace it
-            if (!make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, post_pipelines_[i], false, false, false,
-                               i == kOutline ? Blend::Alpha : Blend::Opaque)) return false;
+            auto make = [&](VkPipeline& out) {
+                return make_pipeline(kPostFullSpirv, sizeof kPostFullSpirv, entries[i].code, entries[i].size, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, out, false, false, false,
+                                     i == kOutline ? Blend::Alpha : Blend::Opaque);
+            };
+            // The outline paints over the window; composite and FXAA write into a target or to the window: one of each.
+            if (i == kOutline ? !window_pipeline([&] { return make(post_pipelines_[i]); }) : !make(post_pipelines_[i])) return false;
+            if ((i == kComposite || i == kFxaa) && !window_pipeline([&] { return make(post_window_[i == kComposite ? 0 : 1]); })) return false;
         }
 #endif
         return true;
@@ -1526,7 +1895,7 @@ public:
         Texture* t = lookup_texture(handle);
         if (!t || !t->depth_image || !rgba) return false;
         vkDeviceWaitIdle(device_);
-        const VkDeviceSize bytes = static_cast<VkDeviceSize>(t->width) * t->height * 4;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(t->width) * t->height * 8;  // half floats
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = bytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -1557,13 +1926,13 @@ public:
         }
         void* mapped = nullptr;
         if (ok && check(vkMapMemory(device_, memory, 0, bytes, 0, &mapped), "vkMapMemory (readback)")) {
-            const u8* src = static_cast<const u8*>(mapped);
-            const bool bgra = format_.format == VK_FORMAT_B8G8R8A8_UNORM || format_.format == VK_FORMAT_B8G8R8A8_SRGB;
-            for (VkDeviceSize i = 0; i < bytes; i += 4) {  // rows top to bottom, as the target holds them; RGBA
-                rgba[i] = src[i + (bgra ? 2 : 0)];
-                rgba[i + 1] = src[i + 1];
-                rgba[i + 2] = src[i + (bgra ? 0 : 2)];
-                rgba[i + 3] = src[i + 3];
+            const u16* src = static_cast<const u16*>(mapped);
+            for (VkDeviceSize i = 0; i < bytes / 2; ++i) {  // rows top to bottom, as the target holds them; RGBA, 0..1 to bytes
+                const u16 h = src[i];
+                const u32 exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu;
+                const f32 v = (h & 0x8000u) ? 0.0f : exponent == 0 ? std::ldexp(static_cast<f32>(mantissa) / 1024.0f, -14)
+                            : exponent == 31 ? 1.0f : std::ldexp(1.0f + static_cast<f32>(mantissa) / 1024.0f, static_cast<int>(exponent) - 15);
+                rgba[i] = static_cast<u8>(std::lround(std::fmin(v, 1.0f) * 255.0f));
             }
             vkUnmapMemory(device_, memory);
         } else {
@@ -1614,6 +1983,91 @@ public:
         Frame& f = frames_[frame_];
         VkDeviceSize at = 0;
         if (!stream_write(f, vertices, static_cast<VkDeviceSize>(vertex_count) * sizeof(ParticleVertex), at)) return;
+        draw_sprites(f, pipeline, particle_layout_, vertex_count, view_proj, texture, soft, VK_NULL_HANDLE, &at);
+    }
+
+    bool supports_gpu_particles() const override { return gpu_sprite_pipelines_[1] != VK_NULL_HANDLE; }
+    BufferHandle create_particle_state(u32 capacity) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].buffer) ++slot;
+        if (slot == kMaxBuffers || capacity == 0 || capacity > kMaxGpuParticles) return {};
+        Buffer& b = buffers_[slot];
+        const VkDeviceSize size = static_cast<VkDeviceSize>(capacity) * 48;
+        if (!make_device_buffer(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, b)) return {};
+        b.size = size;
+        b.clear = true;  // zeroed (every particle dead) before its first simulation
+        return BufferHandle::make(slot, b.generation);
+    }
+    // Between a pause and a resume of the pass, as run_culling.
+    void simulate_particles(BufferHandle state, const GpuParticles& params) override {
+        Buffer* b = lookup(state);
+        if (skip_frame_ || shadow_pass_ || !b || !gpu_particle_sim_) return;
+        Frame& f = frames_[frame_];
+        VkDeviceSize at = 0;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!gpu_particle_set(f, gpu_particle_sim_set_layout_, params, b->buffer, at, set)) return;
+        const VkCommandBuffer cmd = f.cmd;
+        Texture* resume = target_;
+        const bool was_in_pass = in_pass_;
+        const f32 viewport[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
+        end_pass();
+        // Earlier sprite draws' reads before these writes.
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        if (b->clear) {
+            vkCmdFillBuffer(cmd, b->buffer, 0, VK_WHOLE_SIZE, 0);
+            memory_barrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            b->clear = false;
+        }
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu_particle_sim_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu_particle_sim_layout_, 0, 1, &set, 0, nullptr);
+        vkCmdDispatch(cmd, (params.spawn[2] + 63) / 64, 1, 1);
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        if (!was_in_pass) return;
+        if (resume) begin_target_pass(*resume, nullptr);
+        else begin_main_pass(nullptr);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+    void draw_gpu_particles(BufferHandle state, const GpuParticles& params, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
+        Buffer* b = lookup(state);
+        const VkPipeline pipeline = gpu_sprite_pipelines_[additive ? 1 : 0];
+        if (skip_frame_ || shadow_pass_ || !b || b->clear || !pipeline || !params.spawn[2]) return;
+        Frame& f = frames_[frame_];
+        VkDeviceSize at = 0;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!gpu_particle_set(f, gpu_sprite_set_layout_, params, b->buffer, at, set)) return;
+        draw_sprites(f, pipeline, gpu_sprite_layout_, params.spawn[2] * 6, view_proj, texture, soft, set, nullptr);
+    }
+    // A GPU particle set: the parameters (copied into the ring) and the particles.
+    bool gpu_particle_set(Frame& f, VkDescriptorSetLayout layout, const GpuParticles& params, VkBuffer particles, VkDeviceSize& at, VkDescriptorSet& set) {
+        const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+        at = (f.ring_used + align - 1) / align * align;
+        if (!f.ring_mapped || !f.draw_pool || at + sizeof params > kRingBytes) return false;
+        std::memcpy(f.ring_mapped + at, &params, sizeof params);
+        f.ring_used = at + sizeof params;
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &layout;
+        if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) return false;
+        const VkDescriptorBufferInfo buffers[2] = {{f.ring, at, sizeof params}, {particles, 0, VK_WHOLE_SIZE}};
+        VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        for (u32 k = 0; k < 2; ++k) {
+            writes[k].dstSet = set;
+            writes[k].dstBinding = k;
+            writes[k].descriptorCount = 1;
+            writes[k].descriptorType = k ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[k].pBufferInfo = &buffers[k];
+        }
+        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+        return true;
+    }
+    // Sprites (draw_particles from the stream at `stream_at`; draw_gpu_particles from `extra`, set 2): push constants,
+    // the texture (set 0), the depth soft particles fade against (set 1).
+    void draw_sprites(Frame& f, VkPipeline pipeline, VkPipelineLayout layout, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, const f32* soft,
+                      VkDescriptorSet extra, const VkDeviceSize* stream_at) {
         f32 push[kParticlePushBytes / sizeof(f32)] = {};
         std::memcpy(push, view_proj, sizeof(f32) * 16);
         push[16] = lights_.output[0];  // into a scene target: range-compressed
@@ -1641,9 +2095,10 @@ public:
         if (soft_fade) target_depth_read_only(true);
         const VkCommandBuffer cmd = f.cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdPushConstants(cmd, particle_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kParticlePushBytes, push);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particle_layout_, 0, 2, sets, 0, nullptr);
-        vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &at);
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kParticlePushBytes, push);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 0, nullptr);
+        if (extra) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1, &extra, 0, nullptr);
+        if (stream_at) vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, stream_at);
         vkCmdDraw(cmd, vertex_count, 1, 0, 0);
         if (soft_fade) target_depth_read_only(false);
     }
@@ -1678,6 +2133,47 @@ public:
             return {};
         }
         return MaterialShaderHandle::make(slot, m.generation & MaterialShaderHandle::kGenerationMask);
+    }
+
+    static constexpr u32 kMaxPostShaders = 16;
+    struct PostShader {
+        VkPipeline pipeline = VK_NULL_HANDLE, pipeline_window = VK_NULL_HANDLE;  // into a target, to the window
+        u32 generation = 0;
+    };
+    PostShaderHandle create_post_shader(const char* code) override {
+        if (!code || !post_layout_) return {};
+        u32 slot = 0;
+        while (slot < kMaxPostShaders && post_shaders_[slot].pipeline) ++slot;
+        if (slot == kMaxPostShaders) return {};
+        std::string source = std::string("#define LSD_POST_MATERIAL 1\n") + kPostHlsl;
+        source.insert(source.find("//@POST"), std::string(code) + "\n");
+        std::vector<u32> vs, ps;
+        if (!compile_spirv(source, "vs", nullptr, vs, "vs_full", true) || !compile_spirv(source, "ps", nullptr, ps, "ps_composite", true)) return {};
+        PostShader& s = post_shaders_[slot];
+        auto make = [&](VkPipeline& out) {
+            return make_pipeline(vs.data(), vs.size() * 4, ps.data(), ps.size() * 4, nullptr, 0, 0, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, kPostPushBytes,
+                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, post_layout_, out, false, false, false, Blend::Opaque);
+        };
+        if (!make(s.pipeline) || !window_pipeline([&] { return make(s.pipeline_window); })) {
+            if (s.pipeline) vkDestroyPipeline(device_, s.pipeline, nullptr);
+            s.pipeline = s.pipeline_window = VK_NULL_HANDLE;
+            return {};
+        }
+        return PostShaderHandle::make(slot, s.generation & PostShaderHandle::kGenerationMask);
+    }
+    PostShader* lookup_post(PostShaderHandle handle) {
+        if (!handle.valid() || handle.index() >= kMaxPostShaders) return nullptr;
+        PostShader& s = post_shaders_[handle.index()];
+        return s.pipeline && (s.generation & PostShaderHandle::kGenerationMask) == handle.generation() ? &s : nullptr;
+    }
+    void destroy_post_shader(PostShaderHandle handle) override {
+        PostShader* s = lookup_post(handle);
+        if (!s) return;
+        vkDeviceWaitIdle(device_);  // shortcut: stalls; fine for edits in the editor
+        vkDestroyPipeline(device_, s->pipeline, nullptr);
+        vkDestroyPipeline(device_, s->pipeline_window, nullptr);
+        s->pipeline = s->pipeline_window = VK_NULL_HANDLE;
+        ++s->generation;
     }
 
     void destroy_material_shader(MaterialShaderHandle handle) override {
@@ -1871,6 +2367,7 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         u64 size = 0;
         u32 generation = 0;
+        bool clear = false;  // GPU particle state not zeroed yet
     };
 
     Buffer* lookup(BufferHandle handle) {
@@ -1930,7 +2427,8 @@ private:
 
     // HLSL -> SPIR-V through DXC in a hidden process (editor-time: Material Graph edits and loads).
     // shortcut: a process and temp files per stage (a few hundred ms a material); load dxcompiler in-process if it gets slow
-    bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out) {
+    // `entry` (default <stage>_main) is renamed <stage>_main; `post`: post.hlsl's register shifts (t at 0, s from 16).
+    bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out, const char* entry_name = nullptr, bool post = false) {
         const std::filesystem::path dxc = dxc_path();
         if (dxc.empty()) {
             if (!warned_dxc_) LSD_LOG_INFO("vulkan", "Material Graph materials draw with the built-in material on Vulkan: the Vulkan SDK's DXC compiles them (not installed).");
@@ -1947,11 +2445,16 @@ private:
             file << source;
             if (!file) return false;
         }
-        const std::string target = std::string(stage) + "_6_0", entry = std::string(stage) + "_main", dxc_s = dxc.string(), hlsl_s = hlsl.string(),
+        const std::string target = std::string(stage) + "_6_0", entry = entry_name ? std::string(entry_name) : std::string(stage) + "_main", dxc_s = dxc.string(), hlsl_s = hlsl.string(),
                           spv_s = spv.string(), errors_s = errors.string(), define_s = define ? std::string("-D") + define : std::string();
         std::vector<const char*> args = {dxc_s.c_str(), "-spirv", "-fspv-target-env=vulkan1.3", "-T", target.c_str(), "-E", entry.c_str(),
                                          "-Fo", spv_s.c_str(), "-Fe", errors_s.c_str()};
         if (define) args.push_back(define_s.c_str());
+        const std::string rename = std::string("-fspv-entrypoint-name=") + stage + "_main";
+        if (entry_name) args.push_back(rename.c_str());
+        if (post) {
+            for (const char* a : {"-fvk-t-shift", "0", "0", "-fvk-s-shift", "16", "0"}) args.push_back(a);
+        }
         args.push_back(hlsl_s.c_str());
         args.push_back(nullptr);
         const SDL_PropertiesID props = SDL_CreateProperties();
@@ -2663,7 +3166,7 @@ private:
         dynamic.pDynamicStates = dynamic_states;
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = shadow ? 0 : 1;
-        rendering.pColorAttachmentFormats = &format_.format;
+        rendering.pColorAttachmentFormats = &pipeline_format_;  // render targets, unless a window pipeline is being made
         rendering.depthAttachmentFormat = kDepthFormat;
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         create.pNext = &rendering;
@@ -2715,11 +3218,12 @@ private:
             info.pBindings = l.bindings;
             if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
         }
-        const VkDescriptorPoolSize draw_sizes[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
-                                                    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3}};
+        const VkDescriptorPoolSize draw_sizes[4] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5 + kCullSetsPerFrame}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
+                                                    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3 + kComputeSetsPerFrame * 4},
+                                                    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kComputeSetsPerFrame}};
         VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         draw_pool.maxSets = kDrawSetsPerFrame;
-        draw_pool.poolSizeCount = 3;
+        draw_pool.poolSizeCount = 4;
         draw_pool.pPoolSizes = draw_sizes;
         const VkDescriptorPoolSize buffer_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kFramesInFlight * 6};
         VkDescriptorPoolCreateInfo buffer_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -2776,6 +3280,7 @@ private:
         }
         if (!create_texture_support() || !create_rings() || !create_post_pipelines() || !create_mesh_layouts()) return false;
         if (!create_culling()) LSD_LOG_WARN("vulkan", "GPU culling is off: its compute passes could not be made (gpu_cull draws draw every copy).");
+        if (!create_morphs()) morph_pipeline_ = VK_NULL_HANDLE;  // optional: morphs then mix on the CPU
         const auto& skinned_attributes = kSkinnedAttributes;
         const auto& mesh_attributes = kMeshAttributes;
         // Shadow casters read only the position and UV (and the skinning attributes).
@@ -2841,11 +3346,16 @@ private:
                make_pipeline(kShadowVsSpirv, sizeof kShadowVsSpirv, kShadowPsSpirv, sizeof kShadowPsSpirv, shadow_attributes, 2, sizeof(MeshVertex), triangles,
                              kShadowPushBytes, stages, shadow_layout_, shadow_pipelines_[3], false, true, true) &&
                make_pipeline(kUiVsSpirv, sizeof kUiVsSpirv, kUiPsSpirv, sizeof kUiPsSpirv, ui_attributes, 3, sizeof(UiVertex), triangles, kUiPushBytes, stages,
-                             ui_layout_, ui_pipeline_, true, false, false, Blend::Premultiplied) &&
+                             ui_layout_, ui_target_pipeline_, true, false, false, Blend::Premultiplied) &&
+               window_pipeline([&] {
+                   return make_pipeline(kUiVsSpirv, sizeof kUiVsSpirv, kUiPsSpirv, sizeof kUiPsSpirv, ui_attributes, 3, sizeof(UiVertex), triangles, kUiPushBytes, stages,
+                                        ui_layout_, ui_pipeline_, true, false, false, Blend::Premultiplied);
+               }) &&
                make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
                              triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[0], true, true, false, Blend::Alpha) &&
                make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
                              triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[1], true, true, false, Blend::Additive) &&
+               (create_gpu_particles(stages, triangles) || true) &&  // optional: GPU emitters then run on the CPU
                make_pipeline(kLinesVsSpirv, sizeof kLinesVsSpirv, kLinesPsSpirv, sizeof kLinesPsSpirv, line_attributes, 2, sizeof(LineVertex),
                              VK_PRIMITIVE_TOPOLOGY_LINE_LIST, sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT, line_layout_, line_pipeline_);
 #else
@@ -2913,8 +3423,27 @@ private:
     MaterialShader material_shaders_[kMaxMaterialShaders];
     u32 spirv_jobs_ = 0;
     VkDescriptorSetLayout cull_set_layout_ = VK_NULL_HANDLE;
+    // The Hi-Z (build_hiz): R32F in GENERAL, its views (all mips; each mip), per-frame sets per mip, its view-projection.
+    VkDescriptorSetLayout hiz_set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout hiz_layout_ = VK_NULL_HANDLE;
+    VkPipeline hiz_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorPool hiz_pool_ = VK_NULL_HANDLE;
+    VkImage hiz_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory hiz_memory_ = VK_NULL_HANDLE;
+    VkImageView hiz_view_ = VK_NULL_HANDLE, hiz_mip_views_[kMaxHizMips] = {};
+    VkDescriptorSet hiz_sets_[kFramesInFlight][kMaxHizMips] = {};
+    u32 hiz_size_[2] = {}, hiz_mips_ = 0;
+    f32 hiz_view_proj_[16] = {};
+    bool hiz_valid_ = false;
     VkPipelineLayout cull_layout_ = VK_NULL_HANDLE;
     VkPipeline cull_pipelines_[3] = {};  // reset, cull, arguments
+    VkDescriptorSetLayout gpu_particle_sim_set_layout_ = VK_NULL_HANDLE, gpu_sprite_set_layout_ = VK_NULL_HANDLE;  // GPU particles
+    VkPipelineLayout gpu_particle_sim_layout_ = VK_NULL_HANDLE, gpu_sprite_layout_ = VK_NULL_HANDLE;
+    VkPipeline gpu_particle_sim_ = VK_NULL_HANDLE, gpu_sprite_pipelines_[2] = {};  // the pass; alpha, additive sprites
+    VkDescriptorSetLayout morph_set_layout_ = VK_NULL_HANDLE;  // morph targets (create_morphs)
+    VkPipelineLayout morph_layout_ = VK_NULL_HANDLE;
+    VkPipeline morph_pipeline_ = VK_NULL_HANDLE;
+    std::vector<MorphJob> pending_morphs_;
     Buffer cull_out_, cull_args_;        // the visible rows; the count + one indirect draw per batch
     VkQueryPool timestamp_pool_ = VK_NULL_HANDLE;  // kGpuTimestamps per frame in flight
     u32 timestamps_set_[kFramesInFlight] = {};
@@ -2931,6 +3460,16 @@ private:
     f32 viewport_[4] = {};  // the last set_viewport (draw_ui puts it back)
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE, particle_layout_ = VK_NULL_HANDLE;
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE, particle_pipelines_[2] = {};  // alpha, additive
+    VkPipeline ui_target_pipeline_ = VK_NULL_HANDLE, post_window_[2] = {};  // the UI into a target; composite and FXAA to the window
+    VkFormat pipeline_format_ = kTargetFormat;  // what make_pipeline builds for (window_pipeline: the swapchain's)
+    bool in_target_ = false;                    // a render target is bound (not the window)
+    template <class Make>
+    bool window_pipeline(Make make) {  // `make` builds for the window's format
+        pipeline_format_ = format_.format;
+        const bool ok = make();
+        pipeline_format_ = kTargetFormat;
+        return ok;
+    }
     bool warned_stream_ = false;
     bool in_pass_ = false;               // between vkCmdBeginRendering and vkCmdEndRendering
     Texture* target_ = nullptr;          // the render target being drawn into (null: the window or a shadow map)
@@ -2938,6 +3477,7 @@ private:
     VkSampler post_sampler_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout post_set_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout post_layout_ = VK_NULL_HANDLE;
+    PostShader post_shaders_[kMaxPostShaders];
     VkPipeline post_pipelines_[kPostPasses] = {};
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;

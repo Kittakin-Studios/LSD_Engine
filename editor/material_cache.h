@@ -31,7 +31,10 @@ public:
     // `srgb` is how the use wants it (colour vs data); the same file may be loaded both ways.
     // Invalid if the asset is missing or not an image, and while it is still streaming in.
     // `normal_map`: a normal map (linear), compressed to BC5 when compressing.
-    rhi::TextureHandle get(const char* guid, bool srgb, bool normal_map = false);
+    // `want`: how many texels across the use needs it (its size on screen; texture streaming by distance loads only
+    // that much, at least 64, more when it comes closer); kFull: all of it.
+    static constexpr u32 kFull = 0xFFFFFFFFu;
+    rhi::TextureHandle get(const char* guid, bool srgb, bool normal_map = false, u32 want = kFull);
     void check_files();
     // Once a frame: uploads up to `budget` textures the worker finished.
     void update(u32 budget = 4);
@@ -41,6 +44,16 @@ public:
     rhi::Device& device() { return device_; }
     // The largest side any texture loads at (0: as each asset says); video memory sets it.
     void set_size_cap(u32 size) { size_cap_ = size; }
+    // Texture quality: times what get() is asked for (scalability's texture_detail_scale).
+    void set_detail_scale(f32 scale) { detail_scale_ = scale; }
+    // Video memory pressure while running (1 = none): times the detail too, halved when the budget runs short.
+    void set_memory_scale(f32 scale) { memory_scale_ = scale; }
+    f32 memory_scale() const { return memory_scale_; }
+    f32 memory_scale_ = 1.0f;
+    u32 loaded_size(rhi::TextureHandle texture) const;  // the largest side it was loaded at (0: unknown); tests and stat
+    // stat dump: textures on the GPU, how many are loaded smaller than their file (streamed down), the texels they hold.
+    void stats(u32& textures, u32& reduced, u64& texels) const;
+    f32 detail_scale_ = 1.0f;
 
 private:
     const bool compress_;  // colour textures as BC1 / BC3, normal maps as BC5 (the device takes them): 4 to 8 times less video memory
@@ -52,7 +65,15 @@ private:
         i64 modified;
         bool failed;
         bool pending;  // queued or decoding on the worker
+        // Streaming by distance: the most asked for since the last look (kFull: all), the cap it was last loaded with
+        // (0: none, the whole image) and whether that was the whole image anyway.
+        u32 want = 0;
+        u32 requested = 0;
+        bool complete = false;
+        u64 loaded_texels = 0;  // of its largest mip, for stat dump
     };
+    u32 frame_ = 0;
+    static u32 stream_size(u32 want);  // 0: the whole image
     bool load(Entry& entry);
     // Path, time and size for loading `e` (main thread: the registry is not shared with the worker); false if it has no file.
     bool prepare(Entry& e, char* path, usize capacity, u32& max_size);
@@ -92,9 +113,11 @@ public:
     // Fills the material part of a draw (the draw's colour is the tint and is multiplied in). No
     // material: the draw keeps its colour with default roughness. A Material Graph sets the draw's
     // material shader and its textures (compiled when first used and again when its file changes).
-    void apply(const char* material_guid, rhi::MeshDraw& draw);
+    // `want`: texels across its textures should have (TextureCache::get); kFull for all of them.
+    void apply(const char* material_guid, rhi::MeshDraw& draw, u32 want = TextureCache::kFull);
     TextureCache& textures() { return textures_; }
     void check_files();
+    void reload_all();  // every material compiled again (the global material parameters were renamed or reordered)
 
 private:
     struct Entry {

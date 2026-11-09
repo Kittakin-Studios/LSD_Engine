@@ -40,15 +40,20 @@ struct TextureTag {};
 using TextureHandle = Handle<TextureTag>;
 struct MaterialShaderTag {};
 using MaterialShaderHandle = Handle<MaterialShaderTag>;
-enum class BufferUsage : u8 { Vertex, Index };
+struct PostShaderTag {};
+using PostShaderHandle = Handle<PostShaderTag>;
+// Storage: read by compute passes only (a model's packed morph targets).
+enum class BufferUsage : u8 { Vertex, Index, Storage };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
 // BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
 // BC5: two channels (a normal map's X and Y; it reads back Z = 0 and the shader rebuilds it), 16 bytes a block.
-enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB, BC5 };
-inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1; }
+// RGBA16F: half floats, linear, values above 1 kept (HDR images: bright emissive, HDR skies), 8 bytes a texel.
+enum class TextureFormat : u8 { RGBA8, RGBA8_sRGB, BC1, BC1_sRGB, BC3, BC3_sRGB, BC5, RGBA16F };
+inline bool is_block_compressed(TextureFormat f) { return f >= TextureFormat::BC1 && f <= TextureFormat::BC5; }
 inline bool is_srgb(TextureFormat f) { return f == TextureFormat::RGBA8_sRGB || f == TextureFormat::BC1_sRGB || f == TextureFormat::BC3_sRGB; }
 // The bytes of one mip `w` x `h` (blocks round up: a 2x2 mip is one block).
 inline u64 texture_bytes(TextureFormat f, u32 w, u32 h) {
+    if (f == TextureFormat::RGBA16F) return static_cast<u64>(w) * h * 8;
     if (!is_block_compressed(f)) return static_cast<u64>(w) * h * 4;
     return static_cast<u64>((w + 3) / 4) * ((h + 3) / 4) * (f == TextureFormat::BC1 || f == TextureFormat::BC1_sRGB ? 8 : 16);
 }
@@ -71,7 +76,9 @@ struct SkinnedVertex {
     u8 joints[4];
     u8 weights[4];
 };
+static_assert(sizeof(SkinnedVertex) == 40, "cull.hlsl's morph_main and the GLSL mirror read 40-byte vertices");
 constexpr u32 kMaxJoints = 256;
+constexpr u32 kMaxMorphTargets = 256;  // per model on the GPU (Device::morph_vertices); more mix on the CPU
 struct LineVertex {
     f32 position[3];
     f32 color[4];
@@ -151,12 +158,74 @@ struct MeshDraw {
     bool gpu_cull = false;
     f32 local_bounds_min[3] = {};
     f32 local_bounds_max[3] = {};
+    // LODs picked on the GPU (gpu_cull): a visible copy whose bounding radius over its distance from camera_position
+    // (times lod_distance_scale) is below lod_screen_size[k] draws with LOD k + 1's lod_indices[k] / lod_index_counts[k]
+    // (MeshCache::pick_lod's rule); unset LODs: none.
+    BufferHandle lod_indices[3];
+    u32 lod_index_counts[3] = {};
+    f32 lod_screen_size[3] = {};
+    f32 lod_distance_scale = 1.0f;
+    // Also the Hi-Z occlusion test (gpu_cull, the main view): copies hidden behind what the last frame's depth held
+    // there (PostDraw::build_hiz) are dropped; copies off screen or behind the camera then are kept.
+    // shortcut: last frame's depth: a copy coming out from behind a wall shows a frame late; a two-phase test for that
+    bool occlusion_cull = false;
 };
-constexpr u32 kMaxCulledInstances = 65536;  // per gpu_cull draw (256 batches of 256)
+constexpr u32 kMaxCulledInstances = 65536;  // per gpu_cull draw and LOD (256 batches of 256)
+
+// The GPU cull pass's constants (cull.hlsl's Cull; 256 bytes, Vulkan's push constants).
+struct CullConstants {
+    f32 planes[6][4];
+    f32 box_min[4], box_max[4];  // w: the Hi-Z's width and height (mip 0)
+    u32 info[4];                 // copies, batches per LOD, flags (1: Hi-Z test; LOD count << 1), 0
+    u32 index_counts[4];         // per LOD
+    f32 lod[4];                  // LOD 1..3 screen sizes, distance scale
+    f32 camera[4];               // xyz; w: the Hi-Z's mip count
+    f32 hiz_view_proj[4][4];     // rows
+};
+static_assert(sizeof(CullConstants) == 256, "cull.hlsl's Cull");
+// The constants for a gpu_cull draw of `batches` batches per LOD; `hiz_view_proj` (column-major; nullptr: no Hi-Z
+// test) the Hi-Z's view-projection, `hiz_size` its mip 0 width and height, `hiz_mips` its mip count.
+void cull_constants(const struct MeshDraw& draw, u32 batches, const f32* hiz_view_proj, const u32 hiz_size[2], u32 hiz_mips, CullConstants& out);
+// The LOD the cull pass picks for a copy (3 rows of 4) that passed its tests (the CPU mirror, for the tests).
+u32 instance_lod(const CullConstants& c, const f32 rows[12]);
 
 // The six frustum planes (a, b, c, d with a*x + b*y + c*z + d >= 0 inside) of a column-major
 // view-projection, normalised; the near plane is the looser of the GL and D3D conventions.
 void frustum_planes(const f32 view_proj[16], f32 planes[6][4]);
+// GPU particles (Niagara's GPU Compute Sim): one emitter's settings and this step, for Device::simulate_particles and
+// draw_gpu_particles (shaders/gpu_particles.hlsl's Params, float4 by float4).
+struct GpuParticles {
+    f32 spawn_rows[12];  // new particles' space: the effect's world matrix as 3 rows (identity rows for Local Space)
+    f32 draw_rows[12];   // the particles' space to world (the effect's for Local Space; identity otherwise)
+    u32 spawn[4];        // first slot, count (this step's new particles, wrapping at capacity), capacity, seed
+    f32 shape[4];        // 0 point / 1 sphere / 2 box, size xyz
+    f32 direction[4];    // xyz (unit), cos(spread)
+    f32 speed_life[4];   // speed min, max; lifetime min, max
+    f32 force[4];        // acceleration with gravity xyz (in the particles' space), drag
+    f32 step[4];         // dt, floor height, bounce, friction
+    f32 flags[4];        // floor collision (1), kill on hit (1), spin (degrees a second, up to)
+    f32 size[4];         // start, end, size key count, colour key count
+    f32 color_start[4];
+    f32 color_end[4];
+    f32 size_keys[16];   // up to 8 (time, value) pairs
+    f32 color_times[8];
+    f32 color_keys[32];  // up to 8 colours
+    f32 right[4];        // the camera's right and up in world space (drawing)
+    f32 up[4];
+};
+static_assert(sizeof(GpuParticles) == 32 * 16, "gpu_particles.hlsl reads 32 float4s");
+constexpr u32 kMaxGpuParticles = 1u << 20;  // per emitter
+
+// A Device::morph_vertices call as the backends keep it (D3D12 and Vulkan run them at the next frame's start): its
+// buffers and the weights block the pass reads (the vertex count, 3 spare words, then one float per target).
+struct MorphJob {
+    BufferHandle out, base, morphs;
+    u32 vertex_count = 0;
+    u32 word_count = 0;
+    u32 words[4 + kMaxMorphTargets];
+};
+// Fills `job`; targets past kMaxMorphTargets are dropped.
+void morph_job(MorphJob& job, BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count);
 // Whether a local box under an instance row matrix (3 rows of 4) touches the frustum: the same test
 // the GPU culling shaders run (so the CPU fallback and tests agree with them).
 bool instance_visible(const f32 planes[6][4], const f32 rows[12], const f32 local_min[3], const f32 local_max[3]);
@@ -234,7 +303,8 @@ struct LightSetup {
     f32 reflection_info[4] = {};
     f32 reflections[kMaxReflectionProbes][4] = {};
     // Lightmaps (set_lightmap_atlas): x = how bright a stored 1 is (texels hold c / (1 + c), c in units
-    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker).
+    // of x), y = 1 when the atlas is there, z = its size in texels (the Lightmap Density view's checker), w = how many
+    // segments the texture has, top to bottom (0 or 1: the light; 2: then each texel's direction; 3: then the shadow masks).
     // Its RGB replaces the ambient light, A is the sun's baked visibility.
     f32 lightmap_info[4] = {};
     // Volumetric fog (Height Fog > Volumetric): x = strength (0: off), y = anisotropy (-0.9..0.9, how
@@ -244,9 +314,28 @@ struct LightSetup {
     // Box reflection captures (in reflections' order): half size xyz (world axes), w = the fade-in distance;
     // w = 0: a sphere capture.
     f32 reflection_boxes[kMaxReflectionProbes][4] = {};
+    // IES profiles (asset::light_profile.h): per light, 16 samples (4 rows) of 1 - its profile from its axis (dir_range)
+    // to straight behind; all zero (the default) is no profile.
+    f32 light_profiles[kMaxLights * 4][4] = {};
+    // Light functions (Spot / Rect): per light, its image's rectangle in the decal atlas (x, y, w, h), then the scroll
+    // offset (u, v), how many repeats per unit of the view's tangent (z), and 1 when it has one (w).
+    f32 light_functions[kMaxLights * 2][4] = {};
+    // Per light: x = its shadow mask channel + 1 in the lightmap (Stationary lights; 0: none).
+    f32 light_extra[kMaxLights][4] = {};
+    // The normals pass (SSR / AO read it): rows 0-2 the view's rotation; row 3 x = 1 while it draws, when the lit shader
+    // writes each pixel's view-space normal (smooth, as shaded) * 0.5 + 0.5 instead of its colour.
+    f32 normal_view[4][4] = {};
+    // The velocity pass (TAA, motion blur): normal_view[3].y = 1 while it draws; this view's view-projection (without
+    // TAA's jitter). Each draw carries the last frame's matrix from world position to clip space in its normal matrix
+    // rows (xyz), metallic / roughness / emissive.r (their w) and colour (the fourth row); the lit shader writes how far
+    // the pixel moved on screen (uv, x then y, 16 bits each over -2..2: RG and BA high / low bytes; 0 = nothing drawn).
+    f32 velocity_view[4][4] = {};
+    // Global material parameters (Project Settings > Material Parameters, Unreal's Material Parameter Collection):
+    // what Global Parameter nodes read (lsd_globals in the shaders), set from script::global_param_values.
+    f32 global_params[16][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32 + kMaxLights * 16 + 64 + 64 + 256,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with
@@ -284,6 +373,21 @@ struct PostDraw {
     f32 contact_shadow[4] = {};
     bool fxaa = true;
     TextureHandle output;          // a render target to write into instead of the window (screenshots)
+    // A post-process material (create_post_shader): its post_main runs on the scene's colour before tonemapping, with
+    // `post_time` (seconds) and `post_params` as PostIn.time / params.xyz. Invalid: none.
+    PostShaderHandle post_shader;
+    f32 post_time = 0.0f;
+    f32 post_params[3] = {};
+    // The normals pass's target (LightSetup::normal_view): SSR and AO take their normals from it instead of from the
+    // depth (which only knows flat triangles: a low-poly mesh shaded smooth would show its facets). Invalid: from depth.
+    TextureHandle normals;
+    // The velocity pass's target (LightSetup::velocity_view): TAA and motion blur take each pixel's own movement from it
+    // (objects moving by themselves too); where it is empty (sky, particles), the camera's from the depth. Invalid: camera only.
+    TextureHandle velocity;
+    // Build the Hi-Z (gpu_cull's occlusion test, next frame) from this scene's depth, seen through `hiz_view_proj`
+    // (column-major, without TAA's jitter): the main view only.
+    bool build_hiz = false;
+    f32 hiz_view_proj[16] = {};
     // Depth effects read the scene target's depth; they need a perspective view (proj[0] == 0: off).
     f32 proj[4] = {};               // projection [0][0], [1][1], [2][2], [2][3]: view distance = proj[3] / (depth + proj[2])
     f32 ao_intensity = 0.0f;        // screen-space ambient occlusion; 0 = off
@@ -381,8 +485,11 @@ public:
     virtual void draw_shadow_caster(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 light_mvp[16],
                                     const f32* joint_rows = nullptr, u32 joint_count = 0, const struct ShadowCutout* cutout = nullptr) = 0;  // joints: a skinned caster
     // Many copies of one caster in one call: `rows` holds each copy's world matrix as 3 rows (12 floats);
-    // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it.
-    virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count) = 0;
+    // `view_proj` is the light's. Automatic instancing and Instanced Static Meshes use it. With the mesh's local bounds,
+    // a device that culls_shadow_instances() drops the copies outside the light's view on the GPU.
+    virtual void draw_shadow_instances(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32 view_proj[16], const f32* rows, u32 count,
+                                       const f32* bounds_min = nullptr, const f32* bounds_max = nullptr) = 0;
+    virtual bool culls_shadow_instances() const { return false; }
     virtual void end_shadow_pass() = 0;
     virtual void set_shadow_map(TextureHandle sun, TextureHandle local = {}) = 0;
     // The decal atlas the LightSetup's decal rectangles point into (an sRGB texture); for draw_mesh.
@@ -397,6 +504,11 @@ public:
     // compiler's message goes to the log).
     virtual MaterialShaderHandle create_material_shader(const char* code) = 0;
     virtual void destroy_material_shader(MaterialShaderHandle shader) = 0;  // safe while the GPU may still use it
+    // Post-process material code (Unreal's Post Process Material): `float3 post_main(PostIn pi)` with PostIn { uv, color,
+    // time, params } and scene_color(uv) / texel_size(), in the HLSL subset Material Graphs use (float3, lerp, saturate...;
+    // OpenGL maps them), built into the composite pass. Invalid if it does not compile (the message goes to the log).
+    virtual PostShaderHandle create_post_shader(const char* code) = 0;
+    virtual void destroy_post_shader(PostShaderHandle shader) = 0;
     // Line list (2 vertices per line), depth-tested, unlit.
     virtual void draw_lines(BufferHandle vertices, u32 vertex_count, const f32 mvp[16]) = 0;
     // The sky over the whole viewport, without depth: draw it before the meshes (uses set_lights' fog / post).
@@ -446,6 +558,26 @@ public:
     virtual bool supports_bc() const { return false; }
     // MeshDraw::gpu_cull works (compute shaders and indirect draws); else such draws draw every instance.
     virtual bool supports_gpu_culling() const { return false; }
+    // Morph targets on the GPU (Unreal's GPU morph targets): a model's targets packed once (anim::pack_morphs) into a
+    // BufferUsage::Storage buffer, a create_morph_output buffer per object, and morph_vertices fills it with the base
+    // SkinnedVertex buffer plus each delta times its target's weight (weight_count <= kMaxMorphTargets), normals
+    // renormalised. The work runs at the start of the next frame, before its first pass (OpenGL: at once); the output
+    // is then drawn like any SkinnedVertex vertex buffer.
+    virtual bool supports_gpu_morphs() const { return false; }
+    virtual BufferHandle create_morph_output(u32 vertex_count) { (void)vertex_count; return {}; }
+    virtual void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) {
+        (void)out, (void)base, (void)morphs, (void)vertex_count, (void)weights, (void)weight_count;
+    }
+    // GPU particles: an emitter's particles in a buffer of `capacity` (<= kMaxGpuParticles, 48 bytes each, all dead at
+    // first); simulate_particles spawns this step's new ones and moves the rest (a compute pass, run where it is called);
+    // draw_gpu_particles draws them as sprites like draw_particles (unsorted: Additive suits them best).
+    virtual bool supports_gpu_particles() const { return false; }
+    virtual BufferHandle create_particle_state(u32 capacity) { (void)capacity; return {}; }
+    virtual void simulate_particles(BufferHandle state, const GpuParticles& params) { (void)state, (void)params; }
+    virtual void draw_gpu_particles(BufferHandle state, const GpuParticles& params, const f32 view_proj[16], TextureHandle texture, bool additive,
+                                    const f32* soft = nullptr) {
+        (void)state, (void)params, (void)view_proj, (void)texture, (void)additive, (void)soft;
+    }
 };
 
 // Creates a device for desc.backend (Auto = platform default), selecting the GPU with

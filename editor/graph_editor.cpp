@@ -168,6 +168,7 @@ ImU32 pin_color(PinType type) {
         case PinType::Vector: return IM_COL32(250, 200, 40, 255);
         case PinType::Entity: return IM_COL32(60, 160, 255, 255);
         case PinType::Audio: return IM_COL32(190, 140, 255, 255);
+        case PinType::Points: return IM_COL32(60, 210, 190, 255);
     }
     return IM_COL32_WHITE;
 }
@@ -310,6 +311,7 @@ bool value_widget(const script::PinDef& pin, char* value, usize capacity) {
         }
         case PinType::Entity: ImGui::TextDisabled("self"); break;
         case PinType::Exec:
+        case PinType::Points:
         case PinType::Audio: break;
     }
     return changed;
@@ -381,7 +383,7 @@ void save_and_compile(EditorState& s) {
         std::snprintf(s.status, sizeof s.status, "%s: %s", w.name, w.message);
         return;
     }
-    if (w.kind == script::GraphKind::SoundCue) {  // cues are read as they are: nothing to compile
+    if (w.kind == script::GraphKind::SoundCue || w.kind == script::GraphKind::Pcg) {  // read as they are: nothing to compile (PCG Volumes using it rebuild)
         std::snprintf(w.message, sizeof w.message, "Saved");
         w.message_is_error = false;
         std::snprintf(s.status, sizeof s.status, "%s: saved", w.name);
@@ -877,6 +879,23 @@ void set_graph_active_nodes(const u32* ids, u32 count) {
     std::memcpy(g_active, ids, g_active_count * sizeof(u32));
 }
 
+std::string create_pcg_file(const char* folder_path, const char* base) {
+    const std::filesystem::path folder(folder_path);
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    std::filesystem::path path = folder / (std::string(base) + ".lsdpcg");
+    for (int n = 2; std::filesystem::exists(path, error); ++n) path = folder / (std::string(base) + std::to_string(n) + ".lsdpcg");
+    Graph graph(default_allocator());  // a starting chain: sample, keep the gentle slopes, vary, spawn
+    const u32 sample = graph.add("PcgSurface", 0, 40)->id;
+    const u32 slope = graph.add("PcgSlope", 260, 40)->id;
+    const u32 vary = graph.add("PcgTransform", 520, 40)->id;
+    const u32 spawn = graph.add("PcgSpawn", 800, 40)->id;
+    graph.connect(sample, 0, slope, 0);
+    graph.connect(slope, 0, vary, 0);
+    graph.connect(vary, 0, spawn, 0);
+    return script::save_graph_file(graph, path.generic_string().c_str()) ? path.generic_string() : std::string();
+}
+
 bool open_behavior_tree(asset::Guid& out) {
     if (!g_window.open || g_window.kind != script::GraphKind::BehaviorTree) return false;
     out = g_window.guid;
@@ -955,6 +974,7 @@ void open_graph(EditorState& s, const asset::AssetRecord& record) {
     w.kind = record.type == asset::AssetType::Cue ? script::GraphKind::SoundCue
              : record.type == asset::AssetType::MaterialGraph ? script::GraphKind::Material
              : record.type == asset::AssetType::BehaviorTree  ? script::GraphKind::BehaviorTree
+             : record.type == asset::AssetType::PcgGraph      ? script::GraphKind::Pcg
                                                               : script::GraphKind::Script;
     std::snprintf(w.name, sizeof w.name, "%s", record.name);
     w.open = true;
@@ -1091,6 +1111,7 @@ void draw_graph_editor(EditorState& s) {
                   w.kind == script::GraphKind::SoundCue        ? "Sound Cue"
                   : w.kind == script::GraphKind::Material      ? "Material Graph"
                   : w.kind == script::GraphKind::BehaviorTree ? "Behavior Tree"
+                  : w.kind == script::GraphKind::Pcg          ? "PCG Graph"
                                                                : "Visual Script");
     const ImGuiViewport* main = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(main->WorkPos.x + main->WorkSize.x * 0.5f, main->WorkPos.y + main->WorkSize.y * 0.45f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));

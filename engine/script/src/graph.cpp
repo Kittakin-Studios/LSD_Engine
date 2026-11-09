@@ -155,6 +155,9 @@ NodeDef g_defs[] = {
      {kExecIn, {"Class", PinType::String, "Master"}, {"Volume", PinType::Float, "1"}}, 0, {kExecOut}, 0, "lsd.set_class_volume($1, $2)", {}},
     {"SetAudioParam", "Set Audio Parameter", "Audio", "A value Sound Cue Switch nodes read (surface type, intensity...)",
      {kExecIn, {"Name", PinType::String, "Surface"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_audio_param($1, $2)", {}},
+    {"SetMaterialParam", "Set Global Material Parameter", "Rendering",
+     "Sets a global material parameter (Project Settings > Materials; Unreal's Set Vector Parameter Value on a Collection): every material reading it follows",
+     {kExecIn, {"Name", PinType::String, "Wind"}, {"Value", PinType::Vector, "1,1,1"}}, 0, {kExecOut}, 0, "lsd.set_material_parameter($1, $2.x, $2.y, $2.z)", {}},
     {"SetAnimParam", "Set Anim Parameter", "Animation", "A parameter of the target's Animation Graph (Speed, InAir, or your own)",
      {kExecIn, kTarget, {"Name", PinType::String, "Speed"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_anim_param($1, $2, $3)", {}},
     {"PlayMontage", "Play Montage", "Animation", "Plays an animation once over what the target plays (from Bone down: spine_01 = the upper body; empty = all), blended in and out; Custom Event on_montage_ended runs when it ends",
@@ -417,6 +420,30 @@ NodeDef g_cue_defs[] = {
      {kAudioOut}, 0, nullptr, {}},
 };
 
+// PCG Graph nodes (editor/pcg_graph.cpp runs them): samplers make points, filters keep some, Spawn Mesh places a mesh on them.
+constexpr PinDef kPointsIn{"Points", PinType::Points, ""};
+constexpr PinDef kPointsOut{"Points", PinType::Points, ""};
+NodeDef g_pcg_defs[] = {
+    {"PcgSurface", "Surface Sampler", "Samplers", "Points dropped onto the surfaces inside the volume's box, at random",
+     {{"Density", PinType::Float, "20"}, {"Seed", PinType::Float, "1"}}, 0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgSpline", "Spline Sampler", "Samplers", "Points every Spacing metres along the volume's Spline, in a strip Width wide, dropped onto what is below",
+     {{"Spacing", PinType::Float, "2"}, {"Width", PinType::Float, "0"}, {"Seed", PinType::Float, "1"}}, 0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgSlope", "Slope Filter", "Filters", "Keeps the points whose surface slope (degrees) is between Min and Max",
+     {kPointsIn, {"Min", PinType::Float, "0"}, {"Max", PinType::Float, "35"}}, 0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgHeight", "Height Filter", "Filters", "Keeps the points whose height (world Z, metres) is between Min and Max",
+     {kPointsIn, {"Min", PinType::Float, "-1000"}, {"Max", PinType::Float, "1000"}}, 0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgDensity", "Density Filter", "Filters",
+     "Keeps about Keep (0..1) of the points: at random, or by Patch Size metres of noise so whole patches stay or go (clumps, clearings)",
+     {kPointsIn, {"Keep", PinType::Float, "0.5"}, {"Patch Size", PinType::Float, "0"}, {"Seed", PinType::Float, "1"}}, 0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgTransform", "Transform Points", "Points", "A random size between Scale Min and Max, a random turn around Z, tilted to the surface, lifted Offset Z along it",
+     {kPointsIn, {"Scale Min", PinType::Float, "0.8"}, {"Scale Max", PinType::Float, "1.2"}, {"Random Yaw", PinType::Bool, "true"},
+      {"Align To Surface", PinType::Bool, "false"}, {"Offset Z", PinType::Float, "0"}, {"Seed", PinType::Float, "1"}},
+     0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgMerge", "Merge", "Points", "Both sets of points as one", {{"A", PinType::Points, ""}, {"B", PinType::Points, ""}}, 0, {kPointsOut}, 0, nullptr, {}},
+    {"PcgSpawn", "Spawn Mesh", "Output", "Puts a mesh (by name or GUID) on every point (an Instanced Static Mesh under the volume's output)",
+     {kPointsIn, {"Mesh", PinType::String, "Sphere"}, {"Material", PinType::String, ""}, {"Color", PinType::Vector, "0.31,0.54,0.24"}}, 0, {}, 0, nullptr, {}},
+};
+
 // Material Graph nodes. Every value is a float3 in the shader (scalars are (x, x, x), like Unreal's
 // promotion), so Float and Vector pins connect freely; the pin type only picks the widget for typed
 // values. Expressions: $0.. the inputs, mi the material inputs (uv, wpos, normal, view, time); a
@@ -432,6 +459,9 @@ NodeDef g_material_defs[] = {
      {{"Name", PinType::String, "Brightness"}, {"Default", PinType::Float, "1"}}, 0, {{"", PinType::Float, ""}}, 0, nullptr, {"lsd_v3(lsd_params[@].x)"}},
     {"MatVectorParam", "Vector Parameter", "Parameters", "A colour or vector Material Instances can change (by its Name)",
      {{"Name", PinType::String, "Tint"}, {"Default", PinType::Vector, "1,1,1"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"lsd_params[@].xyz"}},
+    {"MatGlobalParam", "Global Parameter", "Parameters",
+     "A value every material shares (Unreal's Collection Parameter): named in Project Settings > Materials, set by scripts (Set Global Material Parameter) for wind, wetness, time of day...",
+     {{"Name", PinType::String, "Wind"}}, 0, {{"", PinType::Vector, ""}}, 0, nullptr, {"lsd_globals[@].xyz"}},
     {"MatTime", "Time", "Constants", "Seconds since the editor started: animate with Sine, Panner...", {}, 0, {{"", PinType::Float, ""}}, 0, nullptr, {"lsd_v3(mi.time)"}},
     {"MatFunctionCall", "Material Function", "Functions", "Runs a Material Function here (Unreal's MaterialFunctionCall): another Material Graph, named in Function, that ends in a Function Output",
      {{"Function", PinType::String, "MF_Name"}, {"A", PinType::Vector, "0,0,0"}, {"B", PinType::Vector, "0,0,0"}, {"C", PinType::Vector, "0,0,0"}}, 0,
@@ -647,6 +677,7 @@ std::string literal(PinType type, const char* value) {
             return lua_string(value);
         }
         case PinType::Exec:
+        case PinType::Points:
         case PinType::Audio: break;  // an unconnected sound input is no sound
     }
     return "nil";
@@ -843,6 +874,10 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
             d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
         }
+        for (NodeDef& d : g_pcg_defs) {
+            d.input_count = count_pins(d.inputs, kMaxNodeInputs);
+            d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
+        }
         for (NodeDef& d : g_bt_defs) {
             d.input_count = count_pins(d.inputs, kMaxNodeInputs);
             d.output_count = count_pins(d.outputs, kMaxNodeOutputs);
@@ -867,12 +902,16 @@ const NodeDef* node_defs(u32& count, GraphKind kind) {
         count = static_cast<u32>(sizeof g_bt_defs / sizeof g_bt_defs[0]);
         return g_bt_defs;
     }
+    if (kind == GraphKind::Pcg) {
+        count = static_cast<u32>(sizeof g_pcg_defs / sizeof g_pcg_defs[0]);
+        return g_pcg_defs;
+    }
     count = static_cast<u32>(g_script_nodes.size());
     return g_script_nodes.data();
 }
 
 const NodeDef* find_node_def(const char* id) {
-    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material, GraphKind::BehaviorTree}) {
+    for (const GraphKind kind : {GraphKind::Script, GraphKind::SoundCue, GraphKind::Material, GraphKind::BehaviorTree, GraphKind::Pcg}) {
         u32 count = 0;
         const NodeDef* defs = node_defs(count, kind);
         for (u32 i = 0; i < count; ++i) {
@@ -959,8 +998,9 @@ bool Graph::connect(u32 from, u32 from_pin, u32 to, u32 to_pin) {
     // numbers and vectors mix (all float3 in the shader).
     const bool numeric = is_material_node(*da) && is_material_node(*db) && (out == PinType::Float || out == PinType::Vector) &&
                          (in == PinType::Float || in == PinType::Vector);
-    const bool wildcard = (out == PinType::Any || in == PinType::Any) && out != PinType::Audio && in != PinType::Audio;
-    if (exec != (in == PinType::Exec) || (out != in && !numeric && !wildcard && (in != PinType::String || out == PinType::Audio))) return false;
+    const bool flow = out == PinType::Audio || in == PinType::Audio || out == PinType::Points || in == PinType::Points;  // sounds, points: only their own kind
+    const bool wildcard = (out == PinType::Any || in == PinType::Any) && !flow;
+    if (exec != (in == PinType::Exec) || (out != in && !numeric && !wildcard && (in != PinType::String || flow))) return false;
     for (usize i = links.size(); i-- > 0;) {
         const GraphLink& l = links[i];
         // An exec output leads to one place; a data input reads from one place.
@@ -1140,12 +1180,13 @@ const char* pin_type_name(PinType type) {
         case PinType::Entity: return "Entity";
         case PinType::Audio: return "Audio";
         case PinType::Any: return "Any";
+        case PinType::Points: return "Points";
     }
     return "Any";
 }
 
 bool parse_pin_type(const char* name, PinType& out) {
-    for (PinType t : {PinType::Float, PinType::Bool, PinType::String, PinType::Vector, PinType::Entity, PinType::Audio, PinType::Any, PinType::Exec}) {
+    for (PinType t : {PinType::Float, PinType::Bool, PinType::String, PinType::Vector, PinType::Entity, PinType::Audio, PinType::Any, PinType::Exec, PinType::Points}) {
         if (std::strcmp(pin_type_name(t), name) == 0) {
             out = t;
             return true;

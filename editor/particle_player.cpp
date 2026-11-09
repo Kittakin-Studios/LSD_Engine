@@ -35,7 +35,8 @@ bool path_of(const asset::AssetRegistry& registry, const char* guid_text, char* 
 } // namespace
 
 ParticlePlayer::ParticlePlayer(rhi::Device& device, Allocator& allocator, const asset::AssetRegistry& registry, TextureCache& textures)
-    : allocator_(allocator), registry_(registry), textures_(textures) {
+    : allocator_(allocator), registry_(registry), textures_(textures), device_(device) {
+    particles::set_gpu_particles(device.supports_gpu_particles());
     // A 64x64 soft dot: white, alpha falling smoothly to 0 at the edge.
     static u8 pixels[64 * 64 * 4];
     for (u32 y = 0; y < 64; ++y) {
@@ -62,6 +63,9 @@ ParticlePlayer::~ParticlePlayer() {
     }
     for (u32 i = 0; i < system_count_; ++i) delete systems_[i];
     allocator_.deallocate(vertices_);
+    for (const GpuState& g : gpu_) {
+        if (g.buffer.valid()) device_.destroy_buffer(g.buffer);
+    }
 }
 
 void ParticlePlayer::load(System& s) {
@@ -103,6 +107,8 @@ void ParticlePlayer::reset() {
 
 void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
     collider_.budget = 1024;  // World collision rays this frame, for every effect together
+    shadow_rays_ = 0;         // lit particles' sun rays, likewise
+    playing_ = playing;
     for (Effect& e : effects_) {  // objects deleted or without the component any more
         if (e.used && (!world.alive(e.entity) || !world.get<world::ParticleEffect>(e.entity))) {
             e.used = false;
@@ -111,6 +117,16 @@ void ParticlePlayer::update(const world::World& world, f32 dt, bool playing) {
     }
     particle_count_ = 0;
     finished_count_ = 0;
+    ++frame_;
+    for (usize i = 0; i < gpu_.size();) {  // GPU emitters not drawn for a few seconds (effect gone, emitter back on the CPU)
+        if (frame_ - gpu_[i].frame < 300) {
+            ++i;
+            continue;
+        }
+        if (gpu_[i].buffer.valid()) device_.destroy_buffer(gpu_[i].buffer);
+        gpu_[i] = gpu_.back();
+        gpu_.pop_back();
+    }
     const reflect::TypeInfo& type = reflect::type_of<world::ParticleEffect>();
     for (u32 i = 0; i < world.count(type); ++i) {
         const world::Entity entity = world.owner(type, i);
@@ -164,12 +180,24 @@ void ParticlePlayer::apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 ey
 
 void ParticlePlayer::apply_lighting(rhi::ParticleVertex* vertices, u32 count, Vec3 eye) const {
     if (!lights_) return;
+    // In Play, the sun's shadow: a ray toward the sun from each sprite (every 6 vertices: one quad), against what physics
+    // collides with, as World collision does. shortcut: a sharp yes / no per sprite, no soft edge; at most 2048 a frame
+    const i32 sun = static_cast<i32>(lights_->shadow_info[1]);
+    const bool shadows = playing_ && collider_.segment && sun >= 0 && static_cast<u32>(sun) < lights_->count;
+    f32 visible = 1.0f;
     for (u32 i = 0; i < count; ++i) {
         rhi::ParticleVertex& v = vertices[i];
         const Vec3 p{v.position[0], v.position[1], v.position[2]};
+        if (shadows && i % 6 == 0 && shadow_rays_ < 2048) {
+            ++shadow_rays_;
+            const rhi::GpuLight& L = lights_->lights[sun];
+            const Vec3 to_sun{-L.direction[0], -L.direction[1], -L.direction[2]};
+            Vec3 hit, n;
+            visible = collider_.segment(collider_.user, p + to_sun * 0.05f, p + to_sun * 60.0f, hit, n) ? 0.0f : 1.0f;
+        }
         const Vec3 to_eye = eye - p;
         const f32 d = length(to_eye);
-        const Vec3 light = particle_light(*lights_, p, d > 1e-4f ? to_eye * (1.0f / d) : Vec3{0.0f, 0.0f, 1.0f});
+        const Vec3 light = particle_light(*lights_, p, d > 1e-4f ? to_eye * (1.0f / d) : Vec3{0.0f, 0.0f, 1.0f}, shadows ? visible : 1.0f);
         v.color[0] *= light.x;
         v.color[1] *= light.y;
         v.color[2] *= light.z;
@@ -181,8 +209,13 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
     const Vec3 right{view.at(0, 0), view.at(0, 1), view.at(0, 2)};  // the view matrix's rows: camera axes in world space
     const Mat4 projection = view_proj * inverse(view);  // soft particles turn depth back into distance with it
     const Vec3 up{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
+    const f32 depth_terms[4] = {0.0f, projection.at(2, 2), projection.at(2, 3), projection.at(3, 3) > 0.5f ? 1.0f : 0.0f};  // soft particles
     for (u32 k = 0; k < system.emitters.count; ++k) {
         const particles::ParticleEmitter emitter = particles::active_modules(system.emitters[k]);
+        if (particles::GpuStep step; instance.gpu_step(k, step)) {  // simulated and drawn on the GPU
+            draw_gpu(device, instance, k, emitter, world, view_proj, right, up, depth_terms);
+            continue;
+        }
         if (emitter.renderer == 1) {  // a lit mesh per particle, in one instanced draw
             const CachedMesh* mesh = meshes_ ? meshes_->get(emitter.mesh) : nullptr;
             const u32 count = instance.count(k);
@@ -234,6 +267,46 @@ void ParticlePlayer::draw_instance(rhi::Device& device, const particles::Particl
         f32 soft[4] = {emitter.soft_distance, projection.at(2, 2), projection.at(2, 3), projection.at(3, 3) > 0.5f ? 1.0f : 0.0f};
         device.draw_particles(vertices_, n, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1, emitter.soft_distance > 0.0f ? soft : nullptr);
     }
+}
+
+// A GPU emitter: its buffer (made again when Max Particles changes or the instance restarts), one simulation per
+// instance step, then its sprites. shortcut: a second instance update before a draw loses the first step's new
+// particles; carry the counts over if effects ever update more often than they draw.
+void ParticlePlayer::draw_gpu(rhi::Device& device, const particles::ParticleInstance& instance, u32 k, const particles::ParticleEmitter& emitter,
+                              const Mat4& world, const Mat4& view_proj, Vec3 right, Vec3 up, const f32 soft_in[4]) {
+    particles::GpuStep step;
+    if (!instance.gpu_step(k, step)) return;
+    GpuState* state = nullptr;
+    for (GpuState& g : gpu_) {
+        if (g.instance == &instance && g.emitter == k) state = &g;
+    }
+    if (!state) state = &gpu_.emplace_back(GpuState{&instance, k, 0, 0, 0, 0, {}});
+    if (state->buffer.valid() && (state->capacity != step.capacity || state->restarts != step.restarts)) {
+        device.destroy_buffer(state->buffer);
+        state->buffer = {};
+    }
+    if (!state->buffer.valid()) {
+        state->buffer = device.create_particle_state(step.capacity);
+        state->capacity = step.capacity;
+        state->restarts = step.restarts;
+        state->steps = step.steps - 1;  // simulate this step
+        if (!state->buffer.valid()) return;
+    }
+    state->frame = frame_;
+    rhi::GpuParticles params;
+    const u32 seed = step.steps * 2654435761u ^ (k + 1) * 40503u ^ static_cast<u32>(reinterpret_cast<uintptr_t>(&instance) >> 4);
+    particles::gpu_params(emitter, step, world, seed, params);
+    if (state->steps != step.steps) {
+        device.simulate_particles(state->buffer, params);
+        state->steps = step.steps;
+    }
+    std::memcpy(params.right, &right, sizeof(Vec3));
+    std::memcpy(params.up, &up, sizeof(Vec3));
+    const rhi::TextureHandle texture = emitter.texture[0] ? textures_.get(emitter.texture, true) : rhi::TextureHandle{};
+    f32 soft[4];
+    std::memcpy(soft, soft_in, sizeof soft);
+    soft[0] = emitter.soft_distance;
+    device.draw_gpu_particles(state->buffer, params, view_proj.m, texture.valid() ? texture : dot_, emitter.blend == 1, emitter.soft_distance > 0.0f ? soft : nullptr);
 }
 
 void ParticlePlayer::draw(rhi::Device& device, const world::World& world, const Mat4& view_proj, const Mat4& view, Vec3 eye, bool skip_hidden) {

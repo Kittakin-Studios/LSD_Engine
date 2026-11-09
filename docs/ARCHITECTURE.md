@@ -149,8 +149,10 @@ device.
 4096 triangles each, from `MeshCache::triangles`) are rasterised into a 256 x 128 depth buffer, each
 triangle at its farthest corner's distance and only on pixels whose centre it covers; a mesh is
 skipped when every pixel its box touches holds something nearer. That keeps it conservative: it can
-miss a hidden mesh but never drop a visible one. Instanced Static Meshes with 32+ copies are culled on
-the GPU (`r.GPUCulling`).
+miss a hidden mesh but never drop a visible one. Instanced Static Meshes and instancing batches with
+32+ copies are culled on the GPU (`r.GPUCulling`, engine/rhi/shaders/cull.hlsl): frustum, LOD by
+screen size and a Hi-Z pyramid built from the main viewport's depth the frame before; each LOD's
+survivors are drawn indirectly. Shadow passes cull Instanced Static Mesh copies the same way (frustum only).
 
 **Reflection captures** (no cubemaps in the RHI): each Reflection Capture renders six 128 x 128 faces
 with `draw_world` into render targets, read back after the frame and unwrapped by

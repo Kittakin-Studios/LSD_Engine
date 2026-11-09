@@ -231,7 +231,7 @@ The tab then reads e.g. *Level: Landscape*, and the mode's tools open in a panel
 **Collision** (each copy blocks in Play with a box around it: trees, rocks; off for grass). **LMB drag** paints every ticked type at once, each spaced by its own density; **Shift+LMB** erases the ticked types. Copies go to *Foliage* objects (Instanced Static Meshes, one per mesh, 1024 each) |
 | **Landscape** | **Create Landscape** (a square of terrain, 65 x 65 heights) where the view looks; **Add Tile** (+X / -X / +Y / -Y) puts another beside the selected one with the shared edge joined, for bigger worlds (the brushes sculpt across tiles; far tiles draw simpler LODs that still meet at the seams). Then sculpt: **Sculpt** (LMB raises, Shift lowers), **Smooth**, **Flatten** (to the height where the stroke began), brush size and strength, Flatten All; **Paint** layers (below); **Holes** (Unreal's Visibility tool: LMB cuts the terrain for caves and tunnels, Shift fills; no drawing or collision there); **Heightmap**: Import sets the selected landscape's heights from a greyscale image (black 0, white Max Height; a 16-bit PNG keeps its 65 536 steps) or Unreal's RAW `.r16` (square, 16-bit), Export writes them as a 65 x 65 `.r16` (16-bit, for World Machine, Gaea or Unreal) or PNG (8-bit) by the file name's extension. It collides in Play; without layers its material is on its Static Mesh |
 | **Animation Sequence** | Your Timelines (double-click to edit), New Timeline, a button to the Animation workspace (Sequencer) |
-| **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output*. **More Meshes** scatters several kinds at once (each point picks one by **Weight**; their copies are in the output's *Variant N* children). Tick **Exclude** on a volume to make it a clearing: it scatters nothing and the others leave its box empty (paths, buildings). Add a **Spline** to a PCG Volume and it scatters along the curve instead (PCG's spline input): one copy every **Spline Spacing** metres, in a strip **Spline Width** wide, dropped onto what is below (fence posts, trees by a road) |
+| **PCG** | **Add PCG Volume**: a box that scatters copies of a mesh on the surfaces inside it by rules in Details (mesh, density per 100 m2, seed, max slope, scale range, random turn, align to surface). Move, size or change it and it rebuilds; the copies are in *<volume>_Output*. **More Meshes** scatters several kinds at once (each point picks one by **Weight**; their copies are in the output's *Variant N* children). Tick **Exclude** on a volume to make it a clearing: it scatters nothing and the others leave its box empty (paths, buildings). Add a **Spline** to a PCG Volume and it scatters along the curve instead (PCG's spline input): one copy every **Spline Spacing** metres, in a strip **Spline Width** wide, dropped onto what is below (fence posts, trees by a road). **Graph** (Unreal's PCG Graph): Content Browser > right-click > **New PCG Graph**, pick it on the volume, and its nodes replace the rules above: **Surface Sampler** (Density, Seed) and **Spline Sampler** make points, **Slope / Height / Density Filter** keep some (Density Filter's **Patch Size** keeps or drops whole patches: clumps and clearings), **Transform Points** sizes, turns, tilts and lifts them, **Merge** joins two sets, and each **Spawn Mesh** puts a mesh (name or GUID, material, colour) on the points reaching it (its own Instanced Static Mesh). Save the graph and the volumes using it rebuild; exclusion volumes still clear their boxes |
 | **VFX** | Your particle systems (double-click to edit, **Place** puts one where the view looks), New Particle System, a button to the Effects workspace (Niagara) |
 
 **Landscape paint layers** (Unreal's Landscape Paint with Layer Infos):
@@ -404,7 +404,7 @@ like Unreal's asset metadata): the Content Browser search box matches tags as we
 | You drop / create | It becomes | Opens in | Unreal |
 | --- | --- | --- | --- |
 | `.fbx`, `.gltf`, `.glb` | Mesh (a skinned mesh if it has bones) | Details (import scale) | Static / Skeletal Mesh |
-| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept linear in data slots and sRGB-encoded in colour slots, values above 1 clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal maps become BC5 (their X and Y; the shader rebuilds Z, as Unreal's TC_Normalmap), masks (ORM) stay uncompressed | Details (max size) | Texture |
+| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept as half floats on the GPU with values above 1, so an HDR emissive map glows as bright as it is; thumbnails and UI show them clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal maps become BC5 (their X and Y; the shader rebuilds Z, as Unreal's TC_Normalmap), masks (ORM) stay uncompressed | Details (max size) | Texture |
 | `.wav .ogg .flac .mp3` | Sound | Details (volume, class...); double-click plays | Sound Wave |
 | `.csv` | Data Table | Data Table window | Data Table |
 | `.lua` | Lua Script | your text editor | — |
@@ -568,14 +568,16 @@ the level; what a copy overrides stays its own.
 
 ## 5. Lighting, sky and post-processing
 
+For the steps to the best picture, in order, see [GRAPHICS.md](GRAPHICS.md) (Epic graphics: a step-by-step guide).
+
 Lights use physical units, like Unreal:
 
 | Component | Units / notes |
 | --- | --- |
 | Directional Light | lux; its +X axis is the light's direction; Cast Shadows, Shadow Distance (cascaded shadows) |
-| Point Light | lumens, attenuation radius, shadows; **Source Radius** makes it a sphere light (softer, wider highlights) |
-| Spot Light | lumens, inner / outer cone, shadows, Source Radius |
-| Rect Light | lumens from its front (+X); **Shape** Rect (Source Width across Y x Height along Z) or Disc (Width across): windows, screens, softboxes, ceiling panels. Unreal's Rect Light; no shadows yet |
+| Point Light | lumens, attenuation radius, shadows; **Source Radius** makes it a sphere light (softer, wider highlights); **IES** (Unreal's IES Texture): drop a photometric `.ies` file in Content and pick it, and the light takes that fixture's pattern by angle from its forward axis (rotate the light to aim it; averaged around the axis, 16 steps from front to back) |
+| Spot Light | lumens, inner / outer cone, shadows, Source Radius, IES (inside the cone); **Light Function** (Unreal's): an image projected along the light whose brightness dims it (a window frame, leaves, a gobo), **Function Tiling** repeats it, **Function Scroll X / Y** slide it (clouds, caustics); Rect Lights have it too. Light functions share the 16 decal image slots |
+| Rect Light | lumens from its front (+X); **Shape** Rect (Source Width across Y x Height along Z) or Disc (Width across): windows, screens, softboxes, ceiling panels. Unreal's Rect Light. Lit exactly: up close the panel's whole outline lights a surface (light reaches points its centre is behind), and glossy floors show its true shape in their reflection. **Cast Shadows** (one shadow tile, a 150 degree view from its front; light leaving almost sideways is unshadowed), softer the bigger the panel. Point and Spot Lights' shadows soften with their Source Radius too |
 | Sky Light | ambient from above and below |
 
 Colour can be set by temperature (Kelvin). **World Settings > Exposure (EV100)** sets the camera
@@ -586,9 +588,17 @@ Atmosphere:
 - **Sky**: a gradient (zenith, horizon, ground) with a sun disc where the first Directional Light
   comes from. Without one the viewport stays its plain dark colour. **Atmosphere** (on by default,
   Unreal's Sky Atmosphere): the colours follow the sun's height, so turning the Directional Light
-  sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night.
+  sets the time of day: blue noon, an orange horizon and red sun at sunrise / sunset, dark night. The
+  sky is computed from how air, haze and ozone scatter sunlight (single scattering), redrawn as the sun
+  turns; shiny surfaces outside Reflection Captures reflect it and the ambient takes its colours.
+  Reflection Captures keep the sky they saw: Build > Build Reflection Captures again after changing the
+  time of day a lot.
   The sun's light takes the same colour, and a **Sky Light** with **Capture Sky** (default) lights
   the level with the sky's colours. Untick Atmosphere to pick the colours yourself.
+  **HDRI** (Unreal's Sky Light cubemap): pick a latitude-longitude `.hdr` or `.exr` image. Shiny surfaces
+  outside every Reflection Capture reflect it (blurrier on rougher ones), the backdrop shows it, and the
+  ambient light takes its averages overhead, at the horizon and below it, times **Brightness**. It uses one of the 8 reflection
+  tiles, so a level with an HDRI has room for 7 captures.
 - **Reflection Capture** (Unreal's Sphere Reflection Capture; Place tab): metal and other shiny
   surfaces within its **Radius** reflect what is around it (the room, the props, the characters)
   instead of only the sky, sharp on smooth surfaces and blurrier on rough ones. It captures when the
@@ -605,7 +615,8 @@ Atmosphere:
   falloff, colour, start distance, max opacity. Particles fade into it like meshes (smoke takes on the
   fog's colour, additive sparks and glows fade out). **Volumetric** (Unreal's Volumetric Fog): the sun
   lights the fog and its shadows cut through it, so fog glows in sunlight, stays dark behind walls
-  and columns, and makes light shafts. It needs a Directional Light that casts shadows.
+  and columns, and makes light shafts, against the sky too (for that it needs a Directional Light that casts shadows). Point
+  and Spot Lights light it too: a lamp gets a glowing halo, a spot a visible cone (without their shadows).
   **Scattering** is how strong the effect is, **Anisotropy** how much brighter it glows looking toward
   the sun, **View Distance** how far it is traced, **Steps** its quality (16 is a good start).
 
@@ -621,14 +632,25 @@ Atmosphere:
   **Ambient Occlusion** (intensity, radius: darker creases and contact points, from the depth
   buffer like Unreal's SSAO) and **Depth of Field** (focal distance, focal region that stays sharp,
   transition, max blur in pixels; focal distance 0 = off; out-of-focus lights open into soft bokeh discs;
-  needs Post Processing quality High or Epic).
+  needs Post Processing quality High or Epic). Reflections and Ambient Occlusion take each pixel's normal from a
+  normals pass (the opaque meshes drawn once more, their smooth normals into a texture, like Unreal's GBuffer World
+  Normal), so a low-poly mesh shaded smooth reflects and darkens smoothly instead of triangle by triangle. It runs
+  only while one of them is on. Ambient Occlusion darkens only the ambient light (sky, bounces, reflections), as
+  Unreal's does: a sunlit surface stays bright, the same crease in shade goes dark.
   **Color Grading LUT** (Unreal's): a 256 x 16 texture strip (16 tiles of 16 x 16; red across, green
   down, blue tile by tile) applied last, in display colours, with **LUT Intensity**. To make one,
   paste a neutral strip into a screenshot, grade the whole picture in Photoshop / GIMP, crop the strip
   out and import it as a texture.
+  **Post Material** (Unreal's Post Process Material): Content Browser > right-click > **New Post Process
+  Material** makes a `.hlsl` with `float3 post_main(PostIn pi)`; pick it here and it runs on every pixel
+  before tonemapping. `pi.color` is the scene there (linear), `pi.uv` its place (0..1, top-down),
+  `pi.time` seconds and `pi.params` this volume's **Post Parameters**; `scene_color(uv)` reads the scene
+  anywhere and `texel_size()` is one pixel. Write it like a shader asset (float3, lerp, saturate, frac:
+  OpenGL maps them). Saving it recompiles; compile errors go to the Output Log.
   **Motion Blur** (Amount 0 = off, Max as % of the screen's width): turning or moving the camera
-  smears the picture along the movement, found the way TAA finds last frame's pixels. Only the
-  camera's own movement for now: an object moving by itself in front of a still camera stays sharp.
+  smears the picture along the movement. Objects moving by themselves blur too (a velocity pass, Unreal's
+  velocity buffer: each mesh's movement on screen since the last frame), over what is behind them as well, and
+  TAA follows them instead of leaving a ghost. Particles and the sky take the camera's movement.
 - **Contact shadows** (Unreal's Contact Shadow Length): **Directional Light > Contact Shadow Length**
   (metres, 0 = off) sends a short ray toward the sun through the depth buffer from every surface that
   faces it, for the small shadows the shadow map misses (feet on the floor, props on a table). It runs
@@ -865,7 +887,9 @@ Static and moving objects use it for their ambient light: rooms get darker, colo
 neighbours. Rebuild after moving walls or lights.
 
 **Lightmaps** (Unreal's lightmaps from Lightmass): static meshes also get a lightmap texture,
-detailed per surface where the probes are coarse:
+detailed per surface where the probes are coarse. They are directional (Unreal's directional lightmaps):
+each texel also keeps where its light mostly comes from, so normal maps still show their bumps under
+baked light. Lighting built before this keeps working, flat, until you build it again.
 
 ![Lighting Only view after Build Lighting](images/lightmap_lighting_only.jpg)
 *Lighting Only view (Alt+6) after Build Lighting: the sky light, the blue floor's bounce, and the
@@ -878,6 +902,14 @@ dark contact under the statue's feet come from the lightmap.*
   probes there: corners, contact under objects, colour from neighbours; a red carpet bounces red, its
   material's texture taken into account) and how much of the **sun**
   reaches it: the sun's shadows are baked too, so they stay beyond the real-time Shadow Distance.
+- **Point / Spot Light > Mobility: Static** (Unreal's Static lights): Build Lighting bakes its light and shadows into
+  the lightmaps and probes, and once the level is baked it costs nothing at run time. It never moves, and moving
+  objects (characters) get only what the probes saw of it. Before a bake it lights like a Movable one.
+- **Mobility: Stationary** (Unreal's Stationary lights, with shadow masks): it lights every frame (change its colour
+  or brightness in play), but Build Lighting bakes its shadows on lightmapped surfaces, soft by its Source Radius
+  and at any quality (at Medium, where local lights have no shadow tiles, they still show). Moving objects still
+  take a shadow tile when one is free. Up to 4 per level (the bake's shadow mask has 4 channels); move it and
+  build again.
 - **Static Mesh > Static Lighting** (on by default, Unreal's Mobility: Static): untick it for
   objects that move; objects with a Rigid Body, Mover, Vehicle or Transport never get a lightmap.
   Moving objects, skeletal meshes and Instanced Static Meshes use the probes.
@@ -910,6 +942,13 @@ shadows have the same holes, on static and skeletal meshes, for every light);
 *The same panel with an Opaque material (left: a solid shadow) and a Masked one (right: the checker's holes in the shadow too).*
 
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
+
+**Global material parameters** (Unreal's Material Parameter Collection): **Project Settings > Materials > Material
+Parameters** names up to 16 values every material can read, each with a starting value (Wind, Wetness, SnowAmount,
+TimeOfDay). In a Material Graph the **Global Parameter** node (Parameters) gives one by name (a colour, or a number in
+all three channels). Scripts change it for every material at once: `lsd.set_material_parameter("Wetness", 0.8)` (or
+`name, r, g, b[, a]`) or the **Set Global Material Parameter** node; Play starts from the starting values and Stop
+puts them back. Renaming or reordering the list compiles the materials again.
 
 ### Material Graphs
 
@@ -1568,8 +1607,9 @@ import the way the mesh's are (its Normals setting), so a puffed cheek or a rais
 Target** node (on a Character it finds the mesh below it). Shape keys animated in the FBX takes
 (facial animation) play with the clip, blended like the bones; a **Morphs** row with the same name
 overrides the clip. Several targets with the same name (head,
-teeth, brows) move together. Shapes are mixed on the CPU when a weight changes, so animate a few
-faces at a time, not crowds.
+teeth, brows) move together. Shapes are mixed on the GPU (a compute pass into each object's own copy when its
+weights change, like Unreal's GPU morph targets), so whole crowds can animate their faces; up to 256 targets per
+mesh (more mix on the CPU).
 
 ---
 
@@ -1647,7 +1687,8 @@ the particles stay where they were born and the ribbon joins them.
 **Lit** (Renderer, Alpha sprites and ribbons; Niagara's lit sprite material): the particles take the
 level's light instead of showing their colour as it is: the sky and ground ambient, the sun and the
 Point / Spot Lights near them, soft enough that light from behind still shows through. Use it for
-smoke, dust and snow; leave fire and sparks unlit and Additive. Lit particles do not catch shadows yet.
+smoke, dust and snow; leave fire and sparks unlit and Additive. In Play, lit particles in the sun's shadow (under a roof, behind a wall) lose its light; local lights do
+not cast shadows on them.
 
 **Soft Distance** (Renderer; Niagara's soft particles / Unreal's DepthFade): sprites fade out over this many
 metres where they meet a surface, instead of showing a hard line where they cut through the floor or a
@@ -1670,7 +1711,10 @@ Rotation, Over Life and Collision each have a **Use** box (Niagara's module chec
 see the effect without it; its settings stay for when you tick it again. **Bounds** draws the box the
 live particles fill (and its size), to see how far an effect reaches. **Min Quality** on an emitter
 (Niagara's emitter scalability) leaves it out below that Effects Quality: extra embers or mist only
-on stronger PCs. Each stage folds away; **Remove Emitter**
+on stronger PCs. **Sim Target GPU** (Niagara's GPU Compute Sim) runs an emitter on the graphics card: up to a
+million particles (Max Particles), spawned and moved by a compute pass and drawn as sprites straight from it, with
+Floor collision; they are not sorted (Additive looks best) and take no lighting, height fog or World collision. On a
+PC without it the emitter runs on the CPU. Each stage folds away; **Remove Emitter**
 takes the shown one out. In a wide window the stack sits beside the preview. Edits save by themselves
 a moment later (like Details, which shows the same modules as categories), and the preview follows
 them. Drag the system into the viewport to place a **Particle Effect** (Active, Time Scale, Preview in
@@ -1980,6 +2024,8 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
    the root `lsd_editor.exe` first (the build replaces it).
 4. **File > Package Project**. It validates the assets, then writes `Build/<Project Name>/`:
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
+   It also writes `Packages/`: one list per level of the assets it uses (Bitsquid's resource packages); the game
+   loads a level's meshes from it while the level opens, so they do not load in the middle of play.
 5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
 
@@ -2046,6 +2092,12 @@ in the project folder, the splash too).
   read and decoded on a worker thread the first time something needs it, and a few finished ones go
   onto the GPU each frame. Levels open without waiting for their images: a material draws in its
   plain colour for a moment, then its textures appear. Changed texture files reload the same way.
+  It also streams by distance: each object asks for about as many texels as it covers on screen, so a
+  character far away holds a small copy of its 4K maps and gets them sharp again as you walk up (about
+  half a second later). Textures only far objects use go smaller and free their memory. The Quality
+  setting scales it (Low a quarter of the detail .. Epic double). `stat dump` lists the textures on the
+  GPU, how many are streamed down and the texels they hold. When video memory runs short while playing
+  (over 90% of what the system allows), the detail halves until it fits, and comes back when there is room.
 - **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static and skeletal meshes, and each copy of an Instanced Static Mesh, hidden
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`
@@ -2087,7 +2139,7 @@ in the project folder, the splash too).
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
 | Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()`, `lsd.camera_forward()` (where the view looks: shoot along it for a crosshair) (nodes Set Camera View, Is Third Person, Get Camera Location) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
-| Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view, `r.GPUCulling 0` to compare) |
+| Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view or hidden behind nearer objects and picks each copy's LOD, `r.GPUCulling 0` to compare) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |
 | Animation | Foot IK (feet planted on steps and slopes in Play; foot bone names, max step, ankle height) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
@@ -2146,6 +2198,7 @@ Audio and animation
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
+| `lsd.set_material_parameter(name, value)` / `(name, r, g, b[, a])` | A global material parameter (Project Settings > Materials) for every material; false if no such name |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
 | `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |
 | `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"...) under a Content/ folder, by name |

@@ -169,6 +169,32 @@ u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f
     return static_cast<u32>(got);
 }
 
+void pack_morphs(const SkinnedModel& model, Array<u32>& out) {
+    const u32 vertex_count = static_cast<u32>(model.vertices.size());
+    out.clear();
+    out.resize(vertex_count * 2 + static_cast<u32>(model.morph_deltas.size()) * 8);
+    for (u32& word : out) word = 0;
+    for (const MorphDelta& d : model.morph_deltas) {
+        if (d.vertex < vertex_count) ++out[d.vertex * 2 + 1];
+    }
+    u32 next = 0;
+    for (u32 v = 0; v < vertex_count; ++v) {  // counts into first entries, the counts refilled below
+        out[v * 2] = next;
+        next += out[v * 2 + 1];
+        out[v * 2 + 1] = 0;
+    }
+    for (u32 t = 0; t < static_cast<u32>(model.morphs.size()); ++t) {
+        for (u32 i = model.morphs[t].first; i < model.morphs[t].first + model.morphs[t].count; ++i) {
+            const MorphDelta& d = model.morph_deltas[i];
+            if (d.vertex >= vertex_count) continue;
+            u32* e = &out[vertex_count * 2 + (out[d.vertex * 2] + out[d.vertex * 2 + 1]++) * 8];
+            std::memcpy(e, d.offset, 12);
+            e[3] = t;
+            std::memcpy(e + 4, d.normal, 12);
+        }
+    }
+}
+
 void add_morph_normals(SkinnedModel& model, u32 normals, f32 smoothing_angle) {
     if (model.morphs.empty() || normals == 0) return;  // Import: the file's normals stay as they are (none recomputed)
     std::vector<MorphDelta> rebuilt;

@@ -23,6 +23,7 @@
 #include "scalability.h"
 #include "template_levels.h"
 #include "paper2d_core.h"
+#include "pcg_graph.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -192,6 +193,30 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
 }
 
+static void test_static_light_bake() {  // Mobility Static: a point light's direct light ends up in the probes (only when Static)
+    using namespace lsd;
+    editor::BakeScene scene;
+    const Vec3 a{-10, -10, 0}, b{10, -10, 0}, c{10, 10, 0}, d{-10, 10, 0};
+    scene.positions = {a, b, c, a, c, d};
+    scene.albedo = {Vec3{}, Vec3{}};  // a black floor: no bounce to confuse it
+    for (int i = 0; i < 3; ++i) scene.lights.sky[i] = scene.lights.ground[i] = 0.0f;
+    scene.lights.count = 1;
+    scene.lights.lights[0] = rhi::GpuLight{};
+    scene.lights.lights[0].type = 1.0f;
+    scene.lights.lights[0].position[2] = 3.0f;
+    scene.lights.lights[0].range = 10.0f;
+    for (int i = 0; i < 3; ++i) scene.lights.lights[0].color[i] = 10.0f;
+    scene.lo = {-1, -1, 1};
+    scene.hi = {1, 1, 2};
+    scene.spacing = 1.0f;
+    editor::BakedLighting movable, baked;
+    editor::bake_lighting(scene, movable);
+    scene.static_lights = 1;
+    editor::bake_lighting(scene, baked);
+    CHECK(!movable.sh.empty() && !baked.sh.empty() && std::fabs(movable.sh[0]) < 1e-4f && baked.sh[0] > 0.1f);
+    CHECK(baked.sh[3] > 0.0f);  // red L1 along +Z: it comes from above
+}
+
 static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor under a 4 m roof, the sun straight down
     using namespace lsd;
     editor::BakeScene scene;
@@ -238,6 +263,33 @@ static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor unde
         } else {
             lit_sum += baked.lightmap[i];
         }
+    }
+    // Directional: the light comes mostly from above in the open (the sky), so the stored directions point up.
+    CHECK(baked.lightmap_dir.size() == baked.lightmap.size());
+    f64 up = 0.0;
+    for (usize i = 0; i < baked.lightmap.size(); i += 4) {
+        if (baked.lightmap[i] && baked.lightmap[i + 3] >= 128) up += (baked.lightmap_dir[i + 2] / 255.0) * 2.0 - 1.0;
+    }
+    CHECK(covered > shadowed && up / static_cast<f64>(covered - shadowed) > 0.4);
+    {  // a Stationary point light above the roof: its shadow mask is dark in the roof's shadow, about 12 m across
+        editor::BakeScene lamp = scene;
+        lamp.lights.count = 2;
+        lamp.lights.lights[1] = rhi::GpuLight{};
+        lamp.lights.lights[1].type = 1.0f;
+        lamp.lights.lights[1].position[2] = 3.0f;
+        lamp.lights.lights[1].range = 40.0f;
+        lamp.static_lights = 1u << (16 + 1);
+        editor::BakedLighting masked;
+        editor::bake_lighting(lamp, masked);
+        CHECK(masked.mask_count == 1 && masked.shadow_mask.size() == masked.lightmap.size() && std::fabs(masked.mask_lights[0][2] - 3.0f) < 1e-4f);
+        u32 dark = 0, cells = 0;
+        for (usize i = 0; i < masked.lightmap.size() && masked.shadow_mask.size() == masked.lightmap.size(); i += 4) {
+            if (!masked.lightmap[i]) continue;
+            ++cells;
+            dark += masked.shadow_mask[i] < 128 ? 1u : 0u;
+        }
+        const f32 masked_share = cells ? static_cast<f32>(dark) / static_cast<f32>(cells) : 0.0f;
+        CHECK(masked_share > 0.28f && masked_share < 0.44f);  // 12 x 12 of 20 x 20 m
     }
     const f32 share = covered ? static_cast<f32>(shadowed) / static_cast<f32>(covered) : 0.0f;
     CHECK(covered > 1000 && share > 0.02f && share < 0.08f);  // 16 of 400 square metres under the roof
@@ -927,9 +979,68 @@ void test_particle_light() {
     const f32 ambient = 2.0f * (0.1f + 0.4f * 0.5f);
     CHECK(std::fabs(facing.x - (ambient + 2.0f * 4.0f * window / 4.0f)) < 1e-4f);  // wrap 1: 4 pi / pi / 4 m2 times the window, times exposure
     CHECK(std::fabs(away.x - ambient) < 1e-4f && facing.x > away.x);  // from behind: wrap 0
+    s.lights[0].type = 0.0f;  // a sun shining down, the shadowed one: behind a wall only the ambient is left
+    s.lights[0].direction[0] = 0.0f;
+    s.lights[0].direction[2] = -1.0f;
+    s.shadow_info[1] = 0.0f;
+    const Vec3 up_n{0, 0, 1};
+    CHECK(editor::particle_light(s, {0, 0, 0}, up_n, 1.0f).x > editor::particle_light(s, {0, 0, 0}, up_n, 0.0f).x);
+    CHECK(std::fabs(editor::particle_light(s, {0, 0, 0}, up_n, 0.0f).x - 2.0f * 0.5f) < 1e-4f);
+}
+
+// PCG Graphs: a 10 x 10 m box over flat ground (x < 0) and a 45 degree slope (x > 0); the Slope Filter keeps the flat
+// half, the Density Filter about half of that, an exclusion box empties a quarter of the box, the seed repeats a layout.
+static void test_pcg_graph() {
+    using namespace lsd;
+    script::Graph graph(default_allocator());
+    const u32 sample = graph.add("PcgSurface", 0, 0)->id;
+    const u32 slope = graph.add("PcgSlope", 0, 0)->id;
+    const u32 thin = graph.add("PcgDensity", 0, 0)->id;
+    const u32 vary = graph.add("PcgTransform", 0, 0)->id;
+    const u32 spawn = graph.add("PcgSpawn", 0, 0)->id;
+    const u32 rocks = graph.add("PcgSpawn", 0, 0)->id;
+    std::snprintf(graph.find(sample)->values[0], 64, "400");  // per 100 square metres: 400 points in the box
+    CHECK(graph.connect(sample, 0, slope, 0) && graph.connect(slope, 0, vary, 0) && graph.connect(vary, 0, spawn, 0));
+    CHECK(graph.connect(slope, 0, thin, 0) && graph.connect(thin, 0, rocks, 0));
+    CHECK(!graph.connect(sample, 0, spawn, 1));  // points never go into a text input
+    std::snprintf(graph.find(rocks)->values[1], 64, "Cube");
+    editor::PcgInputs in;
+    in.box = scaling(Vec3{10, 10, 10}) * translation(Vec3{0, 0, -0.5f});  // z from -5 to 5
+    in.surface = [](Vec3 top, Vec3 down, f32 reach, Vec3& hit) {  // ground: z = 0 for x < 0, z = x beyond
+        const f32 ground = top.x < 0.0f ? 0.0f : top.x;
+        const f32 t = (top.z - ground) / -down.z;
+        if (t < 0.0f || t > reach) return false;
+        hit = top + down * t;
+        return true;
+    };
+    std::vector<editor::PcgSpawn> out;
+    char error[256];
+    CHECK(editor::run_pcg_graph(graph, in, out, error, sizeof error) && out.size() == 2);
+    if (out.size() == 2) {
+        const usize flat = out[0].points.size(), thinned = out[1].points.size();
+        CHECK(flat > 140 && flat < 260);  // about half of 400 (the slope's half is filtered out)
+        bool on_flat = true, varied = false;
+        for (const editor::PcgPoint& p : out[0].points) {
+            on_flat = on_flat && p.position.x < 0.3f && std::fabs(p.position.z) < 1e-3f;
+            varied = varied || std::fabs(p.scale - 1.0f) > 1e-3f;
+        }
+        CHECK(on_flat && varied);
+        CHECK(thinned > flat / 4 && thinned < flat * 3 / 4);  // Keep 0.5
+        CHECK(std::strcmp(out[1].mesh, "Cube") == 0 && std::strcmp(out[0].mesh, "Sphere") == 0);
+        std::vector<editor::PcgSpawn> again;
+        editor::run_pcg_graph(graph, in, again, error, sizeof error);
+        CHECK(again.size() == 2 && again[0].points.size() == flat && std::fabs(again[0].points[0].position.y - out[0].points[0].position.y) < 1e-6f);
+        in.excluded.push_back(affine_inverse(translation(Vec3{-2.5f, -2.5f, -5.0f}) * scaling(Vec3{5, 5, 10})));  // x, y in -5..0
+        editor::run_pcg_graph(graph, in, again, error, sizeof error);
+        CHECK(again.size() == 2 && again[0].points.size() < flat * 3 / 4 && again[0].points.size() > flat / 4);
+    }
+    const u32 merge = graph.add("PcgMerge", 0, 0)->id, back = graph.add("PcgMerge", 0, 0)->id;  // a loop is an error, not a hang
+    CHECK(graph.connect(merge, 0, back, 0) && graph.connect(back, 0, merge, 0) && graph.connect(merge, 0, spawn, 0));
+    CHECK(!editor::run_pcg_graph(graph, in, out, error, sizeof error) && std::strstr(error, "loop"));
 }
 
 int main() {
+    test_pcg_graph();
     test_paper2d();
     test_templates();
     test_scalability();
@@ -952,6 +1063,7 @@ int main() {
     test_particle_light();
     test_shadow_cells();
     test_landscape_tiles();
+    test_static_light_bake();
     test_push_helpers();
     test_bake_texture_albedo();
     test_post_blend();

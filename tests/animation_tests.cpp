@@ -231,6 +231,25 @@ static void morph_tests(const std::string& data) {
     CHECK(out[1].position[0] == 1.0f && out[1].position[2] == 1.0f && out[0].position[1] == 0.5f);
     anim::apply_morphs(model, [](const char*) { return 0.0f; }, out);
     CHECK(out[1].position[2] == 0.0f && out[0].position[1] == 0.0f);
+    {  // packed for the GPU: cull.hlsl's morph_main run here gives what apply_morphs gives
+        Array<u32> packed(default_allocator());
+        anim::pack_morphs(model, packed);
+        CHECK(packed.size() == 2 * 2 + 2 * 8);
+        const f32 weights[2] = {0.5f, 0.25f};
+        for (u32 v = 0; v < 2; ++v) {
+            f32 p[3];
+            std::memcpy(p, model.vertices[v].position, sizeof p);
+            for (u32 k = 0; k < packed[v * 2 + 1]; ++k) {
+                const u32* e = &packed[2 * 2 + (packed[v * 2] + k) * 8];
+                for (u32 c = 0; c < 3; ++c) {
+                    f32 o;
+                    std::memcpy(&o, &e[c], sizeof o);
+                    p[c] += o * weights[e[3]];
+                }
+            }
+            CHECK(v == 1 ? p[2] == 1.0f && p[0] == 1.0f : p[1] == 0.25f);
+        }
+    }
 
     // A real rig: Blender shape keys arrive with their names and offsets on our vertices.
     u32 found = 0;

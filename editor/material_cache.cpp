@@ -47,7 +47,7 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
             }
             auto* data = new asset::TextureData(default_allocator());
             // Colour maps (BC1 / BC3) and normal maps (BC5) are compressed, once, into DerivedData; masks (ORM) stay RGBA8.
-            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map)) {
+            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map, true)) {
                 delete data;
                 data = nullptr;
             }
@@ -89,6 +89,7 @@ void TextureCache::upload(Entry& e, const asset::TextureData& data) {
     if (data.encoding == asset::TextureEncoding::BC1) format = e.srgb ? rhi::TextureFormat::BC1_sRGB : rhi::TextureFormat::BC1;
     if (data.encoding == asset::TextureEncoding::BC3) format = e.srgb ? rhi::TextureFormat::BC3_sRGB : rhi::TextureFormat::BC3;
     if (data.encoding == asset::TextureEncoding::BC5) format = rhi::TextureFormat::BC5;
+    if (data.encoding == asset::TextureEncoding::RGBA16F) format = rhi::TextureFormat::RGBA16F;  // HDR images: linear, above 1 kept
     const rhi::TextureHandle texture = device_.create_texture(data.width, data.height, data.mip_count, format, mips);
     if (!texture.valid()) return;  // keeps the old one, if any
     if (e.texture.valid()) device_.destroy_texture(e.texture);
@@ -104,12 +105,38 @@ bool TextureCache::load(Entry& e) {
         return false;
     }
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map)) {
+    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map, true)) {
         e.failed = !e.texture.valid();
         return false;
     }
     upload(e, data);
     return e.texture.valid();
+}
+
+u32 TextureCache::stream_size(u32 want) {
+    if (want == kFull) return 0;
+    u32 size = 64;
+    while (size < want && size < 16384) size *= 2;
+    return size;
+}
+
+u32 TextureCache::loaded_size(rhi::TextureHandle texture) const {
+    for (u32 i = 0; i < count_; ++i) {
+        if (entries_[i].texture.value == texture.value && texture.valid()) return entries_[i].requested ? entries_[i].requested : 0xFFFFFFFFu;
+    }
+    return 0;
+}
+
+void TextureCache::stats(u32& textures, u32& reduced, u64& texels) const {
+    textures = reduced = 0;
+    texels = 0;
+    for (u32 i = 0; i < count_; ++i) {
+        const Entry& e = entries_[i];
+        if (!e.texture.valid()) continue;
+        ++textures;
+        reduced += e.complete ? 0u : 1u;
+        texels += e.loaded_texels;
+    }
 }
 
 void TextureCache::queue(u32 index) {
@@ -119,6 +146,10 @@ void TextureCache::queue(u32 index) {
         e.failed = true;
         return;
     }
+    // Streaming by distance: only as much as its uses need now (a smaller copy, cached in DerivedData like the rest).
+    const u32 size = stream ? stream_size(e.want) : 0;
+    if (size && (!job.max_size || size < job.max_size)) job.max_size = size;
+    e.requested = job.max_size;
     e.pending = true;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -138,9 +169,33 @@ void TextureCache::update(u32 budget) {
     for (const Finished& f : ready) {
         Entry& e = entries_[f.entry];
         e.pending = false;
-        if (f.data) upload(e, *f.data);
-        else e.failed = !e.texture.valid();
+        if (f.data) {
+            e.complete = !e.requested || (f.data->width < e.requested && f.data->height < e.requested);  // smaller than the cap: all of it
+            e.loaded_texels = static_cast<u64>(f.data->width) * f.data->height;
+            upload(e, *f.data);
+        } else {
+            e.failed = !e.texture.valid();
+        }
         delete f.data;
+    }
+    // About twice a second: a texture asked for bigger than it was loaded comes in sharper; one drawn but only far away
+    // (a quarter of its size or less) goes smaller and frees the memory. Ones not drawn meanwhile keep what they have.
+    if (!stream || ++frame_ % 30 != 0) return;
+    for (u32 i = 0; i < count_; ++i) {
+        Entry& e = entries_[i];
+        if (e.pending || e.failed || !e.texture.valid() || !e.want) {
+            e.want = 0;
+            continue;
+        }
+        const u32 target = stream_size(e.want);
+        const bool sharper = !e.complete && (target == 0 ? e.requested != 0 : e.requested && target > e.requested);
+        const bool smaller = target && (e.requested == 0 || target * 4 <= e.requested);
+        e.want = 0;
+        if (sharper || smaller) {
+            e.want = target ? target : kFull;  // what queue() loads now
+            queue(i);
+            e.want = 0;
+        }
     }
 }
 
@@ -150,13 +205,18 @@ u32 TextureCache::streaming() const {
     return n;
 }
 
-rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_map) {
+rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_map, u32 want) {
     if (!guid || !guid[0]) return {};
+    if (want != kFull) want = static_cast<u32>(static_cast<f32>(want) * detail_scale_ * memory_scale_);
     const u32 use = srgb ? 1u : normal_map ? 2u : 0u;
     const i64 slot = index_.find(guid, use, [&](u32 i) {
         return entries_[i].srgb == srgb && entries_[i].normal_map == normal_map && std::strcmp(entries_[i].guid, guid) == 0;
     });
-    if (slot >= 0) return entries_[slot].texture;
+    if (slot >= 0) {
+        Entry& seen = entries_[slot];
+        seen.want = seen.want > want ? seen.want : want;  // kFull is the largest
+        return seen.texture;
+    }
     if (count_ == sizeof entries_ / sizeof entries_[0]) return {};
     index_.add(guid, use, count_);
     Entry& e = entries_[count_++];
@@ -164,6 +224,7 @@ rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_ma
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);
     e.srgb = srgb;
     e.normal_map = normal_map && !srgb;
+    e.want = want;
     if (stream) queue(count_ - 1);  // drawn without it for a few frames
     else load(e);
     return e.texture;
@@ -222,6 +283,10 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
     if (shader_asset) {  // a material written as code
         std::ifstream f(path, std::ios::binary);
         const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (text.find("post_main") != std::string::npos && text.find("material_main") == std::string::npos) {  // a post-process material: not for surfaces
+            e.failed = true;
+            return;
+        }
         ok = !text.empty() && script::parse_shader_source(text.c_str(), code, error, sizeof error);
         e.blend_mode = code.blend_mode;
     } else {
@@ -312,7 +377,7 @@ void MaterialCache::load(Entry& e) {
     e.failed = !asset::load_data_asset(path, e.material);
 }
 
-void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
+void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
     const Entry* e = guid && guid[0] ? find(guid) : nullptr;
     if (!e || e->failed) return;
     if (e->shader.valid() || e->graph_instance) {
@@ -323,7 +388,7 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
         draw.material_param_count = e->param_count;
         rhi::TextureHandle* slots[4] = {&draw.base_color_texture, &draw.normal_texture, &draw.orm_texture, &draw.emissive_texture};
         for (u32 i = 0; i < graph->texture_count; ++i) {
-            *slots[i] = graph->texture_guids[i][0] ? textures_.get(graph->texture_guids[i], graph->texture_srgb[i]) : rhi::TextureHandle{};
+            *slots[i] = graph->texture_guids[i][0] ? textures_.get(graph->texture_guids[i], graph->texture_srgb[i], false, want) : rhi::TextureHandle{};
         }
         draw.blend = graph->blend_mode == 2 ? 1u : graph->blend_mode == 3 ? 2u : 0u;
         draw.alpha_cutoff = graph->blend_mode == 1 ? 0.333f : 0.0f;  // shortcut: graphs use Unreal's default clip; add a pin if it needs changing
@@ -339,14 +404,18 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw) {
     draw.emissive[0] = m.emissive.r * m.emissive_strength;
     draw.emissive[1] = m.emissive.g * m.emissive_strength;
     draw.emissive[2] = m.emissive.b * m.emissive_strength;
-    draw.base_color_texture = textures_.get(m.base_color_texture, true);
-    draw.normal_texture = textures_.get(m.normal_texture, false, true);
-    draw.orm_texture = textures_.get(m.orm_texture, false);
-    draw.emissive_texture = textures_.get(m.emissive_texture, true);
+    draw.base_color_texture = textures_.get(m.base_color_texture, true, false, want);
+    draw.normal_texture = textures_.get(m.normal_texture, false, true, want);
+    draw.orm_texture = textures_.get(m.orm_texture, false, false, want);
+    draw.emissive_texture = textures_.get(m.emissive_texture, true, false, want);
     // Blend Mode: Opaque, Masked (cut-outs), Translucent, Additive; Opacity scales the alpha.
     if (m.blend_mode != 0) draw.color[3] *= m.opacity;
     draw.blend = m.blend_mode == 2 ? 1u : m.blend_mode == 3 ? 2u : 0u;
     draw.alpha_cutoff = m.blend_mode == 1 ? (m.opacity_mask_clip > 0.0f ? m.opacity_mask_clip : 0.001f) : 0.0f;
+}
+
+void MaterialCache::reload_all() {
+    for (u32 i = 0; i < count_; ++i) load(entries_[i]);
 }
 
 void MaterialCache::check_files() {

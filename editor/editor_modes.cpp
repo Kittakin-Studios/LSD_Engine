@@ -3,6 +3,9 @@
 #include "landscape_core.h"
 #include "lsd/world/spline.h"
 #include "mesh_edit.h"
+#include "pcg_graph.h"
+#include "lsd/foundation/log.h"
+#include "lsd/script/graph.h"
 #include "landscape_paint.h"
 #include "tips.h"
 
@@ -855,12 +858,28 @@ void draw_landscape(EditorState& s) {
 // ---- PCG ----
 
 std::unordered_map<std::string, u64> g_pcg_hash;  // volume name -> rules and box it was built from
+const asset::AssetRegistry* g_pcg_registry = nullptr;  // where PCG Graphs are found (set by update_pcg)
+
+// A PCG Graph's file, or "" (unknown GUID, no registry).
+std::string pcg_graph_path(const char* guid) {
+    asset::Guid id;
+    const asset::AssetRecord* r = g_pcg_registry && guid[0] && asset::parse_guid(guid, id) ? g_pcg_registry->find(id) : nullptr;
+    if (!r) return {};
+    char path[300];
+    g_pcg_registry->source_path(*r, path, sizeof path);
+    return path;
+}
 
 u64 pcg_hash(const world::World& w, Entity e) {
     world::PcgVolume rules = *w.get<world::PcgVolume>(e);
     rules.output[0] = '\0';
     const Mat4 m = w.world_matrix(e);
     u64 h = fnv(m.m, sizeof m.m, fnv(&rules, sizeof rules));
+    if (rules.graph[0]) {  // saving the graph scatters again
+        std::error_code ignored;
+        const auto time = std::filesystem::last_write_time(pcg_graph_path(rules.graph), ignored).time_since_epoch().count();
+        h = fnv(&time, sizeof time, h);
+    }
     if (const auto* spline = w.get<world::Spline>(e)) h = fnv(spline, sizeof *spline, h);  // editing the curve scatters again
     const reflect::TypeInfo& type = reflect::type_of<world::PcgVolume>();
     for (u32 i = 0; i < w.count(type); ++i) {  // moving an exclusion box rebuilds the volumes around it
@@ -1582,8 +1601,57 @@ void update_landscapes(world::World& w, MeshCache& meshes) {
     }
 }
 
+// A scattered point as an instance under `to_out` (the output object's world-to-local): turned around Z, tilted onto
+// its normal when it aligns, sized.
+world::MeshInstance pcg_instance(const PcgPoint& point, const Mat4& to_out) {
+    world::MeshInstance in;
+    in.position = transform_point(to_out, point.position);
+    in.rotation = {0, 0, point.yaw};
+    if (point.align) {  // X then Y tilt the up axis onto the normal (seen before the turn)
+        const Vec3 n = point.normal;
+        const f32 c = std::cos(-point.yaw * kPi / 180.0f), sn = std::sin(-point.yaw * kPi / 180.0f);
+        const Vec3 local{n.x * c - n.y * sn, n.x * sn + n.y * c, n.z};
+        in.rotation.x = -std::asin(local.y < -1.0f ? -1.0f : local.y > 1.0f ? 1.0f : local.y) * 180.0f / kPi;
+        in.rotation.y = std::atan2(local.x, local.z) * 180.0f / kPi;
+    }
+    in.scale = {point.scale, point.scale, point.scale};
+    return in;
+}
+
+// Runs the volume's PCG Graph into `spawns`; false when it has none (or the file cannot be read).
+bool run_volume_graph(EditorState& s, Entity volume, const char* graph_guid, std::vector<PcgSpawn>& spawns) {
+    world::World& w = *s.world;
+    const std::string path = pcg_graph_path(graph_guid);
+    script::Graph graph(default_allocator());
+    if (path.empty() || !script::load_graph_file(graph, path.c_str())) return false;
+    PcgInputs in;
+    in.box = w.world_matrix(volume);
+    Vec3 curve[32], tangents[32];
+    in.curve_points = world::spline_world_curve(w, volume, curve, tangents, in.closed);
+    in.curve = curve;
+    in.tangents = tangents;
+    in.surface = [&s](Vec3 top, Vec3 down, f32 reach, Vec3& at) {
+        f32 t;
+        if (!surface_ray(s, top, down, t) || t > reach) return false;
+        at = top + down * t;
+        return true;
+    };
+    const reflect::TypeInfo& type = reflect::type_of<world::PcgVolume>();
+    for (u32 i = 0; i < w.count(type); ++i) {
+        if (w.owner(type, i) != volume && static_cast<const world::PcgVolume*>(w.at(type, i))->exclude) in.excluded.push_back(affine_inverse(w.world_matrix(w.owner(type, i))));
+    }
+    in.capacity = world::InstancedStaticMesh{}.instances.capacity();
+    char error[256];
+    if (!run_pcg_graph(graph, in, spawns, error, sizeof error)) {
+        LSD_LOG_WARN("editor", "PCG Graph %s: %s", path.c_str(), error);
+        std::snprintf(s.status, sizeof s.status, "PCG Graph: %s", error);
+    }
+    return true;
+}
+
 void generate_pcg(EditorState& s, Entity volume) {
     world::World& w = *s.world;
+    g_pcg_registry = s.registry;
     auto* v = w.get<world::PcgVolume>(volume);
     if (!v) return;
     Entity out = v->output[0] ? find_named(w, v->output) : Entity{};
@@ -1596,6 +1664,10 @@ void generate_pcg(EditorState& s, Entity volume) {
         std::snprintf(v->output, sizeof v->output, "%s", name);
     }
     const world::PcgVolume rules = *v;
+    // A PCG Graph: its Spawn Mesh nodes are the meshes (the output, then Variant N), each with its own points.
+    std::vector<PcgSpawn> spawns;
+    const bool graphed = rules.graph[0] && !rules.exclude && run_volume_graph(s, volume, rules.graph, spawns);
+    const u32 variants = graphed ? static_cast<u32>(std::min<usize>(spawns.empty() ? 0 : spawns.size() - 1, rules.more_meshes.capacity())) : rules.more_meshes.count;
     // One Instanced Static Mesh per mesh: the output for the main one, its "Variant N" children for More Meshes.
     std::vector<Entity> outputs{out};
     for (u32 k = 1; k <= world::PcgVolume{}.more_meshes.capacity(); ++k) {
@@ -1606,21 +1678,38 @@ void generate_pcg(EditorState& s, Entity volume) {
             const Entity c = w.entity_at_slot(slot);
             if (c.valid() && w.parent(c) == out && std::strcmp(w.name(c), name) == 0) child = c;
         }
-        if (!child.valid() && k <= rules.more_meshes.count && !rules.exclude) {
+        if (!child.valid() && k <= variants && !rules.exclude) {
             child = w.create(name);
             w.set_parent(child, out, false);
         }
         if (child.valid()) {
-            if (k > rules.more_meshes.count || rules.exclude) w.add<world::InstancedStaticMesh>(child)->instances.count = 0;  // no longer used
+            if (k > variants || rules.exclude) w.add<world::InstancedStaticMesh>(child)->instances.count = 0;  // no longer used
             else outputs.push_back(child);
         }
     }
     for (u32 k = 0; k < outputs.size(); ++k) {
         auto* target = w.add<world::InstancedStaticMesh>(outputs[k]);
-        std::snprintf(target->mesh, sizeof target->mesh, "%s", k ? rules.more_meshes[k - 1].mesh : rules.mesh);
-        std::snprintf(target->material, sizeof target->material, "%s", k ? rules.more_meshes[k - 1].material : rules.material);
-        target->color = k ? rules.more_meshes[k - 1].color : rules.color;
+        if (graphed && k < spawns.size()) {
+            std::snprintf(target->mesh, sizeof target->mesh, "%s", spawns[k].mesh);
+            std::snprintf(target->material, sizeof target->material, "%s", spawns[k].material);
+            target->color = spawns[k].color;
+        } else if (!graphed) {
+            std::snprintf(target->mesh, sizeof target->mesh, "%s", k ? rules.more_meshes[k - 1].mesh : rules.mesh);
+            std::snprintf(target->material, sizeof target->material, "%s", k ? rules.more_meshes[k - 1].material : rules.material);
+            target->color = k ? rules.more_meshes[k - 1].color : rules.color;
+        }
         target->instances.count = 0;
+    }
+    if (graphed) {  // each Spawn Mesh's points into its mesh's instances
+        for (u32 k = 0; k < outputs.size() && k < spawns.size(); ++k) {
+            auto* target = w.get<world::InstancedStaticMesh>(outputs[k]);
+            const Mat4 to_out = affine_inverse(w.world_matrix(outputs[k]));
+            for (const PcgPoint& p : spawns[k].points) {
+                if (target->instances.count < target->instances.capacity()) target->instances.push_back(pcg_instance(p, to_out));
+            }
+        }
+        g_pcg_hash[w.name(volume)] = pcg_hash(w, volume);
+        return;
     }
     if (rules.exclude) {  // an exclusion box scatters nothing
         g_pcg_hash[w.name(volume)] = pcg_hash(w, volume);
@@ -1679,18 +1768,13 @@ void generate_pcg(EditorState& s, Entity volume) {
             if (n.z < 0.0f) n = n * -1.0f;
         }
         if (std::acos(n.z > 1.0f ? 1.0f : n.z) * 180.0f / kPi > rules.max_slope) continue;
-        world::MeshInstance in;
-        in.position = transform_point(to_out, p);
-        const f32 turn = rules.random_yaw ? yaw : 0.0f;
-        in.rotation = {0, 0, turn};
-        if (rules.align_to_surface) {  // X then Y tilt the up axis onto the normal (seen before the turn)
-            const f32 c = std::cos(-turn * kPi / 180.0f), sn = std::sin(-turn * kPi / 180.0f);
-            const Vec3 local{n.x * c - n.y * sn, n.x * sn + n.y * c, n.z};
-            in.rotation.x = -std::asin(local.y < -1.0f ? -1.0f : local.y > 1.0f ? 1.0f : local.y) * 180.0f / kPi;
-            in.rotation.y = std::atan2(local.x, local.z) * 180.0f / kPi;
-        }
-        const f32 scale = rules.scale_min + (rules.scale_max - rules.scale_min) * k;
-        in.scale = {scale, scale, scale};
+        PcgPoint point;
+        point.position = p;
+        point.normal = n;
+        point.yaw = rules.random_yaw ? yaw : 0.0f;
+        point.align = rules.align_to_surface;
+        point.scale = rules.scale_min + (rules.scale_max - rules.scale_min) * k;
+        world::MeshInstance in = pcg_instance(point, to_out);
         u32 pick = 0;  // which mesh (drawn only with More Meshes, so a single-mesh layout stays as it was)
         if (rules.more_meshes.count && total_weight > 0.0f) {
             f32 r = unit(rng) * total_weight - (rules.weight > 0.0f ? rules.weight : 0.0f);
@@ -1716,6 +1800,7 @@ void generate_pcg(EditorState& s, Entity volume) {
 
 void update_pcg(EditorState& s) {
     if (s.playing || ImGui::IsMouseDown(ImGuiMouseButton_Left)) return;  // after the drag, not during it
+    g_pcg_registry = s.registry;
     const reflect::TypeInfo& type = reflect::type_of<world::PcgVolume>();
     for (u32 i = 0; i < s.world->count(type); ++i) {
         const Entity e = s.world->owner(type, i);

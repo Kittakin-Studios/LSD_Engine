@@ -10,6 +10,13 @@
 namespace lsd::script {
 
 namespace {
+char g_global_names[kMaxGlobalParams][32] = {};
+f32 g_global_values[kMaxGlobalParams][4] = {};
+u32 g_global_count = 0;
+}  // namespace
+
+
+namespace {
 
 // A number the way both shader languages read it as a float ("1" -> "1.0").
 void number(std::string& out, f32 value) {
@@ -150,6 +157,10 @@ struct Compiler {
         if (texture && !texture_slot(*node, slot)) return false;
         const bool scalar_param = std::strcmp(def->id, "MatScalarParam") == 0, vector_param = std::strcmp(def->id, "MatVectorParam") == 0;
         if ((scalar_param || vector_param) && !param_slot(*node, vector_param, slot)) return false;
+        if (std::strcmp(def->id, "MatGlobalParam") == 0) {  // its place in Project Settings > Material Parameters
+            for (slot = 0; slot < g_global_count && std::strcmp(g_global_names[slot], node->values[0]) != 0; ++slot) {}
+            if (slot == g_global_count) return fail("Global Parameter: no Material Parameter with that name (Project Settings > Materials)", node);
+        }
         std::string inputs[kMaxNodeInputs];
         for (u32 i = 0; i < def->input_count && !scalar_param && !vector_param; ++i) {  // parameters: the default is data, not code
             if (def->inputs[i].type == PinType::String) continue;  // settings, not values
@@ -193,6 +204,23 @@ struct Compiler {
 };
 
 } // namespace
+
+void set_global_params(const char* const* names, const f32 (*defaults)[4], u32 count) {
+    g_global_count = count < kMaxGlobalParams ? count : kMaxGlobalParams;
+    for (u32 i = 0; i < kMaxGlobalParams; ++i) {
+        std::snprintf(g_global_names[i], sizeof g_global_names[i], "%s", i < g_global_count ? names[i] : "");
+        for (u32 c = 0; c < 4; ++c) g_global_values[i][c] = i < g_global_count ? defaults[i][c] : 0.0f;
+    }
+}
+const f32* global_param_values() { return &g_global_values[0][0]; }
+bool set_global_param(const char* name, const f32 value[4]) {
+    for (u32 i = 0; i < g_global_count; ++i) {
+        if (std::strcmp(g_global_names[i], name) != 0) continue;
+        for (u32 c = 0; c < 4; ++c) g_global_values[i][c] = value[c];
+        return true;
+    }
+    return false;
+}
 
 bool parse_shader_source(const char* text, MaterialCode& out, char* error, usize error_capacity) {
     out.code.clear();

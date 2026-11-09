@@ -161,6 +161,14 @@ struct GameplayTagDef {
     LSD_PROPERTY(Edit, Tooltip = "What the tag means (shown when picking it)") char comment[96] = "";
 };
 
+// A global material parameter (Unreal's Material Parameter Collection entry): its name and starting value.
+LSD_STRUCT()
+struct MaterialParameterDef {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "What Global Parameter nodes and lsd.set_material_parameter call it (Wind, Wetness, SnowAmount...)") char name[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Its value until a script sets it (a number: its R)") LinearColor value = {1.0f, 1.0f, 1.0f, 1.0f};
+};
+
 // Project-wide settings shared by the team, saved to Config/project.json (Unreal's Project Settings).
 LSD_STRUCT()
 struct ProjectSettings {
@@ -212,6 +220,9 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Voice", Tooltip = "Always transmitting instead of push-to-talk") bool open_mic = false;
     LSD_PROPERTY(Edit, Category = "Gameplay Tags", Tooltip = "The tags the Details tag picker offers (dotted: Damage.Fire is under Damage)")
     List<GameplayTagDef, 128> gameplay_tags;
+    LSD_PROPERTY(Edit, Category = "Materials",
+                 Tooltip = "Global material parameters (Unreal's Material Parameter Collection): values every material can read (the Global Parameter node) and scripts set (lsd.set_material_parameter): wind, wetness, snow, time of day; up to 16")
+    List<MaterialParameterDef, 16> material_parameters;
 };
 
 } // namespace lsd::editor

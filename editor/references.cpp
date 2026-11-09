@@ -11,7 +11,7 @@ namespace {
 bool is_text(asset::AssetType type) {
     using asset::AssetType;
     return type == AssetType::Level || type == AssetType::Data || type == AssetType::Prefab || type == AssetType::Graph || type == AssetType::Cue ||
-           type == AssetType::MaterialGraph || type == AssetType::BehaviorTree;
+           type == AssetType::MaterialGraph || type == AssetType::BehaviorTree || type == AssetType::PcgGraph;
 }
 
 bool read(const std::string& path, std::string& out) {

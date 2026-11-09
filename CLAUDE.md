@@ -4,7 +4,7 @@ Read this first. It is the short, current summary of how LSD_Engine is built and
 The user-facing documentation is in `docs/`: [MANUAL.md](docs/MANUAL.md) (how to use the engine),
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works), [EXAMPLES.md](docs/EXAMPLES.md) (worked
 examples), [Examples/Examples.md](docs/Examples/Examples.md) (first-timer tutorial: input actions, health / stamina HUD,
-interact; its scripts were run for real), [Multiplayer.md](docs/Multiplayer.md) (playtests: join codes, Tailscale), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
+interact; its scripts were run for real), [Multiplayer.md](docs/Multiplayer.md) (playtests: join codes, Tailscale), [GRAPHICS.md](docs/GRAPHICS.md) (step by step to Epic graphics), [CODING.md](docs/CODING.md) (C / C++ gameplay and every command), [BACKLOG.md](docs/BACKLOG.md) (every feature by milestone, ticked when done).
 `docs/` is also the developer's Obsidian vault (settings in the gitignored `docs/.obsidian/`): keep links as
 relative Markdown links, not `[[wikilinks]]`. Pictures of the editor and its panels are in `docs/images/` (JPEG, captured from the editor with `-rhi=opengl -remote`,
 the `screenshot` console command and `ui.Click`, in the default layout); retake one when its panel changes.

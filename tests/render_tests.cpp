@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -97,6 +98,39 @@ static void test_culling() {
     CHECK(!at(150, 0, 0));    // past the far plane
     CHECK(at(10, 9.0f, 0, 4.0f));  // outside by its centre, but a big box reaching into the view
     CHECK(at(0.2f, 0, 0));    // right at the camera, partly in front of the near plane
+    {  // the cull pass's constants and its LOD pick (as MeshCache::pick_lod): smaller on screen, a simpler LOD
+        rhi::MeshDraw draw;
+        std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+        draw.index_count = 36;
+        draw.instance_count = 600;
+        for (int k = 0; k < 3; ++k) {
+            draw.local_bounds_min[k] = -0.5f;
+            draw.local_bounds_max[k] = 0.5f;
+        }
+        draw.lod_indices[0] = rhi::BufferHandle::make(1, 0);
+        draw.lod_index_counts[0] = 18;
+        draw.lod_screen_size[0] = 0.1f;
+        draw.lod_indices[1] = rhi::BufferHandle::make(2, 0);
+        draw.lod_index_counts[1] = 9;
+        draw.lod_screen_size[1] = 0.02f;
+        draw.occlusion_cull = true;
+        rhi::CullConstants c;
+        const u32 hiz[2] = {960, 540};
+        rhi::cull_constants(draw, 3, nullptr, hiz, 0, c);  // no Hi-Z: no occlusion test
+        CHECK(c.info[0] == 600 && c.info[1] == 3 && c.info[2] == (3u << 1) && c.index_counts[1] == 18 && c.index_counts[2] == 9 && c.index_counts[3] == 0);
+        rhi::cull_constants(draw, 3, view_proj.m, hiz, 10, c);
+        CHECK((c.info[2] & 1u) && c.box_min[3] == 960.0f && c.camera[3] == 10.0f && c.hiz_view_proj[3][2] == view_proj.at(3, 2));
+        auto lod_at = [&](f32 x) {
+            const f32 rows[12] = {1, 0, 0, x, 0, 1, 0, 0, 0, 0, 1, 0};
+            return rhi::instance_lod(c, rows);
+        };
+        CHECK(lod_at(3) == 0);    // radius 0.87 at 3 m: 0.29
+        CHECK(lod_at(20) == 1);   // 0.043
+        CHECK(lod_at(80) == 2);   // 0.011
+        draw.lod_distance_scale = 10.0f;  // View Distance: things count as 10 times nearer
+        rhi::cull_constants(draw, 3, nullptr, hiz, 0, c);
+        CHECK(lod_at(20) == 0);
+    }
 }
 
 // Occlusion: a wall 10 m ahead (4 x 4 m) hides a small box behind it; boxes beside it, in front of it,
@@ -165,6 +199,40 @@ static void test_reflection() {
     render::reflection_mips(flat.data(), levels);
     CHECK(levels.size() == render::kReflectionMips - 1 && levels.back().size() == 16u * 16u * 4u);
     CHECK(levels[0][0] >= 127 && levels[0][0] <= 129 && levels.back()[5] >= 127 && levels.back()[5] <= 129);  // a flat colour stays flat
+    {  // an HDRI: sky 1.0 above the horizon, ground 0.25 below, into tile 2 at twice the brightness
+        std::vector<u16> hdri(16 * 8 * 4);
+        for (u32 y = 0; y < 8; ++y)
+            for (u32 x = 0; x < 16; ++x)
+                for (u32 c = 0; c < 4; ++c) hdri[(y * 16 + x) * 4 + c] = y < 4 ? 0x3C00 : 0x3400;  // half 1.0 / 0.25
+        std::fill(atlas.begin(), atlas.end(), u8{0});
+        Vec3 averages[3];
+        render::hdri_to_tile(hdri.data(), 16, 8, 2.0f, 2, atlas.data(), averages);
+        auto tile2 = [&](f32 u, f32 v) {  // column 0, row 1
+            const u32 x = static_cast<u32>(u * render::kReflectionTileW), y = render::kReflectionTileH + static_cast<u32>(v * render::kReflectionTileH);
+            return atlas[(static_cast<usize>(y) * render::kReflectionAtlas + x) * 4];
+        };
+        CHECK(tile2(0.3f, 0.1f) >= 207 && tile2(0.3f, 0.1f) <= 209);  // 2.0 stored like a capture: sqrt(2 / 3)
+        CHECK(tile2(0.9f, 0.9f) >= 146 && tile2(0.9f, 0.9f) <= 148);  // 0.5
+        CHECK(atlas[0] == 0);                                         // tile 0 untouched
+        CHECK(std::fabs(averages[0].x - 1.0f) < 1e-3f && std::fabs(averages[1].y - 1.0f) < 1e-3f && std::fabs(averages[2].z - 0.25f) < 1e-3f);
+    }
+    {  // the atmosphere: a blue noon overhead, a sunset redder toward the sun than away from it, a dark night
+        Vec3 noon[3], sunset[3], night[3];
+        render::atmosphere_to_tile({0.0f, 0.0f, 1.0f}, 1.0f, 0, atlas.data(), noon);
+        auto lum = [](Vec3 c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; };
+        CHECK(noon[0].z > noon[0].y && noon[0].y > noon[0].x);
+        CHECK(lum(noon[0]) > 0.08f && lum(noon[0]) < 0.32f);  // about the old fitted zenith (0.16)
+        CHECK(lum(noon[1]) > lum(noon[0]));                    // a paler, brighter horizon
+        render::atmosphere_to_tile({1.0f, 0.0f, 0.03f}, 1.0f, 1, atlas.data(), sunset);
+        auto tile1 = [&](f32 u, f32 v, int c) {  // column 1, row 0
+            const u32 x = render::kReflectionTileW + static_cast<u32>(u * render::kReflectionTileW), y = static_cast<u32>(v * render::kReflectionTileH);
+            return atlas[(static_cast<usize>(y) * render::kReflectionAtlas + x) * 4 + static_cast<usize>(c)];
+        };
+        CHECK(tile1(0.5f, 0.47f, 0) > tile1(0.5f, 0.47f, 2));  // toward the sun (+X), just above the horizon: red over blue
+        CHECK(tile1(0.5f, 0.47f, 0) > tile1(0.0f, 0.47f, 0));  // brighter red than away from it
+        render::atmosphere_to_tile({0.0f, 0.0f, -1.0f}, 1.0f, 2, atlas.data(), night);
+        CHECK(lum(night[0]) < 0.02f);
+    }
 }
 
 int main() {

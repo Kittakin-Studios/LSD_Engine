@@ -6,6 +6,8 @@
 #include "lsd/rhi/rhi.h"
 #include "lsd/world/world.h"
 
+namespace lsd::asset { class AssetRegistry; }
+
 namespace lsd::editor {
 
 struct BakedLighting;
@@ -27,7 +29,9 @@ void set_shadow_atlas_size(u32 size);
 // The level's baked light probes (Build Lighting), used by world_lights; nullptr: none.
 void set_baked_lighting(const BakedLighting* lighting);
 // Just the light list, sky and ground (what Build Lighting bakes with).
-rhi::LightSetup level_lights(const world::World& world, const LightView& view);
+// `static_lights` (optional): a bit per light index set for the Static ones (Build Lighting bakes their direct light),
+// and bit 16 + index for the Stationary ones (it bakes their shadow masks).
+rhi::LightSetup level_lights(const world::World& world, const LightView& view, u32* static_lights = nullptr);
 // Lights, shadows, and the Height Fog / Post Process Volume the camera sees.
 rhi::LightSetup world_lights(const world::World& world, const LightView& view, bool skip_hidden);
 // The local shadow atlas as 8 x 8 cells for Shadow Resolution: a tile is an aligned square 1 (Low), 2 (Medium,
@@ -41,9 +45,24 @@ struct ShadowCells {
 // `normal` (towards the camera): the sky / ground ambient plus each light's diffuse, wrapped so light from behind still
 // shows through smoke, times exposure (the same scale the lit meshes write).
 // shortcut: no shadows or baked probes; per vertex on the CPU, fine for hundreds of sprites, a GPU path for thousands
-Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal);
+// `sun_visible`: how much of the shadowed sun (LightSetup::shadow_info[1]) reaches it, 0..1 (lit particles in Play ray-test it).
+Vec3 particle_light(const rhi::LightSetup& lights, Vec3 position, Vec3 normal, f32 sun_visible = 1.0f);
+// The light function of light `index` in the last world_lights: its texture GUID, repeats per unit of tangent and
+// scroll per second (u, v); false when it has none.
+bool light_function_of(u32 index, const char*& guid, f32& tiling, f32 scroll[2]);
+// Where Point / Spot Lights' IES profiles are looked up (their .ies files, read once each).
+void set_light_profile_registry(const asset::AssetRegistry* registry);
 // The reflection captures in the atlas now (position xyz, radius w), in tile order; world_lights hands them on.
 void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count);  // boxes: half size, fade (w 0 = sphere)
+// The Sky's environment, its HDRI or its atmosphere (`on` false: none): its tile in the reflection atlas, which the
+// sky pass draws and reflections outside every capture sample instead of the sky gradient, and its zenith / horizon /
+// ground averages (hdri_to_tile, atmosphere_to_tile), which the ambient takes instead of the gradient's colours.
+void set_sky_hdri(bool on, u32 tile, const Vec3 averages[3]);
+// The level's Sky drawn by its atmosphere (Atmosphere ticked): true, and `sun` toward the sun (straight up without a
+// Directional Light).
+bool sky_atmosphere(const world::World& w, bool skip_hidden, Vec3& sun);
+// The level's Sky's HDRI texture GUID ("" when none) and its Brightness.
+const char* sky_hdri(const world::World& w, bool skip_hidden, f32& brightness);
 // Graphics quality (0 Low .. 3 Epic): Low has no shadows, Medium only the sun's and nearer, Epic
 // casts them further.
 void set_shadow_quality(u32 quality);

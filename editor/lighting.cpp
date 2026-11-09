@@ -3,7 +3,15 @@
 
 #include "light_bake.h"
 
+#include "lsd/asset/asset_registry.h"
+#include "lsd/asset/light_profile.h"
+
 #include <algorithm>
+#include <fstream>
+#include "lsd/script/material_graph.h"
+
+#include <sstream>
+#include <string>
 #include <cmath>
 
 namespace lsd::editor {
@@ -139,7 +147,7 @@ void add_atmosphere(const world::World& w, Vec3 eye, bool skip_hidden, rhi::Ligh
     s.tint[2] = best->tint.b;
 }
 
-rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden);
+rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden, bool with_static = true, u32* static_lights = nullptr);
 
 u32 g_quality = 2;
 u32 g_atlas_size = 4096;
@@ -172,7 +180,7 @@ void ShadowCells::give(f32 x, f32 y, u32 side) {
     }
 }
 
-Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
+Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal, f32 sun_visible) {
     const f32 up = normal.z * 0.5f + 0.5f;
     Vec3 light{s.ground[0] + (s.sky[0] - s.ground[0]) * up, s.ground[1] + (s.sky[1] - s.ground[1]) * up, s.ground[2] + (s.sky[2] - s.ground[2]) * up};
     for (u32 i = 0; i < s.count && i < rhi::kMaxLights; ++i) {
@@ -193,6 +201,7 @@ Vec3 particle_light(const rhi::LightSetup& s, Vec3 position, Vec3 normal) {
             if (L.type > 2.5f) atten *= std::clamp(cos_to, 0.0f, 1.0f);  // rect / disc: in front only
         }
         const f32 wrap = dot(normal, l) * 0.5f + 0.5f;  // half-Lambert: a sprite stands for a volume, not a card
+        if (static_cast<f32>(i) == s.shadow_info[1]) atten *= sun_visible;  // the shadowed sun, behind a wall or not
         const f32 k = wrap * atten / kPi;
         light = light + Vec3{L.color[0], L.color[1], L.color[2]} * k;
     }
@@ -205,14 +214,99 @@ void set_post_quality(u32 quality) { g_post_quality = quality; }
 const BakedLighting* g_baked = nullptr;
 u32 shadow_atlas_size() { return g_atlas_size; }
 void set_baked_lighting(const BakedLighting* lighting) { g_baked = lighting; }
-rhi::LightSetup level_lights(const world::World& w, const LightView& view) { return lights_only(w, view, true); }
+rhi::LightSetup level_lights(const world::World& w, const LightView& view, u32* static_lights) { return lights_only(w, view, true, true, static_lights); }
 void set_shadow_atlas_size(u32 size) { g_atlas_size = size; }
 
 namespace {
 f32 g_reflection_probes[rhi::kMaxReflectionProbes][4] = {};
 f32 g_reflection_boxes[rhi::kMaxReflectionProbes][4] = {};
 u32 g_reflection_count = 0;
+const asset::AssetRegistry* g_profile_registry = nullptr;
+struct LoadedProfile {
+    char guid[33];
+    bool ok;
+    f32 samples[asset::kLightProfileSamples];
+};
+LoadedProfile g_profiles[64];
+u32 g_profile_count = 0;
+
+// A light's IES profile by GUID, read and parsed the first time (nullptr: none, or not readable).
+// shortcut: read once per editor run, so an edited .ies needs a restart; watch the file time if that matters
+const f32* light_profile(const char* guid) {
+    if (!guid[0] || !g_profile_registry) return nullptr;
+    for (u32 i = 0; i < g_profile_count; ++i) {
+        if (std::strcmp(g_profiles[i].guid, guid) == 0) return g_profiles[i].ok ? g_profiles[i].samples : nullptr;
+    }
+    if (g_profile_count == 64) return nullptr;
+    LoadedProfile& p = g_profiles[g_profile_count++];
+    std::snprintf(p.guid, sizeof p.guid, "%s", guid);
+    p.ok = false;
+    asset::Guid id;
+    const asset::AssetRecord* r = asset::parse_guid(guid, id) ? g_profile_registry->find(id) : nullptr;
+    if (!r) return nullptr;
+    char path[512];
+    g_profile_registry->source_path(*r, path, sizeof path);
+    std::ifstream file(path, std::ios::binary);
+    std::stringstream text;
+    text << file.rdbuf();
+    p.ok = asset::parse_ies(text.str().c_str(), p.samples);
+    if (!p.ok) LSD_LOG_WARN("editor", "Not an IES light profile: %s", path);
+    return p.ok ? p.samples : nullptr;
+}
+
+// A Stationary light's shadow mask channel in the bake (by where it is, within 1 cm), into light_extra.
+void put_mask_channel(rhi::LightSetup& s, u32 index, Vec3 position);
+
+// Writes `profile` (when there is one) into light `index`'s rows, inverted (zero is none), its axis along `axis`.
+void put_profile(rhi::LightSetup& s, u32 index, const char* guid, Vec3 axis) {
+    const f32* profile = light_profile(guid);
+    if (!profile) return;
+    for (u32 k = 0; k < asset::kLightProfileSamples; ++k) s.light_profiles[index * 4 + k / 4][k % 4] = 1.0f - profile[k];
+    s.lights[index].direction[0] = axis.x;
+    s.lights[index].direction[1] = axis.y;
+    s.lights[index].direction[2] = axis.z;
+}
+
+struct LightFunction {
+    const char* guid;  // the component's own (valid until the world changes; read right after world_lights)
+    f32 tiling, scroll[2];
+};
+LightFunction g_functions[rhi::kMaxLights] = {};
+
+bool g_hdri_on = false;
+u32 g_hdri_tile = 0;
+Vec3 g_hdri_averages[3] = {};
 } // namespace
+
+void set_light_profile_registry(const asset::AssetRegistry* registry) { g_profile_registry = registry; }
+
+namespace {
+void put_mask_channel(rhi::LightSetup& s, u32 index, Vec3 position) {
+    if (!g_baked || g_baked->shadow_mask.empty()) return;
+    for (u32 k = 0; k < g_baked->mask_count; ++k) {
+        const Vec3 at{g_baked->mask_lights[k][0], g_baked->mask_lights[k][1], g_baked->mask_lights[k][2]};
+        if (length(at - position) < 0.01f) {
+            s.light_extra[index][0] = static_cast<f32>(k + 1);
+            return;
+        }
+    }
+}
+} // namespace
+
+bool light_function_of(u32 index, const char*& guid, f32& tiling, f32 scroll[2]) {
+    if (index >= rhi::kMaxLights || !g_functions[index].guid || !g_functions[index].guid[0]) return false;
+    guid = g_functions[index].guid;
+    tiling = g_functions[index].tiling;
+    scroll[0] = g_functions[index].scroll[0];
+    scroll[1] = g_functions[index].scroll[1];
+    return true;
+}
+
+void set_sky_hdri(bool on, u32 tile, const Vec3 averages[3]) {
+    g_hdri_on = on;
+    g_hdri_tile = tile;
+    for (int b = 0; b < 3; ++b) g_hdri_averages[b] = on ? averages[b] : Vec3{};
+}
 
 void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 count) {
     g_reflection_count = count < rhi::kMaxReflectionProbes ? count : rhi::kMaxReflectionProbes;
@@ -225,8 +319,12 @@ void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 co
 }
 
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
-    rhi::LightSetup s = lights_only(w, view, skip_hidden);
+    rhi::LightSetup s = lights_only(w, view, skip_hidden, g_baked == nullptr);  // Static lights are in the bake once there is one
+    static_assert(sizeof s.global_params == script::kMaxGlobalParams * 4 * sizeof(f32), "LightSetup::global_params holds every global material parameter");
+    std::memcpy(s.global_params, script::global_param_values(), sizeof s.global_params);
     s.reflection_info[0] = static_cast<f32>(g_reflection_count);
+    s.reflection_info[1] = g_hdri_on ? 1.0f : 0.0f;  // the environment is the HDRI's tile, z
+    s.reflection_info[2] = static_cast<f32>(g_hdri_tile);
     for (u32 k = 0; k < g_reflection_count; ++k) {
         for (int c = 0; c < 4; ++c) {
             s.reflections[k][c] = g_reflection_probes[k][c];
@@ -365,7 +463,7 @@ struct SkyColors {
     Vec3 sun_direction{0, 0, 1};  // toward the sun
     bool has_sun = false;
 };
-SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
+SkyColors gradient_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
     SkyColors c;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     for (u32 i = 0; i < w.count(dir_type); ++i) {
@@ -392,6 +490,17 @@ SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hid
     const Vec3 tint{sky.sun_color.r, sky.sun_color.g, sky.sun_color.b};
     const Vec3 reddened = mix({1.0f, 0.35f, 0.08f}, {1.0f, 1.0f, 1.0f}, smooth(0.0f, 0.3f, height));
     c.sun = Vec3{tint.x * reddened.x, tint.y * reddened.y, tint.z * reddened.z} * smooth(-0.05f, 0.02f, height);
+    return c;
+}
+
+// With an HDRI: its averages instead of the gradient's colours (the sun stays the light's); the sky pass draws the image.
+SkyColors sky_colors(const world::World& w, const world::Sky& sky, bool skip_hidden) {
+    SkyColors c = gradient_colors(w, sky, skip_hidden);
+    if (g_hdri_on && (sky.hdri[0] || sky.atmosphere)) {
+        c.zenith = g_hdri_averages[0];
+        c.horizon = g_hdri_averages[1];
+        c.ground = g_hdri_averages[2];
+    }
     return c;
 }
 
@@ -450,7 +559,9 @@ bool world_sky(const world::World& w, const Mat4& view_proj, Vec3 eye, bool skip
 
 namespace {
 
-rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden) {
+rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool skip_hidden, bool with_static, u32* static_lights) {
+    if (static_lights) *static_lights = 0;
+    for (LightFunction& f : g_functions) f.guid = nullptr;
     const Vec3 eye = view.eye;
     const reflect::TypeInfo& dir_type = reflect::type_of<world::DirectionalLight>();
     const reflect::TypeInfo& point_type = reflect::type_of<world::PointLight>();
@@ -552,6 +663,9 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         for (u32 i = 0; i < w.count(*type) && n < 512; ++i) {
             const world::Entity e = w.owner(*type, i);
             if (skip_hidden && w.hidden_in_hierarchy(e)) continue;
+            const bool is_static = (type == &point_type && static_cast<const world::PointLight*>(w.at(*type, i))->mobility == 1) ||
+                                   (type == &spot_type && static_cast<const world::SpotLight*>(w.at(*type, i))->mobility == 1);
+            if (is_static && !with_static) continue;  // baked: nothing to do at run time
             const Mat4 m = w.world_matrix(e);
             const Vec3 d = Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - eye;
             candidates[n++] = {type, i, dot(d, d)};
@@ -574,7 +688,11 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const auto* light = static_cast<const world::PointLight*>(w.at(point_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
             put(rhi::LightType::Point, position, {}, light_rgb(light->color, light->use_temperature, light->temperature) * candela, light->attenuation_radius, 0, 0);
+            if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
+            if (static_lights && light->mobility == 2) *static_lights |= 1u << (16 + s.count - 1);
+            if (light->mobility == 2) put_mask_channel(s, s.count - 1, position);
             s.lights[s.count - 1].source_radius = light->source_radius;
+            put_profile(s, s.count - 1, light->ies, forward_of(m));  // a point light's profile hangs off its forward axis
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(6, side_of(light->shadow_resolution)) : 0u;
             if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
@@ -586,8 +704,19 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
         } else if (candidates[k].type == &rect_type) {  // an area light, one-sided: lumens over pi give its candela straight ahead
             const auto* light = static_cast<const world::RectLight*>(w.at(rect_type, candidates[k].index));
             const bool disc = light->shape == 1;
-            put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, forward_of(m), light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
+            const Vec3 dir = forward_of(m);
+            put(disc ? rhi::LightType::Disc : rhi::LightType::Rect, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * (light->intensity / kPi),
                 light->attenuation_radius, disc ? light->source_width * 0.5f : light->source_width, light->source_height);
+            s.lights[s.count - 1].source_radius = std::max(light->source_width, disc ? 0.0f : light->source_height) * 0.5f;  // softens its shadow only
+            g_functions[s.count - 1] = {light->light_function, light->function_tiling * 0.5f / std::tan(radians(75.0f)), {light->function_scroll_x, light->function_scroll_y}};  // over its 150 degrees
+            const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
+            if (side) {  // shortcut: one 150 degree view, so light leaving almost sideways is unshadowed; a cube's 5 faces for that
+                rhi::GpuLight& l = s.lights[s.count - 1];
+                const f32 fov = radians(150.0f);
+                l.shadow_tile = static_cast<f32>(tiles_used);
+                l.shadow_offset = 2.0f * std::tan(fov * 0.5f) / (cell_texels * static_cast<f32>(side)) * 1.5f;
+                add_tile(position, dir, std::fabs(dir.z) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 0, 1}, fov, light->attenuation_radius);
+            }
         } else {
             const auto* light = static_cast<const world::SpotLight*>(w.at(spot_type, candidates[k].index));
             const f32 candela = light->intensity / (4.0f * kPi);
@@ -595,7 +724,12 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
             const Vec3 dir = forward_of(m);
             put(rhi::LightType::Spot, position, dir, light_rgb(light->color, light->use_temperature, light->temperature) * candela,
                 light->attenuation_radius, std::cos(radians(inner)), std::cos(radians(outer)));
+            if (static_lights && light->mobility == 1) *static_lights |= 1u << (s.count - 1);
+            if (static_lights && light->mobility == 2) *static_lights |= 1u << (16 + s.count - 1);
+            if (light->mobility == 2) put_mask_channel(s, s.count - 1, position);
             s.lights[s.count - 1].source_radius = light->source_radius;
+            put_profile(s, s.count - 1, light->ies, dir);
+            g_functions[s.count - 1] = {light->light_function, light->function_tiling * 0.5f / std::tan(radians(outer)), {light->function_scroll_x, light->function_scroll_y}};  // once across the cone
             const u32 side = light->cast_shadows && g_quality >= 2 ? place_tiles(1, side_of(light->shadow_resolution)) : 0u;
             if (side) {
                 rhi::GpuLight& l = s.lights[s.count - 1];
@@ -611,5 +745,18 @@ rhi::LightSetup lights_only(const world::World& w, const LightView& view, bool s
 }
 
 } // namespace
+
+bool sky_atmosphere(const world::World& w, bool skip_hidden, Vec3& sun) {
+    const world::Sky* sky = find_sky(w, skip_hidden);
+    if (!sky || !sky->atmosphere) return false;
+    sun = gradient_colors(w, *sky, skip_hidden).sun_direction;
+    return true;
+}
+
+const char* sky_hdri(const world::World& w, bool skip_hidden, f32& brightness) {
+    const world::Sky* sky = find_sky(w, skip_hidden);
+    brightness = sky ? sky->brightness : 1.0f;
+    return sky ? sky->hdri : "";
+}
 
 } // namespace lsd::editor

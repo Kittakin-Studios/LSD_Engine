@@ -562,6 +562,9 @@ struct PcgVolume {
     LSD_PROPERTY(Edit, Min = 0, Tooltip = "How often the main mesh is picked against More Meshes' weights") f32 weight = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "Other meshes scattered with it, each picked by its weight (several kinds of plants, rocks)") List<PcgMesh, 8> more_meshes;
     LSD_PROPERTY(Edit, Tooltip = "An exclusion box: it scatters nothing, and the other PCG Volumes leave its box empty (paths, clearings, buildings)") bool exclude = false;
+    LSD_PROPERTY(Edit, Widget = "Asset:PcgGraph",
+                 Tooltip = "PCG Graph (Unreal's): rules as nodes (samplers, filters, Transform Points, a Spawn Mesh per mesh) instead of the settings above; double-click it to edit")
+    char graph[33] = "";
     LSD_PROPERTY(Visible, Tooltip = "The object holding the copies") char output[64] = "";
 };
 
@@ -829,10 +832,16 @@ struct PointLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color (warm bulbs, cold daylight)") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 6 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Movable,Static,Stationary",
+                 Tooltip = "Mobility (Unreal's): Movable lights and shadows every frame; Static is baked by Build Lighting into the lightmaps and probes (free at run time, never moves, no light on moving objects but what bounces); Stationary lights every frame (its colour and brightness can change) but its shadows on lightmapped surfaces are baked, soft and beyond any shadow distance (4 per level; moving objects still use a shadow tile); before a bake both light as Movable")
+    u32 mobility = 0;
     LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
     u32 shadow_resolution = 1;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the bulb's size; bigger gives softer, wider highlights (a sphere light)") f32 source_radius = 0.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:LightProfile",
+                 Tooltip = "IES Profile (Unreal's IES Texture): a photometric .ies file shapes the light by angle from its forward axis (a real fixture's pattern of rings and falloff)")
+    char ies[33] = "";
 };
 
 // A cone of light (Unreal's Spot Light): torches, street lamps, stage lights.
@@ -847,10 +856,22 @@ struct SpotLight {
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2000 K candle, 3200 K bulb, 6500 K daylight") f32 temperature = 3200.0f;
     LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles; the lights nearest the camera get them first") bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Movable,Static,Stationary",
+                 Tooltip = "Mobility (Unreal's): Movable lights and shadows every frame; Static is baked by Build Lighting into the lightmaps and probes (free at run time, never moves, no light on moving objects but what bounces); Stationary lights every frame (its colour and brightness can change) but its shadows on lightmapped surfaces are baked, soft and beyond any shadow distance (4 per level; moving objects still use a shadow tile); before a bake both light as Movable")
+    u32 mobility = 0;
     LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
                  Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
     u32 shadow_resolution = 1;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 10, Tooltip = "Source Radius: the lamp's size; bigger gives softer, wider highlights") f32 source_radius = 0.0f;
+    LSD_PROPERTY(Edit, Widget = "Asset:LightProfile",
+                 Tooltip = "IES Profile (Unreal's IES Texture): a photometric .ies file shapes the light by angle from its forward axis (a real fixture's pattern of rings and falloff)")
+    char ies[33] = "";
+    LSD_PROPERTY(Edit, Category = "Light Function", Widget = "Asset:Texture",
+                 Tooltip = "Light Function (Unreal's): an image projected from the light along its forward axis whose brightness dims the light (a gobo, leaves, a window frame, moving clouds); uses one of the 16 decal texture slots")
+    char light_function[33] = "";
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = 0.01, Max = 100, Tooltip = "How many times the image repeats across the light") f32 function_tiling = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image widths per second it slides sideways (clouds, caustics)") f32 function_scroll_x = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image heights per second it slides up") f32 function_scroll_y = 0.0f;
 };
 
 // An area light (Unreal's Rect Light): a glowing panel or disc lighting what is in front of it (+X), with soft
@@ -866,6 +887,17 @@ struct RectLight {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.01, Tooltip = "No light beyond this; smaller is cheaper") f32 attenuation_radius = 8.0f;
     LSD_PROPERTY(Edit, Tooltip = "Colour from Temperature instead of Color") bool use_temperature = false;
     LSD_PROPERTY(Edit, Units = "K", Min = 1000, Max = 15000, Tooltip = "Colour temperature: 2700 K warm panel, 6500 K daylight window") f32 temperature = 6500.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Uses 1 of the 16 shadow tiles (a 150 degree view from its front), softer the bigger the panel; the lights nearest the camera get them first")
+    bool cast_shadows = true;
+    LSD_PROPERTY(Edit, Widget = "Choice:Low,Medium,High",
+                 Tooltip = "Shadow Resolution (Unreal's Shadow Resolution Scale): Low uses a quarter of a tile's texels (blurrier, more lights fit), High four times (sharper; a point light falls back to Medium when its six views do not fit)")
+    u32 shadow_resolution = 1;
+    LSD_PROPERTY(Edit, Category = "Light Function", Widget = "Asset:Texture",
+                 Tooltip = "Light Function (Unreal's): an image projected from the light along its forward axis whose brightness dims the light (a gobo, leaves, a window frame, moving clouds); uses one of the 16 decal texture slots")
+    char light_function[33] = "";
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = 0.01, Max = 100, Tooltip = "How many times the image repeats across the light") f32 function_tiling = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image widths per second it slides sideways (clouds, caustics)") f32 function_scroll_x = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Light Function", Min = -10, Max = 10, Tooltip = "Image heights per second it slides up") f32 function_scroll_y = 0.0f;
 };
 
 // Ambient light from the sky and the ground (Unreal's Sky Light, without a captured cubemap yet).
@@ -891,6 +923,9 @@ struct Sky {
     LSD_PROPERTY(Edit, Tooltip = "Draw the sun where the Directional Light shines from") bool sun_disc = true;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0.1, Max = 10, Tooltip = "How big the sun disc looks") f32 sun_size = 0.8f;
     LSD_PROPERTY(Edit, Tooltip = "Colour of the sun disc") LinearColor sun_color = LinearColor::hex(0xFFF2D6);
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture",
+                 Tooltip = "An HDRI (Unreal's Sky Light cubemap / HDRI Backdrop): a latitude-longitude .hdr or .exr. Reflections outside every Reflection Capture show it, and the sky's colours and the ambient light take its averages (times Brightness)")
+    char hdri[33] = "";
 };
 
 // Exponential height fog (Unreal's Exponential Height Fog): thicker low down, thinning with height.
@@ -941,6 +976,11 @@ struct PostProcessVolume {
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Motion Blur Amount (Unreal's): the camera's own movement blurs the picture along it; 0 = off") f32 motion_blur_amount = 0.0f;
     LSD_PROPERTY(Edit, Units = "%", Min = 0, Max = 20, Tooltip = "Motion Blur Max: the longest smear, as a percentage of the screen's width") f32 motion_blur_max = 5.0f;
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much of the LUT's look: 0 none, 1 all") f32 lut_intensity = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Post Material", Widget = "Asset:Material",
+                 Tooltip = "Post Process Material (Unreal's): a shader asset with float3 post_main(PostIn pi) (Content Browser > New Post Process Material) run on the whole image before tonemapping")
+    char post_material[33] = "";
+    LSD_PROPERTY(Edit, Category = "Post Material", Tooltip = "Its params.xyz (PostIn.params): what the material does with them is up to its code")
+    Vec3 post_parameters = {1, 0, 0};
     LSD_PROPERTY(Edit, Min = 0, Max = 4, Tooltip = "Glow around bright parts (emissive, the sun's highlights); 0 = off") f32 bloom_intensity = 0.5f;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How bright (after exposure) a pixel must be to glow; 1 = white") f32 bloom_threshold = 1.0f;
     LSD_PROPERTY(Edit, Tooltip = "FXAA: smooths jagged edges") bool anti_aliasing = true;

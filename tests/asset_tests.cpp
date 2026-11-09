@@ -2,6 +2,7 @@
 // import it into Content/, find it by search, compile it and load the result.
 #include "lsd/asset/asset_meta.h"
 #include "lsd/asset/localization.h"
+#include "lsd/asset/light_profile.h"
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
 #include "lsd/asset/material_import.h"
@@ -311,6 +312,19 @@ static void test_texture(const fs::path& root) {
         CHECK(asset::load_texture_cached(big.string().c_str(), true, 4096, true, cache.string().c_str(), again) && again.encoding == first.encoding && again.pixels.size() == first.pixels.size() &&
               std::memcmp(again.pixels.data(), first.pixels.data(), first.pixels.size()) == 0 && again.mip_offset[2] == first.mip_offset[2]);
         fs::remove_all(cache);
+        {  // float textures: an HDR image kept as half floats, a value of 4 stays 4 (not clipped to 1)
+            std::vector<f32> bright(4 * 4 * 4, 4.0f);
+            const fs::path hdr = root / "bright.exr";
+            const char* exr_error = nullptr;
+            CHECK(SaveEXR(bright.data(), 4, 4, 4, 0, hdr.string().c_str(), &exr_error) == TINYEXR_SUCCESS);
+            asset::TextureData half(default_allocator()), clipped(default_allocator());
+            CHECK(asset::load_texture(hdr.string().c_str(), false, 4096, half, true) && half.encoding == asset::TextureEncoding::RGBA16F && half.mip_count == 3);
+            u16 h0;
+            std::memcpy(&h0, half.mip(0), 2);
+            CHECK(h0 == 0x4400);  // 4.0 in half
+            CHECK(half.mip_offset[1] == 4 * 4 * 8);
+            CHECK(asset::load_texture(hdr.string().c_str(), false, 4096, clipped) && clipped.encoding == asset::TextureEncoding::RGBA8 && clipped.mip(0)[0] == 255);
+        }
         asset::TextureData odd(default_allocator());
         CHECK(asset::build_texture(rgba.data(), 6, 6, true, 4096, odd) && !asset::compress_texture(odd) && odd.encoding == asset::TextureEncoding::RGBA8);  // not a multiple of 4
     }
@@ -525,7 +539,24 @@ static void test_material_import(const fs::path& root) {
     }
 }
 
+// IES: candela averaged around the axis, normalised, resampled every 12 degrees; nothing outside the file's angles.
+static void test_ies() {
+    using namespace lsd;
+    const char* ies = "IESNA:LM-63-2002\n[TEST] spot\nTILT=NONE\n1 1000 1 4 2 1 2 0.1 0.1 0\n1.0 1.0 50\n0 30 60 90\n0 90\n"
+                      "1000 800 200 0\n1000, 600, 200, 0\n";
+    f32 p[asset::kLightProfileSamples];
+    CHECK(asset::parse_ies(ies, p));
+    CHECK(std::fabs(p[0] - 1.0f) < 1e-4f);
+    CHECK(std::fabs(p[1] - 0.88f) < 1e-4f);   // 12 degrees: 1000 -> 700 over 30
+    CHECK(std::fabs(p[5] - 0.2f) < 1e-4f);    // 60 degrees
+    CHECK(p[15] == 0.0f);                     // straight behind: outside 0..90
+    CHECK(std::fabs(asset::light_profile_at(p, 1.0f) - 1.0f) < 1e-4f);
+    CHECK(std::fabs(asset::light_profile_at(p, std::cos(6.0f * 3.14159265f / 180.0f)) - 0.94f) < 1e-3f);
+    CHECK(!asset::parse_ies("not a profile", p));
+}
+
 int main() {
+    test_ies();
     test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();
     test_anim_curves();

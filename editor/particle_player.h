@@ -46,6 +46,8 @@ private:
     f32 fog_[4] = {}, fog_color_[4] = {};
     void apply_fog(rhi::ParticleVertex* vertices, u32 count, Vec3 eye, bool additive) const;
     const rhi::LightSetup* lights_ = nullptr;
+    mutable u32 shadow_rays_ = 0;  // this frame's sun rays for lit particles
+    bool playing_ = false;         // physics is there to ray-test against
     void apply_lighting(rhi::ParticleVertex* vertices, u32 count, Vec3 eye) const;
     struct System {
         char guid[33];
@@ -66,6 +68,17 @@ private:
     const asset::AssetRegistry& registry_;
     TextureCache& textures_;
     rhi::TextureHandle dot_;  // default sprite: a soft round dot
+    // GPU emitters (ParticleEmitter::sim_target GPU): each one's particle buffer, simulated once per instance step.
+    struct GpuState {
+        const particles::ParticleInstance* instance = nullptr;
+        u32 emitter = 0, capacity = 0, steps = 0, restarts = 0, frame = 0;
+        rhi::BufferHandle buffer;
+    };
+    void draw_gpu(rhi::Device& device, const particles::ParticleInstance& instance, u32 k, const particles::ParticleEmitter& emitter, const Mat4& world,
+                  const Mat4& view_proj, Vec3 right, Vec3 up, const f32 soft[4]);
+    std::vector<GpuState> gpu_;
+    rhi::Device& device_;
+    u32 frame_ = 0;
     System* systems_[64] = {};
     u32 system_count_ = 0;
     Effect effects_[512];

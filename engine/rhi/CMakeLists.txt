@@ -30,7 +30,7 @@ if(LSD_RHI_D3D12 OR LSD_RHI_VULKAN)
   # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup, Vulkan builds Material
   # Graph shaders from it (through the Vulkan SDK's DXC when installed).
   set(text_dir "${CMAKE_CURRENT_BINARY_DIR}/shader_text")
-  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl" "cull;kCullHlsl")
+  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl" "cull;kCullHlsl" "gpu_particles;kGpuParticlesHlsl")
     list(GET pair 0 file)
     list(GET pair 1 name)
     add_custom_command(
@@ -139,13 +139,19 @@ if(LSD_RHI_VULKAN)
     endforeach()
     # The shared GPU culling passes (shaders/cull.hlsl): kCull<Pass>Spirv, entry points renamed main.
     set(cull_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cull.hlsl")
-    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs")
+    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs" "hiz_down;HizDown" "morph_main;MorphMain")
       list(GET pair 0 entry)
       list(GET pair 1 name)
+      set(cull_defines "")
+      if(entry STREQUAL "hiz_down")
+        set(cull_defines -D HIZ_PASS)  # the Hi-Z builder: its own constants and resources
+      elseif(entry STREQUAL "morph_main")
+        set(cull_defines -D MORPH_PASS)  # morph targets (Device::morph_vertices)
+      endif()
       add_custom_command(
         OUTPUT "${spirv_dir}/${entry}.spv.h"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
-        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T cs_6_0 -E ${entry} -fspv-entrypoint-name=main -Fo "${spirv_dir}/${entry}.spv" "${cull_hlsl}"
+        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T cs_6_0 -E ${entry} -fspv-entrypoint-name=main ${cull_defines} -Fo "${spirv_dir}/${entry}.spv" "${cull_hlsl}"
         COMMAND "${CMAKE_COMMAND}" -DINPUT=${spirv_dir}/${entry}.spv -DOUTPUT=${spirv_dir}/${entry}.spv.h -DNAME=k${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
         DEPENDS "${cull_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
         COMMENT "Compiling cull.hlsl (${entry}) to SPIR-V"
@@ -153,10 +159,30 @@ if(LSD_RHI_VULKAN)
       )
       target_sources(lsd_rhi PRIVATE "${spirv_dir}/${entry}.spv.h")
     endforeach()
+    # GPU particles (shaders/gpu_particles.hlsl): the compute pass and the sprites' vertex shader, entry points renamed main / vs_main.
+    set(particles_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_particles.hlsl")
+    foreach(item IN ITEMS "gpu_particle_sim|GpuParticleSim|cs_6_0|PARTICLE_SIM|main" "gpu_particle_vs|GpuParticleVs|vs_6_0|PARTICLE_DRAW|vs_main")
+      string(REPLACE "|" ";" parts "${item}")
+      list(GET parts 0 entry)
+      list(GET parts 1 name)
+      list(GET parts 2 profile)
+      list(GET parts 3 define)
+      list(GET parts 4 renamed)
+      add_custom_command(
+        OUTPUT "${spirv_dir}/${entry}.spv.h"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
+        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${profile} -E ${entry} -fspv-entrypoint-name=${renamed} -D ${define} -Fo "${spirv_dir}/${entry}.spv" "${particles_hlsl}"
+        COMMAND "${CMAKE_COMMAND}" -DINPUT=${spirv_dir}/${entry}.spv -DOUTPUT=${spirv_dir}/${entry}.spv.h -DNAME=k${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        DEPENDS "${particles_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        COMMENT "Compiling gpu_particles.hlsl (${entry}) to SPIR-V"
+        VERBATIM
+      )
+      target_sources(lsd_rhi PRIVATE "${spirv_dir}/${entry}.spv.h")
+    endforeach()
     # The shared post-process passes (shaders/post.hlsl): vs_full and one pixel shader per pass,
     # embedded as kPost<Pass>Spirv (entry points renamed vs_main / ps_main); t registers at bindings 0-2, s registers from 16 (s2 = 18).
     set(post_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/post.hlsl")
-    foreach(entry IN ITEMS vs_full ps_prefilter ps_down ps_up ps_composite ps_fxaa ps_ssr ps_ao ps_ao_apply ps_taa ps_dof ps_motion ps_meter ps_expose ps_outline)
+    foreach(entry IN ITEMS vs_full ps_prefilter ps_down ps_up ps_composite ps_fxaa ps_ssr ps_ao ps_ao_apply ps_taa ps_dof ps_motion ps_meter ps_expose ps_outline ps_velocity)
       string(SUBSTRING "${entry}" 0 2 stage)
       string(SUBSTRING "${entry}" 3 -1 pass)
       string(REPLACE "_" ";" words "${pass}")

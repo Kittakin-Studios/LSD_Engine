@@ -57,6 +57,7 @@ float4 ps_ao(VsOut i) : SV_Target {
     const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
     float3 n = normalize(cross(dx, dy));
     if (dot(n, p) > 0.0) n = -n;  // facing the camera
+    if (texel.z > 0.5) n = normalize(t1.SampleLevel(clamp_linear, i.uv, 0).xyz * 2.0 - 1.0);  // the normals pass's (smooth, as shaded)
     const float radius = ao_p.x;
     const float2 scale = float2(proj.x, proj.y) * 0.5 * radius / -p.z;
     // A 4 x 4 Bayer pattern: the 4 x 4 blur in ps_ao_apply sees every rotation once, so the noise averages out exactly.
@@ -70,9 +71,12 @@ float4 ps_ao(VsOut i) : SV_Target {
         const float3 v = view_pos(i.uv + offset) - p;
         const float vv = dot(v, v);
         const float f = max(radius * radius - vv, 0.0);
-        sum += f * f * f * max((dot(v, n) - 0.01 * radius) / (vv + 0.01), 0.0);
+        // Samples within ~17 degrees of the surface's plane count for nothing: the normal is the flat triangle's, and on a
+        // low-poly mesh shaded smooth those flip in and out triangle by triangle (facets, a stepped band on a sphere).
+        sum += f * f * f * max((dot(v, n) - 0.3 * sqrt(vv) - 0.01 * radius) / (0.7 * (vv + 0.01)), 0.0);
     }
     float ao = max(0.0, 1.0 - sum * ao_p.y * 5.0 / (12.0 * pow(radius, 6.0)));
+    if (texel.z > 0.5) ao = 1.0 - (1.0 - ao) * t1.SampleLevel(clamp_linear, i.uv, 0).a;  // the normals pass: only the ambient share darkens (direct light stays)
     // Contact shadows (reproject[0]: toward the sun in view space, w = length): a short ray through the
     // depth; a point behind what the camera sees there, but not far behind (thickness), is in shadow.
     if (reproject[0].w > 0.0 && dot(n, reproject[0].xyz) > 0.05) {  // faces the sun (else the sun does not light it anyway)
@@ -107,7 +111,22 @@ float4 ps_ao_apply(VsOut i) : SV_Target {
     const float ao = weight > 0.0 ? total / weight : 1.0;
     return float4(encode(tap(t0, i.uv) * ao), 1.0);
 }
-// This frame blended into the last one where this pixel was, clamped to this frame's neighbours.
+// The velocity target's movement in uv (LightSetup::velocity_view's encoding), and back.
+float2 velocity_at(Texture2D t, float2 uv) {
+    const float4 e = round(t.SampleLevel(clamp_linear, uv, 0) * 255.0);  // half-float targets: the bytes, exactly
+    return (float2(e.x * 256.0 + e.y, e.z * 256.0 + e.w) / 65535.0 - 0.5) * 4.0;
+}
+float4 velocity_out(float2 move) { const float2 q = round(saturate(move * 0.25 + 0.5) * 65535.0); const float2 hi = floor(q / 256.0); return float4(hi.x, q.x - hi.x * 256.0, hi.y, q.y - hi.y * 256.0) / 255.0; }
+// The velocity pass's movement (t1) where a mesh was drawn; elsewhere (sky, particles) the camera's, from the depth.
+float4 ps_velocity(VsOut i) : SV_Target {
+    const float4 e = t1.SampleLevel(clamp_linear, i.uv, 0);
+    if (any(e > 0.0)) return e;
+    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
+    const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
+    return velocity_out(prev.w > 0.0 ? i.uv - to_uv(prev.xy / prev.w) : float2(0.0, 0.0));
+}
+// This frame blended into the last one where this pixel was, clamped to this frame's neighbours. texel.w: where it was
+// comes from the resolved velocity (t2) instead of the depth.
 float4 ps_taa(VsOut i) : SV_Target {
     const float3 cur = t0.SampleLevel(clamp_linear, i.uv, 0).rgb;
     float3 lo = cur, hi = cur;
@@ -118,10 +137,11 @@ float4 ps_taa(VsOut i) : SV_Target {
             hi = max(hi, s);
         }
     }
-    const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
+    const bool moved = texel.w > 0.5;
+    const float4 here = float4(to_ndc(i.uv), moved ? 0.5 : depth_at(i.uv), 1.0);
     const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
-    const float2 prev_uv = to_uv(prev.xy / prev.w);
-    const bool outside = taa.y > 0.5 || prev.w <= 0.0 || any(prev_uv < 0.0) || any(prev_uv > 1.0);
+    const float2 prev_uv = moved ? i.uv - velocity_at(t2, i.uv) : to_uv(prev.xy / prev.w);
+    const bool outside = taa.y > 0.5 || (!moved && prev.w <= 0.0) || any(prev_uv < 0.0) || any(prev_uv > 1.0);
     const float3 history = clamp(t1.SampleLevel(clamp_linear, prev_uv, 0).rgb, lo, hi);
     return float4(outside ? cur : lerp(history, cur, taa.x), 1.0);
 }
@@ -130,12 +150,21 @@ float4 ps_taa(VsOut i) : SV_Target {
 float4 ps_motion(VsOut i) : SV_Target {
     const float4 here = float4(to_ndc(i.uv), depth_at(i.uv), 1.0);
     const float4 prev = float4(dot(reproject[0], here), dot(reproject[1], here), dot(reproject[2], here), dot(reproject[3], here));
-    float2 move = prev.w > 0.0 ? (i.uv - to_uv(prev.xy / prev.w)) * taa.z : float2(0.0, 0.0);
+    float2 move = texel.w > 0.5 ? velocity_at(t1, i.uv) * taa.z : prev.w > 0.0 ? (i.uv - to_uv(prev.xy / prev.w)) * taa.z : float2(0.0, 0.0);  // texel.w: the velocity (t1)
+    if (texel.w > 0.5) {  // a moving object smears over what is behind it too: the fastest nearby movement whose smear reaches here
+        [unroll] for (int k = 0; k < 16; ++k) {
+            const float a = k * 0.785398;  // 8 directions, at 4 and 12 pixels
+            const float2 o = float2(cos(a), sin(a)) * (k < 8 ? 4.0 : 12.0) * texel.xy;
+            const float2 m = velocity_at(t1, i.uv + o) * taa.z;
+            if (dot(m, m) > dot(move, move) && length(m) * 0.5 >= length(o)) move = m;
+        }
+    }
     const float span = length(move);
     if (span > taa.w) move *= taa.w / span;
     if (span * (1.0 / texel.x) < 0.5) return float4(encode(tap(t0, i.uv)), 1.0);
     float3 sum = 0.0;
-    [unroll] for (int k = 0; k < 8; ++k) sum += tap(t0, i.uv + move * (k / 7.0 - 0.5));
+    const float jitter = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));  // staggered per pixel: long smears show noise, not steps
+    [unroll] for (int k = 0; k < 8; ++k) sum += tap(t0, i.uv + move * ((k + jitter) / 8.0 - 0.5));
     return float4(encode(sum / 8.0), 1.0);
 }
 // Gather over a disc as wide as this pixel's blur; a sample only counts if its own blur reaches here
@@ -177,6 +206,7 @@ float4 ps_ssr(VsOut i) : SV_Target {
     const float3 dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
     float3 n = normalize(cross(dx, dy));
     if (dot(n, p) > 0.0) n = -n;
+    if (texel.z > 0.5) n = normalize(t1.SampleLevel(clamp_linear, i.uv, 0).xyz * 2.0 - 1.0);  // the normals pass's (smooth, as shaded)
     const float3 ray = reflect(normalize(p), n);
     if (ray.z > 0.4) return float4(encode(c), 1.0);  // back towards the camera: nothing on screen to show
     const float reach = ao_p.w;
@@ -267,9 +297,25 @@ float3 lut(float3 s) {  // a 256 x 16 strip: 16 tiles of 16 x 16 (red across, gr
     const float3 hi = t2.SampleLevel(clamp_linear, inner + float2(min(b0 + 1.0, 15.0) / 16.0, 0.0), 0).rgb;
     return lerp(lo, hi, b - b0);
 }
+#ifdef LSD_POST_MATERIAL  // a post-process material: the backend defines this and puts its code at the POST marker
+struct PostIn { float2 uv; float3 color; float time; float4 params; };
+float3 scene_color(float2 uv) { return tap(t0, uv); }  // the scene, linear and exposed, before tonemapping
+float2 texel_size() { return texel.xy; }
+#endif
+//@POST
 float4 ps_composite(VsOut i) : SV_Target {
     float3 c = tap(t0, i.uv);
     if (bloom.y > 0.0) c += tap(t1, i.uv) * bloom.y;
+#ifdef LSD_POST_MATERIAL
+    {  // its time and parameters ride in proj (unused by this pass)
+        PostIn pi;
+        pi.uv = i.uv;
+        pi.color = c;
+        pi.time = proj.x;
+        pi.params = float4(proj.yzw, 0.0);
+        c = max(post_main(pi), 0.0);
+    }
+#endif
     c *= tint_tm.rgb;
     if (tint_tm.w > 0.5) c = aces(c);
     const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));

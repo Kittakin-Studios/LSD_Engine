@@ -2818,6 +2818,9 @@ void toggle_preview(EditorState& s, const asset::AssetRecord& r);
 bool asset_matches(const asset::AssetRecord& r, const char* type) {
     if (std::strcmp(type, "Mesh") == 0) return r.type == asset::AssetType::Mesh;
     if (std::strcmp(type, "Level") == 0) return r.type == asset::AssetType::Level;
+    if (std::strcmp(type, "Texture") == 0) return r.type == asset::AssetType::Texture;
+    if (std::strcmp(type, "LightProfile") == 0) return r.type == asset::AssetType::LightProfile;
+    if (std::strcmp(type, "PcgGraph") == 0) return r.type == asset::AssetType::PcgGraph;
     if (std::strcmp(type, "Prefab") == 0) return r.type == asset::AssetType::Prefab;
     if (std::strcmp(type, "BehaviorTree") == 0) return r.type == asset::AssetType::BehaviorTree;
     if (std::strcmp(type, "UI") == 0) return r.type == asset::AssetType::UiDocument;
@@ -3910,7 +3913,8 @@ bool open_record(EditorState& s, const asset::AssetRecord& r) {
         open_external(s, r);
     } else if (r.type == asset::AssetType::MaterialGraph && std::filesystem::path(r.path).extension() == script::kShaderExtension) {
         open_external(s, r);  // a shader asset: code, in the code editor (saving it recompiles)
-    } else if (r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree) {
+    } else if (r.type == asset::AssetType::Graph || r.type == asset::AssetType::Cue || r.type == asset::AssetType::MaterialGraph || r.type == asset::AssetType::BehaviorTree ||
+               r.type == asset::AssetType::PcgGraph) {
         open_graph(s, r);
     } else if (r.type == asset::AssetType::Table) {
         open_table(s, r);
@@ -4613,6 +4617,33 @@ void draw_asset_grid(EditorState& s) {
                 start_rename(s, r->guid, "", r->name);
             }
         }
+        if (with_tip(ImGui::MenuItem("New Post Process Material"), "Makes a post-process material (code run on the whole image) here; pick it on a Post Process Volume")) {
+            namespace fs = std::filesystem;
+            const fs::path dir = fs::path(kContentDir) / s.content_folder;
+            fs::path file = dir / "PP_New.hlsl";
+            for (int n = 2; fs::exists(file) && n < 100; ++n) file = dir / ("PP_New" + std::to_string(n) + ".hlsl");
+            static const char kStarter[] =
+                "// A post-process material (Unreal's Post Process Material): runs on every pixel of the image before tonemapping.\n"
+                "// pi.color is the scene there (linear), pi.uv its place (0..1), pi.time seconds, pi.params the volume's Post Parameters;\n"
+                "// scene_color(uv) reads the scene anywhere, texel_size() is one pixel in uv.\n"
+                "float3 post_main(PostIn pi) {\n"
+                "    float grey = dot(pi.color, float3(0.2126, 0.7152, 0.0722));\n"
+                "    float3 sepia = grey * float3(1.07, 0.74, 0.43);\n"
+                "    return lerp(pi.color, sepia, saturate(pi.params.x));  // Post Parameters X: how much\n"
+                "}\n";
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (FILE* f = std::fopen(file.string().c_str(), "wb")) {
+                std::fwrite(kStarter, 1, sizeof kStarter - 1, f);
+                std::fclose(f);
+            }
+            s.registry->scan();
+            if (const asset::AssetRecord* r = record_at(s, file.generic_string())) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
         if (with_tip(ImGui::MenuItem("New UI Document"), "Makes an HTML / CSS game UI document (Unreal's Widget Blueprint) here")) {
             const std::string path = create_ui_document((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "UI_New");
             s.registry->scan();
@@ -4643,6 +4674,15 @@ void draw_asset_grid(EditorState& s) {
             }
         }
         ImGui::SetItemTooltip("A node graph that combines sounds: Random, Modulator, Mixer, Delay, Looping, Switch... Double-click to edit");
+        if (with_tip(ImGui::MenuItem("New PCG Graph"), "Makes a PCG Graph (a PCG Volume's rules as nodes) here")) {
+            const std::string path = create_pcg_file((std::filesystem::path(kContentDir) / s.content_folder).generic_string().c_str(), "PCG_New");
+            s.registry->scan();
+            if (const asset::AssetRecord* r = path.empty() ? nullptr : record_at(s, path)) {
+                select(s, {});
+                s.selected_asset = r->guid;
+                start_rename(s, r->guid, "", r->name);
+            }
+        }
         if (ImGui::MenuItem("New Lua Script")) create_script(s, false);
         ImGui::SetItemTooltip("A .lua file with on_start / on_update; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New JavaScript Script")) create_script(s, true);

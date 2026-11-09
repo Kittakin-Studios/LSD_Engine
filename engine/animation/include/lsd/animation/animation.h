@@ -105,6 +105,10 @@ void apply_morphs(const SkinnedModel& model, WeightOf weight, rhi::SkinnedVertex
 }
 
 // A simpler version of some of a skinned mesh's triangles (an LOD): `indices` (a section of model.indices) cut to about
+// The morph targets packed for rhi::Device::morph_vertices: per vertex its first entry and entry count (2 words),
+// then 8 words per entry (offset xyz, target index, normal turn xyz, 0), each vertex's entries together.
+void pack_morphs(const SkinnedModel& model, Array<u32>& out);
+
 // `ratio` of its triangles, written to `out` as indices into the same vertices (skinning and morphs unchanged). Returns
 // how many; 0 when it will not get simpler. Corners are welded to simplify, then each kept vertex is one of its corners.
 u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f32 ratio, u32* out);

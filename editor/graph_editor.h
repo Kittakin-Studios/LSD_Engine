@@ -19,6 +19,8 @@ void render_graph_preview(EditorState& state, const f32 background[4]);
 std::string create_graph_file(const char* folder_path, const char* base);
 // Creates <folder>/<base>.lsdcue: a Wave Player wired to the Output; returns its path.
 std::string create_cue_file(const char* folder_path, const char* base);
+// A new PCG Graph (.lsdpcg) with a starting chain: Surface Sampler, Slope Filter, Transform Points, Spawn Mesh.
+std::string create_pcg_file(const char* folder_path, const char* base);
 // Creates <folder>/<base>.lsdmatgraph: a Color wired to the Material Output's Base Color; returns its path.
 std::string create_material_graph_file(const char* folder_path, const char* base);
 // Creates <folder>/<base>.lsdbt: a Root with a patrol (Random Location, Move To, Wait); returns its path.

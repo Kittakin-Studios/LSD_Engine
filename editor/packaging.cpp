@@ -127,6 +127,33 @@ u32 validate_assets(const ProjectSettings& project, const asset::AssetRegistry& 
     return problems;
 }
 
+// Resource packages per level (Bitsquid's resource packages): Packages/<level path>.package lists the assets each packaged
+// level uses (its own cook set), one "guid path" a line; the game loads a level's meshes from it before the level plays.
+static void write_level_packages(const asset::AssetRegistry& registry, const fs::path& out) {
+    std::error_code ignored;
+    u32 written = 0;
+    for (usize i = 0; i < registry.count(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        if (r.type != asset::AssetType::Level || !fs::exists(out / "Content" / r.path, ignored)) continue;
+        char guid[33];
+        asset::to_string(r.guid, guid);
+        const std::vector<std::string> used = cook_set(registry, std::string("\"") + guid + "\"");
+        fs::path file = out / "Packages" / r.path;
+        file.replace_extension(".package");
+        fs::create_directories(file.parent_path(), ignored);
+        if (FILE* f = std::fopen(file.generic_string().c_str(), "wb")) {
+            for (const std::string& g : used) {
+                asset::Guid id;
+                const asset::AssetRecord* a = asset::parse_guid(g.c_str(), id) ? registry.find(id) : nullptr;
+                if (a) std::fprintf(f, "%s %s\n", g.c_str(), a->path);
+            }
+            std::fclose(f);
+            ++written;
+        }
+    }
+    LSD_LOG_INFO("editor", "Resource packages: %u level%s (Packages/)", written, written == 1 ? "" : "s");
+}
+
 // Cooking: only the assets the game uses (cook_set), each with its .meta and its compiled data
 // (DerivedData/<guid>.*), Content/Fonts whole (UI fonts are found by folder), and cook_report.txt.
 static bool cook(const ProjectSettings& project, const asset::AssetRegistry& registry, const fs::path& out, std::error_code& error) {
@@ -519,6 +546,7 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
         fs::copy("Content", out / "Content", copy_options, error);
     }
     if (!error) strip_editor_only(out / "Content");
+    if (!error) write_level_packages(registry, out);
     if (!error) fs::copy("Config", out / "Config", copy_options, error);
     if (!error && fs::exists("Binaries", error)) fs::copy("Binaries", out / "Binaries", copy_options, error);  // the C / C++ game code
     if (error) {

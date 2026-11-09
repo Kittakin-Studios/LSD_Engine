@@ -12,6 +12,69 @@ f32 g_spawn_scale = 1.0f;
 void set_spawn_scale(f32 scale) { g_spawn_scale = scale > 0.0f ? scale : 0.0f; }
 u32 g_effects_quality = 3;
 void set_effects_quality(u32 quality) { g_effects_quality = quality; }
+bool g_gpu_particles = false;
+void set_gpu_particles(bool available) { g_gpu_particles = available; }
+
+bool ParticleInstance::gpu_step(u32 emitter, GpuStep& out) const {
+    if (emitter >= kMaxEmitters || !emitters_[emitter].gpu) return false;
+    out = emitters_[emitter].step;
+    out.restarts = restarts_;
+    return true;
+}
+
+void gpu_params(const ParticleEmitter& e, const GpuStep& step, const Mat4& world, u32 seed, rhi::GpuParticles& out) {
+    out = {};
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            const f32 m = world.at(r, c), id = r == c ? 1.0f : 0.0f;
+            out.spawn_rows[r * 4 + c] = e.local_space ? id : m;
+            out.draw_rows[r * 4 + c] = e.local_space ? m : id;
+        }
+    }
+    out.spawn[0] = step.first;
+    out.spawn[1] = step.count;
+    out.spawn[2] = step.capacity;
+    out.spawn[3] = seed;
+    out.shape[0] = static_cast<f32>(e.shape);
+    out.shape[1] = e.shape_size.x;
+    out.shape[2] = e.shape_size.y;
+    out.shape[3] = e.shape_size.z;
+    const f32 axis_length = length(e.direction);
+    const Vec3 axis = axis_length > 1e-6f ? e.direction * (1.0f / axis_length) : Vec3{0, 0, 1};
+    out.direction[0] = axis.x;
+    out.direction[1] = axis.y;
+    out.direction[2] = axis.z;
+    out.direction[3] = std::cos(radians(e.spread < 180.0f ? e.spread : 180.0f));
+    out.speed_life[0] = e.speed_min;
+    out.speed_life[1] = e.speed_max;
+    out.speed_life[2] = e.lifetime_min;
+    out.speed_life[3] = e.lifetime_max;
+    out.force[0] = step.force.x;
+    out.force[1] = step.force.y;
+    out.force[2] = step.force.z;
+    out.force[3] = e.drag;
+    out.step[0] = step.dt;
+    out.step[1] = e.floor_height;
+    out.step[2] = e.bounce;
+    out.step[3] = e.friction;
+    out.flags[0] = e.collision == 1 && !e.local_space ? 1.0f : 0.0f;  // World collision needs physics: not on the GPU
+    out.flags[1] = e.kill_on_hit ? 1.0f : 0.0f;
+    out.flags[2] = e.spin;
+    out.size[0] = e.size_start;
+    out.size[1] = e.size_end;
+    out.size[2] = static_cast<f32>(e.size_over_life.count);
+    out.size[3] = static_cast<f32>(e.color_over_life.count);
+    std::memcpy(out.color_start, &e.color_start, sizeof out.color_start);
+    std::memcpy(out.color_end, &e.color_end, sizeof out.color_end);
+    for (u32 k = 0; k < e.size_over_life.count; ++k) {
+        out.size_keys[k * 2] = e.size_over_life[k].time;
+        out.size_keys[k * 2 + 1] = e.size_over_life[k].value;
+    }
+    for (u32 k = 0; k < e.color_over_life.count; ++k) {
+        out.color_times[k] = e.color_over_life[k].time;
+        std::memcpy(out.color_keys + k * 4, &e.color_over_life[k].color, 4 * sizeof(f32));
+    }
+}
 
 ParticleInstance::~ParticleInstance() {
     for (Emitter& e : emitters_) {
@@ -27,7 +90,10 @@ f32 ParticleInstance::random() {
 }
 
 void ParticleInstance::restart() {
+    ++restarts_;  // GPU emitters start from an empty buffer
     for (Emitter& e : emitters_) {
+        e.step.first = e.step.count = 0;
+        e.quiet = e.life;
         e.count = 0;
         e.time = e.spawn_carry = 0.0f;
         e.burst_done = e.done = false;
@@ -36,7 +102,7 @@ void ParticleInstance::restart() {
 
 bool ParticleInstance::finished() const {
     for (const Emitter& e : emitters_) {
-        if (e.count || (e.capacity && !e.done)) return false;
+        if (e.count || (e.capacity && !e.done) || (e.gpu && e.quiet < e.life)) return false;
     }
     return true;
 }
@@ -80,11 +146,29 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
         if (i >= system.emitters.count || !system.emitters[i].enabled || system.emitters[i].min_quality > g_effects_quality) {
             s.count = 0;
             s.done = true;
+            s.gpu = false;
             continue;
         }
         const ParticleEmitter e = active_modules(system.emitters[i]);
-        const u32 wanted = e.max_particles < 1 ? 1 : e.max_particles > kMaxParticles ? kMaxParticles : e.max_particles;
-        if (s.capacity != wanted) {  // first use, or Max Particles edited: keep what fits
+        const bool gpu = e.sim_target == 1 && g_gpu_particles;
+        const u32 limit = gpu ? rhi::kMaxGpuParticles : kMaxParticles;
+        const u32 wanted = e.max_particles < 1 ? 1 : e.max_particles > limit ? limit : e.max_particles;
+        if (gpu) {  // only the spawn count and the step: the GPU keeps the particles (ParticlePlayer)
+            if (s.particles) allocator_.deallocate(s.particles);
+            s.particles = nullptr;
+            s.count = 0;
+            if (!s.gpu || s.capacity != wanted) s.step = {};
+            s.quiet = s.step.count ? dt : s.quiet + dt;
+            s.life = e.lifetime_max;
+            s.step.first = s.capacity == wanted && s.gpu ? (s.step.first + s.step.count) % wanted : 0u;
+            s.step.count = 0;
+            s.step.capacity = s.capacity = wanted;
+            s.step.dt = dt;
+            ++s.step.steps;
+            s.gpu = true;
+        } else if (s.capacity != wanted || s.gpu) {  // first use, Max Particles edited or back from the GPU: keep what fits
+            if (s.gpu) s.count = 0;
+            s.gpu = false;
             auto* fresh = static_cast<Particle*>(allocator_.allocate(sizeof(Particle) * wanted, alignof(Particle)));
             s.count = s.count < wanted ? s.count : wanted;
             if (s.particles) {
@@ -99,6 +183,7 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
         const Vec3 force = Vec3{0, 0, -gravity * e.gravity_scale} + e.acceleration;
         const Vec3 local_force = e.local_space ? transform_vector(affine_inverse(world), force) : force;
         const f32 keep = std::fmax(0.0f, 1.0f - e.drag * dt);
+        s.step.force = local_force;
         for (u32 k = 0; k < s.count;) {
             Particle& p = s.particles[k];
             p.age += dt;
@@ -138,12 +223,12 @@ void ParticleInstance::update(const ParticleSystem& system, const Mat4& world, f
         if (!emitting || s.done) continue;
         if (!s.burst_done) {
             const u32 burst = e.burst ? static_cast<u32>(std::lround(static_cast<f32>(e.burst) * g_spawn_scale)) : 0u;
-            for (u32 b = 0; b < (e.burst && !burst ? 1u : burst); ++b) spawn(e, s, world);  // a burst keeps at least one
+            for (u32 b = 0; b < (e.burst && !burst ? 1u : burst); ++b) gpu ? void(++s.step.count) : spawn(e, s, world);  // a burst keeps at least one
             s.burst_done = true;
         }
         s.spawn_carry += e.spawn_rate * g_spawn_scale * dt;
         while (s.spawn_carry >= 1.0f) {
-            spawn(e, s, world);
+            gpu ? void(++s.step.count) : spawn(e, s, world);
             s.spawn_carry -= 1.0f;
         }
         s.time += dt;

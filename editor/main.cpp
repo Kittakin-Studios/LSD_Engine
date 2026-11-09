@@ -86,6 +86,7 @@
 #include <string>
 
 bool g_gpu_culling = true;  // r.GPUCulling
+bool g_main_view = false;    // draw_world is drawing the first viewport (its Hi-Z: gpu_cull's occlusion test)
 bool g_occlusion_culling = true;  // r.OcclusionCulling
 bool g_texture_streaming = true;  // r.TextureStreaming
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
@@ -144,7 +145,7 @@ bool shadow_cutout(const char* material, const lsd::LinearColor& tint, lsd::rhi:
     lsd::rhi::MeshDraw look{};
     look.color[0] = look.color[1] = look.color[2] = 1.0f;
     look.color[3] = tint.a;
-    g_materials->apply(material, look);
+    g_materials->apply(material, look, 0);  // 0: only reading it, the draws say how sharp
     if (look.alpha_cutoff <= 0.0f || look.blend != 0 || !look.base_color_texture.valid()) return false;
     out.texture = look.base_color_texture;
     out.cutoff = look.alpha_cutoff;
@@ -189,8 +190,15 @@ void upload_lightmaps(lsd::rhi::Device& device, lsd::editor::MeshCache& meshes) 
     g_lightmap_names.clear();
     const lsd::editor::BakedLighting& l = g_level_lighting;
     if (!l.has_lightmap()) return;
-    const void* mips[1] = {l.lightmap.data()};
-    g_lightmap_atlas = device.create_texture(l.lightmap_size, l.lightmap_size, 1, lsd::rhi::TextureFormat::RGBA8, mips);
+    std::vector<lsd::u8> both;  // directional: the light, then its directions, one texture twice as tall (no extra binding)
+    if (l.lightmap_dir.size() == l.lightmap.size()) {  // and the shadow masks below them, when there are any
+        both = l.lightmap;
+        both.insert(both.end(), l.lightmap_dir.begin(), l.lightmap_dir.end());
+        if (l.shadow_mask.size() == l.lightmap.size()) both.insert(both.end(), l.shadow_mask.begin(), l.shadow_mask.end());
+    }
+    const void* mips[1] = {both.empty() ? l.lightmap.data() : both.data()};
+    const lsd::u32 rows = both.empty() ? l.lightmap_size : static_cast<lsd::u32>(both.size() / (static_cast<size_t>(l.lightmap_size) * 4));
+    g_lightmap_atlas = device.create_texture(l.lightmap_size, rows, 1, lsd::rhi::TextureFormat::RGBA8, mips);
     device.set_lightmap_atlas(g_lightmap_atlas);
     for (lsd::usize k = 0; k < l.objects.size(); ++k) {
         const lsd::editor::LightmapObject& o = l.objects[k];
@@ -228,6 +236,7 @@ bool in_view(const lsd::Mat4& mvp, lsd::Vec3 lo, lsd::Vec3 hi, bool sides_only =
 lsd::f32 g_view_fog[8] = {};  // the last drawn view's height fog (LightSetup fog, fog_color), for the particles
 lsd::rhi::LightSetup g_view_lights;  // the last drawn view's lights, for Lit particles
 lsd::rhi::BufferHandle g_nav_buffer;  // the navmesh overlay's lines (P)
+const lsd::editor::TextureCache* g_texture_cache_stats = nullptr;  // stat dump's texture line
 lsd::u32 g_nav_vertex_count = 0;
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
@@ -312,6 +321,11 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::
         const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
         if (!mesh) continue;
         instance_rows(world, e, *ism, rows, &matrices);
+        if (g_gpu_culling && ism->instances.count >= 32 && device.culls_shadow_instances()) {  // the GPU drops the copies outside the light's view
+            device.draw_shadow_instances(mesh->gpu.vertices, mesh->gpu.indices, mesh->gpu.index_count, vp.m, rows.data(), ism->instances.count,
+                                         &mesh->bounds_min.x, &mesh->bounds_max.x);
+            continue;
+        }
         lsd::u32 kept = 0;  // only the copies whose bounds reach this view (a forest's far side casts into another cascade)
         for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
             if (!in_view(vp * matrices[k], mesh->bounds_min, mesh->bounds_max, true)) {
@@ -733,6 +747,34 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
     return h;
 }
 
+// The normals pass (SSR / AO read it): while `on`, the view's opaque mesh draws are kept as they are submitted (their
+// arrays copied: some are reused by the next draw), then drawn again into a normals target (LightSetup::normal_view).
+struct NormalRecorder {
+    bool on = false;
+    struct Kept {
+        lsd::rhi::MeshDraw draw;
+        std::vector<lsd::f32> joints, instances, params;
+    };
+    std::vector<Kept> draws;
+    lsd::usize used = 0;
+} g_normals;
+
+void submit_mesh(lsd::rhi::Device& device, const lsd::rhi::MeshDraw& draw) {
+    device.draw_mesh(draw);
+    if (!g_normals.on || draw.blend != 0 || draw.wireframe || draw.unlit || draw.debug_view != 0) return;
+    if (g_normals.used == g_normals.draws.size()) g_normals.draws.emplace_back();
+    NormalRecorder::Kept& k = g_normals.draws[g_normals.used++];  // reused frame to frame: no allocation once grown
+    k.draw = draw;
+    auto keep = [](std::vector<lsd::f32>& to, const lsd::f32*& from, lsd::usize count) {
+        if (!from) return;
+        to.assign(from, from + count);
+        from = to.data();
+    };
+    keep(k.joints, k.draw.joint_rows, static_cast<lsd::usize>(draw.joint_count) * 12);
+    keep(k.instances, k.draw.instance_rows, static_cast<lsd::usize>(draw.instance_count) * 12);
+    keep(k.params, k.draw.material_params, static_cast<lsd::usize>(draw.material_param_count) * 4);
+}
+
 void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const lsd::Mat4& view_proj, EditorState& stats) {
     std::sort(items.begin(), items.end(), [](const BatchItem& a, const BatchItem& b) { return a.key < b.key; });
     static std::vector<lsd::f32> rows;
@@ -741,7 +783,7 @@ void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const
         while (end < items.size() && items[end].key == items[i].key) ++end;
         lsd::rhi::MeshDraw draw = items[i].draw;
         if (end - i == 1) {
-            device.draw_mesh(draw);  // alone: its own mvp / normals, as before
+            submit_mesh(device, draw);  // alone: its own mvp / normals, as before
         } else {
             rows.clear();
             for (size_t k = i; k < end; ++k) {
@@ -752,7 +794,11 @@ void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const
             std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
             draw.instance_rows = rows.data();
             draw.instance_count = static_cast<lsd::u32>(end - i);
-            device.draw_mesh(draw);
+            // Ordinary static meshes alike (props, rocks, fence posts) batched by 32 or more: culled on the GPU as Instanced
+            // Static Meshes are (frustum, the Hi-Z occlusion test, LODs).
+            draw.gpu_cull = g_gpu_culling && draw.instance_count >= 32 && device.supports_gpu_culling();
+            draw.occlusion_cull = g_main_view;
+            submit_mesh(device, draw);
         }
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3 * static_cast<lsd::u32>(end - i);
@@ -838,7 +884,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, candidates[k].index));
             lsd::rhi::MeshDraw look{};
             to_rgba(component->color, look.color);
-            materials.apply(component->material, look);
+            materials.apply(component->material, look, 0);  // only its blend mode is read
             if (look.blend != 0 || look.alpha_cutoff > 0.0f || look.color[3] < 0.999f) continue;  // see-through: hides nothing
             const lsd::editor::MeshCache::Triangles* tris = meshes.triangles(component->mesh);
             if (!tris || tris->indices.empty() || tris->indices.size() > 3 * 4096) continue;  // heavy meshes are not worth it on the CPU
@@ -889,7 +935,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             draw.camera_position[2] = eye.z;
             to_rgba(component->color, draw.color);
             draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;  // Material Graph Time
-            materials.apply(material, draw);  // base colour x tint, textures, metallic / roughness, emissive
+            // Texture streaming by distance: about as many texels as the object covers pixels on screen.
+            const lsd::Vec3 extent = lsd::transform_vector(pm, (part_mesh.bounds_max - part_mesh.bounds_min) * 0.5f);
+            const lsd::f32 away = std::max(lsd::length(lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f) - eye), 0.05f);
+            const lsd::f32 pixels = lsd::length(extent) / away * viewport[3] * 1.8f;
+            materials.apply(material, draw, static_cast<lsd::u32>(std::min(pixels, 16384.0f)));  // base colour x tint, textures, metallic / roughness, emissive
             if (std::strncmp(component->mesh, "Landscape:", 10) == 0) {  // painted layers, blended
                 if (const lsd::rhi::TextureHandle t = lsd::editor::landscape_texture(component->mesh); t.valid()) {
                     draw.base_color_texture = t;
@@ -904,10 +954,12 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             if ((!stats.playing || stats.ejected) && stats.is_selected(e)) g_outline.push_back(draw);  // outlined after the post pass
             if (blend_view(stats, draw, lsd::transform_point(pm, (part_mesh.bounds_min + part_mesh.bounds_max) * 0.5f), eye, translucent)) return;
             if (can_batch(draw, pm)) {  // drawn below with the others like it
+                std::memcpy(draw.local_bounds_min, &part_mesh.bounds_min, sizeof draw.local_bounds_min);  // for GPU culling of big batches
+                std::memcpy(draw.local_bounds_max, &part_mesh.bounds_max, sizeof draw.local_bounds_max);
                 batch.push_back({batch_key(draw), draw, pm});
                 return;
             }
-            device.draw_mesh(draw);
+            submit_mesh(device, draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
@@ -971,7 +1023,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 translucent.emplace_back(lsd::length(centre - eye) - static_cast<lsd::f32>(sort_order) * 1.0e5f, draw);  // drawn largest first
                 return;
             }
-            device.draw_mesh(draw);
+            submit_mesh(device, draw);
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
@@ -1049,9 +1101,18 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                 draw.instance_count = copies;
                 // Many copies (foliage, crowds of props): the GPU drops those outside the view.
                 draw.gpu_cull = g_gpu_culling && copies >= 32 && device.supports_gpu_culling();
+                if (draw.gpu_cull) {  // each copy's LOD on the GPU (as pick_lod), and the Hi-Z test in the main view
+                    for (lsd::u32 k = 1; k < mesh->lod_count && k < lsd::editor::CachedMesh::kMaxLods; ++k) {
+                        draw.lod_indices[k - 1] = mesh->lod_indices[k];
+                        draw.lod_index_counts[k - 1] = mesh->lod_index_count[k];
+                        draw.lod_screen_size[k - 1] = mesh->lod_screen_size[k];
+                    }
+                    draw.lod_distance_scale = g_view_distance_scale;
+                    draw.occlusion_cull = g_main_view;
+                }
                 std::memcpy(draw.local_bounds_min, &mesh->bounds_min, sizeof draw.local_bounds_min);
                 std::memcpy(draw.local_bounds_max, &mesh->bounds_max, sizeof draw.local_bounds_max);
-                device.draw_mesh(draw);
+                submit_mesh(device, draw);
                 ++stats.stat_draws;
             } else {
                 for (const lsd::Mat4& m : matrices) {  // Material Graphs have no instanced variant
@@ -1065,7 +1126,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                     for (int r = 0; r < 3; ++r) {
                         for (int c = 0; c < 4; ++c) draw.world[r * 4 + c] = m.at(r, c);
                     }
-                    device.draw_mesh(draw);
+                    submit_mesh(device, draw);
                     ++stats.stat_draws;
                 }
             }
@@ -1119,6 +1180,10 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
                          : stats.view_mode == lsd::editor::ViewMode::LightmapDensity ? 5u : 0u;
         draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
         const lsd::u32 lod = skinned_lod(*model, m, eye);  // auto LODs, as static meshes
+        // Texture streaming by distance, as for static meshes: about as many texels as it covers pixels.
+        const lsd::f32 away = std::max(lsd::length(lsd::transform_point(m, (model->model->bounds_min + model->model->bounds_max) * 0.5f) - eye), 0.05f);
+        const lsd::f32 pixels = lsd::length(lsd::transform_vector(m, (model->model->bounds_max - model->model->bounds_min) * 0.5f)) / away * viewport[3] * 1.8f;
+        const lsd::u32 want = static_cast<lsd::u32>(std::min(pixels, 16384.0f));
         // One draw per material slot (Unreal's mesh sections), each with its slot's material.
         for (lsd::u32 s = 0; s < model->section_count; ++s) {
             lsd::rhi::MeshDraw section = draw;
@@ -1126,14 +1191,14 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const char* material = lsd::editor::section_material(*component, *model, s);
             if (material[0]) section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;  // the material's own colours
             else to_rgba(component->color, section.color);
-            materials.apply(material, section);
+            materials.apply(material, section, want);
             if (editor_view && stats.is_selected(e)) {
                 section.color[0] = 1.0f;
                 section.color[1] = 0.85f;
                 section.color[2] = 0.25f;
             }
             if (blend_view(stats, section, lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}, eye, translucent)) continue;
-            device.draw_mesh(section);
+            submit_mesh(device, section);
             ++stats.stat_draws;
             stats.stat_triangles += section.index_count / 3;
         }
@@ -1141,7 +1206,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     // Translucent and additive meshes last, far to near, over everything opaque (they do not write depth).
     std::sort(translucent.begin(), translucent.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     for (const auto& [distance, draw] : translucent) {
-        device.draw_mesh(draw);
+        submit_mesh(device, draw);
         ++stats.stat_draws;
         stats.stat_triangles += draw.index_count / 3;
     }
@@ -1183,6 +1248,14 @@ void register_console(EditorState& s) {
                           g_shadow_tiles_cached_frame);
             lsd::editor::remote::print(line);
             LSD_LOG_INFO("stat", "%s", line);
+            if (g_texture_cache_stats) {  // texture streaming: what is on the GPU and how much of it is streamed down
+                lsd::u32 textures = 0, reduced = 0;
+                lsd::u64 texels = 0;
+                g_texture_cache_stats->stats(textures, reduced, texels);
+                std::snprintf(line, sizeof line, "textures %u (%u streamed smaller), %.1f M texels", textures, reduced, static_cast<double>(texels) / 1e6);
+                lsd::editor::remote::print(line);
+                LSD_LOG_INFO("stat", "%s", line);
+            }
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
                           st.stat_panel_ms[2], st.stat_panel_ms[3], st.stat_panel_ms[4]);
             lsd::editor::remote::print(line);
@@ -1809,6 +1882,31 @@ void stop_play_clients() {
 
 // The built-in chat box (Project Settings > Chat > Chat Box): the last lines, Enter to type, Tab
 // picks the channel among those the project turns on, Esc cancels.
+// Project Settings > Materials (global material parameters): names and defaults to the material compiler. Returns
+// true when the names changed since the last call (materials compile again); `reset` puts every value back.
+bool apply_material_parameters(const lsd::editor::ProjectSettings& project, bool reset) {
+    static std::string last_names, last_values;
+    static bool applied = false;
+    std::string names_now, values_now;
+    const char* names[lsd::script::kMaxGlobalParams];
+    lsd::f32 defaults[lsd::script::kMaxGlobalParams][4];
+    const lsd::u32 count = project.material_parameters.count < lsd::script::kMaxGlobalParams ? project.material_parameters.count : lsd::script::kMaxGlobalParams;
+    for (lsd::u32 i = 0; i < count; ++i) {
+        const lsd::editor::MaterialParameterDef& p = project.material_parameters[i];
+        names[i] = p.name;
+        std::memcpy(defaults[i], &p.value, sizeof defaults[i]);
+        names_now.append(p.name).append(1, ';');
+        values_now.append(reinterpret_cast<const char*>(&p.value), sizeof p.value);
+    }
+    if (applied && !reset && names_now == last_names && values_now == last_values) return false;
+    const bool recompile = applied ? names_now != last_names : count > 0;  // the first time: materials loaded before it
+    applied = true;
+    last_names = names_now;
+    last_values = values_now;
+    lsd::script::set_global_params(names, defaults, count);
+    return recompile;
+}
+
 void draw_chat_box(lsd::editor::PlaySession& play, const lsd::editor::ProjectSettings& project) {
     static bool typing = false;
     static int channel = 0;
@@ -1913,6 +2011,61 @@ void new_level(EditorState& s) {
     s.history->commit(*s.world, "Default objects");  // so the untitled level counts as unsaved
 }
 
+// A packaged game's resource package for a level (Packages/<level>.package, written by Package Project): its meshes are
+// loaded now, while the level opens (behind the splash), instead of the first time each is drawn in play.
+// shortcut: meshes only; textures stream by distance anyway, sounds load when first played
+void load_level_package(EditorState& s, const char* level_path) {
+    std::error_code ignored;
+    if (!s.meshes || !s.registry || !fs::exists("Packages", ignored)) return;
+    fs::path package = fs::path("Packages") / fs::relative(level_path, kContentDir, ignored);
+    package.replace_extension(".package");
+    FILE* f = std::fopen(package.generic_string().c_str(), "rb");
+    if (!f) return;
+    const lsd::u64 start = SDL_GetTicksNS();
+    char line[400];
+    lsd::u32 loaded = 0;
+    while (std::fgets(line, sizeof line, f)) {
+        char guid[33] = "";
+        if (std::sscanf(line, "%32s", guid) != 1) continue;
+        lsd::asset::Guid id;
+        const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(guid, id) ? s.registry->find(id) : nullptr;
+        if (r && r->type == lsd::asset::AssetType::Mesh && s.meshes->get(guid)) ++loaded;
+    }
+    std::fclose(f);
+    LSD_LOG_INFO("editor", "Package %s: %u meshes loaded (%.0f ms)", package.generic_string().c_str(), loaded, static_cast<double>(SDL_GetTicksNS() - start) * 1e-6);
+}
+
+// A Post Process Volume's Post Material (a shader asset with post_main), compiled on first use and again when its file
+// changes; invalid when it is not one or does not compile (logged).
+lsd::rhi::PostShaderHandle post_material(lsd::rhi::Device& device, const lsd::asset::AssetRegistry& registry, const char* guid) {
+    struct Entry {
+        lsd::rhi::PostShaderHandle shader;
+        fs::file_time_type time;
+        bool tried = false;
+    };
+    static std::unordered_map<std::string, Entry> cache;
+    lsd::asset::Guid id;
+    const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(guid, id) ? registry.find(id) : nullptr;
+    if (!r) return {};
+    char path[300];
+    registry.source_path(*r, path, sizeof path);
+    std::error_code ignored;
+    const fs::file_time_type time = fs::last_write_time(path, ignored);
+    Entry& e = cache[guid];
+    if (e.tried && e.time == time) return e.shader;
+    if (e.shader.valid()) device.destroy_post_shader(e.shader);
+    e = Entry{{}, time, true};
+    std::ifstream file(path, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (text.find("post_main") == std::string::npos) {
+        LSD_LOG_WARN("editor", "%s: a Post Material needs float3 post_main(PostIn pi) (New Post Process Material makes one)", path);
+        return {};
+    }
+    e.shader = device.create_post_shader(text.c_str());
+    if (!e.shader.valid()) LSD_LOG_WARN("editor", "%s: the post-process material did not compile (see the messages above)", path);
+    return e.shader;
+}
+
 bool open_level(EditorState& s, const char* path) {
     s.capture_reflections = true;  // the new level's captures
     if (!lsd::world::load_level_file(*s.world, path)) {
@@ -1923,6 +2076,7 @@ bool open_level(EditorState& s, const char* path) {
     }
     std::snprintf(s.level_path, sizeof s.level_path, "%s", fs::path(path).generic_string().c_str());
     load_level_lighting(s.level_path);
+    load_level_package(s, s.level_path);
     s.selected = {};
     lsd::editor::refresh_prefabs(s);  // prefabs edited since the level was saved show their latest version
     s.history->reset(*s.world, "Open Level");
@@ -2075,6 +2229,7 @@ int main(int argc, char** argv) {
     lsd::reflect::load_file(state.settings, kSettingsPath);
     lsd::editor::load_keymap(state.settings);
     lsd::reflect::load_file(state.project, "Config/project.json");
+    apply_material_parameters(state.project, true);  // before any material compiles
     state.game_mode = game_mode;
     if (game_mode) SDL_SetWindowTitle(window, state.project.project_name);
 
@@ -2146,12 +2301,14 @@ int main(int argc, char** argv) {
     }
     LSD_LOG_INFO("editor", "%zu assets in %s/", registry.count(), kContentDir);
     state.registry = &registry;
+    lsd::editor::set_light_profile_registry(&registry);
 
     lsd::world::World world(allocator);
     lsd::editor::Transactions history(allocator);
     auto* mesh_memory = allocator.allocate(sizeof(lsd::editor::MeshCache), alignof(lsd::editor::MeshCache));
     lsd::editor::MeshCache& meshes = *new (mesh_memory) lsd::editor::MeshCache(*device, allocator, registry, kDataDir);
     auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
+    g_texture_cache_stats = texture_cache;
     // Video memory: smaller textures and shadow atlases on cards with little of it (instead of failing).
     {
         const lsd::u64 budget = vram_arg > 0 ? static_cast<lsd::u64>(vram_arg) * 1024ull * 1024ull : device->query_memory_budget().budget_bytes;
@@ -2258,7 +2415,8 @@ int main(int argc, char** argv) {
             }
             return target[v];
         }
-    } scene_targets;
+    } scene_targets, normal_targets, velocity_targets;  // the normals pass's (SSR, AO), the velocity pass's (TAA, motion blur)
+    std::vector<std::pair<lsd::u32, lsd::Mat4>> last_worlds[4];  // the velocity pass: each kept draw's mesh and place last frame
     struct TaaHistory {  // per viewport: last frame's view-projection (TAA reprojects into it)
         lsd::Mat4 view_proj;
         lsd::u32 frame = 0;
@@ -2317,6 +2475,7 @@ int main(int argc, char** argv) {
     auto apply_user_settings = [&] {
         const lsd::editor::Scalability scalability = lsd::editor::resolve_scalability(user_settings);
         lsd::editor::set_shadow_quality(scalability.shadows);
+        texture_cache->set_detail_scale(lsd::editor::texture_detail_scale(scalability.textures));
         lsd::editor::set_post_quality(scalability.post);
         g_view_distance_scale = lsd::editor::view_distance_scale(scalability.view_distance);
         lsd::particles::set_spawn_scale(lsd::editor::effects_scale(scalability.effects));
@@ -2371,6 +2530,14 @@ int main(int argc, char** argv) {
     lsd::f32 reflection_probes[lsd::render::kMaxReflections][4] = {};
     lsd::f32 reflection_boxes[lsd::render::kMaxReflections][4] = {};  // box captures: half size, fade-in (w 0 = sphere)
     lsd::u32 reflection_capture_count = 0;  // captures rendered this frame, read back after it
+    std::string hdri_guid;                   // the Sky's HDRI the atlas was built with, and its brightness
+    lsd::f32 hdri_brightness = 1.0f;
+    bool env_pending = false;                // the atlas gets the environment's tile (the HDRI's or the atmosphere's) after this frame
+    bool env_refresh = false;                // only the atmosphere's tile again (its sun moved)
+    bool atmosphere_on = false;              // the Sky's atmosphere is the environment, its sun toward atmosphere_sun
+    lsd::Vec3 atmosphere_sun{0.0f, 0.0f, 1.0f};
+    lsd::u32 env_tile = 0;                   // the environment's tile in the atlas (after the captures')
+    std::vector<lsd::u8> atlas_pixels;       // the reflection atlas as last uploaded (the captures stay when only the sky changes)
     lsd::f32 shot_size[2] = {};
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
@@ -2460,6 +2627,7 @@ int main(int argc, char** argv) {
             skinned_cache->check_files();
             effects->check_files();
             materials.check_files();
+            if (apply_material_parameters(state.project, false)) materials.reload_all();  // renamed or reordered: their slots moved
             if (!game_mode && lsd::editor::game_module::changed() && !lsd::editor::game_module::compiling()) {  // a rebuilt Game.dll
                 play.scripts().stop_natives();  // their code is in the old DLL
                 lsd::editor::game_module::load();
@@ -2507,6 +2675,23 @@ int main(int argc, char** argv) {
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
         texture_cache->stream = g_texture_streaming;
         texture_cache->update();  // streamed textures the worker finished go on the GPU
+        {  // Video memory while running: near the budget the streamed detail halves (down to an eighth), with room it comes back
+            static lsd::u64 last_check = 0;
+            if (SDL_GetTicks() - last_check > 2000) {
+                last_check = SDL_GetTicks();
+                const lsd::rhi::MemoryBudget mem = device->query_memory_budget();
+                const lsd::u64 budget = vram_arg > 0 ? static_cast<lsd::u64>(vram_arg) * 1024ull * 1024ull : mem.budget_bytes;
+                if (budget && mem.usage_bytes) {
+                    const double used = static_cast<double>(mem.usage_bytes) / static_cast<double>(budget);
+                    const lsd::f32 scale = texture_cache->memory_scale();
+                    const lsd::f32 next = used > 0.9 ? std::max(scale * 0.5f, 0.125f) : used < 0.6 ? std::min(scale * 2.0f, 1.0f) : scale;
+                    if (next != scale) {
+                        texture_cache->set_memory_scale(next);
+                        LSD_LOG_INFO("editor", "Video memory %.0f%% of the budget: texture detail x%.3g", used * 100.0, static_cast<double>(next));
+                    }
+                }
+            }
+        }
         lsd::editor::update_landscapes(world, meshes);  // landscape meshes follow their heights (rebuilt on change)
         if (state.world != &world) lsd::editor::update_landscapes(*state.world, meshes);  // Play's copy
         lsd::editor::update_editable_meshes(world, meshes);
@@ -2560,7 +2745,8 @@ int main(int argc, char** argv) {
         }
         if (state.package_requested) {
             state.package_requested = false;
-            lsd::editor::package_project(state.project, registry, state.status, sizeof state.status);
+            if (lsd::editor::package_project(state.project, registry, state.status, sizeof state.status)) LSD_LOG_INFO("editor", "%s", state.status);
+            else LSD_LOG_ERROR("editor", "Package Project: %s", state.status);
         }
         {  // Build > Build Release Engine: its latest output line in the status bar while it runs, the result once
             char line[200];
@@ -2707,6 +2893,7 @@ int main(int argc, char** argv) {
                 animations->reset();
                 effects->reset();
                 load_level_lighting(again ? state.level_path : travel_to);
+                if (!again) load_level_package(state, travel_to);
                 state.capture_reflections = true;
                 travelled = !again || travelled;
                 if (again) LSD_LOG_INFO("editor", "Restarted the level (multiplayer host / join / leave)");
@@ -2824,6 +3011,7 @@ int main(int argc, char** argv) {
             }
             play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);
             animations->reset();  // Play starts every animation from its beginning
+            apply_material_parameters(state.project, true);  // scripts start from the defaults
             effects->reset();
             state.playing = true;
             state.paused = false;
@@ -2886,6 +3074,7 @@ int main(int argc, char** argv) {
             state.mouse_captured = false;
             state.paused = state.ejected = false;
             play.stop();
+            apply_material_parameters(state.project, true);  // what scripts set is undone
             LSD_LOG_INFO("editor", "Stop");
         }
         if (game_mode && !state.playing && !state.play_requested) running = false;
@@ -3004,13 +3193,29 @@ int main(int argc, char** argv) {
         lsd::editor::render_mesh_editor(*device, clear_color);
         lsd::editor::render_prefab_editor(*device, clear_color);
         // Reflection captures: six faces from each capture's place, rendered now, read back after the frame.
+        {  // the Sky's HDRI or atmosphere picked, cleared or brighter: the atlas again, with its tile; the sun moved: its tile
+            const bool skip_hidden = !state.playing || state.ejected;
+            lsd::f32 brightness = 1.0f;
+            const char* guid = lsd::editor::sky_hdri(world, skip_hidden, brightness);
+            lsd::Vec3 sun{0.0f, 0.0f, 1.0f};
+            const bool atmosphere = !guid[0] && lsd::editor::sky_atmosphere(world, skip_hidden, sun);
+            if (hdri_guid != guid || atmosphere != atmosphere_on || ((guid[0] || atmosphere) && hdri_brightness != brightness)) state.capture_reflections = true;
+            else if (atmosphere && lsd::dot(sun, atmosphere_sun) < 0.99999f && frame % 6 == 0) env_refresh = true;  // ~10 a second while it turns
+            // shortcut: captures keep the sky they saw; Build > Build Reflection Captures again after a big change of time of day
+            if (state.capture_reflections || env_refresh) atmosphere_sun = sun;
+            hdri_guid = guid;
+            hdri_brightness = brightness;
+            atmosphere_on = atmosphere;
+        }
         if (state.capture_reflections && reflection_capture_count == 0) {
             state.capture_reflections = false;
+            env_pending = !hdri_guid.empty() || atmosphere_on;
             const lsd::reflect::TypeInfo& rtype = lsd::reflect::type_of<lsd::world::ReflectionCapture>();
             const lsd::Vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
             const lsd::f32 face[4] = {0.0f, 0.0f, static_cast<lsd::f32>(lsd::render::kReflectionFace), static_cast<lsd::f32>(lsd::render::kReflectionFace)};
             const lsd::f32 black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-            for (lsd::u32 i = 0; i < world.count(rtype) && reflection_capture_count < lsd::render::kMaxReflections; ++i) {
+            const lsd::u32 capture_limit = lsd::render::kMaxReflections - (env_pending ? 1u : 0u);  // the environment takes the last tile
+            for (lsd::u32 i = 0; i < world.count(rtype) && reflection_capture_count < capture_limit; ++i) {
                 const lsd::world::Entity e = world.owner(rtype, i);
                 if ((!state.playing || state.ejected) && world.hidden_in_hierarchy(e)) continue;
                 const lsd::Mat4 m = world.world_matrix(e);
@@ -3035,8 +3240,9 @@ int main(int argc, char** argv) {
                 }
             }
             device->set_render_target({}, nullptr);
-            if (reflection_capture_count == 0) {  // none in the level: nothing to reflect but the sky
+            if (reflection_capture_count == 0 && !env_pending) {  // none in the level: nothing to reflect but the sky
                 lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, 0);
+                lsd::editor::set_sky_hdri(false, 0, nullptr);
                 device->set_reflection_atlas({});
             }
         }
@@ -3074,6 +3280,13 @@ int main(int argc, char** argv) {
                 post.color_lut = texture_cache->get(volume->color_grading_lut, false);
                 post.lut_intensity = volume->lut_intensity;
             }
+            if (use_post && volume && volume->post_material[0] && state.registry) {  // its Post Material
+                post.post_shader = post_material(*device, *state.registry, volume->post_material);
+                post.post_time = static_cast<lsd::f32>(static_cast<double>(SDL_GetTicks()) * 0.001);
+                post.post_params[0] = volume->post_parameters.x;
+                post.post_params[1] = volume->post_parameters.y;
+                post.post_params[2] = volume->post_parameters.z;
+            }
             if (post.contact_shadow[3] > 0.0f) {  // toward the sun: world space -> view space
                 const lsd::Vec3 toward = lsd::normalize(lsd::transform_vector(view, {post.contact_shadow[0], post.contact_shadow[1], post.contact_shadow[2]}));
                 post.contact_shadow[0] = toward.x;
@@ -3088,6 +3301,8 @@ int main(int argc, char** argv) {
                 post.proj[3] = proj.at(2, 3);
             }
             const bool taa = post.taa && post.proj[0] != 0.0f && v < 4;
+            const lsd::Mat4 unjittered = view_proj;  // the velocity pass: this frame's and the last one's, without jitter
+            const lsd::Mat4 last_view_proj = v < 4 && taa_history[v].valid ? taa_history[v].view_proj : view_proj;
             const bool motion_blur = post.motion_blur > 0.0f && post.proj[0] != 0.0f && v < 4;
             if (taa || motion_blur) {  // last frame's clip space from this one's (without the jitter): TAA and motion blur read it
                 post.taa_reset = !taa_history[v].valid;
@@ -3148,14 +3363,33 @@ int main(int argc, char** argv) {
                 device->set_render_target({}, nullptr);
                 device->set_viewport(pixels[0], pixels[1], pixels[2], pixels[3]);
             }
-            const lsd::rhi::TextureHandle scene = use_post ? scene_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3])) : lsd::rhi::TextureHandle{};
+            // Always through a scene target (render targets are half float; only the post pass writes the window): without
+            // post-processing (Unlit, Wireframe) a plain one, no tonemap, grading or anti-aliasing.
+            if (!use_post) {
+                post = lsd::rhi::PostDraw{};
+                post.tonemap = false;
+                post.fxaa = false;
+            }
+            const lsd::rhi::TextureHandle scene = scene_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
             lsd::f32 scene_clear[4] = {0, 0, 0, 1};
             for (int c = 0; c < 3; ++c) {  // the background, as the scene target stores colour (linear, range-compressed)
                 const lsd::f32 srgb = clear_color[c];
                 const lsd::f32 lin = srgb <= 0.04045f ? srgb / 12.92f : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
                 scene_clear[c] = std::sqrt(lin / (1.0f + lin));
             }
+            // SSR / AO want the meshes' own normals: keep this view's opaque draws for the normals pass below.
+            const bool normals_pass = scene.valid() && use_post && post.proj[0] != 0.0f && (post.ssr_intensity > 0.0f || post.ao_intensity > 0.0f);
+            const bool velocity_pass = scene.valid() && use_post && post.proj[0] != 0.0f && v < 4 && (taa || motion_blur);
+            g_normals.on = normals_pass || velocity_pass;
+            g_normals.used = 0;
+            g_main_view = v == 0;
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
+            g_main_view = false;
+            g_normals.on = false;
+            if (v == 0 && g_gpu_culling && device->supports_gpu_culling()) {  // its depth becomes next frame's Hi-Z
+                post.build_hiz = true;
+                std::memcpy(post.hiz_view_proj, unjittered.m, sizeof post.hiz_view_proj);
+            }
             if (state.show_grid && !state.game_view && !state.playing) {
                 // Side views see the floor edge-on, so they get the grid stood up on their own plane (XZ / YZ).
                 const lsd::Mat4 grid_proj = lens.view == lsd::editor::ViewType::Front ? view_proj * lsd::rotation_x(lsd::radians(90.0f))
@@ -3168,6 +3402,70 @@ int main(int argc, char** argv) {
             }
             effects->set_fog(g_view_fog, g_view_fog + 4);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
+            if (normals_pass) {  // the kept draws again, each pixel's view-space normal into its own target
+                const lsd::rhi::TextureHandle normals = normal_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
+                const lsd::f32 facing[4] = {0.5f, 0.5f, 1.0f, 1.0f};
+                device->set_render_target(normals, facing);
+                static lsd::rhi::LightSetup flagged;  // ~31 KB: off the stack (main's frame is already large)
+                flagged = g_view_lights;
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) flagged.normal_view[r][c] = view.at(r, c);
+                }
+                flagged.normal_view[3][0] = 1.0f;
+                device->set_lights(flagged);
+                for (lsd::usize i = 0; i < g_normals.used; ++i) device->draw_mesh(g_normals.draws[i].draw);
+                device->set_lights(g_view_lights);
+                post.normals = normals;
+            }
+            if (velocity_pass) {  // the kept draws again: each pixel's movement on screen since the last frame
+                const lsd::rhi::TextureHandle velocity = velocity_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
+                const lsd::f32 nothing[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                device->set_render_target(velocity, nothing);
+                static lsd::rhi::LightSetup flagged;  // ~31 KB: off the stack (main's frame is already large)
+                flagged = g_view_lights;
+                for (int r = 0; r < 4; ++r) {
+                    for (int c = 0; c < 4; ++c) flagged.velocity_view[r][c] = unjittered.at(r, c);
+                }
+                flagged.normal_view[3][1] = 1.0f;
+                device->set_lights(flagged);
+                // Each draw's place last frame: the same mesh's nearest draw then (no object ids; still things find themselves).
+                // shortcut: instanced copies and skinned poses move with their object only; per-instance / per-joint history for more
+                static std::vector<std::pair<lsd::u32, lsd::Mat4>> placed;
+                placed.clear();
+                for (lsd::usize i = 0; i < g_normals.used; ++i) {
+                    lsd::rhi::MeshDraw d = g_normals.draws[i].draw;
+                    lsd::Mat4 to_last = last_view_proj;
+                    if (!d.instance_rows) {
+                        lsd::Mat4 place = lsd::translation({0.0f, 0.0f, 0.0f});
+                        for (int r = 0; r < 3; ++r) {
+                            for (int c = 0; c < 4; ++c) place.at(r, c) = d.world[r * 4 + c];
+                        }
+                        const lsd::Vec3 at{place.at(0, 3), place.at(1, 3), place.at(2, 3)};
+                        const lsd::Mat4* was = nullptr;
+                        lsd::f32 best = 1e30f;
+                        for (const auto& [mesh, m] : last_worlds[v]) {
+                            const lsd::Vec3 d2 = lsd::Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - at;
+                            if (mesh == d.vertices.value && lsd::dot(d2, d2) < best) {
+                                best = lsd::dot(d2, d2);
+                                was = &m;
+                            }
+                        }
+                        if (was) to_last = last_view_proj * *was * lsd::affine_inverse(place);
+                        placed.push_back({d.vertices.value, place});
+                    }
+                    for (int r = 0; r < 3; ++r) {
+                        for (int c = 0; c < 3; ++c) d.normal_matrix[r * 4 + c] = to_last.at(r, c);
+                    }
+                    d.metallic = to_last.at(0, 3);
+                    d.roughness = to_last.at(1, 3);
+                    d.emissive[0] = to_last.at(2, 3);
+                    for (int c = 0; c < 4; ++c) d.color[c] = to_last.at(3, c);
+                    device->draw_mesh(d);
+                }
+                last_worlds[v].swap(placed);
+                device->set_lights(g_view_lights);
+                post.velocity = velocity;
+            }
             if (scene.valid()) {
                 post.scene = scene;
                 for (int c = 0; c < 4; ++c) post.viewport[c] = pixels[c];
@@ -3198,9 +3496,13 @@ int main(int argc, char** argv) {
         }
         device->end_frame();
         ++frame;
-        if (reflection_capture_count) {  // the captures' faces: read back, unwrapped into the atlas, uploaded
-            static std::vector<lsd::u8> atlas_pixels, face_pixels[6];
-            atlas_pixels.assign(static_cast<size_t>(lsd::render::kReflectionAtlas) * lsd::render::kReflectionAtlas * 4, 0);
+        const bool capture_pass = reflection_capture_count || env_pending;
+        if (capture_pass || env_refresh) {  // the captures' faces: read back, unwrapped into the atlas; the environment's tile; uploaded
+            static std::vector<lsd::u8> face_pixels[6];
+            if (capture_pass || atlas_pixels.empty()) {
+                atlas_pixels.assign(static_cast<size_t>(lsd::render::kReflectionAtlas) * lsd::render::kReflectionAtlas * 4, 0);
+                env_tile = reflection_capture_count;
+            }
             lsd::Mat4 views[6];
             lsd::render::reflection_views({0.0f, 0.0f, 0.0f}, views);
             for (lsd::u32 k = 0; k < reflection_capture_count; ++k) {
@@ -3213,6 +3515,27 @@ int main(int argc, char** argv) {
                 }
                 if (read) lsd::render::unwrap_reflection(faces, views, k, atlas_pixels.data());
             }
+            bool env_on = false;
+            lsd::Vec3 averages[3] = {};
+            if (env_pending && !hdri_guid.empty()) {  // the Sky's HDRI: resampled into the tile after the captures'
+                lsd::asset::Guid id;
+                const lsd::asset::AssetRecord* r = lsd::asset::parse_guid(hdri_guid.c_str(), id) && state.registry ? state.registry->find(id) : nullptr;
+                char path[512] = "";
+                if (r) state.registry->source_path(*r, path, sizeof path);
+                lsd::asset::TextureData image(allocator);
+                env_on = path[0] && lsd::asset::load_texture(path, false, 1024, image, true) && image.encoding == lsd::asset::TextureEncoding::RGBA16F;
+                if (env_on) {
+                    lsd::render::hdri_to_tile(reinterpret_cast<const lsd::u16*>(image.mip(0)), image.width, image.height, hdri_brightness, env_tile,
+                                              atlas_pixels.data(), averages);
+                } else {
+                    LSD_LOG_WARN("editor", "Sky HDRI: needs an .hdr or .exr image (%s)", path[0] ? path : hdri_guid.c_str());
+                }
+            } else if ((env_pending || env_refresh) && atmosphere_on) {  // the atmosphere's sky for its sun now
+                lsd::render::atmosphere_to_tile(atmosphere_sun, hdri_brightness, env_tile, atlas_pixels.data(), averages);
+                env_on = true;
+            }
+            env_pending = env_refresh = false;
+            lsd::editor::set_sky_hdri(env_on, env_tile, averages);
             for (lsd::u32 i = 0; i < reflection_capture_count * 6; ++i) device->destroy_texture(reflection_faces[i]);
             std::vector<std::vector<lsd::u8>> levels;
             lsd::render::reflection_mips(atlas_pixels.data(), levels);
@@ -3223,8 +3546,10 @@ int main(int argc, char** argv) {
             device->set_reflection_atlas(atlas);
             if (reflection_atlas.valid()) device->destroy_texture(reflection_atlas);  // shortcut: freed at once; defer a frame if a backend complains
             reflection_atlas = atlas;
-            lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, reflection_capture_count);
-            LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
+            if (capture_pass) {
+                lsd::editor::set_reflection_probes(reflection_probes, reflection_boxes, reflection_capture_count);
+                LSD_LOG_INFO("editor", "Reflection captures: %u captured", reflection_capture_count);
+            }
             reflection_capture_count = 0;
         }
         if (shot_target.valid()) {  // HighResShot: read back, save, free
@@ -3291,6 +3616,7 @@ int main(int argc, char** argv) {
     delete skinned_cache;
     g_decals = nullptr;
     delete decal_atlas;
+    g_texture_cache_stats = nullptr;
     delete texture_cache;
     device->destroy_texture(shadow_atlas);
     device->destroy_texture(local_shadow_atlas);

@@ -138,9 +138,49 @@ static void test_fog() {
     CHECK(particles::fog_amount(none, 0.0f, eye, {100, 0, 1}) == 0.0f);  // no fog in the level
 }
 
+// GPU emitters: the instance keeps only the spawn count per step (a ring of slots), the parameters pack the emitter.
+static void test_gpu(Allocator& heap) {
+    particles::ParticleSystem system;
+    system.emitters.count = 1;
+    particles::ParticleEmitter& e = system.emitters[0];
+    e.sim_target = 1;
+    e.gravity_scale = 1.0f;
+    e.spawn_rate = 100.0f;
+    e.burst = 10;
+    e.max_particles = 25;
+    e.duration = 0.2f;
+    e.looping = false;
+    e.lifetime_min = e.lifetime_max = 0.5f;
+    e.size_over_life.count = 2;
+    e.size_over_life[1] = {1.0f, 3.0f};
+    particles::ParticleInstance fx(heap);
+    particles::GpuStep step;
+    particles::set_gpu_particles(false);
+    fx.update(system, Mat4{}, 0.1f, 9.81f, true);
+    CHECK(!fx.gpu_step(0, step) && fx.count(0) == 20);  // no GPU: it runs on the CPU
+    particles::set_gpu_particles(true);
+    fx.restart();
+    fx.update(system, translation({0, 0, 5}), 0.1f, 9.81f, true);
+    CHECK(fx.gpu_step(0, step) && fx.count(0) == 0);
+    CHECK(step.first == 0 && step.count == 20 && step.capacity == 25 && std::fabs(step.force.z + 9.81f) < 1e-4f);
+    const u32 steps = step.steps;
+    fx.update(system, Mat4{}, 0.1f, 9.81f, true);
+    CHECK(fx.gpu_step(0, step) && step.first == 20 && step.count == 10 && step.steps == steps + 1);  // wraps at 25 on the GPU
+    fx.update(system, Mat4{}, 0.1f, 9.81f, true);
+    CHECK(fx.gpu_step(0, step) && step.first == 5 && step.count == 0 && !fx.finished());  // past its duration; particles still alive
+    fx.update(system, Mat4{}, 0.6f, 9.81f, true);
+    CHECK(fx.finished());  // its longest life has passed since the last new particles
+    rhi::GpuParticles params;
+    particles::gpu_params(e, step, translation({1, 2, 3}), 7u, params);
+    CHECK(params.spawn_rows[3] == 1.0f && params.spawn_rows[11] == 3.0f && params.draw_rows[3] == 0.0f && params.draw_rows[0] == 1.0f);
+    CHECK(params.spawn[2] == 25 && params.spawn[3] == 7u && params.size[2] == 2.0f && params.size_keys[2] == 1.0f && params.size_keys[3] == 3.0f);
+    particles::set_gpu_particles(false);
+}
+
 int main() {
     Allocator& heap = default_allocator();
     test_collision(heap);
+    test_gpu(heap);
     test_ribbon(heap);
     test_modules(heap);
     test_fog();
