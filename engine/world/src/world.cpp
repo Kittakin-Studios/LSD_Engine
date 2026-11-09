@@ -1,5 +1,6 @@
 #include "lsd/world/world.h"
 #include "lsd/world/components.h"
+#include "lsd/world/abilities.h"
 
 #include <cstdio>
 #include <cstring>
@@ -64,6 +65,8 @@ void init_types() {
         &reflect::type_of<Outfit>(),
         &reflect::type_of<OutfitPiece>(),
         &reflect::type_of<EditableMesh>(),
+        &reflect::type_of<AttributeSet>(),
+        &reflect::type_of<AbilitySystem>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     for (const reflect::TypeInfo* t : types) g_types[g_type_count++] = t;
@@ -393,8 +396,9 @@ bool tags_match(const char* tags, const char* query) {
 }
 
 bool has_tag(const World& world, Entity entity, const char* query) {
-    const Tags* tags = world.get<Tags>(entity);
-    return tags && tags_match(tags->tags, query);
+    char tags[1024];
+    owned_tags(world, entity, tags, sizeof tags);  // effects and active abilities grant tags too
+    return tags_match(tags, query);
 }
 
 bool tags_query(const char* tags, const char* queries, TagQuery mode) {
@@ -424,8 +428,9 @@ bool tags_query(const char* tags, const char* queries, TagQuery mode) {
 }
 
 bool has_tags(const World& world, Entity entity, const char* queries, TagQuery mode) {
-    const Tags* tags = world.get<Tags>(entity);
-    return tags_query(tags ? tags->tags : "", queries, mode);
+    char tags[1024];
+    owned_tags(world, entity, tags, sizeof tags);
+    return tags_query(tags, queries, mode);
 }
 
 Entity copy_entity(const World& from, Entity source, World& to, Entity parent, bool unique_names) {
