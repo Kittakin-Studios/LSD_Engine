@@ -1426,6 +1426,54 @@ Existing files are kept, so your edits survive a second Apply. The console does 
   ![The Lessons tab](images/lesson_gun_apply.jpg)
   *The Lessons tab: pick a lesson, Apply to Selected Character, read how each part is coded.*
 
+### Editor utility scripts and widgets
+
+Unreal's Editor Utility Blueprints / Widgets / Scripted Actions: a Lua script or a visual script that
+runs **in the editor**, on the level you are editing (not in Play), to automate level work. It gets the
+whole `lsd` API (`lsd.find`, `lsd.spawn`, `lsd.position` / `set_position`, `lsd.get` / `set` / `add` /
+`remove` for any component's properties, `lsd.assets`, `lsd.log`...) plus `lsd.editor`:
+
+| Call | What it does |
+| --- | --- |
+| `function run(self)` | What Run does (a visual script: its **Event Start**) |
+| `lsd.editor.selection()` | The selected objects, `{e, ...}` |
+| `lsd.editor.select({e, ...})` | Replaces the selection |
+| `lsd.editor.open_asset(name)` | Opens an asset as a double-click would |
+| `lsd.editor.console(line)` | Runs a console command |
+| `lsd.editor.panel(title, widgets)` | A dockable panel (the Editor Utility Widget) |
+
+Run one: Content Browser > right-click the script > **Run Editor Utility**, or `utility.Run <name>` in
+the console. Name it `EU_<something>` and it is also listed in **Tools > Editor Utilities**, in the
+toolbar's **Utilities** menu (next to Play) and in the Outliner's right-click **Scripted Actions**
+(run on the selection). Everything one run (or one panel button) changes in the level is **one undo
+step** (Ctrl+Z). Utilities never run while playing, and never in a packaged game (`lsd.editor` raises
+there).
+
+A panel declares its widgets as a list: `{"label", text}`, `{"button", label, function}`,
+`{"checkbox" | "number" | "text", label, variable, default}`. Checkboxes, numbers and text fields
+set the script's global of that name; a button calls the script's function:
+
+```lua
+-- Content/Tools/EU_LineUp.lua
+function run(self)
+  lsd.editor.panel("Line Up", {
+    {"number", "Spacing", "spacing", 2},
+    {"checkbox", "Flat", "flat", true},
+    {"button", "Line Up Selection", "line_up"},
+  })
+end
+
+function line_up()
+  for i, e in ipairs(lsd.editor.selection()) do
+    local x, y, z = lsd.position(e)
+    lsd.set_position(e, (i - 1) * spacing, y, flat and 0 or z)
+  end
+end
+```
+
+Running it again rebuilds its panel. `lsd.spawn(name, x, y, z)` places a prefab, a mesh asset or a
+built-in shape ("Cube").
+
 ### C and C++ scripts
 
 Game code can also be C or C++ (Unreal: your project's C++ module): **Tools > New C / C++ Script**

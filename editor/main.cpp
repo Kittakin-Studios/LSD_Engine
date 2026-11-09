@@ -3,6 +3,7 @@
 #include "keymap.h"
 #include "assistant.h"
 #include "assistant_lessons.h"
+#include "editor_utility.h"
 #include "templates.h"
 #include "editor_modes.h"
 #include "paper2d.h"
@@ -2653,6 +2654,7 @@ int main(int argc, char** argv) {
     int exit_code = 0;
     std::thread unit_tests;
     register_console(state);
+    if (!game_mode) lsd::editor::register_utility_commands(state);  // editor utilities never run in a packaged game
     for (lsd::u32 slot = 0; select_arg && slot < world.slot_count(); ++slot) {
         const lsd::world::Entity e = world.entity_at_slot(slot);
         if (e.valid() && std::strcmp(world.name(e), select_arg) == 0) {
