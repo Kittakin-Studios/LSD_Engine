@@ -50,9 +50,14 @@ public:
     void set_memory_scale(f32 scale) { memory_scale_ = scale; }
     f32 memory_scale() const { return memory_scale_; }
     f32 memory_scale_ = 1.0f;
+    // The texture pool (Unreal's texture streaming pool, r.TexturePoolSize): streamed textures stay within this many bytes
+    // on the GPU, the least recently drawn giving up their sharpest mips first (0: no limit).
+    u64 pool_bytes = 0;
     u32 loaded_size(rhi::TextureHandle texture) const;  // the largest side it was loaded at (0: unknown); tests and stat
     // stat dump: textures on the GPU, how many are loaded smaller than their file (streamed down), the texels they hold.
     void stats(u32& textures, u32& reduced, u64& texels) const;
+    // stat dump: bytes on the GPU (every mip), loads asked for so far, sharper loads the pool held back so far.
+    void pool_stats(u64& resident, u32& requests, u32& denied) const;
     f32 detail_scale_ = 1.0f;
 
 private:
@@ -71,8 +76,13 @@ private:
         u32 requested = 0;
         bool complete = false;
         u64 loaded_texels = 0;  // of its largest mip, for stat dump
+        u32 side = 0;           // its longer side on the GPU now
+        u64 bytes = 0;          // and what it holds there, every mip
+        u32 last_used = 0;      // frame it was last asked for (the pool squeezes the least recent first)
+        bool streams = true;    // its .meta's Mip Streaming
     };
     u32 frame_ = 0;
+    u32 requests_ = 0, denied_ = 0;
     static u32 stream_size(u32 want);  // 0: the whole image
     bool load(Entry& entry);
     // Path, time and size for loading `e` (main thread: the registry is not shared with the worker); false if it has no file.

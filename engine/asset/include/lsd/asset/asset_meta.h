@@ -99,6 +99,8 @@ struct AssetMeta {
     // Textures. Colour vs data (sRGB vs linear) is decided by the material slot that uses them.
     LSD_PROPERTY(Edit, Category = "Texture", Min = 1, Max = 8192, Tooltip = "Larger images are halved until they fit (Unreal's Maximum Texture Size)")
     u32 max_size = 4096;
+    LSD_PROPERTY(Edit, Category = "Texture", Tooltip = "Only the mips the view needs are on the GPU, within the texture pool (r.TexturePoolSize), like Unreal's texture streaming; off = always all of it (Unreal's Never Stream)")
+    bool mip_streaming = true;
 
     // Sound files (Unreal's Sound Wave settings).
     LSD_PROPERTY(Edit, Category = "Sound", Min = 0, Max = 4, Tooltip = "Loudness of this sound (1 = as recorded)") f32 volume = 1.0f;

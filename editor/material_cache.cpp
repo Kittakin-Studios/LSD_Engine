@@ -3,6 +3,7 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
+#include "lsd/render/texture_streaming.h"
 #include "lsd/script/material_graph.h"
 
 #include <cstdio>
@@ -78,6 +79,7 @@ bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) 
     asset::AssetMeta meta;
     if (const asset::AssetRecord* r = registry_.find(guid)) registry_.load_meta(*r, meta);
     max_size = meta.max_size;
+    e.streams = meta.mip_streaming;
     if (size_cap_ && (!max_size || max_size > size_cap_)) max_size = size_cap_;  // little video memory: smaller mips
     return true;
 }
@@ -95,6 +97,9 @@ void TextureCache::upload(Entry& e, const asset::TextureData& data) {
     if (e.texture.valid()) device_.destroy_texture(e.texture);
     e.texture = texture;
     e.failed = false;
+    e.side = data.width > data.height ? data.width : data.height;
+    e.bytes = data.pixels.size();
+    e.loaded_texels = static_cast<u64>(data.width) * data.height;
 }
 
 bool TextureCache::load(Entry& e) {
@@ -109,15 +114,15 @@ bool TextureCache::load(Entry& e) {
         e.failed = !e.texture.valid();
         return false;
     }
+    e.requested = 0;
+    e.complete = true;
     upload(e, data);
     return e.texture.valid();
 }
 
 u32 TextureCache::stream_size(u32 want) {
-    if (want == kFull) return 0;
-    u32 size = 64;
-    while (size < want && size < 16384) size *= 2;
-    return size;
+    const u32 size = render::stream_size(want);
+    return size == render::kStreamWhole ? 0 : size;
 }
 
 u32 TextureCache::loaded_size(rhi::TextureHandle texture) const {
@@ -139,6 +144,13 @@ void TextureCache::stats(u32& textures, u32& reduced, u64& texels) const {
     }
 }
 
+void TextureCache::pool_stats(u64& resident, u32& requests, u32& denied) const {
+    resident = 0;
+    for (u32 i = 0; i < count_; ++i) resident += entries_[i].texture.valid() ? entries_[i].bytes : 0;
+    requests = requests_;
+    denied = denied_;
+}
+
 void TextureCache::queue(u32 index) {
     Entry& e = entries_[index];
     Job job{index, "", e.srgb, 0, e.normal_map};
@@ -147,10 +159,11 @@ void TextureCache::queue(u32 index) {
         return;
     }
     // Streaming by distance: only as much as its uses need now (a smaller copy, cached in DerivedData like the rest).
-    const u32 size = stream ? stream_size(e.want) : 0;
+    const u32 size = stream && e.streams ? stream_size(e.want) : 0;
     if (size && (!job.max_size || size < job.max_size)) job.max_size = size;
     e.requested = job.max_size;
     e.pending = true;
+    ++requests_;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         jobs_.push_back(job);
@@ -171,31 +184,38 @@ void TextureCache::update(u32 budget) {
         e.pending = false;
         if (f.data) {
             e.complete = !e.requested || (f.data->width < e.requested && f.data->height < e.requested);  // smaller than the cap: all of it
-            e.loaded_texels = static_cast<u64>(f.data->width) * f.data->height;
             upload(e, *f.data);
         } else {
             e.failed = !e.texture.valid();
         }
         delete f.data;
     }
-    // About twice a second: a texture asked for bigger than it was loaded comes in sharper; one drawn but only far away
-    // (a quarter of its size or less) goes smaller and frees the memory. Ones not drawn meanwhile keep what they have.
+    // About twice a second: what each texture's draws asked for since the last look, held to the pool
+    // (render::plan_texture_streaming): sharper when it fits, smaller when only far away, the least recently drawn
+    // squeezed while over the pool. Each change is a load of that size (a smaller copy, cached in DerivedData).
     if (!stream || ++frame_ % 30 != 0) return;
+    std::vector<render::StreamTexture> view(count_);
+    std::vector<u32> sides(count_);
+    for (u32 i = 0; i < count_; ++i) {
+        const Entry& e = entries_[i];
+        render::StreamTexture& t = view[i];
+        t.side = e.failed || !e.texture.valid() ? 0u : e.side;
+        t.bytes = e.texture.valid() ? e.bytes : 0;
+        t.wanted = e.want ? render::stream_size(e.want) : 0u;
+        t.last_used = e.last_used;
+        t.complete = e.complete;
+        t.streams = e.streams;
+        t.busy = e.pending;
+    }
+    const render::StreamPlan plan = render::plan_texture_streaming(view.data(), count_, pool_bytes, sides.data());
+    denied_ += plan.denied;
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];
-        if (e.pending || e.failed || !e.texture.valid() || !e.want) {
-            e.want = 0;
-            continue;
-        }
-        const u32 target = stream_size(e.want);
-        const bool sharper = !e.complete && (target == 0 ? e.requested != 0 : e.requested && target > e.requested);
-        const bool smaller = target && (e.requested == 0 || target * 4 <= e.requested);
-        e.want = 0;
-        if (sharper || smaller) {
-            e.want = target ? target : kFull;  // what queue() loads now
+        if (sides[i]) {
+            e.want = sides[i];  // what queue() loads now (kStreamWhole is kFull)
             queue(i);
-            e.want = 0;
         }
+        e.want = 0;
     }
 }
 
@@ -215,6 +235,7 @@ rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_ma
     if (slot >= 0) {
         Entry& seen = entries_[slot];
         seen.want = seen.want > want ? seen.want : want;  // kFull is the largest
+        seen.last_used = frame_;
         return seen.texture;
     }
     if (count_ == sizeof entries_ / sizeof entries_[0]) return {};

@@ -96,6 +96,7 @@ bool g_gpu_culling = true;  // r.GPUCulling
 bool g_main_view = false;    // draw_world is drawing the first viewport (its Hi-Z: gpu_cull's occlusion test)
 bool g_occlusion_culling = true;  // r.OcclusionCulling
 bool g_texture_streaming = true;  // r.TextureStreaming
+lsd::i32 g_texture_pool_mb = 0;    // r.TexturePoolSize (0: a quarter of the video memory budget)
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
 std::vector<lsd::rhi::MeshDraw> g_outline;
@@ -1391,6 +1392,9 @@ void register_console(EditorState& s) {
     console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
     console::add_variable("show.Collision", &s.show_collision, "Draw what blocks in Play (meshes with collision, Blocking Volumes, rigid bodies)");
     console::add_variable("r.ForceLOD", &s.force_lod, "Draw every mesh at this LOD (-1: pick by distance)");
+    console::add_variable("r.TexturePoolSize", &g_texture_pool_mb,
+                          "MB of video memory streamed textures may use (Unreal's r.Streaming.PoolSize); over it the least recently drawn drop "
+                          "their sharpest mips. 0: a quarter of the video memory budget (-vram sets it)");
     console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
     console::add_variable("r.ShadowCaching", &g_shadow_caching, "Spot / point light shadow tiles are kept while nothing they show moves (a skeletal mesh in range redraws them each frame)");
     console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
@@ -1423,6 +1427,14 @@ void register_console(EditorState& s) {
                 lsd::u64 texels = 0;
                 g_texture_cache_stats->stats(textures, reduced, texels);
                 std::snprintf(line, sizeof line, "textures %u (%u streamed smaller), %.1f M texels", textures, reduced, static_cast<double>(texels) / 1e6);
+                lsd::editor::remote::print(line);
+                LSD_LOG_INFO("stat", "%s", line);
+                lsd::u64 resident = 0;
+                lsd::u32 requests = 0, denied = 0;
+                g_texture_cache_stats->pool_stats(resident, requests, denied);
+                std::snprintf(line, sizeof line, "texture pool: resident %.1f MB of %.0f MB, %u requests (%u loading), %u held back by the pool",
+                              static_cast<double>(resident) / (1024.0 * 1024.0), static_cast<double>(g_texture_cache_stats->pool_bytes) / (1024.0 * 1024.0),
+                              requests, g_texture_cache_stats->streaming(), denied);
                 lsd::editor::remote::print(line);
                 LSD_LOG_INFO("stat", "%s", line);
             }
@@ -2572,8 +2584,10 @@ int main(int argc, char** argv) {
     auto* texture_cache = new lsd::editor::TextureCache(*device, registry);  // deleted before the device
     g_texture_cache_stats = texture_cache;
     // Video memory: smaller textures and shadow atlases on cards with little of it (instead of failing).
+    lsd::u64 auto_texture_pool = 0;  // r.TexturePoolSize 0: a quarter of the budget
     {
         const lsd::u64 budget = vram_arg > 0 ? static_cast<lsd::u64>(vram_arg) * 1024ull * 1024ull : device->query_memory_budget().budget_bytes;
+        auto_texture_pool = budget / 4;
         const lsd::u64 gib = 1024ull * 1024ull * 1024ull;
         if (budget && budget < gib * 5 / 2) {
             texture_cache->set_size_cap(1024);
@@ -2581,8 +2595,9 @@ int main(int argc, char** argv) {
         } else if (budget && budget < gib * 5) {
             texture_cache->set_size_cap(2048);
         }
-        LSD_LOG_INFO("editor", "Video memory budget %.1f GB: textures up to %s, shadow atlas %u", static_cast<double>(budget) / static_cast<double>(gib),
-                     budget && budget < gib * 5 / 2 ? "1024" : budget && budget < gib * 5 ? "2048" : "full size", lsd::editor::shadow_atlas_size());
+        LSD_LOG_INFO("editor", "Video memory budget %.1f GB: textures up to %s, texture pool %llu MB, shadow atlas %u", static_cast<double>(budget) / static_cast<double>(gib),
+                     budget && budget < gib * 5 / 2 ? "1024" : budget && budget < gib * 5 ? "2048" : "full size", static_cast<unsigned long long>(auto_texture_pool / (1024ull * 1024ull)),
+                     lsd::editor::shadow_atlas_size());
     }
     const lsd::rhi::TextureHandle shadow_atlas = device->create_shadow_map(lsd::editor::shadow_atlas_size());
     const lsd::rhi::TextureHandle local_shadow_atlas = device->create_shadow_map(lsd::editor::shadow_atlas_size());
@@ -2970,6 +2985,7 @@ int main(int argc, char** argv) {
 
         lsd::world::update_spline_meshes(world);  // Spline Meshes follow their curves (only rebuilt on change)
         texture_cache->stream = g_texture_streaming;
+        texture_cache->pool_bytes = g_texture_pool_mb > 0 ? static_cast<lsd::u64>(g_texture_pool_mb) * 1024ull * 1024ull : auto_texture_pool;
         texture_cache->update();  // streamed textures the worker finished go on the GPU
         {  // Video memory while running: near the budget the streamed detail halves (down to an eighth), with room it comes back
             static lsd::u64 last_check = 0;
