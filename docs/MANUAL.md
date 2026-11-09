@@ -983,6 +983,24 @@ dark contact under the statue's feet come from the lightmap.*
 - An object moved, renamed or given another mesh after the bake goes back to the probes until the
   next Build Lighting. Real-time shadows inside the Shadow Distance stay as they were.
 
+### Dynamic Global Illumination (Unreal's Lumen)
+
+When lights or walls move (a day / night cycle, a door, a torch carried around), baked light is wrong. Tick
+**World Settings > Dynamic Global Illumination** instead: a grid of light probes follows the camera (10 x 10 probes
+across, 5 high, 2 m apart: 18 m around you) and is relit all the time on worker threads. Each probe sees the sky
+(dark under a roof), the light bounced off the surfaces around it (from every light, through their shadows, and the
+light those surfaces already got: bounces add up) and the colours of the meshes, as Build Lighting's probes do, but
+live: move the sun or a wall and the bounce and the room's darkness follow within a few frames.
+
+- While it is on it replaces Build Lighting's probes and lightmaps (no bake needed), and Static lights light in real time like Movable ones; untick it to go back to the bake.
+- Beyond the grid the ambient fades back to the Sky Light's.
+- Console: `r.DynamicGI 0` turns it off everywhere (a quality switch), `r.DynamicGI.Spacing <m>` sets the distance
+  between probes (larger reaches further, coarser), `r.DynamicGI.Rays <n>` the rays per probe (8 .. 256, default 64:
+  more is smoother and slower). `stat dump` prints how long a sweep takes.
+- Limits: it sees Static Meshes only (not skeletal meshes, landscapes or instanced meshes) with their Color and
+  Material base colour (no textures); the light is soft and coarse (2 m), so small contact shadows still need SSAO or
+  the lightmaps.
+
 ---
 
 ### HLOD (Build HLODs)
