@@ -182,7 +182,7 @@ Select. `presets_folder` changes where the presets come from.
 | --- | --- |
 | ![File menu](images/menu_file.jpg) | **File**: new / open / save levels, recent levels, Validate Assets, Import, Package Project. |
 | ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
-| ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console. |
+| ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console; Asset Audit, Size Map, Fix Up Redirectors. |
 | ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Build Release Engine, Validate Assets, Package Project. |
 | ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic), and per group: Shadows, Post Processing, View Distance, Effects. |
 | ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
@@ -501,6 +501,36 @@ at a time while the editor keeps running: a progress bar in the menu bar names t
 still uses the asset. A missing reference shows in red with **Replace with selected**; **Replace its
 references with...** points everything at the asset selected in the Content Browser instead
 (Unreal's Replace References). Reopen the level afterwards to see the change.
+
+**Size Map** (Unreal's Size Map): right-click an asset (or several) or a folder > **Size Map...**, or
+Tools > **Size Map** for all of Content/ (console: `asset.SizeMap [asset | folder]`). It lists the asset and
+everything it uses (by reference, and by name or path in scripts and UI, as cooking follows them) as bars,
+biggest first, with each one's share of the total: what a level really brings into a package. Click a bar to
+find the asset in the Content Browser. Sizes are the source files on disk.
+
+![Size Map](images/win_size_map.jpg)
+
+**Asset Audit** (Unreal's Asset Audit): Tools > **Asset Audit** (`asset.Audit`) is a table of every asset:
+name, type, path, size on disk, compiled size (its data in DerivedData/, when built), and how many assets
+use it. Click a column header to sort; filter by folder, by type, or tick **Unused only**: assets that no
+asset uses and the game does not reach by name either (Project Settings' levels and what they lead to), so
+Cook Used Assets Only leaves them out. Double-click a row to find the asset. **Refresh** reads it all again.
+
+![Asset Audit](images/win_asset_audit.jpg)
+
+**Fix Up Redirectors** (Unreal's Fix Up Redirectors). References between assets use the asset's ID
+(its `.meta`), so renaming or moving never breaks them and no redirector files are left behind. What can
+go stale is a name or path written as text: `lsd.play_sound("Door")` in a script, a level path in Project
+Settings > Maps. The editor writes down every rename and move (Saved/AssetRedirects.txt); Tools > **Fix Up
+Redirectors** (also on a folder's right-click menu, or `asset.FixRedirectors`) rewrites those names and
+paths in scripts, UI documents, text assets and the project settings, then clears the list. A bare name is
+only rewritten when no other asset has the old name now.
+
+**Editing several assets at once** (Unreal's Property Matrix / editing several assets in Details): Ctrl- or
+Shift-click assets of the same type in the Content Browser; Details shows the one you clicked last and
+says how many are selected. For data assets (materials, input actions, curves...) each change you make
+goes to all of them at once; for meshes, textures and sounds, **Save** writes the settings you changed to
+every selected one (the settings you left alone stay as each asset had them).
 
 **Source control** (Unreal's Source Control, Git only). When the project folder is a Git repository,
 asset tiles get a badge: yellow **M** changed, green **A** new, blue **R** renamed (the `.meta`

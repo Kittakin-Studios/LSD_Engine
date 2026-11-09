@@ -4569,7 +4569,7 @@ void draw_size_map(EditorState& s) {
     ImGui::Separator();
     ImGui::BeginChild("bars");
     const u64 biggest = g_size_map.empty() ? 1 : (g_size_map.front().bytes ? g_size_map.front().bytes : 1);
-    const ImU32 bar = u32_color(s.theme.content_tab);
+    const ImU32 bar = (u32_color(s.theme.content_tab) & ~IM_COL32_A_MASK) | (120u << IM_COL32_A_SHIFT);  // see-through: the label stays readable
     for (const SizeEntry& e : g_size_map) {
         if (e.record >= s.registry->count()) break;  // the registry rescanned: Refresh
         const asset::AssetRecord& r = s.registry->get(e.record);
