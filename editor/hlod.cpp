@@ -58,6 +58,8 @@ void append_merged(const HlodSource& s, f32 ratio, HlodProxy& proxy) {
         count = s.index_count;
     }
     const Mat4 inv = affine_inverse(s.world);
+    const Vec3 c0{s.world.at(0, 0), s.world.at(1, 0), s.world.at(2, 0)}, c1{s.world.at(0, 1), s.world.at(1, 1), s.world.at(2, 1)}, c2{s.world.at(0, 2), s.world.at(1, 2), s.world.at(2, 2)};
+    const bool mirrored = dot(cross(c0, c1), c2) < 0.0f;
     std::vector<u32> remap(s.vertex_count, 0xFFFFFFFFu);
     for (u32 i = 0; i < count; ++i) {
         u32& slot = remap[kept[i]];
@@ -74,6 +76,9 @@ void append_merged(const HlodSource& s, f32 ratio, HlodProxy& proxy) {
             proxy.vertices.push_back(v);
         }
         proxy.indices.push_back(slot);
+    }
+    if (mirrored) {  // a negative scale turns the triangles inside out: flip them back
+        for (usize i = proxy.indices.size() - count; i + 2 < proxy.indices.size(); i += 3) std::swap(proxy.indices[i + 1], proxy.indices[i + 2]);
     }
 }
 
@@ -159,6 +164,8 @@ bool gather_hlod_sources(const world::World& w, const asset::AssetRegistry& regi
         }
         storage.vertices.emplace_back(data.vertices, data.vertices + data.vertex_count);
         storage.indices.emplace_back(data.indices, data.indices + data.index_count);
+        const u32 vertex_count = data.vertex_count, index_count = data.index_count;
+        render::free_mesh(allocator, data);  // copied above
         HlodSource s;
         s.key = hlod_member_key(w.name(e), m->mesh, {world_matrix.at(0, 3), world_matrix.at(1, 3), world_matrix.at(2, 3)});
         s.world = world_matrix;
@@ -168,9 +175,9 @@ bool gather_hlod_sources(const world::World& w, const asset::AssetRegistry& regi
         s.color[2] = m->color.b;
         s.color[3] = m->color.a;
         s.vertices = storage.vertices.back().data();
-        s.vertex_count = data.vertex_count;
+        s.vertex_count = vertex_count;
         s.indices = storage.indices.back().data();
-        s.index_count = data.index_count;
+        s.index_count = index_count;
         out.push_back(s);
     }
     return !out.empty();
