@@ -307,6 +307,8 @@ struct VehicleWheel {
     LSD_PROPERTY(Edit, Tooltip = "Turns with the steering (front wheels)") bool steers = false;
     LSD_PROPERTY(Edit, Tooltip = "The engine turns it") bool driven = true;
     LSD_PROPERTY(Edit, Tooltip = "Locked by the handbrake (Space; usually the rear wheels)") bool handbrake = false;
+    LSD_PROPERTY(Edit, Tooltip = "A bone of the vehicle's Skeletal Mesh that is this wheel (Unreal's wheel bone): it spins, steers and bounces with it; empty: none") char bone[64] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Take Position, Radius and Width from the Object's mesh or the Bone's vertices (where you modelled the wheel)") bool fit = false;
 };
 
 LSD_STRUCT(Component, Category = "Movement", Tooltip = "A vehicle the player enters and drives (WASD, Shift boost, Ctrl brake)")
@@ -341,7 +343,12 @@ struct Vehicle {
     LSD_PROPERTY(Edit, Category = "Physics", Units = "m", Min = 0.01, Max = 3, Tooltip = "Suspension travel, fully up to fully down") f32 suspension_length = 0.3f;
     LSD_PROPERTY(Edit, Category = "Physics", Units = "Hz", Min = 0.1, Max = 20, Tooltip = "Suspension stiffness: higher is firmer (a race car 2.5, a truck 1)") f32 suspension_stiffness = 1.5f;
     LSD_PROPERTY(Edit, Category = "Physics", Min = 0, Max = 1, Tooltip = "0 bounces on and on, 1 settles at once") f32 suspension_damping = 0.5f;
-    LSD_PROPERTY(Edit, Category = "Physics", Tooltip = "The wheels (Unreal's Wheel Setups); empty: four at the corners of its box")
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 0, Max = 3, Tooltip = "Tyre grip (Unreal's Friction Force Multiplier): 1 tarmac, 0.3 ice, 1.5 racing slicks") f32 tire_friction = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Physics", Tooltip = "Forward gear ratios, first gear first (Unreal's Transmission Setup); empty: five gears 2.66, 1.78, 1.3, 1, 0.74")
+    List<f32, 8> gear_ratios;
+    LSD_PROPERTY(Edit, Category = "Physics", Min = 0, Max = 20, Tooltip = "The reverse gear's ratio (higher: stronger, slower backwards); 0: 2.9") f32 reverse_gear_ratio = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Physics",
+                 Tooltip = "The wheels (Unreal's Wheel Setups); empty: child objects or Skeletal Mesh bones named Wheel..., fitted to their meshes, else four at the corners of its box")
     List<VehicleWheel, 8> wheels;
 };
 

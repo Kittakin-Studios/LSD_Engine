@@ -240,6 +240,40 @@ static void test_vehicle() {
     w.step(1.0f / 60.0f);
 }
 
+// Tyre grip and gears from Details: on ice the same throttle gets less far; one long gear still drives.
+// fit_wheel sizes a wheel from its mesh's box.
+static f32 drive_distance(f32 friction, u32 gears, f32 ratio) {
+    PhysicsWorld w;
+    w.add_body(box({0, 0, -0.5f}, {500, 500, 0.5f}, Motion::Static));
+    BodyDesc car = box({0, 0, 1.0f}, {2.0f, 1.0f, 0.4f}, Motion::Dynamic);
+    car.mass = 1500.0f;
+    car.centre_of_mass_offset = {0, 0, -0.4f};
+    VehicleDesc v;
+    v.body = w.add_body(car);
+    for (u32 i = 0; i < 4; ++i) {
+        WheelDesc& wheel = v.wheels[v.wheel_count++];
+        wheel.position = {i < 2 ? 1.4f : -1.4f, i % 2 ? -0.8f : 0.8f, -0.3f};
+        wheel.friction = friction;
+    }
+    v.gear_count = gears;
+    for (u32 i = 0; i < gears; ++i) v.gear_ratios[i] = ratio;
+    const u32 vehicle = w.add_vehicle(v);
+    for (int i = 0; i < 60; ++i) w.step(1.0f / 60.0f);
+    w.drive_vehicle(vehicle, 1.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 120; ++i) w.step(1.0f / 60.0f);
+    return centre(w, v.body).x;
+}
+
+static void test_vehicle_setup() {
+    const f32 road = drive_distance(1.0f, 0, 0.0f), ice = drive_distance(0.05f, 0, 0.0f), one_gear = drive_distance(1.0f, 1, 1.5f);
+    std::printf("  2 s of throttle: road %.1f m, ice %.1f m, one gear %.1f m\n", static_cast<double>(road), static_cast<double>(ice), static_cast<double>(one_gear));
+    CHECK(road > 2.0f && ice < road * 0.6f && one_gear > 1.0f);
+    Vec3 c;
+    f32 radius = 0.0f, width = 0.0f;
+    fit_wheel({1.0f, 0.6f, 0.0f}, {1.7f, 0.85f, 0.7f}, c, radius, width);
+    CHECK(std::fabs(c.x - 1.35f) < 1e-4f && std::fabs(c.z - 0.35f) < 1e-4f && std::fabs(radius - 0.35f) < 1e-4f && std::fabs(width - 0.25f) < 1e-4f);
+}
+
 // A one-way platform: the character jumps up through it from below and then stands on its top.
 static void test_one_way() {
     PhysicsWorld world;
@@ -269,6 +303,7 @@ static void test_one_way() {
 
 int main() {
     test_one_way();
+    test_vehicle_setup();
     test_vehicle();
     PhysicsWorld world;
     world.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));        // floor, top at z = 0

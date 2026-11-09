@@ -561,6 +561,9 @@ u32 PhysicsWorld::add_vehicle(const VehicleDesc& desc) {
         wheel->mMaxSteerAngle = JPH::DegreesToRadians(w.max_steer_degrees);
         wheel->mMaxBrakeTorque = desc.brake_torque;
         wheel->mMaxHandBrakeTorque = w.handbrake ? desc.handbrake_torque : 0.0f;
+        const f32 grip = std::fmax(w.friction, 0.0f);
+        for (JPH::LinearCurve::Point& p : wheel->mLongitudinalFriction.mPoints) p.mY *= grip;
+        for (JPH::LinearCurve::Point& p : wheel->mLateralFriction.mPoints) p.mY *= grip;
         settings.mWheels.push_back(wheel);
         if (w.driven) driven.push_back(i);
     }
@@ -576,6 +579,11 @@ u32 PhysicsWorld::add_vehicle(const VehicleDesc& desc) {
         diff.mRightWheel = pair ? static_cast<int>(a_left ? b : a) : -1;
         controller->mDifferentials.push_back(diff);
         i += pair ? 2 : 1;
+    }
+    if (desc.gear_count) controller->mTransmission.mGearRatios.assign(desc.gear_ratios, desc.gear_ratios + std::min(desc.gear_count, 8u));
+    if (desc.reverse_ratio > 0.0f) {
+        controller->mTransmission.mReverseGearRatios.clear();
+        controller->mTransmission.mReverseGearRatios.push_back(-desc.reverse_ratio);
     }
     for (JPH::VehicleDifferentialSettings& d : controller->mDifferentials) d.mEngineTorqueRatio = 1.0f / static_cast<f32>(controller->mDifferentials.size());
     settings.mController = controller;

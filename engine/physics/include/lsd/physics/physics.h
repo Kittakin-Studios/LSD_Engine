@@ -41,6 +41,7 @@ struct WheelDesc {
     f32 max_steer_degrees = 0.0f;     // 0: does not steer
     bool driven = true;               // the engine turns it
     bool handbrake = false;           // the handbrake locks it (usually the rear wheels)
+    f32 friction = 1.0f;              // tyre grip, times Jolt's road curve (0.3 ice, 1 tarmac, 1.5 slicks)
 };
 constexpr u32 kMaxWheels = 8;
 
@@ -55,7 +56,19 @@ struct VehicleDesc {
     f32 brake_torque = 1500.0f;    // N m per wheel
     f32 handbrake_torque = 4000.0f;
     f32 max_pitch_roll_degrees = 60.0f;  // tilts further than this are held back (stays on its wheels)
+    f32 gear_ratios[8] = {};  // forward gears, first gear first; gear_count 0: Jolt's five
+    u32 gear_count = 0;
+    f32 reverse_ratio = 0.0f;  // > 0: the reverse gear's ratio (0: Jolt's)
 };
+
+// A wheel fitted to its mesh or bone (Unreal's wheel bones): `lo` / `hi` are the wheel's box in the
+// vehicle's own space (x forward, y left, z up); its centre, radius (half the larger of its length and
+// height) and width (across).
+inline void fit_wheel(Vec3 lo, Vec3 hi, Vec3& centre, f32& radius, f32& width) {
+    centre = (lo + hi) * 0.5f;
+    radius = 0.5f * (hi.x - lo.x > hi.z - lo.z ? hi.x - lo.x : hi.z - lo.z);
+    width = hi.y - lo.y;
+}
 
 struct VehicleState {
     f32 speed = 0.0f;  // m/s along its forward axis (negative backwards)

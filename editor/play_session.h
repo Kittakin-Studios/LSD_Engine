@@ -209,6 +209,10 @@ private:
         u32 vehicle = ~0u;
         bool parked = false;
         world::Entity wheel_objects[physics::kMaxWheels];
+        Mat4 wheel_offsets[physics::kMaxWheels];  // the wheel's object from its rest frame (any pivot or rotation the mesh has)
+        world::Entity wheel_skeleton;              // the Skeletal Mesh whose bones are wheels
+        char wheel_bones[physics::kMaxWheels][48] = {};
+        Vec3 wheel_rest[physics::kMaxWheels];      // a bone wheel's centre at rest, in the vehicle's own space
         u32 wheel_count = 0;
     };
     std::vector<Moving> moving_;

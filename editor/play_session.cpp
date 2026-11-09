@@ -2981,12 +2981,149 @@ void PlaySession::add_moving(const world::World& world, world::Entity e, const C
 }
 
 // A Physics vehicle: a dynamic box fitted to its mesh, its centre of mass low (it should not tip at
-// every corner), on its listed wheels or four at the corners. The body writes its Transform back.
+// every corner), on its listed wheels, wheels found by name (child meshes or Skeletal Mesh bones called
+// Wheel...) or four at the corners. The body writes its Transform back.
 void PlaySession::add_physics_vehicle(const world::World& world, world::Entity e, const CachedMesh* cached, const world::Vehicle& v) {
     if (simulated_count_ == sizeof simulated_ / sizeof simulated_[0]) return;
+    const Mat4 at = world.world_matrix(e);
+    const Mat4 rigid = without_scale(at), to_local = affine_inverse(rigid);  // the vehicle's own space in metres
+    // A box (lo..hi under `m`) as seen in the vehicle's own space, added to out_lo..out_hi.
+    auto local_box = [&](const Mat4& m, Vec3 lo, Vec3 hi, Vec3& out_lo, Vec3& out_hi) {
+        for (u32 k = 0; k < 8; ++k) {
+            const Vec3 p = transform_point(to_local * m, {k & 1 ? hi.x : lo.x, k & 2 ? hi.y : lo.y, k & 4 ? hi.z : lo.z});
+            out_lo = {std::min(out_lo.x, p.x), std::min(out_lo.y, p.y), std::min(out_lo.z, p.z)};
+            out_hi = {std::max(out_hi.x, p.x), std::max(out_hi.y, p.y), std::max(out_hi.z, p.z)};
+        }
+    };
+    auto is_below = [&](world::Entity c) {
+        for (world::Entity p = world.parent(c); p.valid(); p = world.parent(p)) {
+            if (p == e) return true;
+        }
+        return false;
+    };
+    auto named_wheel = [](const char* name) {
+        for (const char* c = name; *c; ++c) {
+            if (SDL_strncasecmp(c, "wheel", 5) == 0) return true;
+        }
+        return false;
+    };
+    // The vehicle's Skeletal Mesh (on it or a child): its bones can be wheels.
+    world::Entity skeleton = world.get<world::SkeletalMesh>(e) ? e : world::Entity{};
+    for (u32 slot = 0; !skeleton.valid() && slot < world.slot_count(); ++slot) {
+        const world::Entity c = world.entity_at_slot(slot);
+        if (c.valid() && world.get<world::SkeletalMesh>(c) && is_below(c)) skeleton = c;
+    }
+    const world::SkeletalMesh* skeletal = skeleton.valid() ? world.get<world::SkeletalMesh>(skeleton) : nullptr;
+    const SkinnedEntry* skin = skeletal && skinned_ ? skinned_->get(skeletal->mesh) : nullptr;
+    const anim::SkinnedModel* model = skin ? skin->model : nullptr;
+    const Mat4 skin_to_world = model ? skeletal_matrix(world, skeleton, *skeletal, skin) : Mat4{};
+    // A skinned vertex where it is drawn now (the pose's skinning, else as stored), and the bone moving it most.
+    const anim::Pose* pose = model && animations_ ? animations_->pose(skeleton) : nullptr;
+    auto skinned_point = [&](const rhi::SkinnedVertex& sv, u32& joint) {
+        u32 best = 0;
+        for (u32 n = 1; n < 4; ++n) best = sv.weights[n] > sv.weights[best] ? n : best;
+        joint = sv.joints[best];
+        const Vec3 p{sv.position[0], sv.position[1], sv.position[2]};
+        return pose && joint < pose->joint_count() ? transform_point(pose->joint_model(joint) * model->inverse_bind[joint], p) : p;
+    };
+
+    // The wheels' sources: listed, or found by name.
+    struct Source {
+        world::Entity object;
+        i32 bone;
+        Vec3 position;
+        f32 radius, width;
+        bool steers, driven, handbrake, fit;
+    };
+    Source sources[physics::kMaxWheels];
+    u32 count = 0;
+    for (u32 i = 0; i < v.wheels.count && count < physics::kMaxWheels; ++i) {
+        const world::VehicleWheel& w = v.wheels[i];
+        Source& s = sources[count++];
+        s = Source{{}, -1, w.position, w.radius > 0.0f ? w.radius : v.wheel_radius, v.wheel_width, w.steers, w.driven, w.handbrake, w.fit};
+        for (u32 slot = 0; w.object[0] && slot < world.slot_count(); ++slot) {  // its wheel mesh: a child (any depth) of that name
+            const world::Entity c = world.entity_at_slot(slot);
+            if (c.valid() && c != e && std::strcmp(world.name(c), w.object) == 0 && is_below(c)) s.object = c;
+        }
+        if (w.object[0] && !s.object.valid()) LSD_LOG_WARN("play", "%s: wheel %u: no child object named '%s'", world.name(e), i, w.object);
+        if (w.bone[0]) s.bone = model ? model->find_joint(w.bone) : -1;
+        if (w.bone[0] && s.bone < 0) LSD_LOG_WARN("play", "%s: wheel %u: no bone named '%s' on its Skeletal Mesh", world.name(e), i, w.bone);
+    }
+    if (!v.wheels.count) {  // the user's own wheels: child meshes named Wheel..., else bones named so
+        for (u32 slot = 0; slot < world.slot_count() && count < physics::kMaxWheels; ++slot) {
+            const world::Entity c = world.entity_at_slot(slot);
+            if (c.valid() && world.get<world::StaticMesh>(c) && named_wheel(world.name(c)) && is_below(c)) {
+                sources[count++] = Source{c, -1, {}, 0.0f, 0.0f, false, true, false, true};
+            }
+        }
+        for (u32 j = 0; model && !count && j < model->joint_count(); ++j) {
+            const i32 parent = model->joint_parent(j);
+            if (named_wheel(model->joint_name(j)) && (parent < 0 || !named_wheel(model->joint_name(static_cast<u32>(parent))))) {
+                sources[count++] = Source{{}, static_cast<i32>(j), {}, 0.0f, 0.0f, false, true, false, true};
+            }
+            if (count == physics::kMaxWheels) break;
+        }
+    }
+    // Fitted wheels: their mesh's (or bone's vertices') box in the vehicle's space gives place and size.
+    f32 lowest_centre = 1e30f;
+    for (u32 i = 0; i < count; ++i) {
+        Source& s = sources[i];
+        if (!s.fit) continue;
+        Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        if (s.object.valid()) {
+            const auto* mesh = world.get<world::StaticMesh>(s.object);
+            if (const CachedMesh* wheel_mesh = mesh ? meshes_->get(mesh->mesh) : nullptr) local_box(world.world_matrix(s.object), wheel_mesh->bounds_min, wheel_mesh->bounds_max, lo, hi);
+        } else if (s.bone >= 0) {
+            for (usize k = 0; k < model->vertices.size(); ++k) {  // the vertices this bone moves most
+                u32 joint = 0;
+                const Vec3 p = skinned_point(model->vertices[k], joint);
+                if (joint == static_cast<u32>(s.bone)) local_box(skin_to_world, p, p, lo, hi);
+            }
+        }
+        if (lo.x > hi.x) {
+            LSD_LOG_WARN("play", "%s: wheel %u: nothing to fit it to (no mesh, or a bone without vertices)", world.name(e), i);
+            s.fit = false;
+            s.radius = v.wheel_radius;
+            continue;
+        }
+        physics::fit_wheel(lo, hi, s.position, s.radius, s.width);
+        lowest_centre = std::min(lowest_centre, s.position.z);
+    }
+    if (!v.wheels.count && count) {  // found wheels: the front half steers, the back half has the handbrake
+        f32 middle = 0.0f;
+        for (u32 i = 0; i < count; ++i) middle += sources[i].position.x / static_cast<f32>(count);
+        for (u32 i = 0; i < count; ++i) {
+            const bool front = sources[i].position.x > middle;
+            sources[i].steers = front;
+            sources[i].handbrake = !front;
+            sources[i].driven = v.drive == 2 || (v.drive == 1) == front;
+        }
+    }
+
+    // The body: its mesh's box (a Skeletal Mesh's when it has no Static Mesh), its bottom above the wheels' centres.
+    Vec3 lo = cached ? cached->bounds_min : kUnitLo, hi = cached ? cached->bounds_max : kUnitHi;
     Vec3 scale, centre;
-    physics::BodyDesc d = fitted_body(world.world_matrix(e), cached ? cached->bounds_min : kUnitLo, cached ? cached->bounds_max : kUnitHi, 0,
-                                      physics::Motion::Dynamic, scale, centre);
+    if (!cached && model) {
+        Vec3 t, r;
+        decompose_trs(at, t, r, scale);
+        lo = {1e30f, 1e30f, 1e30f};
+        hi = {-1e30f, -1e30f, -1e30f};
+        for (usize k = 0; k < model->vertices.size(); ++k) {
+            u32 joint = 0;
+            const Vec3 p = skinned_point(model->vertices[k], joint);
+            local_box(skin_to_world, p, p, lo, hi);
+        }
+        lo = {lo.x / scale.x, lo.y / scale.y, lo.z / scale.z};
+        hi = {hi.x / scale.x, hi.y / scale.y, hi.z / scale.z};
+    }
+    physics::BodyDesc d = fitted_body(at, lo, hi, 0, physics::Motion::Dynamic, scale, centre);
+    Vec3 body_centre = mul(centre, scale);  // the body sits at the box's centre, the wheels are given from the origin
+    if (const f32 top = body_centre.z + d.half_extents.z; lowest_centre < 1e29f && body_centre.z - d.half_extents.z < lowest_centre && lowest_centre < top - 0.1f) {
+        d.half_extents.z = (top - lowest_centre) * 0.5f;  // wheels inside the body mesh's box: the box would drag on the road
+        body_centre.z = (top + lowest_centre) * 0.5f;
+        centre.z = body_centre.z / scale.z;
+        d.transform = rigid * translation(body_centre);
+    }
     d.mass = v.mass;
     d.friction = 0.3f;  // the body sliding on walls; the tyres have their own grip
     d.centre_of_mass_offset = {0.0f, 0.0f, -d.half_extents.z * 0.9f};
@@ -2998,42 +3135,44 @@ void PlaySession::add_physics_vehicle(const world::World& world, world::Entity e
     vd.engine_torque = v.engine_torque;
     vd.max_rpm = v.max_rpm;
     vd.brake_torque = v.brake_torque;
-    auto wheel = [&](Vec3 at, f32 radius, bool steers, bool driven, bool handbrake) {
+    vd.gear_count = std::min(v.gear_ratios.count, 8u);
+    for (u32 i = 0; i < vd.gear_count; ++i) vd.gear_ratios[i] = std::max(v.gear_ratios[i], 0.05f);
+    vd.reverse_ratio = v.reverse_gear_ratio;
+    Moving m;
+    m.entity = e;
+    m.body = body;
+    m.world_scale = scale;
+    m.wheel_skeleton = skeleton;
+    auto wheel = [&](Vec3 position, f32 radius, f32 width, bool steers, bool driven, bool handbrake) {
         physics::WheelDesc& w = vd.wheels[vd.wheel_count++];
-        w.position = at;
+        w.position = position - body_centre;
         w.radius = radius;
-        w.width = v.wheel_width;
+        w.width = width;
         w.suspension_length = v.suspension_length;
         w.suspension_frequency = v.suspension_stiffness;
         w.suspension_damping = v.suspension_damping;
         w.max_steer_degrees = steers ? v.max_steer_angle : 0.0f;
         w.driven = driven;
         w.handbrake = handbrake;
+        w.friction = v.tire_friction;
     };
-    Moving m;
-    m.entity = e;
-    m.body = body;
-    m.world_scale = scale;
-    const Vec3 body_centre = mul(centre, scale);  // the body sits at the box's centre, the wheels are given from the origin
-    if (v.wheels.count) {
-        for (u32 i = 0; i < v.wheels.count && vd.wheel_count < physics::kMaxWheels; ++i) {
-            const world::VehicleWheel& w = v.wheels[i];
-            wheel(w.position - body_centre, w.radius > 0.0f ? w.radius : v.wheel_radius, w.steers, w.driven, w.handbrake);
-            for (u32 slot = 0; w.object[0] && slot < world.slot_count(); ++slot) {  // its wheel mesh: a child (any depth) of that name
-                const world::Entity c = world.entity_at_slot(slot);
-                if (!c.valid() || c == e || std::strcmp(world.name(c), w.object) != 0) continue;
-                for (world::Entity p = world.parent(c); p.valid(); p = world.parent(p)) {
-                    if (p == e) m.wheel_objects[i] = c;
-                }
-            }
-            if (w.object[0] && !m.wheel_objects[i].valid()) LSD_LOG_WARN("play", "%s: wheel %u: no child object named '%s'", world.name(e), i, w.object);
-        }
-    } else {  // four wheels under the corners of its box, the front ones steering
+    for (u32 i = 0; i < count; ++i) {
+        const Source& s = sources[i];
+        // A fitted wheel hangs from half its travel above where it was modelled, so it rests about there.
+        const Vec3 attach = s.fit ? s.position + Vec3{0.0f, 0.0f, v.suspension_length * 0.5f} : s.position;
+        wheel(attach, s.radius, s.width, s.steers, s.driven, s.handbrake);
+        m.wheel_rest[i] = s.fit ? s.position : attach;  // the wheel's centre where it was placed
+        m.wheel_objects[i] = s.object;
+        if (s.object.valid()) m.wheel_offsets[i] = affine_inverse(rigid * translation(m.wheel_rest[i])) * world.world_matrix(s.object);
+        for (int r = 0; r < 3 && s.object.valid() && !s.fit; ++r) m.wheel_offsets[i].at(r, 3) = 0.0f;  // listed at Position: its pivot is the wheel's centre
+        if (s.bone >= 0) std::snprintf(m.wheel_bones[i], sizeof m.wheel_bones[i], "%s", model->joint_name(static_cast<u32>(s.bone)));
+    }
+    if (!count) {  // four wheels under the corners of its box, the front ones steering
         const Vec3 h = d.half_extents;
         const f32 x = std::max(h.x - v.wheel_radius * 1.2f, h.x * 0.3f), y = std::max(h.y - v.wheel_width * 0.5f, h.y * 0.3f), z = -h.z * 0.75f;
         for (u32 i = 0; i < 4; ++i) {
             const bool front = i < 2;
-            wheel({front ? x : -x, i % 2 == 0 ? y : -y, z}, v.wheel_radius, front, v.drive == 2 || (v.drive == 1) == front, !front);
+            wheel(body_centre + Vec3{front ? x : -x, i % 2 == 0 ? y : -y, z}, v.wheel_radius, v.wheel_width, front, v.drive == 2 || (v.drive == 1) == front, !front);
         }
     }
     m.wheel_count = vd.wheel_count;
@@ -3126,9 +3265,10 @@ void PlaySession::update_vehicle_wheels(world::World& world) {
         for (u32 i = 0; i < m.wheel_count; ++i) {
             const Mat4 at = physics_->wheel_transform(m.vehicle, i);
             if (world.alive(m.wheel_objects[i])) {
-                Vec3 t, r, s;
-                decompose_trs(world.world_matrix(m.wheel_objects[i]), t, r, s);
-                world.set_world_matrix(m.wheel_objects[i], at * scaling(s));
+                world.set_world_matrix(m.wheel_objects[i], at * m.wheel_offsets[i]);
+            } else if (m.wheel_bones[i][0] && animations_ && world.alive(m.wheel_skeleton)) {
+                // The bone from where it rests in the vehicle (moving with it already) to the wheel's frame.
+                animations_->move_bone(m.wheel_skeleton, m.wheel_bones[i], at * translation(-m.wheel_rest[i]) * affine_inverse(without_scale(world.world_matrix(m.entity))));
             } else if (v) {  // no wheel mesh: a ring shows where it is (the placeholder box has no wheels)
                 const f32 radius = i < v->wheels.count && v->wheels[i].radius > 0.0f ? v->wheels[i].radius : v->wheel_radius;
                 Vec3 last{};
