@@ -2596,7 +2596,8 @@ struct PlaySession::PlayingTimeline {
     world::Timeline data;
     f32 time = 0.0f;
     bool loop = false;
-    bool cuts = false;  // has camera cuts: the view goes back to the player at the end
+    bool cuts = false;  // has camera cuts or shots: the view goes back to the player at the end
+    char camera[48] = "";  // the cut / shot camera looked through now
 };
 
 bool PlaySession::play_timeline(const char* name, bool loop) {
@@ -2621,7 +2622,9 @@ bool PlaySession::play_timeline(const char* name, bool loop) {
     std::snprintf(t->name, sizeof t->name, "%s", name);
     t->loop = loop;
     t->time = -1e-4f;  // keys at 0 fire on the first update
-    for (const world::TimelineTrack& track : t->data.tracks) t->cuts = t->cuts || track.type == static_cast<u32>(world::TrackType::CameraCut);
+    for (const world::TimelineTrack& track : t->data.tracks) {
+        t->cuts = t->cuts || track.type == static_cast<u32>(world::TrackType::CameraCut) || track.type == static_cast<u32>(world::TrackType::Shot);
+    }
     *slot = t;
     return true;
 }
@@ -2658,9 +2661,14 @@ void PlaySession::update_timelines(world::World& world, f32 dt) {
                     const world::Entity at = find_named(world, t->data.tracks[i].object);
                     const Mat4 m = world.alive(at) ? world.world_matrix(at) : Mat4{};
                     sounds_->play(keys[k]->text, world.alive(at), {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
-                } else if (type == world::TrackType::CameraCut) {
-                    view_camera_ = find_named(world, keys[k]->text);
                 }
+            }
+        }
+        if (t->cuts) {  // Camera Cuts and Shots (into sub-sequences): cut when the camera changes, so lsd.set_view still works in between
+            const char* camera = timeline_camera(t->data, to);
+            if (camera && std::strcmp(camera, t->camera) != 0) {
+                std::snprintf(t->camera, sizeof t->camera, "%s", camera);
+                view_camera_ = find_named(world, camera);
             }
         }
         if (!ended) continue;
@@ -2779,6 +2787,7 @@ void PlaySession::find_view(const world::World& world) {
     view_forward_ = eye_forward_;
     view_fov_ = 0.0f;
     view_ortho_ = 0.0f;
+    view_entity_ = {};
     const reflect::TypeInfo& camera_type = reflect::type_of<world::Camera>();
     world::Entity camera = view_camera_;
     if (!world.alive(camera) || !world.get<world::Camera>(camera)) {
@@ -2788,13 +2797,14 @@ void PlaySession::find_view(const world::World& world) {
         }
     }
     if (!camera.valid()) {
-        if (const world::Entity own = player_camera(world); own.valid()) view_fov_ = radians(world.get<world::Camera>(own)->fov);  // the player's Camera: its lens
+        if (const world::Entity own = player_camera(world); own.valid()) view_fov_ = radians(camera_fov_degrees(*world.get<world::Camera>(own)));  // the player's Camera: its lens
         return;
     }
+    view_entity_ = camera;
     const Mat4 m = world.world_matrix(camera);
     view_eye_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
     view_forward_ = normalize(Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
-    view_fov_ = radians(world.get<world::Camera>(camera)->fov);
+    view_fov_ = radians(camera_fov_degrees(*world.get<world::Camera>(camera)));
     if (const auto* cam = world.get<world::Camera>(camera); cam->orthographic) view_ortho_ = cam->ortho_height;
 }
 

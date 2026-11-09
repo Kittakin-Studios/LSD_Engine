@@ -84,6 +84,7 @@ public:
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
     f64 clock() const { return play_clock_; }  // seconds of game time since Play started (flipbooks, events)
     f32 view_ortho() const { return view_ortho_; }  // an orthographic Camera's height in metres; 0: perspective
+    world::Entity view_camera_entity() const { return view_entity_; }  // the Camera looked through (its Cine Camera focus); invalid: the player
     // Looks through `camera` (invalid: the player again), cutting or blending over `blend_seconds`.
     void set_view(world::Entity camera, f32 blend_seconds = 0.0f);
     // Unreal's camera shake: strength 1 = 5 cm and about 1 degree of wobble, fading out over `seconds`.
@@ -285,6 +286,7 @@ private:
     f32 blend_fov_ = 0.0f, blend_time_ = 0.0f, blend_length_ = 0.0f;
     f32 shake_strength_ = 0.0f, shake_time_ = 0.0f, shake_length_ = 0.0f, shake_frequency_ = 12.0f, view_clock_ = 0.0f;
     world::Entity view_camera_;  // a Camera component the game looks through (lsd.set_view, Auto Activate)
+    world::Entity view_entity_;  // the Camera find_view settled on
     struct Projectile {
         world::Entity entity;
         Vec3 velocity;  // world space

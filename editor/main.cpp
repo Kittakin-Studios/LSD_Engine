@@ -21,6 +21,7 @@
 #include "navigation.h"
 #include "ui_editor.h"
 #include "timeline_editor.h"
+#include "timeline_player.h"
 #include "mesh_editor.h"
 #include "mesh_materials.h"
 #include "lua_debugger.h"
@@ -1448,6 +1449,23 @@ void register_console(EditorState& s) {
         }
         LSD_LOG_WARN("editor", "timeline.Open: no Timeline named like '%s'", args);
     }, &s, "Open a Timeline in the Timeline window");
+    console::add_command("sequence.Render", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        char name[96] = "";
+        float fps = 30.0f;
+        unsigned width = 1920, height = 1080;
+        if (std::sscanf(args, "%95s %f %u %u", name, &fps, &width, &height) < 1) {
+            LSD_LOG_WARN("editor", "sequence.Render <timeline> [fps] [width] [height]");
+            return;
+        }
+        lsd::usize hits[16];
+        const lsd::usize n = st.registry->search(name, lsd::asset::AssetType::Data, nullptr, hits, 16);
+        for (lsd::usize i = 0; i < n; ++i) {
+            const lsd::asset::AssetRecord& r = st.registry->get(hits[i]);
+            if (std::strcmp(r.data_type, "Timeline") == 0) return lsd::editor::render_timeline_movie(st, r, fps, width, height);
+        }
+        LSD_LOG_WARN("editor", "sequence.Render: no Timeline named like '%s'", name);
+    }, &s, "sequence.Render <timeline> [fps] [width] [height]: renders it frame by frame to PNGs in Saved/MovieRenders (Movie Render Queue)");
     console::add_command("ui.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         lsd::usize hit = 0;
@@ -2322,6 +2340,7 @@ int main(int argc, char** argv) {
         reg.source_path(*r, out, capacity);
         return true;
     }, &registry);
+    lsd::editor::set_timeline_registry(&registry);  // sub-sequences load by name
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
     registry.scan();
     import_pending_materials(registry);
@@ -2602,6 +2621,7 @@ int main(int argc, char** argv) {
     lsd::u32 env_tile = 0;                   // the environment's tile in the atlas (after the captures')
     std::vector<lsd::u8> atlas_pixels;       // the reflection atlas as last uploaded (the captures stay when only the sky changes)
     lsd::f32 shot_size[2] = {};
+    char shot_file[300] = "";  // a movie render frame's path (empty: a HighResShot name)
     lsd::u64 last_scan = SDL_GetTicks();
     lsd::u64 last_tick = SDL_GetTicksNS();
     lsd::u32 mcp_tried_port = 0;  // Claude MCP plugin: the port last tried, so a busy one is not retried every frame
@@ -3325,6 +3345,16 @@ int main(int argc, char** argv) {
             const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
             device->set_viewport(rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y);
             lsd::editor::EditorCamera lens = camera;
+            // Not playing, the main view can look through a Camera (the Timeline's camera lock, movie renders).
+            const lsd::world::Camera* cine = v == 0 && !state.playing && world.alive(state.cine_camera) ? world.get<lsd::world::Camera>(state.cine_camera) : nullptr;
+            lsd::Vec3 cine_eye, cine_forward{1, 0, 0};
+            if (cine) {
+                const lsd::Mat4 m = world.world_matrix(state.cine_camera);
+                cine_eye = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+                cine_forward = lsd::normalize(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)});
+                lens.view = lsd::editor::ViewType::Perspective;
+                lens.fov_y = lsd::radians(lsd::editor::camera_fov_degrees(*cine));
+            }
             if (state.playing && !state.ejected) {
                 lens.view = lsd::editor::ViewType::Perspective;  // the player always sees in perspective
                 if (play.view_fov() > 0.0f) lens.fov_y = play.view_fov();  // a Camera component's
@@ -3334,12 +3364,14 @@ int main(int argc, char** argv) {
                 }
             }
             lsd::Mat4 proj = lsd::editor::camera_projection(lens, rect[2] / rect[3]);
-            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.view_forward(), lsd::Vec3{0, 0, 1}) : lsd::editor::camera_view(camera);
+            const lsd::Mat4 view = state.playing && !state.ejected ? lsd::look_at(play.eye(), play.eye() + play.view_forward(), lsd::Vec3{0, 0, 1})
+                                   : cine                          ? lsd::look_at(cine_eye, cine_eye + cine_forward, lsd::Vec3{0, 0, 1})
+                                                                   : lsd::editor::camera_view(camera);
             lsd::Mat4 view_proj = proj * view;
             state.drawn_view_proj[v] = view_proj;
             lsd::editor::LightView light_view;
-            light_view.eye = state.playing && !state.ejected ? play.eye() : camera.position;
-            light_view.forward = state.playing && !state.ejected ? play.view_forward() : lsd::editor::camera_forward(camera);
+            light_view.eye = state.playing && !state.ejected ? play.eye() : cine ? cine_eye : camera.position;
+            light_view.forward = state.playing && !state.ejected ? play.view_forward() : cine ? cine_forward : lsd::editor::camera_forward(camera);
             light_view.fov_y = lens.fov_y;
             light_view.aspect = rect[2] / rect[3];
             const lsd::f32 pixels[4] = {rect[0] * scale.x, rect[1] * scale.y, rect[2] * scale.x, rect[3] * scale.y};
@@ -3368,6 +3400,11 @@ int main(int argc, char** argv) {
             post.color_deficiency = user_settings.color_deficiency;  // Accessibility: the player's colour-blind filter
             post.color_deficiency_strength = user_settings.color_deficiency_strength;
             post.color_deficiency_correct = !user_settings.color_deficiency_simulate;
+            if (use_post) {  // a Cine Camera's lens: its depth of field over the volume's
+                const lsd::world::Entity looking = state.playing && !state.ejected ? play.view_camera_entity() : cine ? state.cine_camera : lsd::world::Entity{};
+                const bool movie = v == 0 && state.high_res_shot && state.shot_size[1];
+                lsd::editor::cine_camera_post(world, looking, movie ? static_cast<lsd::f32>(state.shot_size[1]) : pixels[3], post);
+            }
             if (use_post && lens.view == lsd::editor::ViewType::Perspective) {  // depth effects (AO, DOF, TAA) need the projection
                 post.proj[0] = proj.at(0, 0);
                 post.proj[1] = proj.at(1, 1);
@@ -3405,6 +3442,17 @@ int main(int argc, char** argv) {
                 const lsd::u32 n = state.high_res_shot;
                 state.high_res_shot = 0;
                 lsd::u32 w = static_cast<lsd::u32>(pixels[2]) * n, h = static_cast<lsd::u32>(pixels[3]) * n;
+                lsd::Mat4 shot_proj = proj;
+                lsd::Mat4 shot_view_proj = view_proj;
+                std::snprintf(shot_file, sizeof shot_file, "%s", state.shot_path);
+                if (state.shot_size[0] && state.shot_size[1]) {  // a movie frame: its own size and aspect, no TAA jitter
+                    w = state.shot_size[0];
+                    h = state.shot_size[1];
+                    shot_proj = lsd::editor::camera_projection(lens, static_cast<lsd::f32>(w) / static_cast<lsd::f32>(h));
+                    shot_view_proj = shot_proj * view;
+                }
+                state.shot_size[0] = state.shot_size[1] = 0;
+                state.shot_path[0] = 0;
                 while (w > 8192 || h > 8192) {
                     w /= 2;
                     h /= 2;
@@ -3420,19 +3468,25 @@ int main(int argc, char** argv) {
                         const lsd::f32 lin = clear_color[c] <= 0.04045f ? clear_color[c] / 12.92f : std::pow((clear_color[c] + 0.055f) / 1.055f, 2.4f);
                         encoded[c] = std::sqrt(lin / (1.0f + lin));
                     }
-                    draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_scene, encoded, true);
+                    draw_world(*device, shot_view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_scene, encoded, true);
                     effects->set_fog(g_view_fog, g_view_fog + 4);
-                    effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
+                    effects->draw(*device, world, shot_view_proj, view, light_view.eye, !state.playing || state.ejected);
                     lsd::rhi::PostDraw shot = post;
                     shot.taa = false;  // one frame: no history
+                    if (shot.proj[0] != 0.0f) {  // depth effects: the shot's own projection
+                        shot.proj[0] = shot_proj.at(0, 0);
+                        shot.proj[1] = shot_proj.at(1, 1);
+                        shot.proj[2] = shot_proj.at(2, 2);
+                        shot.proj[3] = shot_proj.at(2, 3);
+                    }
                     shot.scene = shot_scene;
                     shot.output = shot_target;
                     for (int c = 0; c < 4; ++c) shot.viewport[c] = full[c];
                     device->draw_post(shot);
                 } else if (shot_target.valid()) {
-                    draw_world(*device, view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_target, clear_color, false);
+                    draw_world(*device, shot_view_proj, light_view, full, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, shot_target, clear_color, false);
                     effects->set_fog(g_view_fog, g_view_fog + 4);
-                    effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);
+                    effects->draw(*device, world, shot_view_proj, view, light_view.eye, !state.playing || state.ejected);
                 }
                 device->set_render_target({}, nullptr);
                 device->set_viewport(pixels[0], pixels[1], pixels[2], pixels[3]);
@@ -3630,8 +3684,9 @@ int main(int argc, char** argv) {
             const lsd::u32 w = static_cast<lsd::u32>(shot_size[0]), h = static_cast<lsd::u32>(shot_size[1]);
             std::vector<lsd::u8> rgba(static_cast<size_t>(w) * h * 4);
             fs::create_directories("Saved/Screenshots", ignored);
-            char path[128];
+            char path[300];
             std::snprintf(path, sizeof path, "Saved/Screenshots/HighResShot_%llu.png", static_cast<unsigned long long>(SDL_GetTicks()));
+            if (shot_file[0]) std::snprintf(path, sizeof path, "%s", shot_file);  // a movie render frame
             if (device->read_render_target(shot_target, rgba.data())) {
                 for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;  // opaque (the post pass keeps luma in alpha)
                 if (lsd::asset::write_png(path, w, h, rgba.data())) {
@@ -3651,6 +3706,7 @@ int main(int argc, char** argv) {
     if (!game_mode) fs::remove(kLockPath, ignored);
     lsd::console::remove_all();  // the registrations point into state
     lsd::world::set_prefab_resolver(nullptr, nullptr);  // it points at the registry
+    lsd::editor::set_timeline_registry(nullptr);
     lsd::editor::shutdown_graph_editor();
     lsd::log::set_sink(nullptr, nullptr);
     std::snprintf(state.settings.last_level, sizeof state.settings.last_level, "%s", state.level_path);
