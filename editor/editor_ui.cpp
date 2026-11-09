@@ -261,6 +261,7 @@ void keep_simulation_changes(EditorState& s) {
     (void)added;
 }
 void find_in_content_browser(EditorState& s, asset::Guid guid);
+void note_moves(const asset::AssetRegistry& registry, const char* path_prefix, asset::Guid guid);
 
 using world::Entity;
 
@@ -3212,6 +3213,19 @@ void mark_data_asset_edited() { g_data_dirty = true; }
 
 namespace {
 
+void copy_changed(const reflect::TypeInfo& type, const u8* before, const u8* after, u8* target);
+
+// Bulk editing (Unreal's Property Matrix / multi-asset Details): the other selected assets like `r`
+// (same type, and same data type for data assets).
+std::vector<asset::AssetRecord> same_kind_selected(const EditorState& s, const asset::AssetRecord& r) {
+    std::vector<asset::AssetRecord> out;
+    for (u32 k = 0; k < s.asset_selection_count; ++k) {
+        const asset::AssetRecord* o = s.registry->find(s.asset_selection[k]);
+        if (o && !(o->guid == r.guid) && o->type == r.type && std::strcmp(o->data_type, r.data_type) == 0) out.push_back(*o);
+    }
+    return out;
+}
+
 void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     const EditorTheme& t = s.theme;
     if (!(g_data_guid == r.guid)) load_selected_data(s, r);
@@ -3242,8 +3256,11 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextDisabled("Live: edits apply as you make them");
+    const std::vector<asset::AssetRecord> others = same_kind_selected(s, r);
+    if (!others.empty()) ImGui::TextDisabled("%zu %s assets selected: a change applies to all of them", others.size() + 1, r.data_type);
     ImGui::BeginChild("DataRows");
     const DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
+    std::vector<u8> before(g_data, g_data + g_data_type->size);  // what changes this frame goes to the others
     if (g_data_type == &reflect::type_of<world::Curve>() && draw_curve_editor(reinterpret_cast<world::Curve*>(g_data)->keys)) g_data_dirty = true;
         if (g_data_type == &reflect::type_of<world::CurveVector>()) {
             auto* v = reinterpret_cast<world::CurveVector*>(g_data);
@@ -3259,9 +3276,25 @@ void draw_data_asset_details(EditorState& s, const asset::AssetRecord& r) {
             const ImU32 colors[4] = {IM_COL32(230, 70, 60, 255), IM_COL32(90, 210, 80, 255), IM_COL32(70, 130, 240, 255), IM_COL32(220, 220, 220, 255)};
             if (draw_multi_curve_editor(channels, names, colors, 4)) g_data_dirty = true;
         }
-    if (g_data_type == &reflect::type_of<render::MaterialInstance>() && fill_graph_parameters(s, *reinterpret_cast<render::MaterialInstance*>(g_data))) g_data_dirty = true;
+    if (g_data_type == &reflect::type_of<render::MaterialInstance>() && fill_graph_parameters(s, *reinterpret_cast<render::MaterialInstance*>(g_data))) {
+        g_data_dirty = true;
+        std::memcpy(before.data(), g_data, before.size());  // its parent's parameters, not an edit to share
+    }
     if (draw_properties(*g_data_type, g_data, &style)) g_data_dirty = true;
     ImGui::EndChild();
+    if (!others.empty() && std::memcmp(before.data(), g_data, before.size()) != 0) {
+        // shortcut: loads and writes every other asset on each changed frame (a drag too); batch it if selections get big.
+        std::vector<u8> other(g_data_type->size);
+        for (const asset::AssetRecord& o : others) {
+            char other_path[300];
+            s.registry->source_path(o, other_path, sizeof other_path);
+            std::memcpy(other.data(), g_data_type->defaults, other.size());
+            if (!asset::load_data_asset(other_path, *g_data_type, other.data())) continue;
+            copy_changed(*g_data_type, before.data(), static_cast<const u8*>(g_data), other.data());
+            asset::save_data_asset(other_path, *g_data_type, other.data());
+        }
+        s.reload_assets_now = true;
+    }
 }
 
 // Path of a new file in the current folder: Content/<folder>/<base><extension>, numbered if taken.
@@ -3805,9 +3838,21 @@ void draw_details_panel(EditorState& s) {
             } else if (selected) {
                 ImGui::Text("%s", selected->name);
                 ImGui::TextDisabled("%s  |  Content/%s", asset::to_string(selected->type), selected->path);
-                if (with_tip(ImGui::Button("Save"), "Writes the import settings and reimports the asset")) {
+                const std::vector<asset::AssetRecord> others = same_kind_selected(s, *selected);
+                if (with_tip(ImGui::Button("Save"), "Writes the import settings and reimports the asset; with several assets of this type selected, the settings you changed go to all of them")) {
+                    // The settings changed since the file was read go to the other selected assets too.
+                    asset::AssetMeta before;
+                    s.registry->load_meta(*selected, before);
+                    u32 also = 0;
+                    for (const asset::AssetRecord& o : others) {
+                        asset::AssetMeta meta;
+                        if (!s.registry->load_meta(o, meta)) continue;
+                        copy_changed(reflect::type_of<asset::AssetMeta>(), reinterpret_cast<const u8*>(&before), reinterpret_cast<const u8*>(&s.selected_meta), reinterpret_cast<u8*>(&meta));
+                        also += s.registry->save_meta(o, meta) ? 1u : 0u;
+                    }
                     // The data compiler sees the new settings and rebuilds; placed copies update live.
-                    std::snprintf(s.status, sizeof s.status, s.registry->save_meta(*selected, s.selected_meta) ? "Saved %s.meta" : "Could not save %s.meta", selected->name);
+                    if (s.registry->save_meta(*selected, s.selected_meta)) std::snprintf(s.status, sizeof s.status, "Saved %s.meta and %u more", selected->name, also);
+                    else std::snprintf(s.status, sizeof s.status, "Could not save %s.meta", selected->name);
                 }
                 ImGui::SameLine();
                 if (with_tip(ImGui::Button("Revert"), "Throws away unsaved changes to the settings")) s.registry->load_meta(*selected, s.selected_meta);
@@ -3815,6 +3860,7 @@ void draw_details_panel(EditorState& s) {
                     ImGui::SameLine();
                     if (ImGui::Button(s.sounds && s.sounds->audio()->playing(s.preview_voice) ? "Stop" : "Play")) toggle_preview(s, *selected);
                 }
+                if (!others.empty()) ImGui::TextDisabled("%zu %s assets selected: Save applies the changed settings to all", others.size() + 1, asset::to_string(selected->type));
                 if (s.status[0]) ImGui::TextDisabled("%s", s.status);
                 ImGui::BeginChild("DetailsRows");
                 DetailsStyle style{{u32_color(t.details_row_a), u32_color(t.details_row_b)}, nullptr, details_widget, &s};
@@ -3853,10 +3899,10 @@ void folder_drop_target(EditorState& s, const char* folder) {
         if (const asset::AssetRecord* r = s.registry->find(guid)) {
             if (std::strcmp(r->folder, folder) == 0) {
                 // already there
-            } else if (s.registry->move_asset(*r, folder, error, sizeof error)) {
-                std::snprintf(s.status, sizeof s.status, "Moved to Content/%s", folder);
             } else {
-                std::snprintf(s.status, sizeof s.status, "Move failed: %s", error);
+                note_moves(*s.registry, "", r->guid);  // its path in scripts: Fix Up Redirectors
+                if (s.registry->move_asset(*r, folder, error, sizeof error)) std::snprintf(s.status, sizeof s.status, "Moved to Content/%s", folder);
+                else std::snprintf(s.status, sizeof s.status, "Move failed: %s", error);
             }
         }
     }
@@ -4089,6 +4135,7 @@ void draw_file_dialogs(EditorState& s) {
             if (const asset::AssetRecord* r = s.rename_asset.valid() ? s.registry->find(s.rename_asset) : nullptr) {
                 char old_path[300];
                 s.registry->source_path(*r, old_path, sizeof old_path);
+                note_moves(*s.registry, "", r->guid);  // names of it in scripts: Fix Up Redirectors
                 done = s.registry->rename_asset(*r, s.rename_buffer, error, sizeof error);
                 // Renaming the open level: keep saving to the new file.
                 if (done && std::filesystem::path(old_path) == std::filesystem::path(s.level_path)) {
@@ -4099,7 +4146,10 @@ void draw_file_dialogs(EditorState& s) {
                 const std::filesystem::path to = from.parent_path() / s.rename_buffer;
                 std::error_code ec;
                 if (std::filesystem::exists(to, ec)) std::snprintf(error, sizeof error, "%s already exists", s.rename_buffer);
-                else std::filesystem::rename(from, to, ec);
+                else {
+                    note_moves(*s.registry, s.rename_folder, {});
+                    std::filesystem::rename(from, to, ec);
+                }
                 if (ec) std::snprintf(error, sizeof error, "%s", ec.message().c_str());
                 done = !error[0];
                 if (done) {
@@ -4455,6 +4505,270 @@ void draw_reference_viewer(EditorState& s) {
     ImGui::End();
 }
 
+// ---- Size Map, Asset Audit, Fix Up Redirectors ----
+
+std::string size_text(u64 bytes) {
+    char out[32];
+    if (bytes >= 1048576) std::snprintf(out, sizeof out, "%.1f MB", static_cast<f64>(bytes) / 1048576.0);
+    else std::snprintf(out, sizeof out, "%.1f KB", static_cast<f64>(bytes) / 1024.0);
+    return out;
+}
+
+std::string g_size_map_title;               // the asset or folder measured
+std::vector<std::string> g_size_map_roots;  // its GUIDs
+std::vector<SizeEntry> g_size_map;
+bool g_size_map_open = false;
+
+// An asset name, a folder (relative to Content/) or "" for everything; false if neither matches.
+bool open_size_map_for(EditorState& s, const char* name_or_folder) {
+    g_size_map_roots.clear();
+    const std::string folder = name_or_folder;
+    for (usize i = 0; i < s.registry->count(); ++i) {
+        const asset::AssetRecord& r = s.registry->get(i);
+        const bool in_folder = folder.empty() || std::strncmp(r.path, (folder + "/").c_str(), folder.size() + 1) == 0;
+        if (std::strcmp(r.name, name_or_folder) != 0 && !in_folder) continue;
+        char g[33];
+        asset::to_string(r.guid, g);
+        g_size_map_roots.emplace_back(g);
+    }
+    if (g_size_map_roots.empty()) return false;
+    g_size_map_title = folder.empty() ? "Content" : folder;
+    g_size_map = size_map(*s.registry, g_size_map_roots);
+    g_size_map_open = true;
+    return true;
+}
+
+void open_size_map_for_selection(EditorState& s) {
+    g_size_map_roots.clear();
+    for (u32 k = 0; k < s.asset_selection_count; ++k) {
+        char g[33];
+        asset::to_string(s.asset_selection[k], g);
+        g_size_map_roots.emplace_back(g);
+    }
+    const asset::AssetRecord* first = s.asset_selection_count ? s.registry->find(s.asset_selection[0]) : nullptr;
+    if (!first) return;
+    g_size_map_title = s.asset_selection_count > 1 ? std::to_string(s.asset_selection_count) + " assets" : std::string(first->name);
+    g_size_map = size_map(*s.registry, g_size_map_roots);
+    g_size_map_open = true;
+}
+
+// Sorted bars (Unreal's Size Map draws a treemap; bars read the same sizes).
+// shortcut: file sizes of the sources, not of the cooked data; add DerivedData when packages get big.
+void draw_size_map(EditorState& s) {
+    if (!g_size_map_open || !s.registry) return;
+    ImGui::SetNextWindowSize(ImVec2(640, 460), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Size Map", &g_size_map_open)) {
+        ImGui::End();
+        return;
+    }
+    if (with_tip(ImGui::Button("Refresh"), "Measures again (after adding or changing assets)")) g_size_map = size_map(*s.registry, g_size_map_roots);
+    u64 total = 0;
+    for (const SizeEntry& e : g_size_map) total += e.bytes;
+    ImGui::SameLine();
+    ImGui::Text("%s: %s in %zu asset%s (it and everything it uses)", g_size_map_title.c_str(), size_text(total).c_str(), g_size_map.size(), g_size_map.size() == 1 ? "" : "s");
+    ImGui::Separator();
+    ImGui::BeginChild("bars");
+    const u64 biggest = g_size_map.empty() ? 1 : (g_size_map.front().bytes ? g_size_map.front().bytes : 1);
+    const ImU32 bar = u32_color(s.theme.content_tab);
+    for (const SizeEntry& e : g_size_map) {
+        if (e.record >= s.registry->count()) break;  // the registry rescanned: Refresh
+        const asset::AssetRecord& r = s.registry->get(e.record);
+        ImGui::PushID(static_cast<int>(e.record));
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const f32 width = ImGui::GetContentRegionAvail().x, height = ImGui::GetTextLineHeightWithSpacing();
+        const bool clicked = ImGui::InvisibleButton("row", ImVec2(width > 1.0f ? width : 1.0f, height));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const f32 fraction = static_cast<f32>(static_cast<f64>(e.bytes) / static_cast<f64>(biggest));
+        dl->AddRectFilled(at, ImVec2(at.x + width * fraction, at.y + height - 2.0f), bar, 2.0f);
+        const f64 share = total ? 100.0 * static_cast<f64>(e.bytes) / static_cast<f64>(total) : 0.0;
+        char label[200];
+        std::snprintf(label, sizeof label, "%s  %s  (%.1f%%)  %s", r.name, size_text(e.bytes).c_str(), share, r.type == asset::AssetType::Data && r.data_type[0] ? r.data_type : asset::to_string(r.type));
+        dl->AddText(ImVec2(at.x + 4.0f, at.y + 1.0f), ImGui::GetColorU32(ImGuiCol_Text), label);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Content/%s\nClick: find it in the Content Browser", r.path);
+        if (clicked) find_in_content_browser(s, r.guid);
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+std::vector<AuditRow> g_audit;
+bool g_audit_open = false;
+char g_audit_folder[128] = "";
+int g_audit_type = 0;  // 0 = all, else AssetType + 0
+bool g_audit_unused_only = false;
+
+void refresh_audit(EditorState& s) {
+    g_references.build(*s.registry);
+    static char settings[65536];  // the project settings as text: what the game starts from (as cooking does)
+    const usize n = reflect::save_text(reflect::type_of<ProjectSettings>(), &s.project, settings, sizeof settings);
+    const std::vector<std::string> cooked = cook_set(*s.registry, std::string(settings, n < sizeof settings ? n : sizeof settings - 1));
+    g_audit = audit_assets(*s.registry, g_references, cooked, "DerivedData");
+}
+
+void open_asset_audit_window(EditorState& s) {
+    refresh_audit(s);
+    g_audit_open = true;
+}
+
+// A sortable table of every asset (Unreal's Asset Audit).
+// shortcut: compiled size counts DerivedData/<guid>* only (textures cache by content hash, not counted); key them by GUID if that matters.
+void draw_asset_audit(EditorState& s) {
+    if (!g_audit_open || !s.registry) return;
+    ImGui::SetNextWindowSize(ImVec2(900, 480), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Asset Audit", &g_audit_open)) {
+        ImGui::End();
+        return;
+    }
+    if (with_tip(ImGui::Button("Refresh"), "Reads sizes and references again")) refresh_audit(s);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200.0f);
+    ImGui::InputTextWithHint("##folder", "Folder (e.g. Props)", g_audit_folder, sizeof g_audit_folder);
+    ImGui::SetItemTooltip("Only assets under this folder of Content/");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(140.0f);
+    const char* type_name = g_audit_type ? asset::to_string(static_cast<asset::AssetType>(g_audit_type)) : "All types";
+    if (ImGui::BeginCombo("##type", type_name)) {
+        if (ImGui::Selectable("All types", g_audit_type == 0)) g_audit_type = 0;
+        for (int k = 1; k <= static_cast<int>(asset::AssetType::UiStyle); ++k) {
+            if (ImGui::Selectable(asset::to_string(static_cast<asset::AssetType>(k)), g_audit_type == k)) g_audit_type = k;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Only assets of this type");
+    ImGui::SameLine();
+    with_tip(ImGui::Checkbox("Unused only", &g_audit_unused_only), "Only assets nothing uses: no asset names them and the game does not reach them (Cook Used Assets Only leaves them out)");
+    std::vector<const AuditRow*> rows;
+    u64 disk = 0, derived = 0;
+    u32 unused = 0;
+    const usize prefix = std::strlen(g_audit_folder);
+    for (const AuditRow& row : g_audit) {
+        if (row.record >= s.registry->count()) continue;  // rescanned since: Refresh
+        const asset::AssetRecord& r = s.registry->get(row.record);
+        if (prefix && (std::strncmp(r.path, g_audit_folder, prefix) != 0 || (r.path[prefix] != '/' && r.path[prefix] != '\0'))) continue;
+        if (g_audit_type && static_cast<int>(r.type) != g_audit_type) continue;
+        if (g_audit_unused_only && !row.unused) continue;
+        rows.push_back(&row);
+        disk += row.disk;
+        derived += row.derived;
+        unused += row.unused ? 1u : 0u;
+    }
+    ImGui::Text("%zu assets: %s on disk, %s compiled, %u unused", rows.size(), size_text(disk).c_str(), size_text(derived).c_str(), unused);
+    const ImGuiTableFlags flags = ImGuiTableFlags_Sortable | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV;
+    if (ImGui::BeginTable("audit", 6, flags)) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort);
+        ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("Path");
+        ImGui::TableSetupColumn("Disk", ImGuiTableColumnFlags_PreferSortDescending);
+        ImGui::TableSetupColumn("Compiled", ImGuiTableColumnFlags_PreferSortDescending);
+        ImGui::TableSetupColumn("Used by", ImGuiTableColumnFlags_PreferSortDescending);
+        ImGui::TableHeadersRow();
+        if (const ImGuiTableSortSpecs* sort = ImGui::TableGetSortSpecs(); sort && sort->SpecsCount) {
+            const int column = sort->Specs[0].ColumnIndex;
+            const bool up = sort->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
+            const asset::AssetRegistry& reg = *s.registry;
+            std::stable_sort(rows.begin(), rows.end(), [&](const AuditRow* a, const AuditRow* b) {
+                const asset::AssetRecord &ra = reg.get(a->record), &rb = reg.get(b->record);
+                int c = 0;
+                if (column == 0) c = strcmp_nocase(ra.name, rb.name);
+                else if (column == 1) c = std::strcmp(asset::to_string(ra.type), asset::to_string(rb.type));
+                else if (column == 2) c = strcmp_nocase(ra.path, rb.path);
+                else {
+                    const u64 x = column == 3 ? a->disk : column == 4 ? a->derived : a->users, y = column == 3 ? b->disk : column == 4 ? b->derived : b->users;
+                    c = x < y ? -1 : x > y ? 1 : 0;
+                }
+                return up ? c < 0 : c > 0;
+            });
+        }
+        for (const AuditRow* row : rows) {
+            const asset::AssetRecord& r = s.registry->get(row->record);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(row->record));
+            if (ImGui::Selectable(r.name, false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) find_in_content_browser(s, r.guid);
+            ImGui::SetItemTooltip(row->unused ? "Unused: nothing names it, the game does not reach it\nDouble-click: find it in the Content Browser" : "Double-click: find it in the Content Browser");
+            ImGui::PopID();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.type == asset::AssetType::Data && r.data_type[0] ? r.data_type : asset::to_string(r.type));
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.path);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(size_text(row->disk).c_str());
+            ImGui::TableNextColumn();
+            if (row->derived) ImGui::TextUnformatted(size_text(row->derived).c_str());
+            else ImGui::TextDisabled("-");
+            ImGui::TableNextColumn();
+            if (row->unused) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "0 (unused)");
+            else ImGui::Text("%u", row->users);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
+// Renames and moves since the last fix-up, kept in Saved/ so a restart does not lose them.
+// shortcut: one PC's list; a teammate who pulls a rename runs the fix-up on the renamer's PC (or renames
+// back and forth); share it in Config/ if teams rename a lot.
+constexpr char kRedirectsPath[] = "Saved/AssetRedirects.txt";
+std::vector<Redirect> g_redirects;
+bool g_redirects_loaded = false;
+
+void load_redirects() {
+    if (g_redirects_loaded) return;
+    g_redirects_loaded = true;
+    std::ifstream in(kRedirectsPath);
+    std::string line;
+    while (std::getline(in, line)) {  // "<guid> <old path>"
+        Redirect r;
+        if (line.size() > 33 && asset::parse_guid(line.substr(0, 32).c_str(), r.guid)) g_redirects.push_back({line.substr(33), r.guid});
+    }
+}
+
+void save_redirects() {
+    std::error_code error;
+    std::filesystem::create_directories("Saved", error);
+    std::ofstream out(kRedirectsPath, std::ios::trunc);
+    for (const Redirect& r : g_redirects) {
+        char g[33];
+        asset::to_string(r.guid, g);
+        out << g << ' ' << r.from << '\n';
+    }
+}
+
+// Before a rename or move: the asset `guid`, or every asset under the folder `path_prefix`.
+void note_moves(const asset::AssetRegistry& registry, const char* path_prefix, asset::Guid guid) {
+    load_redirects();
+    const usize n = std::strlen(path_prefix);
+    for (usize i = 0; i < registry.count(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        if (guid.valid() ? r.guid == guid : n && std::strncmp(r.path, path_prefix, n) == 0 && r.path[n] == '/') g_redirects.push_back({r.path, r.guid});
+    }
+    save_redirects();
+}
+
+// Rewrites the names and paths of renamed / moved assets in scripts, UI, text assets and the
+// project settings; returns how many files changed.
+u32 fix_up_asset_redirectors(EditorState& s) {
+    load_redirects();
+    u32 files = fix_up_redirectors(*s.registry, g_redirects);
+    static char settings[65536];
+    const usize n = reflect::save_text(reflect::type_of<ProjectSettings>(), &s.project, settings, sizeof settings);
+    std::string text(settings, n < sizeof settings ? n : sizeof settings - 1);
+    if (fix_up_text(*s.registry, g_redirects, text) && reflect::load_text(reflect::type_of<ProjectSettings>(), &s.project, text.data(), text.size())) {
+        reflect::save_file(s.project, "Config/project.json");  // e.g. Game Default Level after a level moved
+        ++files;
+    }
+    const usize fixed = g_redirects.size();
+    g_redirects.clear();
+    save_redirects();
+    g_data_guid = {};  // the selected data asset reads its fixed text again
+    s.reload_assets_now = true;
+    std::snprintf(s.status, sizeof s.status, "Fix Up Redirectors: %zu rename%s / move%s, %u file%s updated", fixed, fixed == 1 ? "" : "s", fixed == 1 ? "" : "s", files, files == 1 ? "" : "s");
+    LSD_LOG_INFO("editor", "%s", s.status);
+    return files;
+}
+
 char g_new_collection[48] = "";
 bool g_open_new_collection = false;
 
@@ -4712,6 +5026,8 @@ void draw_asset_grid(EditorState& s) {
                 std::snprintf(s.delete_folder, sizeof s.delete_folder, "%s", folder_path.c_str());
                 s.open_delete = true;
             }
+            if (with_tip(ImGui::MenuItem("Size Map..."), "How much disk the folder's assets take with everything they use (Unreal's Size Map)")) open_size_map_for(s, folder_path.c_str());
+            if (with_tip(ImGui::MenuItem("Fix Up Redirectors"), "Updates names and paths of renamed or moved assets in scripts, UI and text assets (GUID references never need it)")) fix_up_asset_redirectors(s);
             if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(folder_path.c_str());
             ImGui::EndPopup();
         }
@@ -4828,6 +5144,7 @@ void draw_asset_grid(EditorState& s) {
             }
             if (r.type == asset::AssetType::Prefab && with_tip(ImGui::MenuItem("Edit Prefab"), "Opens the Prefab Editor")) open_prefab_editor(s, r);
             if (with_tip(ImGui::MenuItem("Reference Viewer..."), "Shows what this asset uses and what uses it")) open_reference_viewer(s, r.guid);
+            if (with_tip(ImGui::MenuItem("Size Map..."), "How much disk the selected assets take with everything they use, biggest first (Unreal's Size Map)")) open_size_map_for_selection(s);
             if (with_tip(ImGui::MenuItem("Duplicate"), "Makes a copy of the asset next to it")) duplicate_asset(s, r);
             if ((r.type == asset::AssetType::Mesh || r.type == asset::AssetType::Texture || r.type == asset::AssetType::Sound) && with_tip(ImGui::MenuItem("Reimport"), "Reads the source file again (after editing it in Blender, Photoshop...)")) {
                 for (u32 k = 0; k < s.asset_selection_count; ++k) {
@@ -5315,6 +5632,10 @@ void draw_menu_bar(EditorState& s) {
             gather_project_text(s.project, *s.registry, s.status, sizeof s.status, changed);
             if (changed) reflect::save_file(s.project, "Config/project.json");  // the new string table
         }
+        ImGui::Separator();
+        if (with_tip(ImGui::MenuItem("Asset Audit"), "Every asset in a sortable table: type, disk size, compiled size, how many use it, unused ones flagged (Unreal's Asset Audit)")) open_asset_audit_window(s);
+        if (with_tip(ImGui::MenuItem("Size Map"), "How much disk all of Content/ takes, biggest assets first (Unreal's Size Map); right-click an asset or folder for its own")) open_size_map_for(s, "");
+        if (with_tip(ImGui::MenuItem("Fix Up Redirectors"), "Updates names and paths of renamed or moved assets in scripts, UI, text assets and the project settings (Unreal's Fix Up Redirectors)")) fix_up_asset_redirectors(s);
         ImGui::Separator();
         if (ImGui::MenuItem("Compile Game Code", command_text(Command::CompileGameCode), false, !game_module::compiling())) game_module::compile();
         ImGui::SetItemTooltip("Builds the C / C++ game code in Source/ into Binaries/Game.dll; it reloads by itself, also while playing (Unreal's Compile / Live Coding)");
@@ -6029,6 +6350,8 @@ void draw_editor(EditorState& s) {
         ImGui::EndPopup();
     }
     draw_reference_viewer(s);
+    draw_size_map(s);
+    draw_asset_audit(s);
     draw_template_picker(s);
     draw_timeline_editor(s);
     draw_anim_graph_editor(s);
@@ -6125,6 +6448,9 @@ void make_default_level(world::World& w) {
 }
 
 bool open_asset(EditorState& s, const asset::AssetRecord& record) { return open_record(s, record); }
+bool open_size_map(EditorState& s, const char* name_or_folder) { return open_size_map_for(s, name_or_folder); }
+void open_asset_audit(EditorState& s) { open_asset_audit_window(s); }
+u32 fix_up_redirectors(EditorState& s) { return fix_up_asset_redirectors(s); }
 DetailsStyle editor_details_style(EditorState& s) { return {{u32_color(s.theme.details_row_a), u32_color(s.theme.details_row_b)}, nullptr, details_widget, &s}; }
 
 bool surface_ray(EditorState& s, Vec3 origin, Vec3 dir, f32& t) {

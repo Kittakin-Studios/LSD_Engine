@@ -1,8 +1,11 @@
 #include "references.h"
 
+#include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 namespace lsd::editor {
 
@@ -12,6 +15,12 @@ bool is_text(asset::AssetType type) {
     using asset::AssetType;
     return type == AssetType::Level || type == AssetType::Data || type == AssetType::Prefab || type == AssetType::Graph || type == AssetType::Cue ||
            type == AssetType::MaterialGraph || type == AssetType::BehaviorTree;
+}
+
+// Assets whose text can name other assets in quoted strings (scripts, UI, levels, data, tables).
+bool names_assets(asset::AssetType type) {
+    using asset::AssetType;
+    return is_text(type) || type == AssetType::Script || type == AssetType::UiDocument || type == AssetType::UiStyle || type == AssetType::Table;
 }
 
 bool read(const std::string& path, std::string& out) {
@@ -133,9 +142,7 @@ std::vector<std::string> cook_set(const asset::AssetRegistry& registry, const st
         registry.source_path(r, source, sizeof source);
         std::string text;
         if (read(std::string(source) + ".meta", text)) scan(text, false);
-        const bool scripted = r.type == asset::AssetType::Script || r.type == asset::AssetType::UiDocument || r.type == asset::AssetType::UiStyle ||
-                              r.type == asset::AssetType::Table;
-        if ((is_text(r.type) || scripted) && read(source, text)) scan(text, true);
+        if (names_assets(r.type) && read(source, text)) scan(text, true);
         if (r.type == asset::AssetType::UiDocument) {  // its own .js beside it (Menu.rml + Menu.js)
             std::string js = r.path;
             js = js.substr(0, js.rfind('.')) + ".js";
@@ -188,6 +195,146 @@ u32 replace_references(const asset::AssetRegistry& registry, const std::string& 
         }
     }
     return changed;
+}
+
+std::unordered_map<std::string, u32> ReferenceIndex::user_counts() const {
+    std::unordered_map<std::string, u32> out;
+    for (const auto& [user, list] : uses_) {
+        for (const std::string& g : list) ++out[g];
+    }
+    return out;
+}
+
+std::vector<SizeEntry> size_map(const asset::AssetRegistry& registry, const std::vector<std::string>& root_guids) {
+    std::string roots;
+    for (const std::string& g : root_guids) roots += '"' + g + "\" ";
+    std::unordered_map<std::string, usize> by_guid;
+    for (usize i = 0; i < registry.count(); ++i) {
+        char g[33];
+        asset::to_string(registry.get(i).guid, g);
+        by_guid[g] = i;
+    }
+    std::vector<SizeEntry> out;
+    for (const std::string& g : cook_set(registry, roots)) {
+        const usize i = by_guid.at(g);  // cook_set only returns registered assets
+        out.push_back({i, registry.get(i).source_size});
+    }
+    std::stable_sort(out.begin(), out.end(), [](const SizeEntry& a, const SizeEntry& b) { return a.bytes > b.bytes; });
+    return out;
+}
+
+std::vector<AuditRow> audit_assets(const asset::AssetRegistry& registry, const ReferenceIndex& index, const std::vector<std::string>& cooked, const char* derived_dir) {
+    std::unordered_map<std::string, u64> derived;  // by the GUID its file names start with
+    std::error_code error;
+    for (const std::filesystem::directory_entry& d : std::filesystem::directory_iterator(derived_dir, error)) {
+        const std::string name = d.path().filename().string();
+        std::error_code ignored;
+        if (name.size() >= 32 && d.is_regular_file(ignored)) derived[name.substr(0, 32)] += d.file_size(ignored);
+    }
+    const std::unordered_map<std::string, u32> users = index.user_counts();
+    const std::unordered_set<std::string> reached(cooked.begin(), cooked.end());
+    std::vector<AuditRow> out;
+    for (usize i = 0; i < registry.count(); ++i) {
+        char g[33];
+        asset::to_string(registry.get(i).guid, g);
+        AuditRow row;
+        row.record = i;
+        row.disk = registry.get(i).source_size;
+        const auto d = derived.find(g);
+        row.derived = d == derived.end() ? 0 : d->second;
+        const auto u = users.find(g);
+        row.users = u == users.end() ? 0 : u->second;
+        row.unused = row.users == 0 && !reached.count(g);
+        out.push_back(row);
+    }
+    return out;
+}
+
+u32 fix_moved_names(std::string& text, const std::string& from, const std::string& to, bool names) {
+    auto stem = [](const std::string& p) {
+        const usize dot = p.rfind('.'), slash = p.rfind('/');
+        return dot == std::string::npos || (slash != std::string::npos && dot < slash) ? p : p.substr(0, dot);
+    };
+    auto leaf = [](const std::string& p) {
+        const usize slash = p.rfind('/');
+        return slash == std::string::npos ? p : p.substr(slash + 1);
+    };
+    const std::string forms[3][2] = {{from, to}, {stem(from), stem(to)}, {leaf(stem(from)), leaf(stem(to))}};
+    u32 changed = 0;
+    for (usize at = 0; at < text.size(); ++at) {  // quoted runs, read as cook_set reads them
+        const char q = text[at];
+        if (q != '"' && q != '\'') continue;
+        usize end = text.find(q, at + 1);
+        if (end == std::string::npos) break;
+        if (end - at - 1 <= 200 && end > at + 1) {
+            std::string s = text.substr(at + 1, end - at - 1);
+            for (char& c : s) c = c == '\\' ? '/' : c;
+            const bool content = s.rfind("Content/", 0) == 0;
+            const std::string bare = content ? s.substr(8) : s;
+            for (u32 f = 0; f < (names ? 3u : 2u); ++f) {
+                if (bare != forms[f][0] || forms[f][0] == forms[f][1]) continue;
+                if (!names && bare.find('/') == std::string::npos && bare.find('.') == std::string::npos) continue;  // a root asset's stem is a bare name
+                const std::string with = (content ? "Content/" : "") + forms[f][1];
+                text.replace(at + 1, end - at - 1, with);
+                end = at + 1 + with.size();
+                ++changed;
+                break;
+            }
+        }
+        if (q == '"') at = end;  // apostrophes inside "..." are not openings
+    }
+    return changed;
+}
+
+namespace {
+
+// Each redirect's new path, and whether its old bare name may be rewritten too: only if the name
+// changed and no asset has the old name now (else "Door" may mean that other asset).
+struct Move {
+    std::string from, to;
+    bool names = false;
+};
+
+std::vector<Move> moves_of(const asset::AssetRegistry& registry, const std::vector<Redirect>& redirects) {
+    std::vector<Move> out;
+    for (const Redirect& r : redirects) {
+        const asset::AssetRecord* now = registry.find(r.guid);
+        if (!now || r.from == now->path) continue;
+        Move m{r.from, now->path, true};
+        std::string old_name = r.from.substr(r.from.rfind('/') == std::string::npos ? 0 : r.from.rfind('/') + 1);
+        old_name = old_name.substr(0, old_name.rfind('.'));
+        for (usize i = 0; i < registry.count() && m.names; ++i) m.names = old_name != registry.get(i).name;
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+} // namespace
+
+u32 fix_up_text(const asset::AssetRegistry& registry, const std::vector<Redirect>& redirects, std::string& text) {
+    u32 changed = 0;
+    for (const Move& m : moves_of(registry, redirects)) changed += fix_moved_names(text, m.from, m.to, m.names);
+    return changed;
+}
+
+u32 fix_up_redirectors(const asset::AssetRegistry& registry, const std::vector<Redirect>& redirects) {
+    const std::vector<Move> moves = moves_of(registry, redirects);
+    u32 files = 0;
+    for (usize i = 0; i < registry.count() && !moves.empty(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        if (!names_assets(r.type)) continue;
+        char source[300];
+        registry.source_path(r, source, sizeof source);
+        std::string text;
+        if (!read(source, text)) continue;
+        u32 changed = 0;
+        for (const Move& m : moves) changed += fix_moved_names(text, m.from, m.to, m.names);
+        if (!changed) continue;
+        std::ofstream out(source, std::ios::binary);
+        out << text;
+        files += out ? 1u : 0u;
+    }
+    return files;
 }
 
 } // namespace lsd::editor

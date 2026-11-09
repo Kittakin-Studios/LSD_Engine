@@ -31,6 +31,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <string>
 
 static int g_failures = 0;
@@ -310,6 +311,41 @@ static void test_references() {  // Reference Viewer: who uses what, and Replace
     };
     CHECK(has("Levels/Main.lsdlevel") && has("Door.lua") && has("Creak.wav") && has("UI/Menu.rml") && has("UI/Menu.rcss") && has("UI/Menu.js"));
     CHECK(!has("Unused.lua") && cooked.size() == 6);
+
+    // Size Map from the level: the same six, biggest first. Asset Audit: who uses what, compiled data, unused.
+    assets.scan();  // the level's new text: sizes refreshed
+    char main_level[33] = "";
+    const asset::AssetRecord* creak = nullptr;
+    for (usize i = 0; i < assets.count(); ++i) {
+        if (std::strcmp(assets.get(i).name, "Main") == 0) asset::to_string(assets.get(i).guid, main_level);
+        if (std::strcmp(assets.get(i).name, "Creak") == 0) creak = &assets.get(i);
+    }
+    const std::vector<editor::SizeEntry> sizes = editor::size_map(assets, {main_level});
+    CHECK(sizes.size() == 6 && sizes.front().bytes >= sizes.back().bytes);
+    std::filesystem::create_directories(cook / "Derived", error);
+    std::ofstream(cook / "Derived" / (std::string(door) + ".lsdx")) << "0123456789";
+    editor::ReferenceIndex users;
+    users.build(assets);
+    for (const editor::AuditRow& row : editor::audit_assets(assets, users, cooked, (cook / "Derived").generic_string().c_str())) {
+        const char* name = assets.get(row.record).name;
+        if (std::strcmp(name, "Door") == 0) CHECK(row.users == 1 && row.derived == 10 && !row.unused);
+        if (std::strcmp(name, "Unused") == 0) CHECK(row.unused && row.users == 0);
+        if (std::strcmp(name, "Main") == 0) CHECK(!row.unused);
+    }
+
+    // Fix Up Redirectors: quoted paths and names follow a move / rename; GUIDs never needed it.
+    std::string text = "open_level(\"Content/Levels/Main.lsdlevel\") x = 'Levels/Main' y = \"Main\"";
+    CHECK(editor::fix_moved_names(text, "Levels/Main.lsdlevel", "Maps/Main.lsdlevel", false) == 2);
+    CHECK(text == "open_level(\"Content/Maps/Main.lsdlevel\") x = 'Maps/Main' y = \"Main\"");
+    CHECK(creak);
+    const editor::Redirect moved{creak ? creak->path : "", creak ? creak->guid : asset::Guid{}};
+    char rename_error[200] = "";
+    CHECK(creak && assets.rename_asset(*creak, "Squeak", rename_error, sizeof rename_error));
+    CHECK(editor::fix_up_redirectors(assets, {moved}) == 1);
+    std::ifstream fixed(cook / "Door.lua");
+    const std::string door_text((std::istreambuf_iterator<char>(fixed)), std::istreambuf_iterator<char>());
+    fixed.close();
+    CHECK(door_text.find("lsd.play_sound(\"Squeak\")") != std::string::npos);
     std::filesystem::remove_all(cook, error);
 }
 

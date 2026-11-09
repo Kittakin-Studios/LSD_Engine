@@ -1575,7 +1575,17 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("no asset with that name (asset.List)");
     }, &s, "asset.Open <name>: open an asset in its editor, like a double-click in the Content Browser");
-    console::add_command("asset.ImportMaterials", [](void* user, const char* args) {
+    console::add_command("asset.SizeMap", [](void* user, const char* args) {
+        lsd::editor::remote::print(lsd::editor::open_size_map(*static_cast<EditorState*>(user), args) ? "Size Map open" : "no asset or folder with that name");
+    }, &s, "asset.SizeMap [asset | folder]: Size Map of an asset or a folder of Content/ (nothing: all of it)");
+    console::add_command("asset.Audit", [](void* user, const char*) { lsd::editor::open_asset_audit(*static_cast<EditorState*>(user)); }, &s,
+                         "asset.Audit: the Asset Audit window (sizes, users, unused assets)");
+    console::add_command("asset.FixRedirectors", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        lsd::editor::fix_up_redirectors(st);
+        lsd::editor::remote::print(st.status);
+    }, &s, "asset.FixRedirectors: update names / paths of renamed or moved assets in scripts, UI, text assets and project settings");
+    console::add_command("asset.ImportMaterials",[](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
             const lsd::asset::AssetRecord r = st.registry->get(i);

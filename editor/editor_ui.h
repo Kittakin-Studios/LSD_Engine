@@ -253,6 +253,11 @@ void clear_output_log();
 // The last `count` Output Log lines as text, oldest first ("[channel] message" per line).
 std::string recent_log(u32 count);
 bool open_asset(EditorState& s, const asset::AssetRecord& record);  // what a double-click in the Content Browser does; false if nothing
+// Asset tools: Size Map of an asset name or a folder of Content/ ("" = all; false if nothing matches),
+// the Asset Audit window, Fix Up Redirectors (returns the files updated).
+bool open_size_map(EditorState& s, const char* name_or_folder);
+void open_asset_audit(EditorState& s);
+u32 fix_up_redirectors(EditorState& s);
 
 // Loads Config/editor_theme.json into theme if it exists.
 void load_theme(EditorTheme& theme);
