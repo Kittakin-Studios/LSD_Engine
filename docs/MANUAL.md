@@ -1756,6 +1756,45 @@ track (export stems the same length as the track), `lsd.music_layer("Drums", 0, 
 `lsd.stop_music(2)`. The same as Play Music / Set Music Layer / Stop Music nodes. Mark music files
 Stream and Looping in their import settings.
 
+**Dynamic music** (Unreal's Quartz clock with music layers): Content Browser > right-click > New Data
+Asset > **Music**. Set its **Tempo** (bpm), **Beats Per Bar** and **Quantize** (Beat or Bar), then
+add **Segments** (a name such as Explore or Combat, and its base track) and **Stems** (a layer, the
+segment it belongs to or empty for all, and the intensity range **From** / **Full** over which it fades
+in). `lsd.play_music("MU_Forest", 1)` starts the first segment with its stems;
+`lsd.music_intensity(0.8)` fades every stem to its gain at that intensity over **Intensity Fade**
+seconds; `lsd.music_segment("Combat")` switches on the next beat or bar of the music's own clock (the
+mixer's sample clock, not the frame), crossfading over **Switch Fade**. Nodes: Set Music Intensity,
+Switch Music Segment. Export segments and stems a whole number of bars long so the grid stays in step
+when they loop.
+
+**Sound Synths** (Unreal's MetaSounds): Content Browser > right-click > **New Sound Synth** makes a
+`.lsdsynth` graph that *makes* sound while it plays instead of picking files. Double-click opens it in
+the graph window (Play previews it). Wires carry a signal (a number per sample); an unwired input uses
+the typed number.
+
+| Node | Does |
+| --- | --- |
+| Oscillator | Sine, Saw, Square or Noise at Frequency (Hz) times Amplitude |
+| Envelope (ADSR) | 0..1: Attack, Decay to Sustain while Gate is above 0.5, then Release |
+| Filter | Low Pass or High Pass at Cutoff (Hz), Resonance 0..1 |
+| Gain | In times Gain (an Envelope into Gain shapes a tone) |
+| Mix | A + B + C + D |
+| Parameter | a value set while it plays: `lsd.set_audio_param("Pitch", 330)` / Set Audio Parameter |
+| Trigger | 1 for Length seconds each time `lsd.trigger_audio("Hit")` / Trigger Audio fires (feed an Envelope's Gate or a Wave Player's Play) |
+| Wave Player | a sound asset as a signal; from the start each time Play rises |
+| Output | what is heard, Volume, Duration (0 = until stopped) |
+
+A Sound Synth plays anywhere a sound does (`lsd.play_sound`, Sound Emitters, Play Sound nodes), with
+the class, attenuation and concurrency from its own settings. Example, an engine whose pitch follows
+speed: Parameter "RPM" into an Oscillator (Saw) into a Filter, and in a script
+`lsd.set_audio_param("RPM", 40 + speed * 6)`.
+
+- **Spatial sound**: a sound with an Attenuation that spatialises pans between the speakers as the
+  listener turns and moves (the camera is the listener) and fades by distance. **Air Absorption**
+  (Sound Attenuation, Unreal's Enable Air Absorption) dulls it with distance: open at Min Distance,
+  low-passed to **Air Absorption Far** at Max Distance. **Reverb Send** sends more of it to a reverb the
+  farther it is (none at Min Distance, **Reverb Send Far** at Max), so far sounds feel far.
+
 - **Sound** assets: volume, pitch, looping, streaming, Sound Class, Attenuation, Concurrency, Subtitle (shown at the bottom of the screen while it plays when the player has Subtitles on; see section 16).
 - **Sound Emitter** component (drag a sound into the viewport; Unreal's Ambient Sound).
 - **Sound Cue** graphs: Wave Player, Random (no repeat), Modulator, Mixer, Concatenator, Delay,
@@ -1772,8 +1811,8 @@ Stream and Looping in their import settings.
   Where volumes overlap, the higher **Priority** wins (a small room inside a big cave).
 - **Occlusion** (Sound Attenuation > Occlusion, Unreal's Enable Occlusion): a sound with it on is
   muffled to **Occlusion Muffle** while anything with collision is between it and the listener.
-- Lua: `lsd.play_sound`, `push_mix`, `set_audio_param`, `set_class_volume`; `stat audio` lists
-  playing sounds.
+- Lua: `lsd.play_sound`, `push_mix`, `set_audio_param`, `trigger_audio`, `set_class_volume`,
+  `music_intensity`, `music_segment`; `stat audio` lists playing sounds.
 
 ---
 
@@ -2426,7 +2465,10 @@ Audio and animation
 | --- | --- |
 | `lsd.play_sound(name [, x, y, z])` | voice id (2D, or at a position) |
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
-| `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | |
+| `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | Sound Cue Switches and Sound Synth Parameters read audio parameters |
+| `lsd.trigger_audio(name)` | fires Sound Synth Trigger nodes of that name |
+| `lsd.play_music(name [, fade])`, `lsd.stop_music([fade])`, `lsd.music_layer(name, volume [, fade])` | a track, or a Music asset (segments and stems) |
+| `lsd.music_intensity(v)`, `lsd.music_segment(name)` | Music asset: stems fade to their gain at v (0..1); switch segment on the next beat / bar |
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |

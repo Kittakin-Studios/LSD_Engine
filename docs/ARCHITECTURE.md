@@ -458,6 +458,20 @@ inherited down the class tree). The project's Base Sound Mix is pushed whenever 
 `audio::waveform` decodes a file into per-column peaks for thumbnails. Sound Cues are graphs evaluated when played (random, mixer, delay,
 modulator...).
 
+Sound Synths (`.lsdsynth`, GraphKind::Synth) are compiled by `editor::compile_synth` into an
+`audio::SynthProgram`: up to 64 nodes in dependency order, each input either an earlier node or a
+number. `audio::synth_render` (`engine/audio/src/dsp.cpp`, pure, tested offline) runs the program
+per sample; a voice owns a copy plus its `SynthState` behind a miniaudio data source (mono, so the
+spatializer pans it), so the audio thread neither allocates nor locks. Wave Player files are decoded
+when the voice starts. Parameters are atomics set by name from the game thread; a Trigger fires when
+its parameter changes (`lsd.trigger_audio` counts it up).
+Distance effects per spatial voice, from the listener each update: air absorption folds a
+log-spaced cutoff into the voice's low-pass; the reverb send splits the voice (miniaudio splitter)
+into its class and a shared wet-only reverb whose bus volume follows distance.
+Dynamic music: `SoundPlayer` plays a Music asset's segment and stems; `music_next_boundary` on the
+mixer's sample clock (`AudioSystem::time_seconds`) gives the wait, and the switch is scheduled
+there (`stop_at` + a delayed start), sample-accurate. Stem gains are `music_stem_gain(intensity)`.
+
 ## Particles
 
 ![The Particle Editor previewing a system simulated by ParticleInstance](images/ed_particles.jpg)
