@@ -1581,7 +1581,7 @@ track (export stems the same length as the track), `lsd.music_layer("Drums", 0, 
 `lsd.stop_music(2)`. The same as Play Music / Set Music Layer / Stop Music nodes. Mark music files
 Stream and Looping in their import settings.
 
-- **Sound** assets: volume, pitch, looping, streaming, Sound Class, Attenuation, Concurrency, subtitle.
+- **Sound** assets: volume, pitch, looping, streaming, Sound Class, Attenuation, Concurrency, Subtitle (shown at the bottom of the screen while it plays when the player has Subtitles on; see section 16).
 - **Sound Emitter** component (drag a sound into the viewport; Unreal's Ambient Sound).
 - **Sound Cue** graphs: Wave Player, Random (no repeat), Modulator, Mixer, Concatenator, Delay,
   Looping, Switch (on an audio parameter); Play previews it.
@@ -1856,9 +1856,33 @@ button:focus, button:hover { background-color: #EEA70E; }
   `ui.setText(id, text)`, `ui.setAttribute(id, name, value)`, `ui.setProperty(id, name, value)`,
   `ui.value(id)`, `ui.close()`, `ui.send(action, id)`, `console.log(...)` / `console.error(...)`.
   A function that runs over half a second is stopped (an endless loop cannot freeze the game).
+- **Widget animations** (UMG's widget animations): write the animation in the document's style as RCSS
+  `@keyframes` (or `transition` on a class), then play it from a script:
+
+  ```css
+  @keyframes pop { from { transform: scale(0.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  ```
+
+  `lsd.ui_play_animation(doc, "panel", "pop 0.4s cubic-out")` plays it (again from the start if it is
+  already playing; `"pulse 1s infinite alternate"` loops, `"none"` stops), and `lsd.ui_animate(doc,
+  "panel", "left", "600px", 0.5, "cubic-in-out")` tweens one property from where it is now (tweens:
+  linear, quadratic, cubic, back, bounce, elastic, sine... with `-in`, `-out` or `-in-out`). In the
+  document's own `.js`: `ui.playAnimation(id, "pop 0.4s")` and `ui.animate(id, property, value, seconds,
+  tween)`; in visual scripts: the **Play UI Animation** node. `onanimationend="fn"` on the element calls
+  `fn` when an animation ends (Unreal's On Animation Finished).
 - **Menus**: `lsd.ui_show_cursor(true)` frees the mouse for the UI. Arrow keys / D-pad move the
   focus between elements with `nav: auto`; Enter / Space / gamepad A press it.
 - **Over objects**: `lsd.ui_follow(doc, "tag", enemy, 2.2)` keeps an element above an object.
+- **UI in the level** (Unreal's Widget Component in World space): add a **UI Panel** component (Add
+  Component > UI) and pick a **Document**. The document is drawn on a flat panel **Width** x **Height**
+  metres, centred on the object, standing up and facing -Y (turn the object to aim it); **Resolution**
+  is how many pixels across it is laid out in (Unreal's Draw Size). It shows in the editor too, its own
+  `.js` runs, its `onclick="fn"` actions reach the scripts in Play and `lsd.ui_data` bindings update it.
+  In Play, while the mouse cursor is shown (`lsd.ui_show_cursor(true)`), hovering and clicking on the
+  panel work like on a screen menu (untick **Clickable** for a display only). **Lit** lets the level's
+  lights shade it (off: its own colours, like a screen). Limits: a wall in front of a panel does not
+  stop a click on it, half-see-through parts come out a little darker than on screen, and pictures in
+  the document are a little lighter.
 - **Ready-made HUD widgets** (no document to make; also the UI nodes Health Bar, Remove Health Bar,
   Damage Number, Show Prompt):
   - `lsd.health_bar(enemy, hp / max_hp)` puts a bar over an object that goes from green to red as it
@@ -1872,7 +1896,8 @@ button:focus, button:hover { background-color: #EEA70E; }
 ![HUD widgets](images/hud_widgets.jpg)
 *A health bar and a damage number over the player, and a prompt.*
 - **A ready-made settings menu**: `lsd.settings_menu()` opens (or closes) an options menu over the game:
-  Quality (Low to Epic), Fullscreen, Master / Music / Effects volume, Mouse sensitivity and Invert look,
+  Quality (Low to Epic), Fullscreen, Master / Music / Effects volume, Mouse sensitivity, Invert look and
+  the accessibility options (Text size, Subtitles, Colour blindness and its strength),
   saved with the player's settings as they change, with the mouse cursor shown while it is open. Bind it
   to Esc or a Pause button; for your own look, copy its idea into a `.rml` with `lsd.get_settings` /
   `lsd.set_settings`. UI actions that should run once whatever scripts exist go to `lsd.on_ui(action,
@@ -1925,7 +1950,19 @@ local extra, found = lsd.load_objects("Slot1")   -- extra.coins == 250; objects 
 ```
 
 **Player settings** (Unreal's Game User Settings) are in `Saved/GameUserSettings.json`: fullscreen,
-quality, master / music / effects volume, mouse sensitivity, invert look, language. The first run picks
+quality, master / music / effects volume, mouse sensitivity, invert look, language, and accessibility:
+
+- `ui_text_scale` (0.5 to 3, 1 = as designed): all game UI text bigger or smaller (menus, HUD, subtitles,
+  UI Panels); layouts make room for it. (The UI window's preview follows it too.)
+- `subtitles` (on by default): a Sound or Sound Cue with a **Subtitle** shows it at the bottom of the screen
+  while it plays (the latest one wins); a subtitle that is a string table key is shown translated.
+- `color_deficiency` (0 Off, 1 Deuteranopia, 2 Protanopia, 3 Tritanopia), `color_deficiency_strength` (0..1)
+  and `color_deficiency_simulate` (Unreal's r.Color.Deficiency): a colour-blind filter in the post-process
+  pass. It corrects the picture (colours that the player cannot tell apart are moved to ones they can);
+  with simulate on it shows how the game looks to that player instead, to check your own colours.
+  The game UI drawn over the view is not filtered.
+
+`lsd.set_settings({ui_text_scale = 1.5, color_deficiency = 1})` changes them from a script. The first run picks
 the quality that suits the graphics card. An options menu reads and changes them:
 
 ```lua
@@ -2140,7 +2177,7 @@ Audio and animation
 | `lsd.set_anim_param(e, name, v)` | Animation Graph parameter |
 | `lsd.play_montage(e, animation [, rate, from_bone, blend, root_motion, slot])` | Plays an animation file once over what e plays (Play Montage); from_bone `spine_01` = the upper body; returns its length; `on_montage_ended(self)` when it ends |
 | `lsd.stop_montage(e [, blend])`, `lsd.montage_playing(e)` | |
-| `lsd.settings_menu([open])` | the built-in options menu (quality, fullscreen, volumes, mouse); no argument toggles it |
+| `lsd.settings_menu([open])` | the built-in options menu (quality, fullscreen, volumes, mouse, accessibility); no argument toggles it |
 | `lsd.on_ui(action, fn)` | a UI action (onclick / onchange name) handled once, engine-wide, before scripts' functions |
 | `lsd.rebuild_navmesh()` | builds the navmesh again now (after moving walls or doors); agents keep walking |
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
@@ -2170,6 +2207,7 @@ UI, saving, settings, languages
 | `lsd.ui_show_cursor(on)` | menus: free the mouse |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
 | `lsd.ui_style(doc, id, property, value)`, `lsd.ui_rml(doc, id, markup)` | one style property; an element's contents as markup |
+| `lsd.ui_play_animation(doc, id, anim)`, `lsd.ui_animate(doc, id, property, value [, seconds, tween])` | widget animations: RCSS @keyframes, or one property tweened |
 | `lsd.health_bar(e, fraction [, height, color])`, `lsd.remove_health_bar(e)` | a health bar over e |
 | `lsd.damage_number(e, amount [, color])`, `lsd.prompt(text [, e])` | a rising damage number; a prompt (nil hides) |
 | `lsd.save_game(slot, v [, version])`, `lsd.save_game_async(slot, v [, version])`, `lsd.load_game(slot)` -> value, version, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
