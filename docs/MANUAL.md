@@ -1665,6 +1665,10 @@ imported curves); keys in the Mesh Editor with that name win.
 
   ![The State Machine window](images/ed_state_machine.jpg)
   *The State Machine window: Entry, the Idle and Walk states and their transitions; Walk selected, its fields on the right.*
+- **Layers** (Unreal's Layered Blend per Bone): an AnimGraph's **Layers** (up to 4) each play a clip from a **Bone**
+  down (`spine_01`: the upper body) over what the states play: aim, reload or wave while the legs run. **Weight**
+  sets how much (1 replaces those bones), or name a **Weight Parameter** and set it from scripts
+  (`lsd.set_anim_param(e, "Aim", 1)` / Set Anim Parameter) to fade the layer in and out. Montages still play on top.
 - Pick the graph in the Skeletal Mesh's **Anim Graph**. A Character feeds **Speed**,
   **VerticalSpeed**, **InAir** and **Direction** (degrees from facing to moving, right positive,
   like Unreal's Calculate Direction) automatically; set your own with `lsd.set_anim_param` or the

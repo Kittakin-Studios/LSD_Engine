@@ -743,6 +743,18 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
             const u32 n = anim::step_graph(*run, table, table_count, state->graph, mesh->playing ? dt * mesh->play_rate : 0.0f, inputs);
             state->input_count = n;
             state->pose.sample_blend(*model->model, inputs, n);
+            for (u32 k = 0; k < graph->layers.count && k < 4; ++k) {  // layers over the states, before montages and IK
+                const anim::AnimLayer& layer = graph->layers[k];
+                state->layer_time[k] += mesh->playing ? dt * mesh->play_rate * layer.play_rate : 0.0f;
+                const f32 weight = layer.weight_parameter[0] ? state->graph.get(layer.weight_parameter) : layer.weight;
+                const ClipSet* files = layer.animation[0] ? cache.clips(mesh->mesh, layer.animation) : set;
+                const anim::Clip* clip = files && layer.clip < files->count ? &files->clips[layer.clip] : nullptr;
+                if (weight <= 0.0f || !clip || clip->duration <= 0.0f) continue;
+                const f32 ratio = state->layer_time[k] / clip->duration;
+                const i32 from = layer.bone[0] ? model->model->find_joint(layer.bone) : -1;
+                if (layer.bone[0] && from < 0) continue;  // a bone this rig does not have: nothing rather than the whole body
+                state->pose.layer(*model->model, clip, layer.looping ? ratio - std::floor(ratio) : std::fmin(ratio, 1.0f), std::fmin(weight, 1.0f), from);
+            }
             step_root_motion(world, *state, *mesh, *model, inputs, n);
             apply_ik(world, *state, *model);
             update_morphs(*state, *mesh, *model);

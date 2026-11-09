@@ -85,6 +85,7 @@ private:
         f32 notify_ratio = 0.0f;
         anim::BlendInput inputs[anim::kMaxBlendInputs];  // what was sampled this frame (morph curves follow it)
         u32 input_count = 0;
+        f32 layer_time[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // the Animation Graph's layers: seconds into each clip
         rhi::BufferHandle morphed;  // bind pose + morph targets: the GPU's output (kept), or a CPU copy rebuilt per change
         u64 morph_key = 0;          // 0: no weights set, draw the model's own vertices
         u32 morph_vertex_count = 0;  // the GPU output's size (0: a CPU copy)

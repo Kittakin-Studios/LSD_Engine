@@ -50,6 +50,21 @@ struct AnimTransition {
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Crossfade time") f32 blend_time = 0.2f;
 };
 
+// An animation layer (Unreal's Layered Blend per Bone in an Anim Blueprint): a clip played from a bone down over
+// what the states play, by a weight a parameter sets (an upper-body aim, reload or wave over the legs' run).
+LSD_STRUCT()
+struct AnimLayer {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The layer's name (shown in the list)") char name[32] = "Upper Body";
+    LSD_PROPERTY(Edit, Widget = "Asset:Mesh", Tooltip = "The animation file it plays (one take per file); empty = the graph's file") char animation[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Which animation in that file (0 = the first)") u32 clip = 0;
+    LSD_PROPERTY(Edit, Tooltip = "It plays from this bone down (spine_01: the upper body; UE rigs' names, or your rig's); empty = the whole body") char bone[48] = "spine_01";
+    LSD_PROPERTY(Edit, Tooltip = "The parameter that sets its weight 0..1 (lsd.set_anim_param / Set Anim Parameter); empty = Weight below") char weight_parameter[32] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Its weight when no Weight Parameter is named (0 = off, 1 = it replaces those bones)") f32 weight = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed (1 = as made)") f32 play_rate = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends (off: holds the last frame)") bool looping = true;
+};
+
 LSD_STRUCT(Category = "Animation")
 struct AnimGraph {
     LSD_GENERATED()
@@ -57,6 +72,8 @@ struct AnimGraph {
     LSD_PROPERTY(Edit, Tooltip = "The state it starts in; empty = the first") char entry_state[32] = "";
     LSD_PROPERTY(Edit, Tooltip = "The graph's states; the first is where it starts (Unreal's Entry)") List<AnimState, 16> states;
     LSD_PROPERTY(Edit, Tooltip = "Checked in order every frame; the first that matches wins") List<AnimTransition, 32> transitions;
+    LSD_PROPERTY(Edit, Tooltip = "Animation layers over the states (Unreal's Layered Blend per Bone): each plays a clip from a bone down, by its weight; up to 4, in order")
+    List<AnimLayer, 4> layers;
 };
 
 constexpr u32 kMaxAnimParams = 16;
