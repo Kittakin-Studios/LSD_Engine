@@ -51,6 +51,7 @@
 #include "lsd/world/curve.h"
 #include "lsd/world/user_types.h"
 #include "lsd/world/timeline.h"
+#include "lsd/world/abilities.h"
 #include "lsd/script/graph.h"
 #include "lsd/render/material.h"
 #include "lsd/audio/audio.h"
@@ -2248,6 +2249,8 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::UserStruct>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::ScriptNode>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Timeline>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameplayEffect>());
+    lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::GameplayAbility>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::world::Flipbook>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::Material>());
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::render::MaterialInstance>());

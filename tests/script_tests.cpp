@@ -6,6 +6,7 @@
 #include "lsd/script/script.h"
 #include "lsd/world/level.h"
 #include "lsd/world/user_types.h"
+#include "lsd/world/abilities.h"
 #include "lsd/asset/data_asset.h"
 #include "lsd/game.hpp"
 
@@ -1337,7 +1338,85 @@ function twice(value) { return value * 2; }
     clear_custom_nodes();
 }
 
+// Ability system from Lua: effects, attributes, abilities with cost / cooldown / tags, and their events.
+static bool gameplay_path(void*, const char* type, const char* name, char* out, usize capacity) {
+    const bool effect = std::strcmp(type, "GameplayEffect") == 0 && std::strncmp(name, "GE_", 3) == 0;
+    const bool ability = std::strcmp(type, "GameplayAbility") == 0 && std::strncmp(name, "GA_", 3) == 0;
+    std::snprintf(out, capacity, "%s/%s.lsdasset", LSD_TEST_TEMP_DIR, name);
+    return (effect || ability) && std::filesystem::exists(out);
+}
+
+static void test_abilities() {
+    auto modifier = [](GameplayEffect& e, const char* attribute, f32 magnitude) {
+        AttributeModifier m;
+        std::snprintf(m.attribute, sizeof m.attribute, "%s", attribute);
+        m.magnitude = magnitude;
+        e.modifiers.push_back(m);
+    };
+    GameplayEffect poison, cost, stun;
+    poison.duration_type = static_cast<u32>(EffectDuration::HasDuration);
+    poison.duration = 2;
+    poison.period = 1;
+    modifier(poison, "Health", -10);
+    modifier(cost, "Stamina", -20);
+    stun.duration_type = static_cast<u32>(EffectDuration::Infinite);
+    std::snprintf(stun.granted_tags, sizeof stun.granted_tags, "Status.Stunned");
+    GameplayAbility dash;
+    std::snprintf(dash.cost_effect, sizeof dash.cost_effect, "GE_Cost");
+    dash.cooldown = 1;
+    std::snprintf(dash.function, sizeof dash.function, "dash");
+    std::snprintf(dash.active_tags, sizeof dash.active_tags, "State.Dashing");
+    std::snprintf(dash.blocked_tags, sizeof dash.blocked_tags, "Status");
+    dash.active_seconds = 0.5f;
+    CHECK(asset::save_data_asset(LSD_TEST_TEMP_DIR "/GE_Poison.lsdasset", reflect::type_of<GameplayEffect>(), &poison) && asset::save_data_asset(LSD_TEST_TEMP_DIR "/GE_Cost.lsdasset", reflect::type_of<GameplayEffect>(), &cost) &&
+          asset::save_data_asset(LSD_TEST_TEMP_DIR "/GE_Stun.lsdasset", reflect::type_of<GameplayEffect>(), &stun) && asset::save_data_asset(LSD_TEST_TEMP_DIR "/GA_Dash.lsdasset", reflect::type_of<GameplayAbility>(), &dash));
+    write(LSD_TEST_TEMP_DIR "/hero.lua", R"(
+function on_attribute_changed(self, name, value, old) local g = lsd.game_instance() g.changes = (g.changes or 0) + 1 g.last = name .. "=" .. value end
+function dash(self, ability) lsd.game_instance().dashed = ability end
+function on_ability_ended(self, ability, cancelled) lsd.game_instance().ended = ability .. " " .. tostring(cancelled) end
+)");
+    HeapAllocator heap("abilities");
+    {
+        World w(heap);
+        const Entity hero = w.create("Hero");
+        std::snprintf(w.add<Script>(hero)->script, sizeof(Script::script), "file:hero.lua");
+        AttributeSet* set = w.add<AttributeSet>(hero);
+        const char* names[3] = {"Health", "MaxHealth", "Stamina"};
+        for (const char* n : names) {
+            Attribute a;
+            std::snprintf(a.name, sizeof a.name, "%s", n);
+            a.base = n[0] == 'S' ? 30.0f : 100.0f;
+            set->attributes.push_back(a);
+        }
+        std::snprintf(set->attributes[0].max_attribute, sizeof(Attribute::max_attribute), "MaxHealth");
+        GrantedAbility granted;
+        std::snprintf(granted.ability, sizeof granted.ability, "GA_Dash");
+        w.add<AbilitySystem>(hero)->abilities.push_back(granted);
+        script::ScriptHost host;
+        host.data_path = gameplay_path;
+        script::ScriptSystem scripts;
+        scripts.start(w, host, path_of, nullptr);
+        CHECK(scripts.run("local e = lsd.find('Hero') assert(lsd.attribute(e, 'Health') == 100) assert(lsd.apply_effect(e, 'GE_Poison') and not lsd.apply_effect(e, 'GE_Nope'))\n"
+                          "assert(lsd.try_activate_ability(e, 'GA_Dash')) local g = lsd.game_instance()\n"
+                          "assert(g.dashed == 'GA_Dash' and g.last == 'Stamina=10' and lsd.has_tag(e, 'State.Dashing'))\n"
+                          "local ok, why = lsd.try_activate_ability(e, 'GA_Dash') assert(not ok and why == 'active')\n"
+                          "lsd.set_attribute(e, 'Health', 500) assert(lsd.attribute(e, 'Health') == 100)"));  // clamped to MaxHealth
+        for (int i = 0; i < 90; ++i) scripts.update(1.0f / 60.0f);  // 1.5 s: one poison tick, dash ended, cooldown over
+        CHECK(scripts.run("local e = lsd.find('Hero') local g = lsd.game_instance()\n"
+                          "assert(lsd.attribute(e, 'Health') == 90 and g.ended == 'GA_Dash false' and not lsd.has_tag(e, 'State') and lsd.ability_cooldown(e, 'GA_Dash') == 0)\n"
+                          "local ok, why = lsd.try_activate_ability(e, 'GA_Dash') assert(not ok and why == 'cost')\n"
+                          "lsd.set_attribute(e, 'Stamina', 50) assert(lsd.apply_effect(e, 'GE_Stun'))\n"
+                          "ok, why = lsd.try_activate_ability(e, 'GA_Dash') assert(not ok and why == 'blocked')\n"
+                          "assert(lsd.remove_effect(e, 'GE_Stun') == 1 and lsd.try_activate_ability(e, 'GA_Dash') and lsd.cancel_ability(e, 'GA_Dash'))\n"
+                          "assert(g.ended == 'GA_Dash true' and lsd.give_ability(e, 'GA_Dash') and not lsd.give_ability(e, 'GA_Nope'))"));
+        CHECK(w.get<AbilitySystem>(hero)->abilities.count == 1 && scripts.error_count() == 0);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
+    test_abilities();
     test_javascript();
     test_js_nodes();
     test_native_nodes();
