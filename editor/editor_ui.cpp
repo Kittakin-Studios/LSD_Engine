@@ -5547,12 +5547,12 @@ void draw_content_browser(EditorState& s) {
             }
             for (const asset::AssetMount& m : s.registry->mounts()) {  // each enabled plugin's Content/, under Plugins/<Name>
                 if (!m.prefix[0]) continue;
-                const bool open = ImGui::TreeNodeEx(m.prefix, node | (s.content_folder == std::string(m.prefix) ? ImGuiTreeNodeFlags_Selected : 0));
+                const bool plugin_open = ImGui::TreeNodeEx(m.prefix, node | (s.content_folder == std::string(m.prefix) ? ImGuiTreeNodeFlags_Selected : 0));
                 if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
                     std::snprintf(s.content_folder, sizeof s.content_folder, "%s", m.prefix);
                     s.search[0] = s.active_collection[0] = '\0';
                 }
-                if (open) {
+                if (plugin_open) {
                     draw_folder_tree(s, m.dir, node, m.dir, m.prefix);
                     ImGui::TreePop();
                 }
