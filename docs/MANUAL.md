@@ -568,6 +568,8 @@ the level; what a copy overrides stays its own.
 
 ## 5. Lighting, sky and post-processing
 
+For the steps to the best picture, in order, see [GRAPHICS.md](GRAPHICS.md) (Epic graphics: a step-by-step guide).
+
 Lights use physical units, like Unreal:
 
 | Component | Units / notes |
