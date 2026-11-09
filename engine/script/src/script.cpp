@@ -1031,6 +1031,15 @@ struct Api {
         return 1;
     }
     static int load_sublevel(lua_State* L) { return sublevel_call(L, true); }
+    static int input_recording(lua_State* L, int what) {
+        const ScriptHost& host = system(L).host_;
+        const char* file = what == 2 ? "" : luaL_checkstring(L, 1);
+        lua_pushboolean(L, host.input_recording && host.input_recording(host.user, what, file));
+        return 1;
+    }
+    static int input_record(lua_State* L) { return input_recording(L, 0); }
+    static int input_play(lua_State* L) { return input_recording(L, 1); }
+    static int input_stop(lua_State* L) { return input_recording(L, 2); }
     static int unload_sublevel(lua_State* L) { return sublevel_call(L, false); }
     static int enter_vehicle(lua_State* L) { return ride_call(L, 0, true); }
     static int exit_vehicle(lua_State* L) { return ride_call(L, 1, false); }
@@ -2017,6 +2026,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
         {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"input_record", Api::input_record}, {"input_play", Api::input_play}, {"input_stop", Api::input_stop},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"ragdoll", Api::ragdoll}, {"set_material_parameter", Api::set_material_parameter}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"anim_curve", Api::anim_curve}, {"set_motion_tag", Api::set_motion_tag}, {"set_morph", Api::set_morph}, {"morph_names", Api::morph_names}, {"set_outfit", Api::set_outfit}, {"assets", Api::assets}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
     };

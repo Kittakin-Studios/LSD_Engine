@@ -418,6 +418,31 @@ static void test_sublevel() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Level Streaming Volumes: inside one listing it loads; a loaded one stays until a margin outside all.
+static void test_streaming_volumes() {
+    World w(default_allocator());
+    const Entity volume = w.create("Volume");
+    auto* v = w.add<LevelStreamingVolume>(volume);
+    StreamedSubLevel house;
+    std::snprintf(house.name, sizeof house.name, "House");
+    v->sub_levels.push_back(house);
+    Transform* t = w.get<Transform>(volume);
+    t->position = {10, 0, 0};
+    t->scale = {4, 4, 3};  // x 8..12, y -2..2, z 0..3
+    CHECK(streaming_volumes_want(w, "Barn", {10, 0, 1}, false) == StreamWant::None);  // not listed: Load Distance decides
+    CHECK(streaming_volumes_want(w, "House", {10, 0, 1}, false) == StreamWant::Load);
+    CHECK(streaming_volumes_want(w, "House", {12.5f, 0, 1}, false) == StreamWant::Unload);
+    CHECK(streaming_volumes_want(w, "House", {12.5f, 0, 1}, true) == StreamWant::Load);  // within the margin: stays
+    CHECK(streaming_volumes_want(w, "House", {13.5f, 0, 1}, true) == StreamWant::Unload);
+    const Entity other = w.create("Other");  // a second volume listing it: inside either is enough
+    w.add<LevelStreamingVolume>(other)->sub_levels.push_back(house);
+    w.get<Transform>(other)->position = {20, 0, 0};
+    CHECK(streaming_volumes_want(w, "House", {20, 0, 0.5f}, false) == StreamWant::Load);
+    v->enabled = false;
+    w.get<LevelStreamingVolume>(other)->enabled = false;
+    CHECK(streaming_volumes_want(w, "House", {10, 0, 1}, false) == StreamWant::None);
+}
+
 // Editor Only: the object and its children go; the rest stays.
 static void test_editor_only() {
     World w(default_allocator());
@@ -435,6 +460,7 @@ int main() {
     test_math();
     test_editor_only();
     test_sublevel();
+    test_streaming_volumes();
     test_entities();
     test_level_round_trip();
     test_prefab();

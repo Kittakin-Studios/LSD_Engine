@@ -60,7 +60,7 @@ void init_types() {
         &reflect::type_of<Mover>(),
         &reflect::type_of<Vehicle>(),
         &reflect::type_of<Transport>(),
-        &reflect::type_of<SubLevel>(),
+        &reflect::type_of<SubLevel>(), &reflect::type_of<LevelStreamingVolume>(),
         &reflect::type_of<Outfit>(),
         &reflect::type_of<OutfitPiece>(),
         &reflect::type_of<EditableMesh>(),

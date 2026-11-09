@@ -175,6 +175,29 @@ bool load_level(World& world, const char* text, usize length) {
     return r.ok;
 }
 
+StreamWant streaming_volumes_want(const World& world, const char* name, Vec3 point, bool loaded) {
+    const reflect::TypeInfo& type = reflect::type_of<LevelStreamingVolume>();
+    StreamWant want = StreamWant::None;
+    for (u32 i = 0; i < world.count(type); ++i) {
+        const auto* volume = static_cast<const LevelStreamingVolume*>(world.at(type, i));
+        bool listed = false;
+        for (u32 k = 0; k < volume->sub_levels.count && !listed; ++k) listed = std::strcmp(volume->sub_levels[k].name, name) == 0;
+        if (!volume->enabled || !listed) continue;
+        // The volume's unit box (x, y -0.5..0.5, z 0..1) under its transform, grown by the margin while loaded.
+        const Mat4 m = world.world_matrix(world.owner(type, i));
+        const Vec3 p = transform_point(affine_inverse(m), point);
+        const f32 margin = loaded ? kStreamingMargin : 0.0f;
+        const auto grow = [&](u32 column) {
+            const f32 scale = length(Vec3{m.at(0, column), m.at(1, column), m.at(2, column)});
+            return scale > 0.0f ? margin / scale : 0.0f;
+        };
+        const f32 gx = grow(0), gy = grow(1), gz = grow(2);
+        if (p.x >= -0.5f - gx && p.x <= 0.5f + gx && p.y >= -0.5f - gy && p.y <= 0.5f + gy && p.z >= -gz && p.z <= 1.0f + gz) return StreamWant::Load;
+        want = StreamWant::Unload;
+    }
+    return want;
+}
+
 bool sublevel_loaded(const World& world, Entity root) {
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         const Entity e = world.entity_at_slot(slot);

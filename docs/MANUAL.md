@@ -377,6 +377,7 @@ restore the autosave, and the Message Log names the crash report folder (`Saved/
 The **Output Log** tab has a console line at the bottom. Type `help` to list every command. A few:
 `stat unit` (frame timings), `stat audio`, `view top`, `viewmode wireframe`, `validate`, `package`,
 `test.Smoke`. While playing, `lua <code>` runs Lua (e.g. `lua lsd.log(lsd.time())`).
+Input recording: `input.Record <file>`, `input.StopRecord`, `input.Play <file>` (see Input below).
 
 ---
 
@@ -682,6 +683,14 @@ while the player is that near (it unloads a little further away); untick **Load 
 only from scripts: `lsd.load_sublevel(e)` / `lsd.unload_sublevel(e)` or the **Load / Unload Stream
 Level** nodes. Their scripts and physics start and stop with them. Sub-levels inside sub-levels are
 not loaded yet.
+
+**Level Streaming Volume** (Place tab, Unreal's Level Streaming Volume): a box that streams by where
+the player is instead of by distance. Size it over an area, then in Details > **Sub Levels** add the
+names of the Sub Level objects (as in the Outliner) it controls. In Play (and the packaged game) each
+listed Sub Level is loaded while the player (or the camera, with no Character in the level) is inside
+any volume that lists it, and unloaded once the player is a metre outside all of them (no flicker at
+the edge). Listed Sub Levels ignore their Load Distance and a script's load / unload (the volumes
+decide every frame); untick the volume's **Enabled** to hand them back.
 
 ### Vehicles, transports and moving meshes
 
@@ -1086,6 +1095,13 @@ While playing, the mouse belongs to the game: the cursor is hidden and the edito
 - A Character with no context set uses the built-in WASD / mouse / Space controls.
 - Players rebind keys from your options menu with `lsd.bindings`, `lsd.rebind` and `lsd.key_pressed`
   (Lua API); rebinds are saved in `Saved/GameUserSettings.json` and applied every time Play starts.
+- **Input recording** (Unreal's input recording, for tests and demos): while playing, console
+  `input.Record walk.inputrec` records every Input Action's value and each frame's time to
+  `Saved/walk.inputrec`; `input.StopRecord` (or Stop) saves it. `input.Play walk.inputrec` plays it
+  back in place of the keys, frame by frame with the recorded frame times, so the same run happens
+  again (a test: `-play -exec="input.Play walk.inputrec" -frames=<n>`). From scripts:
+  `lsd.input_record(file)`, `lsd.input_play(file)`, `lsd.input_stop()`. Only Input Actions are
+  recorded (not UI clicks, raw keys or `lsd.key_pressed`), and changing level ends a recording.
 
 ### Game Mode
 
@@ -2243,6 +2259,7 @@ UI, saving, settings, languages
 | `lsd.broadcast(name, ...)`, `lsd.call(e, name, ...)`, `lsd.implements(e, name)` | events between objects (event dispatchers, interface messages): name(self, ...) on every script, or e's |
 | `lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])`, `lsd.draw_sphere(x, y, z, radius ...)`, `lsd.draw_box(x, y, z, hx, hy, hz ...)`, `lsd.draw_text(x, y, z, text ...)` | debug drawing over the viewport (seconds 0: this frame) |
 | `lsd.bindings(action)`, `lsd.rebind(action, old_key, new_key)`, `lsd.key_pressed()` | key rebinding (Enhanced Input's player mappings): saved in GameUserSettings.json, applied every Play; Move / Look / Jump name the built-in controls |
+| `lsd.input_record(file)`, `lsd.input_play(file)`, `lsd.input_stop()` | input recording: the Input Actions' values and frame times to / from `Saved/<file>` (tests, demos) |
 
 Events a script can define: `on_start(self)`, `on_update(self, dt)`, `on_hit(self, other)`,
 `on_overlap_begin(self, other)`, `on_overlap_end(self, other)`, UI actions `name(self, element_id)`,

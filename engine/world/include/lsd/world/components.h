@@ -230,6 +230,23 @@ struct SubLevel {
     LSD_PROPERTY(Edit, Tooltip = "Show it in the editor") bool show_in_editor = true;
 };
 
+// One Sub Level object a Level Streaming Volume controls, by its name in the Outliner.
+LSD_STRUCT()
+struct StreamedSubLevel {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The name of a Sub Level object in this level") char name[64] = "";
+};
+
+// Streams Sub Levels by where the player is (Unreal's Level Streaming Volume): each listed Sub Level
+// object loads while the player (or the camera when there is no Character) is inside any volume that
+// lists it, and unloads once it is a metre outside all of them. Listed Sub Levels ignore Load Distance.
+LSD_STRUCT(Component, Category = "Volumes", Tooltip = "Loads the listed Sub Levels while the player is inside it")
+struct LevelStreamingVolume {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Off: it streams nothing (its Sub Levels go back to Load Distance)") bool enabled = true;
+    LSD_PROPERTY(Edit, Tooltip = "The Sub Level objects (their names) loaded while the player is inside") List<StreamedSubLevel, 16> sub_levels;
+};
+
 // Moves the object by itself (Unreal's Interp To Movement and spline routes): along a direction, back
 // and forth to an offset, or along a Spline object's path, optionally turning. It can wait for its
 // start (Begin Play, the player entering a Trigger Volume, a time of the game, or a script) and run

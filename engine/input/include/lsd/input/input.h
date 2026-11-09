@@ -4,6 +4,8 @@
 // Both are data assets edited in the Details panel, so input is wired up without code.
 #include "lsd/reflect/reflect.h"
 
+#include <vector>
+
 namespace lsd::input {
 
 // What an action's value means. Read it with InputSystem::value / down / pressed.
@@ -63,6 +65,8 @@ struct Value {
     f32 x = 0, y = 0;
 };
 
+struct InputRecording;
+
 class InputSystem {
 public:
     void clear();
@@ -78,6 +82,11 @@ public:
     bool down(const char* action) const;    // value length above 0.5
     bool pressed(const char* action) const; // went down in the last update
     bool fired(const char* action) const;   // its trigger fired in the last update (Pressed when not set)
+
+    // Input recording (tests, demos): the actions' values from the last update(), appended as one frame,
+    // and a recorded frame played back in place of update() (actions not in the recording read 0).
+    void record(InputRecording& recording, f32 dt) const;
+    void replay(const InputRecording& recording, u32 frame);
 
     static constexpr u32 kMaxActions = 64;
     static constexpr u32 kMaxBindings = 256;
@@ -106,6 +115,7 @@ private:
         u32 context;
     };
     i32 find_action(const char* guid) const;
+    void fire(f32 dt);  // triggers from down / was_down / held
 
     Action actions_[kMaxActions];
     u32 action_count_ = 0;
@@ -113,5 +123,18 @@ private:
     u32 binding_count_ = 0;
     u32 context_count_ = 0;
 };
+
+// Every frame's dt and each action's value (x, y), by action GUID. Saved as text (one line a frame).
+// shortcut: std::vector grows while recording; a fixed buffer if recordings run in shipped builds' hot loops.
+struct InputRecording {
+    u32 action_count = 0;
+    char actions[InputSystem::kMaxActions][33] = {};
+    std::vector<f32> data;  // per frame: dt, then x, y for each action
+    u32 stride() const { return 1 + 2 * action_count; }
+    u32 frame_count() const { return static_cast<u32>(data.size() / stride()); }
+    f32 dt(u32 frame) const { return data[frame * stride()]; }
+};
+bool save_recording(const char* path, const InputRecording& recording);
+bool load_recording(const char* path, InputRecording& out);  // false (and logged) when missing or malformed
 
 } // namespace lsd::input

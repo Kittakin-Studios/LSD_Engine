@@ -98,6 +98,8 @@
 //   lsd.bindings(action) -> {"W", "Gamepad Left Stick", ...}   the keys an Input Action listens to
 //   lsd.rebind(action, old_key, new_key) -> ok   swaps a key now and saves it in the player's settings
 //   lsd.key_pressed() -> name | nil       a key / button that went down this frame ("press a key" menus)
+//   lsd.input_record(file) / lsd.input_play(file) -> ok, lsd.input_stop()   records the Input Actions' values
+//                                         each frame to Saved/<file>, or plays a recording back (tests, demos)
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
 // on every script that defines it.
 //   lsd.save_game(slot, value [, version]) -> ok   Unreal's SaveGame: numbers, strings, booleans and tables (lists or
@@ -311,6 +313,7 @@ struct ScriptHost {
     // Vehicles and movers: 0 enter vehicle, 1 exit, 2 driven vehicle, 3 ride, 4 get off, 5 / 6 / 7 start / stop / restart a mover.
     u32 (*ride)(void* user, int what, world::Entity e) = nullptr;
     bool (*sublevel)(void* user, world::Entity e, bool load) = nullptr;  // a Sub Level object: load / unload its level
+    bool (*input_recording)(void* user, int what, const char* file) = nullptr;  // 0 record, 1 play, 2 stop (files under Saved/)
     // Multiplayer (all null when it is off: scripts then see a standalone game).
     int (*net_mode)(void* user) = nullptr;   // 0 standalone, 1 server, 2 client
     u32 (*net_player)(void* user) = nullptr; // this machine's player id (0 = the server's own)

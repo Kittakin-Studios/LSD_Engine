@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace lsd::input {
@@ -240,6 +241,10 @@ void InputSystem::update(const InputFrame& frame, f32 dt) {
         a.value = {};
         a.down = false;
     }
+    fire(dt);
+}
+
+void InputSystem::fire(f32 dt) {
     for (u32 i = 0; i < action_count_; ++i) {
         Action& a = actions_[i];
         const f32 held_before = a.held;
@@ -255,6 +260,73 @@ void InputSystem::update(const InputFrame& frame, f32 dt) {
             case Trigger::Tap: a.fired = !a.down && a.was_down && held_before <= a.trigger_time; break;
         }
     }
+}
+
+void InputSystem::record(InputRecording& recording, f32 dt) const {
+    if (recording.data.empty() && recording.action_count == 0) {  // the first frame names the actions
+        recording.action_count = action_count_;
+        for (u32 i = 0; i < action_count_; ++i) std::memcpy(recording.actions[i], actions_[i].guid, sizeof recording.actions[i]);
+    }
+    recording.data.push_back(dt);
+    for (u32 i = 0; i < recording.action_count; ++i) {
+        const Value v = value(recording.actions[i]);  // actions added later (a hot-reloaded context) are not recorded
+        recording.data.push_back(v.x);
+        recording.data.push_back(v.y);
+    }
+}
+
+void InputSystem::replay(const InputRecording& recording, u32 frame) {
+    const f32* row = &recording.data[frame * recording.stride()];
+    for (u32 i = 0; i < action_count_; ++i) {
+        Action& a = actions_[i];
+        a.was_down = a.down;
+        a.value = {};
+        for (u32 r = 0; r < recording.action_count; ++r) {
+            if (std::strcmp(recording.actions[r], a.guid) == 0) a.value = {row[1 + 2 * r], row[2 + 2 * r]};
+        }
+        a.smoothed = a.value;  // recorded after smoothing and chords: only the triggers are worked out again
+        a.down = a.value.x * a.value.x + a.value.y * a.value.y > 0.25f;
+    }
+    fire(row[0]);
+}
+
+bool save_recording(const char* path, const InputRecording& recording) {
+    std::FILE* f = std::fopen(path, "w");
+    if (!f) {
+        LSD_LOG_ERROR("input", "Cannot write the input recording %s", path);
+        return false;
+    }
+    std::fprintf(f, "lsd_input_recording 1\nactions %u\n", recording.action_count);
+    for (u32 i = 0; i < recording.action_count; ++i) std::fprintf(f, "%s\n", recording.actions[i]);
+    const u32 frames = recording.frame_count(), stride = recording.stride();
+    std::fprintf(f, "frames %u\n", frames);
+    for (u32 i = 0; i < frames; ++i) {
+        for (u32 k = 0; k < stride; ++k) std::fprintf(f, k ? " %.9g" : "%.9g", static_cast<double>(recording.data[i * stride + k]));  // %.9g: floats round-trip exactly
+        std::fputc('\n', f);
+    }
+    return std::fclose(f) == 0;
+}
+
+bool load_recording(const char* path, InputRecording& out) {
+    out = {};
+    std::FILE* f = std::fopen(path, "r");
+    if (!f) {
+        LSD_LOG_WARN("input", "No input recording %s", path);
+        return false;
+    }
+    unsigned version = 0, actions = 0, frames = 0;
+    bool ok = std::fscanf(f, "lsd_input_recording %u actions %u", &version, &actions) == 2 && version == 1 && actions <= InputSystem::kMaxActions;
+    out.action_count = ok ? actions : 0;
+    for (u32 i = 0; ok && i < out.action_count; ++i) ok = std::fscanf(f, "%32s", out.actions[i]) == 1 && std::strlen(out.actions[i]) == 32;
+    ok = ok && std::fscanf(f, " frames %u", &frames) == 1 && frames <= 10000000u;  // ~46 hours at 60 fps
+    if (ok) out.data.resize(static_cast<usize>(frames) * out.stride());
+    for (usize i = 0; ok && i < out.data.size(); ++i) ok = std::fscanf(f, "%f", &out.data[i]) == 1;
+    std::fclose(f);
+    if (!ok) {
+        LSD_LOG_WARN("input", "%s is not an input recording (or is cut short)", path);
+        out = {};
+    }
+    return ok;
 }
 
 bool InputSystem::fired(const char* action) const {

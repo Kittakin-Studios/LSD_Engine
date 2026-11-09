@@ -66,6 +66,15 @@ public:
     void update(world::World& world, const input::InputFrame& frame, f32 dt);
     void stop();
 
+    // Input recording (input.Record / input.Play, lsd.input_record / input_play): files under Saved/. A
+    // recording names the Input Actions and stores their values and dt per frame; playback feeds them
+    // back in place of the keys and steps each frame with its recorded dt.
+    // shortcut: only Input Actions are recorded (not raw keys, UI clicks or lsd.key_pressed), and level
+    // travel ends a recording; record the raw InputFrame too when a test needs menus or travel.
+    bool input_record(const char* file);
+    bool input_play(const char* file);
+    void input_stop();  // saves a recording; ends a playback
+
     Vec3 feet() const { return feet_; }
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
@@ -261,6 +270,10 @@ private:
     MeshCache* meshes_ = nullptr;
     world::Entity body_entities_[kMaxBodies];  // which object each physics body belongs to
     input::InputSystem input_;
+    input::InputRecording recording_;
+    char recording_path_[300] = "";
+    bool recording_on_ = false, replaying_ = false;
+    u32 replay_frame_ = 0;
     Vec3 view_eye_, view_forward_{1, 0, 0};
     f32 view_fov_ = 0.0f;
     f32 view_ortho_ = 0.0f;
