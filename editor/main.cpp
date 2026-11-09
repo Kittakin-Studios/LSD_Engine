@@ -41,6 +41,7 @@
 #include "live_link.h"
 #include "sound_player.h"
 #include "debug_draw.h"
+#include "multi_user.h"
 #include "remote_console.h"
 #include "game_module.h"
 #include "source_control.h"
@@ -1849,6 +1850,21 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(the level is empty)" : out.c_str());
     }, &s, "Every object in the level: name, parent, world position, components");
+    console::add_command("object.Move", [](void* user, const char* args) {  // tests / the MCP bridge: an undoable move, like a gizmo drag
+        auto& st = *static_cast<EditorState*>(user);
+        char name[64] = "";
+        float x, y, z;
+        if (std::sscanf(args, "%63s %f %f %f", name, &x, &y, &z) == 4) {
+            for (lsd::u32 slot = 0; slot < st.world->slot_count(); ++slot) {
+                const lsd::world::Entity e = st.world->entity_at_slot(slot);
+                if (!e.valid() || std::strcmp(st.world->name(e), name) != 0) continue;
+                st.world->get<lsd::world::Transform>(e)->position = {x, y, z};
+                std::snprintf(st.pending_edit, sizeof st.pending_edit, "Move");
+                return;
+            }
+        }
+        lsd::editor::remote::print("object.Move <name> <x> <y> <z>: an object of the level by name (scene.List)");
+    }, &s, "object.Move <name> <x> <y> <z>: move an object of the level (undoable)");
     console::add_command("asset.List", [](void* user, const char* args) {
         const auto& st = *static_cast<EditorState*>(user);
         std::string filter(args), out;
@@ -2688,6 +2704,7 @@ int main(int argc, char** argv) {
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
     lsd::editor::remote::register_content_commands();  // a game with -remote takes files the editor pushes
+    if (!game_mode) lsd::editor::multi_user::register_commands(state);
     if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg), remote_password && remote_password[0] ? remote_password : nullptr);
 
     lsd::audio::AudioSystem audio;
@@ -2843,6 +2860,7 @@ int main(int argc, char** argv) {
         }
         lsd::editor::remote::poll();
         lsd::editor::remote::push_changes();  // Remote Console > Push Changes
+        lsd::editor::multi_user::update(state);  // before the UI: other users' edits and markers this frame
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A
@@ -3979,6 +3997,7 @@ int main(int argc, char** argv) {
     }
     lsd::editor::set_baked_lighting(nullptr);
     lsd::editor::remote::close();
+    lsd::editor::multi_user::leave();  // tells the others, before the level and ENet go
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;
