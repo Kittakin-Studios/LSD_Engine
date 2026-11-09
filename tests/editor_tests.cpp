@@ -1,6 +1,7 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
 #include "hlod.h"
+#include "dynamic_gi.h"
 #include "light_bake.h"
 #include "lsd/asset/texture.h"
 #include "lighting.h"
@@ -236,6 +237,36 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     rhi::LightSetup setup;
     editor::apply_baked_lighting(baked, setup);
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
+}
+
+static void test_dynamic_gi() {  // Dynamic GI: the grid follows the camera, keeps what it already lit, relights the sky
+    using namespace lsd;
+    const u32 dims[3] = {4, 4, 2};
+    i32 origin[3];
+    editor::gi_grid_origin(Vec3{5.1f, -0.5f, 1.0f}, 2.0f, dims, origin);
+    CHECK(origin[0] == 0 && origin[1] == -3 && origin[2] == -1);  // floor(eye / cell) - dims / 2
+    std::vector<f32> in(4 * 4 * 2 * 12), out(in.size());
+    for (usize i = 0; i < in.size(); ++i) in[i] = static_cast<f32>(i / 12);  // each probe holds its own index
+    std::vector<u8> kept(4 * 4 * 2);
+    const i32 from[3] = {0, 0, 0}, to[3] = {1, 0, 0};  // moved one cell along +x
+    editor::gi_scroll(from, to, dims, in.data(), out.data(), kept.data());
+    CHECK(kept[0] && out[0] == 1.0f && out[12 * 2] == 3.0f);  // new probe 0 is old probe 1
+    CHECK(!kept[3] && out[3 * 12] == 0.0f && !kept[7]);       // the last column is new
+    CHECK(kept[16] && out[16 * 12] == 17.0f);                 // the upper layer moves the same way
+    editor::BakeScene scene;  // a black floor under a white sky, traced as dynamic GI does
+    const Vec3 a{-100, -100, 0}, b{100, -100, 0}, c{100, 100, 0}, d{-100, 100, 0};
+    scene.positions = {a, b, c, a, c, d};
+    scene.albedo = {Vec3{}, Vec3{}};
+    rhi::LightSetup lights;
+    for (int i = 0; i < 3; ++i) lights.sky[i] = lights.ground[i] = 1.0f;
+    lights.count = 0;
+    auto tracer = editor::make_probe_tracer(std::move(scene));
+    editor::set_tracer_lights(*tracer, lights, 0);
+    const f32 at[3] = {0, 0, 1}, cell[3] = {1, 1, 1};
+    std::vector<f32> sh(4 * 4 * 2 * 12);
+    editor::relight_probe_grid(*tracer, at, cell, dims, 64, 7, 2, nullptr, sh.data());
+    const f32 up = (0.886227f * sh[0] + 1.023328f * sh[3]) / 3.14159265f, down = (0.886227f * sh[0] - 1.023328f * sh[3]) / 3.14159265f;
+    CHECK(up > 0.9f && up < 1.1f && down > -0.1f && down < 0.1f);
 }
 
 static void test_static_light_bake() {  // Mobility Static: a point light's direct light ends up in the probes (only when Static)
@@ -1205,6 +1236,7 @@ int main() {
     test_undo_redo();
     test_references();
     test_light_bake();
+    test_dynamic_gi();
     test_lightmaps();
     test_hlod();
     test_rml_edit();
