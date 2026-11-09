@@ -2149,7 +2149,7 @@ in the project folder, the splash too).
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
 | Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view or hidden behind nearer objects and picks each copy's LOD, `r.GPUCulling 0` to compare) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |
-| Animation | Foot IK (feet planted on steps and slopes in Play; foot bone names, max step, ankle height) |
+| Animation | Foot IK (Unreal's foot placement, in Play: the pelvis drops for the lower foot, each foot reaches its ground and turns to its slope, eased so stairs do not pop; foot bone names, max step, ankle height, Max Foot Angle, Speed) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
 | Physics | Rigid Body, Physics Joint |

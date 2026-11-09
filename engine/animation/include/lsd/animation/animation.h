@@ -211,6 +211,9 @@ public:
     // each of `model`'s joints takes the model-space pose of `leader`'s joint with the same name
     // (from `leader_model`); joints the leader lacks stay at their bind pose. Replaces any sampled pose.
     bool follow(const SkinnedModel& model, const SkinnedModel& leader_model, const Pose& leader);
+    // Moves `joint` and everything below it (-1: the whole skeleton) by `m` in model space, after the pose is
+    // built: the pelvis lowered for foot placement, a foot turned to the slope. IK afterwards builds on it.
+    bool transform_models(const SkinnedModel& model, i32 joint, const Mat4& m);
     // Every joint's model-space transform set as given (a ragdoll's bodies); replaces any sampled pose.
     bool set_models(const SkinnedModel& model, const Mat4* models);
 

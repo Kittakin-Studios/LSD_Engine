@@ -577,8 +577,9 @@ struct AttachToSocket {
     LSD_PROPERTY(Edit, Tooltip = "The socket (or bone) on the target's skeleton to stick to") char socket[32] = "";
 };
 
-// Plants a Skeletal Mesh's feet on the ground under them while playing (Unreal's foot IK): each
-// foot is raised onto steps and slopes with two-bone IK. Bones by name, as in the imported skeleton.
+// Plants a Skeletal Mesh's feet on the ground under them while playing (Unreal's foot placement): the
+// pelvis drops for the lower foot, each foot reaches its ground with two-bone IK and turns to its slope.
+// Bones by name, as in the imported skeleton.
 LSD_STRUCT(Component, Category = "Animation", Tooltip = "Plants the skeleton's feet on uneven ground")
 struct FootIK {
     LSD_GENERATED()
@@ -586,6 +587,8 @@ struct FootIK {
     LSD_PROPERTY(Edit, Tooltip = "The right foot bone (UE rigs: foot_r)") char right_foot[48] = "foot_r";
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 2, Tooltip = "How high above the animated foot the ground may be") f32 max_step = 0.5f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 0.5, Tooltip = "Ankle height above the ground") f32 foot_height = 0.08f;
+    LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 60, Tooltip = "Feet turn to the slope under them up to this (0: they stay as animated)") f32 max_foot_angle = 30.0f;
+    LSD_PROPERTY(Edit, Units = "/s", Min = 1, Max = 60, Tooltip = "How fast the pelvis and feet follow the ground (higher: snappier, lower: smoother on stairs)") f32 speed = 12.0f;
 };
 
 // Turns the object at a steady rate while playing (Unreal's Rotating Movement).

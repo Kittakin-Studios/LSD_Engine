@@ -396,6 +396,13 @@ static void ragdoll_tests(const std::string& data) {
     f32 worst = 0.0f;
     for (u32 k = 0; k < sampled.joint_count() * 12; ++k) worst = std::fmax(worst, std::fabs(set.joint_rows()[k] - sampled.joint_rows()[k]));
     CHECK(worst < 1e-4f);
+    // Foot placement moves a joint and what hangs from it in model space: the pelvis (all), then one foot.
+    const u32 pelvis = static_cast<u32>(model.find_joint("Hips")), foot_l = static_cast<u32>(model.find_joint("LeftFoot")), foot_r = static_cast<u32>(model.find_joint("RightFoot"));
+    const f32 before_r = set.joint_model(foot_r).at(2, 3), before_l = set.joint_model(foot_l).at(2, 3), before_hips = set.joint_model(pelvis).at(2, 3);
+    CHECK(set.transform_models(model, -1, translation({0.0f, 0.0f, -0.1f})));
+    CHECK(std::fabs(set.joint_model(pelvis).at(2, 3) - (before_hips - 0.1f)) < 1e-4f && std::fabs(set.joint_model(foot_r).at(2, 3) - (before_r - 0.1f)) < 1e-4f);
+    CHECK(set.transform_models(model, static_cast<i32>(foot_l), translation({0.0f, 0.0f, 0.05f})));
+    CHECK(std::fabs(set.joint_model(foot_l).at(2, 3) - (before_l - 0.05f)) < 1e-4f && std::fabs(set.joint_model(foot_r).at(2, 3) - (before_r - 0.1f)) < 1e-4f);
 }
 
 static void motion_matching_tests(const std::string& data) {

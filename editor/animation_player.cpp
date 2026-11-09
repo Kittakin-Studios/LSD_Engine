@@ -16,6 +16,18 @@ namespace lsd::editor {
 
 namespace {
 
+Vec3 translation_of(const Mat4& m) { return {m.at(0, 3), m.at(1, 3), m.at(2, 3)}; }
+
+// A turn of `angle` radians about the unit axis `a` (Rodrigues).
+Mat4 rotation_axis(Vec3 a, f32 angle) {
+    const f32 c = std::cos(angle), s = std::sin(angle), t = 1.0f - c;
+    Mat4 m;
+    m.at(0, 0) = t * a.x * a.x + c, m.at(0, 1) = t * a.x * a.y - s * a.z, m.at(0, 2) = t * a.x * a.z + s * a.y;
+    m.at(1, 0) = t * a.x * a.y + s * a.z, m.at(1, 1) = t * a.y * a.y + c, m.at(1, 2) = t * a.y * a.z - s * a.x;
+    m.at(2, 0) = t * a.x * a.z - s * a.y, m.at(2, 1) = t * a.y * a.z + s * a.x, m.at(2, 2) = t * a.z * a.z + c;
+    return m;
+}
+
 // Play Sound notifies of `clip` between `from` and `to` seconds (wrapped: went past the end and round).
 void fire_notifies(const ClipSet& set, u32 clip, f32 from, f32 to, bool wrapped, Vec3 at, SoundPlayer& sounds) {
     for (const asset::AnimNotify& n : set.meta.notifies) {
@@ -451,16 +463,43 @@ void AnimationPlayer::apply_ik(world::World& world, State& state, const SkinnedE
     const Mat4 to_world = mesh ? skeletal_matrix(world, state.entity, *mesh, &entry) : world.world_matrix(state.entity);
     const Mat4 to_model = inverse(to_world);
     if (const auto* feet = probe_ ? world.get<world::FootIK>(state.entity) : nullptr) {
-        for (const char* bone : {feet->left_foot, feet->right_foot}) {
-            const i32 j = model.find_joint(bone);
-            if (j < 0) continue;
-            const Mat4 foot = to_world * state.pose.joint_model(static_cast<u32>(j));
+        // Foot placement: where each animated foot's ground is, the pelvis down for the lower one, then each foot
+        // onto its ground and turned to its slope. Heights ease toward the ground (no pops on stairs).
+        const f32 ease = std::fmin(1.0f, dt_ * feet->speed);
+        i32 joints[2] = {model.find_joint(feet->left_foot), model.find_joint(feet->right_foot)};
+        Vec3 ground[2], normal[2];
+        f32 change[2] = {0.0f, 0.0f};
+        bool found[2] = {false, false};
+        f32 lowest = 0.0f;
+        for (u32 k = 0; k < 2; ++k) {
+            if (joints[k] < 0) continue;
+            const Mat4 foot = to_world * state.pose.joint_model(static_cast<u32>(joints[k]));
             const Vec3 at{foot.at(0, 3), foot.at(1, 3), foot.at(2, 3)};
-            Vec3 ground;
-            if (!probe_(probe_user_, at + Vec3{0, 0, feet->max_step}, feet->max_step * 2.0f, ground)) continue;
-            const f32 want = ground.z + feet->foot_height;
-            if (want <= at.z + 0.01f) continue;  // shortcut: feet only go up onto steps; lowering needs a pelvis offset
-            state.pose.two_bone_ik(model, static_cast<u32>(j), transform_point(to_model, Vec3{at.x, at.y, want}), 1.0f);
+            found[k] = probe_(probe_user_, at + Vec3{0, 0, feet->max_step}, feet->max_step * 2.0f, ground[k], normal[k]);
+            if (!found[k]) continue;
+            change[k] = ground[k].z + feet->foot_height - at.z;
+            lowest = std::fmin(lowest, change[k]);
+        }
+        state.pelvis += (std::fmax(lowest, -feet->max_step) - state.pelvis) * ease;  // only ever down: legs reach up
+        const Vec3 down = transform_point(to_model, transform_point(to_world, Vec3{}) + Vec3{0, 0, state.pelvis}) - transform_point(to_model, transform_point(to_world, Vec3{}));
+        if (std::fabs(state.pelvis) > 1e-4f) state.pose.transform_models(model, -1, translation(down));
+        for (u32 k = 0; k < 2; ++k) {
+            state.foot_lift[k] += ((found[k] ? change[k] - state.pelvis : 0.0f) - state.foot_lift[k]) * ease;
+            if (joints[k] < 0) continue;
+            const u32 j = static_cast<u32>(joints[k]);
+            const Mat4 foot = to_world * state.pose.joint_model(j);
+            const Vec3 at{foot.at(0, 3), foot.at(1, 3), foot.at(2, 3)};
+            if (std::fabs(state.foot_lift[k]) > 0.002f) state.pose.two_bone_ik(model, j, transform_point(to_model, at + Vec3{0, 0, state.foot_lift[k]}), 1.0f);
+            if (!found[k] || feet->max_foot_angle <= 0.0f) continue;
+            // Turn the foot (about its ankle) from straight up to the ground's normal, at most max_foot_angle.
+            const Vec3 up = normalize(transform_point(to_model, transform_point(to_world, Vec3{}) + Vec3{0, 0, 1}) - transform_point(to_model, transform_point(to_world, Vec3{})));
+            const Vec3 n = normalize(transform_point(to_model, transform_point(to_world, Vec3{}) + normal[k]) - transform_point(to_model, transform_point(to_world, Vec3{})));
+            const Vec3 axis = cross(up, n);
+            const f32 s = length(axis);
+            if (s < 1e-4f) continue;
+            const f32 angle = std::fmin(std::asin(std::fmin(s, 1.0f)), radians(feet->max_foot_angle));
+            const Vec3 ankle = translation_of(state.pose.joint_model(j));
+            state.pose.transform_models(model, joints[k], translation(ankle) * rotation_axis(axis * (1.0f / s), angle) * translation(-ankle));
         }
     }
     for (u32 i = 0; i < ik_count_; ++i) {

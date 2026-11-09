@@ -1611,6 +1611,22 @@ bool Pose::aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forwar
     return rebuild(model, static_cast<i32>(joint));
 }
 
+bool Pose::transform_models(const SkinnedModel& model, i32 joint, const Mat4& m) {
+    if (!impl_ || joint >= static_cast<i32>(joints_) || model.inverse_bind.size() < joints_) return false;
+    for (u32 j = 0; j < joints_; ++j) {
+        bool below = joint < 0;
+        for (i32 p = static_cast<i32>(j); p >= 0 && !below; p = model.joint_parent(static_cast<u32>(p))) below = p == joint;
+        if (!below) continue;
+        const Mat4 moved = m * joint_model(j);
+        for (int c = 0; c < 4; ++c) impl_->models[j].cols[c] = ozz::math::simd_float4::LoadPtrU(&moved.m[c * 4]);
+        const Mat4 skin = moved * model.inverse_bind[j];
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 4; ++c) rows_[j * 12 + r * 4 + c] = skin.at(r, c);
+        }
+    }
+    return true;
+}
+
 bool Pose::set_models(const SkinnedModel& model, const Mat4* models) {
     const u32 joints = model.joint_count();
     if (!joints || model.inverse_bind.size() < joints) return false;

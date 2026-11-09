@@ -69,7 +69,7 @@ public:
     // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
     void add_ik(world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward = {1, 0, 0});
     // In Play: finds the ground under a point (Foot IK); nullptr in the editor (no foot IK there).
-    using GroundProbe = bool (*)(void* user, Vec3 from, f32 distance, Vec3& hit);
+    using GroundProbe = bool (*)(void* user, Vec3 from, f32 distance, Vec3& hit, Vec3& normal);
     void set_ground_probe(GroundProbe probe, void* user) {
         probe_ = probe;
         probe_user_ = user;
@@ -89,6 +89,8 @@ private:
         u64 morph_key = 0;          // 0: no weights set, draw the model's own vertices
         u32 morph_vertex_count = 0;  // the GPU output's size (0: a CPU copy)
         std::vector<Mat4> ragdoll;   // set_ragdoll_pose: the joints' model-space transforms, while it is a ragdoll
+        f32 pelvis = 0.0f;           // Foot IK: how far the pelvis is lowered now (eased toward the ground's wish)
+        f32 foot_lift[2] = {0.0f, 0.0f};  // and each foot's height change
         bool used = false;
         anim::MotionState motion;
         const anim::MotionData* motion_data = nullptr;  // what `motion` indexes (a rebuild restarts it)

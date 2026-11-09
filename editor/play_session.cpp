@@ -910,11 +910,12 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         }
     };
     if (animations_) {
-        animations_->set_ground_probe([](void* user, Vec3 from, f32 distance, Vec3& hit) {
+        animations_->set_ground_probe([](void* user, Vec3 from, f32 distance, Vec3& hit, Vec3& normal) {
             physics::RayHit ray;
             auto& self = *static_cast<PlaySession*>(user);
             if (!self.physics_ || !self.physics_->raycast(from, Vec3{0, 0, -1}, distance, ray)) return false;
             hit = ray.point;
+            normal = ray.normal;
             return true;
         }, this);
     }
