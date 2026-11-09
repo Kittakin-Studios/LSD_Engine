@@ -75,7 +75,7 @@ Widget / Category). From that:
 ## World
 
 `world::World` holds entities (generational handles, names, parent links, hidden / locked /
-transient flags) and one packed pool per component type (up to 64 types: the engine's, listed in
+transient flags) and one packed pool per component type (up to 128 types: the engine's, listed in
 `components.h` and registered in `world.cpp`, plus game-code components registered at run time with
 `register_component_type`; pools are made on first use). Transient objects (a streamed sub-level's)
 are not saved with the level; `load_sublevel` / `unload_sublevel` add and remove a level's objects
