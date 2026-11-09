@@ -36,6 +36,9 @@ class UiContext;
 
 namespace lsd::editor {
 
+// lsd.assets: "name|guid|folder" lines of the assets of `type` under `folder` (Content/ relative, "" = all), by name.
+u32 list_assets(const asset::AssetRegistry& registry, const char* type, const char* folder, char* out, usize capacity);
+
 class SkinnedCache;
 
 class AnimationPlayer;

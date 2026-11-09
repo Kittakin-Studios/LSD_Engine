@@ -47,6 +47,7 @@
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
+#include "editor_utility.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/curve.h"
 #include "lsd/render/material.h"
@@ -2687,6 +2688,10 @@ void draw_rows(EditorState& s, const OutlineRow* rows, int row_count, bool tree)
                 edited(s, "Detach");
             }
             if (with_tip(ImGui::MenuItem("Delete", command_text(Command::Delete)), "Removes the selection from the level (undoable)")) delete_selected(s);
+            if (with_tip(ImGui::BeginMenu("Scripted Actions", !s.playing), "Editor utility scripts (EU_...) to run on the selection (lsd.editor.selection())")) {
+                draw_utility_menu_items(s);
+                ImGui::EndMenu();
+            }
             if (with_tip(ImGui::BeginMenu("Move to Folder", !s.playing), "Puts the selection in an Outliner folder (folders only organise; they do not move objects)")) {
                 std::set<std::string> folders;
                 for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
@@ -5136,6 +5141,7 @@ void draw_asset_grid(EditorState& s) {
             }
             if (r.type == asset::AssetType::Script && with_tip(ImGui::MenuItem("Edit Script"), "Opens the script in your code editor (VS Code)")) open_external(s, r);
             if (r.type == asset::AssetType::Graph && with_tip(ImGui::MenuItem("Edit Visual Script"), "Opens the visual script's node graph")) open_graph(s, r);
+            if (can_run_utility(r) && with_tip(ImGui::MenuItem("Run Editor Utility", nullptr, false, !s.playing), "Runs this script in the editor on the level (its run or Event Start; one undo step), like Unreal's Run Editor Utility")) run_editor_utility(s, r);
             if (r.type == asset::AssetType::Table && with_tip(ImGui::MenuItem("Edit Data Table"), "Opens the table's rows and columns")) open_table(s, r);
             if (s.particle_editor && asset_matches(r, "ParticleSystem") && with_tip(ImGui::MenuItem("Open Particle Editor"), "Opens the Particle Editor with a preview")) s.particle_editor->open(s, r);
             if ((r.type == asset::AssetType::Sound || r.type == asset::AssetType::Cue) && with_tip(ImGui::MenuItem("Play / Stop"), "Plays the sound (or stops it)")) toggle_preview(s, r);
@@ -5689,6 +5695,10 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Writes .vscode/launch.json: F5 starts the editor under the debugger, breakpoints in Source/ stop");
         ImGui::SetItemTooltip("Writes Source/<Name>.cpp or .c from a template (Unreal's Tools > New C++ Class)");
         ImGui::Separator();
+        if (with_tip(ImGui::BeginMenu("Editor Utilities"), "Scripts named EU_... that run in the editor on the level (Unreal's Editor Utility Blueprints)")) {
+            draw_utility_menu_items(s);
+            ImGui::EndMenu();
+        }
         ImGui::MenuItem("Lua Debugger", nullptr, &s.show_debugger);
         ImGui::SetItemTooltip("Breakpoints, stepping, call stack, locals and watch for Lua scripts (visual scripts: breakpoints on nodes)");
         if (s.settings.assistant_enabled) {
@@ -5815,6 +5825,10 @@ void draw_menu_bar(EditorState& s) {
             s.close_play_window = true;
         }
         ImGui::PopStyleColor();
+        if (with_tip(ImGui::BeginMenu("Utilities"), "Run an editor utility script (EU_...) on the level")) {
+            draw_utility_menu_items(s);
+            ImGui::EndMenu();
+        }
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(s.theme.axis_x));
         if (with_tip(ImGui::MenuItem("Stop", command_text(Command::StopPlay)), "Stops playing (Esc)")) s.stop_requested = true;
@@ -6402,6 +6416,7 @@ void draw_editor(EditorState& s) {
     draw_prefab_editor(s);
     debugger::draw_window(s, &s.show_debugger);
     assistant::draw_window(s, &s.show_assistant);
+    draw_utility_panels(s);
     draw_memory_window(s);
     draw_audio_mixer(s);
     draw_ui_editor(s);
