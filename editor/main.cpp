@@ -34,6 +34,7 @@
 #include "play_session.h"
 #include "ui_panels.h"
 #include "decals.h"
+#include "hlod.h"
 #include "light_bake.h"
 #include "live_link.h"
 #include "sound_player.h"
@@ -177,12 +178,35 @@ bool g_lightmaps_changed = true;  // the GPU's lightmap atlas and lightmapped me
 lsd::rhi::TextureHandle g_lightmap_atlas;
 std::unordered_map<std::string, std::vector<lsd::i32>> g_lightmap_names;  // object name -> its lightmap objects
 
+lsd::editor::HlodData g_hlod;  // the open level's Build HLODs result
+bool g_hlod_changed = true;    // its proxies need (re)making in the mesh cache
+
+// Each proxy as "HLOD:<cell>:<n>" in the mesh cache.
+void upload_hlod(lsd::editor::MeshCache& meshes) {
+    g_hlod_changed = false;
+    for (lsd::usize c = 0; c < g_hlod.cells.size(); ++c) {
+        for (lsd::usize p = 0; p < g_hlod.cells[c].proxies.size(); ++p) {
+            lsd::editor::HlodProxy& proxy = g_hlod.cells[c].proxies[p];
+            lsd::render::MeshData data;
+            data.vertices = proxy.vertices.data();
+            data.indices = proxy.indices.data();
+            data.vertex_count = static_cast<lsd::u32>(proxy.vertices.size());
+            data.index_count = static_cast<lsd::u32>(proxy.indices.size());
+            char key[40];
+            std::snprintf(key, sizeof key, "HLOD:%zu:%zu", c, p);
+            meshes.set_generated(key, data);
+        }
+    }
+}
+
 // The level's baked lighting from its _BuiltData file (none: the Sky Light's flat ambient).
 void load_level_lighting(const char* level_path) {
     const bool found = level_path && level_path[0] && lsd::editor::load_baked_lighting(lsd::editor::baked_lighting_path(level_path).c_str(), g_level_lighting);
     if (!found) g_level_lighting = {};
     lsd::editor::set_baked_lighting(found ? &g_level_lighting : nullptr);
     g_lightmaps_changed = true;
+    if (!(level_path && level_path[0] && lsd::editor::load_hlod(lsd::editor::hlod_path(level_path).c_str(), g_hlod))) g_hlod = {};  // HLOD proxies ride along
+    g_hlod_changed = true;
 }
 
 // The lightmap atlas on the GPU and each lightmapped object's mesh as "Lightmap:<n>" in the cache.
@@ -905,10 +929,25 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             occlusion.add_occluder(view_proj * world.world_matrix(e), tris->points.data(), tris->indices.data(), static_cast<lsd::u32>(tris->indices.size()));
         }
     }
+    // HLOD: the built cells farther than HLOD Distance draw their proxies; their objects are skipped below.
+    static std::vector<lsd::u8> hlod_far;
+    hlod_far.assign(g_hlod.cells.size(), 0);
+    bool any_hlod_far = false;
+    if (world.settings().hlod_enabled) {
+        for (lsd::usize c = 0; c < g_hlod.cells.size(); ++c) {
+            hlod_far[c] = lsd::editor::hlod_cell_far(g_hlod.cells[c], eye, world.settings().hlod_distance * g_view_distance_scale);
+            any_hlod_far |= hlod_far[c] != 0;
+        }
+    }
     for (lsd::u32 i = 0; i < world.count(type); ++i) {
         const auto* component = static_cast<const lsd::world::StaticMesh*>(world.at(type, i));
         const lsd::world::Entity e = world.owner(type, i);
         if ((!stats.playing || stats.ejected) && world.hidden_in_hierarchy(e)) continue;  // hidden in the editor, not in the game
+        if (any_hlod_far) {
+            const lsd::Mat4 at = i < g_frame_meshes.world.size() && g_frame_meshes.mesh[i] ? g_frame_meshes.world[i] : world.world_matrix(e);
+            const auto cell = g_hlod.cell_of.find(lsd::editor::hlod_member_key(world.name(e), component->mesh, {at.at(0, 3), at.at(1, 3), at.at(2, 3)}));
+            if (cell != g_hlod.cell_of.end() && hlod_far[cell->second]) continue;  // its cell's proxy stands in
+        }
         const lsd::Mat4 m = i < g_frame_meshes.world.size() && g_frame_meshes.mesh[i] ? g_frame_meshes.world[i] : world.world_matrix(e);
         const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
                                     lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
@@ -988,6 +1027,45 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             lsd::rhi::MeshDraw part_draw{};
             if (!pick_static_lod(*part_mesh, *component, pm, eye, stats.force_lod, part_draw.indices, part_draw.index_count)) continue;
             submit(part_draw, *part_mesh, pm, part.material);
+        }
+    }
+    for (lsd::usize c = 0; any_hlod_far && c < g_hlod.cells.size(); ++c) {  // the far cells' proxies (world space: no matrix)
+        const lsd::editor::HlodCell& cell = g_hlod.cells[c];
+        if (!hlod_far[c]) continue;
+        if (!in_view(view_proj, {cell.lo[0], cell.lo[1], cell.lo[2]}, {cell.hi[0], cell.hi[1], cell.hi[2]})) {
+            ++stats.stat_culled;
+            continue;
+        }
+        for (lsd::usize p = 0; p < cell.proxies.size(); ++p) {
+            char key[40];
+            std::snprintf(key, sizeof key, "HLOD:%zu:%zu", c, p);
+            const lsd::editor::CachedMesh* proxy_mesh = meshes.get(key);
+            if (!proxy_mesh) continue;
+            lsd::rhi::MeshDraw draw{};
+            draw.vertices = proxy_mesh->gpu.vertices;
+            draw.indices = proxy_mesh->gpu.indices;
+            draw.index_count = proxy_mesh->gpu.index_count;
+            std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
+            for (int k = 0; k < 3; ++k) draw.normal_matrix[k * 4 + k] = 1.0f;
+            for (int k = 0; k < 3; ++k) draw.world[k * 4 + k] = 1.0f;
+            draw.camera_position[0] = eye.x;
+            draw.camera_position[1] = eye.y;
+            draw.camera_position[2] = eye.z;
+            lsd::LinearColor tint;
+            tint.r = cell.proxies[p].color[0];
+            tint.g = cell.proxies[p].color[1];
+            tint.b = cell.proxies[p].color[2];
+            tint.a = 1.0f;
+            to_rgba(tint, draw.color);
+            draw.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
+            materials.apply(cell.proxies[p].material, draw, 2048);
+            const bool editor_view = !stats.playing || stats.ejected;
+            draw.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
+            draw.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u : 0u;
+            draw.wireframe = editor_view && stats.view_mode == lsd::editor::ViewMode::Wireframe;
+            submit_mesh(device, draw);
+            ++stats.stat_draws;
+            stats.stat_triangles += draw.index_count / 3;
         }
     }
     draw_batches(device, batch, view_proj, stats);
@@ -1664,6 +1742,8 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(no assets match)" : out.c_str());
     }, &s, "asset.List [text]: every asset (name, type, path), or those whose line contains text");
+    console::add_command("BuildHLODs", [](void* user, const char*) { static_cast<EditorState*>(user)->build_hlod_requested = true; }, &s,
+                         "Build > Build HLODs: merge each cell's static meshes into a simpler proxy for far away");
     console::add_command("BuildReflections", [](void* user, const char*) { static_cast<EditorState*>(user)->capture_reflections = true; }, &s,
                          "BuildReflections: capture every Reflection Capture again (Build > Build Reflection Captures)");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
@@ -2854,6 +2934,31 @@ int main(int argc, char** argv) {
             }
         }
         if (g_lightmaps_changed) upload_lightmaps(*device, meshes);
+        if (g_hlod_changed) upload_hlod(meshes);
+        if (state.build_hlod_requested) {  // Build > Build HLODs: merge each cell's static meshes (here, on the main thread)
+            state.build_hlod_requested = false;
+            lsd::editor::HlodStorage storage;
+            std::vector<lsd::editor::HlodSource> sources;
+            const auto plain = [&meshes](const lsd::world::StaticMesh& m) { return m.material[0] || !meshes.slot_parts(m.mesh); };  // per-slot Materials are not merged
+            if (!state.level_path[0]) {
+                std::snprintf(state.status, sizeof state.status, "Build HLODs: save the level first (the result goes next to it)");
+            } else if (!lsd::editor::gather_hlod_sources(world, registry, kDataDir, allocator, plain, storage, sources)) {
+                std::snprintf(state.status, sizeof state.status, "Build HLODs: the level has no static meshes to merge");
+            } else {
+                const lsd::u64 started = SDL_GetTicks();
+                lsd::editor::build_hlod(sources, world.settings().hlod_cell_size, 0.25f, g_hlod);
+                g_hlod_changed = true;
+                lsd::u32 proxies = 0, members = 0;
+                for (const lsd::editor::HlodCell& cell : g_hlod.cells) {
+                    proxies += static_cast<lsd::u32>(cell.proxies.size());
+                    members += static_cast<lsd::u32>(cell.members.size());
+                }
+                const bool saved = lsd::editor::save_hlod(lsd::editor::hlod_path(state.level_path).c_str(), g_hlod);
+                std::snprintf(state.status, sizeof state.status, saved ? "HLODs built: %zu cells, %u objects into %u proxy meshes in %.1f s" : "HLODs built (%zu cells, %u objects into %u proxies, %.1f s) but the file could not be written",
+                              g_hlod.cells.size(), members, proxies, static_cast<double>(SDL_GetTicks() - started) / 1000.0);
+                LSD_LOG_INFO("hlod", "%s", state.status);
+            }
+        }
         play.set_workspace(game_mode ? "" : state.settings.workspace);  // lsd.editor_workspace
         if (g_lighting_build) {
             LightingBuild& build = *g_lighting_build;

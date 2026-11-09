@@ -179,6 +179,12 @@ static bool cook(const ProjectSettings& project, const asset::AssetRegistry& reg
         fs::copy_file(source, to, fs::copy_options::overwrite_existing, error);
         if (!error && fs::exists(std::string(source) + ".meta", ignored)) fs::copy_file(std::string(source) + ".meta", to.string() + ".meta", fs::copy_options::overwrite_existing, error);
         if (error) return false;
+        if (r.type == asset::AssetType::Level) {  // the level's built data (baked lighting, HLOD proxies) sits beside it, outside the registry
+            for (const char* ext : {".lsdlight", ".lsdhlod"}) {
+                const fs::path built = fs::path(source).parent_path() / (fs::path(source).stem().string() + "_BuiltData" + ext);
+                if (fs::exists(built, ignored)) fs::copy_file(built, to.parent_path() / built.filename(), fs::copy_options::overwrite_existing, ignored);
+            }
+        }
         for (const fs::directory_entry& d : fs::directory_iterator("DerivedData", ignored)) {  // compiled already: the game does not redo it
             if (d.path().filename().string().rfind(guid, 0) != 0) continue;
             fs::create_directories(out / "DerivedData", ignored);

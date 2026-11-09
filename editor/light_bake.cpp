@@ -293,6 +293,10 @@ bool load_mesh(const char* key, const asset::AssetRegistry& registry, const char
 
 } // namespace
 
+bool load_level_mesh(const char* key, const asset::AssetRegistry& registry, const char* data_dir, Allocator& allocator, render::MeshData& out) {  // HLOD builds from the same meshes
+    return load_mesh(key, registry, data_dir, allocator, out);
+}
+
 namespace {
 
 // A texel of the lightmap atlas: where it is on which surface.
