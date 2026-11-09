@@ -292,7 +292,6 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Rendering: HLOD, dynamic GI, virtual texturing, hair / fur cards
 - Animation: full-body IK [IK Rig]
 - Physics: cloth, vehicles [Chaos Cloth, Chaos Vehicles]
-- Input: touch and gyro
 - Cinematics: full Sequencer (keys, curves, shots, sub-sequences), cinematic camera (film back, focus), render to video [Sequencer, Movie Render Queue]
 - Audio: procedural audio graphs, spatial audio, dynamic music system [MetaSounds, Quartz]
 - Data: editor utility scripts and widgets (Lua + visual script running in the editor) [Editor Utility Widgets]
@@ -360,6 +359,7 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] One-way (jump-through) platforms: the One Way tile shape, Static Mesh > One Way and Sprite > One Way; the character meets them only from above (Jolt character contact validation; tested in physics_tests)
 - [x] Flipbook window [Paper2D Flipbook Editor] (`editor/flipbook_editor.*`, double-click a Flipbook): playing preview with the frame's event, the preview sheet with a grid (click a cell to add a frame), the frame list (cell, duration, event, reorder, delete, Set All Durations), saved live to sprites
 - [x] Tile map layers [Paper2D Tile Map layers]: up to 3 Layers per Tile Map besides its main tiles (name, Visible, Depth in front / behind, Collision), painted from the 2D mode's Layer list (+ / -), drawn back to front in the map's mesh; colliding layers add their runs in Play (tested in editor_tests)
+- [x] Touch and gyro input [Touch input, Touch Interface, motion controls]: SDL finger events (and the mouse as a finger, `input.MouseTouch`) become keys for mappings: Touch Tap / Hold / Swipe Up, Down, Left, Right / Pinch / Drag XY; a virtual pad (`input.VirtualPad`, two floating thumbsticks + two buttons, drawn over Play) fills the gamepad sticks and Face Bottom / Right; Gyro XY / Yaw / Pitch / Roll (gamepad gyro, sensitivity = the mapping's Scale) and Tilt XY / X / Y (accelerometer); `lsd.touch_count` / `lsd.touch(i)`; test commands `input.Touch`, `input.Tap`, `input.Swipe` (recognition and pad maths tested in input_tests)
 
 ## Later
 

@@ -1059,6 +1059,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.set_camera_view = [](void* user, u32 view) { static_cast<PlaySession*>(user)->camera_view_override_ = view; };
     host.camera_location = [](void* user) { return static_cast<PlaySession*>(user)->eye(); };
     host.camera_forward = [](void* user) { return static_cast<PlaySession*>(user)->view_forward(); };
+    host.touch_count = [](void* user) { return static_cast<PlaySession*>(user)->touch_count(); };
+    host.touch_point = [](void* user, u32 i, f32* x, f32* y) { return static_cast<PlaySession*>(user)->touch_point(i, x, y); };
     host.camera_view = [](void* user) -> u32 {
         auto& self = *static_cast<PlaySession*>(user);
         if (self.camera_view_override_ < 2) return self.camera_view_override_;
@@ -2102,7 +2104,16 @@ void PlaySession::apply_live_edits(world::World& world) {
     }
 }
 
+bool PlaySession::touch_point(u32 i, f32* x, f32* y) const {
+    if (i >= touch_.touch_count) return false;
+    *x = touch_.touch_xy[i][0];
+    *y = touch_.touch_xy[i][1];
+    return true;
+}
+
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
+    touch_.touch_count = frame.touch_count;  // not the whole frame: it holds pointers
+    std::memcpy(touch_.touch_xy, frame.touch_xy, sizeof touch_.touch_xy);
     net_receive(world, dt);  // other machines' moves and events first
     talk(frame);
     LSD_PROFILE_SCOPE("play");

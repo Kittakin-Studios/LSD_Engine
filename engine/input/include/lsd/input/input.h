@@ -51,7 +51,16 @@ struct InputFrame {
     u32 mouse_buttons = 0;           // bit 0 left, 1 middle, 2 right
     f32 gamepad_axes[6] = {};        // left x, left y, right x, right y (-1..1, +y = up), left / right trigger (0..1)
     u32 gamepad_buttons = 0;         // bit per SDL_GamepadButton
+    u32 touch_bits = 0;              // TouchBit gestures: tap / swipes last one frame, hold while it lasts
+    f32 touch_pinch = 0;             // two fingers: change of their distance this frame (+ = apart)
+    f32 touch_drag[2] = {};          // the first free finger's move this frame in pixels, y up
+    u32 touch_count = 0;             // fingers down, and where (0..1 of the window, y down)
+    f32 touch_xy[10][2] = {};
+    f32 gyro_deg[3] = {};            // degrees turned this frame: pitch, yaw, roll (0 when there is no gyro)
+    f32 tilt[2] = {};                // the accelerometer's gravity direction, -1..1 (0 when there is none)
 };
+
+enum TouchBit : u32 { kTouchTap = 1, kTouchHold = 2, kTouchSwipeUp = 4, kTouchSwipeDown = 8, kTouchSwipeLeft = 16, kTouchSwipeRight = 32 };
 
 // Key names offered by the editor's key picker. Keyboard keys use SDL's names ("W", "Space", "Left Shift").
 const char* const* key_names(u32& count);

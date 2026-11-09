@@ -1159,6 +1159,26 @@ While playing, the mouse belongs to the game: the cursor is hidden and the edito
   `lsd.input_record(file)`, `lsd.input_play(file)`, `lsd.input_stop()`. Only Input Actions are
   recorded (not UI clicks, raw keys or `lsd.key_pressed`), and changing level ends a recording.
 
+**Touch and gyro** (Unreal's touch input, Touch Interface and motion controls). Use these key names in a
+mapping, like any other key:
+
+| Key | Gives |
+| --- | --- |
+| Touch Tap, Touch Swipe Up / Down / Left / Right | A button for one frame when a finger is lifted after a quick tap (under 0.3 s, barely moved) or a quick swipe (over a tenth of the screen height in 0.6 s) |
+| Touch Hold | A button while one finger rests in place for 0.4 s or more |
+| Touch Pinch | 1D axis: how much two fingers moved apart (+) or together (-) this frame; 1 = a tenth of the screen height. Scale it with the mapping's Scale |
+| Touch Drag XY | 2D axis: the first finger's move this frame in pixels, up positive (look by dragging, like Mouse XY) |
+| Gyro XY, Gyro Yaw, Gyro Pitch, Gyro Roll | Degrees the controller turned this frame (Switch Pro, DualSense, Steam Deck); the mapping's **Scale** is the sensitivity. 0 when no gyro |
+| Tilt XY, Tilt X, Tilt Y | -1..1 from the accelerometer (a controller's or a tablet's): lean the device to steer. 0 when none |
+
+**Virtual joystick** (Touch Interface): console `input.VirtualPad 1` (on by default when the PC has a touch screen)
+draws two thumbsticks (they float where the thumb lands in the lower left and right) and two buttons on the right during Play.
+They fill the gamepad's Left / Right Stick and Face Bottom / Face Right, so the same mappings work with no extra setup.
+Fingers on the pad are not gestures. From scripts: `lsd.touch_count()` and `lsd.touch(i)` (1-based; x, y of
+finger i, 0..1 of the window, y down) for your own gestures. To try touch with a mouse, `input.MouseTouch 1` (free the
+mouse with Escape) makes the left button a finger. Tests: `input.Touch <finger> <down|move|up> <x> <y>`, `input.Tap x y`,
+`input.Swipe x0 y0 x1 y1`. The pad and gestures cover the whole window, not only the game viewport.
+
 ### Game Mode
 
 A **Game Mode** data asset, picked in World Settings, sets the player prefab, a Lua script that runs
