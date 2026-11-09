@@ -238,6 +238,14 @@ struct Camera {
     LSD_PROPERTY(Edit, Category = "Player View", Widget = "Choice:Mouse Look,Orbit Bone,Ride Bone",
                  Tooltip = "Mouse Look: the mouse turns the view; the Camera's own rotation tilts it. Orbit Bone: the mouse circles the view around Follow Bone at Arm Length. Ride Bone: the Camera keeps where you put it relative to Follow Bone and moves only with the bone's animation (the mouse does not turn it)")
     u32 motion = 0;
+    // Cine Camera (Unreal's Cine Camera Actor): a real lens; Sequencer shots and movie renders look through it.
+    LSD_PROPERTY(Edit, Category = "Cine Camera", Units = "mm", Min = 0, Max = 2000, Tooltip = "Lens focal length; 0 = use Field of View instead. 35 mm is wide, 50 mm normal, 85 mm a portrait lens") f32 focal_length = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Cine Camera", Units = "mm", Min = 1, Max = 100, Tooltip = "Film back width (the sensor); with the focal length it sets how blurry out-of-focus things get") f32 sensor_width = 36.0f;
+    LSD_PROPERTY(Edit, Category = "Cine Camera", Units = "mm", Min = 1, Max = 100, Tooltip = "Film back height (the sensor); with the focal length it sets the vertical field of view") f32 sensor_height = 24.0f;
+    LSD_PROPERTY(Edit, Category = "Cine Camera", Min = 0, Max = 32, Tooltip = "Aperture f-stop: low (1.4) = shallow focus and strong blur, high (16) = most things sharp; 0 = no depth of field. Needs a Focal Length") f32 aperture = 0.0f;
+    LSD_PROPERTY(Edit, Category = "Cine Camera", Units = "m", Min = 0.01, Max = 10000, Tooltip = "Manual focus: how far in front of the camera things are sharp") f32 focus_distance = 5.0f;
+    LSD_PROPERTY(Edit, Category = "Cine Camera", Tooltip = "Tracked focus: the name of an object to keep in focus (its distance replaces Focus Distance); empty = manual focus")
+    char focus_object[64] = "";
 };
 
 // Another level placed in this one (Unreal's Level Instance and level streaming): its objects appear

@@ -246,6 +246,21 @@ Camera's first-frame offset from a bone. **Skeletal meshes** are drawn, picked, 
 through `skeletal_matrix()` (`skinned_cache.h`): the object's matrix turned by the mesh's Facing
 (Auto: Unreal rigs, whose front is -Y in the file, turn +90).
 
+**Cinematics** (Timelines, Unreal's Sequencer). The data and the pure maths are in
+`engine/world/timeline.*`: a track's keys become a `world::Curve` per channel (position, rotation,
+value, colour) and go through the Curve evaluator (Auto = Hermite with neighbour-slope tangents, flat
+at the ends; Linear; Constant); `shot_at` / `camera_at` find the shot and camera at a time;
+`cine_fov_degrees` / `cine_depth_of_field` turn a Cine Camera's lens (focal length, film back,
+f-stop, focus) into a field of view and the post pass's focal distance / region / transition / blur
+(a thin lens; one symmetric sharp region because the post pass has one). `editor/timeline_player.*`
+poses tracks onto the level (numbers and colours by reflection), loads sub-sequences by name
+(`find_timeline`, cached until a Timeline is saved) and fills `rhi::PostDraw`'s depth of field from
+the looked-through Camera (`cine_camera_post`). Play cuts to `timeline_camera` whenever it changes;
+in the editor `EditorState::cine_camera` makes the main view look through a Camera (Camera Lock,
+movie renders). Render Movie poses frame n at n / fps, then asks main.cpp for a HighResShot at a
+fixed size and path (`shot_size` / `shot_path`, its own projection, no TAA) and waits until that
+frame was read back and written as PNG before posing the next.
+
 ## Scripting
 
 - **Lua** (LuaJIT, built by our CMake): each Script component gets its own environment table with

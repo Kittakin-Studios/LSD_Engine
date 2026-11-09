@@ -11,5 +11,8 @@ namespace lsd::editor {
 
 void open_timeline_editor(EditorState& state, const asset::AssetRecord& record);
 void draw_timeline_editor(EditorState& state);
+// Movie Render Queue: opens the timeline and renders it at `fps`, `width` x `height`, one frame per
+// editor frame, into Saved/MovieRenders/<name>/<name>_0000.png...
+void render_timeline_movie(EditorState& state, const asset::AssetRecord& record, f32 fps, u32 width, u32 height);
 
 } // namespace lsd::editor

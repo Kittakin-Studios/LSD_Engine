@@ -1819,6 +1819,33 @@ Unreal's Sequencer, the basics. Content Browser > New Data Asset > **Timeline**,
 4. Play it: `lsd.play_timeline("TL_Intro")` or the **Play Timeline** node. When it ends,
    `on_timeline_finished(self, name)` runs and camera cuts hand the view back to the player.
 
+**Keys and curves.** Each key's **Interpolation** (in the key panel) sets how values go to the next
+key: **Auto** (a smooth cubic curve with automatic tangents, like Sequencer's Auto keys; flat at the
+first and last key), **Linear** or **Constant** (a step). On the ruler Auto keys are diamonds, Linear
+triangles, Constant squares. Tick **Curves** for the curve view (Sequencer's Curve Editor) of the
+selected Transform or Property track: pick a channel (Location X..Rotation Z, Value, or Red..Alpha)
+and drag a key up or down. Property tracks animate colours too: write `PointLight.color` and **Key**
+records the light's colour now.
+
+**Shots and sub-sequences** (Sequencer's Shot track). A **Shot** track's keys each start a shot that
+lasts until the next one (drawn as bars): the key's text is the camera to look through, and
+**Sub-Sequence** names another Timeline that plays as that shot, from its start when the shot starts
+(its Transform / Property tracks, and its camera cuts when the shot has no camera of its own).
+**Camera Lock** in the toolbar makes the level view look through the Camera Cut / Shot camera at the
+playhead, with that camera's lens and focus.
+
+**Cine Camera** (Unreal's Cine Camera Actor). A Camera component's **Cine Camera** section: **Focal
+Length** (mm; 0 = use Field of View), **Sensor Width / Height** (the film back, 36 x 24 mm full
+frame), **Aperture** (f-stop: 1.4 shallow focus, 16 most things sharp; 0 = no depth of field) and
+**Focus Distance**, or **Focus Object** (an object's name: tracked focus). The lens drives the
+post-process depth of field whenever the view looks through that camera (Play, Camera Lock, movie
+renders), over any Post Process Volume's own.
+
+**Render Movie** (Movie Render Queue). Toolbar > **Render Movie**: Frame Rate and Resolution, then
+**Render**. The level view plays the timeline through its cameras one frame at a time and saves each
+frame as a PNG in `Saved/MovieRenders/<timeline>/<timeline>_0000.png`... (an image sequence: make a
+video from it with any editor). Console: `sequence.Render TL_Intro 30 1920 1080`.
+
 ## 13. Particles
 
 ![The Particle Editor (double-click a Particle System)](images/ed_particles.jpg)

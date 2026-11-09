@@ -153,6 +153,9 @@ struct EditorState {
     bool run_unit_tests = false;    // Tools > Run Unit Tests
     bool reload_assets_now = false;  // a data asset was just edited: caches check their files this frame
     u32 high_res_shot = 0;          // HighResShot <n>: the main view at n times its size, to Saved/Screenshots
+    u32 shot_size[2] = {0, 0};      // a movie render frame: this size (its own aspect) instead of n times the view
+    char shot_path[300] = "";       // ... saved here
+    world::Entity cine_camera;      // not playing: the main view looks through this Camera (Timeline camera lock, movie renders)
     bool stop_requested = false;
     bool playing = false;
     bool quit_requested = false;   // window closed with unsaved changes: the UI asks first

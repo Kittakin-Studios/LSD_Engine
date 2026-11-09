@@ -1385,7 +1385,7 @@ void draw_panel_tabs(EditorState& s) {
     for (PanelTab& t : g_tabs) t.seen = false;
     const bool active_alive = std::any_of(g_tabs.begin(), g_tabs.end(), [](const PanelTab& t) { return t.id == g_active_tab; });
     if (g_active_tab != kLevelTab && !active_alive) g_select_tab = kLevelTab;  // its editor closed
-    if (s.playing && !s.ejected && g_active_tab != kLevelTab) g_select_tab = kLevelTab;  // Play shows the level
+    if (((s.playing && !s.ejected) || s.shot_size[0]) && g_active_tab != kLevelTab) g_select_tab = kLevelTab;  // Play and movie renders show the level
     const f32 height = ImGui::GetFrameHeight() + 6.0f;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
