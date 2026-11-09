@@ -26,6 +26,9 @@ badly lit scene only hides the problem.
 
 **Check:** `stat unit` in the console shows the frame time. Keep an eye on it from here on.
 
+![Settings menu](images/menu_settings.jpg)
+*Settings > Engine Scalability: the overall level and each group.*
+
 ---
 
 ## Step 1: Exposure (World Settings)
@@ -38,6 +41,9 @@ Everything uses physical units, as in Unreal, so the camera's exposure must suit
    **Min / Max EV** so a dark corridor doesn't turn grey and a sunny field doesn't wash out.
 
 **Check:** a mid-grey wall in your main lighting should look mid grey, not white or black.
+
+![World Settings](images/win_world_settings.jpg)
+*World Settings > Exposure EV100: 1.5 for the default sun.*
 
 ---
 
@@ -53,6 +59,9 @@ Everything uses physical units, as in Unreal, so the camera's exposure must suit
    map misses: feet on the floor, cups on a table.
 
 **Check:** turn the sun; the whole level should change mood.
+
+![Noon and sunset](images/gfx_time_of_day.jpg)
+*The same level at noon (left) and with the sun 3 degrees above the horizon (right): Atmosphere colours the sky, the sunlight and the ambient light; shadows stretch.*
 
 ---
 
@@ -77,6 +86,9 @@ Everything uses physical units, as in Unreal, so the camera's exposure must suit
 **Check:** the **Lighting Only** view mode (Alt+6) shows the light without textures. Is every area
 lit on purpose?
 
+![Rect and Disc Lights at night](images/gfx_rect_lights.jpg)
+*Night, lit only by a 5000 K Rect Light (right of the camera) and an orange Disc Light (left): the glossy floor reflects each panel's real shape (bottom), and the gold sphere picks up both.*
+
 ---
 
 ## Step 4: Atmosphere and fog
@@ -87,6 +99,9 @@ lit on purpose?
    Lights get halos and visible cones.
 
 **Check:** look toward the sun past a wall or pillar. You should see shafts of light.
+
+![Volumetric fog](images/volumetric_fog.jpg)
+*Height Fog without (top) and with Volumetric: sunlit fog glows, shadowed fog stays dark.*
 
 ---
 
@@ -108,6 +123,9 @@ Without baking, the inside of a closed room is as bright as an open field.
 **Check:** the **Lightmap Density** view mode shows even texels where you look most. Corners and
 contact areas should darken softly.
 
+![Lighting Only after Build Lighting](images/lightmap_lighting_only.jpg)
+*Lighting Only (Alt+6) after Build Lighting: sky light, the floor's coloured bounce and soft contact shadows from the lightmap.*
+
 ---
 
 ## Step 6: Reflections
@@ -119,6 +137,9 @@ contact areas should darken softly.
 3. Turn **Reflections** on in the Post Process Volume (screen-space reflections on top).
 
 **Check:** a metal sphere should mirror the room it's in, not only the sky.
+
+![Reflection Capture](images/reflection_capture.jpg)
+*A mirror sphere with the sky only (left) and with a Reflection Capture (right).*
 
 ---
 
@@ -140,6 +161,9 @@ Lighting can't fix flat assets.
 
 **Check:** with Alt+6 (Lighting Only) off and on, the material should carry the detail, not the
 light.
+
+![A Material in Details](images/det_material.jpg)
+*A Material: base colour, metallic, roughness, normal and ORM maps, emissive, blend mode.*
 
 ---
 
@@ -167,6 +191,9 @@ their own mood (a cave, a neon room).
 **Check:** compare against a reference photo or a still from the game you are aiming for, side by
 side.
 
+![Without and with post-processing](images/gfx_post_compare.jpg)
+*Sunset without post-processing (left: no tonemapper, no AO, bloom or vignette; the bright wall clips) and with the Epic starting values above (right: filmic highlights, bloom on the gold, soft vignette).*
+
 ---
 
 ## Step 9: Effects
@@ -176,6 +203,9 @@ side.
 2. For big effects (sparks, magic, rain), set **Sim Target GPU** (Niagara's GPU Compute Sim): up to a
    million particles. Use Additive blending, since GPU particles aren't sorted.
 3. Use **Min Quality** on emitters that only stronger PCs need.
+
+![GPU and CPU particles](images/gfx_gpu_particles.jpg)
+*A GPU emitter (left: 400 000 additive particles bouncing on the floor, with an alpha smoke emitter) next to a CPU emitter (right).*
 
 ---
 
@@ -196,6 +226,9 @@ Epic should still hit your frame rate. These are all on by default; check them w
 
 If the frame is too slow, drop one setting at a time and take the cheapest win first: depth of
 field, then volumetric fog steps, then shadow resolution.
+
+![stat unit](images/stat_unit.jpg)
+*`stat unit`: frame rate and the time per part of the frame.*
 
 ---
 
