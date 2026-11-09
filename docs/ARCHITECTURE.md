@@ -348,7 +348,21 @@ kinematic body and a `Moving` record instead of a static body; `update_rides` ru
 step (E to board, Mover routes and start / repeat conditions, the driven vehicle's arcade model with
 `raycast(..., ignore_body)` for ground and walls) and moves their bodies with `move_kinematic`, so the
 character and objects on them are carried; `place_rider` after the step puts the driver / rider on its
-seat; `vehicle_view` follows behind. Scripts reach it through `ScriptHost.ride`.
+seat; `vehicle_view` follows behind. Scripts reach it through `ScriptHost.ride`. A Physics vehicle
+(`add_physics_vehicle`) finds its wheels (listed, or children / Skeletal Mesh bones named Wheel...),
+fits each to its mesh's box in the vehicle's space (`physics::fit_wheel`; a bone's vertices skinned by
+a sampled rest pose), keeps each wheel object's offset from its rest frame, and after the step
+`update_vehicle_wheels` puts the objects on Jolt's wheel transforms or asks the AnimationPlayer to move
+the bones (`move_bone`: a world-space delta applied after the animation with `Pose::transform_models`).
+
+**Cloth** (`editor/cloth_core.*`, `PlaySession::start_cloth` / `update_cloth`): at Play start a Cloth
+object's mesh triangles are subdivided, put in world space and welded into particles (seams in the
+drawn mesh share one), one side pinned; `PhysicsWorld::add_cloth` makes them a Jolt soft body (edge,
+shear and bend constraints from Stiffness, pinned particles with zero inverse mass), and before each
+step `set_cloth_wind` pushes every triangle along its normal by the air hitting it. After the step
+the particles come back (`cloth_points`), into the object's space, smooth normals are rebuilt and the
+mesh is re-uploaded as "Cloth:<n>" (`MeshCache::set_generated`), which the object's Static Mesh names
+for the rest of Play, so every backend draws it as an ordinary mesh.
 
 **Multiplayer** (`engine/net`, ENet): `NetSession` hosts or joins; channel 0 is reliable (welcome,
 spawn, destroy, events, chat, joins, teams), channel 1 unreliable sequenced (snapshots, owner states).
