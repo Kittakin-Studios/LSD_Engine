@@ -68,6 +68,7 @@ float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 
 #include "material_prelude_hlsl.h"  // kMaterialPreludeHlsl: engine/rhi/shaders/material_prelude.hlsl
 #include "cull_hlsl.h"  // kCullHlsl: engine/rhi/shaders/cull.hlsl
+#include "gpu_particles_hlsl.h"  // kGpuParticlesHlsl: engine/rhi/shaders/gpu_particles.hlsl
 
 // Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(
@@ -308,6 +309,7 @@ public:
             LSD_LOG_WARN("d3d12", "GPU culling is unavailable on this device");
         }
         if (!create_morphs()) morph_pso_.Reset();  // optional: morphs then mix on the CPU
+        if (!create_gpu_particles()) gpu_particle_add_.Reset();  // optional: GPU emitters then run on the CPU
         return true;
     }
 
@@ -1054,10 +1056,65 @@ public:
         std::memcpy(particle_mapped_[frame_] + particle_offset_, vertices, bytes);
         const D3D12_VERTEX_BUFFER_VIEW vbv{particle_buffers_[frame_]->GetGPUVirtualAddress() + particle_offset_, bytes, sizeof(ParticleVertex)};
         particle_offset_ += (bytes + 255u) & ~255u;
+        draw_sprites(&vbv, vertex_count, view_proj, texture, additive, soft, nullptr);
+    }
+
+    bool supports_gpu_particles() const override { return gpu_particle_add_ != nullptr; }
+    BufferHandle create_particle_state(u32 capacity) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].resource) ++slot;
+        if (slot == kMaxBuffers || capacity == 0 || capacity > kMaxGpuParticles) return {};
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        desc.Width = static_cast<u64>(capacity) * 48;
+        desc.Height = 1;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        Buffer& b = buffers_[slot];  // committed resources start zeroed: every particle dead
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                    IID_PPV_ARGS(&b.resource)), "CreateCommittedResource (particles)")) return {};
+        b.size = desc.Width;
+        b.usage = BufferUsage::Storage;
+        b.read_frame = 0;
+        return BufferHandle::make(slot, b.generation);
+    }
+    void simulate_particles(BufferHandle state, const GpuParticles& params) override {
+        Buffer* b = lookup(state);
+        if (!b || !gpu_particle_sim_) return;
+        const D3D12_GPU_VIRTUAL_ADDRESS constants = upload_constants(&params, sizeof params);
+        if (!constants) return;
+        if (b->read_frame == frame_number_) transition(b->resource.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        list_->SetComputeRootSignature(gpu_particle_sim_root_.Get());
+        list_->SetComputeRootConstantBufferView(0, constants);
+        list_->SetComputeRootUnorderedAccessView(1, b->resource->GetGPUVirtualAddress());
+        list_->SetPipelineState(gpu_particle_sim_.Get());
+        list_->Dispatch((params.spawn[2] + 63) / 64, 1, 1);
+        transition(b->resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        b->read_frame = frame_number_;
+    }
+    void draw_gpu_particles(BufferHandle state, const GpuParticles& params, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
+        Buffer* b = lookup(state);
+        if (!b || !gpu_particle_add_ || !params.spawn[2]) return;
+        const D3D12_GPU_VIRTUAL_ADDRESS constants = upload_constants(&params, sizeof params);
+        if (!constants) return;
+        b->read_frame = frame_number_;  // promoted to a shader resource by this draw if not simulated this frame
+        const D3D12_GPU_VIRTUAL_ADDRESS gpu[2] = {constants, b->resource->GetGPUVirtualAddress()};
+        draw_sprites(nullptr, params.spawn[2] * 6, view_proj, texture, additive, soft, gpu);
+    }
+
+    // Sprites (draw_particles from a vertex buffer; draw_gpu_particles built in the vertex shader from `gpu`: its
+    // parameters and particle state): the texture, the depth for soft particles, the blend.
+    void draw_sprites(const D3D12_VERTEX_BUFFER_VIEW* vbv, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft,
+                      const D3D12_GPU_VIRTUAL_ADDRESS* gpu) {
         const Texture* t = lookup_texture(texture);
         ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
         list_->SetDescriptorHeaps(1, heaps);
-        list_->SetGraphicsRootSignature(root_signature_.Get());
+        list_->SetGraphicsRootSignature(gpu ? gpu_sprite_root_.Get() : root_signature_.Get());
         f32 particle_constants[24] = {};
         std::memcpy(particle_constants, view_proj, 16 * sizeof(f32));
         particle_constants[16] = hdr_output_ ? 1.0f : 0.0f;
@@ -1073,9 +1130,15 @@ public:
             const D3D12_CPU_DESCRIPTOR_HANDLE dsv = target_dsv(static_cast<u32>(current_target_) + kMaxTargets);
             list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
         }
-        list_->SetPipelineState(additive ? particle_add_pipeline_.Get() : particle_alpha_pipeline_.Get());
+        if (gpu) {
+            list_->SetGraphicsRootConstantBufferView(3, gpu[0]);
+            list_->SetGraphicsRootShaderResourceView(4, gpu[1]);
+            list_->SetPipelineState(additive ? gpu_particle_add_.Get() : gpu_particle_alpha_.Get());
+        } else {
+            list_->SetPipelineState(additive ? particle_add_pipeline_.Get() : particle_alpha_pipeline_.Get());
+        }
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        list_->IASetVertexBuffers(0, 1, &vbv);
+        if (vbv) list_->IASetVertexBuffers(0, 1, vbv);
         list_->DrawInstanced(vertex_count, 1, 0, 0);
         if (soft_fade) {
             transition(target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
@@ -1489,6 +1552,7 @@ public:
         light_offset_ = 0;
         joint_offset_ = 0;
         particle_offset_ = 0;
+        ++frame_number_;
         run_morphs();
         set_lights(default_lights());
         set_shadow_map({}, {});
@@ -1684,6 +1748,7 @@ private:
         u64 size = 0;
         BufferUsage usage = BufferUsage::Vertex;
         u32 generation = 0;
+        u64 read_frame = 0;  // GPU particle state: the frame it is a shader resource in (it decays to COMMON after each)
     };
 
     struct Target {
@@ -2018,20 +2083,22 @@ private:
         return check(device_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&sky_pipeline_)), "CreateGraphicsPipelineState (sky)");
     }
 
-    bool create_particle_pipeline(bool additive, ComPtr<ID3D12PipelineState>& out) {
+    bool create_particle_pipeline(bool additive, ComPtr<ID3D12PipelineState>& out, bool gpu = false) {
         static const D3D12_INPUT_ELEMENT_DESC layout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
         ComPtr<ID3DBlob> vs, ps;
-        if (!compile(kParticleHlsl, sizeof kParticleHlsl - 1, "vs_main", "vs_5_0", vs, nullptr) ||
+        static const D3D_SHADER_MACRO draw_defines[] = {{"PARTICLE_DRAW", "1"}, {nullptr, nullptr}};
+        if (!(gpu ? compile(kGpuParticlesHlsl, sizeof kGpuParticlesHlsl - 1, "gpu_particle_vs", "vs_5_0", vs, draw_defines)
+                  : compile(kParticleHlsl, sizeof kParticleHlsl - 1, "vs_main", "vs_5_0", vs, nullptr)) ||
             !compile(kParticleHlsl, sizeof kParticleHlsl - 1, "ps_main", "ps_5_0", ps, nullptr)) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
-        pso.pRootSignature = root_signature_.Get();
+        pso.pRootSignature = gpu ? gpu_sprite_root_.Get() : root_signature_.Get();
         pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
         pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
-        pso.InputLayout = {layout, 3};
+        pso.InputLayout = {gpu ? nullptr : layout, gpu ? 0u : 3u};
         D3D12_RENDER_TARGET_BLEND_DESC& blend = pso.BlendState.RenderTarget[0];
         blend.BlendEnable = TRUE;
         blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
@@ -2329,6 +2396,59 @@ private:
         pso.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
         return SUCCEEDED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&morph_pso_)));
     }
+    // GPU particles: the compute pass (b0 parameters, u0 particles) and the sprites, whose root signature is the
+    // particle shader's (b0 constants, t0 sprite, t1 depth) plus the parameters (b2) and the particles (t2) for the vertex shader.
+    bool create_gpu_particles() {
+        D3D12_ROOT_PARAMETER sim[2]{};
+        sim[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        sim[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        for (D3D12_ROOT_PARAMETER& p : sim) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_ROOT_SIGNATURE_DESC sim_desc{};
+        sim_desc.NumParameters = 2;
+        sim_desc.pParameters = sim;
+        ComPtr<ID3DBlob> blob, error, cs;
+        static const D3D_SHADER_MACRO sim_defines[] = {{"PARTICLE_SIM", "1"}, {nullptr, nullptr}};
+        if (FAILED(D3D12SerializeRootSignature(&sim_desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &error)) ||
+            FAILED(device_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gpu_particle_sim_root_))) ||
+            !compile(kGpuParticlesHlsl, sizeof kGpuParticlesHlsl - 1, "gpu_particle_sim", "cs_5_0", cs, sim_defines)) return false;
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = gpu_particle_sim_root_.Get();
+        pso.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+        if (FAILED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&gpu_particle_sim_)))) return false;
+        D3D12_ROOT_PARAMETER params[5]{};
+        params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        params[0].Constants.Num32BitValues = 24;
+        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_DESCRIPTOR_RANGE ranges[2]{};
+        for (UINT i = 0; i < 2; ++i) {
+            ranges[i] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, i, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+            params[1 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            params[1 + i].DescriptorTable = {1, &ranges[i]};
+            params[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        }
+        params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        params[3].Descriptor.ShaderRegister = 2;
+        params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+        params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        params[4].Descriptor.ShaderRegister = 2;
+        params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+        D3D12_STATIC_SAMPLER_DESC sampler{};  // s0, as the particles' linear_wrap
+        sampler.Filter = D3D12_FILTER_ANISOTROPIC;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        sampler.MaxAnisotropy = 8;
+        sampler.MaxLOD = D3D12_FLOAT32_MAX;
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_ROOT_SIGNATURE_DESC desc{};
+        desc.NumParameters = 5;
+        desc.pParameters = params;
+        desc.NumStaticSamplers = 1;
+        desc.pStaticSamplers = &sampler;
+        ComPtr<ID3DBlob> sprite_blob;
+        if (FAILED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &sprite_blob, &error)) ||
+            FAILED(device_->CreateRootSignature(0, sprite_blob->GetBufferPointer(), sprite_blob->GetBufferSize(), IID_PPV_ARGS(&gpu_sprite_root_)))) return false;
+        return create_particle_pipeline(false, gpu_particle_alpha_, true) && create_particle_pipeline(true, gpu_particle_add_, true);
+    }
+
     // The morphs queued since the last frame, at its start (outside any pass); each output ends ready to draw.
     void run_morphs() {
         for (const MorphJob& j : pending_morphs_) {
@@ -2487,6 +2607,9 @@ private:
     f32 hiz_view_proj_[16] = {};
     bool hiz_valid_ = false;
     ComPtr<ID3D12CommandSignature> cull_signature_;
+    ComPtr<ID3D12RootSignature> gpu_particle_sim_root_, gpu_sprite_root_;  // GPU particles (create_gpu_particles)
+    ComPtr<ID3D12PipelineState> gpu_particle_sim_, gpu_particle_alpha_, gpu_particle_add_;
+    u64 frame_number_ = 0;
     ComPtr<ID3D12RootSignature> morph_root_;  // morph targets (create_morphs)
     ComPtr<ID3D12PipelineState> morph_pso_;
     std::vector<MorphJob> pending_morphs_;

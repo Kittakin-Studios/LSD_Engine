@@ -192,6 +192,30 @@ u32 instance_lod(const CullConstants& c, const f32 rows[12]);
 // The six frustum planes (a, b, c, d with a*x + b*y + c*z + d >= 0 inside) of a column-major
 // view-projection, normalised; the near plane is the looser of the GL and D3D conventions.
 void frustum_planes(const f32 view_proj[16], f32 planes[6][4]);
+// GPU particles (Niagara's GPU Compute Sim): one emitter's settings and this step, for Device::simulate_particles and
+// draw_gpu_particles (shaders/gpu_particles.hlsl's Params, float4 by float4).
+struct GpuParticles {
+    f32 spawn_rows[12];  // new particles' space: the effect's world matrix as 3 rows (identity rows for Local Space)
+    f32 draw_rows[12];   // the particles' space to world (the effect's for Local Space; identity otherwise)
+    u32 spawn[4];        // first slot, count (this step's new particles, wrapping at capacity), capacity, seed
+    f32 shape[4];        // 0 point / 1 sphere / 2 box, size xyz
+    f32 direction[4];    // xyz (unit), cos(spread)
+    f32 speed_life[4];   // speed min, max; lifetime min, max
+    f32 force[4];        // acceleration with gravity xyz (in the particles' space), drag
+    f32 step[4];         // dt, floor height, bounce, friction
+    f32 flags[4];        // floor collision (1), kill on hit (1), spin (degrees a second, up to)
+    f32 size[4];         // start, end, size key count, colour key count
+    f32 color_start[4];
+    f32 color_end[4];
+    f32 size_keys[16];   // up to 8 (time, value) pairs
+    f32 color_times[8];
+    f32 color_keys[32];  // up to 8 colours
+    f32 right[4];        // the camera's right and up in world space (drawing)
+    f32 up[4];
+};
+static_assert(sizeof(GpuParticles) == 32 * 16, "gpu_particles.hlsl reads 32 float4s");
+constexpr u32 kMaxGpuParticles = 1u << 20;  // per emitter
+
 // A Device::morph_vertices call as the backends keep it (D3D12 and Vulkan run them at the next frame's start): its
 // buffers and the weights block the pass reads (the vertex count, 3 spare words, then one float per target).
 struct MorphJob {
@@ -540,6 +564,16 @@ public:
     virtual BufferHandle create_morph_output(u32 vertex_count) { (void)vertex_count; return {}; }
     virtual void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) {
         (void)out, (void)base, (void)morphs, (void)vertex_count, (void)weights, (void)weight_count;
+    }
+    // GPU particles: an emitter's particles in a buffer of `capacity` (<= kMaxGpuParticles, 48 bytes each, all dead at
+    // first); simulate_particles spawns this step's new ones and moves the rest (a compute pass, run where it is called);
+    // draw_gpu_particles draws them as sprites like draw_particles (unsorted: Additive suits them best).
+    virtual bool supports_gpu_particles() const { return false; }
+    virtual BufferHandle create_particle_state(u32 capacity) { (void)capacity; return {}; }
+    virtual void simulate_particles(BufferHandle state, const GpuParticles& params) { (void)state, (void)params; }
+    virtual void draw_gpu_particles(BufferHandle state, const GpuParticles& params, const f32 view_proj[16], TextureHandle texture, bool additive,
+                                    const f32* soft = nullptr) {
+        (void)state, (void)params, (void)view_proj, (void)texture, (void)additive, (void)soft;
     }
 };
 

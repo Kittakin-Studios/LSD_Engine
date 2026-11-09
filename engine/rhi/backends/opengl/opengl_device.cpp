@@ -1008,6 +1008,120 @@ void main() {
 }
 )";
 
+// GPU particles (shaders/gpu_particles.hlsl's gpu_particle_sim and gpu_particle_vs), GL's way.
+constexpr char kGpuParticleSimShader[] = R"(#version 460 core
+layout(local_size_x = 64) in;
+layout(std140, binding = 6) uniform ParticleParams {
+    vec4 spawn_rows[3]; vec4 draw_rows[3]; uvec4 spawn; vec4 shape; vec4 direction; vec4 speed_life; vec4 force; vec4 step; vec4 flags; vec4 size;
+    vec4 color_start; vec4 color_end; vec4 size_keys[4]; vec4 color_times[2]; vec4 color_keys[8]; vec4 right; vec4 up;
+} p;
+layout(std430, binding = 4)  buffer Particles { vec4 particles[]; };
+float rand(inout uint s) {
+    s = s * 747796405u + 2891336453u;
+    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    w = (w >> 22u) ^ w;
+    return float(w >> 8) / 16777216.0;
+}
+vec3 rows_point(vec3 v) { return vec3(dot(p.spawn_rows[0], vec4(v, 1.0)), dot(p.spawn_rows[1], vec4(v, 1.0)), dot(p.spawn_rows[2], vec4(v, 1.0))); }
+vec3 rows_vector(vec3 v) { return vec3(dot(p.spawn_rows[0].xyz, v), dot(p.spawn_rows[1].xyz, v), dot(p.spawn_rows[2].xyz, v)); }
+void main() {
+    uint i = gl_GlobalInvocationID.x, capacity = p.spawn.z;
+    if (i >= capacity) return;
+    vec4 a = particles[i * 3u], b = particles[i * 3u + 1u], c = particles[i * 3u + 2u];
+    if ((i + capacity - p.spawn.x) % capacity < p.spawn.y) {
+        uint s = (i * 9781u + 1u) ^ (p.spawn.w * 6271u);
+        vec3 local = vec3(0.0);
+        if (p.shape.x > 1.5) {
+            local = (vec3(rand(s), rand(s), rand(s)) * 2.0 - 1.0) * p.shape.yzw;
+        } else if (p.shape.x > 0.5) {
+            float z = rand(s) * 2.0 - 1.0, phi = rand(s) * 6.2831853, r = pow(rand(s), 1.0 / 3.0);
+            local = vec3(sqrt(1.0 - z * z) * cos(phi), sqrt(1.0 - z * z) * sin(phi), z) * r * p.shape.y;
+        }
+        vec3 axis = p.direction.xyz;
+        float cos_t = 1.0 - rand(s) * (1.0 - p.direction.w), sin_t = sqrt(max(0.0, 1.0 - cos_t * cos_t)), phi = rand(s) * 6.2831853;
+        vec3 u = normalize(cross(abs(axis.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), axis)), v = cross(axis, u);
+        vec3 dir = axis * cos_t + u * (sin_t * cos(phi)) + v * (sin_t * sin(phi));
+        float speed = mix(p.speed_life.x, p.speed_life.y, rand(s));
+        a = vec4(rows_point(local), 0.0);
+        b = vec4(rows_vector(dir * speed), mix(p.speed_life.z, p.speed_life.w, rand(s)));
+        c = vec4(rand(s) * 360.0, (rand(s) * 2.0 - 1.0) * p.flags.z, 0.0, 0.0);
+    } else if (a.w < b.w) {
+        float dt = p.step.x;
+        a.w += dt;
+        b.xyz = (b.xyz + p.force.xyz * dt) * max(0.0, 1.0 - p.force.w * dt);
+        float from_z = a.z;
+        a.xyz += b.xyz * dt;
+        c.x += c.y * dt;
+        if (p.flags.x > 0.5 && from_z >= p.step.y && a.z < p.step.y) {
+            if (p.flags.y > 0.5) a.w = b.w;
+            a.z = p.step.y + 0.01;
+            b.xy *= 1.0 - p.step.w;
+            b.z = -b.z * p.step.z;
+        }
+    } else {
+        return;
+    }
+    particles[i * 3u] = a;
+    particles[i * 3u + 1u] = b;
+    particles[i * 3u + 2u] = c;
+}
+)";
+
+constexpr char kGpuParticleVertexShader[] = R"(#version 460 core
+layout(std140, binding = 6) uniform ParticleParams {
+    vec4 spawn_rows[3]; vec4 draw_rows[3]; uvec4 spawn; vec4 shape; vec4 direction; vec4 speed_life; vec4 force; vec4 step; vec4 flags; vec4 size;
+    vec4 color_start; vec4 color_end; vec4 size_keys[4]; vec4 color_times[2]; vec4 color_keys[8]; vec4 right; vec4 up;
+} p;
+layout(std430, binding = 4) readonly buffer Particles { vec4 particles[]; };
+uniform mat4 u_mvp;
+out vec4 v_color;
+out vec2 v_uv;
+float size_at(float t) {
+    uint n = uint(p.size.z);
+    if (n == 0u) return mix(p.size.x, p.size.y, t);
+    int before = -1, after = -1;
+    float tb = 0.0, ta = 0.0, vb = 0.0, va = 0.0;
+    for (uint k = 0u; k < n; ++k) {
+        vec2 key = (k & 1u) != 0u ? p.size_keys[k >> 1].zw : p.size_keys[k >> 1].xy;
+        if (key.x <= t && (before < 0 || key.x >= tb)) { before = int(k); tb = key.x; vb = key.y; }
+        if (key.x > t && (after < 0 || key.x < ta)) { after = int(k); ta = key.x; va = key.y; }
+    }
+    if (before < 0) return p.size.x * va;
+    if (after < 0) return p.size.x * vb;
+    return p.size.x * mix(vb, va, (t - tb) / (ta - tb));
+}
+vec4 color_at(float t) {
+    uint n = uint(p.size.w);
+    if (n == 0u) return mix(p.color_start, p.color_end, t);
+    int before = -1, after = -1;
+    float tb = 0.0, ta = 0.0;
+    for (uint k = 0u; k < n; ++k) {
+        float key = p.color_times[k >> 2][k & 3u];
+        if (key <= t && (before < 0 || key >= tb)) { before = int(k); tb = key; }
+        if (key > t && (after < 0 || key < ta)) { after = int(k); ta = key; }
+    }
+    if (before < 0) return p.color_keys[after];
+    if (after < 0) return p.color_keys[before];
+    return mix(p.color_keys[before], p.color_keys[after], (t - tb) / (ta - tb));
+}
+void main() {
+    uint i = uint(gl_VertexID) / 6u, k = uint(gl_VertexID) % 6u;
+    vec4 a = particles[i * 3u], b = particles[i * 3u + 1u], c = particles[i * 3u + 2u];
+    v_color = vec4(0.0);
+    v_uv = vec2(0.0);
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    if (a.w >= b.w) return;
+    float t = a.w / b.w;
+    vec2 corner = vec2(k == 1u || k == 2u || k == 4u ? 1.0 : -1.0, k == 2u || k == 4u || k == 5u ? 1.0 : -1.0);
+    float half_size = 0.5 * size_at(t), r = radians(c.x), cs = cos(r), sn = sin(r);
+    vec3 x = (p.right.xyz * cs + p.up.xyz * sn) * half_size, y = (p.up.xyz * cs - p.right.xyz * sn) * half_size;
+    vec3 centre = vec3(dot(p.draw_rows[0], vec4(a.xyz, 1.0)), dot(p.draw_rows[1], vec4(a.xyz, 1.0)), dot(p.draw_rows[2], vec4(a.xyz, 1.0)));
+    gl_Position = u_mvp * vec4(centre + x * corner.x + y * corner.y, 1.0);
+    v_color = color_at(t);
+    v_uv = vec2(corner.x * 0.5 + 0.5, 0.5 - corner.y * 0.5);
+}
+)";
+
 // Morph targets (cull.hlsl's morph_main): base vertices plus each delta times its target's weight.
 constexpr char kMorphComputeShader[] = R"(#version 460 core
 layout(local_size_x = 64) in;
@@ -1613,6 +1727,9 @@ public:
         if (cull_program_) gl_.glDeleteProgram(cull_program_);
         if (hiz_program_) gl_.glDeleteProgram(hiz_program_);
         if (morph_program_) gl_.glDeleteProgram(morph_program_);
+        if (gpu_sim_program_) gl_.glDeleteProgram(gpu_sim_program_);
+        if (gpu_sprite_program_) gl_.glDeleteProgram(gpu_sprite_program_);
+        if (gpu_particle_ubo_) gl_.glDeleteBuffers(1, &gpu_particle_ubo_);
         if (morph_weights_) gl_.glDeleteBuffers(1, &morph_weights_);
         if (hiz_texture_) glDeleteTextures(1, &hiz_texture_);
         if (ui_ibo_) gl_.glDeleteBuffers(1, &ui_ibo_);
@@ -2217,24 +2334,64 @@ public:
         if (!vertex_count || bytes > kParticleRingBytes) return;
         if (particle_offset_ + bytes > kParticleRingBytes) particle_offset_ = 0;  // GL keeps earlier draws' data (it syncs the update)
         gl_.glNamedBufferSubData(particle_vbo_, particle_offset_, bytes, vertices);
+        sprite_state(particle_program_, particle_mvp_, particle_hdr_, particle_soft_, view_proj, texture, additive, soft);
+        gl_.glVertexArrayVertexBuffer(particle_vao_, 0, particle_vbo_, particle_offset_, sizeof(ParticleVertex));
+        gl_.glBindVertexArray(particle_vao_);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
+        particle_offset_ += bytes;
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+    }
+    // The sprites' state (draw_particles, draw_gpu_particles): depth test without writes, the blend, the program's
+    // uniforms, the texture (unit 0) and the depth soft particles fade against (unit 1).
+    void sprite_state(GLuint program, GLint mvp, GLint hdr, GLint soft_location, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) {
         const Texture* t = lookup_texture(texture);
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
         gl_.glBlendFuncSeparate(GL_SRC_ALPHA, additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        gl_.glUseProgram(particle_program_);
-        gl_.glUniformMatrix4fv(particle_mvp_, 1, GL_FALSE, view_proj);
-        gl_.glUniform1f(particle_hdr_, hdr_output_ ? 1.0f : 0.0f);
+        gl_.glUseProgram(program);
+        gl_.glUniformMatrix4fv(mvp, 1, GL_FALSE, view_proj);
+        gl_.glUniform1f(hdr, hdr_output_ ? 1.0f : 0.0f);
         const bool soft_fade = soft && soft[0] > 0.0f && bound_target_;
         const f32 no_soft[4] = {};
-        gl_.glUniform4fv(particle_soft_, 1, soft_fade ? soft : no_soft);
+        gl_.glUniform4fv(soft_location, 1, soft_fade ? soft : no_soft);
         if (soft_fade) gl_.glTextureBarrier();  // its depth is read while attached: defined since nothing writes it from here on
         gl_.glBindTextureUnit(1, soft_fade ? bound_target_->depth : textures_[white_].id);
         gl_.glBindTextureUnit(0, t ? t->id : textures_[white_].id);
-        gl_.glVertexArrayVertexBuffer(particle_vao_, 0, particle_vbo_, particle_offset_, sizeof(ParticleVertex));
-        gl_.glBindVertexArray(particle_vao_);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
-        particle_offset_ += bytes;
+    }
+
+    bool supports_gpu_particles() const override { return gpu_sim_program_ != 0; }
+    BufferHandle create_particle_state(u32 capacity) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].id) ++slot;
+        if (slot == kMaxBuffers || capacity == 0 || capacity > kMaxGpuParticles) return {};
+        Buffer& b = buffers_[slot];
+        const std::vector<u8> dead(static_cast<usize>(capacity) * 48, 0);  // every particle dead
+        gl_.glCreateBuffers(1, &b.id);
+        gl_.glNamedBufferStorage(b.id, static_cast<GLsizeiptr>(dead.size()), dead.data(), 0);
+        b.usage = BufferUsage::Storage;
+        return BufferHandle::make(slot, b.generation);
+    }
+    void simulate_particles(BufferHandle state, const GpuParticles& params) override {
+        const Buffer* b = lookup(state);
+        if (!b || !gpu_sim_program_) return;
+        gl_.glNamedBufferSubData(gpu_particle_ubo_, 0, sizeof params, &params);  // GL orders it after earlier uses
+        gl_.glUseProgram(gpu_sim_program_);
+        gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 6, gpu_particle_ubo_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, b->id);
+        gl_.glDispatchCompute((params.spawn[2] + 63) / 64, 1, 1);
+        gl_.glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    }
+    void draw_gpu_particles(BufferHandle state, const GpuParticles& params, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
+        const Buffer* b = lookup(state);
+        if (!b || !gpu_sprite_program_ || !params.spawn[2]) return;
+        gl_.glNamedBufferSubData(gpu_particle_ubo_, 0, sizeof params, &params);
+        sprite_state(gpu_sprite_program_, gpu_sprite_mvp_, gpu_sprite_hdr_, gpu_sprite_soft_, view_proj, texture, additive, soft);
+        gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 6, gpu_particle_ubo_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, b->id);
+        gl_.glBindVertexArray(vao_);  // no vertex input: the shader builds the sprites
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(params.spawn[2] * 6));
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
     }
@@ -2820,6 +2977,25 @@ private:
                 gl_.glNamedBufferStorage(morph_weights_, 16 + kMaxMorphTargets * 4, nullptr, GL_DYNAMIC_STORAGE_BIT);
             }
         }
+        if (const GLuint cs = compile(GL_COMPUTE_SHADER, kGpuParticleSimShader)) {  // GPU particles (optional: else on the CPU)
+            gpu_sim_program_ = gl_.glCreateProgram();
+            gl_.glAttachShader(gpu_sim_program_, cs);
+            gl_.glLinkProgram(gpu_sim_program_);
+            gl_.glDeleteShader(cs);
+            GLint linked = 0;
+            gl_.glGetProgramiv(gpu_sim_program_, GL_LINK_STATUS, &linked);
+            if (linked) gpu_sprite_program_ = link(kGpuParticleVertexShader, kParticleFragmentShader);
+            if (!linked || !gpu_sprite_program_) {
+                gl_.glDeleteProgram(gpu_sim_program_);
+                gpu_sim_program_ = 0;
+            } else {
+                gpu_sprite_mvp_ = gl_.glGetUniformLocation(gpu_sprite_program_, "u_mvp");
+                gpu_sprite_hdr_ = gl_.glGetUniformLocation(gpu_sprite_program_, "u_hdr");
+                gpu_sprite_soft_ = gl_.glGetUniformLocation(gpu_sprite_program_, "u_soft");
+                gl_.glCreateBuffers(1, &gpu_particle_ubo_);
+                gl_.glNamedBufferStorage(gpu_particle_ubo_, sizeof(GpuParticles), nullptr, GL_DYNAMIC_STORAGE_BIT);
+            }
+        }
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
         shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
@@ -2965,6 +3141,8 @@ private:
     GLuint joint_ubo_ = 0;
     GLuint cull_program_ = 0, cull_in_ = 0, cull_out_ = 0, cull_args_ = 0, cull_ubo_ = 0;
     GLuint morph_program_ = 0, morph_weights_ = 0;  // morph targets (kMorphComputeShader)
+    GLuint gpu_sim_program_ = 0, gpu_sprite_program_ = 0, gpu_particle_ubo_ = 0;  // GPU particles
+    GLint gpu_sprite_mvp_ = -1, gpu_sprite_hdr_ = -1, gpu_sprite_soft_ = -1;
     // The Hi-Z (PostDraw::build_hiz): R32F, the farthest depth of each 2 x 2 down its mips; its view-projection.
     GLuint hiz_program_ = 0, hiz_texture_ = 0;
     GLint hiz_size_location_ = -1, hiz_level_location_ = -1;

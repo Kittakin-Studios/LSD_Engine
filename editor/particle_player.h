@@ -68,6 +68,17 @@ private:
     const asset::AssetRegistry& registry_;
     TextureCache& textures_;
     rhi::TextureHandle dot_;  // default sprite: a soft round dot
+    // GPU emitters (ParticleEmitter::sim_target GPU): each one's particle buffer, simulated once per instance step.
+    struct GpuState {
+        const particles::ParticleInstance* instance = nullptr;
+        u32 emitter = 0, capacity = 0, steps = 0, restarts = 0, frame = 0;
+        rhi::BufferHandle buffer;
+    };
+    void draw_gpu(rhi::Device& device, const particles::ParticleInstance& instance, u32 k, const particles::ParticleEmitter& emitter, const Mat4& world,
+                  const Mat4& view_proj, Vec3 right, Vec3 up, const f32 soft[4]);
+    std::vector<GpuState> gpu_;
+    rhi::Device& device_;
+    u32 frame_ = 0;
     System* systems_[64] = {};
     u32 system_count_ = 0;
     Effect effects_[512];

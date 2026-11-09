@@ -30,7 +30,7 @@ if(LSD_RHI_D3D12 OR LSD_RHI_VULKAN)
   # Shared HLSL (shaders/) embedded as text: D3D12 compiles it at startup, Vulkan builds Material
   # Graph shaders from it (through the Vulkan SDK's DXC when installed).
   set(text_dir "${CMAKE_CURRENT_BINARY_DIR}/shader_text")
-  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl" "cull;kCullHlsl")
+  foreach(pair IN ITEMS "post;kPostHlsl" "mesh;kMeshHlsl" "material_prelude;kMaterialPreludeHlsl" "cull;kCullHlsl" "gpu_particles;kGpuParticlesHlsl")
     list(GET pair 0 file)
     list(GET pair 1 name)
     add_custom_command(
@@ -155,6 +155,26 @@ if(LSD_RHI_VULKAN)
         COMMAND "${CMAKE_COMMAND}" -DINPUT=${spirv_dir}/${entry}.spv -DOUTPUT=${spirv_dir}/${entry}.spv.h -DNAME=k${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
         DEPENDS "${cull_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
         COMMENT "Compiling cull.hlsl (${entry}) to SPIR-V"
+        VERBATIM
+      )
+      target_sources(lsd_rhi PRIVATE "${spirv_dir}/${entry}.spv.h")
+    endforeach()
+    # GPU particles (shaders/gpu_particles.hlsl): the compute pass and the sprites' vertex shader, entry points renamed main / vs_main.
+    set(particles_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_particles.hlsl")
+    foreach(item IN ITEMS "gpu_particle_sim|GpuParticleSim|cs_6_0|PARTICLE_SIM|main" "gpu_particle_vs|GpuParticleVs|vs_6_0|PARTICLE_DRAW|vs_main")
+      string(REPLACE "|" ";" parts "${item}")
+      list(GET parts 0 entry)
+      list(GET parts 1 name)
+      list(GET parts 2 profile)
+      list(GET parts 3 define)
+      list(GET parts 4 renamed)
+      add_custom_command(
+        OUTPUT "${spirv_dir}/${entry}.spv.h"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${spirv_dir}"
+        COMMAND "${LSD_DXC_SPIRV}" -spirv -fspv-target-env=vulkan1.3 -T ${profile} -E ${entry} -fspv-entrypoint-name=${renamed} -D ${define} -Fo "${spirv_dir}/${entry}.spv" "${particles_hlsl}"
+        COMMAND "${CMAKE_COMMAND}" -DINPUT=${spirv_dir}/${entry}.spv -DOUTPUT=${spirv_dir}/${entry}.spv.h -DNAME=k${name}Spirv -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        DEPENDS "${particles_hlsl}" "${PROJECT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+        COMMENT "Compiling gpu_particles.hlsl (${entry}) to SPIR-V"
         VERBATIM
       )
       target_sources(lsd_rhi PRIVATE "${spirv_dir}/${entry}.spv.h")

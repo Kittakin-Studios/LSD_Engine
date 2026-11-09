@@ -76,6 +76,8 @@
 #include "cull_args.spv.h"
 #include "hiz_down.spv.h"
 #include "morph_main.spv.h"
+#include "gpu_particle_sim.spv.h"
+#include "gpu_particle_vs.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -101,6 +103,7 @@ constexpr VkDeviceSize kRowsBytes = kMaxJoints * 48;  // mesh.hlsl's Joints / In
 constexpr VkDeviceSize kParamsBytes = 256;            // its MaterialParams block (16 float4)
 constexpr u32 kCullPushBytes = sizeof(CullConstants);  // cull.hlsl's constants (256: the device must allow that many)
 constexpr u32 kMaxHizMips = 14;
+constexpr u32 kComputeSetsPerFrame = 1024;  // morph and GPU particle sets a frame
 constexpr u32 kCullSetsPerFrame = 256;                // gpu_cull draws a frame
 constexpr u32 kMaxTextures = 4096;
 constexpr VkDeviceSize kRingBytes = 8u << 20;      // per frame in flight: joints and instance matrices
@@ -196,6 +199,15 @@ public:
             for (MaterialShader& m : material_shaders_) release_material(m);
             for (VkPipeline pipeline : cull_pipelines_) vkDestroyPipeline(device_, pipeline, nullptr);
             if (morph_pipeline_) vkDestroyPipeline(device_, morph_pipeline_, nullptr);
+            for (VkPipeline pipeline : {gpu_particle_sim_, gpu_sprite_pipelines_[0], gpu_sprite_pipelines_[1]}) {
+                if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+            }
+            for (VkPipelineLayout layout : {gpu_particle_sim_layout_, gpu_sprite_layout_}) {
+                if (layout) vkDestroyPipelineLayout(device_, layout, nullptr);
+            }
+            for (VkDescriptorSetLayout layout : {gpu_particle_sim_set_layout_, gpu_sprite_set_layout_}) {
+                if (layout) vkDestroyDescriptorSetLayout(device_, layout, nullptr);
+            }
             if (morph_layout_) vkDestroyPipelineLayout(device_, morph_layout_, nullptr);
             if (morph_set_layout_) vkDestroyDescriptorSetLayout(device_, morph_set_layout_, nullptr);
             release_hiz();
@@ -969,6 +981,56 @@ public:
         }
         if (!job) job = &pending_morphs_.emplace_back();
         morph_job(*job, out, base, morphs, vertex_count, weights, weight_count);
+    }
+    // GPU particles: the compute pass (set 0: parameters, particles) and the sprites (the particle layout's sets plus
+    // set 2: parameters and particles for the vertex shader; no vertex input).
+    bool create_gpu_particles(VkShaderStageFlags stages, VkPrimitiveTopology triangles) {
+#if LSD_VULKAN_HAVE_SPIRV
+        auto set_layout = [&](VkShaderStageFlags stage, VkDescriptorSetLayout& out) {
+            const VkDescriptorSetLayoutBinding bindings[2] = {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stage, nullptr},
+                                                              {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stage, nullptr}};
+            VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            info.bindingCount = 2;
+            info.pBindings = bindings;
+            return check(vkCreateDescriptorSetLayout(device_, &info, nullptr, &out), "vkCreateDescriptorSetLayout (GPU particles)");
+        };
+        if (!set_layout(VK_SHADER_STAGE_COMPUTE_BIT, gpu_particle_sim_set_layout_) || !set_layout(VK_SHADER_STAGE_VERTEX_BIT, gpu_sprite_set_layout_)) return false;
+        VkPipelineLayoutCreateInfo sim_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        sim_layout.setLayoutCount = 1;
+        sim_layout.pSetLayouts = &gpu_particle_sim_set_layout_;
+        if (!check(vkCreatePipelineLayout(device_, &sim_layout, nullptr, &gpu_particle_sim_layout_), "vkCreatePipelineLayout (GPU particles)")) return false;
+        VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        module_info.codeSize = sizeof kGpuParticleSimSpirv;
+        module_info.pCode = kGpuParticleSimSpirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (GPU particles)")) return false;
+        VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = gpu_particle_sim_layout_;
+        const bool ok = check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &gpu_particle_sim_), "vkCreateComputePipelines (GPU particles)");
+        vkDestroyShaderModule(device_, module, nullptr);
+        if (!ok) return false;
+        const VkPushConstantRange push{stages, 0, kParticlePushBytes};
+        const VkDescriptorSetLayout sets[3] = {texture_set_layout_, particle_depth_layout_, gpu_sprite_set_layout_};
+        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layout.setLayoutCount = 3;
+        layout.pSetLayouts = sets;
+        layout.pushConstantRangeCount = 1;
+        layout.pPushConstantRanges = &push;
+        if (!check(vkCreatePipelineLayout(device_, &layout, nullptr, &gpu_sprite_layout_), "vkCreatePipelineLayout (GPU sprites)")) return false;
+        if (make_pipeline(kGpuParticleVsSpirv, sizeof kGpuParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, nullptr, 0, 0, triangles, kParticlePushBytes, stages,
+                          gpu_sprite_layout_, gpu_sprite_pipelines_[0], true, true, false, Blend::Alpha) &&
+            make_pipeline(kGpuParticleVsSpirv, sizeof kGpuParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, nullptr, 0, 0, triangles, kParticlePushBytes, stages,
+                          gpu_sprite_layout_, gpu_sprite_pipelines_[1], true, true, false, Blend::Additive)) return true;
+        gpu_sprite_pipelines_[0] = gpu_sprite_pipelines_[1] = VK_NULL_HANDLE;
+        return false;
+#else
+        (void)stages, (void)triangles;
+        return false;
+#endif
     }
     // Morph targets (cull.hlsl's morph_main): four storage buffers (base, packed targets, weights in the ring, output).
     bool create_morphs() {
@@ -1921,6 +1983,91 @@ public:
         Frame& f = frames_[frame_];
         VkDeviceSize at = 0;
         if (!stream_write(f, vertices, static_cast<VkDeviceSize>(vertex_count) * sizeof(ParticleVertex), at)) return;
+        draw_sprites(f, pipeline, particle_layout_, vertex_count, view_proj, texture, soft, VK_NULL_HANDLE, &at);
+    }
+
+    bool supports_gpu_particles() const override { return gpu_sprite_pipelines_[1] != VK_NULL_HANDLE; }
+    BufferHandle create_particle_state(u32 capacity) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].buffer) ++slot;
+        if (slot == kMaxBuffers || capacity == 0 || capacity > kMaxGpuParticles) return {};
+        Buffer& b = buffers_[slot];
+        const VkDeviceSize size = static_cast<VkDeviceSize>(capacity) * 48;
+        if (!make_device_buffer(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, b)) return {};
+        b.size = size;
+        b.clear = true;  // zeroed (every particle dead) before its first simulation
+        return BufferHandle::make(slot, b.generation);
+    }
+    // Between a pause and a resume of the pass, as run_culling.
+    void simulate_particles(BufferHandle state, const GpuParticles& params) override {
+        Buffer* b = lookup(state);
+        if (skip_frame_ || shadow_pass_ || !b || !gpu_particle_sim_) return;
+        Frame& f = frames_[frame_];
+        VkDeviceSize at = 0;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!gpu_particle_set(f, gpu_particle_sim_set_layout_, params, b->buffer, at, set)) return;
+        const VkCommandBuffer cmd = f.cmd;
+        Texture* resume = target_;
+        const bool was_in_pass = in_pass_;
+        const f32 viewport[4] = {viewport_[0], viewport_[1], viewport_[2], viewport_[3]};
+        end_pass();
+        // Earlier sprite draws' reads before these writes.
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        if (b->clear) {
+            vkCmdFillBuffer(cmd, b->buffer, 0, VK_WHOLE_SIZE, 0);
+            memory_barrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            b->clear = false;
+        }
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu_particle_sim_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu_particle_sim_layout_, 0, 1, &set, 0, nullptr);
+        vkCmdDispatch(cmd, (params.spawn[2] + 63) / 64, 1, 1);
+        memory_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        if (!was_in_pass) return;
+        if (resume) begin_target_pass(*resume, nullptr);
+        else begin_main_pass(nullptr);
+        set_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+    void draw_gpu_particles(BufferHandle state, const GpuParticles& params, const f32 view_proj[16], TextureHandle texture, bool additive, const f32* soft) override {
+        Buffer* b = lookup(state);
+        const VkPipeline pipeline = gpu_sprite_pipelines_[additive ? 1 : 0];
+        if (skip_frame_ || shadow_pass_ || !b || b->clear || !pipeline || !params.spawn[2]) return;
+        Frame& f = frames_[frame_];
+        VkDeviceSize at = 0;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        if (!gpu_particle_set(f, gpu_sprite_set_layout_, params, b->buffer, at, set)) return;
+        draw_sprites(f, pipeline, gpu_sprite_layout_, params.spawn[2] * 6, view_proj, texture, soft, set, nullptr);
+    }
+    // A GPU particle set: the parameters (copied into the ring) and the particles.
+    bool gpu_particle_set(Frame& f, VkDescriptorSetLayout layout, const GpuParticles& params, VkBuffer particles, VkDeviceSize& at, VkDescriptorSet& set) {
+        const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+        at = (f.ring_used + align - 1) / align * align;
+        if (!f.ring_mapped || !f.draw_pool || at + sizeof params > kRingBytes) return false;
+        std::memcpy(f.ring_mapped + at, &params, sizeof params);
+        f.ring_used = at + sizeof params;
+        VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        info.descriptorPool = f.draw_pool;
+        info.descriptorSetCount = 1;
+        info.pSetLayouts = &layout;
+        if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) return false;
+        const VkDescriptorBufferInfo buffers[2] = {{f.ring, at, sizeof params}, {particles, 0, VK_WHOLE_SIZE}};
+        VkWriteDescriptorSet writes[2] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        for (u32 k = 0; k < 2; ++k) {
+            writes[k].dstSet = set;
+            writes[k].dstBinding = k;
+            writes[k].descriptorCount = 1;
+            writes[k].descriptorType = k ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[k].pBufferInfo = &buffers[k];
+        }
+        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+        return true;
+    }
+    // Sprites (draw_particles from the stream at `stream_at`; draw_gpu_particles from `extra`, set 2): push constants,
+    // the texture (set 0), the depth soft particles fade against (set 1).
+    void draw_sprites(Frame& f, VkPipeline pipeline, VkPipelineLayout layout, u32 vertex_count, const f32 view_proj[16], TextureHandle texture, const f32* soft,
+                      VkDescriptorSet extra, const VkDeviceSize* stream_at) {
         f32 push[kParticlePushBytes / sizeof(f32)] = {};
         std::memcpy(push, view_proj, sizeof(f32) * 16);
         push[16] = lights_.output[0];  // into a scene target: range-compressed
@@ -1948,9 +2095,10 @@ public:
         if (soft_fade) target_depth_read_only(true);
         const VkCommandBuffer cmd = f.cmd;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        vkCmdPushConstants(cmd, particle_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kParticlePushBytes, push);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particle_layout_, 0, 2, sets, 0, nullptr);
-        vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, &at);
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kParticlePushBytes, push);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 0, nullptr);
+        if (extra) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1, &extra, 0, nullptr);
+        if (stream_at) vkCmdBindVertexBuffers(cmd, 0, 1, &f.stream, stream_at);
         vkCmdDraw(cmd, vertex_count, 1, 0, 0);
         if (soft_fade) target_depth_read_only(false);
     }
@@ -2219,6 +2367,7 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         u64 size = 0;
         u32 generation = 0;
+        bool clear = false;  // GPU particle state not zeroed yet
     };
 
     Buffer* lookup(BufferHandle handle) {
@@ -3069,11 +3218,12 @@ private:
             info.pBindings = l.bindings;
             if (!check(vkCreateDescriptorSetLayout(device_, &info, nullptr, l.out), "vkCreateDescriptorSetLayout (mesh)")) return false;
         }
-        const VkDescriptorPoolSize draw_sizes[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5 + kCullSetsPerFrame}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
-                                                    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3}};
+        const VkDescriptorPoolSize draw_sizes[4] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kDrawSetsPerFrame * 5 + kCullSetsPerFrame}, {VK_DESCRIPTOR_TYPE_SAMPLER, kDrawSetsPerFrame * 2},
+                                                    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kCullSetsPerFrame * 3 + kComputeSetsPerFrame * 4},
+                                                    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kComputeSetsPerFrame}};
         VkDescriptorPoolCreateInfo draw_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         draw_pool.maxSets = kDrawSetsPerFrame;
-        draw_pool.poolSizeCount = 3;
+        draw_pool.poolSizeCount = 4;
         draw_pool.pPoolSizes = draw_sizes;
         const VkDescriptorPoolSize buffer_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kFramesInFlight * 6};
         VkDescriptorPoolCreateInfo buffer_pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -3205,6 +3355,7 @@ private:
                              triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[0], true, true, false, Blend::Alpha) &&
                make_pipeline(kParticleVsSpirv, sizeof kParticleVsSpirv, kParticlePsSpirv, sizeof kParticlePsSpirv, particle_attributes, 3, sizeof(ParticleVertex),
                              triangles, kParticlePushBytes, stages, particle_layout_, particle_pipelines_[1], true, true, false, Blend::Additive) &&
+               (create_gpu_particles(stages, triangles) || true) &&  // optional: GPU emitters then run on the CPU
                make_pipeline(kLinesVsSpirv, sizeof kLinesVsSpirv, kLinesPsSpirv, sizeof kLinesPsSpirv, line_attributes, 2, sizeof(LineVertex),
                              VK_PRIMITIVE_TOPOLOGY_LINE_LIST, sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT, line_layout_, line_pipeline_);
 #else
@@ -3286,6 +3437,9 @@ private:
     bool hiz_valid_ = false;
     VkPipelineLayout cull_layout_ = VK_NULL_HANDLE;
     VkPipeline cull_pipelines_[3] = {};  // reset, cull, arguments
+    VkDescriptorSetLayout gpu_particle_sim_set_layout_ = VK_NULL_HANDLE, gpu_sprite_set_layout_ = VK_NULL_HANDLE;  // GPU particles
+    VkPipelineLayout gpu_particle_sim_layout_ = VK_NULL_HANDLE, gpu_sprite_layout_ = VK_NULL_HANDLE;
+    VkPipeline gpu_particle_sim_ = VK_NULL_HANDLE, gpu_sprite_pipelines_[2] = {};  // the pass; alpha, additive sprites
     VkDescriptorSetLayout morph_set_layout_ = VK_NULL_HANDLE;  // morph targets (create_morphs)
     VkPipelineLayout morph_layout_ = VK_NULL_HANDLE;
     VkPipeline morph_pipeline_ = VK_NULL_HANDLE;

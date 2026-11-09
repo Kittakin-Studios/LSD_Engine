@@ -32,12 +32,16 @@ struct ParticleEmitter {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Category = "Emitter", Tooltip = "The emitter's name (shown in the Particle Editor)") char name[32] = "Emitter";
     LSD_PROPERTY(Edit, Category = "Emitter", Tooltip = "Off: the emitter spawns nothing (to compare without it)") bool enabled = true;
+    LSD_PROPERTY(Edit, Category = "Emitter", Widget = "Choice:CPU,GPU",
+                 Tooltip = "GPU (Niagara's GPU Compute Sim): simulated on the graphics card, up to a million particles (Max Particles); drawn as sprites, unsorted (Additive suits it), Floor collision only; no lighting or height fog")
+    u32 sim_target = 0;
     // Spawn
     LSD_PROPERTY(Edit, Category = "Spawn", Units = "/s", Min = 0, Tooltip = "Particles a second") f32 spawn_rate = 20.0f;
     LSD_PROPERTY(Edit, Category = "Spawn", Min = 0, Max = 4096, Tooltip = "Particles all at once when it starts (and each loop)") u32 burst = 0;
     LSD_PROPERTY(Edit, Category = "Spawn", Units = "s", Min = 0, Tooltip = "How long it emits; 0 = forever") f32 duration = 0.0f;
     LSD_PROPERTY(Edit, Category = "Spawn", Tooltip = "Starts again after its duration") bool looping = true;
-    LSD_PROPERTY(Edit, Category = "Spawn", Min = 1, Max = 4096, Tooltip = "At most this many alive at once; the oldest make room") u32 max_particles = 500;
+    LSD_PROPERTY(Edit, Category = "Spawn", Min = 1, Max = 1048576, Tooltip = "At most this many alive at once; the oldest make room (CPU: up to 4096; GPU: up to 1048576)")
+    u32 max_particles = 500;
     LSD_PROPERTY(Edit, Category = "Initialize Particle", Units = "s", Min = 0, Tooltip = "Shortest life of a particle (each gets a random life between Min and Max)") f32 lifetime_min = 1.0f;
     LSD_PROPERTY(Edit, Category = "Initialize Particle", Units = "s", Min = 0, Tooltip = "Longest life of a particle") f32 lifetime_max = 2.0f;
     // Shape and velocity (in the effect's space: rotate the object to aim it)
@@ -105,6 +109,8 @@ struct ParticleSystem {
 // Effects quality (Unreal's sg.EffectsQuality): every emitter's rate and burst times this (1 = as made).
 void set_spawn_scale(f32 scale);
 void set_effects_quality(u32 quality);  // 0 Low .. 3 Epic: emitters asking for more spawn nothing
+// Whether GPU emitters (sim_target GPU) run on the graphics card (rhi::Device::supports_gpu_particles); without it they run on the CPU.
+void set_gpu_particles(bool available);
 // The stack's modules that can be switched off (ParticleEmitter::disabled_modules).
 enum ModuleBit : u32 { kModuleShape = 1, kModuleVelocity = 2, kModuleForces = 4, kModuleColor = 8, kModuleSize = 16, kModuleRotation = 32,
                        kModuleOverLife = 64, kModuleCollision = 128 };
@@ -115,6 +121,15 @@ ParticleEmitter active_modules(const ParticleEmitter& e);
 // fog = density, height falloff, base height, max opacity; start = no fog nearer than this.
 f32 fog_amount(const f32 fog[4], f32 start, Vec3 eye, Vec3 point);
 f32 size_at(const ParticleEmitter& e, f32 t);
+// A GPU emitter's step as ParticleInstance::update left it: its new particles go in slots first.. (count of them,
+// wrapping at capacity); `steps` counts updates (simulate once per step), `restarts` counts restart() (start clean).
+struct GpuStep {
+    u32 first = 0, count = 0, capacity = 0, steps = 0, restarts = 0;
+    f32 dt = 0.0f;
+    Vec3 force;  // gravity and acceleration, in the particles' space
+};
+// The emitter and its step as the GPU pass reads them (rhi::GpuParticles); the camera's right / up are left 0.
+void gpu_params(const ParticleEmitter& e, const GpuStep& step, const Mat4& world, u32 seed, rhi::GpuParticles& out);
 LinearColor color_at(const ParticleEmitter& e, f32 t);
 
 struct Particle {
@@ -145,6 +160,7 @@ public:
     void restart();          // no particles, every emitter back to its start (and its burst)
     bool finished() const;   // nothing alive and nothing more to emit (every emitter non-looping and done)
     u32 count(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].count : 0; }
+    bool gpu_step(u32 emitter, GpuStep& out) const;  // false: a CPU emitter
     // The box every live particle is in (local or world space as each emitter keeps them); false when there are none.
     bool bounds(Vec3& lo, Vec3& hi) const;
     const Particle* particles(u32 emitter) const { return emitter < kMaxEmitters ? emitters_[emitter].particles : nullptr; }
@@ -165,7 +181,11 @@ private:
         f32 spawn_carry = 0.0f; // fraction of a particle owed by the rate
         bool burst_done = false;
         bool done = false;      // non-looping and past its duration
+        bool gpu = false;       // simulated on the GPU: only the spawn count and the step are kept here
+        GpuStep step;
+        f32 quiet = 0.0f, life = 0.0f;  // GPU: time since particles were last born; the longest life
     };
+    u32 restarts_ = 0;
     void spawn(const ParticleEmitter& e, Emitter& state, const Mat4& world);
     f32 random();  // 0..1
 
