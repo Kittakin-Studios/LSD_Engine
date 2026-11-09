@@ -6,6 +6,7 @@
 // Kill Volumes and the World Settings' Kill Z send the player back to the start. Objects with a
 // Script component run their Lua file (engine/script) after physics each frame; Trigger Volumes
 // send them on_overlap_begin / on_overlap_end when the Character or a simulated object enters or leaves.
+#include "cloth_core.h"
 #include "editor_settings.h"
 #include "mesh_cache.h"
 #include "sound_player.h"
@@ -235,6 +236,17 @@ private:
     void add_physics_vehicle(const world::World& world, world::Entity e, const CachedMesh* cached, const world::Vehicle& v);
     void drive_physics(Moving& m, const world::Vehicle& v, const input::InputFrame& frame, input::Value move);
     void update_vehicle_wheels(world::World& world);  // after the step: wheel objects follow their wheels
+    // Cloth components: each one's soft body, and its mesh drawn from it as "Cloth:<n>" (the object's Static Mesh points there in Play).
+    struct ClothRun {
+        world::Entity entity;
+        u32 body = 0;
+        char key[24] = "";
+        ClothMesh mesh;
+        std::vector<Vec3> points;  // the particles this frame
+    };
+    std::vector<ClothRun> cloths_;
+    void start_cloth(world::World& world, world::Entity e);
+    void update_cloth(world::World& world);  // after the step: wind for the next one, the mesh from the particles
     Moving* moving_of(world::Entity e);
     void restart_mover(world::World& world, Moving& m);
     bool step_mover(world::World& world, Moving& m, const world::Mover& mover, f32 dt, Vec3& at, Vec3& rotation);

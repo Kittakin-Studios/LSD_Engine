@@ -77,6 +77,22 @@ struct VehicleState {
     u32 wheels_on_ground = 0;
 };
 
+// Cloth (Unreal's Chaos Cloth): particles joined along the triangles' edges (a Jolt soft body) that
+// stretch, shear and bend a little, fall, and collide with the world's bodies. Pinned particles stay put.
+struct ClothDesc {
+    const Vec3* points = nullptr;  // world space, one per particle (corners shared by triangles once)
+    u32 point_count = 0;
+    const u32* indices = nullptr;  // triangles over the points
+    u32 index_count = 0;
+    const u8* pinned = nullptr;    // per point, non-zero: held where it is (nullptr: none)
+    f32 mass = 1.0f;               // kg, the whole cloth
+    f32 stiffness = 0.8f;          // 0 stretchy and limp, 1 as stiff as it gets
+    f32 damping = 0.3f;            // how quickly its motion dies down
+    f32 gravity_scale = 1.0f;
+    f32 thickness = 0.02f;         // m: how far it keeps from what it lies on
+    u32 iterations = 5;            // solver passes per step (more: stiffer, slower)
+};
+
 struct CharacterDesc {
     Vec3 feet;
     f32 radius = 0.35f;
@@ -174,6 +190,13 @@ public:
     // y left (its axle), z up; identity if there is no such wheel.
     Mat4 wheel_transform(u32 vehicle, u32 wheel) const;
     VehicleState vehicle_state(u32 vehicle) const;
+
+    // Cloth: returns its body index (remove_body takes it out again).
+    u32 add_cloth(const ClothDesc& desc);
+    // The air around a cloth for the next steps (m/s): it pushes on each triangle facing it.
+    void set_cloth_wind(u32 body, Vec3 wind);
+    // A cloth's particles in world space after the last step, in add_cloth's order; how many were written.
+    u32 cloth_points(u32 body, Vec3* out, u32 capacity) const;
 
     void set_gravity(f32 metres_per_second2);
     void step(f32 dt);

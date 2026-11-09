@@ -352,6 +352,26 @@ struct Vehicle {
     List<VehicleWheel, 8> wheels;
 };
 
+// Cloth on this object's Static Mesh (Unreal's Chaos Cloth): in Play its vertices move as one soft
+// sheet (a flag, curtain, banner, sail), held along one side, falling, blown by wind and lying on what
+// it meets. The object's mesh is drawn from the moving vertices; it has no other collision.
+LSD_STRUCT(Component, Category = "Physics", Tooltip = "Cloth: in Play the Static Mesh moves as cloth (flags, curtains, banners), held along one side, blown by wind, lying on the world")
+struct Cloth {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Top,Bottom,+X,-X,+Y,-Y,None",
+                 Tooltip = "Which side is held in place (Unreal's painted Max Distance 0), in the world's directions: Top for a banner or curtain, the pole's side for a flag; None: it all falls")
+    u32 pin = 0;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much of the cloth, from that side, is held: 0 just the edge, 0.3 the third nearest it") f32 pin_amount = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 5, Tooltip = "Splits every triangle into four this many times before simulating (a Plane needs 4 or 5); 0: the mesh's own vertices") u32 subdivide = 0;
+    LSD_PROPERTY(Edit, Units = "kg", Min = 0.01, Max = 1000, Tooltip = "The whole cloth's mass (heavier: hangs straighter, wind moves it less)") f32 mass = 1.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0: stretchy and limp like silk, 1: stiff like canvas") f32 stiffness = 0.8f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "How quickly its swinging dies down (air resistance)") f32 damping = 0.3f;
+    LSD_PROPERTY(Edit, Min = -2, Max = 2, Tooltip = "Gravity times this (0: floats, negative: rises)") f32 gravity_scale = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Tooltip = "The wind blowing on it (world directions), e.g. 0, 6, 0 for a breeze along +Y") Vec3 wind{0.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How much the wind comes and goes in gusts (0: steady)") f32 gustiness = 0.4f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 0.5, Tooltip = "How far it keeps from what it lies on (stops it showing through)") f32 thickness = 0.02f;
+};
+
 // A ride the player hitches without driving (trains, ferries, lifts, cable cars): E near it gets on or
 // off, and the player travels on its seat. It moves with a Mover or Spline Follower on the same object.
 LSD_STRUCT(Component, Category = "Movement", Tooltip = "Something the player rides along its route without driving (trains, lifts, boats)")

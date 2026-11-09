@@ -733,6 +733,7 @@ void PlaySession::stop() {
     talking_ = false;
     my_avatar_ = {};
     moving_.clear();
+    cloths_.clear();
     driving_ = riding_ = {};
     play_clock_ = 0.0;
     nav_checked_ = 0.0;
@@ -963,6 +964,9 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     // Level geometry is static; RigidBody objects are simulated.
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         if (const world::Entity e = world.entity_at_slot(slot); e.valid()) add_entity_bodies(world, e);
+    }
+    for (u32 slot = 0; slot < world.slot_count(); ++slot) {
+        if (const world::Entity e = world.entity_at_slot(slot); e.valid() && world.get<world::Cloth>(e)) start_cloth(world, e);
     }
     add_joints(world, {});
     agent_count_ = 0;
@@ -1606,6 +1610,7 @@ world::Entity PlaySession::body_entity(u32 body) const {
 // Meshes with collision and Blocking Volumes become static bodies, RigidBody objects dynamic ones.
 void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) {
     if (world.get<world::Character>(e)) return;  // the player is the character controller, not a body
+    if (world.get<world::Cloth>(e) && world.get<world::StaticMesh>(e)) return;  // its mesh is the cloth (start_cloth)
     Vec3 scale, centre;
     const auto* mesh = world.get<world::StaticMesh>(e);
     const CachedMesh* cached = mesh ? meshes_->get(mesh->mesh) : nullptr;
@@ -2266,6 +2271,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         world.set_world_matrix(s.entity, physics_->body_transform(s.body) * translation(-mul(s.centre, s.scale)) * scaling(s.scale));
     }
     update_vehicle_wheels(world);
+    update_cloth(world);
     if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; car && car->vehicle != ~0u) place_rider(world);  // on the car where it is now
     if (world.alive(character_)) {
         Vec3 t, r, scale;
@@ -3182,6 +3188,78 @@ void PlaySession::add_physics_vehicle(const world::World& world, world::Entity e
     physics_->drive_vehicle(m.vehicle, 0.0f, 0.0f, 0.0f, 1.0f);  // parked
     m.parked = true;
     moving_.push_back(m);
+}
+
+// ---- Cloth ----
+
+// The Static Mesh's triangles (subdivided, in world space) become a soft body; the object draws "Cloth:<n>" from now on.
+void PlaySession::start_cloth(world::World& world, world::Entity e) {
+    const auto* cloth = world.get<world::Cloth>(e);
+    auto* mesh = world.get<world::StaticMesh>(e);
+    const MeshCache::Triangles* t = mesh ? meshes_->triangles(mesh->mesh) : nullptr;
+    if (!cloth || !t || t->indices.size() < 3) {
+        LSD_LOG_WARN("play", "%s: Cloth needs a Static Mesh with triangles", world.name(e));
+        return;
+    }
+    ClothRun run;
+    run.entity = e;
+    std::vector<rhi::MeshVertex>& v = run.mesh.vertices;
+    v.resize(t->points.size());
+    for (usize i = 0; i < v.size(); ++i) {
+        v[i] = rhi::MeshVertex{{t->points[i].x, t->points[i].y, t->points[i].z}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}};
+        if (t->uvs.size() >= (i + 1) * 2) v[i].uv[0] = t->uvs[i * 2], v[i].uv[1] = t->uvs[i * 2 + 1];
+    }
+    run.mesh.indices = t->indices;
+    // shortcut: each level quadruples the triangles; 5 on a big mesh is slow to simulate, an LOD-like cap when that bites
+    subdivide_cloth(v, run.mesh.indices, std::min(cloth->subdivide, 5u));
+    const Mat4 to_world = world.world_matrix(e);
+    for (rhi::MeshVertex& vertex : v) {
+        const Vec3 p = transform_point(to_world, {vertex.position[0], vertex.position[1], vertex.position[2]});
+        vertex.position[0] = p.x, vertex.position[1] = p.y, vertex.position[2] = p.z;
+    }
+    weld_cloth(run.mesh, 1e-4f);
+    // shortcut: pinned particles stay where Play started (not carried by a moving parent), skinned capes need SkinVertices
+    pin_cloth(run.mesh, cloth->pin, cloth->pin_amount);
+    physics::ClothDesc d;
+    d.points = run.mesh.particles.data();
+    d.point_count = static_cast<u32>(run.mesh.particles.size());
+    d.indices = run.mesh.particle_indices.data();
+    d.index_count = static_cast<u32>(run.mesh.particle_indices.size());
+    d.pinned = run.mesh.pinned.data();
+    d.mass = cloth->mass;
+    d.stiffness = cloth->stiffness;
+    d.damping = cloth->damping;
+    d.gravity_scale = cloth->gravity_scale;
+    d.thickness = cloth->thickness;
+    run.body = physics_->add_cloth(d);
+    if (run.body < kMaxBodies) body_entities_[run.body] = e;
+    run.points.resize(run.mesh.particles.size());
+    std::snprintf(run.key, sizeof run.key, "Cloth:%u", static_cast<unsigned>(cloths_.size()));
+    std::snprintf(mesh->mesh, sizeof mesh->mesh, "%s", run.key);  // Play's copy of the level: Stop loads the original back
+    cloths_.push_back(std::move(run));
+}
+
+void PlaySession::update_cloth(world::World& world) {
+    for (u32 k = 0; k < cloths_.size(); ++k) {
+        ClothRun& c = cloths_[k];
+        const auto* cloth = world.alive(c.entity) ? world.get<world::Cloth>(c.entity) : nullptr;
+        if (!cloth) continue;
+        // Gusts: the wind rises and falls on two slow waves (a different phase per cloth).
+        const f32 t = static_cast<f32>(play_clock_) + static_cast<f32>(k) * 1.7f;
+        const f32 gust = 1.0f + cloth->gustiness * (0.6f * std::sin(t * 1.3f) + 0.4f * std::sin(t * 3.7f + 1.0f));
+        physics_->set_cloth_wind(c.body, cloth->wind * std::max(gust, 0.0f));
+        const u32 n = physics_->cloth_points(c.body, c.points.data(), static_cast<u32>(c.points.size()));
+        if (n != c.points.size()) continue;
+        const Mat4 to_local = inverse(world.world_matrix(c.entity));  // drawn under the object's own matrix
+        for (Vec3& p : c.points) p = transform_point(to_local, p);
+        update_cloth_vertices(c.mesh, c.points.data());
+        render::MeshData data;
+        data.vertices = c.mesh.vertices.data();
+        data.indices = c.mesh.indices.data();
+        data.vertex_count = static_cast<u32>(c.mesh.vertices.size());
+        data.index_count = static_cast<u32>(c.mesh.indices.size());
+        meshes_->set_generated(c.key, data);  // shortcut: a fresh vertex buffer a frame (as Water does); a dynamic buffer if many cloths
+    }
 }
 
 // ---- Multiplayer seats: the server decides who sits where; the driver's machine owns the car. ----
