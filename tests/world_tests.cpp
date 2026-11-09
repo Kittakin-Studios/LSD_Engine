@@ -6,6 +6,7 @@
 #include "lsd/world/curve.h"
 #include "lsd/world/timeline.h"
 #include "lsd/world/water.h"
+#include "lsd/world/abilities.h"
 
 #include <cmath>
 #include <cstdio>
@@ -490,7 +491,122 @@ static void test_water() {  // Water Bodies: waves, the lake's rectangle, the ri
     CHECK(river_samples(w, river, points, left) >= 5 && std::fabs(left[0].y - 1.0f) < 1e-4f);
 }
 
+// Ability system rules: modifiers, clamping, stacking, periodic ticks, expiry, cost / cooldown / tag checks.
+static AttributeModifier modifier(const char* attribute, ModifierOp op, f32 magnitude) {
+    AttributeModifier m;
+    std::snprintf(m.attribute, sizeof m.attribute, "%s", attribute);
+    m.op = static_cast<u32>(op);
+    m.magnitude = magnitude;
+    return m;
+}
+
+static void test_abilities() {
+    auto close = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-3f; };
+    AttributeSet set;
+    const char* names[3] = {"Health", "MaxHealth", "Stamina"};
+    const f32 values[3] = {100, 100, 50};
+    for (u32 i = 0; i < 3; ++i) {
+        Attribute a;
+        std::snprintf(a.name, sizeof a.name, "%s", names[i]);
+        a.base = values[i];
+        set.attributes.push_back(a);
+    }
+    std::snprintf(find_attribute(set, "Health")->max_attribute, sizeof(Attribute::max_attribute), "MaxHealth");
+    recompute(set);
+    CHECK(close(find_attribute(set, "Health")->current, 100));
+
+    GameplayEffect hit;  // Instant: the base changes, clamped at Min 0
+    hit.modifiers.push_back(modifier("Health", ModifierOp::Add, -30));
+    CHECK(apply_effect(set, hit, "GE_Hit") && close(find_attribute(set, "Health")->base, 70) && set.effects.count == 0);
+    GameplayEffect heal;
+    heal.modifiers.push_back(modifier("Health", ModifierOp::Add, 500));
+    apply_effect(set, heal, "GE_Heal");
+    CHECK(close(find_attribute(set, "Health")->base, 100));  // clamped to MaxHealth
+
+    GameplayEffect buff;  // Has Duration: current only, gone when it ends
+    buff.duration_type = static_cast<u32>(EffectDuration::HasDuration);
+    buff.duration = 2;
+    buff.modifiers.push_back(modifier("MaxHealth", ModifierOp::Multiply, 1.5f));
+    buff.modifiers.push_back(modifier("Health", ModifierOp::Add, 25));
+    std::snprintf(buff.granted_tags, sizeof buff.granted_tags, "Status.Buffed");
+    buff.stacking = static_cast<u32>(EffectStacking::Stack);
+    buff.max_stacks = 2;
+    apply_effect(set, buff, "GE_Buff");
+    CHECK(close(find_attribute(set, "MaxHealth")->current, 150) && close(find_attribute(set, "Health")->current, 125) && close(find_attribute(set, "Health")->base, 100));
+    apply_effect(set, buff, "GE_Buff");
+    apply_effect(set, buff, "GE_Buff");  // capped at 2 stacks
+    CHECK(set.effects.count == 1 && set.effects[0].stacks == 2 && close(find_attribute(set, "Health")->current, 150));  // 100 + 50, MaxHealth 225
+    CHECK(!tick_effects(set, 1.0f) && set.effects.count == 1);
+    CHECK(tick_effects(set, 1.0f) && set.effects.count == 0 && close(find_attribute(set, "Health")->current, 100));
+
+    GameplayEffect poison;  // periodic: 5 ticks of -10 over 5 s, the first after 1 s
+    poison.duration_type = static_cast<u32>(EffectDuration::HasDuration);
+    poison.duration = 5;
+    poison.period = 1;
+    poison.modifiers.push_back(modifier("Health", ModifierOp::Add, -10));
+    poison.stacking = static_cast<u32>(EffectStacking::Refresh);
+    apply_effect(set, poison, "GE_Poison");
+    CHECK(close(find_attribute(set, "Health")->current, 100));
+    for (int i = 0; i < 300; ++i) tick_effects(set, 1.0f / 60.0f);
+    CHECK(close(find_attribute(set, "Health")->base, 50) && set.effects.count == 0);
+    apply_effect(set, poison, "GE_Poison");
+    tick_effects(set, 100.0f);  // one long step still ticks only within the 5 s
+    CHECK(close(find_attribute(set, "Health")->base, 0) && set.effects.count == 0);
+
+    GameplayEffect armor;  // Infinite until removed; Override wins
+    armor.duration_type = static_cast<u32>(EffectDuration::Infinite);
+    armor.modifiers.push_back(modifier("Stamina", ModifierOp::Override, 7));
+    apply_effect(set, armor, "GE_Armor");
+    apply_effect(set, armor, "GE_Armor");  // stacking None: two copies
+    tick_effects(set, 1000.0f);
+    CHECK(set.effects.count == 2 && close(find_attribute(set, "Stamina")->current, 7));
+    CHECK(remove_effect(set, "GE_Armor") == 2 && close(find_attribute(set, "Stamina")->current, 50));
+
+    // Abilities: cost, cooldown, tags.
+    GameplayEffect cost;
+    cost.modifiers.push_back(modifier("Stamina", ModifierOp::Add, -20));
+    GameplayAbility dash;
+    std::snprintf(dash.blocked_tags, sizeof dash.blocked_tags, "Status.Stunned");
+    std::snprintf(dash.required_tags, sizeof dash.required_tags, "Hero");
+    GrantedAbility state;
+    CHECK(can_activate(dash, state, "Hero", "", &set, &cost) == AbilityBlock::None);
+    CHECK(can_activate(dash, state, "Enemy", "", &set, &cost) == AbilityBlock::MissingTags);
+    CHECK(can_activate(dash, state, "Hero, Status.Stunned", "", &set, &cost) == AbilityBlock::BlockedTags);
+    CHECK(can_activate(dash, state, "Hero, Cooldown.Dash", "Cooldown.Dash", &set, &cost) == AbilityBlock::Cooldown);
+    find_attribute(set, "Stamina")->base = 10;
+    CHECK(can_activate(dash, state, "Hero", "", &set, &cost) == AbilityBlock::Cost && !can_afford(nullptr, cost));
+    AbilitySystem abilities;
+    state.cooldown_left = 1.0f;
+    state.active = true;
+    state.active_left = 0.5f;
+    std::snprintf(state.active_tags, sizeof state.active_tags, "State.Dashing");
+    abilities.abilities.push_back(state);
+    CHECK(can_activate(dash, abilities.abilities[0], "Hero", "", &set, nullptr) == AbilityBlock::Active);
+    u32 ended[4];
+    CHECK(tick_abilities(abilities, 0.6f, ended, 4) == 1 && ended[0] == 0 && !abilities.abilities[0].active && abilities.abilities[0].active_tags[0] == 0);
+    CHECK(can_activate(dash, abilities.abilities[0], "Hero", "", &set, nullptr) == AbilityBlock::Cooldown);
+    tick_abilities(abilities, 0.5f, ended, 4);
+    CHECK(can_activate(dash, abilities.abilities[0], "Hero", "", &set, nullptr) == AbilityBlock::None);
+
+    HeapAllocator heap("abilities");  // granted tags count as the object's own
+    {
+        World w(heap);
+        const Entity e = w.create("Hero");
+        std::snprintf(w.add<Tags>(e)->tags, sizeof(Tags::tags), "Hero");
+        AttributeSet* s = w.add<AttributeSet>(e);
+        GameplayEffect stun;
+        stun.duration_type = static_cast<u32>(EffectDuration::Infinite);
+        std::snprintf(stun.granted_tags, sizeof stun.granted_tags, "Status.Stunned");
+        apply_effect(*s, stun, "GE_Stun");
+        CHECK(has_tag(w, e, "Status") && has_tag(w, e, "Hero") && has_tags(w, e, "Hero, Status.Stunned", TagQuery::All));
+        remove_effect(*w.get<AttributeSet>(e), "GE_Stun");
+        CHECK(!has_tag(w, e, "Status"));
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
+    test_abilities();
     test_math();
     test_editor_only();
     test_sublevel();

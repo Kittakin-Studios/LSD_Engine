@@ -6,8 +6,9 @@ add_library(lsd_world STATIC
   src/curve.cpp
   src/timeline.cpp
   src/water.cpp
+  src/abilities.cpp
 )
 target_include_directories(lsd_world PUBLIC include)
 target_link_libraries(lsd_world PUBLIC lsd_foundation lsd_reflect)
 lsd_configure_target(lsd_world)
-lsd_reflect(lsd_world include/lsd/world/components.h include/lsd/world/curve.h include/lsd/world/user_types.h include/lsd/world/timeline.h)
+lsd_reflect(lsd_world include/lsd/world/components.h include/lsd/world/curve.h include/lsd/world/user_types.h include/lsd/world/timeline.h include/lsd/world/abilities.h)

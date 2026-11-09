@@ -8,6 +8,7 @@
 #include "lsd/asset/guid.h"
 #include "lsd/asset/localization.h"
 #include "lsd/foundation/log.h"
+#include "lsd/world/abilities.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/user_types.h"
 
@@ -1439,6 +1440,264 @@ struct Api {
         if (s.host_.damaged) s.host_.damaged(s.host_.user, target, amount, instigator);
         return 0;
     }
+
+    // ---- Ability system (rules in lsd/world/abilities.h) ----
+    // shortcut: runs wherever it is called and nothing is replicated (single player, or server-side scripts
+    // guarded by lsd.has_authority()); replicate AttributeSet / AbilitySystem when multiplayer games need it.
+    // A GameplayEffect / GameplayAbility asset by name or GUID; `name` gets its asset name (the file's stem).
+    static bool load_gameplay(ScriptSystem& s, const char* data_type, const char* key, const reflect::TypeInfo& type, void* out, char* name, usize capacity) {
+        char path[260];
+        if (!key[0] || !s.host_.data_path || !s.host_.data_path(s.host_.user, data_type, key, path, sizeof path) || !asset::load_data_asset(path, type, out)) return false;
+        const char* stem = path;
+        for (const char* p = path; *p; ++p) {
+            if (*p == '/' || *p == '\\') stem = p + 1;
+        }
+        const char* dot = std::strrchr(stem, '.');
+        std::snprintf(name, capacity, "%.*s", static_cast<int>(dot ? dot - stem : static_cast<std::ptrdiff_t>(std::strlen(stem))), stem);
+        return true;
+    }
+    struct AttributeValues {
+        u32 count;
+        f32 value[16];
+    };
+    static AttributeValues attribute_values(world::World& w, world::Entity e) {
+        AttributeValues v{};
+        if (world::AttributeSet* set = w.get<world::AttributeSet>(e)) {
+            world::recompute(*set);  // edited base values have no current one until something computes it
+            v.count = set->attributes.count;
+            for (u32 i = 0; i < v.count; ++i) v.value[i] = set->attributes[i].current;
+        }
+        return v;
+    }
+    // lsd.call(e, event, text, numbers... [, flag]): an event on e's scripts and native behaviours.
+    static void send_event(ScriptSystem& s, world::Entity e, const char* event, const char* text, const f64* numbers, int count, int flag = -1) {
+        lua_State* L = s.lua_;
+        lua_getglobal(L, "lsd");
+        lua_getfield(L, -1, "call");
+        lua_remove(L, -2);
+        lua_pushnumber(L, e.value);
+        lua_pushstring(L, event);
+        lua_pushstring(L, text);
+        for (int i = 0; i < count; ++i) lua_pushnumber(L, numbers[i]);
+        if (flag >= 0) lua_pushboolean(L, flag);
+        protected_call(L, 3 + count + (flag >= 0 ? 1 : 0), event);
+    }
+    // on_attribute_changed(self, name, value, old) for each current value that changed since `before`.
+    static void notify_attributes(ScriptSystem& s, world::Entity e, const AttributeValues& before) {
+        const world::AttributeSet* set = s.world_->get<world::AttributeSet>(e);
+        if (!set) return;
+        struct Change {
+            char name[32];
+            f64 values[2];
+        } changes[16];
+        u32 n = 0;
+        for (u32 i = 0; i < set->attributes.count; ++i) {
+            const f32 old = i < before.count ? before.value[i] : 0.0f;
+            if (i < before.count && set->attributes[i].current == old) continue;
+            std::snprintf(changes[n].name, sizeof changes[n].name, "%s", set->attributes[i].name);
+            changes[n].values[0] = set->attributes[i].current;
+            changes[n++].values[1] = old;
+        }
+        for (u32 i = 0; i < n; ++i) send_event(s, e, "on_attribute_changed", changes[i].name, changes[i].values, 2);  // scripts may change the world: copied first
+    }
+    static bool apply_effect_to(ScriptSystem& s, world::Entity target, const char* key) {
+        world::World& w = *s.world_;
+        world::GameplayEffect effect;
+        char name[64];
+        if (!w.alive(target) || !load_gameplay(s, "GameplayEffect", key, reflect::type_of<world::GameplayEffect>(), &effect, name, sizeof name)) return false;
+        const AttributeValues before = attribute_values(w, target);
+        if (!world::apply_effect(*w.add<world::AttributeSet>(target), effect, name)) {
+            LSD_LOG_WARN("script", "apply_effect: %s has 16 effects already, %s not applied", w.name(target), name);
+            return false;
+        }
+        // Gameplay Cue: a sound and / or particles at the target.
+        const Mat4 m = w.world_matrix(target);
+        const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        if (effect.cue_sound[0] && s.host_.play_sound) s.host_.play_sound(s.host_.user, effect.cue_sound, true, at);
+        if (effect.cue_effect[0] && s.host_.spawn) s.host_.spawn(s.host_.user, effect.cue_effect, at);
+        notify_attributes(s, target, before);
+        return true;
+    }
+    static int apply_effect(lua_State* L) {
+        const world::Entity e = entity(L, 1);
+        lua_pushboolean(L, apply_effect_to(system(L), e, luaL_checkstring(L, 2)));
+        return 1;
+    }
+    static int remove_effect(lua_State* L) {
+        ScriptSystem& s = system(L);
+        const world::Entity e = live_entity(L, 1);
+        const char* name = luaL_checkstring(L, 2);
+        const AttributeValues before = attribute_values(*s.world_, e);
+        world::AttributeSet* set = s.world_->get<world::AttributeSet>(e);
+        const u32 removed = set ? world::remove_effect(*set, name) : 0;
+        if (removed) notify_attributes(s, e, before);
+        lua_pushnumber(L, removed);
+        return 1;
+    }
+    static int attribute(lua_State* L) {
+        const world::Entity e = live_entity(L, 1);
+        const char* name = luaL_checkstring(L, 2);
+        world::AttributeSet* set = world(L).get<world::AttributeSet>(e);
+        if (set) world::recompute(*set);
+        const world::Attribute* a = set ? world::find_attribute(*set, name) : nullptr;
+        if (!a) {
+            lua_pushnil(L);
+            return 1;
+        }
+        lua_pushnumber(L, a->current);
+        lua_pushnumber(L, a->base);
+        return 2;
+    }
+    static int set_attribute(lua_State* L) {
+        ScriptSystem& s = system(L);
+        const world::Entity e = live_entity(L, 1);
+        const char* name = luaL_checkstring(L, 2);
+        const f32 value = static_cast<f32>(luaL_checknumber(L, 3));
+        const AttributeValues before = attribute_values(*s.world_, e);
+        world::AttributeSet& set = *s.world_->add<world::AttributeSet>(e);
+        if (!world::find_attribute(set, name)) {
+            world::Attribute fresh;
+            std::snprintf(fresh.name, sizeof fresh.name, "%s", name);
+            if (!set.attributes.push_back(fresh)) return luaL_error(L, "set_attribute: %s has 16 attributes already", s.world_->name(e));
+        }
+        world::GameplayEffect set_base;  // an Instant Override: the base changes and is clamped like any effect's
+        std::snprintf(set_base.modifiers.items[0].attribute, sizeof set_base.modifiers.items[0].attribute, "%s", name);
+        set_base.modifiers.items[0].op = static_cast<u32>(world::ModifierOp::Override);
+        set_base.modifiers.items[0].magnitude = value;
+        set_base.modifiers.count = 1;
+        world::apply_effect(set, set_base, "");
+        notify_attributes(s, e, before);
+        return 0;
+    }
+    // The slot of e's granted ability `name` (asset name, or the GUID Details stored); its name filled in. -1 if none.
+    static i32 ability_slot(ScriptSystem& s, world::Entity e, const char* name) {
+        world::AbilitySystem* abilities = s.world_->get<world::AbilitySystem>(e);
+        for (u32 i = 0; abilities && i < abilities->abilities.count; ++i) {
+            world::GrantedAbility& g = abilities->abilities[i];
+            if (!g.name[0]) {
+                world::GameplayAbility unused;
+                load_gameplay(s, "GameplayAbility", g.ability, reflect::type_of<world::GameplayAbility>(), &unused, g.name, sizeof g.name);
+            }
+            if (std::strcmp(g.name, name) == 0 || std::strcmp(g.ability, name) == 0) return static_cast<i32>(i);
+        }
+        return -1;
+    }
+    static world::GrantedAbility* granted(ScriptSystem& s, world::Entity e, i32 slot) {
+        world::AbilitySystem* abilities = slot >= 0 ? s.world_->get<world::AbilitySystem>(e) : nullptr;
+        return abilities && static_cast<u32>(slot) < abilities->abilities.count ? &abilities->abilities[static_cast<u32>(slot)] : nullptr;
+    }
+    static int give_ability(lua_State* L) {
+        ScriptSystem& s = system(L);
+        const world::Entity e = live_entity(L, 1);
+        world::GameplayAbility ability;
+        world::GrantedAbility g;
+        if (!load_gameplay(s, "GameplayAbility", luaL_checkstring(L, 2), reflect::type_of<world::GameplayAbility>(), &ability, g.name, sizeof g.name)) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+        lua_pushboolean(L, ability_slot(s, e, g.name) >= 0 || s.world_->add<world::AbilitySystem>(e)->abilities.push_back(g));
+        return 1;
+    }
+    static int try_activate_ability(lua_State* L) {
+        ScriptSystem& s = system(L);
+        world::World& w = *s.world_;
+        const world::Entity e = live_entity(L, 1);
+        const i32 slot = ability_slot(s, e, luaL_checkstring(L, 2));
+        world::GameplayAbility ability;
+        char name[64];
+        const world::GrantedAbility* g = granted(s, e, slot);
+        if (!g || !load_gameplay(s, "GameplayAbility", g->ability[0] ? g->ability : g->name, reflect::type_of<world::GameplayAbility>(), &ability, name, sizeof name)) {
+            lua_pushboolean(L, 0);
+            lua_pushstring(L, "no such ability");
+            return 2;
+        }
+        world::GameplayEffect cost, cooldown;
+        char unused[64];
+        const bool has_cost = load_gameplay(s, "GameplayEffect", ability.cost_effect, reflect::type_of<world::GameplayEffect>(), &cost, unused, sizeof unused);
+        const bool has_cooldown = load_gameplay(s, "GameplayEffect", ability.cooldown_effect, reflect::type_of<world::GameplayEffect>(), &cooldown, unused, sizeof unused);
+        char tags[1024];
+        world::owned_tags(w, e, tags, sizeof tags);
+        world::AttributeSet* set = w.get<world::AttributeSet>(e);
+        if (set) world::recompute(*set);
+        const world::AbilityBlock block = world::can_activate(ability, *g, tags, has_cooldown ? cooldown.granted_tags : "", set, has_cost ? &cost : nullptr);
+        if (block != world::AbilityBlock::None) {
+            lua_pushboolean(L, 0);
+            lua_pushstring(L, world::to_string(block));
+            return 2;
+        }
+        if (has_cost) apply_effect_to(s, e, ability.cost_effect);
+        if (has_cooldown) apply_effect_to(s, e, ability.cooldown_effect);
+        world::GrantedAbility* state = granted(s, e, slot);  // again: on_attribute_changed may have changed the world
+        if (state) {
+            state->active = true;
+            state->cooldown_left = ability.cooldown;
+            state->active_left = ability.active_seconds;
+            std::snprintf(state->active_tags, sizeof state->active_tags, "%s", ability.active_tags);
+            state->montage = false;
+            if (ability.montage[0] && s.host_.play_montage) {
+                const f32 seconds = s.host_.play_montage(s.host_.user, e, ability.montage, 1.0f, "", 0.2f, false, "Default");
+                state->montage = seconds > 0.0f;
+                if (ability.active_seconds <= 0.0f) state->active_left = seconds;
+            }
+        }
+        if (ability.function[0]) send_event(s, e, ability.function, name, nullptr, 0);
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    static int finish_ability(lua_State* L, bool cancelled) {
+        ScriptSystem& s = system(L);
+        const world::Entity e = live_entity(L, 1);
+        world::GrantedAbility* g = granted(s, e, ability_slot(s, e, luaL_checkstring(L, 2)));
+        if (!g || !g->active) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+        g->active = false;
+        g->active_tags[0] = '\0';
+        if (cancelled && g->montage && s.host_.stop_montage) s.host_.stop_montage(s.host_.user, e, 0.2f, "Default");
+        char name[64];
+        std::snprintf(name, sizeof name, "%s", g->name);
+        send_event(s, e, "on_ability_ended", name, nullptr, 0, cancelled ? 1 : 0);
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    static int end_ability(lua_State* L) { return finish_ability(L, false); }
+    static int cancel_ability(lua_State* L) { return finish_ability(L, true); }
+    static int ability_cooldown(lua_State* L) {
+        ScriptSystem& s = system(L);
+        const world::Entity e = live_entity(L, 1);
+        const world::GrantedAbility* g = granted(s, e, ability_slot(s, e, luaL_checkstring(L, 2)));
+        lua_pushnumber(L, g ? g->cooldown_left : 0.0f);
+        return 1;
+    }
+    // Every frame before on_update: effect timers and periodic ticks, ability cooldowns and active time.
+    static void tick_gameplay(ScriptSystem& s, f32 dt) {
+        world::World& w = *s.world_;
+        constexpr u32 kMax = 256;  // shortcut: up to 256 objects with effects (and 256 with abilities) tick a frame, enough for now
+        world::Entity due[kMax];
+        u32 n = 0;
+        const reflect::TypeInfo& sets = reflect::type_of<world::AttributeSet>();
+        for (u32 i = 0; i < w.count(sets) && n < kMax; ++i) {
+            if (static_cast<const world::AttributeSet*>(w.at(sets, i))->effects.count) due[n++] = w.owner(sets, i);
+        }
+        for (u32 i = 0; i < n; ++i) {  // owners first: scripts called back may add or destroy objects
+            const AttributeValues before = attribute_values(w, due[i]);
+            world::AttributeSet* set = w.alive(due[i]) ? w.get<world::AttributeSet>(due[i]) : nullptr;
+            if (set && world::tick_effects(*set, dt)) notify_attributes(s, due[i], before);
+        }
+        n = 0;
+        const reflect::TypeInfo& systems = reflect::type_of<world::AbilitySystem>();
+        for (u32 i = 0; i < w.count(systems) && n < kMax; ++i) due[n++] = w.owner(systems, i);
+        for (u32 i = 0; i < n; ++i) {
+            world::AbilitySystem* abilities = w.alive(due[i]) ? w.get<world::AbilitySystem>(due[i]) : nullptr;
+            if (!abilities) continue;
+            u32 ended[16];
+            char names[16][64];
+            const u32 k = world::tick_abilities(*abilities, dt, ended, 16);
+            for (u32 j = 0; j < k; ++j) std::snprintf(names[j], sizeof names[j], "%s", abilities->abilities[ended[j]].name);
+            for (u32 j = 0; j < k; ++j) send_event(s, due[i], "on_ability_ended", names[j], nullptr, 0, 0);
+        }
+    }
     static int rebuild_navmesh(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         lua_pushboolean(L, host.rebuild_navmesh && host.rebuild_navmesh(host.user));
@@ -2047,6 +2306,9 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"input_record", Api::input_record}, {"input_play", Api::input_play}, {"input_stop", Api::input_stop},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"ragdoll", Api::ragdoll}, {"set_material_parameter", Api::set_material_parameter}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"anim_curve", Api::anim_curve}, {"set_motion_tag", Api::set_motion_tag}, {"set_morph", Api::set_morph}, {"morph_names", Api::morph_names}, {"set_outfit", Api::set_outfit}, {"assets", Api::assets}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
+        {"apply_effect", Api::apply_effect}, {"remove_effect", Api::remove_effect}, {"attribute", Api::attribute}, {"set_attribute", Api::set_attribute},
+        {"give_ability", Api::give_ability}, {"try_activate_ability", Api::try_activate_ability}, {"end_ability", Api::end_ability},
+        {"cancel_ability", Api::cancel_ability}, {"ability_cooldown", Api::ability_cooldown},
     };
     lua_newtable(lua_);
     for (const luaL_Reg& r : api) {
@@ -2068,6 +2330,8 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     run(kSandbox, "=lsd sandbox");
     update_hook();  // breakpoints set before Play
 
+    const reflect::TypeInfo& sets = reflect::type_of<world::AttributeSet>();
+    for (u32 i = 0; i < world.count(sets); ++i) world::recompute(*static_cast<world::AttributeSet*>(world.at(sets, i)));  // current values from the edited bases
     const reflect::TypeInfo& type = reflect::type_of<world::Script>();
     for (u32 i = 0; i < world.count(type); ++i) add_instance(world.owner(type, i), static_cast<const world::Script*>(world.at(type, i))->script);
     create_natives();  // before any on_start, so events sent from one reach the behaviours too
@@ -2407,6 +2671,7 @@ void ScriptSystem::update(f32 dt) {
     lua_getfield(lua_, -1, "_tick");
     lua_remove(lua_, -2);
     protected_call(lua_, 0, "timers");
+    Api::tick_gameplay(*this, dt);
     if (check_files) js::update(js_);
     const f64 dt_arg = dt;
     for (u32 i = 0; i < count_; ++i) {

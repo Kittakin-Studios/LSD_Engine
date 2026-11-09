@@ -1401,6 +1401,54 @@ stop on lines that start a statement; on a line that continues one (a `.then(...
 literal's fields) the stop comes at the next statement. Only Play from the editor is instrumented; a
 packaged game runs the scripts as written.
 
+### Abilities, effects and attributes (Gameplay Ability System)
+
+The smallest version of Unreal's Gameplay Ability System, set up in Details and driven from scripts:
+
+1. **Attributes**: Details > Add Component > **Attribute Set** on the object (Unreal's Attribute Set). Add
+   rows: **Name** (Health, MaxHealth, Stamina...), **Base**, **Min** (default 0), **Max** (0 = none) or
+   **Max Attribute** (Health: `MaxHealth`). **Current** is the base with the lasting effects on it, clamped;
+   in Play the **Effects** list shows what is on the object.
+2. **Effects**: Content Browser > New Data Asset > **GameplayEffect** (Unreal's Gameplay Effect).
+   **Duration Type**: Instant (changes the base for good: damage, healing, costs), Has Duration (lasts
+   **Duration** seconds: a buff) or Infinite (until `lsd.remove_effect`). **Modifiers**: attribute + Add /
+   Multiply / Override + magnitude (-10 with Add is 10 damage). **Period** (damage over time): every Period
+   seconds the modifiers change the base, the first one a Period after it is applied (5 s, period 1 = 5 ticks).
+   **Granted Tags**: gameplay tags the target has while it lasts (`lsd.has_tag` and Has Tag see them).
+   **Stacking**: None (another copy), Refresh (timer starts over), Stack (one more stack up to Max Stacks;
+   modifiers count once per stack). **Cue Sound** / **Cue Effect** (Gameplay Cues): a sound and a particle
+   system / prefab, by asset name, played at the target when it is applied.
+3. **Abilities**: New Data Asset > **GameplayAbility** (Unreal's Gameplay Ability): **Cost Effect** (an Instant
+   effect on the owner, e.g. Stamina -20; it cannot activate if that takes an attribute below its Min),
+   **Cooldown** seconds and / or a **Cooldown Effect** (blocked while the owner has its granted tags),
+   **Required Tags** (all needed), **Blocked Tags** (any blocks: Status.Stunned), **Active Tags** (granted while
+   it runs), **Function** (called on the owner's scripts: `function dash(self, ability)`), **Montage** (an
+   animation played on the owner), **Active Seconds** (0 = the montage's length, or it ends at once).
+4. Give the object an **Ability System** component and add the abilities (or `lsd.give_ability(e, "GA_Dash")`).
+
+```lua
+function on_start(self)
+  lsd.apply_effect(self.entity, "GE_Burning")            -- by asset name
+end
+function on_update(self, dt)
+  if lsd.pressed("IA_Dash") then
+    local ok, why = lsd.try_activate_ability(self.entity, "GA_Dash")   -- why: "cooldown", "cost", "blocked"...
+  end
+end
+function dash(self, ability) lsd.log("dashing") end                     -- the ability's Function
+function on_attribute_changed(self, name, value, old)                     -- Health, Stamina... changed
+  if name == "Health" then lsd.health_bar(self.entity, value / lsd.attribute(self.entity, "MaxHealth")) end
+end
+function on_ability_ended(self, ability, cancelled) end
+```
+
+Visual scripts: **Abilities** nodes (Apply Gameplay Effect, Remove Gameplay Effect, Try Activate Ability,
+Cancel Ability, Give Ability, Get Attribute, Set Attribute) and **Event Attribute Changed** / **Event Ability
+Ended**. C / C++ and JavaScript call the same `lsd` functions. Limits: it runs where it is called and is not
+replicated (in multiplayer, call it on the server: `lsd.has_authority()`), at most 16 attributes, 16 effects
+and 16 abilities per object, no attribute-based magnitudes or effect executions (compute the number in a script
+and use `lsd.set_attribute`).
+
 ## 10. Visual scripting
 
 ![A visual script (Interact_System)](images/ed_visual_script.jpg)
@@ -2269,7 +2317,7 @@ in the project folder, the splash too).
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
 | Physics | Rigid Body, Physics Joint |
-| Gameplay | Player Start, Character, Script, Tags (the **+** button picks from Project Settings > Gameplay Tags), Spline, Spline Follower |
+| Gameplay | Player Start, Character, Script, Tags (the **+** button picks from Project Settings > Gameplay Tags), Spline, Spline Follower, Attribute Set, Ability System ([abilities](#abilities-effects-and-attributes-gameplay-ability-system)) |
 | Audio / Effects | Sound Emitter, Particle Effect |
 | AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller |
 | Prefab | Prefab Instance (added for you) |
@@ -2320,6 +2368,13 @@ Audio and animation
 | `lsd.on_ui(action, fn)` | a UI action (onclick / onchange name) handled once, engine-wide, before scripts' functions |
 | `lsd.rebuild_navmesh()` | builds the navmesh again now (after moving walls or doors); agents keep walking |
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
+| `lsd.attribute(e, name)` | an Attribute Set value: current, base (nil if none) |
+| `lsd.set_attribute(e, name, base)` | sets the base (clamped; added if missing); `on_attribute_changed(self, name, value, old)` runs on change |
+| `lsd.apply_effect(target, effect)`, `lsd.remove_effect(target, effect)` | a Gameplay Effect by asset name: ok / how many removed |
+| `lsd.give_ability(e, ability)` | adds a Gameplay Ability to e's Ability System; false if no such asset |
+| `lsd.try_activate_ability(e, ability)` | ok, why ("cooldown", "cost", "blocked", "missing tags", "active"): pays the cost, starts the cooldown, runs its Function / Montage |
+| `lsd.end_ability(e, ability)`, `lsd.cancel_ability(e, ability)` | ends it early (cancel also stops its montage); `on_ability_ended(self, ability, cancelled)` |
+| `lsd.ability_cooldown(e, ability)` | cooldown seconds left |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
 | `lsd.ragdoll(e[, on])` | e's skeletal mesh (or its child's) falls as a ragdoll (true, default) or animates again (false) |

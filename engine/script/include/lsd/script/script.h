@@ -67,6 +67,15 @@
 //   lsd.report_noise(x, y, z [, loudness]) AI Controllers in hearing range set NoiseLocation
 //   lsd.rebuild_navmesh() -> ok           builds the navmesh again now (after moving walls or doors); agents keep walking
 //   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
+// Ability system (Unreal's Gameplay Ability System; lsd/world/abilities.h): effects and abilities by asset name.
+//   lsd.attribute(e, name) -> current, base | nil, lsd.set_attribute(e, name, base)   an Attribute Set's values
+//   lsd.apply_effect(target, effect) -> ok, lsd.remove_effect(target, effect) -> count   Gameplay Effects
+//   lsd.give_ability(e, ability) -> ok    adds it to e's Ability System
+//   lsd.try_activate_ability(e, ability) -> ok, why   checks cooldown / tags / cost ("cooldown", "blocked",
+//                                         "missing tags", "cost", "active"), pays the cost, starts the cooldown
+//   lsd.end_ability(e, ability), lsd.cancel_ability(e, ability) -> ok, lsd.ability_cooldown(e, ability) -> seconds
+// Events: on_attribute_changed(self, name, value, old), the ability's Function(self, ability),
+// on_ability_ended(self, ability, cancelled). Effects' granted tags count for lsd.has_tag.
 //   lsd.ui_open(name) -> doc              a UI document (.rml) by asset name over the game; nil if none
 //   lsd.ui_close(doc), lsd.ui_set_text(doc, id, text), lsd.ui_set(doc, id, attribute, value)
 //   lsd.ui_value(doc, id) -> text         a text field's value

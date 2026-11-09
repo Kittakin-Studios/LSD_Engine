@@ -1399,7 +1399,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     }
     host.data_path = [](void* user, const char* data_type, const char* name, char* out, usize capacity) {
         const auto& self = *static_cast<const PlaySession*>(user);
-        const asset::AssetRecord* r = self.find_asset(asset::AssetType::Data, name);
+        asset::Guid guid;  // asset fields (an ability's Cost Effect) hold GUIDs; scripts use names
+        const asset::AssetRecord* r = asset::parse_guid(name, guid) ? self.registry_->find(guid) : self.find_asset(asset::AssetType::Data, name);
         const bool ok = r && std::strcmp(r->data_type, data_type) == 0;
         if (ok) self.registry_->source_path(*r, out, capacity);
         return ok;

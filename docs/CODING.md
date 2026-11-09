@@ -366,6 +366,8 @@ api("play_music", "Theme", 2.0);                       // lsd.play_music("Theme"
 float length = api("spline_length", track).number();   // results by position
 api("set_view", camera, 1.5);
 api("save_game", "slot1", 42);
+bool dashed = api("try_activate_ability", self, "GA_Dash").boolean();  // abilities, effects, attributes too
+float health = api("attribute", self, "Health").number();
 ```
 
 In C: `lsd_lua_call("play_music", "[\"Theme\", 2]", out, sizeof out)` with the arguments as a JSON
