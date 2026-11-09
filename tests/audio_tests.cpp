@@ -1,5 +1,6 @@
 // Audio tests without a sound card: the engine is mixed by hand (read_frames) and measured.
 #include "lsd/audio/audio.h"
+#include "lsd/audio/dsp.h"
 
 #include <cmath>
 #include <cstdio>
@@ -67,9 +68,140 @@ static void test_meters() {
     a.shutdown();
 }
 
+
+// Sound Synth building blocks and a whole program, rendered offline into a buffer.
+static void test_synth() {
+    u32 noise = 1;
+    CHECK(std::fabs(synth_oscillator(SynthShape::Sine, 0.25, noise) - 1.0f) < 1e-5f);
+    CHECK(synth_oscillator(SynthShape::Saw, 0.0, noise) == -1.0f && synth_oscillator(SynthShape::Square, 0.75, noise) == -1.0f);
+    f32 lo = 1.0f, hi = -1.0f;
+    for (int i = 0; i < 1000; ++i) {
+        const f32 n = synth_oscillator(SynthShape::Noise, 0.0, noise);
+        lo = n < lo ? n : lo;
+        hi = n > hi ? n : hi;
+    }
+    CHECK(lo >= -1.0f && hi <= 1.0f && hi - lo > 1.5f);
+
+    // ADSR at 1 kHz: 10 ms attack, 10 ms decay to 0.5, release 20 ms.
+    f32 level = 0.0f, stage = 0.0f;
+    for (int i = 0; i < 10; ++i) synth_envelope(true, 0.01f, 0.01f, 0.5f, 0.02f, 1000.0f, level, stage);
+    CHECK(level == 1.0f && stage == 2.0f);
+    for (int i = 0; i < 30; ++i) synth_envelope(true, 0.01f, 0.01f, 0.5f, 0.02f, 1000.0f, level, stage);
+    CHECK(std::fabs(level - 0.5f) < 1e-4f && stage == 3.0f);
+    for (int i = 0; i < 9; ++i) synth_envelope(false, 0.01f, 0.01f, 0.5f, 0.02f, 1000.0f, level, stage);
+    CHECK(level > 0.0f && stage == 4.0f);
+    for (int i = 0; i < 2; ++i) synth_envelope(false, 0.01f, 0.01f, 0.5f, 0.02f, 1000.0f, level, stage);
+    CHECK(level == 0.0f && stage == 0.0f);
+
+    // Filters: a 10 kHz sine through a 500 Hz low pass is quiet, through a high pass it stays.
+    auto through = [](bool high, f32 freq) {
+        f32 s1 = 0.0f, s2 = 0.0f, peak = 0.0f;
+        for (int i = 0; i < 4800; ++i) {
+            const f32 y = synth_filter(std::sin(static_cast<f32>(i) * 6.2831853f * freq / 48000.0f), 500.0f, 0.0f, high, 48000.0f, s1, s2);
+            if (i > 2400) peak = std::fmax(peak, std::fabs(y));
+        }
+        return peak;
+    };
+    CHECK(through(false, 10000.0f) < 0.02f && through(false, 50.0f) > 0.9f);
+    CHECK(through(true, 10000.0f) > 0.9f && through(true, 50.0f) < 0.05f);
+
+    // A program: param "pitch" -> sine (amplitude by an envelope gated by trigger "hit"), into a gain.
+    auto* program = new SynthProgram();
+    SynthProgram& p = *program;
+    std::snprintf(p.params[0], sizeof p.params[0], "pitch");
+    p.param_defaults[0] = 1000.0f;
+    std::snprintf(p.params[1], sizeof p.params[1], "hit");
+    p.param_count = 2;
+    p.nodes[0].op = SynthOp::Param;
+    p.nodes[0].slot = 0;
+    p.nodes[1].op = SynthOp::Trigger;
+    p.nodes[1].slot = 1;
+    p.nodes[1].b = 0.05f;
+    p.nodes[2].op = SynthOp::Envelope;
+    p.nodes[2].in[0].node = 1;
+    p.nodes[2].a = 0.001f;
+    p.nodes[2].b = 0.001f;
+    p.nodes[2].c = 1.0f;
+    p.nodes[2].d = 0.001f;
+    p.nodes[3].op = SynthOp::Oscillator;
+    p.nodes[3].mode = static_cast<u8>(SynthShape::Sine);
+    p.nodes[3].in[0].node = 0;
+    p.nodes[3].in[1].node = 2;
+    p.nodes[4].op = SynthOp::Gain;
+    p.nodes[4].in[0].node = 3;
+    p.nodes[4].in[1].value = 0.5f;
+    p.count = 5;
+    p.output.node = 4;
+    p.duration = 0.5f;
+    auto* state = new SynthState();
+    synth_reset(p, *state);
+    static f32 buffer[48000];
+    auto peak_of = [](const f32* b, u32 n) {
+        f32 m = 0.0f;
+        for (u32 i = 0; i < n; ++i) m = std::fmax(m, std::fabs(b[i]));
+        return m;
+    };
+    CHECK(synth_render(p, *state, buffer, 4800, 48000) == 4800);
+    CHECK(peak_of(buffer, 4800) == 0.0f);  // no trigger yet: silent
+    CHECK(synth_set_param(p, *state, "hit", 1.0f) && !synth_set_param(p, *state, "nope", 1.0f));
+    synth_render(p, *state, buffer, 1200, 48000);  // 25 ms into a 50 ms pulse
+    CHECK(std::fabs(peak_of(buffer + 200, 1000) - 0.5f) < 0.01f);
+    u32 crossings = 0;  // 1000 Hz: about 2 zero crossings per millisecond
+    for (u32 i = 201; i < 1200; ++i) crossings += (buffer[i - 1] < 0.0f) != (buffer[i] < 0.0f);
+    CHECK(crossings >= 40 && crossings <= 44);
+    synth_set_param(p, *state, "pitch", 2000.0f);  // live from the game thread
+    synth_render(p, *state, buffer, 960, 48000);
+    crossings = 0;
+    for (u32 i = 1; i < 960; ++i) crossings += (buffer[i - 1] < 0.0f) != (buffer[i] < 0.0f);
+    CHECK(crossings >= 76 && crossings <= 82);
+    synth_render(p, *state, buffer, 4800, 48000);  // pulse over, envelope released
+    CHECK(peak_of(buffer + 2400, 2400) == 0.0f);
+    CHECK(synth_render(p, *state, buffer, 48000, 48000) < 48000);  // duration 0.5 s: ends
+
+    // A Wave node playing a decoded buffer once, then looping.
+    static f32 wave[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+    SynthProgram& w = *program;
+    w = SynthProgram();
+    w.nodes[0].op = SynthOp::Wave;
+    w.nodes[0].slot = 0;
+    w.count = 1;
+    w.output.node = 0;
+    w.wave_count = 1;
+    w.wave_data[0] = wave;
+    w.wave_frames[0] = 4;
+    synth_reset(w, *state);
+    synth_render(w, *state, buffer, 6, 48000);
+    CHECK(buffer[0] == 0.1f && buffer[3] == 0.4f && buffer[4] == 0.0f);
+    w.nodes[0].mode = 1;
+    synth_reset(w, *state);
+    synth_render(w, *state, buffer, 6, 48000);
+    CHECK(buffer[4] == 0.1f && buffer[5] == 0.2f);
+    delete state;
+    delete program;
+}
+
+// The music clock and stems, and the distance helpers for spatial sounds.
+static void test_music_and_distance() {
+    // 120 bpm, 4/4: a beat is 0.5 s, a bar 2 s.
+    CHECK(std::fabs(music_next_boundary(0.3f, 120.0f, 4, false) - 0.2f) < 1e-4f);
+    CHECK(std::fabs(music_next_boundary(0.3f, 120.0f, 4, true) - 1.7f) < 1e-4f);
+    CHECK(std::fabs(music_next_boundary(2.1f, 120.0f, 4, true) - 1.9f) < 1e-4f);
+    CHECK(music_next_boundary(4.0f, 120.0f, 4, true) == 0.0f);  // on the bar: now
+    CHECK(music_next_boundary(1.0f, 0.0f, 4, true) == 0.0f);
+    CHECK(music_stem_gain(0.0f, 0.3f, 0.6f) == 0.0f && music_stem_gain(0.45f, 0.3f, 0.6f) > 0.49f && music_stem_gain(0.45f, 0.3f, 0.6f) < 0.51f);
+    CHECK(music_stem_gain(1.0f, 0.3f, 0.6f) == 1.0f && music_stem_gain(0.5f, 0.5f, 0.5f) == 1.0f && music_stem_gain(0.4f, 0.5f, 0.5f) == 0.0f);
+    CHECK(distance_fraction(1.0f, 2.0f, 40.0f) == 0.0f && distance_fraction(21.0f, 2.0f, 40.0f) == 0.5f && distance_fraction(90.0f, 2.0f, 40.0f) == 1.0f);
+    CHECK(air_absorption_cutoff(1.0f, 2.0f, 40.0f, 2000.0f) == 20000.0f);
+    CHECK(std::fabs(air_absorption_cutoff(40.0f, 2.0f, 40.0f, 2000.0f) - 2000.0f) < 1.0f);
+    const f32 mid = air_absorption_cutoff(21.0f, 2.0f, 40.0f, 2000.0f);
+    CHECK(mid > 6000.0f && mid < 6700.0f);  // log-spaced: sqrt(20000 * 2000)
+}
+
 int main() {
     write_tone();
     test_meters();
+    test_synth();
+    test_music_and_distance();
     AudioSystem a;
     CHECK(a.init(false) && !a.has_device());
     CHECK(loudness(a) == 0.0f);  // nothing playing: silence
