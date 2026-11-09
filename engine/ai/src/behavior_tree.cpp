@@ -91,17 +91,16 @@ bool Blackboard::is_set(const char* name) const {
     return e && (e->vector || e->value[0] != 0.0f);
 }
 
-namespace {
-
-// Compare / Condition: key <op> value, or (Condition) set / not set.
-bool test_key(const Blackboard& board, const BtNode& n) {
-    if (n.op == 4) return board.is_set(n.key);
-    if (n.op == 5) return !board.is_set(n.key);
-    const Blackboard::Entry* e = board.find(n.key);
+bool test_key(const Blackboard& board, const char* key, u32 op, f32 value) {
+    if (op == 4) return board.is_set(key);
+    if (op == 5) return !board.is_set(key);
+    const Blackboard::Entry* e = board.find(key);
     const f32 v = e ? e->value[0] : 0.0f;
-    return n.op == 0 ? v > n.value : n.op == 1 ? v < n.value : n.op == 2 ? v == n.value : v != n.value;
+    return op == 0 ? v > value : op == 1 ? v < value : op == 2 ? v == value : v != value;
 }
 
+namespace {
+bool test_key(const Blackboard& board, const BtNode& n) { return test_key(board, n.key, n.op, n.value); }
 } // namespace
 
 // ---- Runner ----
@@ -110,7 +109,8 @@ void BtRunner::abort(const BehaviorTree& tree, u32 index, const BtHost& host) {
     State& s = states_[index];
     if (!s.running) return;
     const BtNode& n = tree.nodes[index];
-    if (n.type == BtType::MoveTo && host.stop && !moved_) host.stop(host.user);
+    if ((n.type == BtType::MoveTo || n.type == BtType::UseSmartObject) && host.stop && !moved_) host.stop(host.user);
+    if (s.claim >= 0 && host.release_smart_object) host.release_smart_object(host.user, s.claim);
     for (u32 c = 0; c < n.child_count; ++c) abort(tree, n.children[c], host);
     s = State{};
 }
@@ -247,6 +247,43 @@ BtStatus BtRunner::run(const BehaviorTree& tree, u32 index, Blackboard& board, c
             }
             break;
         }
+        case BtType::UseSmartObject: {
+            if (!resumed) {
+                s.claim = host.claim_smart_object ? host.claim_smart_object(host.user, n.text, n.value, s.target) : -1;
+                s.used = -1.0f;
+                if (s.claim < 0 || !host.move_to || !host.move_to(host.user, s.target, 0.3f)) break;
+                moved_ = true;
+            }
+            if (s.used < 0.0f) {  // walking to the slot
+                const Vec3 d = host.position ? s.target - host.position(host.user) : Vec3{};
+                const f32 gap = d.x * d.x + d.y * d.y;
+                const bool walking = host.moving && host.moving(host.user);
+                if (gap > 0.5f * 0.5f && walking) {
+                    result = BtStatus::Running;
+                    break;
+                }
+                if (gap > 1.5f * 1.5f) break;  // stopped short (blocked): the claim is let go
+                if (host.stop) host.stop(host.user);
+                s.used = 0.0f;
+            } else {
+                s.used += dt;
+            }
+            const int r = host.use_smart_object ? host.use_smart_object(host.user, s.claim, s.used) : 1;
+            if (r == 2) {
+                result = BtStatus::Running;
+                break;
+            }
+            result = r == 1 ? BtStatus::Success : BtStatus::Failure;
+            break;
+        }
+        case BtType::RunQuery: {
+            Vec3 point;
+            if (host.run_query && host.run_query(host.user, n.text, point)) {
+                board.set(n.key, point);
+                result = BtStatus::Success;
+            }
+            break;
+        }
         case BtType::RunScript: {
             const int r = host.run_script ? host.run_script(host.user, n.text, dt) : -1;
             result = r == 1 ? BtStatus::Success : r == 2 ? BtStatus::Running : BtStatus::Failure;
@@ -255,10 +292,14 @@ BtStatus BtRunner::run(const BehaviorTree& tree, u32 index, Blackboard& board, c
     }
     s.running = result == BtStatus::Running;
     s.ok = result != BtStatus::Failure;
+    if (!s.running && s.claim >= 0) {  // finished, failed or never got there: the slot is free again
+        if (host.release_smart_object) host.release_smart_object(host.user, s.claim);
+        s.claim = -1;
+    }
     return result;
 }
 
-void BtRunner::tick(const BehaviorTree& tree, Blackboard& board, const BtHost& host, f32 dt) {
+BtStatus BtRunner::tick(const BehaviorTree& tree, Blackboard& board, const BtHost& host, f32 dt) {
     if (tree_ != &tree) {  // a new (or reloaded) tree: start clean
         for (State& s : states_) s = State{};
         tree_ = &tree;
@@ -266,7 +307,7 @@ void BtRunner::tick(const BehaviorTree& tree, Blackboard& board, const BtHost& h
     moved_ = false;
     clock_ += dt;
     for (State& s : states_) s.ok = false;
-    if (tree.count) run(tree, 0, board, host, dt);
+    return tree.count ? run(tree, 0, board, host, dt) : BtStatus::Failure;
 }
 
 void BtRunner::reset(const BtHost& host) {

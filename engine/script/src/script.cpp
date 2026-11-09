@@ -1429,6 +1429,35 @@ struct Api {
         if (host.report_noise) host.report_noise(host.user, at, static_cast<f32>(luaL_optnumber(L, 4, 1.0)));
         return 0;
     }
+    static int claim_smart_object(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        Vec3 slot;
+        const world::Entity object = host.claim_smart_object
+            ? host.claim_smart_object(host.user, live_entity(L, 1), luaL_optstring(L, 2, ""), static_cast<f32>(luaL_optnumber(L, 3, 15.0)), slot)
+            : world::Entity{};
+        if (!object.valid()) {
+            lua_pushnil(L);
+            return 1;
+        }
+        lua_pushnumber(L, object.value);
+        push_vec3(L, slot);
+        return 4;
+    }
+    static int release_smart_object(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.release_smart_object) host.release_smart_object(host.user, live_entity(L, 1));
+        return 0;
+    }
+    static int run_query(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        Vec3 best;
+        if (!host.run_query || !host.run_query(host.user, live_entity(L, 1), luaL_checkstring(L, 2), best)) {
+            lua_pushnil(L);
+            return 1;
+        }
+        push_vec3(L, best);
+        return 3;
+    }
     static int apply_damage(lua_State* L) {
         ScriptSystem& s = system(L);
         const world::Entity target = entity(L, 1);
@@ -2294,7 +2323,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"save_game_async", Api::save_game_async}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
-        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"apply_damage", Api::apply_damage}, {"rebuild_navmesh", Api::rebuild_navmesh}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
+        {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"claim_smart_object", Api::claim_smart_object}, {"release_smart_object", Api::release_smart_object}, {"run_query", Api::run_query}, {"apply_damage", Api::apply_damage}, {"rebuild_navmesh", Api::rebuild_navmesh}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow}, {"ui_style", Api::ui_style}, {"ui_rml", Api::ui_rml}, {"_ui_open_text", Api::ui_open_text},
         {"ui_play_animation", Api::ui_play_animation}, {"ui_animate", Api::ui_animate},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},

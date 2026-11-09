@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <memory>
 #include <string>
 
 static int g_failures = 0;
@@ -804,6 +805,36 @@ static void test_run_behavior() {
     std::filesystem::remove(sub_path);
 }
 
+// A State Tree asset becomes the runner's tree: tasks by kind, transitions by state name (an unknown name fails).
+static void test_state_tree_asset() {
+    auto data = std::make_unique<world::StateTreeData>();
+    data->states.count = 2;
+    std::snprintf(data->states[0].name, sizeof data->states[0].name, "Idle");
+    std::snprintf(data->states[1].name, sizeof data->states[1].name, "Sit");
+    data->states[0].tasks.count = 1;
+    data->states[0].tasks[0].kind = 1;  // Wait
+    data->states[0].tasks[0].value = 2.0f;
+    data->states[0].transitions.count = 1;
+    std::snprintf(data->states[0].transitions[0].to_state, sizeof data->states[0].transitions[0].to_state, "Sit");
+    data->states[1].tasks.count = 1;
+    data->states[1].tasks[0].kind = 6;  // Use Smart Object
+    std::snprintf(data->states[1].tasks[0].text, sizeof data->states[1].tasks[0].text, "Bench");
+    auto tree = std::make_unique<ai::StateTree>();
+    char error[128] = "";
+    CHECK(editor::build_state_tree(*data, *tree, error, sizeof error));
+    CHECK(tree->count == 2 && tree->states[0].tasks[0].type == ai::BtType::Wait && tree->states[0].transitions[0].target == 1);
+    CHECK(tree->states[0].transitions[0].trigger == ai::StTrigger::Completed);
+    CHECK(tree->states[1].tasks[0].type == ai::BtType::UseSmartObject && std::strcmp(tree->states[1].tasks[0].text, "Bench") == 0);
+    std::snprintf(data->states[0].transitions[0].to_state, sizeof data->states[0].transitions[0].to_state, "Nowhere");
+    CHECK(!editor::build_state_tree(*data, *tree, error, sizeof error) && std::strstr(error, "Nowhere"));
+
+    world::EnvQueryData q;
+    q.tests.count = 1;
+    q.tests[0].purpose = 1;  // Filter only
+    const ai::EnvQuery eq = editor::to_env_query(q);
+    CHECK(eq.test_count == 1 && eq.tests[0].filter && !eq.tests[0].score && eq.points_per_ring == 12);
+}
+
 // Device Profiles: GPU name (any case), video memory range and platform; applying sets the quality and groups.
 static void test_device_profiles() {
     editor::DeviceProfile deck;
@@ -1082,6 +1113,7 @@ int main() {
     test_scalability();
     test_device_profiles();
     test_run_behavior();
+    test_state_tree_asset();
     test_gather_text();
     test_landscape_core();
     test_mesh_edit();

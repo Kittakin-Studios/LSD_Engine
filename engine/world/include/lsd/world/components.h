@@ -1129,11 +1129,84 @@ struct BlackboardData {
     LSD_PROPERTY(Edit, Tooltip = "The keys (perception's CanSeePlayer, PlayerLocation... need not be listed)") List<BlackboardKey, 32> keys;
 };
 
+// A State Tree task (the behaviour tree's tasks): what it does, run in order with the state's other tasks.
+LSD_STRUCT()
+struct StateTreeTask {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Move To,Wait,Run Script,Set Key,Clear Key,Random Location,Use Smart Object,Run Query", Tooltip = "What the task does")
+    u32 kind = 1;
+    LSD_PROPERTY(Edit, Tooltip = "The blackboard key it uses: Move To walks to it; Set Key, Clear Key, Random Location and Run Query write it") char key[32] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Run Script: the agent's Lua function; Set Key: the value (1 or x,y,z); Use Smart Object: the activity (empty: any); Run Query: the Environment Query asset's name")
+    char text[64] = "";
+    LSD_PROPERTY(Edit, Tooltip = "Move To: how near counts as there (m); Wait: seconds; Random Location and Use Smart Object: how far to look (m)") f32 value = 1.0f;
+};
+
+// When a State Tree leaves a state (Unreal's State Tree transition) and where to.
+LSD_STRUCT()
+struct StateTreeTransition {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:On Succeeded,On Failed,On Completed,On Condition,After Time",
+                 Tooltip = "When: its tasks all succeeded, one failed, either, a blackboard check holds (checked every frame, interrupts the tasks), or after some seconds in the state")
+    u32 trigger = 2;
+    LSD_PROPERTY(Edit, Tooltip = "On Condition: the blackboard key checked") char key[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:>,<,==,!=,is set,not set", Tooltip = "On Condition: how the key is compared with Value") u32 op = 4;
+    LSD_PROPERTY(Edit, Tooltip = "On Condition: the number compared with; After Time: seconds in the state") f32 value = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The state it goes to, by name (its own name starts it again)") char to_state[32] = "";
+};
+
+LSD_STRUCT()
+struct StateTreeState {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "Its name (transitions go to it by this)") char name[32] = "State";
+    LSD_PROPERTY(Edit, Tooltip = "What it does, in order (like a Sequence: one failing ends the rest)") List<StateTreeTask, 4> tasks;
+    LSD_PROPERTY(Edit, Tooltip = "Ways out, checked in order every frame: the first that fires wins") List<StateTreeTransition, 4> transitions;
+};
+
+// State Tree asset (Unreal's State Tree): states with tasks and transitions; an AI Controller runs it instead of a
+// Behavior Tree. New Data Asset > StateTreeData; the first state is where it starts.
+LSD_STRUCT(Category = "AI", Tooltip = "States with tasks and transitions for an AI Controller (the first state starts)")
+struct StateTreeData {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The states; the first is where it starts") List<StateTreeState, 16> states;
+};
+
+// One test of an Environment Query: measures each point, then filters and / or scores it.
+LSD_STRUCT()
+struct EnvQueryTest {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Distance,Can See Target,Reachable,Facing",
+                 Tooltip = "Distance (m), the target seen from the point (a ray at eye height), a navmesh path from the querier, or how much the point is ahead of the querier (1 ahead, -1 behind)")
+    u32 type = 0;
+    LSD_PROPERTY(Edit, Widget = "Choice:Target,Querier", Tooltip = "Distance: measured from the target or from the querier") u32 from = 0;
+    LSD_PROPERTY(Edit, Widget = "Choice:Score,Filter,Filter and Score", Tooltip = "Score: adds to the point's score; Filter: drops points outside Min..Max (yes / no tests: the ones that fail)") u32 purpose = 0;
+    LSD_PROPERTY(Edit, Tooltip = "Filter: the lowest value kept") f32 min = 0.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Filter: the highest value kept") f32 max = 1000.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Score: how much it counts; positive prefers high values (far, visible, ahead), negative low ones (near, hidden)") f32 weight = 1.0f;
+};
+
+// Environment Query asset (Unreal's EQS query): candidate points around the querier or a target, tested, filtered
+// and scored; the best one goes into a blackboard key (Run Query) or back to a script (lsd.run_query).
+LSD_STRUCT(Category = "AI", Tooltip = "Finds the best point around an AI (cover, a flanking spot): points, tests, the best wins")
+struct EnvQueryData {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Choice:Rings,Grid", Tooltip = "Rings of points, or a square grid") u32 generator = 0;
+    LSD_PROPERTY(Edit, Widget = "Choice:Querier,Target", Tooltip = "Points around the AI itself or around the target") u32 around = 0;
+    LSD_PROPERTY(Edit, Tooltip = "The target: a blackboard key holding a location (the querier itself if it is not set)") char target_key[32] = "PlayerLocation";
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "Rings: the outer ring; Grid: half its width") f32 radius = 8.0f;
+    LSD_PROPERTY(Edit, Min = 1, Max = 8, Tooltip = "Rings: how many, evenly out to Radius") u32 rings = 2;
+    LSD_PROPERTY(Edit, Min = 3, Max = 64, Tooltip = "Rings: points on each ring") u32 points_per_ring = 12;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.25, Tooltip = "Grid: between points") f32 spacing = 2.0f;
+    LSD_PROPERTY(Edit, Tooltip = "Points snap onto the navmesh; ones off it are dropped") bool on_navmesh = true;
+    LSD_PROPERTY(Edit, Tooltip = "The tests, in order (filters first drop points, so later tests score fewer)") List<EnvQueryTest, 4> tests;
+    LSD_PROPERTY(Edit, Tooltip = "Play draws the points for 2 s each time it runs: green best, yellow to red by score, grey dropped") bool debug_draw = false;
+};
+
 LSD_STRUCT(Component, Category = "AI", Tooltip = "An AI brain: a Behavior Tree, sight and hearing")
 struct AIController {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Widget = "Asset:BehaviorTree", Tooltip = "The Behavior Tree that decides what it does") char behavior_tree[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:BlackboardData", Tooltip = "Its Blackboard asset: typed keys with starting values (empty: any key, all unset)") char blackboard[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:StateTreeData", Tooltip = "A State Tree to run instead of the Behavior Tree (empty: the Behavior Tree)") char state_tree[33] = "";
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it sees the player (CanSeePlayer)") f32 sight_range = 15.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 360, Tooltip = "Field of view, centred on the object's +X") f32 sight_angle = 120.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "How far it hears noises (lsd.report_noise / Report Noise)") f32 hearing_range = 12.0f;
@@ -1162,6 +1235,21 @@ struct NavLink {
     LSD_PROPERTY(Edit, Tooltip = "Agents may cross both ways; off = only from the object to End (a drop off a ledge)") bool both_ways = true;
     LSD_PROPERTY(Edit, Units = "m", Min = 0.1, Max = 5, Tooltip = "How far from each end the navmesh may be") f32 snap_radius = 0.5f;
     LSD_PROPERTY(Edit, Tooltip = "Off: paths ignore it") bool enabled = true;
+};
+
+// A spot AI can use (Unreal's Smart Object): a bench, a workstation, a door. Each slot holds one user; the Use Smart
+// Object task (Behavior and State Trees) or lsd.claim_smart_object finds a free one, walks there and uses it.
+LSD_STRUCT(Component, Category = "AI", Tooltip = "A spot AI can use (a bench, a workstation): slots for one user each and what they do there")
+struct SmartObject {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "What it is for (Sit, Work...): Use Smart Object tasks look for this (an empty task activity takes any)") char activity[32] = "Use";
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Where users stand, from the object (turns with it); one user each") List<Vec3, 8> slots = {1, {Vec3{1.0f, 0.0f, 0.0f}}};
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "How long one use lasts (0: until the script returns true or false)") f32 duration = 3.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The user's Lua function called every frame while it uses this (true: done, false: failed, nothing: still using); empty: none")
+    char script_function[64] = "";
+    LSD_PROPERTY(Edit, Tooltip = "An animation the user plays once as it starts (a montage, by asset name); empty: none") char animation[64] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The user turns to face the object while it uses it") bool face_object = true;
+    LSD_PROPERTY(Edit, Tooltip = "Off: AI does not use it (a broken machine, a door being locked)") bool enabled = true;
 };
 
 // How the navmesh is built (Unreal's Project Settings > Navigation Mesh, per level here).

@@ -57,6 +57,8 @@ struct Builder {
                  : std::strcmp(t, "BtTimeLimit") == 0      ? BtType::TimeLimit
                  : std::strcmp(t, "BtForceSuccess") == 0   ? BtType::ForceSuccess
                  : std::strcmp(t, "BtService") == 0        ? BtType::Service
+                 : std::strcmp(t, "BtUseSmartObject") == 0 ? BtType::UseSmartObject
+                 : std::strcmp(t, "BtRunQuery") == 0       ? BtType::RunQuery
                                                            : BtType::Root;
         if (n.type == BtType::Root && std::strcmp(t, "BtRoot") != 0) return fail("Not a behaviour tree node", &node);
         // Settings by pin (index 0 is the parent wire).
@@ -81,6 +83,14 @@ struct Builder {
             case BtType::ClearKey:
             case BtType::IsSet: std::snprintf(n.key, sizeof n.key, "%s", node.values[1]); break;
             case BtType::RunScript: std::snprintf(n.text, sizeof n.text, "%s", node.values[1]); break;
+            case BtType::UseSmartObject:
+                std::snprintf(n.text, sizeof n.text, "%s", node.values[1]);
+                n.value = static_cast<f32>(std::atof(node.values[2]));
+                break;
+            case BtType::RunQuery:
+                std::snprintf(n.text, sizeof n.text, "%s", node.values[1]);
+                std::snprintf(n.key, sizeof n.key, "%s", node.values[2]);
+                break;
             case BtType::Compare:
             case BtType::Condition: {
                 std::snprintf(n.key, sizeof n.key, "%s", node.values[1]);
@@ -152,6 +162,72 @@ bool build_behavior_tree(const script::Graph& graph, ai::BehaviorTree& out, char
     Builder b{graph, out, error, capacity, resolve, user};
     u32 index = 0;
     return b.add(*root, index);
+}
+
+bool build_state_tree(const world::StateTreeData& data, ai::StateTree& out, char* error, usize capacity) {
+    out.count = 0;
+    static constexpr ai::BtType kTasks[] = {ai::BtType::MoveTo, ai::BtType::Wait, ai::BtType::RunScript, ai::BtType::SetKey,
+                                            ai::BtType::ClearKey, ai::BtType::RandomLocation, ai::BtType::UseSmartObject, ai::BtType::RunQuery};
+    if (data.states.count == 0) {
+        std::snprintf(error, capacity, "No states");
+        return false;
+    }
+    for (u32 i = 0; i < data.states.count && i < ai::kMaxStStates; ++i) {
+        const world::StateTreeState& src = data.states[i];
+        ai::StState& st = out.states[out.count++];
+        st = ai::StState{};
+        std::snprintf(st.name, sizeof st.name, "%s", src.name);
+        for (u32 k = 0; k < src.tasks.count && k < ai::kMaxStTasks; ++k) {
+            const world::StateTreeTask& t = src.tasks[k];
+            ai::BtNode& n = st.tasks[st.task_count++];
+            n = ai::BtNode{};
+            n.type = kTasks[t.kind < sizeof kTasks / sizeof kTasks[0] ? t.kind : 1];
+            std::snprintf(n.key, sizeof n.key, "%s", t.key);
+            std::snprintf(n.text, sizeof n.text, "%s", t.text);
+            n.value = t.value;
+        }
+        for (u32 k = 0; k < src.transitions.count && k < ai::kMaxStTransitions; ++k) {
+            const world::StateTreeTransition& t = src.transitions[k];
+            ai::StTransition& tr = st.transitions[st.transition_count++];
+            tr.trigger = static_cast<ai::StTrigger>(t.trigger <= 4 ? t.trigger : 2);
+            std::snprintf(tr.key, sizeof tr.key, "%s", t.key);
+            tr.op = t.op <= 5 ? t.op : 4;
+            tr.value = t.value;
+            u32 target = data.states.count;
+            for (u32 s = 0; s < data.states.count; ++s) {
+                if (std::strcmp(data.states[s].name, t.to_state) == 0) target = s;
+            }
+            if (target >= data.states.count || target >= ai::kMaxStStates) {
+                std::snprintf(error, capacity, "State '%s': no state named '%s' to go to", src.name, t.to_state);
+                return false;
+            }
+            tr.target = target;
+        }
+    }
+    return true;
+}
+
+ai::EnvQuery to_env_query(const world::EnvQueryData& data) {
+    ai::EnvQuery q;
+    q.generator = data.generator == 1 ? ai::QueryGenerator::Grid : ai::QueryGenerator::Rings;
+    q.around_target = data.around == 1;
+    q.radius = data.radius;
+    q.spacing = data.spacing;
+    q.rings = data.rings;
+    q.points_per_ring = data.points_per_ring;
+    q.on_navmesh = data.on_navmesh;
+    for (u32 i = 0; i < data.tests.count && i < ai::kMaxQueryTests; ++i) {
+        const world::EnvQueryTest& t = data.tests[i];
+        ai::QueryTest& out = q.tests[q.test_count++];
+        out.type = static_cast<ai::QueryTestType>(t.type <= 3 ? t.type : 0);
+        out.to_target = t.from == 0;
+        out.filter = t.purpose >= 1;
+        out.score = t.purpose != 1;
+        out.min = t.min;
+        out.max = t.max;
+        out.weight = t.weight;
+    }
+    return q;
 }
 
 bool load_behavior_tree(const char* path, ai::BehaviorTree& out, char* error, usize capacity, BtResolver resolve, void* user) {

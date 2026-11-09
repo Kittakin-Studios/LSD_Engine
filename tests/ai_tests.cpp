@@ -1,6 +1,9 @@
 // AI tests: a navmesh over a floor with a wall in the middle; paths go round the wall and agents
 // walk to their targets.
 #include "lsd/ai/behavior_tree.h"
+#include "lsd/ai/env_query.h"
+#include "lsd/ai/smart_object.h"
+#include "lsd/ai/state_tree.h"
 #include "lsd/ai/navigation.h"
 #include <cstring>
 
@@ -250,7 +253,160 @@ static void nav_tile_tests() {
     CHECK(nav.nearest_point({15.5f, 15.5f, 0.0f}, p) && std::fabs(p.x - 15.5f) + std::fabs(p.y - 15.5f) > 0.4f);  // not under the crate
 }
 
+// A State Tree: Patrol (wait 1 s, then Completed -> Rest), Rest (Timer 0.5 s -> Patrol), and from either a
+// Condition (Alert is set) -> Alarm, whose script task fails -> back to Patrol.
+static void state_tree_tests() {
+    using namespace lsd::ai;
+    StateTree t;
+    t.count = 3;
+    auto task = [](StState& s, BtType type, f32 value, const char* text = "") {
+        BtNode& n = s.tasks[s.task_count++];
+        n.type = type;
+        n.value = value;
+        std::snprintf(n.text, sizeof n.text, "%s", text);
+    };
+    auto go = [](StState& s, StTrigger when, u32 target, f32 value = 0, const char* key = "") {
+        StTransition& tr = s.transitions[s.transition_count++];
+        tr.trigger = when;
+        tr.target = target;
+        tr.value = value;
+        tr.op = 4;
+        std::snprintf(tr.key, sizeof tr.key, "%s", key);
+    };
+    go(t.states[0], StTrigger::Condition, 2, 0, "Alert");
+    task(t.states[0], BtType::Wait, 1.0f);
+    go(t.states[0], StTrigger::Completed, 1);
+    go(t.states[1], StTrigger::Condition, 2, 0, "Alert");
+    go(t.states[1], StTrigger::Timer, 0, 0.5f);
+    task(t.states[2], BtType::RunScript, 0, "alarm");
+    go(t.states[2], StTrigger::Succeeded, 1);
+    go(t.states[2], StTrigger::Failed, 0);
+
+    int alarms = 0;
+    BtHost host;
+    host.user = &alarms;
+    host.run_script = [](void* u, const char*, f32) { ++*static_cast<int*>(u); return 0; };
+    Blackboard board;
+    StRunner runner;
+    const f32 dt = 0.1f;
+    runner.tick(t, board, host, dt);
+    CHECK(runner.state() == 0);
+    for (int i = 0; i < 10; ++i) runner.tick(t, board, host, dt);
+    CHECK(runner.state() == 1);  // waited 1 s, then Completed
+    for (int i = 0; i < 6; ++i) runner.tick(t, board, host, dt);
+    CHECK(runner.state() == 0);  // the timer sent it back
+    board.set("Alert", 1.0f);
+    runner.tick(t, board, host, dt);
+    CHECK(runner.state() == 2);  // the condition interrupted the wait
+    board.clear("Alert");
+    runner.tick(t, board, host, dt);
+    CHECK(alarms == 1 && runner.state() == 0);  // the script failed: Failed -> Patrol
+
+    // pick_transition alone: order wins, and Succeeded / Failed only once the tasks are done.
+    CHECK(pick_transition(t.states[2], board, false, BtStatus::Running, 5.0f) == -1);
+    CHECK(pick_transition(t.states[2], board, true, BtStatus::Success, 0.0f) == 0);
+    CHECK(pick_transition(t.states[2], board, true, BtStatus::Failure, 0.0f) == 1);
+}
+
+// Smart Objects: one slot each, two agents; the Use Smart Object task claims, walks, uses, releases.
+static void smart_object_tests() {
+    using namespace lsd::ai;
+    SmartClaims claims;
+    const i32 first = claims.claim(7, 0, 1);
+    CHECK(first >= 0 && claims.taken(7, 0) && claims.claim(7, 0, 2) == -1);
+    const Vec3 spots[2] = {{2, 0, 0}, {6, 0, 0}};
+    bool taken[2] = {true, false};
+    CHECK(nearest_free(spots, taken, 2, {0, 0, 0}, 10.0f) == 1);  // the near one is taken
+    CHECK(nearest_free(spots, taken, 2, {0, 0, 0}, 5.0f) == -1);  // the free one is too far
+    claims.release(first);
+    CHECK(!claims.taken(7, 0) && !claims.get(first));
+    claims.claim(7, 1, 3);
+    claims.release_user(3);
+    CHECK(!claims.taken(7, 1));
+
+    struct User {
+        Vec3 at{0, 0, 0}, target{0, 0, 0};
+        bool walking = false;
+        SmartClaims claims;
+        int uses = 0;
+    } user;
+    BehaviorTree t;
+    t.count = 2;
+    t.nodes[0].type = BtType::Root;
+    t.nodes[0].child_count = 1;
+    t.nodes[0].children[0] = 1;
+    t.nodes[1].type = BtType::UseSmartObject;
+    t.nodes[1].value = 10.0f;
+    BtHost host;
+    host.user = &user;
+    host.move_to = [](void* u, Vec3 to, f32) { auto& a = *static_cast<User*>(u); a.target = to; a.walking = true; return true; };
+    host.moving = [](void* u) { return static_cast<User*>(u)->walking; };
+    host.stop = [](void* u) { static_cast<User*>(u)->walking = false; };
+    host.position = [](void* u) { return static_cast<User*>(u)->at; };
+    host.claim_smart_object = [](void* u, const char*, f32, Vec3& slot) { slot = {3, 0, 0}; return static_cast<User*>(u)->claims.claim(9, 0, 1); };
+    host.use_smart_object = [](void* u, i32, f32 seconds) { ++static_cast<User*>(u)->uses; return seconds >= 1.0f ? 1 : 2; };
+    host.release_smart_object = [](void* u, i32 id) { static_cast<User*>(u)->claims.release(id); };
+    BtRunner runner;
+    Blackboard board;
+    BtStatus r = BtStatus::Running;
+    int frames = 0;
+    for (; frames < 200 && r == BtStatus::Running; ++frames) {
+        r = runner.tick(t, board, host, 0.1f);
+        if (frames == 2) CHECK(user.claims.taken(9, 0) && user.uses == 0);  // claimed, still walking
+        if (user.walking) {  // 1 m a tick
+            const Vec3 d = user.target - user.at;
+            if (length(d) <= 1.0f) user.at = user.target, user.walking = false;
+            else user.at = user.at + d * (1.0f / length(d));
+        }
+    }
+    CHECK(r == BtStatus::Success && user.uses >= 10 && std::fabs(user.at.x - 3) < 0.01f);
+    CHECK(!user.claims.taken(9, 0));  // released when done
+}
+
+// Environment query: a ring around the querier; points the wall hides from the target are dropped, the rest
+// prefer being near the target.
+static void env_query_tests() {
+    using namespace lsd::ai;
+    EnvQuery q;
+    q.rings = 1;
+    q.points_per_ring = 8;
+    q.radius = 4.0f;
+    q.on_navmesh = false;
+    q.tests[0].type = QueryTestType::Visible;
+    q.tests[0].filter = true;
+    q.tests[0].score = false;
+    q.tests[1].type = QueryTestType::Distance;
+    q.tests[1].weight = -1.0f;  // nearer the target is better
+    q.test_count = 2;
+    QueryHost host;
+    host.visible = [](void*, Vec3 from, Vec3) { return from.y > -1.0f; };  // a wall hides everything south
+    QueryPoint points[kMaxQueryPoints];
+    u32 count = 0;
+    const i32 best = run_query(q, host, {0, 0, 0}, {1, 0, 0}, {10, 0, 0}, points, kMaxQueryPoints, count);
+    CHECK(count == 8);
+    CHECK(best == 0 && std::fabs(points[0].at.x - 4) < 1e-3f);  // due east, nearest the target
+    u32 kept = 0;
+    for (u32 i = 0; i < count; ++i) kept += points[i].kept ? 1u : 0u;
+    CHECK(kept == 5);  // the three southern points are hidden
+    // Facing on a grid: the point straight ahead wins; a filter can drop everything.
+    q.generator = QueryGenerator::Grid;
+    q.radius = 2.0f;
+    q.spacing = 1.0f;
+    q.tests[0] = QueryTest{};
+    q.tests[0].type = QueryTestType::Facing;
+    q.test_count = 1;
+    const i32 ahead = run_query(q, host, {0, 0, 0}, {0, 1, 0}, {0, 0, 0}, points, kMaxQueryPoints, count);
+    CHECK(count == 25 && ahead >= 0 && points[ahead].at.y > 0.5f && std::fabs(points[ahead].at.x) < 1e-3f);
+    q.tests[0].type = QueryTestType::Distance;
+    q.tests[0].filter = true;
+    q.tests[0].min = 100.0f;
+    CHECK(run_query(q, host, {0, 0, 0}, {0, 1, 0}, {0, 0, 0}, points, kMaxQueryPoints, count) == -1);
+}
+
 int main() {
+    state_tree_tests();
+    smart_object_tests();
+    env_query_tests();
     bt_tests();
     nav_tile_tests();
     blackboard_schema_tests();

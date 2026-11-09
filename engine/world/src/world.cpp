@@ -68,6 +68,7 @@ void init_types() {
         &reflect::type_of<EditableMesh>(),
         &reflect::type_of<AttributeSet>(),
         &reflect::type_of<AbilitySystem>(),
+        &reflect::type_of<SmartObject>(),
     };
     static_assert(sizeof types / sizeof types[0] <= kMaxComponentTypes);
     for (const reflect::TypeInfo* t : types) g_types[g_type_count++] = t;
