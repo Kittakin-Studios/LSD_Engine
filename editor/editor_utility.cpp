@@ -139,6 +139,7 @@ void draw_utility_panels(EditorState& s) {
         if (!panels[p].open) continue;
         char title[128];
         std::snprintf(title, sizeof title, "%s###utility_%s", panels[p].title, panels[p].script.c_str());
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 240.0f), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin(title, &panels[p].open)) {
             ImGui::End();
             continue;
