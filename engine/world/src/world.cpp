@@ -56,6 +56,7 @@ void init_types() {
         &reflect::type_of<PcgVolume>(),
         &reflect::type_of<Sprite>(),
         &reflect::type_of<TileMap>(),
+        &reflect::type_of<UiPanel>(),
         &reflect::type_of<NetReplicated>(),
         &reflect::type_of<Mover>(),
         &reflect::type_of<Vehicle>(),

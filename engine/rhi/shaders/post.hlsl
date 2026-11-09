@@ -323,6 +323,7 @@ float4 ps_composite(VsOut i) : SV_Target {
     c = max((c - 0.18) * grade.y + 0.18, 0.0);
     const float2 v = i.uv - 0.5;
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
+    if (dof.w > 0.5) c = max(float3(dot(proj.xyz, c), dot(ao_p.xyz, c), dot(dof.xyz, c)), 0.0);  // colour-vision filter (rhi::post_color_vision)
     float3 s = to_srgb(c);
     if (grade.w > 0.0) s = lerp(s, lut(s), grade.w);
     return float4(s, dot(s, float3(0.299, 0.587, 0.114)));  // luma in alpha for FXAA

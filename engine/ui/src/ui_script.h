@@ -6,6 +6,8 @@
 // JavaScript API:
 //   ui.setText(id, text), ui.setAttribute(id, name, value), ui.setProperty(id, name, value)
 //   ui.value(id) -> text            a text field's value
+//   ui.playAnimation(id, "pop 0.4s cubic-out")   plays (replays) @keyframes; "none" stops
+//   ui.animate(id, property, value [, seconds, tween])   tweens one property ("opacity", "0", 0.5, "cubic-in-out")
 //   ui.close()                      closes this document
 //   ui.send(action [, element_id])  passes an action on to Lua (functions in gameplay scripts)
 //   console.log(...), console.error(...)   to the Output Log

@@ -33,6 +33,9 @@ public:
     void stop_music(f32 fade);
     void set_music_layer(const char* name, f32 volume, f32 fade);
 
+    // Subtitles: the Subtitle of the latest sound (or cue) that had one, while it still plays; "" if none.
+    const char* subtitle();
+
 private:
     const asset::AssetRecord* find(const char* sound, bool cues = true) const;
     u32 play_cue(const asset::AssetRecord& cue, bool spatial, Vec3 position);
@@ -71,6 +74,8 @@ private:
     };
     Layer layers_[8];
     u32 layer_count_ = 0;
+    char subtitle_[128] = "";
+    u32 subtitle_voice_ = 0;
 };
 
 } // namespace lsd::editor

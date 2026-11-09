@@ -703,7 +703,8 @@ public:
         list_->SetDescriptorHeaps(1, heaps);
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, kRootConstants, constants, 0);
-        list_->SetGraphicsRootDescriptorTable(1, (base ? base : &textures_[white_])->srv_gpu);
+        const Target* base_target = base ? nullptr : lookup(draw.base_color_texture);  // a render target (a world UI panel)
+        list_->SetGraphicsRootDescriptorTable(1, base ? base->srv_gpu : base_target ? base_target->srv_gpu : textures_[white_].srv_gpu);
         list_->SetGraphicsRootDescriptorTable(2, (normal ? normal : &textures_[flat_normal_])->srv_gpu);
         list_->SetGraphicsRootDescriptorTable(3, (orm ? orm : &textures_[white_])->srv_gpu);
         list_->SetGraphicsRootConstantBufferView(4, current_lights_);
@@ -1467,6 +1468,7 @@ public:
         g[13] = p.contrast;
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
+        post_color_vision(p, g);
         const bool fxaa = p.fxaa && !taa;
         const PostShader* custom = lookup_post(p.post_shader);
         if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)

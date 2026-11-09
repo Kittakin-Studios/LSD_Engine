@@ -84,6 +84,22 @@ const CachedMesh* sprite_mesh(MeshCache& meshes, const world::Sprite& sprite, u3
     return upload(meshes, key, v, idx);
 }
 
+const CachedMesh* ui_panel_mesh(MeshCache& meshes, const world::UiPanel& panel, bool flip_v) {
+    char key[64];
+    std::snprintf(key, sizeof key, "UiPanel:%.3fx%.3f:%d", static_cast<f64>(panel.width), static_cast<f64>(panel.height), flip_v ? 1 : 0);
+    if (const CachedMesh* mesh = meshes.get(key)) return mesh;
+    std::vector<rhi::MeshVertex> v;
+    std::vector<u32> idx;
+    const f32 w = panel.width * 0.5f, h = panel.height * 0.5f;
+    add_quad(v, idx, -w, -h, w, h, 0.0f, flip_v ? 1.0f : 0.0f, 1.0f, flip_v ? 0.0f : 1.0f);
+    return upload(meshes, key, v, idx);
+}
+
+void ui_panel_bounds(const world::UiPanel& panel, Vec3& lo, Vec3& hi) {
+    lo = {-panel.width * 0.5f, -0.01f, -panel.height * 0.5f};
+    hi = {panel.width * 0.5f, 0.01f, panel.height * 0.5f};
+}
+
 const CachedMesh* tile_map_mesh(MeshCache& meshes, const world::TileMap& map, u32 id) {
     u32 hash = 2166136261u;  // FNV-1a over everything the mesh depends on
     auto mix = [&hash](u32 x) {

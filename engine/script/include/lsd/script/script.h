@@ -78,13 +78,16 @@
 //                                         hidden when it is behind the camera; lsd.ui_unfollow(doc, id)
 //   lsd.ui_style(doc, id, property, value)   one style property ("width", "40%"), the others kept
 //   lsd.ui_rml(doc, id, markup)           replaces the element's contents with RML markup
+//   lsd.ui_play_animation(doc, id, anim)  plays (replays) RCSS @keyframes: "pop 0.4s cubic-out"; "none" stops
+//   lsd.ui_animate(doc, id, property, value [, seconds, tween])   tweens one property from where it is
+//                                         (UMG widget animations: "opacity", "0", 0.5, "cubic-in-out")
 // Ready-made HUD widgets (no UI document needed; they float over objects):
 //   lsd.health_bar(e, fraction [, height = 2.2 [, "#RRGGBB"]])   a bar over e (0..1), updated by calling
 //                                         again; green to red as it empties; lsd.remove_health_bar(e)
 //   lsd.damage_number(e, amount [, "#RRGGBB"])   a number that rises from e and fades in a second
 //   lsd.prompt(text [, e])                "Press E to open": at the bottom of the screen, or over e;
 //                                         lsd.prompt(nil [, e]) hides it
-//   lsd.settings_menu([open]) -> open     a ready-made options menu (quality, fullscreen, volumes, mouse);
+//   lsd.settings_menu([open]) -> open     a ready-made options menu (quality, fullscreen, volumes, mouse, accessibility);
 //                                         no argument: opens or closes it
 //   lsd.on_ui(action, function(element_id) end)   a UI action handled once, engine-wide (before scripts')
 //   lsd.get_settings() -> {fullscreen, quality, master_volume, music_volume, effects_volume,
@@ -337,6 +340,8 @@ struct ScriptHost {
     bool (*ui_style)(void* user, i32 doc, const char* id, const char* property, const char* value) = nullptr;
     bool (*ui_rml)(void* user, i32 doc, const char* id, const char* rml) = nullptr;
     i32 (*ui_open_text)(void* user, const char* rml) = nullptr;  // a document from markup (the HUD widgets); -1 if none
+    // Widget animations: property nullptr plays `value` as an RCSS animation; else tweens property to value.
+    bool (*ui_animate)(void* user, i32 doc, const char* id, const char* property, const char* value, f32 seconds, const char* tween) = nullptr;
 };
 
 class ScriptSystem {

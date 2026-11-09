@@ -1694,6 +1694,7 @@ public:
         g[13] = p.contrast;
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
+        post_color_vision(p, g);
         const bool fxaa = p.fxaa && !taa;
         const PostShader* custom = lookup_post(p.post_shader);
         if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)

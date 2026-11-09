@@ -1349,6 +1349,7 @@ void main() {
     c = max((c - 0.18) * grade.y + 0.18, 0.0);
     vec2 v = v_uv - 0.5;
     c *= 1.0 - grade.z * smoothstep(0.1, 0.5, dot(v, v));
+    if (u_post[6].w > 0.5) c = max(vec3(dot(u_post[4].xyz, c), dot(u_post[5].xyz, c), dot(u_post[6].xyz, c)), 0.0);  // colour-vision filter (rhi::post_color_vision)
     vec3 s = to_srgb(c);
     if (grade.w > 0.0) {  // Color Grading LUT: 16 tiles of 16 x 16 (red across, green down), blue picks the tile
         float b = clamp(s.b, 0.0, 1.0) * 15.0, b0 = floor(b);
@@ -2132,7 +2133,8 @@ public:
             gl_.glNamedBufferSubData(param_ubo_, 0, sizeof values, values);  // GL keeps earlier draws' data
             gl_.glBindBufferBase(GL_UNIFORM_BUFFER, 3, param_ubo_);
         }
-        gl_.glBindTextureUnit(0, base ? base->id : textures_[white_].id);
+        const Target* base_target = base ? nullptr : lookup(draw.base_color_texture);  // a render target (a world UI panel)
+        gl_.glBindTextureUnit(0, base ? base->id : base_target ? base_target->color : textures_[white_].id);
         gl_.glBindTextureUnit(1, normal ? normal->id : textures_[flat_normal_].id);
         gl_.glBindTextureUnit(2, orm ? orm->id : textures_[white_].id);
         const Texture* emissive = lookup_texture(draw.emissive_texture);
@@ -2684,6 +2686,7 @@ public:
         g[13] = p.contrast;
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
+        post_color_vision(p, g);
         const bool fxaa = p.fxaa && !taa;
         const PostShader* custom = lookup_post(p.post_shader);
         if (custom) {  // a post-process material: the scene's texel, its time and parameters (proj's row: unused here)

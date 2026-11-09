@@ -27,6 +27,10 @@ const CachedMesh* sprite_mesh(MeshCache& meshes, const world::Sprite& sprite, u3
 const CachedMesh* tile_map_mesh(MeshCache& meshes, const world::TileMap& map, u32 id);
 // Local boxes (picking, collision): a sprite 1 x 0.1 x 1 m; a map its tiles, 0.1 m deep.
 void sprite_bounds(Vec3& lo, Vec3& hi);
+// A world UI panel (UiPanel): a width x height quad centred on its origin, facing -Y, both sides; `flip_v`
+// when the device's render targets come out upside down (OpenGL). Its box is 0.02 m deep.
+const CachedMesh* ui_panel_mesh(MeshCache& meshes, const world::UiPanel& panel, bool flip_v);
+void ui_panel_bounds(const world::UiPanel& panel, Vec3& lo, Vec3& hi);
 void tile_map_bounds(const world::TileMap& map, Vec3& lo, Vec3& hi);
 
 } // namespace lsd::editor

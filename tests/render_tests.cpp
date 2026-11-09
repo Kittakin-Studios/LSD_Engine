@@ -235,7 +235,48 @@ static void test_reflection() {
     }
 }
 
+// The colour-vision filter (Unreal's r.Color.Deficiency): off or strength 0 changes nothing, white stays
+// white, a deuteranope sees red and green closer, and the correction pulls them apart again.
+static void test_color_vision() {
+    using namespace lsd;
+    auto apply = [](const f32 m[9], const f32 in[3], f32 out[3]) {
+        for (int r = 0; r < 3; ++r) out[r] = m[r * 3] * in[0] + m[r * 3 + 1] * in[1] + m[r * 3 + 2] * in[2];
+    };
+    auto gap = [](const f32 a[3], const f32 b[3]) { return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])); };
+    f32 m[9];
+    rhi::color_vision_matrix(0, 1.0f, true, m);
+    CHECK(near(m[0], 1) && near(m[1], 0) && near(m[4], 1) && near(m[8], 1));
+    rhi::color_vision_matrix(1, 0.0f, true, m);
+    CHECK(near(m[0], 1) && near(m[3], 0) && near(m[4], 1));
+    const f32 white[3] = {1, 1, 1}, red[3] = {1, 0, 0}, green[3] = {0, 1, 0};
+    for (u32 type = 1; type <= 3; ++type) {
+        f32 sim[9], out[3];
+        rhi::color_vision_matrix(type, 1.0f, false, sim);
+        apply(sim, white, out);
+        CHECK(near(out[0], 1, 0.02f) && near(out[1], 1, 0.02f) && near(out[2], 1, 0.02f));
+    }
+    f32 sim[9], fix[9], r_sim[3], g_sim[3], r_fix[3], g_fix[3], r_fix_seen[3], g_fix_seen[3];
+    rhi::color_vision_matrix(1, 1.0f, false, sim);
+    rhi::color_vision_matrix(1, 1.0f, true, fix);
+    apply(sim, red, r_sim);
+    apply(sim, green, g_sim);
+    CHECK(gap(r_sim, g_sim) < gap(red, green));  // harder to tell apart
+    apply(fix, red, r_fix);
+    apply(fix, green, g_fix);
+    apply(sim, r_fix, r_fix_seen);
+    apply(sim, g_fix, g_fix_seen);
+    CHECK(gap(r_fix_seen, g_fix_seen) > gap(r_sim, g_sim));  // corrected colours, as seen: further apart
+    rhi::PostDraw post;
+    f32 g[48] = {};
+    rhi::post_color_vision(post, g);
+    CHECK(g[27] == 0.0f);  // off: the composite skips it
+    post.color_deficiency = 2;
+    rhi::post_color_vision(post, g);
+    CHECK(g[27] == 1.0f && g[19] == 0.0f);
+}
+
 int main() {
+    test_color_vision();
     test_reflection();
     test_math();
     test_meshes();
