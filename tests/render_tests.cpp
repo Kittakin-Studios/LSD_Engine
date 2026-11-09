@@ -3,6 +3,7 @@
 #include "lsd/render/mesh.h"
 #include "lsd/render/occlusion.h"
 #include "lsd/render/reflection.h"
+#include "lsd/render/texture_streaming.h"
 
 #include <vector>
 #include "lsd/rhi/rhi.h"
@@ -275,6 +276,44 @@ static void test_color_vision() {
     CHECK(g[27] == 1.0f && g[19] == 0.0f);
 }
 
+// Texture streaming: what the view asks for, held to the pool, least recently drawn squeezed first.
+static void test_texture_streaming() {
+    using namespace lsd::render;
+    CHECK(stream_size(10) == 64 && stream_size(65) == 128 && stream_size(1024) == 1024 && stream_size(kStreamWhole) == kStreamWhole);
+    const lsd::u64 mb = 1024 * 1024;
+    StreamTexture t[4];
+    // 0: drawn close, at 1024 (4 MB), wants 4096. 1: drawn far, at 2048 (16 MB), wants 256.
+    // 2: not drawn for a while, at 2048 (16 MB). 3: Mip Streaming off, at 512 and not complete.
+    t[0].side = 1024; t[0].bytes = 4 * mb; t[0].wanted = 4096; t[0].last_used = 10;
+    t[1].side = 2048; t[1].bytes = 16 * mb; t[1].wanted = 256; t[1].last_used = 10;
+    t[2].side = 2048; t[2].bytes = 16 * mb; t[2].last_used = 3;
+    t[3].side = 512; t[3].bytes = 1 * mb; t[3].streams = false; t[3].last_used = 3;
+    lsd::u32 out[4];
+    StreamPlan p = plan_texture_streaming(t, 4, 0, out);  // no pool: everyone gets what the view needs
+    CHECK(p.resident_bytes == 37 * mb && p.squeezed == 0 && p.denied == 0);
+    CHECK(out[0] == 4096 && out[1] == 256 && out[2] == 0 && out[3] == kStreamWhole && p.loads == 3);
+    // A 40 MB pool: the far one shrinks first (37 -> 21.25 MB); then 4096 for the close one (64 MB) does not fit, 2048 (16 MB) does.
+    p = plan_texture_streaming(t, 4, 40 * mb, out);
+    CHECK(p.squeezed == 0 && out[1] == 256 && out[0] == 2048 && p.denied == 0);
+    // A 20 MB pool (37 resident): the one not drawn halves first (16 -> 4 MB: 25 MB), then the largest recent one, straight
+    // to the 256 it needs (9.25 MB); the close one's 2048 would make 21.25: held back.
+    p = plan_texture_streaming(t, 4, 20 * mb, out);
+    CHECK(p.squeezed == 2 && out[2] == 1024 && out[1] == 256 && out[3] == kStreamWhole);
+    CHECK(out[0] == 0 && p.denied == 1);
+    // Busy ones and the smallest are left alone; nothing to squeeze ends the loop.
+    StreamTexture small[2];
+    small[0].side = 64; small[0].bytes = 16 * 1024; small[0].last_used = 1;
+    small[1].side = 4096; small[1].bytes = 64 * mb; small[1].busy = true; small[1].wanted = 64;
+    p = plan_texture_streaming(small, 2, 1, out);
+    CHECK(out[0] == 0 && out[1] == 0 && p.loads == 0);
+    // Not drawn and room in the pool: kept as it is; complete ones do not get sharper.
+    StreamTexture kept[2];
+    kept[0].side = 512; kept[0].bytes = mb;
+    kept[1].side = 512; kept[1].bytes = mb; kept[1].wanted = 2048; kept[1].complete = true;
+    p = plan_texture_streaming(kept, 2, 100 * mb, out);
+    CHECK(out[0] == 0 && out[1] == 0);
+}
+
 int main() {
     test_color_vision();
     test_reflection();
@@ -282,6 +321,7 @@ int main() {
     test_meshes();
     test_culling();
     test_occlusion();
+    test_texture_streaming();
     if (g_failures == 0) std::printf("All render tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

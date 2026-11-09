@@ -4,6 +4,7 @@ add_library(lsd_render STATIC
   src/material.cpp
   src/occlusion.cpp
   src/reflection.cpp
+  src/texture_streaming.cpp
 )
 target_include_directories(lsd_render PUBLIC include)
 target_link_libraries(lsd_render PUBLIC lsd_foundation lsd_rhi lsd_reflect)
