@@ -114,7 +114,7 @@ uniform vec2 u_flags;    // unlit, has normal map
 uniform float u_time;    // Material Graph Time
 struct Light { vec4 pos_type; vec4 dir_range; vec4 color_inner; vec4 spot; };
 layout(std140, binding = 1) uniform Lights {
-    float exposure; uint light_count; vec2 pad0; vec4 sky_color; vec4 ground; Light lights[16];
+    float exposure; uint light_count; vec2 depth_proj; vec4 sky_color; vec4 ground; Light lights[16];
     mat4 shadow_vp[4]; vec4 shadow_tile[4]; vec4 shadow_split; vec4 shadow_info;
     mat4 local_vp[16]; vec4 local_tile[16];
     vec4 fog; vec4 fog_color; vec4 post; vec4 tint; vec4 viewport_px; vec4 hdr_out;
@@ -260,6 +260,13 @@ layout(binding = 5) uniform sampler2D decal_tex;
 layout(binding = 6) uniform sampler2D reflection_tex;  // reflection captures (lat-long tiles, mipmapped)
 layout(binding = 7) uniform sampler2D lightmap_tex;    // the level's lightmaps (Build Lighting)
 layout(binding = 8) uniform sampler2D emissive_tex;    // the emissive map (white without one)
+layout(binding = 9) uniform sampler2D scene_depth_tex; // MeshDraw::scene_depth: the target's depth (white: none)
+// Metres of the view from this pixel to what is drawn behind it (far without a depth to read).
+float scene_depth_m() {
+    float behind = texelFetch(scene_depth_tex, ivec2(gl_FragCoord.xy), 0).r;
+    if (depth_proj.y == 0.0 || behind >= 1.0) return 1e4;
+    return depth_proj.y / (behind + depth_proj.x) - depth_proj.y / (gl_FragCoord.z + depth_proj.x);
+}
 vec3 apply_decals(vec3 c, vec3 wpos, vec3 n) {
     uint count = uint(decal_info.x);
     for (uint d = 0u; d < count; ++d) {
@@ -395,7 +402,7 @@ void main() {
     bool pixel_art = u_flags.y > 1023.5;  // 1024: whole texels of the base colour texture
 #ifdef LSD_MATERIAL
     MaterialIn mi;
-    mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time;
+    mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time; mi.depth = scene_depth_m();
     Surface surf = material_main(mi);
     vec4 base = vec4(surf.base_color * u_color.rgb, u_color.a * surf.opacity);
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
@@ -522,7 +529,7 @@ constexpr char kMaterialPreludeGlsl[] = R"(
 #define lerp mix
 #define frac fract
 #define saturate(x) clamp((x), 0.0, 1.0)
-struct MaterialIn { vec3 uv; vec3 wpos; vec3 normal; vec3 view; float time; };
+struct MaterialIn { vec3 uv; vec3 wpos; vec3 normal; vec3 view; float time; float depth; };
 struct Surface { vec3 base_color; float metallic; float roughness; vec3 emissive; vec3 normal; float ao; float opacity; };
 vec3 lsd_v3(float x) { return vec3(x); }
 vec4 lsd_tex0(vec3 uv) { return texture(base_tex, uv.xy); }
@@ -1489,6 +1496,10 @@ public:
         gl_.glBindTextureUnit(5, decal_texture_ ? decal_texture_ : textures_[white_].id);
         gl_.glBindTextureUnit(6, reflection_texture_ ? reflection_texture_ : textures_[white_].id);
         gl_.glBindTextureUnit(7, lightmap_texture_ ? lightmap_texture_ : textures_[white_].id);
+        // Water's depth tint: the target's depth, read while attached (the blended draw does not write it).
+        const bool depth_read = draw.scene_depth && graph && draw.blend == 1 && !draw.wireframe && bound_target_;
+        if (depth_read) gl_.glTextureBarrier();
+        gl_.glBindTextureUnit(9, depth_read ? bound_target_->depth : textures_[white_].id);
         glPolygonMode(GL_FRONT_AND_BACK, draw.wireframe ? GL_LINE : GL_FILL);
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1 translucent, 2 additive, 3 overdraw (no depth test)
         if (blend) {

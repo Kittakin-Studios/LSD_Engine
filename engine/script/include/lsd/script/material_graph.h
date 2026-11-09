@@ -3,7 +3,7 @@
 // wired into a Material Output, compiled to shader code. The code is one function in the syntax
 // both backends accept (HLSL spelling; the OpenGL backend maps float3 / lerp / frac / saturate):
 //
-//   Surface material_main(MaterialIn mi)   // mi: uv, wpos, normal, view (all float3), time
+//   Surface material_main(MaterialIn mi)   // mi: uv, wpos, normal, view (all float3), time, depth (rhi::MeshDraw::scene_depth)
 //
 // Every value is a float3. The RHI wraps it into the lit-mesh shader (rhi::Device::create_material_shader),
 // which defines MaterialIn, Surface, lsd_v3(x) and lsd_tex0..2(uv) for the textures listed here.

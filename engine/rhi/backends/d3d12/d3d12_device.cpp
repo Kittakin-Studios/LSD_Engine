@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <string>
 #include <new>
 
@@ -385,8 +386,12 @@ public:
     void destroy_buffer(BufferHandle handle) override {
         Buffer* b = lookup(handle);
         if (!b) return;
-        wait_for_gpu();  // shortcut: stalls; switch to deferred release when buffers churn per frame
-        b->resource.Reset();
+        if (retired_count_[frame_] < kMaxRetired) {  // the frame being recorded may use it: released after its fence (buffers made per frame, water)
+            retired_[frame_][retired_count_[frame_]++] = std::move(b->resource);
+        } else {
+            wait_for_gpu();
+            b->resource.Reset();
+        }
         ++b->generation;
     }
 
@@ -673,6 +678,9 @@ public:
         const bool skinned = draw.joint_rows && draw.joint_count;
         const bool instanced = !skinned && draw.instance_rows && draw.instance_count;
         const u32 blend = draw.wireframe || draw.blend > 3 ? 0u : draw.blend;  // 1..3: a blended variant
+        // Water's depth tint: the target's depth read by the shader and tested read-only at once (as soft particles).
+        const Target* depth_target = draw.scene_depth && material && blend == 1 && !instanced && current_target_ >= 0 ? &targets_[current_target_] : nullptr;
+        list_->SetGraphicsRootDescriptorTable(9, depth_target ? depth_target->depth_srv_gpu : textures_[white_].srv_gpu);
         if (instanced) {  // batches of kMaxJoints instances through the joint ring
             list_->SetPipelineState(draw.wireframe ? instanced_wire_pipeline_.Get() : blend ? blend_pipelines_[2][blend - 1].Get() : instanced_pipeline_.Get());
             list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -727,7 +735,18 @@ public:
         const D3D12_INDEX_BUFFER_VIEW ibv{ib->resource->GetGPUVirtualAddress(), static_cast<UINT>(ib->size), DXGI_FORMAT_R32_UINT};
         list_->IASetVertexBuffers(0, 1, &vbv);
         list_->IASetIndexBuffer(&ibv);
+        const u32 target_slot = static_cast<u32>(current_target_);
+        if (depth_target) {
+            transition(depth_target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(target_slot), dsv = target_dsv(target_slot + kMaxTargets);
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        }
         list_->DrawIndexedInstanced(draw.index_count, 1, 0, 0, 0);
+        if (depth_target) {
+            transition(depth_target->depth.Get(), D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = target_rtv(target_slot), dsv = target_dsv(target_slot);
+            list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        }
     }
 
     MaterialShader* lookup_material(MaterialShaderHandle handle) {
@@ -1342,6 +1361,8 @@ public:
     void begin_frame(const f32 clear_color[4]) override {
         frame_ = swapchain_->GetCurrentBackBufferIndex();
         wait_for_fence(frame_fence_values_[frame_]);
+        for (u32 i = 0; i < retired_count_[frame_]; ++i) retired_[frame_][i].Reset();
+        retired_count_[frame_] = 0;
         if (timestamps_set_[frame_] && timestamp_readback_ && timestamp_frequency_) {  // this slot's last frame has finished: its timings
             const D3D12_RANGE range{sizeof(u64) * frame_ * kGpuTimestamps, sizeof(u64) * (frame_ + 1) * kGpuTimestamps};
             u64* ticks = nullptr;
@@ -1662,7 +1683,7 @@ private:
     bool create_pipelines() {
         // Root constants, then one table per mesh texture (t0 base colour, t1 normal, t2 occlusion / roughness / metallic).
         // 63 of 64 DWORDs: 52 constants, 4 tables, 3 root CBVs (2 each).
-        D3D12_ROOT_PARAMETER params[9]{};
+        D3D12_ROOT_PARAMETER params[10]{};
         D3D12_DESCRIPTOR_RANGE scene_range{};  // t3 / t4: the sun's and the local lights' shadow atlases, t5 decals, t6 reflection captures, t7 lightmaps
         scene_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         scene_range.NumDescriptors = 5;
@@ -1719,8 +1740,16 @@ private:
         samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
         samplers[1].ShaderRegister = 1;
         samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_DESCRIPTOR_RANGE depth_range{};  // t9: the target's depth for MeshDraw::scene_depth (64 of 64 DWORDs)
+        depth_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        depth_range.NumDescriptors = 1;
+        depth_range.BaseShaderRegister = 9;
+        params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[9].DescriptorTable.NumDescriptorRanges = 1;
+        params[9].DescriptorTable.pDescriptorRanges = &depth_range;
+        params[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs_desc{};
-        rs_desc.NumParameters = 9;
+        rs_desc.NumParameters = 10;
         rs_desc.pParameters = params;
         rs_desc.NumStaticSamplers = 3;
         rs_desc.pStaticSamplers = samplers;
@@ -2135,6 +2164,9 @@ private:
     HANDLE fence_event_ = nullptr;
     u64 fence_value_ = 0;
     u64 frame_fence_values_[kBackBufferCount] = {};
+    static constexpr u32 kMaxRetired = 64;  // buffers a frame can release late (more: the old stall)
+    ComPtr<ID3D12Resource> retired_[kBackBufferCount][kMaxRetired];  // destroyed while that frame was recorded
+    u32 retired_count_[kBackBufferCount] = {};
     TextureHandle outline_mask_;  // the selection outline's mask, sized to the last viewport
     u32 outline_size_[2] = {};
     ComPtr<ID3D12QueryHeap> timestamp_heap_;  // GPU timings: kGpuTimestamps per frame in flight

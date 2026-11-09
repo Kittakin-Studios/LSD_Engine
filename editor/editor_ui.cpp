@@ -287,7 +287,7 @@ constexpr PlaceItem kPlaceItems[] = {
     {"Cube", "Cube", nullptr}, {"Sphere", "Sphere", nullptr}, {"Plane", "Plane", nullptr},
     {"Player Start", nullptr, "PlayerStart"}, {"Character", nullptr, "Character"}, {"Blocking Volume", nullptr, "BlockingVolume"},
     {"Kill Volume", nullptr, "KillVolume"}, {"Trigger Volume", nullptr, "TriggerVolume"}, {"Spline", nullptr, "Spline"}, {"Sound Emitter", nullptr, "SoundEmitter"}, {"Particle Effect", nullptr, "ParticleEffect"}, {"Sky", nullptr, "Sky"}, {"Height Fog", nullptr, "HeightFog"},
-    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Nav Link", nullptr, "NavLink"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
+    {"Post Process Volume", nullptr, "PostProcessVolume"}, {"Lightmass Importance Volume", nullptr, "LightmassImportanceVolume"}, {"Decal", nullptr, "Decal"}, {"Nav Mesh Bounds", nullptr, "NavMeshBounds"}, {"Nav Modifier Volume", nullptr, "NavModifierVolume"}, {"Nav Link", nullptr, "NavLink"}, {"Cull Distance Volume", nullptr, "CullDistanceVolume"}, {"Water Volume", nullptr, "WaterVolume"}, {"Water Body", nullptr, "WaterBody"}, {"Nav Agent", "Cube", "NavAgent"}, {"AI Controller", nullptr, "AIController"}, {"Audio Volume", nullptr, "AudioVolume"},
     {"Directional Light", nullptr, "DirectionalLight"}, {"Point Light", nullptr, "PointLight"}, {"Spot Light", nullptr, "SpotLight"}, {"Rect Light", nullptr, "RectLight"}, {"Sky Light", nullptr, "SkyLight"}, {"Reflection Capture", nullptr, "ReflectionCapture"}, {"Camera", nullptr, "Camera"}, {"Empty", nullptr, nullptr},
     // Movement prefabs, cubes as placeholders: swap the mesh in Details.
     {"Sub Level", nullptr, "SubLevel"}, {"Drivable Vehicle", "Cube", "Vehicle"}, {"Transport (Ride)", "Cube", "Transport"}, {"Moving Mesh (Mover)", "Cube", "Mover"},
@@ -1497,6 +1497,7 @@ const char* place_tip(const char* label) {  // what each Place item is, for its 
     if (std::strcmp(label, "Nav Modifier Volume") == 0) return "AI paths go round its box";
     if (std::strcmp(label, "Cull Distance Volume") == 0) return "Hides small meshes inside it when far away (faster frames)";
     if (std::strcmp(label, "Water Volume") == 0) return "Water the Character swims in";
+    if (std::strcmp(label, "Water Body") == 0) return "A lake, ocean or river with waves (Kind in Details); swum in and floated on in Play";
     if (std::strcmp(label, "Nav Agent") == 0) return "An AI walker that paths around the level (Move To, Behavior Trees)";
     if (std::strcmp(label, "AI Controller") == 0) return "An AI with a Behavior Tree, sight and hearing";
     if (std::strcmp(label, "Audio Volume") == 0) return "Reverb inside its box: rooms, caves, halls";

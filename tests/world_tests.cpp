@@ -5,6 +5,7 @@
 #include "lsd/world/spline.h"
 #include "lsd/world/curve.h"
 #include "lsd/world/timeline.h"
+#include "lsd/world/water.h"
 
 #include <cmath>
 #include <cstdio>
@@ -431,6 +432,39 @@ static void test_editor_only() {
     CHECK(destroy_editor_only(w) == 0);
 }
 
+static void test_water() {  // Water Bodies: waves, the lake's rectangle, the river's strip, depth
+    HeapAllocator heap("water");
+    World w(heap);
+    const Entity lake = w.create("Lake");
+    w.get<Transform>(lake)->position = {10, 0, 2};
+    WaterBody* body = w.add<WaterBody>(lake);
+    body->wave_height = 0.0f;
+    f32 h = 0.0f;
+    CHECK(water_surface(w, lake, {12, 3, 0}, 1.0f, h) && std::fabs(h - 2.0f) < 1e-5f);  // flat: the object's height
+    CHECK(!water_surface(w, lake, {25, 0, 0}, 1.0f, h));                              // past the 20 m rectangle
+    CHECK(in_water(w, {10, 0, 1}, 0.0f) && !in_water(w, {10, 0, 2.5f}, 0.0f) && !in_water(w, {10, 0, -9}, 0.0f));  // under, above, below Depth
+    body->wave_height = 0.4f;
+    f32 lowest = 1e9f, highest = -1e9f, sx = 0.0f, sy = 0.0f;
+    for (int i = 0; i < 200; ++i) {
+        const f32 v = water_wave_height(*body, static_cast<f32>(i) * 0.37f, 1.0f, 0.5f);
+        lowest = std::fmin(lowest, v), highest = std::fmax(highest, v);
+    }
+    CHECK(highest > 0.1f && lowest < -0.1f && highest < 0.45f && -lowest < 0.45f);  // biggest wave 0.2 up and down, the rest smaller
+    // The slope is the height's derivative (the shader's normals come from it).
+    const f32 e = 1e-3f, h0 = water_wave_height(*body, 3.0f, 4.0f, 2.0f, &sx, &sy);
+    CHECK(std::fabs((water_wave_height(*body, 3.0f + e, 4.0f, 2.0f) - h0) / e - sx) < 0.01f);
+    CHECK(std::fabs((water_wave_height(*body, 3.0f, 4.0f + e, 2.0f) - h0) / e - sy) < 0.01f);
+    // A river 4 m wide along the default 4 m Spline on +X.
+    const Entity river = w.create("River");
+    w.add<Spline>(river);
+    w.add<WaterBody>(river)->kind = 2;
+    w.get<WaterBody>(river)->wave_height = 0.0f;
+    CHECK(water_surface(w, river, {2, 1.5f, 5}, 0.0f, h) && std::fabs(h) < 1e-4f);
+    CHECK(!water_surface(w, river, {2, 2.5f, 5}, 0.0f, h));  // beyond half the width
+    Vec3 points[kRiverSamples], left[kRiverSamples];
+    CHECK(river_samples(w, river, points, left) >= 5 && std::fabs(left[0].y - 1.0f) < 1e-4f);
+}
+
 int main() {
     test_math();
     test_editor_only();
@@ -440,6 +474,7 @@ int main() {
     test_prefab();
     test_tags();
     test_spline();
+    test_water();
     test_curve();
     test_timeline();
     if (g_failures == 0) std::printf("All world tests passed.\n");

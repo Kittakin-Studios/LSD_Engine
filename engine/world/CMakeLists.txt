@@ -5,6 +5,7 @@ add_library(lsd_world STATIC
   src/spline.cpp
   src/curve.cpp
   src/timeline.cpp
+  src/water.cpp
 )
 target_include_directories(lsd_world PUBLIC include)
 target_link_libraries(lsd_world PUBLIC lsd_foundation lsd_reflect)

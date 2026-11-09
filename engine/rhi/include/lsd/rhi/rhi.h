@@ -139,6 +139,10 @@ struct MeshDraw {
     f32 time = 0.0f;
     const f32* material_params = nullptr;  // its parameters, 4 floats each (copied; unset ones are 0)
     u32 material_param_count = 0;
+    // A translucent Material Graph drawn into a render target: its `mi.depth` reads the target's depth
+    // (what is drawn behind it) as metres of the view between it and this surface (water's depth tint).
+    // Elsewhere (the window, orthographic views, opaque draws) mi.depth is far (1e4).
+    bool scene_depth = false;
     // Instancing (Unreal's Instanced Static Mesh): when set, the mesh is drawn once per instance in
     // one call; each instance's world matrix is given as its first three rows (12 floats). mvp is
     // then the view-projection; world / normal_matrix are unused. Built-in material only (no Material
@@ -188,7 +192,9 @@ constexpr u32 kMaxReflectionProbes = 8;  // reflection captures in the atlas (re
 struct LightSetup {
     f32 exposure = 1.0f;
     u32 count = 0;
-    f32 pad0[2] = {};
+    // The projection's [2][2] and [2][3] (perspective; 0, 0: none): view distance = depth_proj[1] / (depth + depth_proj[0]),
+    // for MeshDraw::scene_depth.
+    f32 depth_proj[2] = {};
     f32 sky[4] = {0.30f, 0.36f, 0.45f, 0.0f};    // ambient from above (radiance, before exposure)
     f32 ground[4] = {0.16f, 0.15f, 0.14f, 0.0f}; // ambient from below
     GpuLight lights[kMaxLights] = {};

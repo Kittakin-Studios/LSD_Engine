@@ -12,6 +12,7 @@
 #include "navigation.h"
 #include "graph_editor.h"
 #include "paper2d.h"
+#include "water.h"
 
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_timer.h>
@@ -23,6 +24,7 @@
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/timeline.h"
+#include "lsd/world/water.h"
 
 #include <SDL3/SDL_stdinc.h>
 
@@ -1819,6 +1821,23 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     swimming_ = false;
     for (u32 i = 0; i < world.count(water_type) && !swimming_; ++i) {
         swimming_ = static_cast<const world::WaterVolume*>(world.at(water_type, i))->enabled && inside_volume(world, world.owner(water_type, i), chest);
+    }
+    // Water Bodies: the chest under their (waving) surface; rigid bodies in them float.
+    const f32 water_clock = water_time();  // the drawn waves' clock: what floats rides the waves you see
+    if (!swimming_) swimming_ = world::in_water(world, chest, water_clock);
+    const reflect::TypeInfo& body_water_type = reflect::type_of<world::WaterBody>();
+    for (u32 i = 0; i < simulated_count_ && world.count(body_water_type); ++i) {
+        const Simulated& s = simulated_[i];
+        if (s.kinematic || !world.alive(s.entity)) continue;
+        const Mat4 placed = physics_->body_transform(s.body);
+        const Vec3 c{placed.at(0, 3), placed.at(1, 3), placed.at(2, 3)};
+        for (u32 k = 0; k < world.count(body_water_type); ++k) {
+            const auto* water = static_cast<const world::WaterBody*>(world.at(body_water_type, k));
+            f32 top = 0.0f, sx = 0.0f, sy = 0.0f;
+            if (water->buoyancy <= 0.0f || !world::water_surface(world, world.owner(body_water_type, k), c, water_clock, top) || c.z < top - water->depth) continue;
+            world::water_wave_height(*water, c.x, c.y, water_clock, &sx, &sy);  // tilted with the wave under it
+            if (physics_->apply_buoyancy(s.body, Vec3{c.x, c.y, top}, normalize(Vec3{-sx, -sy, 1.0f}), water->buoyancy, 0.5f, 0.05f, dt)) break;
+        }
     }
     // Crouching while the crouch action is held; standing up waits until there is room overhead.
     const bool want_crouch = settings_.crouch_action[0] && input_.down(settings_.crouch_action) && !swimming_;
