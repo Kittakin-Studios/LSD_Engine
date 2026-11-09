@@ -10,6 +10,7 @@ endif()
 add_library(lsd_asset STATIC
   src/guid.cpp
   src/asset_registry.cpp
+  src/plugins.cpp
   src/data_asset.cpp
   src/data_table.cpp
   src/localization.cpp
@@ -22,4 +23,4 @@ add_library(lsd_asset STATIC
 target_include_directories(lsd_asset PUBLIC include)
 target_link_libraries(lsd_asset PUBLIC lsd_foundation lsd_reflect lsd_render PRIVATE ufbx cgltf meshoptimizer lsd_stb)
 lsd_configure_target(lsd_asset)
-lsd_reflect(lsd_asset include/lsd/asset/asset_meta.h)
+lsd_reflect(lsd_asset include/lsd/asset/asset_meta.h include/lsd/asset/plugins.h)

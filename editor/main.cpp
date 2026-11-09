@@ -18,6 +18,7 @@
 #include "particle_editor.h"
 #include "particle_player.h"
 #include "packaging.h"
+#include "lsd/asset/plugins.h"
 #include "navigation.h"
 #include "ui_editor.h"
 #include "timeline_editor.h"
@@ -1465,6 +1466,30 @@ void register_console(EditorState& s) {
     }, &s, "Build > Build Release Engine: the Release build Package Project copies, with CMake in the background");
     console::add_command("package", [](void* user, const char*) { static_cast<EditorState*>(user)->package_requested = true; }, &s,
                          "Package the project into Build/<Project Name>/ (File > Package Project)");
+    console::add_command("plugin.New", [](void* user, const char* args) {  // Edit > Plugins > New Plugin
+        auto& st = *static_cast<EditorState*>(user);
+        std::string why;
+        if (lsd::asset::create_plugin(lsd::editor::kPluginsDir, args, why)) {
+            lsd::editor::mount_extras(*st.registry);
+            st.registry->scan();
+            lsd::editor::remote::print("Made Plugins/");
+        } else {
+            lsd::editor::remote::print(why.c_str());
+        }
+    }, &s, "plugin.New <name>: makes Plugins/<name>/ (Edit > Plugins > New Plugin)");
+    console::add_command("package.dlc", [](void* user, const char* args) {  // File > Package DLC: <folder> [base manifest]
+        auto& st = *static_cast<EditorState*>(user);
+        std::string folder = args, base;
+        if (const auto space = folder.find(' '); space != std::string::npos) {
+            base = folder.substr(space + 1);
+            folder.resize(space);
+        }
+        if (folder == "-") folder.clear();
+        char message[400];
+        lsd::editor::package_dlc(*st.registry, folder.c_str(), base.c_str(), message, sizeof message);
+        lsd::editor::remote::print(message);
+        LSD_LOG_INFO("editor", "%s", message);
+    }, &s, "package.dlc <folder|-> [base manifest]: Build/DLC/<Name>/ from a content folder or plugin, a patch with a base manifest (File > Package DLC)");
     console::add_command("debug.Crash", [](void*, const char* args) {  // tests the crash reporter
         if (std::strcmp(args, "abort") == 0) std::abort();
         if (std::strcmp(args, "terminate") == 0) std::terminate();
@@ -2397,6 +2422,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::particles::ParticleSystem>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
+    lsd::editor::mount_extras(registry);  // plugins (Plugins/<Name>/Content) and DLC packages (DLC/<Name>/Content)
     lsd::world::set_prefab_resolver([](void* user, const char* guid_text, char* out, lsd::usize capacity) {  // nested prefabs refresh from their files
         const auto& reg = *static_cast<const lsd::asset::AssetRegistry*>(user);
         lsd::asset::Guid guid;

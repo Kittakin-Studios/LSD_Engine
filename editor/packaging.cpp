@@ -2,6 +2,7 @@
 #include "references.h"
 
 #include "lsd/asset/asset_registry.h"
+#include "lsd/asset/plugins.h"
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
 #include "lsd/reflect/reflect.h"
@@ -497,6 +498,61 @@ static void strip_editor_only(const fs::path& content) {
     if (folders || objects) LSD_LOG_INFO("editor", "Stripped editor-only data: %u folder(s), %u object(s) from the levels", folders, objects);
 }
 
+void mount_extras(asset::AssetRegistry& registry) {
+    std::vector<asset::AssetMount> mounts = asset::plugin_mounts(asset::discover_plugins(kPluginsDir));
+    for (const asset::AssetMount& m : asset::dlc_mounts(kDlcDir)) mounts.push_back(m);  // after the plugins: DLC overrides
+    registry.set_mounts(mounts);
+}
+
+bool package_dlc(const asset::AssetRegistry& registry, const char* folder, const char* base_manifest, char* message, usize capacity) {
+    const std::string source = folder ? folder : "";
+    const bool patch = base_manifest && *base_manifest;
+    asset::Manifest base;
+    if (patch && !asset::load_manifest(base_manifest, base)) {
+        std::snprintf(message, capacity, "Could not read the base manifest %s", base_manifest);
+        return false;
+    }
+    if (source.empty() ? !patch : !asset::safe_relative_path(source.c_str())) {
+        std::snprintf(message, capacity, "Pick a content folder or a plugin (Plugins/<Name>) to package, or a base manifest to patch against");
+        return false;
+    }
+    std::string name = source.empty() ? std::string("Patch") : folder_name(fs::path(source).filename().string().c_str());
+    if (patch && !source.empty()) name += "_Patch";
+    const fs::path out = fs::path(kBuildDir) / "DLC" / name;
+    std::error_code error;
+    if (fs::exists(out, error) && !fs::exists(out / kManifestFile, error)) {
+        std::snprintf(message, capacity, "%s exists and is not a DLC package: move it away first", out.generic_string().c_str());
+        return false;
+    }
+    fs::remove_all(out, error);
+    u32 copied = 0;
+    for (usize i = 0; i < registry.count() && !error; ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        if (!source.empty() && (std::strncmp(r.path, source.c_str(), source.size()) != 0 || r.path[source.size()] != '/')) continue;
+        char from[300], meta[300];
+        registry.source_path(r, from, sizeof from);
+        registry.meta_path(r, meta, sizeof meta);
+        if (patch && asset::manifest_matches(base, r.path, asset::hash_file(from))) continue;
+        const fs::path to = out / "Content" / r.path;
+        fs::create_directories(to.parent_path(), error);
+        fs::copy_file(from, to, fs::copy_options::overwrite_existing, error);
+        if (!error && fs::exists(meta, error)) fs::copy_file(meta, to.string() + ".meta", fs::copy_options::overwrite_existing, error);
+        ++copied;
+    }
+    if (error || !copied) {
+        if (error) std::snprintf(message, capacity, "Packaging the DLC failed: %s", error.message().c_str());
+        else std::snprintf(message, capacity, "Nothing to package%s", patch ? " (every asset matches the base)" : " in that folder");
+        return false;
+    }
+    asset::Manifest manifest = asset::manifest_of_folder((out / "Content").generic_string().c_str());
+    manifest.name = name;
+    asset::save_manifest(manifest, (out / kManifestFile).generic_string().c_str());
+    std::snprintf(message, capacity, "Packaged %s: %u asset%s%s. Copy the folder into the game's DLC/ folder; the game mounts it at start", out.generic_string().c_str(), copied,
+                  copied == 1 ? "" : "s", patch ? " new or changed since the base" : "");
+    LSD_LOG_INFO("editor", "%s", message);
+    return true;
+}
+
 bool package_project(const ProjectSettings& project, const asset::AssetRegistry& registry, char* message, usize capacity) {
     std::error_code error;
     const u32 problems = validate_assets(project, registry);
@@ -516,7 +572,7 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     }
 
     const std::string name = folder_name(project.project_name);
-    const fs::path out = fs::path("Build") / name;
+    const fs::path out = fs::path(kBuildDir) / name;
     // Only a folder we made is cleared (it has the marker), never anything else.
     if (fs::exists(out, error)) {
         if (!fs::exists(out / kGameMarker, error)) {
@@ -544,6 +600,14 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
         }
     } else if (!error) {
         fs::copy("Content", out / "Content", copy_options, error);
+        for (const asset::AssetMount& m : registry.mounts()) {  // plugins and DLC land in Content/ under their prefix
+            if (!error && m.prefix[0] && fs::exists(m.dir, error)) fs::copy(m.dir, out / "Content" / m.prefix, copy_options, error);
+        }
+    }
+    if (!error) {  // what the base package holds, for Package DLC's patches (hashes of the source files, before stripping)
+        asset::Manifest manifest = asset::manifest_of_folder((out / "Content").generic_string().c_str());
+        manifest.name = name;
+        asset::save_manifest(manifest, (out / kManifestFile).generic_string().c_str());
     }
     if (!error) strip_editor_only(out / "Content");
     if (!error) write_level_packages(registry, out);

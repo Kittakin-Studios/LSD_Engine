@@ -2295,6 +2295,22 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
 5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
 
+**Plugins** (Unreal's Plugins): a folder `Plugins/<Name>/` with `plugin.json` (name, version, description,
+enabled), its own `Content/` and, if it has game code, `Source/*.cpp` / `*.c`. **Edit > Plugins** lists them with an
+**Enabled** checkbox (it applies at once) and **New Plugin** makes the folder. An enabled plugin's `Content/` shows in the
+Content Browser as `Plugins/<Name>/...` (its .meta files stay inside the plugin, so references keep working when the
+plugin moves between projects), its `Source/` files join `Game.dll` at the next **Tools > Compile Game Code**, and
+**Package Project** ships its content inside the game's `Content/Plugins/<Name>/`. A disabled plugin is invisible
+to all three.
+
+**DLC and patches** (Unreal's chunking and patch .pak): **File > Package DLC** writes `Build/DLC/<Name>/` with
+`Content/` and `manifest.lsdmanifest` (every file with its hash). *Folder* is what to include, as the Content Browser
+shows it: `Levels/Episode2` or `Plugins/MyPlugin`. For a **patch** fill *Base manifest* with the
+`manifest.lsdmanifest` of the package players have (every Package Project writes one, in its folder): only assets new or
+changed since are packaged, so a patch is small. Copy the DLC folder into the shipped game's `DLC/` folder: at start the
+game mounts every `DLC/<Name>/Content`, in name order, and a file with the same path replaces the base one (same GUID, as
+its .meta travels with it) while new files are simply added. Name patches so they sort in order: `Patch1`, `Patch2`.
+
 **Cooking** (Unreal's cook): tick **Project Settings > Packaging > Cook Used Assets Only** and the
 package gets only the assets the game uses: found from the Project Settings (Game Default Level, Game
 Mode, input, sound mixes...) through references, and through names and paths in scripts, graphs and UI

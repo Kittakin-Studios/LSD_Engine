@@ -296,7 +296,6 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Cinematics: full Sequencer (keys, curves, shots, sub-sequences), cinematic camera (film back, focus), render to video [Sequencer, Movie Render Queue]
 - Audio: procedural audio graphs, spatial audio, dynamic music system [MetaSounds, Quartz]
 - Data: editor utility scripts and widgets (Lua + visual script running in the editor) [Editor Utility Widgets]
-- Build: plugins, DLC / patch packages [Chunking] (C++ hot reload moved to milestone 7)
 - Collaboration: multi-user editing in one level [Multi-User Editing]
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 
@@ -361,6 +360,8 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Flipbook window [Paper2D Flipbook Editor] (`editor/flipbook_editor.*`, double-click a Flipbook): playing preview with the frame's event, the preview sheet with a grid (click a cell to add a frame), the frame list (cell, duration, event, reorder, delete, Set All Durations), saved live to sprites
 - [x] Tile map layers [Paper2D Tile Map layers]: up to 3 Layers per Tile Map besides its main tiles (name, Visible, Depth in front / behind, Collision), painted from the 2D mode's Layer list (+ / -), drawn back to front in the map's mesh; colliding layers add their runs in Play (tested in editor_tests)
 - [x] Touch and gyro input [Touch input, Touch Interface, motion controls]: SDL finger events (and the mouse as a finger, `input.MouseTouch`) become keys for mappings: Touch Tap / Hold / Swipe Up, Down, Left, Right / Pinch / Drag XY; a virtual pad (`input.VirtualPad`, two floating thumbsticks + two buttons, drawn over Play) fills the gamepad sticks and Face Bottom / Right; Gyro XY / Yaw / Pitch / Roll (gamepad gyro, sensitivity = the mapping's Scale) and Tilt XY / X / Y (accelerometer); `lsd.touch_count` / `lsd.touch(i)`; test commands `input.Touch`, `input.Tap`, `input.Swipe` (recognition and pad maths tested in input_tests)
+- [x] Plugins [Plugins]: `Plugins/<Name>/plugin.json` (name, version, description, Enabled), its own `Content/` (mounted into the Content Browser under `Plugins/<Name>/`, found by the Asset Registry through `AssetRegistry::set_mounts`, .meta files stay in the plugin) and optional `Source/*.c|cpp` (added to the Game.dll build by Compile Game Code while enabled); Edit > Plugins lists them with an Enabled checkbox (applied at once) and New Plugin; packaging includes enabled plugins' content (`engine/asset/plugins.*`). Shortcut: plugin code shares the project's one Game.dll and has no include paths or dependencies of its own
+- [x] DLC / patch packages [Chunking / patch .pak]: File > Package DLC writes `Build/DLC/<Name>/` (the assets of one content folder or plugin, or with a base `manifest.lsdmanifest` only those new or changed since) with its own manifest (path, hash, size per file); every Package Project writes a manifest too. The shipped game mounts the packages in its `DLC/` folder at start, name order, a later one overriding the same path. Shortcut: a plain folder, not one compressed archive; no signature check
 
 ## Later
 

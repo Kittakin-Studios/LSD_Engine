@@ -1,5 +1,6 @@
 #include "game_module.h"
 
+#include "lsd/asset/plugins.h"
 #include "lsd/foundation/log.h"
 
 #include <SDL3/SDL.h>
@@ -160,6 +161,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
 file(GLOB GAME_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.c ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 add_library(Game SHARED ${GAME_SOURCES})
+target_sources(Game PRIVATE ${LSD_PLUGIN_SOURCES})  # the enabled plugins' Plugins/<Name>/Source files, passed by the editor
 target_include_directories(Game PRIVATE "${LSD_GAME_API_INCLUDE}")
 set_target_properties(Game PROPERTIES PREFIX ""
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../Binaries"
@@ -373,6 +375,16 @@ void compile() {
         return;
     }
     if (g_compile.joinable()) g_compile.join();
+    std::string plugin_sources;  // the enabled plugins' Source/ files, ';'-separated for CMake
+    for (const std::string& f : asset::plugin_source_files(asset::discover_plugins("Plugins"))) plugin_sources += (plugin_sources.empty() ? "" : ";") + f;
+    {  // a Source/CMakeLists.txt from before plugins: add the line that takes their files
+        std::ifstream in("Source/CMakeLists.txt");
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!text.empty() && text.find("LSD_PLUGIN_SOURCES") == std::string::npos) {
+            std::ofstream out("Source/CMakeLists.txt", std::ios::app);
+            out << "\ntarget_sources(Game PRIVATE ${LSD_PLUGIN_SOURCES})  # plugins' Source files, passed by the editor\n";
+        }
+    }
     // The build runs from a script file: no quoting puzzles in the shell line.
     fs::create_directories("Intermediate", error);
 #ifdef _WIN32
@@ -380,13 +392,13 @@ void compile() {
     std::ofstream bat("Intermediate/compile_game.bat", std::ios::binary);
     bat << "@echo off\r\n";
     if (!vcvars.empty()) bat << "call \"" << vcvars << "\" >nul 2>&1\r\n";
-    bat << "cmake -S Source -B Intermediate/GameBuild -G Ninja -DCMAKE_BUILD_TYPE=Debug \"-DLSD_GAME_API_INCLUDE=" << include << "\" || exit /b 1\r\n";
+    bat << "cmake -S Source -B Intermediate/GameBuild -G Ninja -DCMAKE_BUILD_TYPE=Debug \"-DLSD_GAME_API_INCLUDE=" << include << "\" \"-DLSD_PLUGIN_SOURCES=" << plugin_sources << "\" || exit /b 1\r\n";
     bat << "cmake --build Intermediate/GameBuild || exit /b 1\r\n";
     bat.close();
     std::string script = "Intermediate\\compile_game.bat 2>&1";
 #else
     std::string script = "cmake -S Source -B Intermediate/GameBuild -DCMAKE_BUILD_TYPE=Debug \"-DLSD_GAME_API_INCLUDE=" + include +
-                         "\" 2>&1 && cmake --build Intermediate/GameBuild 2>&1";
+                         "\" \"-DLSD_PLUGIN_SOURCES=" + plugin_sources + "\" 2>&1 && cmake --build Intermediate/GameBuild 2>&1";
 #endif
     g_compiling = true;
     g_compile = std::thread(run_compile, script);

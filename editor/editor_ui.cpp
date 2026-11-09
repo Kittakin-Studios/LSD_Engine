@@ -39,6 +39,7 @@
 #include "transactions.h"
 
 #include "lsd/asset/data_asset.h"
+#include "lsd/asset/plugins.h"
 #include "lsd/core/console.h"
 #include "lsd/input/input.h"
 #include "lsd/debug_ui/details_panel.h"
@@ -4238,14 +4239,17 @@ void draw_file_dialogs(EditorState& s) {
 
 // Draws the sub-folders of `dir` as tree nodes; clicking one selects it. Returns false if none.
 // shortcut: reads the disk every frame; move to the registry's index when folders get many.
-bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTreeNodeFlags flags) {
+// `root` is the folder the tree starts in and `prefix` its path in the registry ("" for Content, "Plugins/<Name>" for a plugin's Content).
+bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTreeNodeFlags flags, const std::filesystem::path& root = kContentDir,
+                      const std::string& prefix = "") {
     std::error_code error;
     bool any = false;
     for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
         if (!entry.is_directory(error)) continue;
         any = true;
         const std::string name = entry.path().filename().string();
-        const std::string relative = std::filesystem::relative(entry.path(), kContentDir, error).generic_string();
+        const std::string inside = std::filesystem::relative(entry.path(), root, error).generic_string();
+        const std::string relative = prefix.empty() ? inside : prefix + "/" + inside;
         const bool selected = relative == s.content_folder;
         const bool open = ImGui::TreeNodeEx(name.c_str(), flags | (selected ? ImGuiTreeNodeFlags_Selected : 0));
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
@@ -4254,7 +4258,7 @@ bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTre
         }
         folder_drop_target(s, relative.c_str());
         if (open) {
-            draw_folder_tree(s, entry.path(), flags);
+            draw_folder_tree(s, entry.path(), flags, root, prefix);
             ImGui::TreePop();
         }
     }
@@ -5541,6 +5545,18 @@ void draw_content_browser(EditorState& s) {
                 if (!draw_folder_tree(s, kContentDir, node)) ImGui::TextDisabled("(no folders)");
                 ImGui::TreePop();
             }
+            for (const asset::AssetMount& m : s.registry->mounts()) {  // each enabled plugin's Content/, under Plugins/<Name>
+                if (!m.prefix[0]) continue;
+                const bool plugin_open = ImGui::TreeNodeEx(m.prefix, node | (s.content_folder == std::string(m.prefix) ? ImGuiTreeNodeFlags_Selected : 0));
+                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                    std::snprintf(s.content_folder, sizeof s.content_folder, "%s", m.prefix);
+                    s.search[0] = s.active_collection[0] = '\0';
+                }
+                if (plugin_open) {
+                    draw_folder_tree(s, m.dir, node, m.dir, m.prefix);
+                    ImGui::TreePop();
+                }
+            }
             ImGui::PopStyleColor();
             ImGui::EndChild();
             ImGui::PopStyleVar();
@@ -5637,6 +5653,7 @@ void draw_menu_bar(EditorState& s) {
         ImGui::SetItemTooltip("Pick files (several at once) to copy into the Content Browser's folder; dropping files or a whole folder on the editor works too");
         if (ImGui::MenuItem("Package Project", nullptr, false, !s.playing)) s.package_requested = true;
         ImGui::SetItemTooltip("Build/<Project Name>/: the game in a folder that runs on another PC (opens Project Settings > Game Default Level)");
+        with_tip(ImGui::MenuItem("Package DLC...", nullptr, &s.show_package_dlc), "Packages one content folder or plugin (or what changed since an earlier package) into Build/DLC/<Name>/, which the shipped game mounts from its DLC/ folder");
         ImGui::EndMenu();
     }
     if (with_tip(ImGui::BeginMenu("Edit"), "Undo, copy and paste, grouping; Editor Preferences and Project Settings")) {
@@ -5659,6 +5676,7 @@ void draw_menu_bar(EditorState& s) {
         if (with_tip(ImGui::MenuItem("Delete", command_text(Command::Delete), false, has), "Removes the selection")) delete_selected(s);
         if (with_tip(ImGui::MenuItem("Drop to Floor", command_text(Command::DropToFloor), false, has), "Moves the selection down until it rests on what is below")) drop_to_floor(s);
         ImGui::Separator();
+        with_tip(ImGui::MenuItem("Plugins", nullptr, &s.show_plugins), "Plugins/<Name> folders with their own Content and game code: turn them on or off, make a new one");
         with_tip(ImGui::MenuItem("Editor Preferences", nullptr, &s.show_preferences), "Your own editor settings: camera speed, snapping, autosave, theme, plugins");
         with_tip(ImGui::MenuItem("Project Settings", nullptr, &s.show_project_settings), "The game's settings, shared with the team: maps, multiplayer, languages, platform");
         ImGui::EndMenu();
@@ -6115,6 +6133,77 @@ void draw_plugins(EditorState& s) {
     kPlugins[selected].draw(s);
 }
 
+// Edit > Plugins (Unreal's Plugins window): the Plugins/<Name>/plugin.json folders, an Enabled checkbox each, New Plugin.
+void draw_plugins_window(EditorState& s) {
+    if (!s.show_plugins) return;
+    static std::vector<asset::PluginInfo> list;
+    static double refreshed = -10.0;
+    static char new_name[48] = "";
+    if (ImGui::GetTime() - refreshed > 1.0) {
+        list = asset::discover_plugins(kPluginsDir);
+        refreshed = ImGui::GetTime();
+    }
+    ImGui::SetNextWindowSize(ImVec2(520, 340), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Plugins", &s.show_plugins)) {
+        if (list.empty()) ImGui::TextDisabled("No plugins. New Plugin makes Plugins/<Name>/ with plugin.json and Content/.");
+        for (const asset::PluginInfo& p : list) {
+            ImGui::PushID(p.descriptor.name);
+            bool on = p.descriptor.enabled;
+            if (with_tip(ImGui::Checkbox("##enabled", &on), "Enabled: its Content shows under Plugins/<Name>/ and ships in packages; its Source/ builds into the game code at the next Compile Game Code")) {
+                asset::set_plugin_enabled(kPluginsDir, p.descriptor.name, on);
+                mount_extras(*s.registry);
+                s.registry->scan();
+                refreshed = -10.0;
+                std::snprintf(s.status, sizeof s.status, "%s %s (Compile Game Code applies its C / C++ files)", p.descriptor.name, on ? "enabled" : "disabled");
+            }
+            ImGui::SameLine();
+            ImGui::Text("%s  v%s", p.descriptor.name, p.descriptor.version);
+            if (p.descriptor.description[0]) ImGui::TextDisabled("    %s", p.descriptor.description);
+            ImGui::PopID();
+        }
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(200);
+        ImGui::InputText("##new_plugin", new_name, sizeof new_name);
+        ImGui::SetItemTooltip("The new plugin's name (also its folder name)");
+        ImGui::SameLine();
+        if (with_tip(ImGui::Button("New Plugin"), "Makes Plugins/<Name>/ with plugin.json and an empty Content/")) {
+            std::string why;
+            if (asset::create_plugin(kPluginsDir, new_name, why)) {
+                mount_extras(*s.registry);
+                s.registry->scan();
+                refreshed = -10.0;
+                std::snprintf(s.status, sizeof s.status, "Made Plugins/%s", new_name);
+                new_name[0] = '\0';
+            } else {
+                std::snprintf(s.status, sizeof s.status, "New Plugin: %s", why.c_str());
+            }
+        }
+        ImGui::TextDisabled("Plugins/<Name>/Content is found by the Content Browser; Plugins/<Name>/Source/*.cpp joins Game.dll.");
+    }
+    ImGui::End();
+}
+
+// File > Package DLC (Unreal's patch .pak / chunking).
+void draw_package_dlc_window(EditorState& s) {
+    if (!s.show_package_dlc) return;
+    static char folder[256] = "";
+    static char base[256] = "";
+    ImGui::SetNextWindowSize(ImVec2(520, 220), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Package DLC", &s.show_package_dlc)) {
+        ImGui::InputText("Folder", folder, sizeof folder);
+        ImGui::SetItemTooltip("The content folder or plugin to package, as the Content Browser shows it: Levels/Episode2 or Plugins/MyPlugin (empty = everything, with a base manifest)");
+        if (with_tip(ImGui::SmallButton("Use the open folder"), "Fills Folder with the Content Browser's current folder")) std::snprintf(folder, sizeof folder, "%s", s.content_folder);
+        ImGui::InputText("Base manifest", base, sizeof base);
+        ImGui::SetItemTooltip("For a patch: the manifest.lsdmanifest of the package (or earlier DLC) players have; only new and changed assets are packaged. Empty = a whole DLC");
+        if (with_tip(ImGui::Button("Package DLC"), "Writes Build/DLC/<Name>/ (Content/ and manifest.lsdmanifest); copy it into the shipped game's DLC/ folder")) {
+            if (package_dlc(*s.registry, folder, base, s.status, sizeof s.status)) LSD_LOG_INFO("editor", "%s", s.status);
+            else LSD_LOG_ERROR("editor", "Package DLC: %s", s.status);
+        }
+        ImGui::TextWrapped("%s", s.status);
+    }
+    ImGui::End();
+}
+
 void draw_preferences_window(EditorState& s) {
     if (!s.show_preferences) return;
     EditorTheme& t = s.theme;
@@ -6346,6 +6435,8 @@ void draw_editor(EditorState& s) {
     }
     draw_history_window(s);
     draw_preferences_window(s);
+    draw_plugins_window(s);
+    draw_package_dlc_window(s);
     draw_world_settings_window(s);
     draw_message_log(s);
     draw_project_settings(s);
