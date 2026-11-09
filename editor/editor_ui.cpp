@@ -836,12 +836,13 @@ bool raycast(EditorState& s, const Ray& ray, Entity ignore, Entity& hit, f32& hi
         }
     }
     // 2D: sprites and tile maps by their flat boxes.
-    for (const reflect::TypeInfo* flat : {&reflect::type_of<world::Sprite>(), &reflect::type_of<world::TileMap>()}) {
+    for (const reflect::TypeInfo* flat : {&reflect::type_of<world::Sprite>(), &reflect::type_of<world::TileMap>(), &reflect::type_of<world::UiPanel>()}) {
         for (u32 i = 0; i < s.world->count(*flat); ++i) {
             const Entity e = s.world->owner(*flat, i);
             if (e == ignore || s.world->hidden_in_hierarchy(e) || (pickable && s.world->locked(e))) continue;
             Vec3 lo, hi;
             if (flat == &reflect::type_of<world::Sprite>()) sprite_bounds(lo, hi);
+            else if (flat == &reflect::type_of<world::UiPanel>()) ui_panel_bounds(*static_cast<const world::UiPanel*>(s.world->at(*flat, i)), lo, hi);
             else tile_map_bounds(*static_cast<const world::TileMap*>(s.world->at(*flat, i)), lo, hi);
             const Mat4 inv = affine_inverse(s.world->world_matrix(e));
             f32 t;

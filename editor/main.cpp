@@ -32,6 +32,7 @@
 #include "lsd/ui/ui.h"
 #include "skinned_cache.h"
 #include "play_session.h"
+#include "ui_panels.h"
 #include "decals.h"
 #include "light_bake.h"
 #include "live_link.h"
@@ -91,6 +92,7 @@ bool g_texture_streaming = true;  // r.TextureStreaming
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
 std::vector<lsd::rhi::MeshDraw> g_outline;
+lsd::editor::UiPanels* g_ui_panels = nullptr;  // world UI panels: their textures for draw_world
 constexpr lsd::f32 kOutlineColor[4] = {1.0f, 0.55f, 0.08f, 1.0f};
 
 // input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
@@ -932,7 +934,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     {
         const bool editor_view = !stats.playing || stats.ejected;
         auto draw_flat = [&](lsd::world::Entity e, const lsd::editor::CachedMesh* mesh, const char* texture, const lsd::LinearColor& tint, bool pixel_art, bool lit, lsd::f32 cutoff,
-                             bool blended = false, lsd::i32 sort_order = 0) {
+                             bool blended = false, lsd::i32 sort_order = 0, lsd::rhi::TextureHandle texture_handle = {}) {
             if (!mesh || (editor_view && world.hidden_in_hierarchy(e))) return;
             const lsd::Mat4 m = world.world_matrix(e);
             const lsd::Mat4 mvp = view_proj * m;
@@ -959,6 +961,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             to_rgba(tint, draw.color);
             draw.roughness = 1.0f;
             if (texture[0]) draw.base_color_texture = materials.textures().get(texture, true);
+            if (texture_handle.valid()) draw.base_color_texture = texture_handle;
             draw.pixel_art = pixel_art;
             draw.alpha_cutoff = cutoff;
             draw.unlit = !lit || (editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision));
@@ -987,6 +990,16 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const auto* map = static_cast<const lsd::world::TileMap*>(world.at(map_type, i));
             const lsd::world::Entity e = world.owner(map_type, i);
             draw_flat(e, lsd::editor::tile_map_mesh(meshes, *map, e.value), map->tileset, map->tint, map->pixel_art, map->lit, 0.5f);
+        }
+        // World UI panels: their document's texture on a quad, blended over what is behind (no document yet: a dim glass pane).
+        // shortcut: the texture holds premultiplied colours drawn with straight alpha, so half-see-through parts come out a little dark.
+        const lsd::reflect::TypeInfo& panel_type = lsd::reflect::type_of<lsd::world::UiPanel>();
+        for (lsd::u32 i = 0; i < world.count(panel_type); ++i) {
+            const auto* panel = static_cast<const lsd::world::UiPanel*>(world.at(panel_type, i));
+            const lsd::world::Entity e = world.owner(panel_type, i);
+            const lsd::rhi::TextureHandle shown = g_ui_panels ? g_ui_panels->texture(e) : lsd::rhi::TextureHandle{};
+            const lsd::LinearColor tint = shown.valid() ? lsd::LinearColor{1.0f, 1.0f, 1.0f, 1.0f} : lsd::LinearColor{0.2f, 0.25f, 0.35f, 0.4f};
+            draw_flat(e, lsd::editor::ui_panel_mesh(meshes, *panel, device.render_targets_flipped()), "", tint, false, panel->lit, 0.0f, true, 0, shown);
         }
     }
     // Instanced Static Meshes: every copy in one draw (a Material Graph draws them one by one).
@@ -2279,6 +2292,9 @@ int main(int argc, char** argv) {
     play.set_sounds(&sounds);
     auto* game_ui = new lsd::ui::UiContext("game");  // documents over the player's view; deleted before the device
     play.set_ui(game_ui);
+    auto* ui_panels = new lsd::editor::UiPanels();  // UiPanel components' documents (deleted before the UI library)
+    g_ui_panels = ui_panels;
+    play.set_ui_panels(ui_panels);
     // The player's settings: loaded (the first time: the quality this graphics card suits) and applied.
     lsd::editor::GameUserSettings user_settings;
     // The quality for this PC: the graphics card's recommendation, then the first of the project's Device Profiles
@@ -2325,6 +2341,7 @@ int main(int argc, char** argv) {
         sounds.set_class_volume("Music", user_settings.music_volume, false);  // projects without these classes: nothing to set
         sounds.set_class_volume("SFX", user_settings.effects_volume, false);
         if (game_mode) SDL_SetWindowFullscreen(window, user_settings.fullscreen);
+        lsd::ui::set_text_scale(user_settings.ui_text_scale);  // shortcut: the UI window's preview scales too (one font engine for all contexts)
     };
     apply_user_settings();
     play.set_user_settings(&user_settings);
@@ -2398,6 +2415,12 @@ int main(int argc, char** argv) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A
                 game_ui->process_event(event);
+                if (!game_ui->hovering() && state.viewport_count > 0) {  // not on a screen element: maybe on a world UI panel
+                    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+                    const lsd::f32* r = state.viewport_rects[0];
+                    const lsd::f32 view_pixels[4] = {r[0] * scale.x, r[1] * scale.y, r[2] * scale.x, r[3] * scale.y};
+                    ui_panels->process_event(event, world, state.drawn_view_proj[0], view_pixels);
+                }
                 if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                     switch (event.gbutton.button) {
                         case SDL_GAMEPAD_BUTTON_DPAD_UP: game_ui->navigate(0, -1); break;
@@ -3001,6 +3024,8 @@ int main(int argc, char** argv) {
         particle_editor->render(*device, clear_color);
         lsd::editor::render_graph_preview(state, clear_color);
         lsd::editor::render_ui_editor(*device, clear_color);
+        ui_panels->sync(world, state.registry, *device, state.playing);
+        ui_panels->render(*device);
         lsd::editor::render_mesh_editor(*device, clear_color);
         lsd::editor::render_prefab_editor(*device, clear_color);
         // Reflection captures: six faces from each capture's place, rendered now, read back after the frame.
@@ -3081,6 +3106,9 @@ int main(int argc, char** argv) {
                 post.contact_shadow[2] = toward.z;
             }
             post.delta_seconds = dt;  // eye adaptation eases over time
+            post.color_deficiency = user_settings.color_deficiency;  // Accessibility: the player's colour-blind filter
+            post.color_deficiency_strength = user_settings.color_deficiency_strength;
+            post.color_deficiency_correct = !user_settings.color_deficiency_simulate;
             if (use_post && lens.view == lsd::editor::ViewType::Perspective) {  // depth effects (AO, DOF, TAA) need the projection
                 post.proj[0] = proj.at(0, 0);
                 post.proj[1] = proj.at(1, 1);
@@ -3282,6 +3310,9 @@ int main(int argc, char** argv) {
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;
     play.set_ui(nullptr);  // ~PlaySession stops Play again: it must not reach the deleted context
+    play.set_ui_panels(nullptr);
+    g_ui_panels = nullptr;
+    delete ui_panels;
     lsd::ui::set_translator(nullptr, nullptr);
     lsd::editor::shutdown_ui_editor();
     delete game_ui;

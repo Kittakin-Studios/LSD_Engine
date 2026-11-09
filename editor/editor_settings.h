@@ -151,6 +151,15 @@ struct GameUserSettings {
     LSD_PROPERTY(Edit, Category = "Controls", Tooltip = "Moving the mouse up looks down (flight controls)") bool invert_look = false;
     LSD_PROPERTY(Edit, Category = "Controls", Tooltip = "Keys the player rebound (lsd.rebind)") List<KeyBinding, 32> key_bindings;
     LSD_PROPERTY(Edit, Category = "Language", Tooltip = "A column of the project's string table (en, fr...); empty: the project's default") char language[16] = "";
+    LSD_PROPERTY(Edit, Category = "Accessibility", Min = 0.5, Max = 3, Tooltip = "Times the size of all game UI text (menus, HUD, subtitles, world panels); 1 = as designed")
+    f32 ui_text_scale = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Accessibility", Tooltip = "Sounds with a Subtitle show it at the bottom of the screen while they play") bool subtitles = true;
+    LSD_PROPERTY(Edit, Category = "Accessibility", Widget = "Choice:Off,Deuteranopia,Protanopia,Tritanopia",
+                 Tooltip = "Colour-blind filter (Unreal's Color Deficiency): Deuteranopia (green-weak), Protanopia (red-weak), Tritanopia (blue-weak)")
+    u32 color_deficiency = 0;
+    LSD_PROPERTY(Edit, Category = "Accessibility", Min = 0, Max = 1, Tooltip = "How strong the colour-blind filter is (0 = none, 1 = full)") f32 color_deficiency_strength = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Accessibility", Tooltip = "Show how the game looks to that colour-blindness instead of correcting for it (for checking your colours)")
+    bool color_deficiency_simulate = false;
 };
 
 // One entry of the project's gameplay tag list (Unreal's Gameplay Tag Manager), e.g. "Damage.Fire".

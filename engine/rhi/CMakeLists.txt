@@ -1,6 +1,7 @@
 add_library(lsd_rhi STATIC
   src/device_selection.cpp
   src/culling.cpp
+  src/color_vision.cpp
   src/device_factory.cpp
 )
 target_include_directories(lsd_rhi PUBLIC include)

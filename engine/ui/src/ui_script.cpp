@@ -66,6 +66,17 @@ JSValue js_set_property(JSContext* ctx, JSValueConst, int argc, JSValueConst* ar
     DocumentScript& s = self(ctx);
     return JS_NewBool(ctx, s.ui.set_property(s.document, arg(ctx, argc, argv, 0).c_str(), arg(ctx, argc, argv, 1).c_str(), arg(ctx, argc, argv, 2).c_str()));
 }
+JSValue js_play_animation(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    DocumentScript& s = self(ctx);
+    return JS_NewBool(ctx, s.ui.play_animation(s.document, arg(ctx, argc, argv, 0).c_str(), arg(ctx, argc, argv, 1).c_str()));
+}
+JSValue js_animate(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+    DocumentScript& s = self(ctx);
+    double seconds = 0.3;
+    if (argc > 3) JS_ToFloat64(ctx, &seconds, argv[3]);
+    return JS_NewBool(ctx, s.ui.animate(s.document, arg(ctx, argc, argv, 0).c_str(), arg(ctx, argc, argv, 1).c_str(), arg(ctx, argc, argv, 2).c_str(),
+                                        static_cast<f32>(seconds), arg(ctx, argc, argv, 4).c_str()));
+}
 JSValue js_value(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     DocumentScript& s = self(ctx);
     char out[512] = "";
@@ -117,6 +128,8 @@ DocumentScript* DocumentScript::load(const std::string& path, UiContext& ui, Doc
     JS_SetPropertyStr(ctx, ui_object, "setAttribute", JS_NewCFunction(ctx, js_set_attribute, "setAttribute", 3));
     JS_SetPropertyStr(ctx, ui_object, "setProperty", JS_NewCFunction(ctx, js_set_property, "setProperty", 3));
     JS_SetPropertyStr(ctx, ui_object, "value", JS_NewCFunction(ctx, js_value, "value", 1));
+    JS_SetPropertyStr(ctx, ui_object, "playAnimation", JS_NewCFunction(ctx, js_play_animation, "playAnimation", 2));
+    JS_SetPropertyStr(ctx, ui_object, "animate", JS_NewCFunction(ctx, js_animate, "animate", 5));
     JS_SetPropertyStr(ctx, ui_object, "close", JS_NewCFunction(ctx, js_close, "close", 0));
     JS_SetPropertyStr(ctx, ui_object, "send", JS_NewCFunction(ctx, js_send, "send", 2));
     JS_SetPropertyStr(ctx, global, "ui", ui_object);

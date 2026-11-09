@@ -30,6 +30,8 @@ bool init(rhi::Device& device, const char* fonts_folder = "Content/Fonts");
 // nullptr to keep the text). Text whose whole content is a string table key gets translated.
 using Translator = const char* (*)(void* user, const char* text);
 void set_translator(Translator translator, void* user);
+// Accessibility (the player's UI Text Scale): every document's text times `scale` (0.25..4; 1 = as written).
+void set_text_scale(f32 scale);
 void shutdown();
 
 class UiContext {
@@ -55,6 +57,13 @@ public:
     bool get_value(DocumentId document, const char* element_id, char* out, usize capacity) const;  // inputs
     // One style property ("left", "120px"), leaving the element's other styles alone.
     bool set_property(DocumentId document, const char* element_id, const char* name, const char* value);
+
+    // Widget animations (UMG's): `animation` plays (or replays from the start) RCSS @keyframes, e.g.
+    // "pop 0.4s cubic-out" or "pulse 1s infinite alternate" ("none" stops them); animate tweens one
+    // property from its current value to `value` over `seconds` ("linear", "cubic-in-out", "back-out",
+    // "elastic-out"... nullptr: linear). The element's onanimationend="fn" fires when one ends.
+    bool play_animation(DocumentId document, const char* element_id, const char* animation);
+    bool animate(DocumentId document, const char* element_id, const char* property, const char* value, f32 seconds, const char* tween);
 
     // The UI designer canvas: the element under a point (context pixels) that has an id, or its
     // nearest ancestor with one (never the body); an element's border box (x, y, width, height in
@@ -84,6 +93,8 @@ public:
     // `viewport`: x, y, width, height in window pixels (where it is drawn; input is relative to it).
     void update(const f32 viewport[4]);
     void render(rhi::Device& device);
+    // Drawing into a render target that meshes sample (a world UI panel): colours written linear.
+    void set_linear_colors(bool linear);
     // True if the UI used the event (a click on a button, typing into a field).
     bool process_event(const SDL_Event& event);
     bool hovering() const;  // the mouse is over an element (not just the document's empty body)

@@ -4,6 +4,7 @@
 #include "debug_draw.h"
 #include "skinned_cache.h"
 #include "timeline_player.h"
+#include "ui_panels.h"
 #include "behavior.h"
 
 #include "lsd/foundation/profile.h"
@@ -469,6 +470,8 @@ void PlaySession::stop() {
     chat_.clear();
     if (ui_) ui_->close_all();
     ui_cursor_ = false;
+    subtitle_doc_ = -1;
+    subtitle_shown_[0] = '\0';
     ui_follower_count_ = 0;
     scripts_.stop();
     nav_.clear_agents();  // the mesh stays for the next Play (rebuilt only if the level changed)
@@ -1120,6 +1123,10 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         auto* ui = static_cast<PlaySession*>(user)->ui_;
         return ui && ui->set_property(doc, id, property, value);
     };
+    host.ui_animate = [](void* user, i32 doc, const char* id, const char* property, const char* value, f32 seconds, const char* tween) {
+        auto* ui = static_cast<PlaySession*>(user)->ui_;
+        return ui && (property ? ui->animate(doc, id, property, value, seconds, tween) : ui->play_animation(doc, id, value));
+    };
     host.ui_rml = [](void* user, i32 doc, const char* id, const char* rml) {
         auto* ui = static_cast<PlaySession*>(user)->ui_;
         return ui && ui->set_rml(doc, id, rml);
@@ -1129,6 +1136,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return ui ? ui->open_text(rml, "Content/") : -1;
     };
     host.ui_data = [](void* user, const char* name, int type, f64 number, const char* text) {
+        if (auto* panels = static_cast<PlaySession*>(user)->ui_panels_) panels->set_data(name, type, number, text);
         auto* ui = static_cast<PlaySession*>(user)->ui_;
         if (!ui) return;
         if (type == 0) ui->set_data(name, number);
@@ -1607,13 +1615,21 @@ void PlaySession::place_ui_followers(const world::World& world, const Mat4& view
     }
 }
 
+namespace {
+void send_ui_action(void* user, ui::UiContext&, ui::DocumentId, const char* action, const char* element_id) {
+    auto& self = *static_cast<PlaySession*>(user);
+    if (self.scripts().broadcast(action, element_id) == 0) LSD_LOG_WARN("ui", "No script has a function '%s' (from #%s)", action, element_id);
+}
+} // namespace
+
 void PlaySession::set_ui(ui::UiContext* ui) {
     ui_ = ui;
-    if (!ui_) return;
-    ui_->set_actions([](void* user, ui::UiContext&, ui::DocumentId, const char* action, const char* element_id) {
-        auto& self = *static_cast<PlaySession*>(user);
-        if (self.scripts_.broadcast(action, element_id) == 0) LSD_LOG_WARN("ui", "No script has a function '%s' (from #%s)", action, element_id);
-    }, this);
+    if (ui_) ui_->set_actions(send_ui_action, this);
+}
+
+void PlaySession::set_ui_panels(UiPanels* panels) {
+    ui_panels_ = panels;
+    if (ui_panels_) ui_panels_->set_actions(send_ui_action, this);
 }
 
 void PlaySession::update_followers(world::World& world, f32 dt) {
@@ -1647,6 +1663,25 @@ void PlaySession::update_followers(world::World& world, f32 dt) {
         world.set_world_matrix(f.entity, trs(at, rotation, scale));
         if (f.body != physics::kWorldBody) physics_->move_kinematic(f.body, translation(at) * rotation_euler(rotation) * translation(mul(f.centre, f.scale)), dt);
     }
+}
+
+// Subtitles (Accessibility): the line of the sound playing now, at the bottom of the screen, in the
+// player's language when it is a string table key; off in the player's settings: none.
+void PlaySession::update_subtitles() {
+    if (!ui_ || !sounds_) return;
+    const char* line = user_settings_ && !user_settings_->subtitles ? "" : sounds_->subtitle();
+    if (std::strcmp(line, subtitle_shown_) == 0) return;
+    std::snprintf(subtitle_shown_, sizeof subtitle_shown_, "%s", line);
+    if (!ui_->is_open(subtitle_doc_)) {
+        static const char kSubtitleRml[] = R"(<rml><head><style>
+body { width: 100%; height: 100%; font-family: sans; pointer-events: none; }
+#line { position: absolute; left: 10%; width: 80%; bottom: 6%; text-align: center; font-size: 26px; color: #FFFFFF;
+        padding: 6px 14px; background-color: rgba(0, 0, 0, 170); border-radius: 6px; display: none; }
+</style></head><body><div id="line"></div></body></rml>)";
+        subtitle_doc_ = ui_->open_text(kSubtitleRml, "Content/");
+    }
+    ui_->set_text(subtitle_doc_, "line", localization_ ? localization_->text(line) : line);
+    ui_->set_property(subtitle_doc_, "line", "display", line[0] ? "block" : "none");
 }
 
 // Audio Volumes: the one the ears are in sets the reverb (faded); voices on the other side of a
@@ -1971,6 +2006,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         sounds_->audio()->set_position(emitters_[i].voice, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
     }
     update_audio_volumes(world, dt);
+    update_subtitles();
     if (animations_) animations_->apply_root_motion(world, character_);  // root motion of objects without the player's Character
     send_hits();
     update_triggers(world);

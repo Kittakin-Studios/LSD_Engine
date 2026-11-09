@@ -436,7 +436,7 @@ local settings_doc = nil
 local SETTINGS_RML = [[<rml><head><style>
 body { width: 100%; height: 100%; font-family: sans; color: #FFFFFF; background-color: rgba(0, 0, 0, 120); }
 div { display: block; }
-#panel { position: absolute; left: 50%; top: 50%; width: 560px; margin-left: -280px; margin-top: -250px; padding: 18px 24px;
+#panel { position: absolute; left: 50%; top: 50%; width: 560px; margin-left: -280px; margin-top: -330px; padding: 18px 24px;
          background-color: rgba(13, 4, 4, 235); border: 2px #F3C312; border-radius: 10px; }
 #title { font-size: 34px; font-weight: bold; color: #FFE51A; margin-bottom: 12px; }
 .row { margin: 8px 0; font-size: 20px; }
@@ -457,17 +457,22 @@ input.range sliderbar { width: 16px; height: 18px; background-color: #F3C312; bo
 <div class="row"><span class="label">Effects</span><input type="range" class="range" id="effects_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Mouse sensitivity</span><input type="range" class="range" id="mouse_sensitivity" min="1" max="50" step="1" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Invert look</span><button class="button" id="invert_look" onclick="__lsd_toggle">Off</button></div>
+<div class="row"><span class="label">Text size</span><input type="range" class="range" id="ui_text_scale" min="0.5" max="2" step="0.1" onchange="__lsd_slider"/></div>
+<div class="row"><span class="label">Subtitles</span><button class="button" id="subtitles" onclick="__lsd_toggle">Off</button></div>
+<div class="row"><span class="label">Colour blindness</span><button class="button" id="cb0" onclick="__lsd_colorblind">Off</button><button class="button" id="cb1" onclick="__lsd_colorblind">Deutan</button><button class="button" id="cb2" onclick="__lsd_colorblind">Protan</button><button class="button" id="cb3" onclick="__lsd_colorblind">Tritan</button></div>
+<div class="row"><span class="label">Filter strength</span><input type="range" class="range" id="color_deficiency_strength" min="0" max="1" step="0.1" onchange="__lsd_slider"/></div>
 <button class="button" id="close" onclick="__lsd_settings_close">Close</button>
 </div></body></rml>]]
 local function settings_show()
   local s = lsd.get_settings()
   if not s or not settings_doc then return end
   for q = 0, 3 do lsd.ui_set(settings_doc, "q" .. q, "class", s.quality == q and "button on" or "button") end
-  for _, id in ipairs({"fullscreen", "invert_look"}) do
+  for q = 0, 3 do lsd.ui_set(settings_doc, "cb" .. q, "class", s.color_deficiency == q and "button on" or "button") end
+  for _, id in ipairs({"fullscreen", "invert_look", "subtitles"}) do
     lsd.ui_set_text(settings_doc, id, s[id] and "On" or "Off")
     lsd.ui_set(settings_doc, id, "class", s[id] and "button on" or "button")
   end
-  for _, id in ipairs({"master_volume", "music_volume", "effects_volume"}) do lsd.ui_set(settings_doc, id, "value", tostring(s[id])) end
+  for _, id in ipairs({"master_volume", "music_volume", "effects_volume", "ui_text_scale", "color_deficiency_strength"}) do lsd.ui_set(settings_doc, id, "value", tostring(s[id])) end
   lsd.ui_set(settings_doc, "mouse_sensitivity", "value", tostring(math.floor(s.mouse_sensitivity * 10 + 0.5)))  -- in tenths, whole steps
 end
 function lsd.settings_menu(open)
@@ -484,6 +489,7 @@ function lsd.settings_menu(open)
   return settings_doc ~= nil
 end
 lsd.on_ui("__lsd_quality", function(id) lsd.set_settings({quality = tonumber(string.sub(id, 2))}) settings_show() end)
+lsd.on_ui("__lsd_colorblind", function(id) lsd.set_settings({color_deficiency = tonumber(string.sub(id, 3))}) settings_show() end)
 lsd.on_ui("__lsd_toggle", function(id) local s = lsd.get_settings() lsd.set_settings({[id] = not s[id]}) settings_show() end)
 lsd.on_ui("__lsd_slider", function(id)
   local v = tonumber(lsd.ui_value(settings_doc, id))
@@ -1344,6 +1350,17 @@ struct Api {
                                                           luaL_tolstring_compat(L, 4)));
         return 1;
     }
+    static int ui_play_animation(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_animate && host.ui_animate(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), nullptr, luaL_checkstring(L, 3), 0.0f, nullptr));
+        return 1;
+    }
+    static int ui_animate(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushboolean(L, host.ui_animate && host.ui_animate(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3),
+                                                              luaL_tolstring_compat(L, 4), static_cast<f32>(luaL_optnumber(L, 5, 0.3)), luaL_optstring(L, 6, nullptr)));
+        return 1;
+    }
     static int ui_rml(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         lua_pushboolean(L, host.ui_rml && host.ui_rml(host.user, static_cast<i32>(luaL_checkinteger(L, 1)), luaL_checkstring(L, 2), luaL_checkstring(L, 3)));
@@ -1998,6 +2015,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},
         {"bb_clear", Api::bb_clear}, {"report_noise", Api::report_noise}, {"apply_damage", Api::apply_damage}, {"rebuild_navmesh", Api::rebuild_navmesh}, {"ui_open", Api::ui_open}, {"ui_close", Api::ui_close},
         {"ui_set_text", Api::ui_set_text}, {"ui_set", Api::ui_set}, {"ui_value", Api::ui_value}, {"ui_data", Api::ui_data}, {"ui_show_cursor", Api::ui_show_cursor}, {"ui_follow", Api::ui_follow}, {"ui_unfollow", Api::ui_unfollow}, {"ui_style", Api::ui_style}, {"ui_rml", Api::ui_rml}, {"_ui_open_text", Api::ui_open_text},
+        {"ui_play_animation", Api::ui_play_animation}, {"ui_animate", Api::ui_animate},
         {"get_settings", Api::get_settings}, {"set_settings", Api::set_settings}, {"text", Api::text}, {"set_language", Api::set_language},
         {"languages", Api::languages}, {"bindings", Api::bindings}, {"broadcast", Api::broadcast}, {"set_view", Api::set_view}, {"enum", Api::user_enum}, {"ik_reach", Api::ik_reach}, {"ik_look_at", Api::ik_look_at}, {"play_music", Api::play_music}, {"play_timeline", Api::play_timeline}, {"socket", Api::socket}, {"stop_timeline", Api::stop_timeline}, {"stop_music", Api::stop_music}, {"music_layer", Api::music_layer}, {"struct", Api::user_struct}, {"draw_line", Api::draw_line}, {"draw_sphere", Api::draw_sphere}, {"draw_box", Api::draw_box}, {"draw_text", Api::draw_text}, {"call", Api::call_on}, {"native_call", Api::native_call}, {"net_mode", Api::net_mode}, {"load_sublevel", Api::load_sublevel}, {"unload_sublevel", Api::unload_sublevel}, {"enter_vehicle", Api::enter_vehicle}, {"exit_vehicle", Api::exit_vehicle},
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},

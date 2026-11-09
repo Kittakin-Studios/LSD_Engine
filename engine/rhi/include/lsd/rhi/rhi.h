@@ -310,7 +310,18 @@ struct PostDraw {
     f32 exposure_speed_up = 3.0f;
     f32 exposure_speed_down = 1.0f;
     f32 delta_seconds = 0.0f;  // since this view's last frame; 0: jump to the target
+    // Colour-vision filter (Unreal's r.Color.Deficiency), applied in the composite before display colours:
+    // 0 off, 1 deuteranopia, 2 protanopia, 3 tritanopia; strength 0..1; correct: colours that type cannot
+    // tell apart are shifted into ones it can (for players), else how they look to it (for designers).
+    u32 color_deficiency = 0;
+    f32 color_deficiency_strength = 1.0f;
+    bool color_deficiency_correct = true;
 };
+
+// The filter's 3 x 3 matrix (row-major, linear RGB in -> out); identity when type is 0.
+void color_vision_matrix(u32 type, f32 strength, bool correct, f32 out[9]);
+// Writes it into the composite pass's constants (each backend's draw_post calls it).
+void post_color_vision(const PostDraw& post, f32 constants[48]);
 
 // A gradient sky with a sun disc behind everything (display colours; fog and post-processing apply).
 struct SkyDraw {
@@ -355,7 +366,8 @@ public:
     // Needs init_debug_ui() first on D3D12 (its view lives in the UI's descriptor heap).
     virtual TextureHandle create_texture(u32 width, u32 height, u32 mip_count, TextureFormat format, const void* const* mips) = 0;
 
-    // Offscreen colour target (RGBA8, same format as the window) with its own depth buffer.
+    // Offscreen colour target (RGBA8, same format as the window) with its own depth buffer. It can also be
+    // a MeshDraw's base_color_texture (read as is, not sRGB-decoded: write linear colours into it).
     virtual TextureHandle create_render_target(u32 width, u32 height) = 0;
     virtual void destroy_texture(TextureHandle texture) = 0;  // safe while the GPU may still use it
 

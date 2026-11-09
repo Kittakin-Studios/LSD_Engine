@@ -1341,6 +1341,7 @@ public:
         g[13] = p.contrast;
         g[14] = p.vignette;
         g[15] = p.color_lut.valid() ? p.lut_intensity : 0.0f;
+        post_color_vision(p, g);
         const bool fxaa = p.fxaa && !taa;
         post_pass(kComposite, fxaa ? c.ldr : p.output, p.viewport, src, bloom ? c.up[0] : TextureHandle{}, p.color_lut, g);
         if (fxaa) {

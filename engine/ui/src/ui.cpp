@@ -7,10 +7,13 @@
 #include "lsd/reflect/json.h"
 
 #include <RmlUi/Core.h>
+#include <FontEngineDefault/FontEngineInterfaceDefault.h>  // shortcut: RmlUi's own header from its sources, upgrade if a version moves it
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keyboard.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +42,8 @@ public:
     f32 viewport[4] = {};
     bool scissor_on = false;
     i32 scissor[4] = {};
+    bool linear = false;  // the context draws into a texture meshes sample (world UI panels): linear colours
+    std::vector<rhi::UiVertex> converted;
 
     Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices) override {
         auto* g = new Geometry();
@@ -63,6 +68,24 @@ public:
         if (!drawing || !g) return;
         rhi::UiDraw d;
         d.vertices = g->vertices.data();
+        if (linear) {  // shortcut: vertex colours only; images in the document stay sRGB (a little light), convert them at load if it shows
+            static f32 to_linear[256] = {-1.0f};
+            if (to_linear[0] < 0.0f) {
+                for (int i = 0; i < 256; ++i) {
+                    const f32 c = static_cast<f32>(i) / 255.0f;
+                    to_linear[i] = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+                }
+            }
+            converted = g->vertices;
+            for (rhi::UiVertex& v : converted) {
+                const u32 a = v.color[3];
+                for (int c = 0; c < 3 && a; ++c) {  // premultiplied: undo, convert, redo
+                    const u32 straight = std::min<u32>(255u, (v.color[c] * 255u + a / 2) / a);
+                    v.color[c] = static_cast<u8>(to_linear[straight] * static_cast<f32>(a) + 0.5f);
+                }
+            }
+            d.vertices = converted.data();
+        }
         d.vertex_count = static_cast<u32>(g->vertices.size());
         d.indices = g->indices.data();
         d.index_count = static_cast<u32>(g->indices.size());
@@ -133,7 +156,19 @@ public:
     }
 };
 
+// UI Text Scale (accessibility): every font size is asked for times the scale, so all text grows and
+// the layout makes room for it (sizes set in px included).
+class ScaledFonts final : public Rml::FontEngineInterfaceDefault {
+public:
+    f32 scale = 1.0f;
+    Rml::FontFaceHandle GetFontFaceHandle(const Rml::String& family, Rml::Style::FontStyle style, Rml::Style::FontWeight weight, int size) override {
+        const int scaled = static_cast<int>(static_cast<f32>(size) * scale + 0.5f);
+        return FontEngineInterfaceDefault::GetFontFaceHandle(family, style, weight, scaled > 1 ? scaled : 1);
+    }
+};
+
 RenderInterface* g_render = nullptr;
+ScaledFonts* g_fonts = nullptr;
 SystemInterface* g_system = nullptr;
 std::vector<std::vector<Rml::byte>>* g_font_data = nullptr;  // kept until Rml::Shutdown
 std::unordered_map<Rml::Context*, std::pair<UiContext*, UiContext::Impl*>>* g_contexts = nullptr;
@@ -213,6 +248,8 @@ bool init(rhi::Device& device, const char* fonts_folder) {
     g_contexts = new std::unordered_map<Rml::Context*, std::pair<UiContext*, UiContext::Impl*>>();
     Rml::SetRenderInterface(g_render);
     Rml::SetSystemInterface(g_system);
+    g_fonts = new ScaledFonts();
+    Rml::SetFontEngineInterface(g_fonts);
     if (!Rml::Initialise()) {
         LSD_LOG_ERROR("ui", "RmlUi did not start");
         return false;
@@ -258,10 +295,19 @@ void set_translator(Translator translator, void* user) {
     g_system->translator_user = user;
 }
 
+void set_text_scale(f32 scale) {
+    scale = scale < 0.25f ? 0.25f : scale > 4.0f ? 4.0f : scale;
+    if (!g_fonts || g_fonts->scale == scale) return;
+    g_fonts->scale = scale;
+    Rml::ReleaseFontResources();  // every element asks for its font again, at the new size
+}
+
 void shutdown() {
     shutdown_scripts();
     if (!g_render) return;
     Rml::Shutdown();
+    delete g_fonts;
+    g_fonts = nullptr;
     delete g_instancer;
     delete g_contexts;
     delete g_font_data;
@@ -395,6 +441,7 @@ struct UiContext::Impl {
     ActionHandler actions = nullptr;
     void* user = nullptr;
     f32 viewport[4] = {0, 0, 1, 1};
+    bool linear = false;
 
     Rml::Element* element(DocumentId d, const char* id) const {
         return d >= 0 && static_cast<usize>(d) < documents.size() && documents[d] ? documents[d]->GetElementById(id) : nullptr;
@@ -586,6 +633,40 @@ bool UiContext::set_property(DocumentId d, const char* id, const char* name, con
     return e != nullptr;
 }
 
+bool UiContext::play_animation(DocumentId d, const char* id, const char* animation) {
+    Rml::Element* e = impl_->element(d, id);
+    if (!e) return false;
+    e->RemoveProperty("animation");  // the same animation again starts over
+    return e->SetProperty("animation", animation);
+}
+
+namespace {
+// "cubic-in-out" -> Tween{Cubic, InOut}; RmlUi's tween names (unknown: linear).
+Rml::Tween parse_tween(const char* name) {
+    static const char* const kTypes[] = {"none", "back", "bounce", "circular", "cubic", "elastic", "exponential", "linear", "quadratic", "quartic", "quintic", "sine"};
+    if (!name || !name[0]) return Rml::Tween{};
+    const char* dash = std::strchr(name, '-');
+    const usize length = dash ? static_cast<usize>(dash - name) : std::strlen(name);
+    Rml::Tween::Direction direction = Rml::Tween::Out;
+    if (dash && std::strcmp(dash, "-in") == 0) direction = Rml::Tween::In;
+    else if (dash && std::strcmp(dash, "-in-out") == 0) direction = Rml::Tween::InOut;
+    for (int t = 1; t < static_cast<int>(sizeof kTypes / sizeof kTypes[0]); ++t) {
+        if (std::strlen(kTypes[t]) == length && std::strncmp(kTypes[t], name, length) == 0) return Rml::Tween{static_cast<Rml::Tween::Type>(t), direction};
+    }
+    return Rml::Tween{};
+}
+} // namespace
+
+bool UiContext::animate(DocumentId d, const char* id, const char* property, const char* value, f32 seconds, const char* tween) {
+    Rml::Element* e = impl_->element(d, id);
+    if (!e) return false;
+    Rml::PropertyDictionary parsed;
+    if (!Rml::StyleSheetSpecification::ParsePropertyDeclaration(parsed, property, value)) return false;
+    const Rml::Property* target = parsed.GetProperty(Rml::StyleSheetSpecification::GetPropertyId(property));
+    if (!target) return false;  // a shorthand ("margin"): name one of its parts
+    return e->Animate(property, *target, seconds > 0.0f ? seconds : 0.001f, parse_tween(tween));
+}
+
 bool UiContext::element_at(f32 x, f32 y, char* id, usize capacity) const {
     if (!impl_->context) return false;
     for (Rml::Element* e = impl_->context->GetElementAtPoint(Rml::Vector2f(x, y)); e; e = e->GetParentNode()) {
@@ -648,13 +729,17 @@ void UiContext::update(const f32 viewport[4]) {
     impl_->context->Update();
 }
 
+void UiContext::set_linear_colors(bool linear) { impl_->linear = linear; }
+
 void UiContext::render(rhi::Device& device) {
     if (!impl_->context || !g_render) return;
     g_render->drawing = &device;
+    g_render->linear = impl_->linear;
     std::memcpy(g_render->viewport, impl_->viewport, sizeof g_render->viewport);
     g_render->scissor_on = false;
     impl_->context->Render();
     g_render->drawing = nullptr;
+    g_render->linear = false;
 }
 
 bool UiContext::process_event(const SDL_Event& event) {

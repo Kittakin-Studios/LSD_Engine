@@ -37,6 +37,7 @@ namespace lsd::editor {
 class SkinnedCache;
 
 class AnimationPlayer;
+class UiPanels;
 
 // Multiplayer for one Play (Project Settings > Multiplayer): host or join, and how.
 struct NetPlay {
@@ -121,6 +122,7 @@ public:
     const ai::NavMesh& navmesh() const { return nav_; }  // built when Play starts
     // The game's UI (documents opened by scripts and the Game Mode's HUD). Its actions call Lua.
     void set_ui(ui::UiContext* ui);
+    void set_ui_panels(UiPanels* panels);  // world UI panels: their actions go to the scripts, lsd.ui_data reaches them
     bool ui_cursor() const { return ui_cursor_; }  // a menu wants the mouse
     // The player's settings Lua reads and changes; `changed` tells main.cpp to apply and save them.
     void set_user_settings(GameUserSettings* settings) { user_settings_ = settings; }
@@ -300,6 +302,7 @@ private:
     AnimationPlayer* animations_ = nullptr;
     SkinnedCache* skinned_ = nullptr;
     ui::UiContext* ui_ = nullptr;
+    UiPanels* ui_panels_ = nullptr;
     GameUserSettings* user_settings_ = nullptr;
     asset::Localization* localization_ = nullptr;
     const char* base_mix_ = nullptr;
@@ -313,6 +316,8 @@ private:
     u32 ui_follower_count_ = 0;
     bool settings_changed_ = false;
     bool ui_cursor_ = false;
+    i32 subtitle_doc_ = -1;  // the subtitle line's document, opened with the first subtitle
+    char subtitle_shown_[128] = "";
     // Nav Agents walking on the navmesh.
     ai::NavMesh nav_;
     struct Agent {
@@ -389,6 +394,7 @@ private:
     u32 follower_count_ = 0;
     void update_followers(world::World& world, f32 dt);
     void update_audio_volumes(const world::World& world, f32 dt);
+    void update_subtitles();
     f32 reverb_now_ = 0.0f, room_now_ = 0.5f;
     u32 overlap_count_ = 0;
     u32 simulated_count_ = 0;

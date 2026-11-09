@@ -437,6 +437,20 @@ struct TileMap {
     LSD_PROPERTY(Edit, Tooltip = "More layers over or under the main tiles (the 2D mode's Layer list paints them)") List<TileLayer, 3> layers;
 };
 
+// A UI document drawn into a texture and shown on a flat panel in the level (Unreal's Widget
+// Component in World space). The panel stands in the X-Z plane facing -Y, centred on the object.
+LSD_STRUCT(Component, Category = "UI", Tooltip = "A UI document (.rml and its .js) on a flat panel in the level: screens, signs, keypads (Unreal's Widget Component in World space)")
+struct UiPanel {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:UI", Tooltip = "The UI document shown on the panel; its own .js runs, its on-click actions go to the scripts in Play") char document[33] = "";
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 100, Tooltip = "Width of the panel in the level") f32 width = 1.6f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 0.05, Max = 100, Tooltip = "Height of the panel in the level") f32 height = 0.9f;
+    LSD_PROPERTY(Edit, Min = 64, Max = 2048, Tooltip = "Pixels across that the document is laid out in (Unreal's Draw Size); the height follows the panel's shape")
+    u32 resolution = 1024;
+    LSD_PROPERTY(Edit, Tooltip = "Lit by the level's lights; off: its own colours, like a screen") bool lit = false;
+    LSD_PROPERTY(Edit, Tooltip = "In Play, while the mouse cursor is shown (a menu), clicks and hovering on the panel reach its document") bool clickable = true;
+};
+
 // A picture projected onto whatever is inside its box (Unreal's Decal Actor): blood, dirt, cracks,
 // signs, road markings. The box is the unit cube scaled by the transform (like the volumes); it
 // projects down its local -Z onto surfaces facing up its +Z. The texture's alpha cuts it out.

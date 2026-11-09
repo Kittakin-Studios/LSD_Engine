@@ -152,7 +152,21 @@ u32 SoundPlayer::play_file(const asset::AssetRecord& wave, const asset::AssetMet
     d.concurrency = concurrency_index(settings.concurrency);
     d.delay = delay;
     d.instance = instance;
-    return audio_->play(d);
+    const u32 voice = audio_->play(d);
+    const char* line = settings.subtitle[0] ? settings.subtitle : own.subtitle;
+    if (voice && line[0]) {
+        std::snprintf(subtitle_, sizeof subtitle_, "%s", line);
+        subtitle_voice_ = instance ? instance : voice;  // a cue's voices share its instance
+    }
+    return voice;
+}
+
+const char* SoundPlayer::subtitle() {
+    if (subtitle_voice_ && (!audio_ || !audio_->playing(subtitle_voice_))) {
+        subtitle_voice_ = 0;
+        subtitle_[0] = '\0';
+    }
+    return subtitle_;
 }
 
 u32 SoundPlayer::play_cue(const asset::AssetRecord& cue, bool spatial, Vec3 position) {
