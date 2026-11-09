@@ -49,6 +49,13 @@ struct SoundAttenuation {
     LSD_PROPERTY(Edit, Category = "Occlusion", Tooltip = "Muffled when something solid is between it and the listener (Unreal's Enable Occlusion)")
     bool occlusion = false;
     LSD_PROPERTY(Edit, Category = "Occlusion", Units = "Hz", Min = 100, Max = 20000, Tooltip = "Low-pass while blocked") f32 occlusion_muffle = 1200.0f;
+    LSD_PROPERTY(Edit, Category = "Air Absorption", Tooltip = "High frequencies fade with distance, as in air: far sounds are duller (Unreal's Enable Air Absorption)")
+    bool air_absorption = false;
+    LSD_PROPERTY(Edit, Category = "Air Absorption", Units = "Hz", Min = 100, Max = 20000, Tooltip = "Low-pass cutoff at Max Distance; open at Min Distance")
+    f32 air_absorption_far = 3000.0f;
+    LSD_PROPERTY(Edit, Category = "Reverb", Tooltip = "Sends more of it to a reverb the farther it is, so distant sounds feel far away (Unreal's Reverb Send)")
+    bool reverb_send = false;
+    LSD_PROPERTY(Edit, Category = "Reverb", Min = 0, Max = 1, Tooltip = "Reverb send at Max Distance; none at Min Distance") f32 reverb_send_far = 0.5f;
 };
 
 LSD_STRUCT(Category = "Audio")
@@ -75,6 +82,36 @@ struct SoundMix {
     LSD_PROPERTY(Edit, Tooltip = "Sound Classes this mix changes (volume, pitch, low-pass) while it is pushed") List<SoundMixAdjuster, 16> adjusters;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Time to blend the mix in when pushed") f32 fade_in = 0.2f;
     LSD_PROPERTY(Edit, Units = "s", Min = 0, Tooltip = "Time to blend it out when popped") f32 fade_out = 0.5f;
+};
+
+// Dynamic music (Unreal's Quartz clock with music layers): segments switch on the beat or the bar,
+// stems fade in and out with an intensity set by scripts (lsd.music_intensity / music_segment).
+LSD_STRUCT()
+struct MusicSegment {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The name lsd.music_segment and Switch Music Segment use (Explore, Combat...)") char name[32] = "Explore";
+    LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "Its base track (loops until the next segment)") char sound[33] = "";
+};
+
+LSD_STRUCT()
+struct MusicStem {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Widget = "Asset:Sound", Tooltip = "A layer playing in step with the segment (drums, strings...)") char sound[33] = "";
+    LSD_PROPERTY(Edit, Tooltip = "The segment it belongs to; empty = every segment") char segment[32] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Intensity where it starts to be heard") f32 from = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Intensity where it is at full volume") f32 full = 1.0f;
+};
+
+LSD_STRUCT(Category = "Audio")
+struct Music {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Units = "bpm", Min = 20, Max = 300, Tooltip = "Tempo of every segment: the clock segment switches wait for") f32 tempo = 120.0f;
+    LSD_PROPERTY(Edit, Min = 1, Max = 16, Tooltip = "Beats in a bar (4 for 4/4)") u32 beats_per_bar = 4;
+    LSD_PROPERTY(Edit, Widget = "Choice:Beat,Bar", Tooltip = "A segment switch waits for the next beat or the next bar") u32 quantize = 1;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Max = 4, Tooltip = "Crossfade at a segment switch") f32 switch_fade = 0.05f;
+    LSD_PROPERTY(Edit, Units = "s", Min = 0, Max = 10, Tooltip = "Time stems take to follow an intensity change") f32 intensity_fade = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "The first one plays when the music starts") List<MusicSegment, 8> segments;
+    LSD_PROPERTY(Edit, Tooltip = "Layers faded by intensity") List<MusicStem, 16> stems;
 };
 
 } // namespace lsd::audio

@@ -130,6 +130,48 @@ static void test_sound_cue() {
     CHECK(evaluate_cue(h, env, v, 16) == 1 && v[0].looping && v[0].delay == 1.0f);
 }
 
+// Sound Synth graphs compile to a program in dependency order; loops and foreign nodes are refused.
+static void test_sound_synth() {
+    using namespace lsd::editor;
+    using lsd::script::Graph;
+    Graph g(default_allocator());
+    const u32 output = g.add("SynOutput", 0, 0)->id;
+    const u32 gain = g.add("SynGain", 0, 0)->id;
+    const u32 osc = g.add("SynOscillator", 0, 0)->id;
+    const u32 pitch = g.add("SynParam", 0, 0)->id;
+    const u32 env = g.add("SynEnvelope", 0, 0)->id;
+    const u32 hit = g.add("SynTrigger", 0, 0)->id;
+    const u32 wave = g.add("SynWave", 0, 0)->id;
+    const u32 mix = g.add("SynMix", 0, 0)->id;
+    std::snprintf(g.find(osc)->values[2], 64, "Square");
+    std::snprintf(g.find(wave)->values[0], 64, "Thud");
+    CHECK(g.connect(pitch, 0, osc, 0) && g.connect(osc, 0, gain, 0) && g.connect(hit, 0, env, 0) && g.connect(env, 0, gain, 1));
+    CHECK(g.connect(gain, 0, mix, 0) && g.connect(hit, 0, wave, 2) && g.connect(wave, 0, mix, 1) && g.connect(mix, 0, output, 0));
+    auto* p = new lsd::audio::SynthProgram();
+    char problem[160];
+    CHECK(compile_synth(g, *p, problem, sizeof problem));
+    CHECK(p->count == 7 && p->param_count == 2 && p->wave_count == 1 && std::strcmp(p->waves[0], "Thud") == 0);
+    CHECK(std::strcmp(p->params[0], "Pitch") == 0 && p->param_defaults[0] == 440.0f && std::strcmp(p->params[1], "Hit") == 0);
+    for (u32 i = 0; i < p->count; ++i) {  // every wired input reads an earlier node
+        for (u32 k = 0; k < lsd::audio::kSynthInputs; ++k) CHECK(p->nodes[i].in[k].node < static_cast<i32>(i));
+    }
+    CHECK(p->output.node == static_cast<i32>(p->count) - 1 && p->nodes[p->count - 1].op == lsd::audio::SynthOp::Mix);
+    bool square = false, played = false;
+    for (u32 i = 0; i < p->count; ++i) {
+        square |= p->nodes[i].op == lsd::audio::SynthOp::Oscillator && p->nodes[i].mode == static_cast<u8>(lsd::audio::SynthShape::Square);
+        played |= p->nodes[i].op == lsd::audio::SynthOp::Wave && p->nodes[i].b == 1.0f;  // Play is wired
+    }
+    CHECK(square && played);
+    CHECK(g.connect(mix, 0, osc, 1));  // a loop: refused by the compiler
+    CHECK(!compile_synth(g, *p, problem, sizeof problem) && std::strstr(problem, "loop"));
+    g.disconnect_input(osc, 1);
+    g.add("CueWave", 0, 0);
+    CHECK(g.connect(g.nodes[g.nodes.size() - 1].id, 0, mix, 2) == false);  // a Sound Cue node does not wire into a synth
+    Graph empty(default_allocator());
+    CHECK(!compile_synth(empty, *p, problem, sizeof problem));
+    delete p;
+}
+
 static void test_rml_anchor() {  // UMG anchors: re-anchoring keeps the element where it is
     using namespace lsd::editor;
     std::string rml = "<rml><body><div id=\"hud\" style=\"position: absolute; left: 100px; top: 50px; width: 200px; height: 40px;\"></div></body></rml>";
@@ -1107,6 +1149,7 @@ static void test_pcg_graph() {
 }
 
 int main() {
+    test_sound_synth();
     test_pcg_graph();
     test_paper2d();
     test_templates();

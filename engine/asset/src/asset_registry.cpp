@@ -74,7 +74,7 @@ AssetType type_from_extension(const char* extension) {
     if (std::strcmp(lower, ".lua") == 0 || std::strcmp(lower, ".js") == 0) return AssetType::Script;
     if (std::strcmp(lower, ".lsdgraph") == 0) return AssetType::Graph;
     if (std::strcmp(lower, ".csv") == 0) return AssetType::Table;
-    if (std::strcmp(lower, ".lsdcue") == 0) return AssetType::Cue;
+    if (std::strcmp(lower, ".lsdcue") == 0 || std::strcmp(lower, ".lsdsynth") == 0) return AssetType::Cue;  // shortcut: Sound Synths share the Sound Cue type (play, emitters, preview), give them their own when they need their own Content Browser filter
     if (std::strcmp(lower, ".lsdmatgraph") == 0) return AssetType::MaterialGraph;
     if (std::strcmp(lower, ".lsdbt") == 0) return AssetType::BehaviorTree;
     if (std::strcmp(lower, ".rml") == 0) return AssetType::UiDocument;
