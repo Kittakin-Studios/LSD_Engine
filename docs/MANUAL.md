@@ -763,12 +763,22 @@ their Static Mesh):
     Physics** makes it a real car: a body on wheels with suspension, an engine (torque, max RPM), an
     automatic gearbox and brakes. It rolls down slopes, bounces over bumps, slides, and can be pushed.
     W / S throttle (pressing against the way it rolls brakes first), A / D steer, **Ctrl** brake,
-    **Space** handbrake, **Shift** boost. Mass, steering angle, wheel radius / width and the suspension
-    (travel, stiffness, damping) are there too. With no **Wheels** listed it gets four at the corners
-    of its box (front ones steer; Drive picks rear, front or all-wheel). List wheels to place them
-    yourself; a wheel's **Object** names a child mesh (a wheel from Create Prefab from Parts, its pivot
-    at the wheel's centre) that spins, steers and moves with it, like Unreal's wheel bones. Without a
-    wheel mesh, a ring shows each wheel in Play.
+    **Space** handbrake, **Shift** boost. Mass, steering angle, wheel radius / width, the suspension
+    (travel, stiffness, damping), **Tire Friction** (Unreal's Friction Force Multiplier: 1 tarmac, 0.3
+    ice), **Gear Ratios** (Unreal's Transmission Setup: first gear first; empty = five gears) and
+    **Reverse Gear Ratio** are there too.
+  - **Your own car mesh** (like a Chaos Vehicle Blueprint with its wheel bones): put the body mesh on the
+    vehicle object and the four wheel meshes as its children, where the wheels are, and name them
+    **Wheel...** (Wheel FL, Wheel_RR...). With no **Wheels** listed, Play finds them, takes each one's
+    place, radius and width from its mesh, makes the front half steer and the back half take the
+    handbrake (Drive picks which are driven), and spins, steers and bounces each mesh with its wheel,
+    whatever its pivot or rotation. A rigged car works the same way: a **Skeletal Mesh** on the vehicle
+    (or a child) whose wheel bones are named **wheel...** (wheel_fl, Wheel_RR...) has those bones turned.
+    To set wheels up by hand, list them: a wheel's **Object** (a child mesh) or **Bone** is what turns,
+    and **Fit** takes its place and size from that mesh or bone instead of Position / Radius. With
+    nothing found it gets four wheels at the corners of its box and a ring shows each one in Play.
+    Keep the vehicle's scale uniform (scale the mesh in its import settings): a wheel under a squashed
+    parent cannot spin without stretching.
   - **Multiplayer**: give the vehicle **Net Replicated**. The server hands out the seats: the first
     player in drives (their machine simulates the car, everyone else sees it move), the next ones sit
     on the **Passenger Seats** (positions in the vehicle's space) with the follow camera. Getting out,
@@ -1245,6 +1255,15 @@ capsule for each big bone, fitted to the skin that bone moves most (head, hands 
 bones ride along with their parent), joined at the joints by cone joints (40 degrees of swing, 25 of twist), about 70 kg
 in all; a ragdoll's parts do not collide with each other. It starts from the pose the mesh had that frame. Clothes on
 the body (Leader Pose) follow it. For now it starts at rest and the object itself stays where it was.
+**Cloth** (Unreal's Chaos Cloth): add a **Cloth** component to an object with a Static Mesh (a flag, curtain, banner,
+sail; a Plane works). In Play its vertices move as one soft sheet: **Pin** holds one side in place (Top for a banner or
+curtain, the pole's side for a flag; in world directions) and **Pin Amount** how much of it (0: just the edge);
+**Subdivide** splits each triangle into four that many times first (a Plane needs 4 or 5; your own cloth mesh may need
+none); **Mass**, **Stiffness** (silk 0 to canvas 1), **Damping**, **Gravity Scale**, **Wind** (m/s, world directions)
+with **Gustiness**, and **Thickness**. It falls onto and drapes over the level's bodies and Rigid Bodies, and is drawn
+from the moving vertices with the mesh's material and UVs on D3D12, Vulkan and OpenGL. For now the pinned side stays
+where Play started (cloth on a moving object does not follow it) and capes skinned to a character's bones are not done.
+
 Select the object and click the joint's yellow ring in the viewport to move its pivot with the gizmo. Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
 capsule (`lsd.sphere_trace` / `box_trace` / `capsule_trace`) or list what overlaps a shape
 (`lsd.overlap_sphere` / `overlap_box`). Visual scripts have **Line Trace**, **Sphere Trace**, **Capsule
@@ -2511,7 +2530,7 @@ in the project folder, the splash too).
 | Animation | Foot IK (Unreal's foot placement, in Play: the pelvis drops for the lower foot, each foot reaches its ground and turns to its slope, eased so stairs do not pop; foot bone names, max step, ankle height, Max Foot Angle, Speed) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
-| Physics | Rigid Body, Physics Joint |
+| Physics | Rigid Body, Physics Joint, Cloth |
 | Gameplay | Player Start, Character, Script, Tags (the **+** button picks from Project Settings > Gameplay Tags), Spline, Spline Follower, Attribute Set, Ability System ([abilities](#abilities-effects-and-attributes-gameplay-ability-system)) |
 | Audio / Effects | Sound Emitter, Particle Effect |
 | AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller, Smart Object |

@@ -240,6 +240,97 @@ static void test_vehicle() {
     w.step(1.0f / 60.0f);
 }
 
+// Tyre grip and gears from Details: on ice the same throttle gets less far; one long gear still drives.
+// fit_wheel sizes a wheel from its mesh's box.
+static f32 drive_distance(f32 friction, u32 gears, f32 ratio) {
+    PhysicsWorld w;
+    w.add_body(box({0, 0, -0.5f}, {500, 500, 0.5f}, Motion::Static));
+    BodyDesc car = box({0, 0, 1.0f}, {2.0f, 1.0f, 0.4f}, Motion::Dynamic);
+    car.mass = 1500.0f;
+    car.centre_of_mass_offset = {0, 0, -0.4f};
+    VehicleDesc v;
+    v.body = w.add_body(car);
+    for (u32 i = 0; i < 4; ++i) {
+        WheelDesc& wheel = v.wheels[v.wheel_count++];
+        wheel.position = {i < 2 ? 1.4f : -1.4f, i % 2 ? -0.8f : 0.8f, -0.3f};
+        wheel.friction = friction;
+    }
+    v.gear_count = gears;
+    for (u32 i = 0; i < gears; ++i) v.gear_ratios[i] = ratio;
+    const u32 vehicle = w.add_vehicle(v);
+    for (int i = 0; i < 60; ++i) w.step(1.0f / 60.0f);
+    w.drive_vehicle(vehicle, 1.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 120; ++i) w.step(1.0f / 60.0f);
+    return centre(w, v.body).x;
+}
+
+static void test_vehicle_setup() {
+    const f32 road = drive_distance(1.0f, 0, 0.0f), ice = drive_distance(0.05f, 0, 0.0f), one_gear = drive_distance(1.0f, 1, 1.5f);
+    std::printf("  2 s of throttle: road %.1f m, ice %.1f m, one gear %.1f m\n", static_cast<double>(road), static_cast<double>(ice), static_cast<double>(one_gear));
+    CHECK(road > 2.0f && ice < road * 0.6f && one_gear > 1.0f);
+    Vec3 c;
+    f32 radius = 0.0f, width = 0.0f;
+    fit_wheel({1.0f, 0.6f, 0.0f}, {1.7f, 0.85f, 0.7f}, c, radius, width);
+    CHECK(std::fabs(c.x - 1.35f) < 1e-4f && std::fabs(c.z - 0.35f) < 1e-4f && std::fabs(radius - 0.35f) < 1e-4f && std::fabs(width - 0.25f) < 1e-4f);
+}
+
+// Cloth: a 1 m square sheet, flat at z = 3. Pinned along one edge it swings down and hangs; unpinned
+// it falls onto a box and stops there; wind pushes a hanging sheet sideways.
+static void cloth_grid(Vec3* points, u32* indices, u32& index_count) {
+    constexpr u32 n = 11;
+    for (u32 y = 0; y < n; ++y) {
+        for (u32 x = 0; x < n; ++x) points[y * n + x] = {static_cast<f32>(x) * 0.1f, static_cast<f32>(y) * 0.1f, 3.0f};
+    }
+    index_count = 0;
+    for (u32 y = 0; y + 1 < n; ++y) {
+        for (u32 x = 0; x + 1 < n; ++x) {
+            const u32 a = y * n + x, b = a + 1, c = a + n, d = c + 1;
+            const u32 quad[6] = {a, b, d, a, d, c};
+            for (u32 k : quad) indices[index_count++] = k;
+        }
+    }
+}
+
+static void test_cloth() {
+    Vec3 points[121];
+    u32 indices[600], index_count = 0;
+    u8 pinned[121] = {};
+    cloth_grid(points, indices, index_count);
+    for (u32 x = 0; x < 11; ++x) pinned[x] = 1;  // the y = 0 edge
+    {
+        PhysicsWorld w;
+        ClothDesc d;
+        d.points = points;
+        d.point_count = 121;
+        d.indices = indices;
+        d.index_count = index_count;
+        d.pinned = pinned;
+        const u32 cloth = w.add_cloth(d);
+        for (int i = 0; i < 180; ++i) w.step(1.0f / 60.0f);
+        Vec3 now[121];
+        CHECK(w.cloth_points(cloth, now, 121) == 121);
+        std::printf("  hanging cloth: pinned corner z %.2f, far corner z %.2f y %.2f\n", static_cast<double>(now[0].z), static_cast<double>(now[120].z), static_cast<double>(now[120].y));
+        CHECK(std::fabs(now[0].z - 3.0f) < 1e-3f && now[120].z < 2.4f && length(now[120] - now[0]) > 1.2f && length(now[120] - now[0]) < 1.6f);  // swung down, hardly stretched
+        w.set_cloth_wind(cloth, {0, 8, 0});
+        for (int i = 0; i < 120; ++i) w.step(1.0f / 60.0f);
+        CHECK(w.cloth_points(cloth, now, 121) == 121 && now[120].y > 0.3f);  // blown out along +Y
+    }
+    {
+        PhysicsWorld w;
+        w.add_body(box({0.5f, 0.5f, 1.0f}, {2, 2, 1}, Motion::Static));  // top at z = 2
+        ClothDesc d;
+        d.points = points;
+        d.point_count = 121;
+        d.indices = indices;
+        d.index_count = index_count;
+        const u32 cloth = w.add_cloth(d);
+        for (int i = 0; i < 120; ++i) w.step(1.0f / 60.0f);
+        Vec3 now[121];
+        w.cloth_points(cloth, now, 121);
+        CHECK(now[60].z > 1.95f && now[60].z < 2.2f);  // resting on the box
+    }
+}
+
 // A one-way platform: the character jumps up through it from below and then stands on its top.
 static void test_one_way() {
     PhysicsWorld world;
@@ -269,6 +360,8 @@ static void test_one_way() {
 
 int main() {
     test_one_way();
+    test_vehicle_setup();
+    test_cloth();
     test_vehicle();
     PhysicsWorld world;
     world.add_body(box({0, 0, -0.5f}, {50, 50, 0.5f}, Motion::Static));        // floor, top at z = 0

@@ -34,6 +34,9 @@
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
@@ -203,6 +206,11 @@ struct PhysicsWorld::Impl {
         bool added = true;  // in the system (taken out while its body is kinematic)
     };
     std::vector<Vehicle> vehicles;
+    struct ClothWind {
+        u32 body;
+        JPH::Vec3 wind;
+    };
+    std::vector<ClothWind> cloth_wind;
     void remove_vehicle(Vehicle& v) {
         if (!v.constraint) return;
         if (v.added) {
@@ -309,6 +317,65 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     }
     impl_->one_way_top.push_back(top);
     return static_cast<u32>(impl_->bodies.size() - 1);
+}
+
+u32 PhysicsWorld::add_cloth(const ClothDesc& desc) {
+    JPH::Ref<JPH::SoftBodySharedSettings> shared = new JPH::SoftBodySharedSettings();
+    const f32 inverse_mass = static_cast<f32>(desc.point_count) / std::fmax(desc.mass, 0.001f);
+    for (u32 i = 0; i < desc.point_count; ++i) {
+        const Vec3 p = desc.points[i];
+        const bool held = desc.pinned && desc.pinned[i];
+        shared->mVertices.push_back(JPH::SoftBodySharedSettings::Vertex(JPH::Float3(p.x, p.y, p.z), JPH::Float3(0, 0, 0), held ? 0.0f : inverse_mass));
+    }
+    for (u32 i = 0; i + 2 < desc.index_count; i += 3) {
+        const u32 a = desc.indices[i], b = desc.indices[i + 1], c = desc.indices[i + 2];
+        if (a == b || b == c || a == c || a >= desc.point_count || b >= desc.point_count || c >= desc.point_count) continue;  // welded flat
+        shared->AddFace(JPH::SoftBodySharedSettings::Face(a, b, c));
+    }
+    // Compliance is 1 / stiffness: stretch and shear stay nearly rigid, bending is what makes cloth soft.
+    const f32 soft = 1.0f - std::clamp(desc.stiffness, 0.0f, 1.0f);
+    const JPH::SoftBodySharedSettings::VertexAttributes attributes(soft * soft * 1e-4f, soft * soft * 1e-3f, soft * 0.5f + 1e-5f);
+    shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
+    shared->Optimize();
+    JPH::SoftBodyCreationSettings settings(shared, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), kMovingLayer);
+    settings.mUserData = impl_->bodies.size();
+    settings.mNumIterations = std::max(desc.iterations, 1u);
+    settings.mLinearDamping = std::fmax(desc.damping, 0.0f);
+    settings.mGravityFactor = desc.gravity_scale;
+    settings.mVertexRadius = std::fmax(desc.thickness, 0.0f);
+    settings.mUpdatePosition = false;  // the particles carry the positions; the body stays at the origin
+    settings.mAllowSleeping = false;   // wind keeps it moving
+    settings.mFacesDoubleSided = true;
+    settings.mFriction = 0.5f;
+    const JPH::BodyID id = impl_->system.GetBodyInterface().CreateAndAddSoftBody(settings, JPH::EActivation::Activate);
+    if (id.IsInvalid()) LSD_LOG_ERROR("physics", "Out of bodies");
+    impl_->bodies.push_back(id);
+    impl_->one_way_top.push_back(std::numeric_limits<f32>::quiet_NaN());
+    return static_cast<u32>(impl_->bodies.size() - 1);
+}
+
+void PhysicsWorld::set_cloth_wind(u32 body, Vec3 wind) {
+    for (Impl::ClothWind& w : impl_->cloth_wind) {
+        if (w.body == body) {
+            w.wind = to_jolt(wind);
+            return;
+        }
+    }
+    impl_->cloth_wind.push_back({body, to_jolt(wind)});
+}
+
+u32 PhysicsWorld::cloth_points(u32 body, Vec3* out, u32 capacity) const {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return 0;
+    JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), impl_->bodies[body]);
+    if (!lock.Succeeded() || !lock.GetBody().IsSoftBody()) return 0;
+    const auto* motion = static_cast<const JPH::SoftBodyMotionProperties*>(lock.GetBody().GetMotionProperties());
+    const JPH::RMat44 com = lock.GetBody().GetCenterOfMassTransform();
+    const u32 count = std::min(static_cast<u32>(motion->GetVertices().size()), capacity);
+    for (u32 i = 0; i < count; ++i) {
+        const JPH::RVec3 p = com * motion->GetVertex(i).mPosition;
+        out[i] = {static_cast<f32>(p.GetX()), static_cast<f32>(p.GetY()), static_cast<f32>(p.GetZ())};
+    }
+    return count;
 }
 
 u32 PhysicsWorld::body_count() const { return static_cast<u32>(impl_->bodies.size()); }
@@ -561,6 +628,9 @@ u32 PhysicsWorld::add_vehicle(const VehicleDesc& desc) {
         wheel->mMaxSteerAngle = JPH::DegreesToRadians(w.max_steer_degrees);
         wheel->mMaxBrakeTorque = desc.brake_torque;
         wheel->mMaxHandBrakeTorque = w.handbrake ? desc.handbrake_torque : 0.0f;
+        const f32 grip = std::fmax(w.friction, 0.0f);
+        for (JPH::LinearCurve::Point& p : wheel->mLongitudinalFriction.mPoints) p.mY *= grip;
+        for (JPH::LinearCurve::Point& p : wheel->mLateralFriction.mPoints) p.mY *= grip;
         settings.mWheels.push_back(wheel);
         if (w.driven) driven.push_back(i);
     }
@@ -576,6 +646,11 @@ u32 PhysicsWorld::add_vehicle(const VehicleDesc& desc) {
         diff.mRightWheel = pair ? static_cast<int>(a_left ? b : a) : -1;
         controller->mDifferentials.push_back(diff);
         i += pair ? 2 : 1;
+    }
+    if (desc.gear_count) controller->mTransmission.mGearRatios.assign(desc.gear_ratios, desc.gear_ratios + std::min(desc.gear_count, 8u));
+    if (desc.reverse_ratio > 0.0f) {
+        controller->mTransmission.mReverseGearRatios.clear();
+        controller->mTransmission.mReverseGearRatios.push_back(-desc.reverse_ratio);
     }
     for (JPH::VehicleDifferentialSettings& d : controller->mDifferentials) d.mEngineTorqueRatio = 1.0f / static_cast<f32>(controller->mDifferentials.size());
     settings.mController = controller;
@@ -634,6 +709,29 @@ void PhysicsWorld::set_gravity(f32 g) { impl_->system.SetGravity(JPH::Vec3(0, 0,
 
 void PhysicsWorld::step(f32 dt) {
     if (dt <= 0.0f) return;
+    // Wind on cloth: each triangle is pushed along its normal by the air hitting it (drag ~ 0.6 * area * v^2),
+    // so a flag flaps instead of just leaning.
+    for (const Impl::ClothWind& w : impl_->cloth_wind) {
+        if (w.body >= impl_->bodies.size() || impl_->bodies[w.body].IsInvalid()) continue;
+        JPH::BodyLockWrite lock(impl_->system.GetBodyLockInterface(), impl_->bodies[w.body]);
+        if (!lock.Succeeded() || !lock.GetBody().IsSoftBody()) continue;
+        auto* motion = static_cast<JPH::SoftBodyMotionProperties*>(lock.GetBody().GetMotionProperties());
+        JPH::Array<JPH::SoftBodyVertex>& v = motion->GetVertices();
+        for (const JPH::SoftBodySharedSettings::Face& f : motion->GetFaces()) {
+            JPH::SoftBodyVertex& a = v[f.mVertex[0]];
+            JPH::SoftBodyVertex& b = v[f.mVertex[1]];
+            JPH::SoftBodyVertex& c = v[f.mVertex[2]];
+            const JPH::Vec3 cross = (b.mPosition - a.mPosition).Cross(c.mPosition - a.mPosition);
+            const f32 twice_area = cross.Length();
+            if (twice_area < 1e-8f) continue;
+            const JPH::Vec3 normal = cross / twice_area;
+            const f32 along = (w.wind - (a.mVelocity + b.mVelocity + c.mVelocity) / 3.0f).Dot(normal);
+            const JPH::Vec3 push = normal * (0.3f * twice_area * along * std::fabs(along) * dt / 3.0f);  // impulse per corner
+            a.mVelocity += push * a.mInvMass;
+            b.mVelocity += push * b.mInvMass;
+            c.mVelocity += push * c.mInvMass;
+        }
+    }
     impl_->system.Update(dt, 1, &impl_->temp, &impl_->jobs);
     // Breakable joints: the impulse holding the pivot together this step, over dt, is the force.
     for (u32 i = 0; i < impl_->joints.size(); ++i) {

@@ -25,6 +25,7 @@
 #include "template_levels.h"
 #include "paper2d_core.h"
 #include "pcg_graph.h"
+#include "cloth_core.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -1186,8 +1187,33 @@ static void test_pcg_graph() {
     CHECK(!editor::run_pcg_graph(graph, in, out, error, sizeof error) && std::strstr(error, "loop"));
 }
 
+// Cloth meshes: a 1 m quad drawn as two triangles with a seam (6 vertices, the diagonal's corners twice),
+// subdivided twice: 32 triangles over a 5 x 5 grid of particles; Top pins its upper row.
+static void test_cloth_mesh() {
+    editor::ClothMesh m;
+    const f32 corners[6][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 0}, {1, 1}, {0, 1}};
+    for (const auto& c : corners) m.vertices.push_back(rhi::MeshVertex{{c[0], 0.0f, c[1]}, {0, -1, 0}, {c[0], c[1]}, {0, 0}});
+    m.indices = {0, 1, 2, 3, 4, 5};
+    editor::subdivide_cloth(m.vertices, m.indices, 2);
+    CHECK(m.indices.size() == 32 * 3);
+    editor::weld_cloth(m, 1e-4f);
+    CHECK(m.particles.size() == 25 && m.particle_of.size() == m.vertices.size());
+    CHECK(editor::pin_cloth(m, 0, 0.0f) == 5);   // the z = 1 row
+    CHECK(editor::pin_cloth(m, 3, 0.3f) == 10);  // -X: x <= 0.3, two columns
+    CHECK(editor::pin_cloth(m, 6, 0.5f) == 0);   // None
+    std::vector<Vec3> moved = m.particles;
+    for (Vec3& p : moved) p.y += p.z * 0.5f;  // tilted back: normals turn with it, the same on both sides of the seam
+    editor::update_cloth_vertices(m, moved.data());
+    bool same = true;
+    for (usize v = 0; v < m.vertices.size(); ++v) same = same && std::fabs(m.vertices[v].normal[1] - m.vertices[0].normal[1]) < 1e-4f;
+    CHECK(same && std::fabs(m.vertices[0].normal[1] + 0.894f) < 0.01f && std::fabs(m.vertices[0].normal[2] - 0.447f) < 0.01f);
+    const rhi::MeshVertex& mid = m.vertices[m.indices[2]];
+    CHECK(std::fabs(mid.uv[0] + mid.uv[1] - mid.position[0] - mid.position[2]) < 1e-5f);  // UVs follow the grid
+}
+
 int main() {
     test_sound_synth();
+    test_cloth_mesh();
     test_pcg_graph();
     test_paper2d();
     test_templates();

@@ -68,6 +68,9 @@ public:
     // IK for the next update (scripts call it every frame they want it): a bone reaches a world
     // point (two-bone) or looks at it (aim along `forward`, the bone's own axis).
     void add_ik(world::Entity e, const char* bone, Vec3 target, f32 weight, bool aim, Vec3 forward = {1, 0, 0});
+    // For the next update: moves `bone` and the bones below it by `world_delta` (world space, after the
+    // animation; a vehicle's wheel bones spinning and steering).
+    void move_bone(world::Entity e, const char* bone, const Mat4& world_delta);
     // In Play: finds the ground under a point (Foot IK); nullptr in the editor (no foot IK there).
     using GroundProbe = bool (*)(void* user, Vec3 from, f32 distance, Vec3& hit, Vec3& normal);
     void set_ground_probe(GroundProbe probe, void* user) {
@@ -160,6 +163,8 @@ private:
         Vec3 target, forward;
         f32 weight;
         bool aim;
+        bool move = false;  // move_bone: `delta` instead of IK
+        Mat4 delta;
     };
     Ik iks_[64];
     struct Sockets {  // a mesh's sockets from its .meta, re-read when the file changes
