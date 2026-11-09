@@ -502,9 +502,19 @@ void AnimationPlayer::apply_ik(world::World& world, State& state, const SkinnedE
             state.pose.transform_models(model, joints[k], translation(ankle) * rotation_axis(axis * (1.0f / s), angle) * translation(-ankle));
         }
     }
+    if (mesh && mesh->full_body_ik) {  // the reach requests together: the body helps the limbs
+        anim::IkGoal goals[16];
+        u32 n = 0;
+        for (u32 i = 0; i < ik_count_ && n < 16; ++i) {
+            const Ik& ik = iks_[i];
+            const i32 j = ik.entity == state.entity && !ik.aim ? model.find_joint(ik.bone) : -1;
+            if (j >= 0) goals[n++] = {static_cast<u32>(j), transform_point(to_model, ik.target), ik.weight};
+        }
+        anim::full_body_ik(state.pose, model, goals, n);
+    }
     for (u32 i = 0; i < ik_count_; ++i) {
         const Ik& ik = iks_[i];
-        if (ik.entity != state.entity) continue;
+        if (ik.entity != state.entity || (mesh && mesh->full_body_ik && !ik.aim)) continue;
         const i32 j = model.find_joint(ik.bone);
         if (j < 0) continue;
         const Vec3 target = transform_point(to_model, ik.target);

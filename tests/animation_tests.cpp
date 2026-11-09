@@ -367,6 +367,31 @@ static void rig_tests() {
 // own features finding it again, and playback that keeps returning a clip.
 // Ragdolls: a capsule per big bone of a humanoid, parents first, every body but the root hanging from one; a pose set
 // from model-space joints skins like the sampled one.
+// Full-body IK: a hand target beyond the arm's reach gets closer with the body helping than with the arm alone.
+static void full_body_ik_tests(const std::string& data) {
+    anim::SkinnedModel model(default_allocator());
+    char error[256] = "";
+    CHECK(anim::import_skinned((data + "/maya_kenney_character_7700_binary.fbx").c_str(), 1.0f, model, error, sizeof error));
+    const i32 hand = model.find_joint("LeftHand");
+    CHECK(hand >= 0);
+    if (hand < 0) return;
+    const anim::BlendInput still{nullptr, 0.0f, 1.0f};
+    anim::Pose arm, body;
+    arm.sample_blend(model, &still, 1);
+    body.sample_blend(model, &still, 1);
+    const Mat4 h = arm.joint_model(static_cast<u32>(hand));
+    const Vec3 target = Vec3{h.at(0, 3), h.at(1, 3), h.at(2, 3)} + Vec3{0.0f, 0.0f, 1.5f};  // well above the hand
+    CHECK(arm.two_bone_ik(model, static_cast<u32>(hand), target, 1.0f));
+    const anim::IkGoal goal{static_cast<u32>(hand), target, 1.0f};
+    CHECK(anim::full_body_ik(body, model, &goal, 1));
+    auto miss = [&](const anim::Pose& p) {
+        const Mat4 m = p.joint_model(static_cast<u32>(hand));
+        return length(Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)} - target);
+    };
+    std::printf("  full-body IK: arm alone misses by %.3f, with the body %.3f\n", static_cast<double>(miss(arm)), static_cast<double>(miss(body)));
+    CHECK(miss(body) < miss(arm) * 0.8f);
+}
+
 // Retargeting between humanoids named their own ways: the part each bone plays.
 static void human_bone_tests() {
     using H = anim::HumanBone;
@@ -720,6 +745,7 @@ int main() {
     motion_matching_tests(data);
     ragdoll_tests(data);
     human_bone_tests();
+    full_body_ik_tests(data);
     morph_tests(data);
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
     u32 tested_animation = 0;

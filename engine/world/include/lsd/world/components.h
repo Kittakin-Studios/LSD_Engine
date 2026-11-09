@@ -706,6 +706,9 @@ struct SkeletalMesh {
     LSD_PROPERTY(Edit, Category = "Physics",
                  Tooltip = "Simulate Physics (Unreal's ragdoll): from the start of Play the body falls as a ragdoll, a capsule per big bone made from the mesh, joined at the joints. Scripts: lsd.ragdoll(e, true / false)")
     bool simulate_physics = false;
+    LSD_PROPERTY(Edit, Category = "Physics",
+                 Tooltip = "Full Body IK (Unreal's Full Body IK): hand and foot targets from lsd.ik_reach move the whole body: the pelvis shifts and the spine turns toward targets out of reach, then the limbs bend")
+    bool full_body_ik = false;
     LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh where no material is set") LinearColor color = LinearColor::hex(0xB4B4B8);
     // Edited in Details > Materials (one row per slot of the mesh), so saved but not shown as a list.
     LSD_PROPERTY(Save, Tooltip = "Material slots drawn with another material on this object (Unreal's Override Materials)") List<MaterialOverride, 48> material_overrides;

@@ -1713,6 +1713,71 @@ bool Pose::transform_models(const SkinnedModel& model, i32 joint, const Mat4& m)
     return true;
 }
 
+bool full_body_ik(Pose& pose, const SkinnedModel& model, const IkGoal* goals, u32 count) {
+    const u32 joints = model.joint_count();
+    if (!count || !joints || pose.joint_count() != joints) return false;
+    auto at = [&](u32 j) {
+        const Mat4 m = pose.joint_model(j);
+        return Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    };
+    // shortcut: the parts are worked out from the bone names each call; cache them on the model if many characters use it
+    std::vector<const char*> names(joints);
+    for (u32 j = 0; j < joints; ++j) names[j] = model.joint_name(j);
+    std::vector<HumanBone> parts(joints);
+    human_bones(names.data(), joints, parts.data());
+    i32 pelvis = -1;
+    std::vector<u32> spine;
+    for (u32 j = 0; j < joints; ++j) {
+        if (parts[j] == HumanBone::Pelvis && pelvis < 0) pelvis = static_cast<i32>(j);
+        if (parts[j] == HumanBone::Spine || parts[j] == HumanBone::Chest || parts[j] == HumanBone::UpperChest) spine.push_back(j);
+    }
+    // 1. The pelvis moves by the average of how far each target lies past its limb's reach (half of it: the spine and
+    //    the limb do the rest), so a hand reaching for a high shelf lifts the body a little.
+    Vec3 shift{};
+    f32 total = 0.0f;
+    for (u32 g = 0; g < count; ++g) {
+        const i32 mid = model.joint_parent(goals[g].joint);
+        const i32 start = mid >= 0 ? model.joint_parent(static_cast<u32>(mid)) : -1;
+        if (start < 0) continue;
+        const Vec3 s = at(static_cast<u32>(start)), m = at(static_cast<u32>(mid)), e = at(goals[g].joint);
+        const f32 reach = (length(m - s) + length(e - m)) * 0.98f, d = length(goals[g].target - s);
+        if (d > reach && d > 1e-5f) shift = shift + (goals[g].target - s) * ((d - reach) / d * 0.5f * goals[g].weight);
+        total += goals[g].weight;
+    }
+    if (pelvis >= 0 && total > 0.0f && length(shift) > 1e-5f) pose.transform_models(model, pelvis, translation(shift * (1.0f / total)));
+    // 2. The spine turns the chest toward the hands' targets, the turn shared by its bones.
+    if (!spine.empty()) {
+        const Vec3 chest = at(spine.back());
+        Vec3 now{}, want{};
+        u32 hands = 0;
+        for (u32 g = 0; g < count; ++g) {
+            const HumanBone p = parts[goals[g].joint];
+            if (p != HumanBone::HandL && p != HumanBone::HandR) continue;
+            now = now + (at(goals[g].joint) - chest);
+            want = want + (goals[g].target - chest) * goals[g].weight + (at(goals[g].joint) - chest) * (1.0f - goals[g].weight);
+            ++hands;
+        }
+        const Vec3 axis = cross(now, want);
+        const f32 s = length(axis), c = dot(now, want);
+        if (hands && s > 1e-6f) {
+            const f32 angle = std::fmin(std::atan2(s, c), 0.61f) / static_cast<f32>(spine.size());  // 35 degrees at most
+            const Vec3 a = axis * (1.0f / s);
+            const f32 cs = std::cos(angle), sn = std::sin(angle), t = 1.0f - cs;
+            Mat4 r;
+            r.at(0, 0) = t * a.x * a.x + cs, r.at(0, 1) = t * a.x * a.y - sn * a.z, r.at(0, 2) = t * a.x * a.z + sn * a.y;
+            r.at(1, 0) = t * a.x * a.y + sn * a.z, r.at(1, 1) = t * a.y * a.y + cs, r.at(1, 2) = t * a.y * a.z - sn * a.x;
+            r.at(2, 0) = t * a.x * a.z - sn * a.y, r.at(2, 1) = t * a.y * a.z + sn * a.x, r.at(2, 2) = t * a.z * a.z + cs;
+            for (u32 j : spine) {
+                const Vec3 p = at(j);
+                pose.transform_models(model, static_cast<i32>(j), translation(p) * r * translation(-p));
+            }
+        }
+    }
+    // 3. Each limb bends to its target.
+    for (u32 g = 0; g < count; ++g) pose.two_bone_ik(model, goals[g].joint, goals[g].target, goals[g].weight);
+    return true;
+}
+
 bool Pose::set_models(const SkinnedModel& model, const Mat4* models) {
     const u32 joints = model.joint_count();
     if (!joints || model.inverse_bind.size() < joints) return false;

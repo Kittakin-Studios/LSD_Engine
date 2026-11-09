@@ -134,6 +134,17 @@ constexpr u32 kMaxRagdollBodies = 32;
 // Returns how many bodies were written (bones in skeleton order, parents first); 0 for a mesh without enough bones.
 u32 build_ragdoll(const SkinnedModel& model, RagdollBody* out, u32 capacity, f32 total_mass = 70.0f);
 
+// Full-body IK (Unreal's Full Body IK, an IK Rig's solver in its simplest form): hands and feet reach their targets
+// (model space) with the whole body helping: the pelvis shifts toward targets beyond a limb's reach, the spine turns
+// toward the hands' targets (spread over its bones, at most 35 degrees), then each limb bends with two-bone IK.
+struct IkGoal {
+    u32 joint = 0;       // the end bone (a hand or a foot)
+    Vec3 target;         // where it should be, model space
+    f32 weight = 1.0f;   // 0..1
+};
+class Pose;
+bool full_body_ik(Pose& pose, const SkinnedModel& model, const IkGoal* goals, u32 count);
+
 // The morph targets packed for rhi::Device::morph_vertices: per vertex its first entry and entry count (2 words),
 // then 8 words per entry (offset xyz, target index, normal turn xyz, 0), each vertex's entries together.
 void pack_morphs(const SkinnedModel& model, Array<u32>& out);
