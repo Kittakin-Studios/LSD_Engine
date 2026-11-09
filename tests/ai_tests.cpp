@@ -312,14 +312,14 @@ static void state_tree_tests() {
 static void smart_object_tests() {
     using namespace lsd::ai;
     SmartClaims claims;
-    const i32 a = claims.claim(7, 0, 1);
-    CHECK(a >= 0 && claims.taken(7, 0) && claims.claim(7, 0, 2) == -1);
+    const i32 first = claims.claim(7, 0, 1);
+    CHECK(first >= 0 && claims.taken(7, 0) && claims.claim(7, 0, 2) == -1);
     const Vec3 spots[2] = {{2, 0, 0}, {6, 0, 0}};
     bool taken[2] = {true, false};
     CHECK(nearest_free(spots, taken, 2, {0, 0, 0}, 10.0f) == 1);  // the near one is taken
     CHECK(nearest_free(spots, taken, 2, {0, 0, 0}, 5.0f) == -1);  // the free one is too far
-    claims.release(a);
-    CHECK(!claims.taken(7, 0) && !claims.get(a));
+    claims.release(first);
+    CHECK(!claims.taken(7, 0) && !claims.get(first));
     claims.claim(7, 1, 3);
     claims.release_user(3);
     CHECK(!claims.taken(7, 1));

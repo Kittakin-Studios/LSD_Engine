@@ -1791,6 +1791,72 @@ key goes, as before.
 **Edit trees while playing**: save the behaviour tree and, within a second, every agent running it starts
 again from the new tree's root (what it was doing is stopped first). A save that does not load keeps the old tree.
 
+### State Trees
+
+A **State Tree** (Unreal's State Tree) is the other way to give an AI Controller a brain: a list of states,
+one active at a time. Each state runs its **Tasks** in order (like a Sequence: one failing ends the rest) and
+leaves through its **Transitions**, checked in order every frame (the first that fires wins).
+
+1. Content Browser > New Data Asset > **StateTreeData**. Double-click it; Details lists the **States**
+   (the first one is where it starts). Press **+** to add a state, give it a **Name**.
+2. Add **Tasks**: **Kind** is Move To, Wait, Run Script, Set Key, Clear Key, Random Location, Use Smart
+   Object or Run Query (the Behavior Tree's tasks). **Key**, **Text** and **Value** are their settings
+   (hover each for what it means for each kind: Move To walks to Key within Value metres, Wait waits
+   Value seconds, Run Script calls the Lua function in Text...).
+3. Add **Transitions**: **Trigger** is On Succeeded / On Failed / On Completed (the tasks finished: all
+   succeeded, one failed, either), On Condition (Key Op Value on the blackboard, checked every frame, so it
+   interrupts what the state is doing: "CanSeePlayer is set" -> Chase) or After Time (Value seconds in the
+   state). **To State** is the state's name (its own name starts it again).
+4. On the enemy's **AI Controller**, pick it in **State Tree**. It runs instead of the Behavior Tree, with
+   the same blackboard and perception keys.
+
+Example: *Patrol* (Random Location -> PatrolLocation, Move To PatrolLocation; On Completed -> Patrol, On
+Condition CanSeePlayer is set -> Chase), *Chase* (Move To PlayerLocation; On Condition CanSeePlayer not set
+-> Patrol). Shortcut: states are flat (no child states yet), and the asset is read when Play starts.
+
+### Smart Objects
+
+A **Smart Object** (Unreal's Smart Objects) marks something AI can use: a bench, a workstation, a
+vending machine. Add the **Smart Object** component (Add Component > AI) to the object:
+
+| Property | What it does |
+| --- | --- |
+| Activity | what it is for (Sit, Work...): tasks look for this name |
+| Slots | where users stand, from the object (turns with it); each slot holds one user at a time |
+| Duration | how long one use lasts (0: until the script says it is done) |
+| Script Function | a function of the *user's* Lua script, called every frame while it uses the object (true: done, false: failed, nothing: still using) |
+| Animation | a montage the user plays as it starts (by asset name) |
+| Face Object | the user turns to the object while using it |
+| Enabled | off: nobody uses it (a broken machine) |
+
+The **Use Smart Object** task (Behavior Tree node, State Tree task kind) finds the nearest free slot with
+that **Activity** (empty: any) within **Radius**, claims it (no one else takes it), walks there, uses it
+and then frees it; it fails when none is free or the slot cannot be reached. A user that is interrupted
+(a higher branch, a transition) lets its slot go. From scripts: `lsd.claim_smart_object(e, "Sit", 15)`
+returns the object and where to stand (walk there with `lsd.move_to`), `lsd.release_smart_object(e)` frees it.
+
+### Environment queries
+
+An **Environment Query** (Unreal's EQS) finds the best point near an AI: cover from the player, a spot to
+flank from, a place to stand near a goal. New Data Asset > **EnvQueryData**:
+
+- **Generator**: **Rings** (Rings x Points Per Ring, evenly out to Radius) or a **Grid** (Radius = half its
+  width, Spacing between points), **Around** the querier or the **Target** (a blackboard key with a
+  location, Target Key; the querier itself when it is not set). **On Navmesh** snaps the points onto the
+  navmesh and drops the ones off it.
+- **Tests**, in order: **Distance** (from the target or the querier), **Can See Target** (a ray at eye
+  height), **Reachable** (a navmesh path from the querier), **Facing** (1 ahead of the querier, -1
+  behind). **Purpose**: Score, Filter (drops points outside Min..Max; for yes / no tests, the ones that
+  fail) or both. **Weight**: positive prefers high values (far, visible, ahead), negative low ones (near,
+  hidden). Each scoring test is scaled 0..1 over the points still in, so metres and yes / no mix.
+- **Debug Draw**: in Play each run draws its points for 2 s: green the best, red to yellow by score, grey dropped.
+
+Use it with the **Run Query** task (Behavior Tree node, State Tree task kind: the query's name in
+Query / Text, the best point into Key), then Move To that key; from scripts `lsd.run_query(e, "EQ_Cover")`
+returns x, y, z (nil when every point was dropped). Cover from the player: Target Key PlayerLocation, a
+Can See Target test scored with Weight -1 (hidden points win), then Distance from the Querier with
+Weight -0.5 (the nearer of them).
+
 ---
 
 ## 15. Game UI
@@ -2147,7 +2213,7 @@ in the project folder, the splash too).
 | Physics | Rigid Body, Physics Joint |
 | Gameplay | Player Start, Character, Script, Tags (the **+** button picks from Project Settings > Gameplay Tags), Spline, Spline Follower |
 | Audio / Effects | Sound Emitter, Particle Effect |
-| AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller |
+| AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller, Smart Object |
 | Prefab | Prefab Instance (added for you) |
 
 ### Lua API
@@ -2211,6 +2277,9 @@ AI
 | `lsd.find_path(x, y, z, tx, ty, tz)` | list of `{x, y, z}` corners |
 | `lsd.bb_set(e, key, v)`, `lsd.bb_get(e, key)`, `lsd.bb_clear(e, key)` | blackboard |
 | `lsd.report_noise(x, y, z [, loudness])` | AI hearing |
+| `lsd.claim_smart_object(e [, activity [, radius]])` | the nearest free Smart Object slot (activity "" = any, radius 15 m), held for e: object, x, y, z, or nil |
+| `lsd.release_smart_object(e)` | frees the slots e holds |
+| `lsd.run_query(e, query)` | an Environment Query asset by name, run for e: its best point x, y, z, or nil |
 
 UI, saving, settings, languages
 
