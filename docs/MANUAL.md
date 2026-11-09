@@ -875,6 +875,32 @@ best first:
 Everyone needs the same build (File > Package Project, then send the Build folder). If the
 host's firewall asks, allow the game on private and public networks.
 
+### Multi-User Editing
+
+Unreal's Multi-User Editing: two or more editors of the same project edit one level together.
+**Window > Multi-User Editing**:
+
+1. One person clicks **Host** (UDP port 7790; their firewall may ask: allow it). The panel lists
+   their **join codes** (one per network address, Tailscale's included: see
+   [Multiplayer.md](Multiplayer.md) for getting across the internet).
+2. The others paste a code or an address (`192.168.1.20` or `192.168.1.20:7790`) and click **Join**.
+   Their level is replaced by the host's, as it is now (save yours first).
+3. Edit as usual. Each finished change (the steps Undo History lists: moves, Details edits, placing,
+   deleting, renaming, Undo / Redo, opening another level) appears on everyone else's editor; it is
+   an undo step there too ("Multi-User edit").
+4. The others' cameras show in the viewport as a coloured ball with their name, and what they have
+   selected as a box of the same colour. The panel's **Users** list says what each has selected;
+   **Go To** moves your camera to theirs. **Your Name** is what they see.
+5. **Leave** ends it (the host leaving ends it for everyone). Everyone saves their own copy.
+
+Every editor needs the same Content/ (use source control): assets are not sent, only the level.
+There are no locks: when two people change one object, the last change wins. Edits that arrive
+while you are playing are applied when you press Stop.
+
+Console: `multiuser.Host [port]`, `multiuser.Join <code or address>`, `multiuser.Leave`,
+`multiuser.Users` (who is there, their camera and selection), `multiuser.Name <name>`, and
+`object.Move <name> <x> <y> <z>` (an undoable move, for scripts and tests).
+
 ### 2D games (Paper2D)
 
 ![The Level tab's 2D mode](images/mode_2d.jpg)

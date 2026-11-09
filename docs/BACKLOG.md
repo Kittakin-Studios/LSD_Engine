@@ -299,7 +299,7 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Rendering: dynamic GI, virtual texturing
 - Physics: cloth, vehicles [Chaos Cloth, Chaos Vehicles]
 - Data: editor utility scripts and widgets (Lua + visual script running in the editor) [Editor Utility Widgets]
-- Collaboration: multi-user editing in one level [Multi-User Editing]
+- [x] Collaboration: multi-user editing in one level [Multi-User Editing]: Window > Multi-User Editing (`editor/multi_user.*`) hosts or joins a session by address or join code over ENet (port 7790); the joiner gets the host's level; every finished edit (each undo step: move, Details change, create / delete / rename, undo / redo, opening a level) travels as per-object ops in the level file's text (`editor/multi_user_core.*`, `world::save_entity` / `load_entities`, tested in editor_tests), the host passes them on; each user's camera and selection show to the others as a coloured marker with their name; `multiuser.Host` / `Join` / `Leave` / `Users` / `Name`, `object.Move`. Partial: no object locks (last edit wins), assets are not sent (same Content/ everywhere), Play pauses syncing, two objects made in the same instant can collide on one id
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
 
 ## Performance (measured)
