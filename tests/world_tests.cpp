@@ -370,6 +370,55 @@ static void test_timeline() {  // Sequencer basics: eased transforms, values, ke
     const world::TimelineKey* fired[4];
     CHECK(world::keys_crossed(t, 1, 0.0f, 3.0f, fired, 4) == 2 && std::strcmp(fired[0]->text, "first") == 0);
     CHECK(world::keys_crossed(t, 1, 1.5f, 2.0f, fired, 4) == 0);  // exactly at `from` does not fire again
+
+    // Interpolation: Linear and Constant from the first key; Auto (cubic) through a middle key is not flat there.
+    t.keys[0].interp = 1;
+    CHECK(world::sample_value(t, 0, 1.5f, v) && std::fabs(v - 12.5f) < 1e-4f);
+    t.keys[0].interp = 2;
+    CHECK(world::sample_value(t, 0, 2.9f, v) && v == 10.0f);
+    t.keys[0].interp = 0;
+    k.time = 5.0f;
+    k.value = 30.0f;
+    t.keys.push_back(k);  // 10, 20, 30 at 1, 3, 5: the auto tangent at 3 is 5 per second
+    f32 before = 0, after = 0;
+    CHECK(world::sample_value(t, 0, 2.99f, before) && world::sample_value(t, 0, 3.01f, after) && std::fabs((after - before) / 0.02f - 5.0f) < 0.1f);
+    // Colours: channels 7-10.
+    t.keys[0].color = {0, 0, 0, 1};
+    t.keys[1].color = {1, 0.5f, 0, 1};
+    LinearColor c;
+    CHECK(world::sample_color(t, 0, 2.0f, c) && std::fabs(c.r - 0.5f) < 1e-4f && std::fabs(c.g - 0.25f) < 1e-4f && c.a == 1.0f);
+
+    // Shots and camera cuts: the later key wins; nothing before the first.
+    world::Timeline s;
+    world::TimelineTrack cuts;
+    cuts.type = static_cast<u32>(world::TrackType::CameraCut);
+    world::TimelineTrack shots;
+    shots.type = static_cast<u32>(world::TrackType::Shot);
+    s.tracks.push_back(cuts);
+    s.tracks.push_back(shots);
+    world::TimelineKey a;
+    a.track = 1;
+    a.time = 1.0f;
+    std::snprintf(a.text, sizeof a.text, "CamA");
+    std::snprintf(a.sequence, sizeof a.sequence, "TL_Sub");
+    s.keys.push_back(a);
+    a.track = 0;
+    a.time = 2.0f;
+    std::snprintf(a.text, sizeof a.text, "CamB");
+    s.keys.push_back(a);
+    CHECK(world::camera_at(s, 0.5f) == nullptr && !world::shot_at(s, 0.5f));
+    CHECK(std::strcmp(world::camera_at(s, 1.5f), "CamA") == 0 && std::strcmp(world::shot_at(s, 1.5f)->sequence, "TL_Sub") == 0);
+    CHECK(std::strcmp(world::camera_at(s, 2.0f), "CamB") == 0);
+    CHECK(world::movie_frame_count(2.0f, 30.0f) == 61);
+
+    // Cine Camera: 24 mm film back height at 24 mm is ~53 degrees; wider aperture / longer lens: less in focus, more blur.
+    CHECK(std::fabs(world::cine_fov_degrees(24.0f, 24.0f) - 53.13f) < 0.05f);
+    const world::LensBlur wide = world::cine_depth_of_field(50.0f, 36.0f, 24.0f, 1.4f, 3.0f, 1080.0f);
+    const world::LensBlur narrow = world::cine_depth_of_field(50.0f, 36.0f, 24.0f, 16.0f, 3.0f, 1080.0f);
+    const world::LensBlur tele = world::cine_depth_of_field(200.0f, 36.0f, 24.0f, 1.4f, 3.0f, 1080.0f);
+    CHECK(wide.focal_region > 0.0f && wide.focal_region < narrow.focal_region && tele.focal_region < wide.focal_region);
+    CHECK(wide.max_blur > narrow.max_blur && wide.max_blur > 5.0f && tele.max_blur <= 32.0f);
+    CHECK(world::cine_depth_of_field(50.0f, 36.0f, 24.0f, 0.0f, 3.0f, 1080.0f).max_blur == 0.0f);  // no aperture: no depth of field
 }
 
 // Sub-levels: another level's objects under a root, moved with it, not saved with this level.
