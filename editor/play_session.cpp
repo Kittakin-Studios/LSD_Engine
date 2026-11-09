@@ -2996,7 +2996,7 @@ void PlaySession::add_physics_vehicle(const world::World& world, world::Entity e
     // A box (lo..hi under `m`) as seen in the vehicle's own space, added to out_lo..out_hi.
     auto local_box = [&](const Mat4& m, Vec3 lo, Vec3 hi, Vec3& out_lo, Vec3& out_hi) {
         for (u32 k = 0; k < 8; ++k) {
-            const Vec3 p = transform_point(to_local * m, {k & 1 ? hi.x : lo.x, k & 2 ? hi.y : lo.y, k & 4 ? hi.z : lo.z});
+            const Vec3 p = transform_point(to_local * m, {(k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z});
             out_lo = {std::min(out_lo.x, p.x), std::min(out_lo.y, p.y), std::min(out_lo.z, p.z)};
             out_hi = {std::max(out_hi.x, p.x), std::max(out_hi.y, p.y), std::max(out_hi.z, p.z)};
         }
