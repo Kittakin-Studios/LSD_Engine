@@ -25,6 +25,7 @@
 #include "template_levels.h"
 #include "paper2d_core.h"
 #include "pcg_graph.h"
+#include "multi_user_core.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -1186,6 +1187,47 @@ static void test_pcg_graph() {
     CHECK(!editor::run_pcg_graph(graph, in, out, error, sizeof error) && std::strstr(error, "loop"));
 }
 
+// Multi-user editing: one editor's edits as ops, applied on another's copy of the level.
+static void test_multi_user_ops() {
+    HeapAllocator heap("multi_user");
+    world::World a(heap), b(heap);
+    const world::Entity floor = a.create("Floor");
+    const world::Entity crate = a.create("Crate");
+    const world::Entity lamp = a.create("Lamp");
+    Array<char> text(heap), other(heap);
+    world::save_level(a, text);
+    CHECK(world::load_level(b, text.data(), text.size()));  // a joiner gets the host's level
+    editor::multi_user::Baseline base_a, base_b;
+    editor::multi_user::capture(a, base_a);
+    editor::multi_user::capture(b, base_b);
+    CHECK(editor::multi_user::diff(a, base_a).empty());  // nothing changed yet
+
+    // Move, rename, add a component, delete, create a child, change World Settings.
+    a.get<world::Transform>(crate)->position = {1, 2, 3};
+    a.set_name(floor, "Ground");
+    a.add<world::PointLight>(lamp)->intensity = 42.0f;
+    a.destroy(crate);
+    const world::Entity child = a.create("Bulb");
+    a.set_parent(child, lamp, false);
+    a.settings().gravity = 1.62f;
+    const std::string ops = editor::multi_user::diff(a, base_a);
+    CHECK(!ops.empty() && ops.find("\"remove\"") != std::string::npos && ops.find("\"settings\"") != std::string::npos);
+    CHECK(editor::multi_user::diff(a, base_a).empty());  // the baseline moved with it
+    CHECK(editor::multi_user::apply(b, ops.data(), ops.size(), base_b));
+    world::save_level(a, text);
+    world::save_level(b, other);
+    CHECK(text.size() == other.size() && std::memcmp(text.data(), other.data(), text.size()) == 0);
+    CHECK(editor::multi_user::diff(b, base_b).empty());  // applied ops are not sent back
+
+    // A component removed on the other side; then a bad message changes nothing it cannot parse.
+    b.remove(lamp, reflect::type_of<world::PointLight>());
+    const std::string back = editor::multi_user::diff(b, base_b);
+    CHECK(editor::multi_user::apply(a, back.data(), back.size(), base_a));
+    CHECK(!a.get<world::PointLight>(lamp) && a.parent(child) == lamp && std::strcmp(a.name(floor), "Ground") == 0);
+    const char bad[] = "{\"set\": [{\"id\": oops";
+    CHECK(!editor::multi_user::apply(a, bad, sizeof bad - 1, base_a));
+}
+
 int main() {
     test_sound_synth();
     test_pcg_graph();
@@ -1203,6 +1245,7 @@ int main() {
     test_landscape_paint();
     test_assistant();
     test_undo_redo();
+    test_multi_user_ops();
     test_references();
     test_light_bake();
     test_lightmaps();

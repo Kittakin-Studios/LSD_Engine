@@ -25,6 +25,12 @@ void save_level(const World& world, Array<char>& out);
 // Clears the world and loads the text. On a syntax error the world is left empty and false is returned.
 bool load_level(World& world, const char* text, usize length);
 
+// One object as save_level writes it ({"id": ..., "name": ..., components}); empty if it is dead.
+void save_entity(const World& world, Entity e, Array<char>& out);
+// A JSON array of such objects (multi-user edits): each id is created, or emptied and rewritten if
+// it exists; parents are linked after all of them are in. False on a syntax error.
+bool load_entities(World& world, const char* text, usize length);
+
 bool save_level_file(const World& world, const char* path);
 // Destroys every object with an EditorOnly component, children too (Play and packaging); returns how many went.
 u32 destroy_editor_only(World& world);
