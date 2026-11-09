@@ -537,6 +537,17 @@ active, and not begun at all (returns false) while another is. A tab's x sets `*
 editor's next draw, so the editor runs its own close. While an editor tab is active the workspace row
 and the 3D viewport are skipped (`viewport_count` 0); Play selects the Level tab.
 
+### Editor utilities
+
+`editor/editor_utility_core.*` (tested in editor_tests) owns a second `ScriptSystem` on the editor's world.
+Its `ScriptHost` sets `editor`, a callback behind `lsd._editor(command, arg)`; with it set, `start()` runs
+none of the level's Script components. Lua glue builds `lsd.editor` on top and gives each utility file
+its own environment, kept so its panel's buttons (`lsd._utility_call`) and fields (`lsd._utility_set`)
+reach its functions and globals; C++ passes code and values as Lua long-bracket strings (`lua_quote`).
+A run or button saves the level text before and after: if it differs, `editor/editor_utility.cpp` names
+a pending edit (one undo step). Play's host never sets `editor`, so `lsd.editor` raises there, and
+`main.cpp` registers the `utility.Run` command only outside game mode.
+
 ## Editor plugins and the Claude MCP bridge
 
 Editor Preferences > Plugins is a table of plugins (`kPlugins` in `editor/editor_ui.cpp`: name,

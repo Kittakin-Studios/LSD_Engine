@@ -288,13 +288,13 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - [x] AI State Trees: StateTreeData assets (states with up to 4 tasks, the behaviour tree's own task kinds incl. Use Smart Object / Run Query, and up to 4 transitions: On Succeeded / Failed / Completed, On Condition (blackboard Key Op Value, interrupts), After Time; to a state by name), edited as a list in Details; AI Controller > State Tree runs it instead of the Behavior Tree (`ai::StRunner` runs each state's tasks through `BtRunner`; `pick_transition` tested in ai_tests, the asset conversion in editor_tests; checked in Play); shortcut: flat states (no child states), read when Play starts [State Tree]
 - [x] AI Smart Objects: Smart Object component (Activity, Slots, Duration, the user's Script Function, Animation montage, Face Object, Enabled), a claim table (`ai::SmartClaims`, one slot per user), the Use Smart Object task (Behavior Tree node, State Tree task: claim the nearest free slot, walk there, use it, release it, also when interrupted; tested in ai_tests, checked in Play), `lsd.claim_smart_object` / `lsd.release_smart_object` [Smart Objects]
 - [x] AI environment queries: EnvQueryData assets (Rings / Grid around the querier or a blackboard target, snapped onto the navmesh; Distance, Can See Target, Reachable, Facing tests as Score / Filter with weights, normalised per test; `ai::run_query` tested in ai_tests), the Run Query task (Behavior Tree node, State Tree task: best point into a key), `lsd.run_query`, Debug Draw of the scored points in Play [EQS]
+- [x] Editor utility scripts and widgets: Lua / visual scripts run in the editor on the edited level with `lsd.editor` (selection, select, open asset, console, `panel` = a dockable ImGui panel of labels, buttons, checkboxes, numbers, text fields bound to the script), one undo step per run or button; Content Browser > Run Editor Utility, Tools > Editor Utilities, toolbar Utilities, Outliner Scripted Actions (EU_ scripts), `utility.Run`; never in Play or a packaged game (`editor/editor_utility*`, tested in editor_tests) [Editor Utility Blueprints / Widgets, Scripted Actions]
 - Rendering: HLOD, dynamic GI, virtual texturing, hair / fur cards
 - Animation: full-body IK, animation layers [IK Rig]
 - Physics: cloth, vehicles [Chaos Cloth, Chaos Vehicles]
 - Input: touch and gyro
 - Cinematics: full Sequencer (keys, curves, shots, sub-sequences), cinematic camera (film back, focus), render to video [Sequencer, Movie Render Queue]
 - Audio: procedural audio graphs, spatial audio, dynamic music system [MetaSounds, Quartz]
-- Data: editor utility scripts and widgets (Lua + visual script running in the editor) [Editor Utility Widgets]
 - Build: plugins, DLC / patch packages [Chunking] (C++ hot reload moved to milestone 7)
 - Collaboration: multi-user editing in one level [Multi-User Editing]
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
