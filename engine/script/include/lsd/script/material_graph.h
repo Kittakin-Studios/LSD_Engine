@@ -42,6 +42,15 @@ struct MaterialCode {
 // Material Function nodes are compiled in place (up to 4 deep) from the graph file the resolver finds.
 bool compile_material_graph(const Graph& graph, MaterialCode& out, char* error, usize error_capacity);
 
+// Global material parameters (Project Settings > Material Parameters, Unreal's Material Parameter Collection): up to
+// kMaxGlobalParams named values (4 floats; a number fills all 4) that every material reads through the Global Parameter
+// node (by name: its slot is the name's place in the list) and scripts set (lsd.set_material_parameter). set_global_params
+// names them and puts every value back to its default (the editor calls it on load, on change, and when Play starts / stops).
+constexpr u32 kMaxGlobalParams = 16;
+void set_global_params(const char* const* names, const f32 (*defaults)[4], u32 count);
+const f32* global_param_values();  // kMaxGlobalParams x 4 floats, for rhi::LightSetup::global_params
+bool set_global_param(const char* name, const f32 value[4]);  // false: no parameter with that name
+
 // Material Functions (Unreal's): a Material Graph with a Function Output node (and Function Input
 // nodes A, B, C) used from other graphs by a Material Function node naming it. The program sets how a
 // name becomes a graph file; without it Material Function nodes fail to compile.

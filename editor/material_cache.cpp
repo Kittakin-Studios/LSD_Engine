@@ -414,6 +414,10 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
     draw.alpha_cutoff = m.blend_mode == 1 ? (m.opacity_mask_clip > 0.0f ? m.opacity_mask_clip : 0.001f) : 0.0f;
 }
 
+void MaterialCache::reload_all() {
+    for (u32 i = 0; i < count_; ++i) load(entries_[i]);
+}
+
 void MaterialCache::check_files() {
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];

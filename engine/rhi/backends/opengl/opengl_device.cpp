@@ -130,6 +130,7 @@ layout(std140, binding = 1) uniform Lights {
     vec4 light_extra[16];
     vec4 normal_view[4];
     vec4 velocity_view[4];
+    vec4 lsd_globals[16];  // global material parameters
 };
 float light_profile(uint li, float c) {  // mesh.hlsl's
     float x = acos(clamp(c, -1.0, 1.0)) / 3.14159265 * 15.0;

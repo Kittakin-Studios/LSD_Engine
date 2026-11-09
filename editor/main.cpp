@@ -1882,6 +1882,31 @@ void stop_play_clients() {
 
 // The built-in chat box (Project Settings > Chat > Chat Box): the last lines, Enter to type, Tab
 // picks the channel among those the project turns on, Esc cancels.
+// Project Settings > Materials (global material parameters): names and defaults to the material compiler. Returns
+// true when the names changed since the last call (materials compile again); `reset` puts every value back.
+bool apply_material_parameters(const lsd::editor::ProjectSettings& project, bool reset) {
+    static std::string last_names, last_values;
+    static bool applied = false;
+    std::string names_now, values_now;
+    const char* names[lsd::script::kMaxGlobalParams];
+    lsd::f32 defaults[lsd::script::kMaxGlobalParams][4];
+    const lsd::u32 count = project.material_parameters.count < lsd::script::kMaxGlobalParams ? project.material_parameters.count : lsd::script::kMaxGlobalParams;
+    for (lsd::u32 i = 0; i < count; ++i) {
+        const lsd::editor::MaterialParameterDef& p = project.material_parameters[i];
+        names[i] = p.name;
+        std::memcpy(defaults[i], &p.value, sizeof defaults[i]);
+        names_now.append(p.name).append(1, ';');
+        values_now.append(reinterpret_cast<const char*>(&p.value), sizeof p.value);
+    }
+    if (applied && !reset && names_now == last_names && values_now == last_values) return false;
+    const bool recompile = applied ? names_now != last_names : count > 0;  // the first time: materials loaded before it
+    applied = true;
+    last_names = names_now;
+    last_values = values_now;
+    lsd::script::set_global_params(names, defaults, count);
+    return recompile;
+}
+
 void draw_chat_box(lsd::editor::PlaySession& play, const lsd::editor::ProjectSettings& project) {
     static bool typing = false;
     static int channel = 0;
@@ -2204,6 +2229,7 @@ int main(int argc, char** argv) {
     lsd::reflect::load_file(state.settings, kSettingsPath);
     lsd::editor::load_keymap(state.settings);
     lsd::reflect::load_file(state.project, "Config/project.json");
+    apply_material_parameters(state.project, true);  // before any material compiles
     state.game_mode = game_mode;
     if (game_mode) SDL_SetWindowTitle(window, state.project.project_name);
 
@@ -2601,6 +2627,7 @@ int main(int argc, char** argv) {
             skinned_cache->check_files();
             effects->check_files();
             materials.check_files();
+            if (apply_material_parameters(state.project, false)) materials.reload_all();  // renamed or reordered: their slots moved
             if (!game_mode && lsd::editor::game_module::changed() && !lsd::editor::game_module::compiling()) {  // a rebuilt Game.dll
                 play.scripts().stop_natives();  // their code is in the old DLL
                 lsd::editor::game_module::load();
@@ -2984,6 +3011,7 @@ int main(int argc, char** argv) {
             }
             play.start(world, meshes, registry, state.camera.position, state.camera.yaw, state.camera.pitch);
             animations->reset();  // Play starts every animation from its beginning
+            apply_material_parameters(state.project, true);  // scripts start from the defaults
             effects->reset();
             state.playing = true;
             state.paused = false;
@@ -3046,6 +3074,7 @@ int main(int argc, char** argv) {
             state.mouse_captured = false;
             state.paused = state.ejected = false;
             play.stop();
+            apply_material_parameters(state.project, true);  // what scripts set is undone
             LSD_LOG_INFO("editor", "Stop");
         }
         if (game_mode && !state.playing && !state.play_requested) running = false;

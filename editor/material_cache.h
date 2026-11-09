@@ -117,6 +117,7 @@ public:
     void apply(const char* material_guid, rhi::MeshDraw& draw, u32 want = TextureCache::kFull);
     TextureCache& textures() { return textures_; }
     void check_files();
+    void reload_all();  // every material compiled again (the global material parameters were renamed or reordered)
 
 private:
     struct Entry {

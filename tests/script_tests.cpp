@@ -1043,6 +1043,25 @@ static void test_material_graph() {
     CHECK(g.connect(bright_id, 0, out, 1) && g.connect(tint_param_id, 0, mul, 1));
     CHECK(compile_material_graph(g, code, error, sizeof error));
     CHECK(code.param_count == 2 && std::strcmp(code.params[0].name, "Tint") == 0 && code.params[0].vector && code.params[0].value[2] == 0.3f);
+
+    // Global parameters (Project Settings > Materials): the slot is the name's place in the list; unknown names fail.
+    {
+        GraphNode* wind = g.add("MatGlobalParam", 0, 900);
+        std::snprintf(wind->values[0], sizeof wind->values[0], "Snow");
+        const u32 wind_id = wind->id;
+        CHECK(g.connect(wind_id, 0, out, 3));
+        CHECK(!compile_material_graph(g, code, error, sizeof error) && std::strstr(error, "Global Parameter"));
+        const char* names[2] = {"Wind", "Snow"};
+        const f32 defaults[2][4] = {{1, 1, 1, 1}, {0.25f, 0.25f, 0.25f, 0.25f}};
+        set_global_params(names, defaults, 2);
+        CHECK(compile_material_graph(g, code, error, sizeof error) && std::strstr(code.code.data(), "lsd_globals[1].xyz"));
+        const f32 deep[4] = {0.9f, 0.9f, 0.9f, 0.9f};
+        CHECK(set_global_param("Snow", deep) && !set_global_param("Rain", deep) && global_param_values()[4] == 0.9f);
+        set_global_params(names, defaults, 2);  // back to the defaults
+        CHECK(global_param_values()[4] == 0.25f);
+        set_global_params(nullptr, nullptr, 0);
+        g.remove(wind_id);
+    }
     CHECK(std::strcmp(code.params[1].name, "Brightness") == 0 && code.params[1].value[0] == 2.5f && code.params[1].value[2] == 2.5f);
     CHECK(std::strstr(code.code.data(), "lsd_params[0].xyz") && std::strstr(code.code.data(), "lsd_v3(lsd_params[1].x)"));
 

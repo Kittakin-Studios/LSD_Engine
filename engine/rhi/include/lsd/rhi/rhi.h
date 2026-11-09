@@ -330,9 +330,12 @@ struct LightSetup {
     // rows (xyz), metallic / roughness / emissive.r (their w) and colour (the fourth row); the lit shader writes how far
     // the pixel moved on screen (uv, x then y, 16 bits each over -2..2: RG and BA high / low bytes; 0 = nothing drawn).
     f32 velocity_view[4][4] = {};
+    // Global material parameters (Project Settings > Material Parameters, Unreal's Material Parameter Collection):
+    // what Global Parameter nodes read (lsd_globals in the shaders), set from script::global_param_values.
+    f32 global_params[16][4] = {};
 };
 static_assert(sizeof(GpuLight) == 64 &&
-                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32 + kMaxLights * 16 + 64 + 64,
+                  sizeof(LightSetup) == 48 + kMaxLights * 64 + 256 + 64 + 16 + 16 + kMaxShadowTiles * 80 + 96 + 48 + kMaxProbes * 48 + 16 + kMaxDecals * 80 + 16 + kMaxReflectionProbes * 16 + 16 + 16 + kMaxReflectionProbes * 16 + kMaxLights * 64 + kMaxLights * 32 + kMaxLights * 16 + 64 + 64 + 256,
               "matches the shader's light buffer");
 
 // The post-process pass (Unreal's post-process stack): reads a scene target drawn with

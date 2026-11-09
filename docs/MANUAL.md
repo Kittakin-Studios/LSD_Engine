@@ -943,6 +943,13 @@ shadows have the same holes, on static and skeletal meshes, for every light);
 
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 
+**Global material parameters** (Unreal's Material Parameter Collection): **Project Settings > Materials > Material
+Parameters** names up to 16 values every material can read, each with a starting value (Wind, Wetness, SnowAmount,
+TimeOfDay). In a Material Graph the **Global Parameter** node (Parameters) gives one by name (a colour, or a number in
+all three channels). Scripts change it for every material at once: `lsd.set_material_parameter("Wetness", 0.8)` (or
+`name, r, g, b[, a]`) or the **Set Global Material Parameter** node; Play starts from the starting values and Stop
+puts them back. Renaming or reordering the list compiles the materials again.
+
 ### Material Graphs
 
 ![The Material Graph editor](images/ed_material_graph.jpg)
@@ -2191,6 +2198,7 @@ Audio and animation
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
+| `lsd.set_material_parameter(name, value)` / `(name, r, g, b[, a])` | A global material parameter (Project Settings > Materials) for every material; false if no such name |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
 | `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |
 | `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"...) under a Content/ folder, by name |

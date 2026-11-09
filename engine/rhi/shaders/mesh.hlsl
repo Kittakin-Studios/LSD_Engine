@@ -43,6 +43,7 @@ VK_BIND(0, 2) cbuffer Lights : register(b1) {
     float4 light_extra[16];      // per light: x = its shadow mask channel + 1
     float4 normal_view[4];       // the normals pass: the view's rotation (rows 0-2), [3].x = 1 while it draws ([3].y: the velocity pass)
     float4 velocity_view[4];     // the velocity pass: this view's view-projection without jitter
+    float4 lsd_globals[16];      // global material parameters (the Global Parameter node)
 };
 // A light's IES profile at the angle from its axis whose cosine is c (1 without one; asset::light_profile_at).
 float light_profile(uint li, float c) {
