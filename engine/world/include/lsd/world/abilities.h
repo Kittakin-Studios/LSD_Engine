@@ -23,7 +23,7 @@ struct Attribute {
     LSD_GENERATED()
     LSD_PROPERTY(Edit, Tooltip = "The attribute's name (Health, MaxHealth, Stamina...): effects and scripts use it") char name[32] = "";
     LSD_PROPERTY(Edit, Tooltip = "Its base value: Instant and periodic effects (and lsd.set_attribute) change it for good") f32 base = 0.0f;
-    LSD_PROPERTY(Visible, Tooltip = "Its value now: the base with the lasting effects' modifiers on it, clamped") f32 current = 0.0f;
+    LSD_PROPERTY(Visible, Tooltip = "Its value in Play: the base with the lasting effects' modifiers on it, clamped") f32 current = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "It never goes below this (Health stops at 0)") f32 min = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "It never goes above this (0 = no maximum)") f32 max = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Another attribute that is its maximum (Health: MaxHealth); empty = Max only") char max_attribute[32] = "";
