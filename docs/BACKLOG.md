@@ -289,7 +289,6 @@ pointers) and the reflection tables. Both become the C API, so every language se
 - Build: plugins, DLC / patch packages [Chunking] (C++ hot reload moved to milestone 7)
 - Collaboration: multi-user editing in one level [Multi-User Editing]
 - Compute: optional CUDA / ROCm (HIP) plugins for editor and offline tools
-- VR / XR via OpenXR **(S)**
 
 ## Performance (measured)
 
