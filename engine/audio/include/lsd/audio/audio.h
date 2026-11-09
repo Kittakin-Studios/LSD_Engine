@@ -3,6 +3,7 @@
 // of volume groups, 3D attenuation around one listener, and concurrency groups. World convention:
 // Z up, metres. Without an audio device (servers, tests) everything still runs, silently, and
 // read_frames() pulls the mix by hand.
+#include "lsd/audio/dsp.h"
 #include "lsd/audio/sound_assets.h"
 #include "lsd/foundation/math.h"
 
@@ -25,6 +26,9 @@ struct PlayDesc {
     u32 concurrency = kNoGroup;  // from add_concurrency
     f32 delay = 0.0f;            // seconds before it starts
     u32 instance = 0;            // a voice id this one belongs to (a Sound Cue's voices stop together)
+    // A Sound Synth rendered live instead of `path` (copied); its Wave nodes play these files.
+    const SynthProgram* synth = nullptr;
+    const char* synth_waves[kSynthMaxWaves] = {};
 };
 
 struct MixAdjust {
@@ -94,6 +98,12 @@ public:
     void stop_with_fade(u32 voice, f32 seconds);
     f32 voice_time(u32 voice);
     void seek_voice(u32 voice, f32 seconds);
+    // The mixer's clock (seconds since init), and a stop scheduled on it: quantised music switches
+    // land on the sample, not on the next game frame.
+    f32 time_seconds() const;
+    void stop_at(u32 voice, f32 seconds_from_now, f32 fade);
+    // Sound Synths: a parameter by name on every playing synth that has it (lsd.set_audio_param).
+    void set_synth_param(const char* name, f32 value);
 
     // Sound Mixes: class volumes multiplied while pushed, faded in and out. Returns a mix id.
     u32 push_mix(const MixAdjust* adjusters, u32 count, f32 fade_in, f32 fade_out);

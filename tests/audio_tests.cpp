@@ -434,6 +434,69 @@ int main() {
     a.update(0.0f);
     CHECK(a.voice(0).lowpass > 4000.0f && a.voice(0).lowpass < 6000.0f);  // back to the wall's
     a.stop_all();
+
+    // A Sound Synth through the mixer: a 440 Hz sine is heard, follows its parameter, ends with
+    // its Duration; a scheduled stop lands on the mixer's clock.
+    {
+        auto* synth = new SynthProgram();
+        std::snprintf(synth->params[0], sizeof synth->params[0], "level");
+        synth->param_defaults[0] = 0.5f;
+        synth->param_count = 1;
+        synth->nodes[0].op = SynthOp::Param;
+        synth->nodes[1].op = SynthOp::Oscillator;
+        synth->nodes[1].in[0].value = 440.0f;
+        synth->nodes[1].in[1].node = 0;
+        synth->count = 2;
+        synth->output.node = 1;
+        synth->duration = 0.5f;
+        PlayDesc s;
+        s.name = "Synth";
+        s.synth = synth;
+        const u32 voice = a.play(s);
+        delete synth;  // the voice has its own copy
+        CHECK(voice != 0 && a.playing(voice));
+        const f32 synth_level = loudness(a, 4800);
+        CHECK(synth_level > 0.15f && synth_level < 0.4f);  // sine at 0.5: RMS ~0.35, mono spread to both sides
+        a.set_synth_param("level", 0.0f);
+        loudness(a, 960);
+        CHECK(loudness(a, 4800) < 0.001f);
+        a.set_synth_param("level", 0.5f);
+        loudness(a, 48000);  // past its 0.5 s
+        a.update(0.0f);
+        CHECK(!a.playing(voice));
+    }
+    {
+        d.sound_class = kMasterClass;
+        d.looping = true;
+        const u32 scheduled = a.play(d);
+        const f32 t0 = a.time_seconds();
+        a.stop_at(scheduled, 0.1f, 0.0f);
+        loudness(a, 2400);  // 50 ms: still playing
+        CHECK(a.playing(scheduled) && a.time_seconds() - t0 > 0.04f);
+        loudness(a, 4800);  // past 100 ms
+        CHECK(loudness(a, 4800) < 0.001f);
+        a.update(0.0f);
+        CHECK(!a.playing(scheduled));
+        d.looping = false;
+    }
+
+    // Air absorption: a spatial voice far away gets a low-pass from its distance alone.
+    d.spatial = true;
+    d.attenuation.air_absorption = true;
+    d.attenuation.air_absorption_far = 2000.0f;
+    d.attenuation.reverb_send = true;
+    d.position = Vec3{30.0f, 0.0f, 0.0f};
+    a.set_listener({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    const u32 far = a.play(d);
+    a.update(0.0f);
+    CHECK(far != 0 && a.voice(0).lowpass < 5000.0f && a.voice(0).lowpass > 2000.0f);
+    a.set_position(far, {1.0f, 0.0f, 0.0f});  // inside Min Distance: open again
+    a.update(0.0f);
+    CHECK(a.voice(0).lowpass > 19000.0f);
+    CHECK(loudness(a, 4800) > 0.01f);  // the send path mixes without trouble
+    a.stop_all();
+    d.spatial = false;
+
     a.reset_classes();
     a.shutdown();
     if (g_failures == 0) std::printf("All audio tests passed.\n");

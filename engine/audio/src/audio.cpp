@@ -76,6 +76,52 @@ void set_reverb(verblib& reverb, f32 amount, f32 room_size) {
     verblib_set_room_size(&reverb, room_size);
 }
 
+// A Sound Synth as a miniaudio data source: mono samples rendered on the audio thread from the
+// voice's own copy of the program (no allocation, no locks there).
+struct SynthSource {
+    ma_data_source_base base;
+    SynthProgram program;
+    SynthState state;
+    u32 rate;
+};
+
+ma_result synth_read(ma_data_source* source, void* out, ma_uint64 frames, ma_uint64* read) {
+    auto& s = *static_cast<SynthSource*>(source);
+    ma_uint64 done = 0;
+    while (done < frames) {
+        const u32 want = frames - done > 4096 ? 4096u : static_cast<u32>(frames - done);
+        const u32 got = synth_render(s.program, s.state, static_cast<f32*>(out) + done, want, s.rate);
+        done += got;
+        if (got < want) break;
+    }
+    if (read) *read = done;
+    return done < frames ? MA_AT_END : MA_SUCCESS;
+}
+ma_result synth_seek(ma_data_source*, ma_uint64) { return MA_SUCCESS; }  // a synth has no timeline to jump in
+ma_result synth_format(ma_data_source* source, ma_format* format, ma_uint32* channels, ma_uint32* rate, ma_channel* map, size_t map_capacity) {
+    *format = ma_format_f32;
+    *channels = 1;  // mono: the spatializer pans it
+    *rate = static_cast<SynthSource*>(source)->rate;
+    if (map && map_capacity) map[0] = MA_CHANNEL_MONO;
+    return MA_SUCCESS;
+}
+ma_result synth_cursor(ma_data_source* source, ma_uint64* cursor) {
+    *cursor = static_cast<SynthSource*>(source)->state.frame;
+    return MA_SUCCESS;
+}
+ma_result synth_length(ma_data_source*, ma_uint64* length) {
+    *length = 0;
+    return MA_NOT_IMPLEMENTED;  // until stopped (or its Duration)
+}
+ma_data_source_vtable g_synth_vtable = {synth_read, synth_seek, synth_format, synth_cursor, synth_length, nullptr, 0};
+
+void free_synth(SynthSource* s) {
+    if (!s) return;
+    ma_data_source_uninit(&s->base);
+    for (u32 i = 0; i < kSynthMaxWaves; ++i) ma_free(const_cast<f32*>(s->program.wave_data[i]), nullptr);
+    delete s;
+}
+
 } // namespace
 
 struct AudioSystem::Impl {
@@ -86,6 +132,7 @@ struct AudioSystem::Impl {
     // Every sound ends in `master`, then the listener's environment reverb, then the speakers.
     ma_sound_group master;
     ma_reverb_node environment;
+    ma_reverb_node distance_reverb;  // Reverb Send: farther voices send more here (wet only, into master)
     struct Effect {
         u32 type;
         void* node;  // the miniaudio node, heap-allocated by its type
@@ -152,6 +199,14 @@ struct AudioSystem::Impl {
         bool occlusion;
         f32 occlusion_muffle;
         bool fading_out;  // stop_with_fade: done once miniaudio has stopped it
+        SynthSource* synth;  // a Sound Synth's renderer, or null for a file
+        // Distance effects (Sound Attenuation): air absorption and the reverb send.
+        f32 min_distance, max_distance;
+        f32 air_far;      // Hz at max distance; 0 = no air absorption
+        f32 air_cutoff;   // from the last update
+        f32 send_far;     // reverb send at max distance
+        bool has_send;    // lowpass -> splitter (0: class, 1: distance reverb)
+        ma_splitter_node send;
     };
     Voice* voices = nullptr;
     u32 next_id = 1;
@@ -161,13 +216,17 @@ struct AudioSystem::Impl {
     void free_voice(Voice& v) {
         if (!v.used) return;
         ma_sound_uninit(&v.sound);
+        if (v.has_send) ma_splitter_node_uninit(&v.send, nullptr);
         ma_lpf_node_uninit(&v.lowpass, nullptr);
+        free_synth(v.synth);  // after its sound: the mixer no longer reads it
+        v.synth = nullptr;
+        v.has_send = false;
         v.used = false;
     }
     // The voice's low-pass: the lower of what its caller set and what the mixes ask of its class.
     void apply_cutoff(Voice& v) {
         const f32 mix = v.sound_class < class_count ? class_cutoff[v.sound_class] : kOpen;
-        const f32 want = v.base_cutoff < mix ? v.base_cutoff : mix;
+        const f32 want = std::fmin(std::fmin(v.base_cutoff, mix), v.air_cutoff);
         if (std::fabs(v.cutoff - want) < want * 0.02f) return;  // re-initialising the filter costs: only on real changes
         const ma_lpf_config config = ma_lpf_config_init(ma_format_f32, 2, ma_engine_get_sample_rate(&engine), want, 2);
         ma_lpf_node_reinit(&config, &v.lowpass);
@@ -311,6 +370,11 @@ bool AudioSystem::init(bool use_device) {
     const ma_reverb_node_config reverb = ma_reverb_node_config_init(2, ma_engine_get_sample_rate(&impl_->engine));
     ma_reverb_node_init(ma_engine_get_node_graph(&impl_->engine), &reverb, nullptr, &impl_->environment);
     set_reverb(impl_->environment.reverb, 0.0f, 0.5f);
+    ma_reverb_node_init(ma_engine_get_node_graph(&impl_->engine), &reverb, nullptr, &impl_->distance_reverb);
+    verblib_set_dry(&impl_->distance_reverb.reverb, 0.0f);  // only the tail: the dry sound already went its own way
+    verblib_set_wet(&impl_->distance_reverb.reverb, 0.4f);
+    verblib_set_room_size(&impl_->distance_reverb.reverb, 0.7f);
+    ma_node_attach_output_bus(&impl_->distance_reverb, 0, &impl_->master, 0);
     impl_->meters[0] = impl_->make_meter();  // master -> meter -> environment
     if (impl_->meters[0]) {
         ma_node_attach_output_bus(&impl_->master, 0, &impl_->meters[0]->base, 0);
@@ -335,6 +399,7 @@ void AudioSystem::shutdown() {
     stop_all();
     impl_->release_classes();
     impl_->class_count = 0;
+    ma_reverb_node_uninit(&impl_->distance_reverb, nullptr);
     ma_sound_group_uninit(&impl_->master);
     impl_->destroy_meter(0);
     ma_reverb_node_uninit(&impl_->environment, nullptr);
@@ -424,7 +489,7 @@ u32 AudioSystem::add_concurrency(u32 max_voices, u32 when_full) {
 }
 
 u32 AudioSystem::play(const PlayDesc& d) {
-    if (!impl_->ready || !d.path) return 0;
+    if (!impl_->ready || (!d.path && !d.synth)) return 0;
     Impl& m = *impl_;
     // Concurrency: a full group stops its oldest or quietest voice, or refuses the new one.
     if (d.concurrency < m.concurrency_count) {
@@ -453,23 +518,69 @@ u32 AudioSystem::play(const PlayDesc& d) {
         }
         m.free_voice(*slot);
     }
-    ma_uint32 flags = d.stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
+    ma_uint32 flags = d.synth ? 0 : d.stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
     const bool spatial = d.spatial && d.attenuation.spatialize;
     if (!spatial) flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
     ma_sound_group* group = d.sound_class > 0 && d.sound_class < m.class_count ? &m.groups[d.sound_class] : &m.master;
-    const ma_result result = ma_sound_init_from_file(&m.engine, d.path, flags, group, nullptr, &slot->sound);
+    SynthSource* synth = nullptr;
+    if (d.synth) {  // its own program copy, its Wave files decoded here (never on the audio thread)
+        synth = new SynthSource();
+        synth->program = *d.synth;
+        synth->rate = ma_engine_get_sample_rate(&m.engine);
+        for (u32 i = 0; i < kSynthMaxWaves; ++i) {
+            synth->program.wave_data[i] = nullptr;
+            synth->program.wave_frames[i] = 0;
+            if (i >= d.synth->wave_count || !d.synth_waves[i]) continue;
+            ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, synth->rate);
+            void* data = nullptr;
+            ma_uint64 frames = 0;
+            if (ma_decode_file(d.synth_waves[i], &config, &frames, &data) == MA_SUCCESS) {
+                synth->program.wave_data[i] = static_cast<const f32*>(data);
+                synth->program.wave_frames[i] = frames;
+            } else {
+                LSD_LOG_WARN("audio", "%s: could not read the wave %s", d.name, d.synth_waves[i]);
+            }
+        }
+        synth_reset(synth->program, synth->state);
+        ma_data_source_config config = ma_data_source_config_init();
+        config.vtable = &g_synth_vtable;
+        if (ma_data_source_init(&config, &synth->base) != MA_SUCCESS) {
+            free_synth(synth);
+            return 0;
+        }
+    }
+    const ma_result result = synth ? ma_sound_init_from_data_source(&m.engine, &synth->base, flags, group, &slot->sound)
+                                   : ma_sound_init_from_file(&m.engine, d.path, flags, group, nullptr, &slot->sound);
     if (result != MA_SUCCESS) {
-        LSD_LOG_WARN("audio", "Could not play %s: %s", d.path, ma_result_description(result));
+        LSD_LOG_WARN("audio", "Could not play %s: %s", d.synth ? d.name : d.path, ma_result_description(result));
+        free_synth(synth);
         return 0;
     }
     // Its own low-pass (open until an Audio Volume muffles it): sound -> lowpass -> class.
     const ma_lpf_node_config lowpass = ma_lpf_node_config_init(2, ma_engine_get_sample_rate(&m.engine), kOpen, 2);
     if (ma_lpf_node_init(ma_engine_get_node_graph(&m.engine), &lowpass, nullptr, &slot->lowpass) != MA_SUCCESS) {
         ma_sound_uninit(&slot->sound);
+        free_synth(synth);
         return 0;
     }
     ma_node_attach_output_bus(&slot->sound, 0, &slot->lowpass, 0);
-    ma_node_attach_output_bus(&slot->lowpass, 0, group, 0);
+    // Reverb Send: the low-passed sound splits to its class and, by distance, to the distance reverb.
+    const ma_splitter_node_config split = ma_splitter_node_config_init(2);
+    slot->has_send = spatial && d.attenuation.reverb_send && ma_splitter_node_init(ma_engine_get_node_graph(&m.engine), &split, nullptr, &slot->send) == MA_SUCCESS;
+    if (slot->has_send) {
+        ma_node_attach_output_bus(&slot->lowpass, 0, &slot->send, 0);
+        ma_node_attach_output_bus(&slot->send, 0, group, 0);
+        ma_node_attach_output_bus(&slot->send, 1, &m.distance_reverb, 0);
+        ma_node_set_output_bus_volume(&slot->send, 1, 0.0f);  // set by distance in update()
+    } else {
+        ma_node_attach_output_bus(&slot->lowpass, 0, group, 0);
+    }
+    slot->synth = synth;
+    slot->min_distance = d.attenuation.min_distance;
+    slot->max_distance = d.attenuation.max_distance;
+    slot->air_far = spatial && d.attenuation.air_absorption ? d.attenuation.air_absorption_far : 0.0f;
+    slot->air_cutoff = kOpen;
+    slot->send_far = d.attenuation.reverb_send_far;
     slot->cutoff = kOpen;
     slot->base_cutoff = kOpen;
     slot->used = true;
@@ -633,9 +744,42 @@ void AudioSystem::seek_voice(u32 voice, f32 seconds) {
     }
 }
 
+f32 AudioSystem::time_seconds() const {
+    if (!impl_->ready) return 0.0f;
+    return static_cast<f32>(static_cast<f64>(ma_engine_get_time_in_pcm_frames(&impl_->engine)) / ma_engine_get_sample_rate(&impl_->engine));
+}
+
+void AudioSystem::stop_at(u32 voice, f32 seconds_from_now, f32 fade) {
+    if (!impl_->ready) return;
+    const f64 rate = ma_engine_get_sample_rate(&impl_->engine);
+    const ma_uint64 at = ma_engine_get_time_in_pcm_frames(&impl_->engine) + static_cast<ma_uint64>(static_cast<f64>(seconds_from_now > 0.0f ? seconds_from_now : 0.0f) * rate);
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = impl_->voices[i];
+        if (!v.used || (v.id != voice && v.instance != voice)) continue;
+        ma_sound_set_stop_time_with_fade_in_pcm_frames(&v.sound, at, static_cast<ma_uint64>(static_cast<f64>(fade > 0.0f ? fade : 0.0f) * rate));
+        v.fading_out = true;
+    }
+}
+
+void AudioSystem::set_synth_param(const char* name, f32 value) {
+    if (!impl_->ready) return;
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = impl_->voices[i];
+        if (v.used && v.synth) synth_set_param(v.synth->program, v.synth->state, name, value);
+    }
+}
+
 void AudioSystem::update(f32 dt) {
     if (!impl_->ready) return;
     Impl& m = *impl_;
+    // Distance effects: air absorption (a low-pass) and the reverb send follow the listener.
+    for (u32 i = 0; i < kMaxVoices; ++i) {
+        Impl::Voice& v = m.voices[i];
+        if (!v.used || !v.spatial) continue;
+        const f32 distance = length(v.position - m.listener);
+        v.air_cutoff = v.air_far > 0.0f ? air_absorption_cutoff(distance, v.min_distance, v.max_distance, v.air_far) : kOpen;
+        if (v.has_send) ma_node_set_output_bus_volume(&v.send, 1, v.send_far * distance_fraction(distance, v.min_distance, v.max_distance));
+    }
     // Mix fades, then every class volume = its own volume x each mix's adjuster, by the mix's weight.
     for (u32 i = 0; i < m.mix_count;) {
         Impl::Mix& mix = m.mixes[i];

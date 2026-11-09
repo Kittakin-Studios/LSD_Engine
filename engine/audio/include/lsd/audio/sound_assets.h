@@ -49,6 +49,13 @@ struct SoundAttenuation {
     LSD_PROPERTY(Edit, Category = "Occlusion", Tooltip = "Muffled when something solid is between it and the listener (Unreal's Enable Occlusion)")
     bool occlusion = false;
     LSD_PROPERTY(Edit, Category = "Occlusion", Units = "Hz", Min = 100, Max = 20000, Tooltip = "Low-pass while blocked") f32 occlusion_muffle = 1200.0f;
+    LSD_PROPERTY(Edit, Category = "Air Absorption", Tooltip = "High frequencies fade with distance, as in air: far sounds are duller (Unreal's Enable Air Absorption)")
+    bool air_absorption = false;
+    LSD_PROPERTY(Edit, Category = "Air Absorption", Units = "Hz", Min = 100, Max = 20000, Tooltip = "Low-pass cutoff at Max Distance; open at Min Distance")
+    f32 air_absorption_far = 3000.0f;
+    LSD_PROPERTY(Edit, Category = "Reverb", Tooltip = "Sends more of it to a reverb the farther it is, so distant sounds feel far away (Unreal's Reverb Send)")
+    bool reverb_send = false;
+    LSD_PROPERTY(Edit, Category = "Reverb", Min = 0, Max = 1, Tooltip = "Reverb send at Max Distance; none at Min Distance") f32 reverb_send_far = 0.5f;
 };
 
 LSD_STRUCT(Category = "Audio")
