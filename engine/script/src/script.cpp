@@ -1120,6 +1120,15 @@ struct Api {
         lua_pushstring(L, host.editor_workspace ? host.editor_workspace(host.user) : "");
         return 1;
     }
+    static int editor_call(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (!host.editor) return luaL_error(L, "lsd.editor: editor utility scripts run only in the editor, not in Play or a game");
+        static char out[64 * 1024];
+        out[0] = 0;
+        if (!host.editor(host.user, luaL_checkstring(L, 1), luaL_optstring(L, 2, ""), out, sizeof out)) lua_pushnil(L);
+        else lua_pushstring(L, out);
+        return 1;
+    }
     static int net_join(lua_State* L) { return net_session(L, 1, luaL_checkstring(L, 1)); }
     static int net_leave(lua_State* L) { return net_session(L, 2, luaL_optstring(L, 1, "")); }
     static int net_join_code(lua_State* L) {
@@ -2331,7 +2340,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"vehicle", Api::vehicle}, {"ride", Api::ride}, {"stop_riding", Api::stop_riding}, {"start_mover", Api::start_mover}, {"stop_mover", Api::stop_mover},
         {"restart_mover", Api::restart_mover}, {"player_id", Api::player_id},
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
-        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
+        {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"_editor", Api::editor_call}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed},
         {"input_record", Api::input_record}, {"input_play", Api::input_play}, {"input_stop", Api::input_stop},
         {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"ragdoll", Api::ragdoll}, {"set_material_parameter", Api::set_material_parameter}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"anim_curve", Api::anim_curve}, {"set_motion_tag", Api::set_motion_tag}, {"set_morph", Api::set_morph}, {"morph_names", Api::morph_names}, {"set_outfit", Api::set_outfit}, {"assets", Api::assets}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
@@ -2358,6 +2367,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     run(kPrelude, "=lsd prelude");
     run(kSandbox, "=lsd sandbox");
     update_hook();  // breakpoints set before Play
+    if (host.editor) return;  // editor utilities: the level's own scripts wait for Play
 
     const reflect::TypeInfo& sets = reflect::type_of<world::AttributeSet>();
     for (u32 i = 0; i < world.count(sets); ++i) world::recompute(*static_cast<world::AttributeSet*>(world.at(sets, i)));  // current values from the edited bases

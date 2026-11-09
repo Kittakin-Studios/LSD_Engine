@@ -24,6 +24,7 @@
 #include "template_levels.h"
 #include "paper2d_core.h"
 #include "pcg_graph.h"
+#include "editor_utility_core.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -1106,7 +1107,99 @@ static void test_pcg_graph() {
     CHECK(!editor::run_pcg_graph(graph, in, out, error, sizeof error) && std::strstr(error, "loop"));
 }
 
+// Editor utilities: a script spawns, moves and selects in a test world; the run is one undo step; its panel's
+// widgets set the script's variables and its button calls a function; lsd.editor raises outside the editor.
+static lsd::world::Entity named(const lsd::world::World& w, const char* name) {
+    for (lsd::u32 slot = 0; slot < w.slot_count(); ++slot) {
+        const lsd::world::Entity e = w.entity_at_slot(slot);
+        if (e.valid() && std::strcmp(w.name(e), name) == 0) return e;
+    }
+    return {};
+}
+
+static void test_editor_utility() {
+    using namespace lsd;
+    world::World w(default_allocator());
+    const world::Entity crate = w.create("Crate");
+    editor::Transactions history(default_allocator());
+    history.reset(w, "Open");
+    struct Ctx {
+        world::World* world;
+        world::Entity selected[8];
+        u32 count;
+    } ctx{&w, {}, 0};
+    ctx.selected[ctx.count++] = crate;
+    editor::UtilityHooks hooks;
+    hooks.user = &ctx;
+    hooks.selection = [](void* user, world::Entity* out, u32 capacity) {
+        auto& c = *static_cast<Ctx*>(user);
+        u32 n = 0;
+        for (; n < c.count && n < capacity; ++n) out[n] = c.selected[n];
+        return n;
+    };
+    hooks.select = [](void* user, const world::Entity* list, u32 count) {
+        auto& c = *static_cast<Ctx*>(user);
+        c.count = count < 8 ? count : 8;
+        for (u32 i = 0; i < c.count; ++i) c.selected[i] = list[i];
+    };
+    hooks.spawn = [](void* user, const char* name, Vec3 at) {
+        world::World& world = *static_cast<Ctx*>(user)->world;
+        char unique[64];
+        world.unique_name(name, unique, sizeof unique);
+        const world::Entity e = world.create(unique);
+        world.get<world::Transform>(e)->position = at;
+        return e;
+    };
+    editor::EditorUtilities utilities;
+    utilities.start(w, hooks);
+    const char* code = R"(
+function run(self)
+  for _, e in ipairs(lsd.editor.selection()) do lsd.set_position(e, 0, 0, 5) end
+  local box = lsd.spawn("Box", 1, 2, 3)
+  lsd.editor.select({box})
+  lsd.editor.panel("Tools ]]", {{"label", "Hi"}, {"number", "Height", "height", 2}, {"checkbox", "Tall", "tall", true},
+                                {"text", "Name", "label"}, {"button", "Raise", "raise"}})
+end
+function raise()
+  local e = lsd.find(label)
+  if tall then lsd.set_position(e, 0, 0, height) end
+end
+)";
+    CHECK(utilities.run_code("Content/EU_Test.lua", code));  // the level changed
+    history.commit(w, "Run EU_Test");
+    CHECK(w.get<world::Transform>(crate)->position.z == 5.0f);
+    CHECK(ctx.count == 1 && std::strcmp(w.name(ctx.selected[0]), "Box") == 0);
+    CHECK(utilities.panels().size() == 1);
+    if (utilities.panels().size() == 1) {
+        editor::UtilityPanel& panel = utilities.panels()[0];
+        CHECK(std::strcmp(panel.title, "Tools ]]") == 0 && panel.widgets.size() == 5);
+        CHECK(panel.widgets[1].kind == editor::UtilityWidget::Kind::Number && panel.widgets[1].number == 2.0);
+        CHECK(panel.widgets[2].kind == editor::UtilityWidget::Kind::Checkbox && panel.widgets[2].on);
+        CHECK(panel.widgets[4].kind == editor::UtilityWidget::Kind::Button);
+        panel.widgets[1].number = 7.5;
+        utilities.push_value(0, 1);
+        std::snprintf(panel.widgets[3].text, sizeof panel.widgets[3].text, "Crate");
+        utilities.push_value(0, 3);
+        CHECK(utilities.press(0, 4));
+        CHECK(w.get<world::Transform>(crate)->position.z == 7.5f);
+        history.commit(w, "Raise");
+        CHECK(!utilities.press(0, 4));  // already there: no undo step
+    }
+    CHECK(history.undo(w));
+    CHECK(w.get<world::Transform>(named(w, "Crate"))->position.z == 5.0f);
+    CHECK(history.undo(w));
+    CHECK(w.get<world::Transform>(named(w, "Crate"))->position.z == 0.0f && !named(w, "Box").valid());  // the spawn is undone too
+    CHECK(!utilities.run_code("Content/EU_Bad.lua", "function run( broken"));  // a syntax error is logged, nothing changes
+    // Play's scripts have no lsd.editor host: the call raises.
+    script::ScriptSystem play;
+    play.start(w, {}, nullptr, nullptr);
+    CHECK(!play.run("lsd._editor('selection')"));
+    play.stop();
+    CHECK(editor::lua_quote("a]") == "[=[\na]]=]" && editor::lua_quote("x") == "[[\nx]]");
+}
+
 int main() {
+    test_editor_utility();
     test_pcg_graph();
     test_paper2d();
     test_templates();
