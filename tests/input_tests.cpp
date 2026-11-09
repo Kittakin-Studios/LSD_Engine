@@ -1,6 +1,7 @@
 // Input tests: mapping contexts turn keys, mouse and sticks into action values; data asset round trip.
 #include "lsd/asset/data_asset.h"
 #include "lsd/input/input.h"
+#include "lsd/input/touch.h"
 
 #include <SDL3/SDL.h>
 
@@ -253,12 +254,124 @@ static void test_recording() {
     std::remove(path);
 }
 
+static InputFrame touch_frame(const TouchState& t) {
+    InputFrame f;
+    t.fill(f);
+    return f;
+}
+
+static void test_touch() {
+    TouchState t;
+    t.set_view(1280, 720);
+    t.down(1, 0.5f, 0.2f);  // a quick tap
+    t.update(0.1f);
+    t.up(1, 0.5f, 0.2f);
+    t.update(0.016f);
+    CHECK(touch_frame(t).touch_bits == kTouchTap);
+    t.end_frame();
+    CHECK(touch_frame(t).touch_bits == 0 && touch_frame(t).touch_count == 0);
+
+    t.down(1, 0.2f, 0.2f);  // a swipe right, then up
+    t.update(0.1f);
+    t.up(1, 0.5f, 0.2f);
+    CHECK(touch_frame(t).touch_bits == kTouchSwipeRight);
+    t.end_frame();
+    t.down(1, 0.5f, 0.6f);
+    t.up(1, 0.5f, 0.3f);
+    CHECK(touch_frame(t).touch_bits == kTouchSwipeUp);
+    t.end_frame();
+
+    t.down(1, 0.5f, 0.5f);  // a long press is a hold while it lasts, not a tap
+    t.update(0.2f);
+    CHECK((touch_frame(t).touch_bits & kTouchHold) == 0);
+    t.update(0.3f);
+    CHECK((touch_frame(t).touch_bits & kTouchHold) != 0 && touch_frame(t).touch_count == 1);
+    t.up(1, 0.5f, 0.5f);
+    CHECK((touch_frame(t).touch_bits & kTouchTap) == 0);
+    t.end_frame();
+    t.update(0.016f);
+    CHECK(touch_frame(t).touch_bits == 0);
+
+    t.down(1, 0.4f, 0.2f);  // pinch: two fingers apart
+    t.down(2, 0.6f, 0.2f);
+    t.update(0.016f);
+    t.move(2, 0.7f, 0.2f);
+    t.update(0.016f);
+    CHECK(touch_frame(t).touch_pinch > 0.1f);
+    t.move(2, 0.65f, 0.2f);
+    t.update(0.016f);
+    CHECK(touch_frame(t).touch_pinch < 0.0f);
+    t.up(1, 0.4f, 0.2f);
+    t.up(2, 0.65f, 0.2f);
+    t.end_frame();
+
+    t.down(1, 0.5f, 0.5f);  // drag: pixels, y up
+    t.update(0.016f);
+    t.move(1, 0.5f + 10.0f / 1280.0f, 0.5f - 5.0f / 720.0f);
+    t.update(0.016f);
+    CHECK(std::fabs(touch_frame(t).touch_drag[0] - 10.0f) < 0.01f && std::fabs(touch_frame(t).touch_drag[1] - 5.0f) < 0.01f);
+    t.up(1, 0.5f, 0.5f);
+    t.end_frame();
+
+    // The pad: a left thumb pushed a full stick radius right reads 1 on the gamepad's left stick; a button press reads as Face Bottom.
+    t.set_pad(true);
+    t.down(1, 0.15f, 0.75f);
+    t.move(1, 0.15f + TouchState::kStickRadius * 720.0f / 1280.0f, 0.75f);
+    t.down(2, 0.92f, 0.72f);
+    t.update(0.016f);
+    InputFrame pad = touch_frame(t);
+    CHECK(std::fabs(pad.gamepad_axes[0] - 1.0f) < 0.001f && std::fabs(pad.gamepad_axes[1]) < 0.001f);
+    CHECK((pad.gamepad_buttons & (1u << SDL_GAMEPAD_BUTTON_SOUTH)) != 0 && pad.touch_bits == 0);
+    t.move(1, 0.15f, 0.75f - 0.5f * TouchState::kStickRadius);  // half way up: y is up-positive
+    pad = touch_frame(t);
+    CHECK(std::fabs(pad.gamepad_axes[1] - 0.5f) < 0.001f);
+    PadWidget widgets[4];
+    CHECK(t.pad_widgets(widgets, 4) == 4 && widgets[0].active && widgets[2].active && !widgets[3].active);
+    t.up(1, 0.15f, 0.7f);
+    t.up(2, 0.92f, 0.72f);
+    CHECK(touch_frame(t).gamepad_buttons == 0 && touch_frame(t).gamepad_axes[0] == 0.0f && touch_frame(t).touch_bits == 0);
+    t.set_pad(false);
+    t.down(1, 0.15f, 0.75f);  // pad off: the same finger is a plain gesture finger
+    CHECK(t.pad_widgets(widgets, 4) == 0 && touch_frame(t).gamepad_axes[0] == 0.0f);
+}
+
+static void test_touch_mappings() {
+    constexpr char kLookGyro[] = "00000000000000000000000000000008";
+    constexpr char kSwipe[] = "00000000000000000000000000000009";
+    constexpr char kZoom[] = "0000000000000000000000000000000a";
+    constexpr char kLean[] = "0000000000000000000000000000000b";
+    InputMappingContext ctx;
+    ctx.mappings.push_back(map(kLookGyro, "Gyro XY", 0, 2.0f));  // sensitivity is the mapping's scale
+    ctx.mappings.push_back(map(kSwipe, "Touch Swipe Up"));
+    ctx.mappings.push_back(map(kZoom, "Touch Pinch", 0, 3.0f));
+    ctx.mappings.push_back(map(kLean, "Tilt XY"));
+    CHECK(is_key("Touch Tap") && is_key("Gyro Yaw") && is_2d_key("Gyro XY") && is_2d_key("Touch Drag XY") && !is_2d_key("Touch Pinch"));
+    InputSystem input;
+    input.add_context(ctx);
+    InputFrame f;
+    input.update(f);  // no sensors, no fingers: harmless zeros
+    CHECK(input.value(kLookGyro).x == 0.0f && !input.down(kSwipe));
+    f.gyro_deg[0] = 1.0f;  // pitch
+    f.gyro_deg[1] = 3.0f;  // yaw
+    f.touch_bits = kTouchSwipeUp;
+    f.touch_pinch = 0.5f;
+    f.tilt[0] = 0.25f;
+    input.update(f);
+    CHECK(input.value(kLookGyro).x == 6.0f && input.value(kLookGyro).y == 2.0f);
+    CHECK(input.pressed(kSwipe) && input.fired(kSwipe) && input.value(kZoom).x == 1.5f && input.value(kLean).x == 0.25f);
+    f.touch_bits = 0;
+    input.update(f);
+    CHECK(!input.down(kSwipe));
+}
+
 int main() {
     test_mappings();
     test_held_key();
     test_modifiers();
     test_data_asset();
     test_recording();
+    test_touch();
+    test_touch_mappings();
     if (g_failures == 0) std::printf("All input tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

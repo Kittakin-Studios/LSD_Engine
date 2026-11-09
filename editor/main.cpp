@@ -48,6 +48,7 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/core/console.h"
 #include "lsd/input/input.h"
+#include "lsd/input/touch.h"
 #include "lsd/core/job_system.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/curve.h"
@@ -101,8 +102,58 @@ constexpr lsd::f32 kOutlineColor[4] = {1.0f, 0.55f, 0.08f, 1.0f};
 // input.Hold <key> <seconds>: keys held for the game as if pressed (tests and the MCP bridge drive Play).
 lsd::u64 g_held_until[SDL_SCANCODE_COUNT] = {};
 lsd::u64 g_mouse_held_until[3] = {};  // input.Hold on Left / Middle / Right Mouse Button
+lsd::input::TouchState g_touch;       // fingers (SDL, input.Touch, or the mouse as a finger) -> gestures and the virtual pad
+bool g_virtual_pad = false;           // input.VirtualPad: thumbsticks and buttons on screen (on by default with a touch screen)
+bool g_mouse_touch = false;           // input.MouseTouch: the left mouse button acts as a finger
 
 namespace {
+
+// The mouse as a finger: left button down / drag / up, position as 0..1 of the window.
+void feed_mouse_touch(SDL_Window* window, bool enabled) {
+    static bool was_down = false;
+    float mx = 0, my = 0;
+    int w = 1, h = 1;
+    const bool down = enabled && (SDL_GetMouseState(&mx, &my) & SDL_BUTTON_LMASK) != 0;
+    SDL_GetWindowSize(window, &w, &h);
+    const lsd::f32 x = mx / static_cast<float>(w), y = my / static_cast<float>(h);
+    constexpr lsd::u64 kMouseFinger = 0xFFFF0001ull;
+    if (down && !was_down) g_touch.down(kMouseFinger, x, y);
+    else if (down) g_touch.move(kMouseFinger, x, y);
+    else if (was_down) g_touch.up(kMouseFinger, x, y);
+    was_down = down;
+}
+
+// Gamepad gyro (rad/s -> degrees turned this frame) and the accelerometer's gravity direction.
+void read_motion(lsd::input::InputFrame& frame, SDL_Gamepad* gamepad, SDL_Sensor* accel_sensor, lsd::f32 dt) {
+    float v[3] = {};
+    constexpr float kDegrees = 57.29578f, kGravity = 9.80665f;
+    if (gamepad && SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO) && SDL_GetGamepadSensorData(gamepad, SDL_SENSOR_GYRO, v, 3)) {
+        for (int i = 0; i < 3; ++i) frame.gyro_deg[i] = v[i] * kDegrees * dt;
+    }
+    bool have_accel = gamepad && SDL_GamepadHasSensor(gamepad, SDL_SENSOR_ACCEL) && SDL_GetGamepadSensorData(gamepad, SDL_SENSOR_ACCEL, v, 3);
+    have_accel = have_accel || (accel_sensor && SDL_GetSensorData(accel_sensor, v, 3));
+    // shortcut: tilt reads accel x and z as left-right and forward-back, unchecked on a real tablet; flip with the mapping's scale, verify with hardware
+    if (have_accel) {
+        frame.tilt[0] = std::fmax(-1.0f, std::fmin(1.0f, v[0] / kGravity));
+        frame.tilt[1] = std::fmax(-1.0f, std::fmin(1.0f, v[2] / kGravity));
+    }
+}
+
+// The on-screen pad (Unreal's Touch Interface), drawn over the game.
+void draw_virtual_pad() {
+    lsd::input::PadWidget widgets[4];
+    if (!g_virtual_pad || g_touch.pad_widgets(widgets, 4) == 0) return;
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    for (const lsd::input::PadWidget& w : widgets) {
+        const ImVec2 at(w.x * size.x, w.y * size.y);
+        const float r = w.radius * size.y;
+        const ImU32 fill = IM_COL32(255, 255, 255, w.active ? 90 : 40), line = IM_COL32(255, 255, 255, 140);
+        draw->AddCircleFilled(at, r, fill, 32);
+        draw->AddCircle(at, r, line, 32, 2.0f);
+        if (w.stick) draw->AddCircleFilled(ImVec2(w.knob_x * size.x, w.knob_y * size.y), r * 0.45f, IM_COL32(255, 255, 255, w.active ? 200 : 110), 24);
+    }
+}
 
 bool g_screenshot = false;  // the screenshot command: capture the next frame
 
@@ -1477,6 +1528,33 @@ void register_console(EditorState& s) {
         }
         g_held_until[k] = SDL_GetTicks() + static_cast<lsd::u64>(seconds * 1000.0f);
     }, nullptr, "input.Hold <key> <seconds>: hold a key or mouse button for the game (tests), e.g. input.Hold W 2, input.Hold Right Mouse Button 1");
+    console::add_variable("input.VirtualPad", &g_virtual_pad, "Show the on-screen thumbsticks and buttons in Play; they drive the gamepad's sticks and Face Bottom / Face Right (on by default with a touch screen)");
+    console::add_variable("input.MouseTouch", &g_mouse_touch, "The left mouse button acts as a finger in Play (the mouse must not be captured: press Escape first)");
+    console::add_command("input.Touch", [](void*, const char* args) {  // tests: a synthetic finger event, like input.Hold for keys
+        unsigned id = 0;
+        float x = 0, y = 0;
+        char what[8] = "";
+        if (std::sscanf(args, "%u %7s %f %f", &id, what, &x, &y) != 4) {
+            LSD_LOG_WARN("input", "input.Touch <finger> <down|move|up> <x> <y> (x, y 0..1 of the window)");
+            return;
+        }
+        if (std::strcmp(what, "down") == 0) g_touch.down(id, x, y);
+        else if (std::strcmp(what, "move") == 0) g_touch.move(id, x, y);
+        else g_touch.up(id, x, y);
+    }, nullptr, "input.Touch <finger> <down|move|up> <x> <y>: a synthetic touch event, x and y 0..1 of the window (tests), e.g. input.Touch 1 down 0.5 0.5");
+    console::add_command("input.Tap", [](void*, const char* args) {
+        float x = 0.5f, y = 0.5f;
+        std::sscanf(args, "%f %f", &x, &y);
+        g_touch.down(99, x, y);
+        g_touch.up(99, x, y);
+    }, nullptr, "input.Tap <x> <y>: a quick touch (tests), x and y 0..1 of the window");
+    console::add_command("input.Swipe", [](void*, const char* args) {
+        float x0 = 0.5f, y0 = 0.6f, x1 = 0.5f, y1 = 0.3f;
+        std::sscanf(args, "%f %f %f %f", &x0, &y0, &x1, &y1);
+        g_touch.down(98, x0, y0);
+        g_touch.move(98, x1, y1);
+        g_touch.up(98, x1, y1);
+    }, nullptr, "input.Swipe <x0> <y0> <x1> <y1>: a quick swipe (tests); the default is up");
     console::add_command("ui.Keys", [](void*, const char* args) {  // tests: "down down enter", 0.8 s later
         static char keys[128];
         std::snprintf(keys, sizeof keys, "%s", args);
@@ -2230,9 +2308,14 @@ int main(int argc, char** argv) {
     lsd::Allocator& allocator = lsd::default_allocator();
     lsd::JobSystem jobs(allocator, lsd::recommended_worker_count(info));
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_SENSOR)) {
         LSD_LOG_ERROR("editor", "SDL_Init failed: %s", SDL_GetError());
         return 1;
+    }
+    {
+        int touch_devices = 0;
+        SDL_free(SDL_GetTouchDevices(&touch_devices));
+        g_virtual_pad = touch_devices > 0;
     }
     std::error_code ignored;
     fs::create_directories("Saved", ignored);
@@ -2584,6 +2667,15 @@ int main(int argc, char** argv) {
     bool travelled = false;  // lsd.open_level went to another level during this Play
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
     SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player
+    SDL_Sensor* accel_sensor = nullptr;  // a device accelerometer (tablets, phones); the gamepad's own is used first
+    {
+        int sensor_count = 0;
+        SDL_SensorID* sensors = SDL_GetSensors(&sensor_count);
+        for (int i = 0; sensors && i < sensor_count && !accel_sensor; ++i) {
+            if (SDL_GetSensorTypeForID(sensors[i]) == SDL_SENSOR_ACCEL) accel_sensor = SDL_OpenSensor(sensors[i]);
+        }
+        SDL_free(sensors);
+    }
     char title[400] = "";
 
     bool running = true;
@@ -2660,10 +2752,18 @@ int main(int argc, char** argv) {
                     mouse_dx += event.motion.xrel;
                     mouse_dy += event.motion.yrel;
                     break;
+                case SDL_EVENT_FINGER_DOWN: g_touch.down(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y); break;
+                case SDL_EVENT_FINGER_MOTION: g_touch.move(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y); break;
+                case SDL_EVENT_FINGER_UP:
+                case SDL_EVENT_FINGER_CANCELED: g_touch.up(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y); break;
                 case SDL_EVENT_GAMEPAD_ADDED:
                     if (!gamepad) {
                         gamepad = SDL_OpenGamepad(event.gdevice.which);
                         if (gamepad) LSD_LOG_INFO("editor", "Gamepad: %s", SDL_GetGamepadName(gamepad));
+                        // Motion controls (Switch Pro, DualSense, Steam Deck): a pad without a gyro just reads zero.
+                        for (const SDL_SensorType type : {SDL_SENSOR_GYRO, SDL_SENSOR_ACCEL}) {
+                            if (gamepad && SDL_GamepadHasSensor(gamepad, type)) SDL_SetGamepadSensorEnabled(gamepad, type, true);
+                        }
                     }
                     break;
                 case SDL_EVENT_GAMEPAD_REMOVED:
@@ -2787,6 +2887,7 @@ int main(int argc, char** argv) {
             if (game_mode) lsd::editor::draw_game(state);
             else lsd::editor::draw_editor(state);
             if (state.playing && play.network().active() && state.project.chat_box) draw_chat_box(play, state.project);
+            if (state.playing && !state.ejected) draw_virtual_pad();
             ImGui::Render();
         }
         state.stat_ui_ms = timer.lap();
@@ -3165,6 +3266,14 @@ int main(int argc, char** argv) {
         }
         SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
 
+        {
+            int win_w = 1, win_h = 1;
+            SDL_GetWindowSize(window, &win_w, &win_h);
+            g_touch.set_view(static_cast<lsd::f32>(win_w), static_cast<lsd::f32>(win_h));
+            g_touch.set_pad(g_virtual_pad && state.playing && !state.ejected);
+            feed_mouse_touch(window, g_mouse_touch && state.playing && !state.ejected && !state.mouse_captured);
+            g_touch.update(dt);
+        }
         if (state.playing) {
             // Devices go to the game only while it has the mouse (not when ejected or the mouse is freed).
             lsd::input::InputFrame devices;
@@ -3195,12 +3304,17 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            if (!state.ejected) {  // fingers, the pad and motion work without the mouse
+                g_touch.fill(devices);
+                read_motion(devices, gamepad, accel_sensor, dt);
+            }
             LSD_PROFILE_SCOPE("game");
             lsd::editor::debug_draw::tick(state.paused ? 0.0f : dt);  // the UI has drawn them; one-frame shapes go before scripts add new ones
             if (!state.paused || state.step_requested) play.update(world, devices, state.paused ? 1.0f / 60.0f : dt);
             state.step_requested = false;
             state.player_feet = play.feet();
         }
+        g_touch.end_frame();  // one-frame gestures were read above (or Play is off)
         // Behaviour tree live debugging: the open tree's running nodes glow.
         {
             lsd::asset::Guid tree;

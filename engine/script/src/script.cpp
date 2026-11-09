@@ -1018,6 +1018,20 @@ struct Api {
         push_vec3(L, host.camera_forward ? host.camera_forward(host.user) : Vec3{1, 0, 0});
         return 3;
     }
+    static int touch_count(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        lua_pushnumber(L, host.touch_count ? static_cast<lua_Number>(host.touch_count(host.user)) : 0.0);
+        return 1;
+    }
+    static int touch(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const lua_Number n = luaL_checknumber(L, 1);
+        f32 x = 0, y = 0;
+        if (n < 1 || !host.touch_point || !host.touch_point(host.user, static_cast<u32>(n) - 1, &x, &y)) return 0;
+        lua_pushnumber(L, static_cast<lua_Number>(x));
+        lua_pushnumber(L, static_cast<lua_Number>(y));
+        return 2;
+    }
     static int broadcast(lua_State* L) { return dispatch(L, false); }
     static int ride_call(lua_State* L, int what, bool target) {
         const ScriptHost& host = system(L).host_;
@@ -2319,7 +2333,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
-        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location}, {"camera_forward", Api::camera_forward},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location}, {"camera_forward", Api::camera_forward}, {"touch_count", Api::touch_count}, {"touch", Api::touch},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"save_game_async", Api::save_game_async}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},

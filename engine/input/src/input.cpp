@@ -16,6 +16,9 @@ namespace {
 constexpr u32 kMouseX = 1000, kMouseY = 1001, kMouseXY = 1002, kMouseLeft = 1003, kMouseMiddle = 1004, kMouseRight = 1005;
 constexpr u32 kLeftStickX = 1010, kLeftStickY = 1011, kRightStickX = 1012, kRightStickY = 1013, kLeftStick = 1014, kRightStick = 1015,
               kLeftTrigger = 1016, kRightTrigger = 1017;
+// Touch gestures (bit = source - kTouchTap, as TouchBit), then pinch / drag, the gyro and the tilt.
+constexpr u32 kSrcTap = 1020, kSrcSwipeRight = 1025, kTouchPinch = 1026, kTouchDrag = 1027;
+constexpr u32 kGyroYaw = 1030, kGyroPitch = 1031, kGyroRoll = 1032, kGyroXY = 1033, kTiltX = 1034, kTiltY = 1035, kTiltXY = 1036;
 constexpr u32 kGamepadButton = 1100;  // + SDL_GamepadButton
 constexpr u32 kNoSource = 0xFFFFFFFFu;
 
@@ -27,6 +30,10 @@ struct NamedSource {
 const NamedSource kSpecial[] = {
     {"Mouse X", kMouseX}, {"Mouse Y", kMouseY}, {"Mouse XY", kMouseXY},
     {"Left Mouse Button", kMouseLeft}, {"Middle Mouse Button", kMouseMiddle}, {"Right Mouse Button", kMouseRight},
+    {"Touch Tap", 1020}, {"Touch Hold", 1021}, {"Touch Swipe Up", 1022}, {"Touch Swipe Down", 1023}, {"Touch Swipe Left", 1024},
+    {"Touch Swipe Right", kSrcSwipeRight}, {"Touch Pinch", kTouchPinch}, {"Touch Drag XY", kTouchDrag},
+    {"Gyro Yaw", kGyroYaw}, {"Gyro Pitch", kGyroPitch}, {"Gyro Roll", kGyroRoll}, {"Gyro XY", kGyroXY},
+    {"Tilt X", kTiltX}, {"Tilt Y", kTiltY}, {"Tilt XY", kTiltXY},
     {"Gamepad Left Stick", kLeftStick}, {"Gamepad Right Stick", kRightStick},
     {"Gamepad Left Stick X", kLeftStickX}, {"Gamepad Left Stick Y", kLeftStickY},
     {"Gamepad Right Stick X", kRightStickX}, {"Gamepad Right Stick Y", kRightStickY},
@@ -46,6 +53,8 @@ const char* const kKeyNames[] = {
     "W", "A", "S", "D", "Q", "E", "R", "F", "C", "V", "Z", "X", "Space", "Left Shift", "Left Ctrl", "Left Alt", "Tab",
     "Return", "Escape", "Up", "Down", "Left", "Right", "1", "2", "3", "4", "5", "F1", "F2", "F3", "F4",
     "Mouse X", "Mouse Y", "Mouse XY", "Left Mouse Button", "Middle Mouse Button", "Right Mouse Button",
+    "Touch Tap", "Touch Hold", "Touch Swipe Up", "Touch Swipe Down", "Touch Swipe Left", "Touch Swipe Right", "Touch Pinch", "Touch Drag XY",
+    "Gyro Yaw", "Gyro Pitch", "Gyro Roll", "Gyro XY", "Tilt X", "Tilt Y", "Tilt XY",
     "Gamepad Left Stick", "Gamepad Right Stick", "Gamepad Left Stick X", "Gamepad Left Stick Y", "Gamepad Right Stick X",
     "Gamepad Right Stick Y", "Gamepad Left Trigger", "Gamepad Right Trigger", "Gamepad Face Bottom", "Gamepad Face Right",
     "Gamepad Face Left", "Gamepad Face Top", "Gamepad Left Shoulder", "Gamepad Right Shoulder", "Gamepad Left Thumb",
@@ -69,6 +78,10 @@ Value dead_zone(f32 x, f32 y, f32 dead = 0.15f) {
     return {x * scaled, y * scaled};
 }
 
+bool is_2d_source(u32 s) { return s == kMouseXY || s == kLeftStick || s == kRightStick || s == kTouchDrag || s == kGyroXY || s == kTiltXY; }
+// Pixels, degrees or finger distance rather than -1..1: a binding's dead zone does not apply.
+bool is_raw_source(u32 s) { return s == kMouseX || s == kMouseY || s == kMouseXY || s == kTouchPinch || s == kTouchDrag || (s >= kGyroYaw && s <= kGyroXY); }
+
 Value read(u32 source, const InputFrame& f) {
     if (source < static_cast<u32>(f.key_count)) return {f.keys[source] ? 1.0f : 0.0f, 0};
     switch (source) {
@@ -86,8 +99,18 @@ Value read(u32 source, const InputFrame& f) {
         case kRightStickY: return {dead_zone(0, f.gamepad_axes[3]).y, 0};
         case kLeftTrigger: return {f.gamepad_axes[4], 0};
         case kRightTrigger: return {f.gamepad_axes[5], 0};
+        case kTouchPinch: return {f.touch_pinch, 0};
+        case kTouchDrag: return {f.touch_drag[0], f.touch_drag[1]};
+        case kGyroYaw: return {f.gyro_deg[1], 0};
+        case kGyroPitch: return {f.gyro_deg[0], 0};
+        case kGyroRoll: return {f.gyro_deg[2], 0};
+        case kGyroXY: return {f.gyro_deg[1], f.gyro_deg[0]};
+        case kTiltX: return {f.tilt[0], 0};
+        case kTiltY: return {f.tilt[1], 0};
+        case kTiltXY: return {f.tilt[0], f.tilt[1]};
         default: break;
     }
+    if (source >= kSrcTap && source <= kSrcSwipeRight) return {(f.touch_bits & (1u << (source - kSrcTap))) ? 1.0f : 0.0f, 0};
     if (source >= kGamepadButton && source < kGamepadButton + 32) return {(f.gamepad_buttons & (1u << (source - kGamepadButton))) ? 1.0f : 0.0f, 0};
     return {};
 }
@@ -101,7 +124,7 @@ const char* const* key_names(u32& count) {
 
 bool is_2d_key(const char* key) {
     const u32 s = resolve(key);
-    return s == kMouseXY || s == kLeftStick || s == kRightStick;
+    return is_2d_source(s);
 }
 
 bool is_key(const char* key) { return key && key[0] && resolve(key) != kNoSource; }
@@ -201,8 +224,7 @@ void InputSystem::update(const InputFrame& frame, f32 dt) {
     for (u32 b = 0; b < binding_count_; ++b) {
         const Binding& binding = bindings_[b];
         Value v = read(binding.source, frame);
-        const bool mouse_axis = binding.source == kMouseX || binding.source == kMouseY || binding.source == kMouseXY;  // pixels, not -1..1
-        if (binding.dead_zone > 0.0f && !mouse_axis) v = dead_zone(v.x, v.y, binding.dead_zone);  // the mapping's own, on top
+        if (binding.dead_zone > 0.0f && !is_raw_source(binding.source)) v = dead_zone(v.x, v.y, binding.dead_zone);  // the mapping's own, on top
         if (v.x == 0.0f && v.y == 0.0f) continue;
         bool blocked = false, claimed = false;
         for (u32 c = 0; c < claim_count; ++c) {
@@ -213,8 +235,7 @@ void InputSystem::update(const InputFrame& frame, f32 dt) {
         if (blocked) continue;
         if (!claimed) claims[claim_count++] = {binding.source, binding.context};
         Value& out = actions_[binding.action].value;
-        const bool two_d = binding.source == kMouseXY || binding.source == kLeftStick || binding.source == kRightStick;
-        if (two_d) {
+        if (is_2d_source(binding.source)) {
             out.x += v.x * binding.scale;
             out.y += v.y * binding.scale;
         } else if (binding.axis == 1) {
