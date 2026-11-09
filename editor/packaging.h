@@ -9,7 +9,7 @@
 //     vcruntime / msvcp    the Visual C++ runtime, app-local, for PCs without it
 //
 // Assets stay in their source formats and are compiled on first run (DerivedData/), as in the editor.
-// shortcut: no cooking, compression or encryption; compile assets into one archive when packages grow.
+// shortcut: no compression or encryption; compile assets into one archive when packages grow.
 #include "editor_settings.h"
 
 #include "lsd/foundation/types.h"
@@ -22,6 +22,20 @@ class AssetRegistry;
 namespace lsd::editor {
 
 constexpr char kGameMarker[] = "game.json";
+constexpr char kManifestFile[] = "manifest.lsdmanifest";  // in a package or a DLC package: every file with its hash
+constexpr char kPluginsDir[] = "Plugins";
+constexpr char kDlcDir[] = "DLC";
+constexpr char kBuildDir[] = "Build";
+
+// Mounts the enabled plugins' Content/ (Plugins/<Name>/Content, shown under Plugins/<Name>/) and the DLC packages in DLC/ (merged
+// into Content/, overriding the same paths) into the registry; call before a scan (a packaged game finds DLC/ beside its exe).
+void mount_extras(asset::AssetRegistry& registry);
+
+// File > Package DLC (Unreal's patch .pak / chunking): Build/DLC/<Name>/ with Content/ (the assets under one content folder or
+// plugin, "Plugins/<Name>"; "" = everything) and manifest.lsdmanifest. With `base_manifest` (the manifest.lsdmanifest of a
+// package or an earlier DLC) it carries only the assets that are new or changed since.
+// shortcut: a plain folder, not one archive file; pack it when download size matters.
+bool package_dlc(const asset::AssetRegistry& registry, const char* folder, const char* base_manifest, char* message, usize capacity);
 
 // The packaged game's splash (Project Settings > Platform > Splash), copied beside the exe as
 // splash.<ext>: a borderless window over the game's while it loads (SDL's 2D renderer, so it shows

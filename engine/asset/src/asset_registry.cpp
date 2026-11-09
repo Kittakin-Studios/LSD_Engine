@@ -99,12 +99,19 @@ const AssetRecord* AssetRegistry::find(Guid guid) const {
     return nullptr;
 }
 
+// The record's path inside its mount's folder (a mount with a prefix drops "prefix/").
+const char* AssetRegistry::rel_of(const AssetRecord& record) const {
+    if (record.mount == 0 || record.mount > mounts_.size()) return record.path;
+    const usize n = std::strlen(mounts_[record.mount - 1].prefix);
+    return n ? record.path + n + 1 : record.path;
+}
+
 void AssetRegistry::source_path(const AssetRecord& record, char* out, usize capacity) const {
-    std::snprintf(out, capacity, "%s/%s", content_dir_, record.path);
+    std::snprintf(out, capacity, "%s/%s", dir_of(record.mount), rel_of(record));
 }
 
 void AssetRegistry::meta_path(const AssetRecord& record, char* out, usize capacity) const {
-    std::snprintf(out, capacity, "%s/%s.meta", content_dir_, record.path);
+    std::snprintf(out, capacity, "%s/%s.meta", dir_of(record.mount), rel_of(record));
 }
 
 bool AssetRegistry::load_meta(const AssetRecord& record, AssetMeta& out) const {
@@ -133,6 +140,7 @@ struct AssetRegistry::Walk {
         u64 size;
         i64 time;
         i64 meta_time;
+        u8 mount = 0;
     };
     bool ok = false;  // false when Content/ is missing: then nothing is dropped
     std::vector<File> files;
@@ -148,18 +156,41 @@ struct AssetRegistry::Async {
 namespace {
 
 // Only touches the file system and its own result, so it is safe on a worker thread.
-void walk_content(const char* content_dir, AssetRegistry::Walk& out) {
+void walk_folder(const char* dir, const std::string& prefix, u8 mount, AssetRegistry::Walk& out) {
     std::error_code error;
-    if (!fs::is_directory(content_dir, error)) return;
-    out.ok = true;
-    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(content_dir, error)) {
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(dir, error)) {
         if (!entry.is_regular_file(error)) continue;
         const AssetType type = type_from_extension(entry.path().extension().string().c_str());
         if (type == AssetType::Unknown) continue;
         const fs::path meta = fs::path(entry.path().string() + ".meta");
-        out.files.push_back({fs::relative(entry.path(), content_dir, error).generic_string(), type, static_cast<u64>(entry.file_size(error)),
-                             write_time(entry.path()), fs::exists(meta, error) ? write_time(meta) : 0});
+        const std::string relative = fs::relative(entry.path(), dir, error).generic_string();
+        out.files.push_back({prefix.empty() ? relative : prefix + "/" + relative, type, static_cast<u64>(entry.file_size(error)),
+                             write_time(entry.path()), fs::exists(meta, error) ? write_time(meta) : 0, mount});
     }
+}
+
+// The content root, then each mount; a path found twice keeps the later one (a mount overrides).
+void walk_content(const char* content_dir, const std::vector<AssetMount>& mounts, AssetRegistry::Walk& out) {
+    std::error_code error;
+    if (!fs::is_directory(content_dir, error)) return;
+    out.ok = true;
+    walk_folder(content_dir, "", 0, out);
+    for (usize i = 0; i < mounts.size(); ++i) {
+        if (fs::is_directory(mounts[i].dir, error)) walk_folder(mounts[i].dir, mounts[i].prefix, static_cast<u8>(i + 1), out);
+    }
+    if (mounts.empty()) return;
+    std::unordered_map<std::string, usize> at;
+    std::vector<AssetRegistry::Walk::File> unique;
+    for (AssetRegistry::Walk::File& f : out.files) {
+        const auto it = at.find(f.relative);
+        if (it != at.end()) {
+            unique[it->second] = f;
+            continue;
+        }
+        at.emplace(f.relative, unique.size());
+        unique.push_back(f);
+    }
+    out.files.swap(unique);
 }
 
 } // namespace
@@ -172,7 +203,7 @@ AssetRegistry::~AssetRegistry() {
 bool AssetRegistry::scan() {
     ++sync_scans_;
     Walk walk;
-    walk_content(content_dir_, walk);
+    walk_content(content_dir_, mounts_, walk);
     return apply(walk);
 }
 
@@ -187,8 +218,8 @@ bool AssetRegistry::scan_async() {
     }
     async_ = new Async();
     async_->generation = sync_scans_;
-    async_->thread = std::thread([a = async_, dir = std::string(content_dir_)] {
-        walk_content(dir.c_str(), a->walk);
+    async_->thread = std::thread([a = async_, dir = std::string(content_dir_), mounts = mounts_] {
+        walk_content(dir.c_str(), mounts, a->walk);
         a->done.store(true, std::memory_order_release);
     });
     return changed;
@@ -213,11 +244,19 @@ bool AssetRegistry::apply(const Walk& walk) {
     for (usize i = 0; i < records_.size(); ++i) known.emplace(records_[i].path, i);
 
     for (const Walk::File& f : walk.files) {
-        char full[300];
-        std::snprintf(full, sizeof full, "%s/%s", content_dir_, f.relative.c_str());
         const auto it = known.find(f.relative);
+        AssetRecord probe;  // only to ask source_path where this file lives
+        probe.mount = f.mount;
+        copy_string(probe.path, sizeof probe.path, f.relative.c_str());
+        char full[300];
+        source_path(probe, full, sizeof full);
         if (it != known.end()) {
             AssetRecord& existing = records_[it->second];
+            if (existing.mount != f.mount) {  // a mount now provides (or no longer provides) this path
+                existing.mount = f.mount;
+                existing.meta_time = 0;
+                changed = true;
+            }
             if (existing.source_size != f.size || existing.source_time != f.time) {
                 existing.source_size = f.size;
                 existing.source_time = f.time;
@@ -238,6 +277,7 @@ bool AssetRegistry::apply(const Walk& walk) {
         record.source_size = f.size;
         record.source_time = f.time;
         record.meta_time = f.meta_time;
+        record.mount = f.mount;
         copy_string(record.path, sizeof record.path, f.relative.c_str());
         copy_string(record.folder, sizeof record.folder, fs::path(f.relative).parent_path().generic_string().c_str());
         copy_string(record.name, sizeof record.name, fs::path(f.relative).stem().string().c_str());

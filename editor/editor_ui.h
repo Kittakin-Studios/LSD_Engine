@@ -65,6 +65,8 @@ struct EditorState {
     EditorCamera perspective_camera;  // restored when leaving an orthographic view
     bool show_history = false;
     bool show_preferences = false;
+    bool show_plugins = false;      // Edit > Plugins
+    bool show_package_dlc = false;  // File > Package DLC
     bool show_stats = false;  // `stat fps`: fps, frame time, draw calls, triangles
     bool show_audio_stats = false;  // `stat audio`: active voices
     bool show_audio_mixer = false;  // Window > Audio Mixer: the Sound Class / Submix graph with live meters

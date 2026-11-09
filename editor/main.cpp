@@ -2314,6 +2314,7 @@ int main(int argc, char** argv) {
     lsd::asset::register_data_type(lsd::reflect::type_of<lsd::particles::ParticleSystem>());
 
     lsd::asset::AssetRegistry registry(allocator, kContentDir);
+    lsd::editor::mount_extras(registry);  // plugins (Plugins/<Name>/Content) and DLC packages (DLC/<Name>/Content)
     lsd::world::set_prefab_resolver([](void* user, const char* guid_text, char* out, lsd::usize capacity) {  // nested prefabs refresh from their files
         const auto& reg = *static_cast<const lsd::asset::AssetRegistry*>(user);
         lsd::asset::Guid guid;

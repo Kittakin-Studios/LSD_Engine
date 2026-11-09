@@ -6,6 +6,7 @@
 #include "lsd/asset/asset_registry.h"
 #include "lsd/asset/texture.h"
 #include "lsd/asset/material_import.h"
+#include "lsd/asset/plugins.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/array.h"
 
@@ -555,7 +556,101 @@ static void test_ies() {
     CHECK(!asset::parse_ies("not a profile", p));
 }
 
+static void write_text(const fs::path& file, const char* text) {
+    fs::create_directories(file.parent_path());
+    if (FILE* f = std::fopen(file.string().c_str(), "wb")) {
+        std::fputs(text, f);
+        std::fclose(f);
+    }
+}
+
+static std::string source_of(const asset::AssetRegistry& registry, const char* path) {
+    for (usize i = 0; i < registry.count(); ++i) {
+        if (std::strcmp(registry.get(i).path, path) != 0) continue;
+        char out[300];
+        registry.source_path(registry.get(i), out, sizeof out);
+        return fs::path(out).generic_string();
+    }
+    return "";
+}
+
+// Plugins, mounts and DLC / patch manifests.
+static void test_plugins_dlc(const fs::path& root) {
+    CHECK(asset::safe_relative_path("Levels/a.csv"));
+    CHECK(!asset::safe_relative_path("../a.csv") && !asset::safe_relative_path("a/../../b") && !asset::safe_relative_path("/etc/x"));
+    CHECK(!asset::safe_relative_path("C:/x") && !asset::safe_relative_path("a\\b") && !asset::safe_relative_path("") && !asset::safe_relative_path("a//b"));
+
+    asset::Manifest m;
+    m.name = "Base";
+    m.entries = {{"a.csv", 0xabcdef0123456789ull, 10}, {"Plugins/P/with space.csv", 5, 2}};
+    asset::Manifest back;
+    CHECK(asset::manifest_from_text(asset::manifest_to_text(m), back));
+    CHECK(back.name == "Base" && back.entries.size() == 2 && back.entries[0].hash == 0xabcdef0123456789ull && back.entries[1].path == "Plugins/P/with space.csv");
+    CHECK(!asset::manifest_from_text("lsd-manifest 1\nname x\n0000000000000001 3 ../evil.csv\n", back));
+    CHECK(!asset::manifest_from_text("not a manifest", back));
+    asset::Manifest now = m;
+    now.entries[0].hash = 1;                 // changed
+    now.entries.push_back({"new.csv", 9, 1});  // added
+    const std::vector<std::string> changed = asset::manifest_changed(m, now);
+    CHECK(changed.size() == 2 && changed[0] == "a.csv" && changed[1] == "new.csv");
+    CHECK(asset::manifest_matches(m, "a.csv", 0xabcdef0123456789ull) && !asset::manifest_matches(m, "a.csv", 1));
+
+    const fs::path dir = root / "plugins_dlc";
+    fs::remove_all(dir);
+    write_text(dir / "Content/a.csv", "a,1\n");
+    write_text(dir / "Content/keep.csv", "k,1\n");
+    const std::string plugins = (dir / "Plugins").generic_string();
+    std::string why;
+    CHECK(asset::create_plugin(plugins.c_str(), "Alpha", why) && asset::create_plugin(plugins.c_str(), "Beta", why));
+    CHECK(!asset::create_plugin(plugins.c_str(), "Alpha", why) && !asset::create_plugin(plugins.c_str(), "..", why));
+    write_text(dir / "Plugins/Alpha/Content/Sub/b.csv", "b,1\n");
+    write_text(dir / "Plugins/Beta/Content/c.csv", "c,1\n");
+    write_text(dir / "Plugins/Alpha/Source/Alpha.cpp", "int x;\n");
+    CHECK(asset::set_plugin_enabled(plugins.c_str(), "Beta", false));
+    std::vector<asset::PluginInfo> found = asset::discover_plugins(plugins.c_str());
+    CHECK(found.size() == 2 && std::strcmp(found[0].descriptor.name, "Alpha") == 0 && found[0].descriptor.enabled && !found[1].descriptor.enabled);
+    CHECK(asset::plugin_mounts(found).size() == 1 && asset::plugin_source_files(found).size() == 1);
+
+    write_text(dir / "DLC/Patch1/Content/a.csv", "a,patch1\n");
+    write_text(dir / "DLC/Patch2/Content/a.csv", "a,patch2\n");
+    write_text(dir / "DLC/Patch2/Content/dlc_only.csv", "d,1\n");
+    HeapAllocator heap("plugins");
+    asset::AssetRegistry registry(heap, (dir / "Content").generic_string().c_str());
+    std::vector<asset::AssetMount> mounts = asset::plugin_mounts(found);
+    for (const asset::AssetMount& d : asset::dlc_mounts((dir / "DLC").generic_string().c_str())) mounts.push_back(d);
+    CHECK(mounts.size() == 3);
+    registry.set_mounts(mounts);
+    registry.scan();
+    CHECK(source_of(registry, "Plugins/Alpha/Sub/b.csv").find("Plugins/Alpha/Content/Sub/b.csv") != std::string::npos);
+    CHECK(source_of(registry, "Plugins/Beta/c.csv").empty());                                      // disabled: not mounted
+    CHECK(source_of(registry, "a.csv").find("DLC/Patch2/Content/a.csv") != std::string::npos);      // the later package wins
+    CHECK(source_of(registry, "keep.csv").find("Content/keep.csv") != std::string::npos);
+    CHECK(source_of(registry, "dlc_only.csv").find("DLC/Patch2") != std::string::npos);
+    asset::AssetMeta meta;
+    for (usize i = 0; i < registry.count(); ++i) {
+        if (std::strcmp(registry.get(i).path, "Plugins/Alpha/Sub/b.csv") == 0) {
+            CHECK(registry.load_meta(registry.get(i), meta) && meta.guid[0] != '\0');  // the .meta sits in the plugin
+            CHECK(std::strcmp(registry.get(i).folder, "Plugins/Alpha/Sub") == 0);
+        }
+    }
+    // Removing the DLC and re-enabling Beta returns the base file and adds the plugin's.
+    asset::set_plugin_enabled(plugins.c_str(), "Beta", true);
+    registry.set_mounts(asset::plugin_mounts(asset::discover_plugins(plugins.c_str())));
+    registry.scan();
+    CHECK(source_of(registry, "a.csv").find("Content/a.csv") != std::string::npos && source_of(registry, "a.csv").find("DLC") == std::string::npos);
+    CHECK(!source_of(registry, "Plugins/Beta/c.csv").empty() && source_of(registry, "dlc_only.csv").empty());
+
+    // A manifest of a folder, and a patch against it.
+    asset::Manifest base = asset::manifest_of_folder((dir / "Content").generic_string().c_str());
+    CHECK(base.entries.size() == 2);  // .meta files are not listed
+    write_text(dir / "Content/a.csv", "a,2\n");
+    write_text(dir / "Content/more.csv", "m,1\n");
+    const std::vector<std::string> patch = asset::manifest_changed(base, asset::manifest_of_folder((dir / "Content").generic_string().c_str()));
+    CHECK(patch.size() == 2 && patch[0] == "a.csv" && patch[1] == "more.csv");
+}
+
 int main() {
+    test_plugins_dlc(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_ies();
     test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();

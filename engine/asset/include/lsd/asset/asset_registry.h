@@ -7,6 +7,8 @@
 #include "lsd/asset/guid.h"
 #include "lsd/foundation/array.h"
 
+#include <vector>
+
 namespace lsd::asset {
 
 enum class AssetType : u8 { Unknown, Mesh, Level, Data, Prefab, Script, Graph, Table, Sound, Cue, Texture, MaterialGraph, BehaviorTree, UiDocument, UiStyle, LightProfile, PcgGraph };
@@ -25,6 +27,14 @@ struct AssetRecord {
     u64 source_size = 0;
     i64 source_time = 0;    // last write time, for the data compiler's up-to-date check
     i64 meta_time = 0;      // .meta last write time: tags are re-read when it changes
+    u8 mount = 0;           // 0 = the content root, else 1 + the index in AssetRegistry::set_mounts
+};
+
+// An extra folder of assets (a plugin's Content/, a DLC package's Content/) shown in the registry under
+// `prefix` ("Plugins/MyPlugin"; empty = merged into the content root, so its files override the same path).
+struct AssetMount {
+    char prefix[96] = "";
+    char dir[256] = "";
 };
 
 // True for a usable file or folder name: non-empty, not "." / "..", no \ / : * ? \" < > | or control characters.
@@ -36,6 +46,11 @@ public:
     ~AssetRegistry();
     AssetRegistry(const AssetRegistry&) = delete;
     AssetRegistry& operator=(const AssetRegistry&) = delete;
+
+    // Extra asset folders, scanned after the content root: on the same path the later mount wins (DLC / patches
+    // override). Set before scan(); a mount's files are found by source_path like any other.
+    void set_mounts(const std::vector<AssetMount>& mounts) { mounts_ = mounts; }
+    const std::vector<AssetMount>& mounts() const { return mounts_; }
 
     // Re-reads Content/: adds new files (writing their .meta), drops deleted ones, refreshes
     // sizes, times and tags. Returns true if anything changed.
@@ -82,6 +97,9 @@ private:
     struct Async;
     Array<AssetRecord> records_;
     char content_dir_[256] = "";
+    std::vector<AssetMount> mounts_;  // shortcut: std::vector, editor-time list of a few entries
+    const char* rel_of(const AssetRecord& record) const;
+    const char* dir_of(u8 mount) const { return mount == 0 || mount > mounts_.size() ? content_dir_ : mounts_[mount - 1].dir; }
     Async* async_ = nullptr;
     u32 generation_ = 0;
     u32 sync_scans_ = 0;  // bumped by scan(): an async walk started before it is stale
