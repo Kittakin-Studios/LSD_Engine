@@ -330,7 +330,7 @@ float3 capture_sample(uint k, float3 r, float roughness, float3 wpos) {
     float2 uv = float2(atan2(r.y, r.x) / 6.28318531 + 0.5, acos(clamp(r.z, -1.0, 1.0)) / 3.14159265);
     uv = clamp(uv, margin, 1.0 - margin);
     const float2 atlas = (float2(k % 2, k / 2) + uv) / float2(2.0, 4.0);
-    float3 c = min(reflection_tex.SampleLevel(samp, atlas, lod).rgb, 0.999);
+    float3 c = min(reflection_tex.SampleLevel(decal_samp, atlas, lod).rgb, 0.999);
     return c * c / (1.0 - c * c) / max(exposure, 1e-6);  // stored like the scene target: exposed, range-compressed
 }
 // Reflection captures over the sky reflection: the two this point is most inside, blended by how far inside each is
