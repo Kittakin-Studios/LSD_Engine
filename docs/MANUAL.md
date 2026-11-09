@@ -1598,8 +1598,9 @@ import the way the mesh's are (its Normals setting), so a puffed cheek or a rais
 Target** node (on a Character it finds the mesh below it). Shape keys animated in the FBX takes
 (facial animation) play with the clip, blended like the bones; a **Morphs** row with the same name
 overrides the clip. Several targets with the same name (head,
-teeth, brows) move together. Shapes are mixed on the CPU when a weight changes, so animate a few
-faces at a time, not crowds.
+teeth, brows) move together. Shapes are mixed on the GPU (a compute pass into each object's own copy when its
+weights change, like Unreal's GPU morph targets), so whole crowds can animate their faces; up to 256 targets per
+mesh (more mix on the CPU).
 
 ---
 

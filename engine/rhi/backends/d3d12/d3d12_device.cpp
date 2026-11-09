@@ -15,6 +15,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <vector>
 #include <string>
 #include <new>
 
@@ -306,11 +307,43 @@ public:
             cull_signature_.Reset();
             LSD_LOG_WARN("d3d12", "GPU culling is unavailable on this device");
         }
+        if (!create_morphs()) morph_pso_.Reset();  // optional: morphs then mix on the CPU
         return true;
     }
 
     Backend backend() const override { return Backend::D3D12; }
     bool supports_gpu_culling() const override { return cull_signature_ != nullptr; }
+    bool supports_gpu_morphs() const override { return morph_pso_ != nullptr; }
+    BufferHandle create_morph_output(u32 vertex_count) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].resource) ++slot;
+        if (slot == kMaxBuffers || vertex_count == 0) return {};
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        desc.Width = static_cast<u64>(vertex_count) * sizeof(SkinnedVertex);
+        desc.Height = 1;
+        desc.DepthOrArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        Buffer& b = buffers_[slot];  // COMMON: promoted to UAV by the morph pass, decays back after each frame
+        if (!check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                    IID_PPV_ARGS(&b.resource)), "CreateCommittedResource (morph output)")) return {};
+        b.size = desc.Width;
+        b.usage = BufferUsage::Vertex;
+        return BufferHandle::make(slot, b.generation);
+    }
+    void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) override {
+        MorphJob* job = nullptr;  // one job per output: a later change this frame replaces it
+        for (MorphJob& j : pending_morphs_) {
+            if (j.out.value == out.value) job = &j;
+        }
+        if (!job) job = &pending_morphs_.emplace_back();
+        morph_job(*job, out, base, morphs, vertex_count, weights, weight_count);
+    }
     bool culls_shadow_instances() const override { return cull_signature_ != nullptr; }
     const AdapterInfo& adapter() const override { return info_; }
 
@@ -1456,6 +1489,7 @@ public:
         light_offset_ = 0;
         joint_offset_ = 0;
         particle_offset_ = 0;
+        run_morphs();
         set_lights(default_lights());
         set_shadow_map({}, {});
     }
@@ -2273,6 +2307,49 @@ private:
         transition(cull_args_.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
+    // Morph targets (cull.hlsl's morph_main): base vertices (t0), packed targets (t1), the weights (t2) into the output (u0).
+    bool create_morphs() {
+        D3D12_ROOT_PARAMETER params[4]{};
+        for (u32 k = 0; k < 3; ++k) {
+            params[k].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+            params[k].Descriptor.ShaderRegister = k;
+        }
+        params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        for (D3D12_ROOT_PARAMETER& p : params) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_ROOT_SIGNATURE_DESC rs{};
+        rs.NumParameters = 4;
+        rs.pParameters = params;
+        ComPtr<ID3DBlob> blob, error, cs;
+        static const D3D_SHADER_MACRO defines[] = {{"MORPH_PASS", "1"}, {nullptr, nullptr}};
+        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &error)) ||
+            FAILED(device_->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&morph_root_))) ||
+            !compile(kCullHlsl, sizeof kCullHlsl - 1, "morph_main", "cs_5_0", cs, defines)) return false;
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = morph_root_.Get();
+        pso.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+        return SUCCEEDED(device_->CreateComputePipelineState(&pso, IID_PPV_ARGS(&morph_pso_)));
+    }
+    // The morphs queued since the last frame, at its start (outside any pass); each output ends ready to draw.
+    void run_morphs() {
+        for (const MorphJob& j : pending_morphs_) {
+            const Buffer* out = lookup(j.out);
+            const Buffer* base = lookup(j.base);
+            const Buffer* morphs = lookup(j.morphs);
+            if (!morph_pso_ || !out || !base || !morphs) continue;
+            const D3D12_GPU_VIRTUAL_ADDRESS weights = upload_constants(j.words, j.word_count * 4);
+            if (!weights) break;
+            list_->SetComputeRootSignature(morph_root_.Get());
+            list_->SetComputeRootShaderResourceView(0, base->resource->GetGPUVirtualAddress());
+            list_->SetComputeRootShaderResourceView(1, morphs->resource->GetGPUVirtualAddress());
+            list_->SetComputeRootShaderResourceView(2, weights);
+            list_->SetComputeRootUnorderedAccessView(3, out->resource->GetGPUVirtualAddress());
+            list_->SetPipelineState(morph_pso_.Get());
+            list_->Dispatch((j.vertex_count + 63) / 64, 1, 1);
+            transition(out->resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        }
+        pending_morphs_.clear();
+    }
+
     // The compute passes for a gpu_cull draw; false (nothing recorded) if it cannot run: draw all.
     bool run_culling(const MeshDraw& draw, u32 batches) {
         if (!cull_signature_ || draw.instance_count > kMaxCulledInstances) return false;
@@ -2410,6 +2487,9 @@ private:
     f32 hiz_view_proj_[16] = {};
     bool hiz_valid_ = false;
     ComPtr<ID3D12CommandSignature> cull_signature_;
+    ComPtr<ID3D12RootSignature> morph_root_;  // morph targets (create_morphs)
+    ComPtr<ID3D12PipelineState> morph_pso_;
+    std::vector<MorphJob> pending_morphs_;
     u8* joint_mapped_[kBackBufferCount] = {};
     u32 joint_offset_ = 0;
     ComPtr<ID3D12Resource> particle_buffers_[kBackBufferCount];

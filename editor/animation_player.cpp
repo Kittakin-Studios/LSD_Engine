@@ -1,6 +1,7 @@
 #include "animation_player.h"
 
 #include "lsd/asset/data_asset.h"
+#include "lsd/foundation/allocator.h"
 #include "lsd/foundation/hash_id.h"
 #include "lsd/foundation/log.h"
 
@@ -30,17 +31,31 @@ AnimationPlayer::~AnimationPlayer() {
     for (State& s : states_) {
         if (s.morphed.valid()) device_.destroy_buffer(s.morphed);
     }
+    for (const MorphData& m : morph_data_) {
+        if (m.buffer.valid()) device_.destroy_buffer(m.buffer);
+    }
+}
+
+rhi::BufferHandle AnimationPlayer::morph_data(const SkinnedEntry& model) {
+    for (const MorphData& m : morph_data_) {
+        if (m.vertices == model.vertices.value) return m.buffer;
+    }
+    Array<u32> packed(default_allocator());
+    anim::pack_morphs(*model.model, packed);
+    const rhi::BufferHandle buffer = packed.size() ? device_.create_buffer(rhi::BufferUsage::Storage, packed.data(), packed.size() * sizeof(u32)) : rhi::BufferHandle{};
+    morph_data_.push_back({model.vertices.value, buffer});
+    return buffer;
 }
 
 rhi::BufferHandle AnimationPlayer::vertices(world::Entity e, rhi::BufferHandle model) const {
     for (const State& s : states_) {
-        if (s.used && s.entity == e) return s.morphed.valid() ? s.morphed : model;
+        if (s.used && s.entity == e) return s.morphed.valid() && s.morph_key ? s.morphed : model;
     }
     return model;
 }
 
-// shortcut: morphs on the CPU, a new buffer per change (buffers are immutable); move to the GPU
-// (a delta buffer read in the skinning shader) when many faces animate at once
+// On the GPU when the device can (a compute pass into the object's own output, kept between changes); otherwise
+// mixed on the CPU into a new buffer per change (buffers are immutable).
 void AnimationPlayer::update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model) {
     // A Morphs row on the component wins (scripts, hand-set); otherwise the playing clips' curves.
     auto weight_of = [&](const char* name) {
@@ -64,8 +79,29 @@ void AnimationPlayer::update_morphs(State& state, const world::SkeletalMesh& mes
     if (!any) key = 0;  // nothing to mix: the shared buffer
     if (key == state.morph_key) return;
     state.morph_key = key;
+    const u32 vertex_count = static_cast<u32>(model.model->vertices.size());
+    if (key != 0 && device_.supports_gpu_morphs() && model.model->morphs.size() <= rhi::kMaxMorphTargets) {
+        const rhi::BufferHandle data = morph_data(model);
+        if (data.valid() && state.morphed.valid() && state.morph_vertex_count != vertex_count) {  // a CPU copy, or another model's size
+            device_.destroy_buffer(state.morphed);
+            state.morphed = {};
+        }
+        if (data.valid() && !state.morphed.valid()) {
+            state.morphed = device_.create_morph_output(vertex_count);
+            state.morph_vertex_count = state.morphed.valid() ? vertex_count : 0;
+        }
+        if (data.valid() && state.morphed.valid()) {
+            f32 weights[rhi::kMaxMorphTargets];
+            u32 count = 0;
+            for (const anim::MorphTarget& t : model.model->morphs) weights[count++] = weight_of(t.name);
+            device_.morph_vertices(state.morphed, model.vertices, data, vertex_count, weights, count);
+            return;
+        }
+    }
+    if (key == 0 && state.morph_vertex_count) return;  // the GPU output waits for the next weights (vertices() shows the model's)
     if (state.morphed.valid()) device_.destroy_buffer(state.morphed);
     state.morphed = {};
+    state.morph_vertex_count = 0;
     if (key == 0) return;
     std::vector<rhi::SkinnedVertex> morphed(model.model->vertices.size());
     anim::apply_morphs(*model.model, weight_of, morphed.data());
@@ -568,6 +604,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         if (s.morphed.valid()) device_.destroy_buffer(s.morphed);
         s.morphed = {};
         s.morph_key = 0;
+        s.morph_vertex_count = 0;
     }
     const reflect::TypeInfo& type = reflect::type_of<world::SkeletalMesh>();
     for (u32 i = 0; i < world.count(type); ++i) {

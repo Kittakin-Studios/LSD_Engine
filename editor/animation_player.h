@@ -82,8 +82,9 @@ private:
         f32 notify_ratio = 0.0f;
         anim::BlendInput inputs[anim::kMaxBlendInputs];  // what was sampled this frame (morph curves follow it)
         u32 input_count = 0;
-        rhi::BufferHandle morphed;  // bind pose + morph targets, rebuilt when the weights change
-        u64 morph_key = 0;
+        rhi::BufferHandle morphed;  // bind pose + morph targets: the GPU's output (kept), or a CPU copy rebuilt per change
+        u64 morph_key = 0;          // 0: no weights set, draw the model's own vertices
+        u32 morph_vertex_count = 0;  // the GPU output's size (0: a CPU copy)
         bool used = false;
         anim::MotionState motion;
         const anim::MotionData* motion_data = nullptr;  // what `motion` indexes (a rebuild restarts it)
@@ -132,6 +133,14 @@ private:
     std::vector<MotionInputs> motion_inputs_;
     rhi::Device& device_;
     void update_morphs(State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& model);
+    // Each model's targets packed for the GPU (anim::pack_morphs), by its vertex buffer.
+    // shortcut: a reloaded model's old entry stays until the player goes; drop entries on reload if reloads pile up.
+    rhi::BufferHandle morph_data(const SkinnedEntry& model);
+    struct MorphData {
+        u64 vertices;
+        rhi::BufferHandle buffer;
+    };
+    std::vector<MorphData> morph_data_;
     struct Follower {
         State* state;
         world::Entity entity;

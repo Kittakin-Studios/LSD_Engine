@@ -139,12 +139,14 @@ if(LSD_RHI_VULKAN)
     endforeach()
     # The shared GPU culling passes (shaders/cull.hlsl): kCull<Pass>Spirv, entry points renamed main.
     set(cull_hlsl "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cull.hlsl")
-    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs" "hiz_down;HizDown")
+    foreach(pair IN ITEMS "cull_reset;CullReset" "cull_main;CullMain" "cull_args;CullArgs" "hiz_down;HizDown" "morph_main;MorphMain")
       list(GET pair 0 entry)
       list(GET pair 1 name)
       set(cull_defines "")
       if(entry STREQUAL "hiz_down")
         set(cull_defines -D HIZ_PASS)  # the Hi-Z builder: its own constants and resources
+      elseif(entry STREQUAL "morph_main")
+        set(cull_defines -D MORPH_PASS)  # morph targets (Device::morph_vertices)
       endif()
       add_custom_command(
         OUTPUT "${spirv_dir}/${entry}.spv.h"

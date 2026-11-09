@@ -2,6 +2,7 @@
 #include "lsd/rhi/rhi.h"
 
 #include <cmath>
+#include <cstring>
 
 namespace lsd::rhi {
 
@@ -88,6 +89,18 @@ u32 instance_lod(const CullConstants& c, const f32 rows[12]) {
         if (k < lods && size < c.lod[k - 1]) l = k;
     }
     return l;
+}
+
+void morph_job(MorphJob& job, BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) {
+    const u32 count = weight_count < kMaxMorphTargets ? weight_count : kMaxMorphTargets;
+    job.out = out;
+    job.base = base;
+    job.morphs = morphs;
+    job.vertex_count = vertex_count;
+    job.word_count = 4 + count;
+    job.words[0] = vertex_count;
+    job.words[1] = job.words[2] = job.words[3] = 0;
+    std::memcpy(job.words + 4, weights, count * sizeof(f32));
 }
 
 } // namespace lsd::rhi

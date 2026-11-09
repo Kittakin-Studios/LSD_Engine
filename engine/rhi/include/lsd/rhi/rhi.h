@@ -42,7 +42,8 @@ struct MaterialShaderTag {};
 using MaterialShaderHandle = Handle<MaterialShaderTag>;
 struct PostShaderTag {};
 using PostShaderHandle = Handle<PostShaderTag>;
-enum class BufferUsage : u8 { Vertex, Index };
+// Storage: read by compute passes only (a model's packed morph targets).
+enum class BufferUsage : u8 { Vertex, Index, Storage };
 // RGBA8 colour data: sRGB for colour textures (base colour, emissive), linear for data (normals, masks).
 // BC1 / BC3 (DXT1 / DXT5): 4x4 blocks of 8 / 16 bytes (opaque / with alpha), when Device::supports_bc().
 // BC5: two channels (a normal map's X and Y; it reads back Z = 0 and the shader rebuilds it), 16 bytes a block.
@@ -75,7 +76,9 @@ struct SkinnedVertex {
     u8 joints[4];
     u8 weights[4];
 };
+static_assert(sizeof(SkinnedVertex) == 40, "cull.hlsl's morph_main and the GLSL mirror read 40-byte vertices");
 constexpr u32 kMaxJoints = 256;
+constexpr u32 kMaxMorphTargets = 256;  // per model on the GPU (Device::morph_vertices); more mix on the CPU
 struct LineVertex {
     f32 position[3];
     f32 color[4];
@@ -189,6 +192,16 @@ u32 instance_lod(const CullConstants& c, const f32 rows[12]);
 // The six frustum planes (a, b, c, d with a*x + b*y + c*z + d >= 0 inside) of a column-major
 // view-projection, normalised; the near plane is the looser of the GL and D3D conventions.
 void frustum_planes(const f32 view_proj[16], f32 planes[6][4]);
+// A Device::morph_vertices call as the backends keep it (D3D12 and Vulkan run them at the next frame's start): its
+// buffers and the weights block the pass reads (the vertex count, 3 spare words, then one float per target).
+struct MorphJob {
+    BufferHandle out, base, morphs;
+    u32 vertex_count = 0;
+    u32 word_count = 0;
+    u32 words[4 + kMaxMorphTargets];
+};
+// Fills `job`; targets past kMaxMorphTargets are dropped.
+void morph_job(MorphJob& job, BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count);
 // Whether a local box under an instance row matrix (3 rows of 4) touches the frustum: the same test
 // the GPU culling shaders run (so the CPU fallback and tests agree with them).
 bool instance_visible(const f32 planes[6][4], const f32 rows[12], const f32 local_min[3], const f32 local_max[3]);
@@ -518,6 +531,16 @@ public:
     virtual bool supports_bc() const { return false; }
     // MeshDraw::gpu_cull works (compute shaders and indirect draws); else such draws draw every instance.
     virtual bool supports_gpu_culling() const { return false; }
+    // Morph targets on the GPU (Unreal's GPU morph targets): a model's targets packed once (anim::pack_morphs) into a
+    // BufferUsage::Storage buffer, a create_morph_output buffer per object, and morph_vertices fills it with the base
+    // SkinnedVertex buffer plus each delta times its target's weight (weight_count <= kMaxMorphTargets), normals
+    // renormalised. The work runs at the start of the next frame, before its first pass (OpenGL: at once); the output
+    // is then drawn like any SkinnedVertex vertex buffer.
+    virtual bool supports_gpu_morphs() const { return false; }
+    virtual BufferHandle create_morph_output(u32 vertex_count) { (void)vertex_count; return {}; }
+    virtual void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) {
+        (void)out, (void)base, (void)morphs, (void)vertex_count, (void)weights, (void)weight_count;
+    }
 };
 
 // Creates a device for desc.backend (Auto = platform default), selecting the GPU with

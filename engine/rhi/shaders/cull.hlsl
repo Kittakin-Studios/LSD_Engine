@@ -3,8 +3,39 @@
 // counts, test each copy's box against the frustum and (occlusion_cull) the Hi-Z, pick its LOD by its size on
 // screen and pack it into that LOD's rows, then one indirect draw's arguments per LOD and batch of 256.
 // Layout of `args`: four visible counts (one per LOD), then 5 uints per (LOD, batch).
-// HIZ_PASS builds the Hi-Z instead (hiz_down): its own constants and resources.
-#ifndef HIZ_PASS
+// HIZ_PASS builds the Hi-Z instead (hiz_down): its own constants and resources; MORPH_PASS mixes morph targets
+// (morph_main, Device::morph_vertices).
+#ifdef MORPH_PASS
+#ifdef __spirv__
+#define VK_BIND(b, s) [[vk::binding(b, s)]]
+#else
+#define VK_BIND(b, s)
+#endif
+VK_BIND(0, 0) ByteAddressBuffer morph_base : register(t0);      // rhi::SkinnedVertex, 40 bytes each
+VK_BIND(1, 0) ByteAddressBuffer morph_deltas : register(t1);    // anim::pack_morphs
+VK_BIND(2, 0) ByteAddressBuffer morph_weights : register(t2);   // the vertex count, 3 spare words, then one float per target
+VK_BIND(3, 0) RWByteAddressBuffer morph_out : register(u0);
+[numthreads(64, 1, 1)]
+void morph_main(uint3 id : SV_DispatchThreadID) {
+    const uint vertex_count = morph_weights.Load(0);
+    const uint v = id.x;
+    if (v >= vertex_count) return;
+    const uint at = v * 40u;
+    float3 p = asfloat(morph_base.Load3(at)), n = asfloat(morph_base.Load3(at + 12u));
+    const uint2 range = morph_deltas.Load2(v * 8u);
+    for (uint k = 0; k < range.y; ++k) {
+        const uint e = vertex_count * 8u + (range.x + k) * 32u;
+        const uint4 offset = morph_deltas.Load4(e);
+        const float w = asfloat(morph_weights.Load(16u + offset.w * 4u));
+        p += asfloat(offset.xyz) * w;
+        n += asfloat(morph_deltas.Load3(e + 16u)) * w;
+    }
+    if (range.y > 0u && dot(n, n) > 1e-12) n = normalize(n);
+    morph_out.Store3(at, asuint(p));
+    morph_out.Store3(at + 12u, asuint(n));
+    morph_out.Store4(at + 24u, morph_base.Load4(at + 24u));  // uv, joints, weights
+}
+#elif !defined(HIZ_PASS)
 #ifdef __spirv__  // Vulkan: the constants as push constants (256 bytes), the buffers by set / binding
 #define VK_BIND(b, s) [[vk::binding(b, s)]]
 struct CullConstants { float4 planes[6]; float4 box_min; float4 box_max; uint4 info; uint4 index_counts; float4 lod; float4 camera; float4 hiz_vp[4]; };

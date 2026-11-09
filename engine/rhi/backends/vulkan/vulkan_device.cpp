@@ -75,6 +75,7 @@
 #include "cull_main.spv.h"
 #include "cull_args.spv.h"
 #include "hiz_down.spv.h"
+#include "morph_main.spv.h"
 #endif
 
 namespace lsd::rhi {
@@ -194,6 +195,9 @@ public:
             vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
             for (MaterialShader& m : material_shaders_) release_material(m);
             for (VkPipeline pipeline : cull_pipelines_) vkDestroyPipeline(device_, pipeline, nullptr);
+            if (morph_pipeline_) vkDestroyPipeline(device_, morph_pipeline_, nullptr);
+            if (morph_layout_) vkDestroyPipelineLayout(device_, morph_layout_, nullptr);
+            if (morph_set_layout_) vkDestroyDescriptorSetLayout(device_, morph_set_layout_, nullptr);
             release_hiz();
             if (hiz_pipeline_) vkDestroyPipeline(device_, hiz_pipeline_, nullptr);
             if (hiz_layout_) vkDestroyPipelineLayout(device_, hiz_layout_, nullptr);
@@ -367,6 +371,7 @@ public:
         view_set_ = VK_NULL_HANDLE;
         f.memo_count = 0;
         if (f.draw_pool) vkResetDescriptorPool(device_, f.draw_pool, 0);
+        run_morphs(f);
         shadow_pass_ = nullptr;
         target_ = nullptr;
         sun_shadow_ = {};
@@ -493,7 +498,8 @@ public:
         }
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = size;
-        info.usage = usage == BufferUsage::Index ? VK_BUFFER_USAGE_INDEX_BUFFER_BIT : VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        info.usage = usage == BufferUsage::Index ? VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+                                                  : VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;  // the morph pass reads vertices too
         Buffer& b = buffers_[slot];
         if (!check(vkCreateBuffer(device_, &info, nullptr, &b.buffer), "vkCreateBuffer")) return {};
         VkMemoryRequirements need;
@@ -945,6 +951,97 @@ public:
     }
 
     bool supports_gpu_culling() const override { return cull_pipelines_[2] != VK_NULL_HANDLE; }
+    bool supports_gpu_morphs() const override { return morph_pipeline_ != VK_NULL_HANDLE; }
+    BufferHandle create_morph_output(u32 vertex_count) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].buffer) ++slot;
+        if (slot == kMaxBuffers || vertex_count == 0) return {};
+        Buffer& b = buffers_[slot];
+        const VkDeviceSize size = static_cast<VkDeviceSize>(vertex_count) * sizeof(SkinnedVertex);
+        if (!make_device_buffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, b)) return {};
+        b.size = size;
+        return BufferHandle::make(slot, b.generation);
+    }
+    void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) override {
+        MorphJob* job = nullptr;  // one job per output: a later change this frame replaces it
+        for (MorphJob& j : pending_morphs_) {
+            if (j.out.value == out.value) job = &j;
+        }
+        if (!job) job = &pending_morphs_.emplace_back();
+        morph_job(*job, out, base, morphs, vertex_count, weights, weight_count);
+    }
+    // Morph targets (cull.hlsl's morph_main): four storage buffers (base, packed targets, weights in the ring, output).
+    bool create_morphs() {
+#if LSD_VULKAN_HAVE_SPIRV
+        VkDescriptorSetLayoutBinding bindings[4];
+        for (u32 k = 0; k < 4; ++k) bindings[k] = {k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layout.bindingCount = 4;
+        layout.pBindings = bindings;
+        if (!check(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &morph_set_layout_), "vkCreateDescriptorSetLayout (morph)")) return false;
+        VkPipelineLayoutCreateInfo pipeline_layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipeline_layout.setLayoutCount = 1;
+        pipeline_layout.pSetLayouts = &morph_set_layout_;
+        if (!check(vkCreatePipelineLayout(device_, &pipeline_layout, nullptr, &morph_layout_), "vkCreatePipelineLayout (morph)")) return false;
+        VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        module_info.codeSize = sizeof kMorphMainSpirv;
+        module_info.pCode = kMorphMainSpirv;
+        VkShaderModule module = VK_NULL_HANDLE;
+        if (!check(vkCreateShaderModule(device_, &module_info, nullptr, &module), "vkCreateShaderModule (morph)")) return false;
+        VkComputePipelineCreateInfo create{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        create.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = morph_layout_;
+        const bool ok = check(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &create, nullptr, &morph_pipeline_), "vkCreateComputePipelines (morph)");
+        vkDestroyShaderModule(device_, module, nullptr);
+        return ok;
+#else
+        return false;
+#endif
+    }
+    // The morphs queued since the last frame, before its first pass; the outputs' last reads before, the draws' after.
+    void run_morphs(Frame& f) {
+        if (pending_morphs_.empty()) return;
+        bool barrier = false;
+        for (const MorphJob& j : pending_morphs_) {
+            const Buffer* out = lookup(j.out);
+            const Buffer* base = lookup(j.base);
+            const Buffer* morphs = lookup(j.morphs);
+            if (!morph_pipeline_ || !out || !base || !morphs) continue;
+            const VkDeviceSize bytes = j.word_count * 4;
+            const VkDeviceSize align = storage_alignment_ ? storage_alignment_ : 256;
+            const VkDeviceSize at = (f.ring_used + align - 1) / align * align;
+            if (!f.ring_mapped || at + bytes > kRingBytes) break;
+            std::memcpy(f.ring_mapped + at, j.words, bytes);
+            f.ring_used = at + bytes;
+            VkDescriptorSetAllocateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            info.descriptorPool = f.draw_pool;
+            info.descriptorSetCount = 1;
+            info.pSetLayouts = &morph_set_layout_;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            if (vkAllocateDescriptorSets(device_, &info, &set) != VK_SUCCESS) break;
+            const VkDescriptorBufferInfo buffers[4] = {{base->buffer, 0, VK_WHOLE_SIZE}, {morphs->buffer, 0, VK_WHOLE_SIZE}, {f.ring, at, bytes}, {out->buffer, 0, VK_WHOLE_SIZE}};
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = set;
+            write.descriptorCount = 4;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.pBufferInfo = buffers;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            if (!barrier) {  // earlier frames' vertex reads of the outputs before these writes
+                memory_barrier(f.cmd, VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                               VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+                vkCmdBindPipeline(f.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, morph_pipeline_);
+                barrier = true;
+            }
+            vkCmdBindDescriptorSets(f.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, morph_layout_, 0, 1, &set, 0, nullptr);
+            vkCmdDispatch(f.cmd, (j.vertex_count + 63) / 64, 1, 1);
+        }
+        if (barrier) memory_barrier(f.cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT,
+                                    VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
+        pending_morphs_.clear();
+    }
 
     // The compute passes for a gpu_cull draw, between a pause and a resume of the pass (compute cannot
     // run inside one); false (nothing recorded) if it cannot run: the draw draws every copy.
@@ -3033,6 +3130,7 @@ private:
         }
         if (!create_texture_support() || !create_rings() || !create_post_pipelines() || !create_mesh_layouts()) return false;
         if (!create_culling()) LSD_LOG_WARN("vulkan", "GPU culling is off: its compute passes could not be made (gpu_cull draws draw every copy).");
+        if (!create_morphs()) morph_pipeline_ = VK_NULL_HANDLE;  // optional: morphs then mix on the CPU
         const auto& skinned_attributes = kSkinnedAttributes;
         const auto& mesh_attributes = kMeshAttributes;
         // Shadow casters read only the position and UV (and the skinning attributes).
@@ -3188,6 +3286,10 @@ private:
     bool hiz_valid_ = false;
     VkPipelineLayout cull_layout_ = VK_NULL_HANDLE;
     VkPipeline cull_pipelines_[3] = {};  // reset, cull, arguments
+    VkDescriptorSetLayout morph_set_layout_ = VK_NULL_HANDLE;  // morph targets (create_morphs)
+    VkPipelineLayout morph_layout_ = VK_NULL_HANDLE;
+    VkPipeline morph_pipeline_ = VK_NULL_HANDLE;
+    std::vector<MorphJob> pending_morphs_;
     Buffer cull_out_, cull_args_;        // the visible rows; the count + one indirect draw per batch
     VkQueryPool timestamp_pool_ = VK_NULL_HANDLE;  // kGpuTimestamps per frame in flight
     u32 timestamps_set_[kFramesInFlight] = {};

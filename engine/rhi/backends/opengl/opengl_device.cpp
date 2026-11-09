@@ -1008,6 +1008,34 @@ void main() {
 }
 )";
 
+// Morph targets (cull.hlsl's morph_main): base vertices plus each delta times its target's weight.
+constexpr char kMorphComputeShader[] = R"(#version 460 core
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Base { uint base[]; };
+layout(std430, binding = 1) readonly buffer Deltas { uint deltas[]; };
+layout(std430, binding = 2) readonly buffer Weights { uint vertex_count; uint pad0; uint pad1; uint pad2; float weights[]; };
+layout(std430, binding = 3) writeonly buffer Out { uint morphed[]; };
+void main() {
+    uint v = gl_GlobalInvocationID.x;
+    if (v >= vertex_count) return;
+    uint at = v * 10u;  // rhi::SkinnedVertex, 40 bytes
+    vec3 p = uintBitsToFloat(uvec3(base[at], base[at + 1u], base[at + 2u]));
+    vec3 n = uintBitsToFloat(uvec3(base[at + 3u], base[at + 4u], base[at + 5u]));
+    uint first = deltas[v * 2u], count = deltas[v * 2u + 1u];
+    for (uint k = 0u; k < count; ++k) {
+        uint e = vertex_count * 2u + (first + k) * 8u;
+        float w = weights[deltas[e + 3u]];
+        p += uintBitsToFloat(uvec3(deltas[e], deltas[e + 1u], deltas[e + 2u])) * w;
+        n += uintBitsToFloat(uvec3(deltas[e + 4u], deltas[e + 5u], deltas[e + 6u])) * w;
+    }
+    if (count > 0u && dot(n, n) > 1e-12) n = normalize(n);
+    uvec3 pb = floatBitsToUint(p), nb = floatBitsToUint(n);
+    morphed[at] = pb.x; morphed[at + 1u] = pb.y; morphed[at + 2u] = pb.z;
+    morphed[at + 3u] = nb.x; morphed[at + 4u] = nb.y; morphed[at + 5u] = nb.z;
+    morphed[at + 6u] = base[at + 6u]; morphed[at + 7u] = base[at + 7u]; morphed[at + 8u] = base[at + 8u]; morphed[at + 9u] = base[at + 9u];  // uv, joints, weights
+}
+)";
+
 // The Hi-Z (cull.hlsl's hiz_down): each texel the farthest of 2 x 2 of the level before (or of the depth).
 constexpr char kHizComputeShader[] = R"(#version 460 core
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -1584,6 +1612,8 @@ public:
         }
         if (cull_program_) gl_.glDeleteProgram(cull_program_);
         if (hiz_program_) gl_.glDeleteProgram(hiz_program_);
+        if (morph_program_) gl_.glDeleteProgram(morph_program_);
+        if (morph_weights_) gl_.glDeleteBuffers(1, &morph_weights_);
         if (hiz_texture_) glDeleteTextures(1, &hiz_texture_);
         if (ui_ibo_) gl_.glDeleteBuffers(1, &ui_ibo_);
         if (ui_vao_) gl_.glDeleteVertexArrays(1, &ui_vao_);
@@ -1831,6 +1861,33 @@ public:
 
     bool render_targets_flipped() const override { return true; }  // GL textures start at the bottom row
     bool supports_gpu_culling() const override { return cull_program_ != 0; }
+    bool supports_gpu_morphs() const override { return morph_program_ != 0; }
+    BufferHandle create_morph_output(u32 vertex_count) override {
+        u32 slot = 0;
+        while (slot < kMaxBuffers && buffers_[slot].id) ++slot;
+        if (slot == kMaxBuffers || vertex_count == 0) return {};
+        Buffer& b = buffers_[slot];
+        gl_.glCreateBuffers(1, &b.id);
+        gl_.glNamedBufferStorage(b.id, static_cast<GLsizeiptr>(vertex_count) * static_cast<GLsizeiptr>(sizeof(SkinnedVertex)), nullptr, 0);
+        b.usage = BufferUsage::Vertex;
+        return BufferHandle::make(slot, b.generation);
+    }
+    void morph_vertices(BufferHandle out, BufferHandle base, BufferHandle morphs, u32 vertex_count, const f32* weights, u32 weight_count) override {
+        const Buffer* o = lookup(out);
+        const Buffer* b = lookup(base);
+        const Buffer* m = lookup(morphs);
+        if (!morph_program_ || !o || !b || !m) return;
+        MorphJob job;
+        morph_job(job, out, base, morphs, vertex_count, weights, weight_count);
+        gl_.glNamedBufferSubData(morph_weights_, 0, static_cast<GLsizeiptr>(job.word_count) * 4, job.words);  // GL orders it after earlier dispatches
+        gl_.glUseProgram(morph_program_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, b->id);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m->id);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, morph_weights_);
+        gl_.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, o->id);
+        gl_.glDispatchCompute((vertex_count + 63) / 64, 1, 1);
+        gl_.glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+    }
     bool culls_shadow_instances() const override { return cull_program_ != 0; }
 
     void set_viewport(f32 x, f32 y, f32 width, f32 height) override {
@@ -2748,6 +2805,21 @@ private:
             hiz_size_location_ = hiz_program_ ? gl_.glGetUniformLocation(hiz_program_, "u_size") : -1;
             hiz_level_location_ = hiz_program_ ? gl_.glGetUniformLocation(hiz_program_, "u_level") : -1;
         }
+        if (const GLuint cs = compile(GL_COMPUTE_SHADER, kMorphComputeShader)) {  // morph targets (optional: else on the CPU)
+            morph_program_ = gl_.glCreateProgram();
+            gl_.glAttachShader(morph_program_, cs);
+            gl_.glLinkProgram(morph_program_);
+            gl_.glDeleteShader(cs);
+            GLint linked = 0;
+            gl_.glGetProgramiv(morph_program_, GL_LINK_STATUS, &linked);
+            if (!linked) {
+                gl_.glDeleteProgram(morph_program_);
+                morph_program_ = 0;
+            } else {
+                gl_.glCreateBuffers(1, &morph_weights_);
+                gl_.glNamedBufferStorage(morph_weights_, 16 + kMaxMorphTargets * 4, nullptr, GL_DYNAMIC_STORAGE_BIT);
+            }
+        }
         line_program_ = link(kLineVertexShader, kLineFragmentShader);
         shadow_program_ = link(with_skinning(kShadowVertexShader, false).c_str(), kShadowFragmentShader);
         shadow_mvp_ = gl_.glGetUniformLocation(shadow_program_, "u_mvp");
@@ -2892,6 +2964,7 @@ private:
     GLint instanced_shadow_mvp_ = -1;
     GLuint joint_ubo_ = 0;
     GLuint cull_program_ = 0, cull_in_ = 0, cull_out_ = 0, cull_args_ = 0, cull_ubo_ = 0;
+    GLuint morph_program_ = 0, morph_weights_ = 0;  // morph targets (kMorphComputeShader)
     // The Hi-Z (PostDraw::build_hiz): R32F, the farthest depth of each 2 x 2 down its mips; its view-projection.
     GLuint hiz_program_ = 0, hiz_texture_ = 0;
     GLint hiz_size_location_ = -1, hiz_level_location_ = -1;
