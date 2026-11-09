@@ -1,5 +1,6 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
+#include "hlod.h"
 #include "light_bake.h"
 #include "lsd/asset/texture.h"
 #include "lighting.h"
@@ -348,6 +349,43 @@ static void test_lightmaps() {  // Build Lighting's lightmaps: a 20 m floor unde
     editor::BakedLighting loaded;
     CHECK(editor::load_baked_lighting(path.c_str(), loaded) && loaded.has_lightmap() && loaded.lightmap == baked.lightmap && loaded.objects.size() == 1 &&
           loaded.objects[0].indices == baked.objects[0].indices && std::strcmp(loaded.objects[0].name, "Floor") == 0);
+}
+
+static void test_hlod() {  // HLOD: cells, merge by look, the switch distance, the file
+    using namespace lsd;
+    Allocator& allocator = default_allocator();
+    render::MeshData ball = render::make_sphere(allocator, 16, 8);
+    auto source = [&](const char* name, f32 x, const char* material) {
+        editor::HlodSource s;
+        s.key = editor::hlod_member_key(name, "Sphere", {x, 0, 0});
+        s.world = Mat4{};
+        s.world.at(0, 3) = x;
+        std::snprintf(s.material, sizeof s.material, "%s", material);
+        s.vertices = ball.vertices;
+        s.vertex_count = ball.vertex_count;
+        s.indices = ball.indices;
+        s.index_count = ball.index_count;
+        return s;
+    };
+    // Three objects share the 50 m cell at the origin (two looks), one stands alone 200 m away.
+    const std::vector<editor::HlodSource> sources = {source("A", 1, ""), source("B", 3, ""), source("C", 5, "m1"), source("Far", 200, "")};
+    editor::HlodData data;
+    editor::build_hlod(sources, 50.0f, 0.25f, data);
+    CHECK(data.cells.size() == 1 && data.cells[0].members.size() == 3 && data.cells[0].proxies.size() == 2);
+    CHECK(data.cell_of.count(sources[0].key) == 1 && data.cell_of.count(sources[3].key) == 0);  // the lone one is never hidden
+    u32 merged = 0;
+    for (const editor::HlodProxy& p : data.cells[0].proxies) merged += static_cast<u32>(p.indices.size());
+    CHECK(merged > 0 && merged < 3 * ball.index_count);  // simpler than the originals together
+    CHECK(data.cells[0].lo[0] < 1.0f && data.cells[0].hi[0] > 5.0f);  // world space: the objects are at x = 1..5
+    CHECK(!editor::hlod_cell_far(data.cells[0], {0, 0, 0}, 100.0f) && editor::hlod_cell_far(data.cells[0], {300, 0, 0}, 100.0f));
+    CHECK(!editor::hlod_cell_far(data.cells[0], {50, 0, 0}, 100.0f));  // measured to the nearest point of the cell
+    const std::string path = (std::filesystem::path(LSD_TEST_TEMP_DIR) / "Hlod_BuiltData.lsdhlod").generic_string();
+    CHECK(editor::save_hlod(path.c_str(), data));
+    editor::HlodData loaded;
+    CHECK(editor::load_hlod(path.c_str(), loaded) && loaded.cells.size() == 1 && loaded.cells[0].proxies[0].indices == data.cells[0].proxies[0].indices &&
+          loaded.cell_of.count(sources[1].key) == 1 && std::strcmp(loaded.cells[0].proxies[1].material, data.cells[0].proxies[1].material) == 0);
+    CHECK(!editor::load_hlod("no/such/file.lsdhlod", loaded) && !loaded.valid());
+    render::free_mesh(allocator, ball);
 }
 
 static void test_references() {  // Reference Viewer: who uses what, and Replace References
@@ -1168,6 +1206,7 @@ int main() {
     test_references();
     test_light_bake();
     test_lightmaps();
+    test_hlod();
     test_rml_edit();
     test_rml_anchor();
     test_sound_cue();

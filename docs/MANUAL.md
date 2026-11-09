@@ -183,7 +183,7 @@ Select. `presets_folder` changes where the presets come from.
 | ![File menu](images/menu_file.jpg) | **File**: new / open / save levels, recent levels, Validate Assets, Import, Package Project. |
 | ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
 | ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console; Asset Audit, Size Map, Fix Up Redirectors. |
-| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build Navigation, Build Release Engine, Validate Assets, Package Project. |
+| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build HLODs, Build Navigation, Build Release Engine, Validate Assets, Package Project. |
 | ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic), and per group: Shadows, Post Processing, View Distance, Effects. |
 | ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
 
@@ -984,6 +984,25 @@ dark contact under the statue's feet come from the lightmap.*
   next Build Lighting. Real-time shadows inside the Shadow Distance stay as they were.
 
 ---
+
+### HLOD (Build HLODs)
+
+A street of two hundred small meshes costs two hundred draws even when it is a smudge in the distance. **Build > Build
+HLODs** (Unreal's Hierarchical LOD) fixes that: it cuts the level's Static Meshes into square cells, merges each cell's
+objects into a few simplified proxy meshes (a quarter of the triangles of each), and saves them next to the level as
+`<Level>_BuiltData.lsdhlod` (save the level first). Beyond a distance a cell draws its proxies instead of its objects;
+nearer, the objects as before. It works in the editor viewport, in Play and in a packaged game (Package Project copies
+the file, also with Cook Used Assets Only). Console: `BuildHLODs`.
+
+**World Settings**: **Hlod Enabled** (off: always the objects), **Hlod Cell Size** (metres, the grid; rebuild after
+changing it), **Hlod Distance** (metres from the camera to the nearest point of the cell; Engine Scalability > View
+Distance scales it). `stat dump` shows the draws: look from far away and they drop to one per look per cell.
+
+What is merged: opaque, visible Static Meshes that do not move (no Rigid Body, Mover, Vehicle or Transport), with no
+Material or a plain opaque Material (not a Material Instance or Graph), no Max Draw Distance and no per-slot Materials.
+Cells with fewer than two such objects are left alone. Limits: one proxy per distinct Material + tint in a cell (no
+baked atlas), no lightmaps on the proxies (they use the probes), shadows still come from the objects, and a
+moved or renamed object is not recognised until you build again.
 
 ## 6. Materials
 

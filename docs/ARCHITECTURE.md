@@ -199,6 +199,15 @@ distance a Cull Distance Volume gives its size (the volumes are gathered once pe
 meshes are cached variants (`MeshCache::get_box_uv`, key `<mesh>|box:x,y,z` at the object's scale
 rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis.
 
+**HLOD** (`editor/hlod.*`): Build > Build HLODs puts every opaque, non-moving Static Mesh into a grid cell
+(World Settings > Hlod Cell Size) by its position, simplifies each mesh (`asset::simplify_mesh`, 25 %), moves it to
+world space (normals by the inverse transpose, winding flipped for a negative scale) and appends it to the cell's proxy
+for its look (Material + tint). `HlodData` is saved as `<Level>_BuiltData.lsdhlod` (magic `LSDHLOD1`), loaded with
+the level beside the baked lighting and cooked with it. Each object is found again by `hlod_member_key` (name, mesh,
+place to the mm). `draw_world` marks the cells whose nearest point is past Hlod Distance (`hlod_cell_far`), skips
+their members in the static mesh loop and draws their proxies (`HLOD:<cell>:<n>` in the mesh cache) as plain
+unbatched mesh draws, so every backend needs nothing new. Shadow passes still use the objects.
+
 The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
 backends). Its order: ambient occlusion (from depth: 12 samples rotated by a 4×4 Bayer pattern, then
 a 4×4 depth-aware blur that sees every rotation once, so no noise is left; multiplied into the

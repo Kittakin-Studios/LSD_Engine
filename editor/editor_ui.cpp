@@ -5728,6 +5728,7 @@ void draw_menu_bar(EditorState& s) {
     }
     if (ImGui::BeginMenu("Build")) {
         if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
+        if (with_tip(ImGui::MenuItem("Build HLODs", nullptr, false, !s.playing), "Merges each World Settings > HLOD Cell Size cell's static meshes into a simpler proxy drawn instead of them beyond HLOD Distance; saved next to the level (<level>_BuiltData.lsdhlod), so save it first")) s.build_hlod_requested = true;
         if (with_tip(ImGui::MenuItem("Build Reflection Captures"), "Captures what each Reflection Capture sees again (after moving things)")) s.capture_reflections = true;
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
         if (ImGui::MenuItem("Build Navigation", command_text(Command::ToggleNavigation))) s.show_navigation = true;  // the navmesh rebuilds while it is shown

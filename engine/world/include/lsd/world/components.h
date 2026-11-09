@@ -1289,6 +1289,12 @@ struct WorldSettings {
     LSD_PROPERTY(Edit, Tooltip = "How the navmesh is built for AI (agent size, steps, slopes)") NavSettings navigation;
     LSD_PROPERTY(Edit, Widget = "Choice:Off,256,512,1024,2048,4096", Tooltip = "Build Lighting's lightmap atlas for the level's static meshes (sharp baked shadows and bounced light); Off: light probes only")
     u32 lightmap_resolution = 3;
+    LSD_PROPERTY(Edit, Tooltip = "HLOD (Unreal's Hierarchical LOD): cells built by Build > Build HLODs draw one merged, simpler mesh instead of their objects when farther than HLOD Distance")
+    bool hlod_enabled = true;
+    LSD_PROPERTY(Edit, Units = "m", Min = 5, Tooltip = "Build HLODs groups static meshes into square cells this wide (a grid over the level); rebuild after changing it")
+    f32 hlod_cell_size = 50.0f;
+    LSD_PROPERTY(Edit, Units = "m", Min = 1, Tooltip = "A built HLOD cell draws its merged mesh instead of its objects when its nearest point is farther than this from the camera")
+    f32 hlod_distance = 100.0f;
 };
 
 } // namespace lsd::world
