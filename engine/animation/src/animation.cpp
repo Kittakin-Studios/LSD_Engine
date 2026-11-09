@@ -169,6 +169,70 @@ u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f
     return static_cast<u32>(got);
 }
 
+u32 build_ragdoll(const SkinnedModel& model, RagdollBody* out, u32 capacity, f32 total_mass) {
+    const u32 joints = model.joint_count();
+    if (!joints || model.inverse_bind.size() < joints || !capacity) return 0;
+    std::vector<Vec3> at(joints);  // each joint's bind position
+    for (u32 j = 0; j < joints; ++j) {
+        const Mat4 bind = affine_inverse(model.inverse_bind[j]);
+        at[j] = {bind.at(0, 3), bind.at(1, 3), bind.at(2, 3)};
+    }
+    std::vector<std::vector<Vec3>> owned(joints);  // the vertices each joint moves most
+    for (const rhi::SkinnedVertex& v : model.vertices) {
+        u32 best = 0;
+        for (u32 k = 1; k < 4; ++k) {
+            if (v.weights[k] > v.weights[best]) best = k;
+        }
+        if (v.joints[best] < joints && v.weights[best]) owned[v.joints[best]].push_back({v.position[0], v.position[1], v.position[2]});
+    }
+    const f32 height = std::fmax(model.bounds_max.z - model.bounds_min.z, 0.1f);
+    std::vector<i32> body_of(joints, -1);
+    u32 count = 0;
+    f32 volume_sum = 0.0f;
+    auto percentile = [](std::vector<f32>& v, f32 p) {
+        const usize k = static_cast<usize>(p * static_cast<f32>(v.size() - 1));
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(k), v.end());
+        return v[k];
+    };
+    for (u32 j = 0; j < joints && count < capacity; ++j) {  // parents before children (the skeleton's order)
+        const std::vector<Vec3>& verts = owned[j];
+        if (verts.size() < 12) continue;
+        Vec3 axis{}, centroid{};
+        f32 longest = 0.0f;
+        for (u32 c = 0; c < joints; ++c) {  // along the bone to its longest child
+            if (model.joint_parent(c) != static_cast<i32>(j)) continue;
+            const f32 d = length(at[c] - at[j]);
+            if (d > longest && d > 0.01f * height) longest = d, axis = (at[c] - at[j]) * (1.0f / d);
+        }
+        for (const Vec3& p : verts) centroid = centroid + p * (1.0f / static_cast<f32>(verts.size()));
+        if (length(axis) < 0.5f) axis = length(centroid - at[j]) > 1e-4f ? normalize(centroid - at[j]) : Vec3{0, 0, 1};  // an end bone: toward its flesh
+        std::vector<f32> along(verts.size()), across(verts.size());
+        for (usize i = 0; i < verts.size(); ++i) {
+            const Vec3 d = verts[i] - at[j];
+            along[i] = dot(d, axis);
+            across[i] = length(d - axis * along[i]);
+        }
+        const f32 t0 = percentile(along, 0.03f), t1 = percentile(along, 0.97f), radius = std::fmax(percentile(across, 0.6f), 0.01f);
+        // Fingers, toes and twist bones are short: they follow their parent. An end bone (a head) goes by its flesh.
+        if (longest > 0.0f ? longest < 0.045f * height : std::fmax(t1 - t0, 2.0f * radius) < 0.06f * height) continue;
+        RagdollBody& b = out[count];
+        b = {};
+        b.joint = j;
+        b.centre = at[j] + axis * ((t0 + t1) * 0.5f);
+        b.axis = axis;
+        b.radius = radius;
+        b.half_height = std::fmax((t1 - t0) * 0.5f - radius, 0.0f);
+        for (i32 p = model.joint_parent(j); p >= 0 && b.parent < 0; p = model.joint_parent(static_cast<u32>(p))) b.parent = body_of[static_cast<u32>(p)];
+        b.mass = 3.14159265f * radius * radius * (2.0f * b.half_height + 4.0f / 3.0f * radius);  // its volume for now
+        volume_sum += b.mass;
+        body_of[j] = static_cast<i32>(count++);
+    }
+    f32 clamped = 0.0f;  // at least 1% each (a hand is not weightless), then scaled back to the total
+    for (u32 i = 0; i < count; ++i) clamped += out[i].mass = std::fmax(out[i].mass / volume_sum, 0.01f);
+    for (u32 i = 0; i < count; ++i) out[i].mass *= total_mass / clamped;
+    return count;
+}
+
 void pack_morphs(const SkinnedModel& model, Array<u32>& out) {
     const u32 vertex_count = static_cast<u32>(model.vertices.size());
     out.clear();
@@ -1545,6 +1609,26 @@ bool Pose::aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forwar
     if (!job.Run()) return false;
     rotate_local(impl_->locals, joint, fix);
     return rebuild(model, static_cast<i32>(joint));
+}
+
+bool Pose::set_models(const SkinnedModel& model, const Mat4* models) {
+    const u32 joints = model.joint_count();
+    if (!joints || model.inverse_bind.size() < joints) return false;
+    if (!impl_) impl_ = new Impl();
+    if (joints != joints_) {
+        delete[] rows_;
+        rows_ = new f32[joints * 12];
+        joints_ = joints;
+    }
+    impl_->models.resize(joints);
+    for (u32 j = 0; j < joints; ++j) {
+        for (int c = 0; c < 4; ++c) impl_->models[j].cols[c] = ozz::math::simd_float4::LoadPtrU(&models[j].m[c * 4]);
+        const Mat4 skin = models[j] * model.inverse_bind[j];
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 4; ++c) rows_[j * 12 + r * 4 + c] = skin.at(r, c);
+        }
+    }
+    return true;
 }
 
 bool Pose::follow(const SkinnedModel& model, const SkinnedModel& leader_model, const Pose& leader) {

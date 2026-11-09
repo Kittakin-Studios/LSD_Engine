@@ -646,6 +646,9 @@ struct SkeletalMesh {
                  Tooltip = "Which way the character's front points in its file; it is turned to face the object's forward (+X, where the Character walks and the camera looks). Auto: Unreal rigs (UE4 / UE5 exports face -Y here, Unreal's Blueprint turns them -90) are turned; others face +X")
     u32 facing = 0;
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "One material for the whole mesh, over its material slots (empty: each slot's own material, see Materials below)") char material[33] = "";
+    LSD_PROPERTY(Edit, Category = "Physics",
+                 Tooltip = "Simulate Physics (Unreal's ragdoll): from the start of Play the body falls as a ragdoll, a capsule per big bone made from the mesh, joined at the joints. Scripts: lsd.ragdoll(e, true / false)")
+    bool simulate_physics = false;
     LSD_PROPERTY(Edit, Tooltip = "Colour of the mesh where no material is set") LinearColor color = LinearColor::hex(0xB4B4B8);
     // Edited in Details > Materials (one row per slot of the mesh), so saved but not shown as a list.
     LSD_PROPERTY(Save, Tooltip = "Material slots drawn with another material on this object (Unreal's Override Materials)") List<MaterialOverride, 48> material_overrides;

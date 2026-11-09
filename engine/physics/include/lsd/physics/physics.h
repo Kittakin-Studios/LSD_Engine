@@ -27,6 +27,7 @@ struct BodyDesc {
     bool one_way = false; // the player passes up (and sideways) through it and lands on its top (2D jump-through platforms)
     bool plane_2d = false;  // moves only in X-Z, turns only around Y (2D games)
     Vec3 centre_of_mass_offset;  // dynamic: moves the centre of mass (body space), e.g. down for a car that should not tip
+    u32 group = 0;  // bodies sharing a non-zero group never collide with each other (a ragdoll's parts)
 };
 
 // A wheel of a physics vehicle (Unreal's Chaos Vehicle Wheel): a ray-cast suspension with a tyre.

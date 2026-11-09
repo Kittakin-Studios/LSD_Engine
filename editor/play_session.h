@@ -239,6 +239,22 @@ private:
     void apply_input();  // context_ into input_, with each action's trigger
 
     physics::PhysicsWorld* physics_ = nullptr;
+    // Ragdolls (Skeletal Mesh > Simulate Physics, lsd.ragdoll): a capsule body per big bone (anim::build_ragdoll),
+    // started from the mesh's current pose; each step their transforms become its pose (AnimationPlayer::set_ragdoll_pose).
+    struct Ragdoll {
+        world::Entity entity;            // the Skeletal Mesh
+        std::vector<u32> bodies;         // physics bodies
+        std::vector<i32> body_of;        // per joint: its body (into `bodies`) or -1 (it keeps its offset from its parent)
+        std::vector<i32> parents;        // per joint
+        std::vector<Mat4> body_to_joint; // per joint with a body: the joint in its body's frame
+        std::vector<Mat4> start;         // per joint: its model-space transform when it fell
+    };
+    std::vector<Ragdoll> ragdolls_;
+    u32 ragdoll_groups_ = 0;
+    bool ragdoll_scan_ = false;  // Simulate Physics meshes still to start (they need their first pose)
+    bool start_ragdoll(world::World& world, world::Entity e);
+    void stop_ragdoll(world::Entity e);
+    void update_ragdolls(world::World& world);
     script::ScriptSystem scripts_;
     const asset::AssetRegistry* registry_ = nullptr;
     world::World* world_ = nullptr;

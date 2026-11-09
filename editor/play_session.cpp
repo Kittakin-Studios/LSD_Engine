@@ -449,6 +449,117 @@ void PlaySession::update_agents(world::World& world, f32 dt) {
     }
 }
 
+bool PlaySession::start_ragdoll(world::World& world, world::Entity e) {
+    for (const Ragdoll& r : ragdolls_) {
+        if (r.entity == e) return true;  // already one
+    }
+    const auto* mesh = world.get<world::SkeletalMesh>(e);
+    const SkinnedEntry* entry = mesh && skinned_ ? skinned_->get(mesh->mesh) : nullptr;
+    const anim::Pose* pose = entry && animations_ ? animations_->pose(e) : nullptr;
+    if (!physics_ || !pose || pose->joint_count() != entry->model->joint_count()) return false;
+    const anim::SkinnedModel& model = *entry->model;
+    anim::RagdollBody parts[anim::kMaxRagdollBodies];
+    const u32 count = anim::build_ragdoll(model, parts, anim::kMaxRagdollBodies);
+    if (!count) return false;
+    const Mat4 to_world = skeletal_matrix(world, e, *mesh, entry);
+    const f32 scale = length(Vec3{to_world.at(0, 0), to_world.at(1, 0), to_world.at(2, 0)});
+    const u32 joints = model.joint_count();
+    Ragdoll r;
+    r.entity = e;
+    r.body_of.assign(joints, -1);
+    r.parents.resize(joints);
+    r.body_to_joint.resize(joints);
+    r.start.resize(joints);
+    for (u32 j = 0; j < joints; ++j) {
+        r.parents[j] = model.joint_parent(j);
+        r.start[j] = pose->joint_model(j);
+    }
+    const u32 group = ++ragdoll_groups_;
+    for (u32 i = 0; i < count; ++i) {
+        const anim::RagdollBody& b = parts[i];
+        const Vec3 x = normalize(cross(std::fabs(b.axis.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0}, b.axis)), y = cross(b.axis, x);
+        Mat4 frame;  // the capsule in the bind pose: Z along the bone
+        for (int k = 0; k < 3; ++k) {
+            frame.at(k, 0) = (&x.x)[k];
+            frame.at(k, 1) = (&y.x)[k];
+            frame.at(k, 2) = (&b.axis.x)[k];
+            frame.at(k, 3) = (&b.centre.x)[k];
+        }
+        // Where the bone is now: its skinning matrix carries the bind-pose capsule along.
+        const Mat4 now = without_scale(to_world * r.start[b.joint] * model.inverse_bind[b.joint] * frame);
+        physics::BodyDesc d;
+        d.shape = physics::Shape::Capsule;
+        d.half_extents = {b.radius * scale, b.radius * scale, b.half_height * scale};
+        d.transform = now;
+        d.motion = physics::Motion::Dynamic;
+        d.mass = b.mass;
+        d.friction = 0.7f;
+        d.group = group;
+        const u32 body = physics_->add_body(d);
+        r.body_of[b.joint] = static_cast<i32>(r.bodies.size());
+        r.bodies.push_back(body);
+        const Mat4 joint_world = to_world * r.start[b.joint];
+        r.body_to_joint[b.joint] = affine_inverse(now) * joint_world;
+        if (b.parent < 0) continue;
+        physics::JointDesc joint;  // at the bone's start, swinging up to 40 degrees and twisting 25 either way
+        joint.type = physics::JointType::Cone;
+        joint.body_a = r.bodies[static_cast<u32>(b.parent)];
+        joint.body_b = body;
+        joint.pivot = {joint_world.at(0, 3), joint_world.at(1, 3), joint_world.at(2, 3)};
+        joint.axis = normalize(Vec3{now.at(0, 2), now.at(1, 2), now.at(2, 2)});
+        joint.cone_angle = 40.0f;
+        joint.limited = true;
+        joint.limit_min = -25.0f;
+        joint.limit_max = 25.0f;
+        physics_->add_joint(joint);
+    }
+    ragdolls_.push_back(std::move(r));
+    // shortcut: starts at rest (no velocity from the animation), and the object stays where it was, so a ragdoll
+    // that falls far can be culled with it; carry the pose's speed and move the object with the root body if needed
+    return true;
+}
+
+void PlaySession::stop_ragdoll(world::Entity e) {
+    for (usize i = 0; i < ragdolls_.size(); ++i) {
+        if (ragdolls_[i].entity != e) continue;
+        for (u32 body : ragdolls_[i].bodies) physics_->remove_body(body);  // their joints go with them
+        if (animations_) animations_->set_ragdoll_pose(e, nullptr, 0);
+        ragdolls_.erase(ragdolls_.begin() + static_cast<std::ptrdiff_t>(i));
+        return;
+    }
+}
+
+// Each joint from its body (or, without one, at its offset from its parent as it fell), into the mesh's space.
+void PlaySession::update_ragdolls(world::World& world) {
+    if (ragdoll_scan_) {  // Simulate Physics: once each mesh has its first pose
+        ragdoll_scan_ = false;
+        const reflect::TypeInfo& type = reflect::type_of<world::SkeletalMesh>();
+        for (u32 i = 0; i < world.count(type); ++i) {
+            const auto* mesh = static_cast<const world::SkeletalMesh*>(world.at(type, i));
+            if (mesh->simulate_physics && !start_ragdoll(world, world.owner(type, i))) ragdoll_scan_ = true;
+        }
+    }
+    static std::vector<Mat4> placed, models;
+    for (const Ragdoll& r : ragdolls_) {
+        const auto* mesh = world.alive(r.entity) ? world.get<world::SkeletalMesh>(r.entity) : nullptr;
+        const SkinnedEntry* entry = mesh && skinned_ ? skinned_->get(mesh->mesh) : nullptr;
+        if (!entry || !animations_) continue;
+        const Mat4 to_world = skeletal_matrix(world, r.entity, *mesh, entry);
+        const Mat4 to_model = affine_inverse(to_world);
+        const usize joints = r.start.size();
+        placed.resize(joints);
+        models.resize(joints);
+        for (usize j = 0; j < joints; ++j) {  // parents come first
+            const i32 b = r.body_of[j], p = r.parents[j];
+            if (b >= 0) placed[j] = physics_->body_transform(r.bodies[static_cast<usize>(b)]) * r.body_to_joint[j];
+            else if (p >= 0) placed[j] = placed[static_cast<usize>(p)] * (affine_inverse(r.start[static_cast<usize>(p)]) * r.start[j]);
+            else placed[j] = to_world * r.start[j];
+            models[j] = to_model * placed[j];
+        }
+        animations_->set_ragdoll_pose(r.entity, models.data(), static_cast<u32>(joints));
+    }
+}
+
 void PlaySession::stop() {
     prefab_text_.clear();  // edits between sessions are read again
     net_.shutdown();  // tells the others first
@@ -480,6 +591,11 @@ void PlaySession::stop() {
     tree_count_ = 0;
     if (sounds_) sounds_->stop_all_and_forget();
     emitter_count_ = 0;
+    for (const Ragdoll& r : ragdolls_) {
+        if (animations_) animations_->set_ragdoll_pose(r.entity, nullptr, 0);
+    }
+    ragdolls_.clear();
+    ragdoll_scan_ = false;
     delete physics_;
     physics_ = nullptr;
     simulated_count_ = 0;
@@ -618,6 +734,7 @@ bool PlaySession::rebind(const char* action, const char* from, const char* to) {
 
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel) {
     stop();
+    ragdoll_scan_ = true;  // Simulate Physics meshes fall once they have a pose
     const u64 start_ns = SDL_GetTicksNS();  // how long Play takes to start (logged at the end)
     if (!travel) {
         scripts_.clear_persistent();  // a new Play: a fresh game instance
@@ -946,6 +1063,21 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.anim_curve = [](void* user, world::Entity e, const char* name, f32& value) {
         const auto& self = *static_cast<PlaySession*>(user);
         return self.animations_ && self.skinned_ && self.animations_->curve_value(*self.world_, *self.skinned_, e, name, value);
+    };
+    host.ragdoll = [](void* user, world::Entity e, bool on) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (!self.world_ || !self.world_->alive(e)) return false;
+        world::Entity mesh = self.world_->get<world::SkeletalMesh>(e) ? e : world::Entity{};
+        for (u32 slot = 0; !mesh.valid() && slot < self.world_->slot_count(); ++slot) {  // a Character's mesh below it
+            const world::Entity c = self.world_->entity_at_slot(slot);
+            if (c.valid() && self.world_->parent(c) == e && self.world_->get<world::SkeletalMesh>(c)) mesh = c;
+        }
+        if (!mesh.valid()) return false;
+        if (!on) {
+            self.stop_ragdoll(mesh);
+            return true;
+        }
+        return self.start_ragdoll(*self.world_, mesh);
     };
     host.set_anim_param = [](void* user, world::Entity e, const char* name, f32 value) {
         auto& self = *static_cast<PlaySession*>(user);
@@ -1836,6 +1968,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
     }  // in a Physics vehicle the driver sits inside its body: not moved, so it cannot push the car
     physics_->step(dt);
+    update_ragdolls(world);
     u32 broken[16];  // breakable joints that snapped: tell the object that owned the joint
     for (u32 n = physics_->take_broken_joints(broken, 16), k = 0; k < n; ++k) {
         if (broken[k] < kMaxJoints && world.alive(joint_owners_[broken[k]])) scripts_.send(joint_owners_[broken[k]], "on_joint_break", {});

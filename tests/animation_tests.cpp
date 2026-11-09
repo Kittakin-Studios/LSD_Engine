@@ -365,6 +365,39 @@ static void rig_tests() {
 
 // Motion matching: the path a held direction predicts, a database from a real rig's takes, a frame's
 // own features finding it again, and playback that keeps returning a clip.
+// Ragdolls: a capsule per big bone of a humanoid, parents first, every body but the root hanging from one; a pose set
+// from model-space joints skins like the sampled one.
+static void ragdoll_tests(const std::string& data) {
+    anim::SkinnedModel model(default_allocator());
+    char error[256] = "";
+    CHECK(anim::import_skinned((data + "/maya_kenney_character_7700_binary.fbx").c_str(), 1.0f, model, error, sizeof error));
+    anim::RagdollBody bodies[anim::kMaxRagdollBodies];
+    const u32 count = anim::build_ragdoll(model, bodies, anim::kMaxRagdollBodies, 70.0f);
+    std::printf("  ragdoll: %u bodies\n", count);
+    CHECK(count >= 8);
+    u32 roots = 0;
+    f32 mass = 0.0f;
+    bool foot = false, hips = false;
+    for (u32 i = 0; i < count; ++i) {
+        const anim::RagdollBody& b = bodies[i];
+        CHECK(b.parent < static_cast<i32>(i) && b.radius > 0.005f && b.radius < 0.5f && std::fabs(length(b.axis) - 1.0f) < 1e-3f);
+        roots += b.parent < 0 ? 1u : 0u;
+        mass += b.mass;
+        foot = foot || b.joint == static_cast<u32>(model.find_joint("LeftFoot"));
+        hips = hips || b.joint == static_cast<u32>(model.find_joint("Hips"));
+    }
+    CHECK(roots == 1 && foot && hips && std::fabs(mass - 70.0f) < 1.0f);
+    const anim::BlendInput still{nullptr, 0.0f, 1.0f};
+    anim::Pose sampled, set;
+    sampled.sample_blend(model, &still, 1);
+    std::vector<Mat4> models(model.joint_count());
+    for (u32 j = 0; j < model.joint_count(); ++j) models[j] = sampled.joint_model(j);
+    CHECK(set.set_models(model, models.data()) && set.joint_count() == sampled.joint_count());
+    f32 worst = 0.0f;
+    for (u32 k = 0; k < sampled.joint_count() * 12; ++k) worst = std::fmax(worst, std::fabs(set.joint_rows()[k] - sampled.joint_rows()[k]));
+    CHECK(worst < 1e-4f);
+}
+
 static void motion_matching_tests(const std::string& data) {
     anim::MotionInput standing;
     f32 pos[6], face[6];
@@ -657,6 +690,7 @@ int main() {
     graph_editing_tests();
     const std::string data = LSD_UFBX_DATA_DIR;
     motion_matching_tests(data);
+    ragdoll_tests(data);
     morph_tests(data);
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
     u32 tested_animation = 0;

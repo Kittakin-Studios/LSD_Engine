@@ -35,6 +35,7 @@
 //   lsd.set_audio_param(name, value)      read by Sound Cue Switch nodes
 //   lsd.set_anim_param(e, name, value)    an Animation Graph parameter on e's skeletal mesh (and its children's)
 //   lsd.set_morph(e, name, weight)        a morph target (blend shape) weight on e's skeletal mesh (or its child's)
+//   lsd.ragdoll(e, on)                     e's skeletal mesh (or its child's) becomes a ragdoll (true) or animates again (false)
 //   lsd.morph_names(e) -> {"Nose_Wide", ...}   the morph targets e's skeletal mesh (or its child's) has
 //   lsd.set_outfit(e, slot, mesh [, r, g, b])  what e's Outfit wears in a slot ("Shirt", "Shoes"...), a mesh
 //                                         asset by name or GUID ("" takes it off); the slot is added if new
@@ -300,6 +301,7 @@ struct ScriptHost {
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
     void (*set_anim_param)(void* user, world::Entity e, const char* name, f32 value) = nullptr;
+    bool (*ragdoll)(void* user, world::Entity e, bool on) = nullptr;  // false: no skeletal mesh there
     f32 (*play_montage)(void* user, world::Entity e, const char* animation, f32 rate, const char* from_bone, f32 blend, bool root_motion, const char* slot) = nullptr;
     void (*stop_montage)(void* user, world::Entity e, f32 blend, const char* slot) = nullptr;  // slot "": all
     bool (*montage_playing)(void* user, world::Entity e, const char* slot) = nullptr;          // slot "": any

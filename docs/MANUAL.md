@@ -1122,6 +1122,14 @@ meet without being pushed. **Physics
 Joint** links two objects (fixed, hinge, ball, slider, **cone**: swings within a cone, twist limited; limits;
 motors: doors, chains, rotating platforms). **Spring Frequency** makes hinge / slider limits give like a
 spring; **Break Force** makes it snap when pulled harder (the object's scripts get `on_joint_break`).
+
+**Ragdolls** (Unreal's Physics Asset + Simulate Physics on a Skeletal Mesh): tick **Skeletal Mesh > Physics > Simulate
+Physics** and the body falls as a ragdoll when Play starts, or call `lsd.ragdoll(e)` (the **Set Ragdoll** node) when a
+character dies; `lsd.ragdoll(e, false)` gives it back to its animation. The physics asset is made from the mesh: a
+capsule for each big bone, fitted to the skin that bone moves most (head, hands and feet included; fingers and twist
+bones ride along with their parent), joined at the joints by cone joints (40 degrees of swing, 25 of twist), about 70 kg
+in all; a ragdoll's parts do not collide with each other. It starts from the pose the mesh had that frame. Clothes on
+the body (Leader Pose) follow it. For now it starts at rest and the object itself stays where it was.
 Select the object and click the joint's yellow ring in the viewport to move its pivot with the gizmo. Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
 capsule (`lsd.sphere_trace` / `box_trace` / `capsule_trace`) or list what overlaps a shape
 (`lsd.overlap_sphere` / `overlap_box`). Visual scripts have **Line Trace**, **Sphere Trace**, **Capsule
@@ -2198,6 +2206,7 @@ Audio and animation
 | `lsd.apply_damage(target, amount [, instigator])` | calls the target's `on_damage(self, amount, instigator)` (Event Any Damage; instigator nil when none); an AI target senses it |
 | `lsd.anim_curve(e, name)` | an animation curve's value where e's animation is now (0 when none has it) |
 | `lsd.set_morph(e, name, weight)` | Morph target weight on the skeletal mesh (0 rest, 1 full) |
+| `lsd.ragdoll(e[, on])` | e's skeletal mesh (or its child's) falls as a ragdoll (true, default) or animates again (false) |
 | `lsd.set_material_parameter(name, value)` / `(name, r, g, b[, a])` | A global material parameter (Project Settings > Materials) for every material; false if no such name |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
 | `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |

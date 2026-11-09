@@ -47,6 +47,12 @@ rhi::BufferHandle AnimationPlayer::morph_data(const SkinnedEntry& model) {
     return buffer;
 }
 
+void AnimationPlayer::set_ragdoll_pose(world::Entity e, const Mat4* models, u32 count) {
+    for (State& s : states_) {
+        if (s.used && s.entity == e) s.ragdoll.assign(models, models + count);
+    }
+}
+
 rhi::BufferHandle AnimationPlayer::vertices(world::Entity e, rhi::BufferHandle model) const {
     for (const State& s : states_) {
         if (s.used && s.entity == e) return s.morphed.valid() && s.morph_key ? s.morphed : model;
@@ -605,6 +611,7 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         s.morphed = {};
         s.morph_key = 0;
         s.morph_vertex_count = 0;
+        s.ragdoll.clear();
     }
     const reflect::TypeInfo& type = reflect::type_of<world::SkeletalMesh>();
     for (u32 i = 0; i < world.count(type); ++i) {
@@ -736,6 +743,11 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         auto local = [&](f32 t) { return mesh->looping ? t - std::floor(t / duration) * duration : (t < 0.0f ? 0.0f : t > duration ? duration : t); };
         const f32 from = local(before), to = local(state->time);
         fire_notifies(*set, mesh->clip, from, to, mesh->looping && to < from, at, *sounds);
+    }
+    for (State& s : states_) {  // ragdolls: their bodies' pose over the animation (before clothes copy it)
+        const auto* mesh = s.used && !s.ragdoll.empty() ? world.get<world::SkeletalMesh>(s.entity) : nullptr;
+        const SkinnedEntry* model = mesh ? cache.get(mesh->mesh) : nullptr;
+        if (model && s.ragdoll.size() == model->model->joint_count()) s.pose.set_models(*model->model, s.ragdoll.data());
     }
     // Leader poses: clothes (and hair, gear) on the same skeleton copy their body's pose by bone name.
     for (const Follower& f : followers_) {

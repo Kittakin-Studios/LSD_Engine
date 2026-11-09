@@ -20,6 +20,9 @@ public:
     // `sounds` only in Play (notifies are silent in the editor).
     void update(world::World& world, SkinnedCache& cache, f32 dt, SoundPlayer* sounds);
     const anim::Pose* pose(world::Entity e) const;  // nullptr until the object has been updated
+    // Ragdoll (Simulate Physics): every joint's model-space transform from its bodies, drawn instead of the animation
+    // from the next update on (clothes following it too); count = 0 gives the object back to its animation.
+    void set_ragdoll_pose(world::Entity e, const Mat4* models, u32 count);
     // The Animation Graph state `e` is in ("" without a graph or before its first update), and the
     // crossfade's source state if one is running ("" otherwise).
     const char* graph_state(SkinnedCache& cache, const world::SkeletalMesh& mesh, world::Entity e, const char** fading_from = nullptr) const;
@@ -85,6 +88,7 @@ private:
         rhi::BufferHandle morphed;  // bind pose + morph targets: the GPU's output (kept), or a CPU copy rebuilt per change
         u64 morph_key = 0;          // 0: no weights set, draw the model's own vertices
         u32 morph_vertex_count = 0;  // the GPU output's size (0: a CPU copy)
+        std::vector<Mat4> ragdoll;   // set_ragdoll_pose: the joints' model-space transforms, while it is a ragdoll
         bool used = false;
         anim::MotionState motion;
         const anim::MotionData* motion_data = nullptr;  // what `motion` indexes (a rebuild restarts it)

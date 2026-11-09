@@ -105,6 +105,21 @@ void apply_morphs(const SkinnedModel& model, WeightOf weight, rhi::SkinnedVertex
 }
 
 // A simpler version of some of a skinned mesh's triangles (an LOD): `indices` (a section of model.indices) cut to about
+// Ragdoll (Unreal's Physics Asset, made from the mesh): a capsule for each bone enough of the mesh follows (fitted to
+// the vertices it moves most), joined to its nearest ancestor's capsule at the bone's start. Bind pose, model space.
+struct RagdollBody {
+    u32 joint = 0;            // the bone it moves
+    i32 parent = -1;          // the body it hangs from (an index into the bodies), -1 for the root body
+    Vec3 centre;              // the capsule's centre
+    Vec3 axis{0, 0, 1};       // its long axis (unit), along the bone
+    f32 radius = 0.05f;
+    f32 half_height = 0.0f;   // of the cylinder between the end caps (physics::BodyDesc's capsule)
+    f32 mass = 1.0f;          // kg, the total shared by volume
+};
+constexpr u32 kMaxRagdollBodies = 32;
+// Returns how many bodies were written (bones in skeleton order, parents first); 0 for a mesh without enough bones.
+u32 build_ragdoll(const SkinnedModel& model, RagdollBody* out, u32 capacity, f32 total_mass = 70.0f);
+
 // The morph targets packed for rhi::Device::morph_vertices: per vertex its first entry and entry count (2 words),
 // then 8 words per entry (offset xyz, target index, normal turn xyz, 0), each vertex's entries together.
 void pack_morphs(const SkinnedModel& model, Array<u32>& out);
@@ -196,6 +211,8 @@ public:
     // each of `model`'s joints takes the model-space pose of `leader`'s joint with the same name
     // (from `leader_model`); joints the leader lacks stay at their bind pose. Replaces any sampled pose.
     bool follow(const SkinnedModel& model, const SkinnedModel& leader_model, const Pose& leader);
+    // Every joint's model-space transform set as given (a ragdoll's bodies); replaces any sampled pose.
+    bool set_models(const SkinnedModel& model, const Mat4* models);
 
 private:
     bool rebuild(const SkinnedModel& model, i32 from);  // locals -> model matrices -> rows

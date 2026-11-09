@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
@@ -164,9 +165,18 @@ public:
     std::vector<Contact> pending;
 };
 
+// BodyDesc::group: bodies of one non-zero group never collide with each other (a ragdoll's parts).
+class SameGroupFilter final : public JPH::GroupFilter {
+public:
+    bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
+        return a.GetGroupID() == JPH::CollisionGroup::cInvalidGroup || a.GetGroupID() != b.GetGroupID();
+    }
+};
+
 } // namespace
 
 struct PhysicsWorld::Impl {
+    JPH::Ref<JPH::GroupFilter> group_filter = new SameGroupFilter();
     BroadPhaseLayers broad_phase_layers;
     ObjectVsBroadPhaseFilter object_vs_broad_phase;
     ObjectPairFilter object_pairs;
@@ -282,6 +292,7 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     settings.mFriction = desc.friction;
     settings.mUserData = impl_->bodies.size();  // our index, for contacts and ray hits
     settings.mRestitution = desc.restitution;
+    if (desc.group) settings.mCollisionGroup = JPH::CollisionGroup(impl_->group_filter, desc.group, 0);
     if (desc.plane_2d) settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationZ | JPH::EAllowedDOFs::RotationY;
     if (desc.motion == Motion::Dynamic) {
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;

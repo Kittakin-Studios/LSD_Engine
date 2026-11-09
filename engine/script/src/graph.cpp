@@ -158,6 +158,8 @@ NodeDef g_defs[] = {
     {"SetMaterialParam", "Set Global Material Parameter", "Rendering",
      "Sets a global material parameter (Project Settings > Materials; Unreal's Set Vector Parameter Value on a Collection): every material reading it follows",
      {kExecIn, {"Name", PinType::String, "Wind"}, {"Value", PinType::Vector, "1,1,1"}}, 0, {kExecOut}, 0, "lsd.set_material_parameter($1, $2.x, $2.y, $2.z)", {}},
+    {"Ragdoll", "Set Ragdoll", "Animation", "The target's skeletal mesh falls as a ragdoll (Unreal's Set Simulate Physics on a Skeletal Mesh); untick On to animate it again",
+     {kExecIn, kTarget, {"On", PinType::Bool, "true"}}, 0, {kExecOut}, 0, "lsd.ragdoll($1, $2)", {}},
     {"SetAnimParam", "Set Anim Parameter", "Animation", "A parameter of the target's Animation Graph (Speed, InAir, or your own)",
      {kExecIn, kTarget, {"Name", PinType::String, "Speed"}, {"Value", PinType::Float, "0"}}, 0, {kExecOut}, 0, "lsd.set_anim_param($1, $2, $3)", {}},
     {"PlayMontage", "Play Montage", "Animation", "Plays an animation once over what the target plays (from Bone down: spine_01 = the upper body; empty = all), blended in and out; Custom Event on_montage_ended runs when it ends",
