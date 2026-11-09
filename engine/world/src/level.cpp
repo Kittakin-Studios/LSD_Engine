@@ -60,6 +60,97 @@ bool in_transient(const World& world, Entity e) {  // it or an ancestor is a Sub
     return false;
 }
 
+void append_entity(Array<char>& out, const World& world, Entity e) {
+    char line[128];
+    const Entity parent = world.parent(e);
+    std::snprintf(line, sizeof line, "{\"id\": %u, \"name\": ", e.value);
+    append(out, line);
+    append_string(out, world.name(e));
+    std::snprintf(line, sizeof line, ", \"parent\": %lld", parent.valid() ? static_cast<long long>(parent.value) : -1LL);
+    append(out, line);
+    if (world.hidden(e)) append(out, ", \"hidden\": true");
+    if (world.locked(e)) append(out, ", \"locked\": true");
+    if (world.folder(e)[0]) {
+        append(out, ", \"folder\": ");
+        append_string(out, world.folder(e));
+    }
+    u32 type_count = 0;
+    const reflect::TypeInfo* const* types = component_types(type_count);
+    for (u32 t = 0; t < type_count; ++t) {
+        const void* component = world.get(e, *types[t]);
+        if (!component) continue;
+        std::snprintf(line, sizeof line, ",\n     \"%s\": ", types[t]->name);
+        append(out, line);
+        append_component(out, *types[t], component);
+    }
+    append(out, "}");
+}
+
+struct Link {
+    Entity child;
+    long long parent;
+};
+
+// One entity object. `replace`: an existing object with that id is emptied and rewritten (multi-user
+// edits); otherwise the id must be free (level load). Its parent link goes to `links`.
+void read_entity(World& world, reflect::JsonReader& r, Array<Link>& links, bool replace) {
+    // "id" and "name" come first (save_level writes them first).
+    Entity e;
+    char name[64] = "";
+    r.expect('{');
+    while (r.ok && !r.peek('}')) {
+        char field[64];
+        r.read_string(field, sizeof field);
+        r.expect(':');
+        long long value = 0;
+        if (std::strcmp(field, "id") == 0) {
+            if (read_integer(r, value)) e.value = static_cast<u32>(value);
+        } else if (std::strcmp(field, "name") == 0) {
+            r.read_string(name, sizeof name);
+            if (replace && world.alive(e)) {
+                u32 type_count = 0;
+                const reflect::TypeInfo* const* types = component_types(type_count);
+                for (u32 t = 1; t < type_count; ++t) world.remove(e, *types[t]);  // [0] is Transform: reset below
+                std::memcpy(world.add(e, *types[0]), types[0]->defaults, types[0]->size);
+                world.set_name(e, name);
+                world.set_hidden(e, false);
+                world.set_locked(e, false);
+                world.set_folder(e, "");
+                world.set_parent(e, Entity{}, false);
+            } else if (!world.create_at(e, name)) {
+                r.fail("missing or duplicate entity id");
+            }
+        } else if (std::strcmp(field, "hidden") == 0 || std::strcmp(field, "locked") == 0) {
+            char token[8];
+            r.read_token(token, sizeof token);
+            const bool on = std::strcmp(token, "true") == 0;
+            if (field[0] == 'h') world.set_hidden(e, on);
+            else world.set_locked(e, on);
+        } else if (std::strcmp(field, "folder") == 0) {
+            char folder[64] = "";
+            r.read_string(folder, sizeof folder);
+            world.set_folder(e, folder);
+        } else if (std::strcmp(field, "parent") == 0) {
+            if (read_integer(r, value) && value >= 0) links.push_back({e, value});
+        } else if (const reflect::TypeInfo* type = find_component_type(field); type && world.alive(e)) {
+            reflect::read_object(r, *type, world.add(e, *type));
+        } else {
+            r.skip_value();  // unknown component (removed from the engine): dropped
+        }
+        if (!r.accept(',')) break;
+    }
+    r.expect('}');
+}
+
+void apply_links(World& world, const Array<Link>& links) {
+    for (const Link& link : links) {
+        Entity parent;
+        parent.value = static_cast<u32>(link.parent);
+        // Raw link, not set_parent(): the saved Transform is already relative to the parent.
+        if (!world.alive(parent) || !world.set_parent(link.child, parent, false)) LSD_LOG_WARN("world", "Dropped a bad parent link in the level");
+    }
+}
+
 } // namespace
 
 void save_level(const World& world, Array<char>& out) {
@@ -70,41 +161,38 @@ void save_level(const World& world, Array<char>& out) {
     append(out, ",\n  \"world_settings\": ");
     append_component(out, reflect::type_of<WorldSettings>(), &world.settings());
     append(out, ",\n  \"entities\": [");
-    u32 type_count = 0;
-    const reflect::TypeInfo* const* types = component_types(type_count);
     bool first = true;
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         const Entity e = world.entity_at_slot(slot);
         if (!e.valid() || in_transient(world, e)) continue;  // Sub Level contents live in their own file
-        const Entity parent = world.parent(e);
-        std::snprintf(line, sizeof line, "%s\n    {\"id\": %u, \"name\": ", first ? "" : ",", e.value);
-        append(out, line);
-        append_string(out, world.name(e));
-        std::snprintf(line, sizeof line, ", \"parent\": %lld", parent.valid() ? static_cast<long long>(parent.value) : -1LL);
-        append(out, line);
-        if (world.hidden(e)) append(out, ", \"hidden\": true");
-        if (world.locked(e)) append(out, ", \"locked\": true");
-        if (world.folder(e)[0]) {
-            append(out, ", \"folder\": ");
-            append_string(out, world.folder(e));
-        }
-        for (u32 t = 0; t < type_count; ++t) {
-            const void* component = world.get(e, *types[t]);
-            if (!component) continue;
-            std::snprintf(line, sizeof line, ",\n     \"%s\": ", types[t]->name);
-            append(out, line);
-            append_component(out, *types[t], component);
-        }
-        append(out, "}");
+        append(out, first ? "\n    " : ",\n    ");
+        append_entity(out, world, e);
         first = false;
     }
     append(out, "\n  ]\n}\n");
 }
 
+void save_entity(const World& world, Entity e, Array<char>& out) {
+    out.clear();
+    if (world.alive(e)) append_entity(out, world, e);
+}
+
+bool load_entities(World& world, const char* text, usize length) {
+    Array<Link> links(default_allocator());
+    reflect::JsonReader r{text, text + length};
+    r.expect('[');
+    while (r.ok && !r.peek(']')) {
+        read_entity(world, r, links, true);
+        if (!r.accept(',')) break;
+    }
+    r.expect(']');
+    apply_links(world, links);
+    return r.ok;
+}
+
 bool load_level(World& world, const char* text, usize length) {
     world.clear();
     Allocator& heap = default_allocator();
-    struct Link { Entity child; long long parent; };
     Array<Link> links(heap);
     reflect::JsonReader r{text, text + length};
 
@@ -121,40 +209,7 @@ bool load_level(World& world, const char* text, usize length) {
         } else if (std::strcmp(key, "entities") == 0) {
             r.expect('[');
             while (r.ok && !r.peek(']')) {
-                // Entity object. "id" and "name" come first (save_level writes them first).
-                Entity e;
-                char name[64] = "";
-                r.expect('{');
-                while (r.ok && !r.peek('}')) {
-                    char field[64];
-                    r.read_string(field, sizeof field);
-                    r.expect(':');
-                    long long value = 0;
-                    if (std::strcmp(field, "id") == 0) {
-                        if (read_integer(r, value)) e.value = static_cast<u32>(value);
-                    } else if (std::strcmp(field, "name") == 0) {
-                        r.read_string(name, sizeof name);
-                        if (!world.create_at(e, name)) r.fail("missing or duplicate entity id");
-                    } else if (std::strcmp(field, "hidden") == 0 || std::strcmp(field, "locked") == 0) {
-                        char token[8];
-                        r.read_token(token, sizeof token);
-                        const bool on = std::strcmp(token, "true") == 0;
-                        if (field[0] == 'h') world.set_hidden(e, on);
-                        else world.set_locked(e, on);
-                    } else if (std::strcmp(field, "folder") == 0) {
-                        char folder[64] = "";
-                        r.read_string(folder, sizeof folder);
-                        world.set_folder(e, folder);
-                    } else if (std::strcmp(field, "parent") == 0) {
-                        if (read_integer(r, value) && value >= 0) links.push_back({e, value});
-                    } else if (const reflect::TypeInfo* type = find_component_type(field); type && world.alive(e)) {
-                        reflect::read_object(r, *type, world.add(e, *type));
-                    } else {
-                        r.skip_value();  // unknown component (removed from the engine): dropped
-                    }
-                    if (!r.accept(',')) break;
-                }
-                r.expect('}');
+                read_entity(world, r, links, false);
                 if (!r.accept(',')) break;
             }
             r.expect(']');
@@ -165,12 +220,7 @@ bool load_level(World& world, const char* text, usize length) {
     }
     r.expect('}');
 
-    for (const Link& link : links) {
-        Entity parent;
-        parent.value = static_cast<u32>(link.parent);
-        // Raw link, not set_parent(): the saved Transform is already relative to the parent.
-        if (!world.alive(parent) || !world.set_parent(link.child, parent, false)) LSD_LOG_WARN("world", "Dropped a bad parent link in the level");
-    }
+    apply_links(world, links);
     if (!r.ok) world.clear();
     return r.ok;
 }

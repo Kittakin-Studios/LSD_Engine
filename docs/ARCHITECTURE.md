@@ -621,6 +621,25 @@ calls for Anthropic and OpenAI-compatible APIs. Tools are the MCP bridge's set r
 (`editor/assistant_lessons.*`) are teaching text whose code blocks are the files; Apply writes them,
 makes the input assets and sockets and attaches the component to the selection.
 
+## Multi-user editing
+
+`editor/multi_user.*` (network, panel, markers) over `editor/multi_user_core.*` (ops, no network,
+tested in editor_tests). A session is a `net::NetSession` on its own empty `World`, so nothing in
+the level replicates as game objects; only named events go over it (reliable; texts over 16 KB go as
+`mu_more` pieces first). The host is the hub: a joiner's events go to it, it applies and passes them on.
+
+- **Join**: on PlayerJoined the host sends `mu_level` (its level path and `save_level` text); the
+  joiner loads it, resets its undo history and starts syncing.
+- **Edits**: `Transactions::version()` changes with every commit, undo, redo and reset. When it does,
+  `multi_user::diff` compares each object's `world::save_entity` text with the baseline (the level as
+  everyone last agreed on it) and sends `mu_ops`: `{"settings": ..., "remove": [ids], "set": [objects]}`.
+  `apply` runs removes first (a new object may reuse a slot), then `world::load_entities` (an existing
+  id is emptied and rewritten, parents linked last), re-captures the baseline so nothing echoes back,
+  and commits an undo step. Ids are entity handles, the same everywhere because joiners load the
+  host's text. Ops that arrive during Play wait for Stop.
+- **Presence**: every 0.2 s each editor sends `mu_view` (`id|x y z yaw|selected|name`); markers are
+  one-frame `debug_draw` shapes. A user unheard for 5 s is dropped.
+
 ## Packaging and game mode
 
 `package_project` validates the assets, copies the Release executable (renamed to the project),

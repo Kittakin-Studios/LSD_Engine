@@ -22,6 +22,7 @@
 #include "mesh_cache.h"
 #include "debug_draw.h"
 #include "references.h"
+#include "multi_user.h"
 #include "remote_console.h"
 #include "game_module.h"
 #include "keymap.h"
@@ -5799,6 +5800,7 @@ void draw_menu_bar(EditorState& s) {
         with_tip(ImGui::MenuItem("World Settings", nullptr, &s.show_world_settings), "This level's settings: gravity, Kill Z, Game Mode, Level Script, navigation");
         with_tip(ImGui::MenuItem("Message Log", nullptr, &s.show_message_log), "Warnings and errors from imports, validation and packaging");
         with_tip(ImGui::MenuItem("Memory", nullptr, &s.show_memory), "Memory used: RAM, video memory and each allocator");
+        with_tip(ImGui::MenuItem("Multi-User Editing", nullptr, &s.show_multi_user), "Edit this level together with other editors: host or join a session, see their cameras and selections (Unreal's Multi-User Editing)");
         with_tip(ImGui::MenuItem("Audio Mixer", nullptr, &s.show_audio_mixer), "The Sound Classes with their Submix effects and live level meters (Unreal's submix graph)");
         if (with_tip(ImGui::BeginMenu("Viewports"), "2D, 2.5D and 3D views of the level, side by side (a 2D game previewed in 3D)")) {
             const u32 kinds = s.settings.viewport_kinds ? s.settings.viewport_kinds : kViewport3D;
@@ -6471,6 +6473,7 @@ void draw_editor(EditorState& s) {
     if (s.particle_editor) s.particle_editor->draw(s);
     source_control::draw();
     remote::draw_window(&s.show_remote_console);
+    multi_user::draw_window(s);
     if (s.new_script_popup) {  // Tools > New C / C++ Script
         ImGui::OpenPopup("New C / C++ Script");
         s.new_script_popup = false;
