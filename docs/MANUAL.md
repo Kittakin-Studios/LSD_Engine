@@ -1728,6 +1728,14 @@ with Offset / Turn, Save. Then give a prop **Attach To Socket** (the character's
 the socket) to carry it, or ask a script: `lsd.socket(e, "Hand_R")` -> x, y, z, fx, fy, fz.
 A bone's name works wherever a socket's does (Attach To Socket, a Camera's Follow Bone).
 
+**Retarget Pose** (Unreal's retarget base pose / the IK Retargeter's Retarget Pose; Skeleton section):
+the pose a rig is matched in when animations move between rigs, so an A-pose character and a
+T-pose one line up limb for limb. **Show Retarget Pose** previews it; select a bone and **Turn** it
+(degrees about X / Y / Z, its children follow); **Auto Align (T-pose)** (humanoid rigs) turns the
+arms straight out and the legs straight down; **Reset Bone** / **Reset** undo; Save keeps it in the
+mesh's .meta. Clips from other files are re-imported with it; the mesh's own takes are unchanged.
+Only FBX clips use it (glTF clips are not retargeted between rigs).
+
 **Unreal rigs** (the Mesh Editor's Skeleton section shows **Rig**): characters with Unreal's bone
 names are recognised, whoever made them (Character Creator, Mixamo-to-UE exports...):
 

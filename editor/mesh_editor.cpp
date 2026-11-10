@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <vector>
 
 namespace lsd::editor {
@@ -531,6 +532,9 @@ void shutdown_mesh_editor() {
     if (g_mw.device && g_mw.morphed.valid()) g_mw.device->destroy_buffer(g_mw.morphed);
     g_mw.target = {};
     g_mw.open = false;
+    // Freed now: at exit ozz's allocator is gone before g_mw (a pure call in the sampling context's destructor).
+    std::destroy_at(&g_mw.pose);
+    std::construct_at(&g_mw.pose);
 }
 
 } // namespace lsd::editor

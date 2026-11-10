@@ -491,6 +491,13 @@ blending up to 6 clips, joint matrices for GPU skinning). An `AnimGraph` is a st
 smallest triangle of samples around the point, the nearest edge outside them); the editor's
 animation player steps it each frame and fires notifies.
 
+**Retarget pose**: a rigged mesh's .meta may hold `retarget_pose` (per-bone turns from rest, model
+axes, degrees). `anim::retarget_models` builds the model-space pose from the rest locals plus those turns
+(children follow), `auto_align_turns` finds the turns that straighten a humanoid's arms and legs into a
+T-pose. `import_clips` takes a `RetargetPoses` (the source and target rigs' turns) and matches the two
+rigs bone by bone in those poses instead of their rest poses; the skinned cache passes them and re-imports
+clips when either side's pose changes. shortcut: FBX clips only, pelvis-height scaling ignores the pelvis turn.
+
 **Morph targets**: `import_skinned` reads each blend channel's full shape as sparse per-vertex
 offsets (`MorphTarget` / `MorphDelta`, moved into model space like the vertices); `import_clips`
 samples animated channel weights at 30 fps into the clip. Each frame the animation player takes a
