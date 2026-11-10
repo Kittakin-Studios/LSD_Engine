@@ -32,6 +32,11 @@ bool path_of(const asset::AssetRegistry& registry, const char* guid_text, char* 
     return true;
 }
 
+// A texture's file and its .meta together: Saving its settings (Max Size, Mip Streaming) reloads it like an edit.
+i64 texture_time(const char* path) {
+    return file_time(path) + file_time((std::string(path) + ".meta").c_str());
+}
+
 } // namespace
 
 TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& registry)
@@ -73,7 +78,7 @@ TextureCache::~TextureCache() {
 
 bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) {
     if (!path_of(registry_, e.guid, path, capacity)) return false;
-    e.modified = file_time(path);
+    e.modified = texture_time(path);
     asset::Guid guid;
     asset::parse_guid(e.guid, guid);
     asset::AssetMeta meta;
@@ -255,8 +260,9 @@ void TextureCache::check_files() {
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];
         char path[300];
-        if (!e.pending && path_of(registry_, e.guid, path, sizeof path) && file_time(path) != e.modified) {
+        if (!e.pending && path_of(registry_, e.guid, path, sizeof path) && texture_time(path) != e.modified) {
             LSD_LOG_INFO("editor", "Reloading texture %s", path);
+            if (!e.want) e.want = e.complete ? kFull : e.side;  // back at the size it had, not the smallest
             if (stream) queue(i);  // the old one stays until the new one is up
             else load(e);
         }
