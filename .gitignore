@@ -32,3 +32,4 @@ docs/.obsidian/
 # Claude Code plugin data (local sessions, never shared)
 .claude-flow/
 .claude/worktrees/
+graphify-out/n
