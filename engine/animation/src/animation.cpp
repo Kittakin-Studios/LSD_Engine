@@ -211,6 +211,86 @@ bool is_humanoid(const HumanBone* parts, u32 count) {
     return found == 6;
 }
 
+void retarget_models(const i32* parents, const Mat4* rest_local, const Vec3* turns, u32 count, Mat4* out) {
+    for (u32 j = 0; j < count; ++j) {
+        Mat4 m = parents[j] >= 0 ? out[parents[j]] * rest_local[j] : rest_local[j];
+        if (turns && (turns[j].x != 0.0f || turns[j].y != 0.0f || turns[j].z != 0.0f)) {
+            const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+            m = translation(at) * rotation_euler(turns[j]) * translation(-at) * m;  // about the joint, in model space
+        }
+        out[j] = m;
+    }
+}
+
+void auto_align_turns(const i32* parents, const Mat4* rest_local, const HumanBone* parts, u32 count, Vec3* turns) {
+    using H = HumanBone;
+    auto find = [&](H part) {
+        for (u32 j = 0; j < count; ++j) {
+            if (parts[j] == part) return static_cast<i32>(j);
+        }
+        return -1;
+    };
+    std::vector<Mat4> models(count);
+    retarget_models(parents, rest_local, turns, count, models.data());
+    const i32 left = find(H::UpperArmL), right = find(H::UpperArmR);
+    Vec3 side{1, 0, 0};  // the character's left, level: from its right shoulder to its left
+    if (left >= 0 && right >= 0) {
+        const Mat4 &l = models[static_cast<u32>(left)], &r = models[static_cast<u32>(right)];
+        side = Vec3{l.at(0, 3) - r.at(0, 3), l.at(1, 3) - r.at(1, 3), 0.0f};
+        if (length(side) < 1e-5f) return;
+        side = normalize(side);
+    }
+    for (u32 j = 0; j < count; ++j) {
+        Mat4 m = parents[j] >= 0 ? models[static_cast<u32>(parents[j])] * rest_local[j] : rest_local[j];
+        H next = H::None;
+        Vec3 want{0, 0, -1};
+        switch (parts[j]) {
+            case H::UpperArmL: next = H::LowerArmL, want = side; break;
+            case H::LowerArmL: next = H::HandL, want = side; break;
+            case H::UpperArmR: next = H::LowerArmR, want = -side; break;
+            case H::LowerArmR: next = H::HandR, want = -side; break;
+            case H::ThighL: next = H::CalfL; break;
+            case H::CalfL: next = H::FootL; break;
+            case H::ThighR: next = H::CalfR; break;
+            case H::CalfR: next = H::FootR; break;
+            default: break;
+        }
+        // The bone points at the next part below it (twist bones between are skipped).
+        i32 end = -1;
+        for (u32 k = j + 1; k < count && next != H::None && end < 0; ++k) {
+            if (parts[k] != next) continue;
+            for (i32 a = parents[k]; a >= 0 && end < 0; a = parents[a]) end = a == static_cast<i32>(j) ? static_cast<i32>(k) : -1;
+        }
+        if (end >= 0) {
+            Mat4 below;  // the end joint relative to this one, at rest
+            for (i32 a = end; a != static_cast<i32>(j); a = parents[a]) below = rest_local[a] * below;
+            const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+            const Vec3 bone = transform_point(m, Vec3{below.at(0, 3), below.at(1, 3), below.at(2, 3)}) - at;
+            if (length(bone) > 1e-6f) {
+                const Vec3 from = normalize(bone);
+                Vec3 axis = cross(from, want);
+                const f32 s = length(axis), c = dot(from, want);
+                Mat4 turn;
+                if (s > 1e-6f || c < 0.0f) {
+                    // Rodrigues: about `axis` by the angle between them (half a turn about any perpendicular when opposite).
+                    axis = s > 1e-6f ? axis * (1.0f / s) : normalize(std::fabs(from.z) < 0.9f ? cross(from, Vec3{0, 0, 1}) : cross(from, Vec3{1, 0, 0}));
+                    const f32 sine = s > 1e-6f ? s : 0.0f, k = 1.0f - c;
+                    turn.at(0, 0) = c + axis.x * axis.x * k, turn.at(0, 1) = axis.x * axis.y * k - axis.z * sine, turn.at(0, 2) = axis.x * axis.z * k + axis.y * sine;
+                    turn.at(1, 0) = axis.y * axis.x * k + axis.z * sine, turn.at(1, 1) = c + axis.y * axis.y * k, turn.at(1, 2) = axis.y * axis.z * k - axis.x * sine;
+                    turn.at(2, 0) = axis.z * axis.x * k - axis.y * sine, turn.at(2, 1) = axis.z * axis.y * k + axis.x * sine, turn.at(2, 2) = c + axis.z * axis.z * k;
+                }
+                Vec3 t, scale;
+                decompose_trs(turn, t, turns[j], scale);
+            }
+        }
+        if (turns[j].x != 0.0f || turns[j].y != 0.0f || turns[j].z != 0.0f) {
+            const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+            m = translation(at) * rotation_euler(turns[j]) * translation(-at) * m;
+        }
+        models[j] = m;
+    }
+}
+
 u32 simplify_skinned(const SkinnedModel& model, const u32* indices, u32 count, f32 ratio, u32* out) {
     const usize n = model.vertices.size();
     if (!n || count < 3) return 0;
@@ -399,6 +479,51 @@ std::vector<ozz::math::Transform> rest_poses(const ozz::animation::Skeleton& ske
         rest[j].scale = ozz::math::Float3(sx[lane], sy[lane], sz[lane]);
     }
     return rest;
+}
+
+Mat4 to_mat4(const ozz::math::Transform& t) {
+    const ozz::math::Quaternion& q = t.rotation;
+    Mat4 r;
+    r.at(0, 0) = 1 - 2 * (q.y * q.y + q.z * q.z), r.at(0, 1) = 2 * (q.x * q.y - q.z * q.w), r.at(0, 2) = 2 * (q.x * q.z + q.y * q.w);
+    r.at(1, 0) = 2 * (q.x * q.y + q.z * q.w), r.at(1, 1) = 1 - 2 * (q.x * q.x + q.z * q.z), r.at(1, 2) = 2 * (q.y * q.z - q.x * q.w);
+    r.at(2, 0) = 2 * (q.x * q.z - q.y * q.w), r.at(2, 1) = 2 * (q.y * q.z + q.x * q.w), r.at(2, 2) = 1 - 2 * (q.x * q.x + q.y * q.y);
+    return translation(Vec3{t.translation.x, t.translation.y, t.translation.z}) * r * scaling(Vec3{t.scale.x, t.scale.y, t.scale.z});
+}
+
+// The rotation of a transform without shear (its scale taken out), as a quaternion.
+ozz::math::Quaternion rotation_of(const Mat4& m) {
+    f32 r[3][3];
+    for (int c = 0; c < 3; ++c) {
+        const f32 l = length(Vec3{m.at(0, c), m.at(1, c), m.at(2, c)});
+        for (int row = 0; row < 3; ++row) r[row][c] = l > 1e-8f ? m.at(row, c) / l : 0.0f;
+    }
+    const f32 trace = r[0][0] + r[1][1] + r[2][2];
+    ozz::math::Quaternion q;
+    if (trace > 0.0f) {
+        const f32 s = std::sqrt(trace + 1.0f) * 2.0f;
+        q = ozz::math::Quaternion((r[2][1] - r[1][2]) / s, (r[0][2] - r[2][0]) / s, (r[1][0] - r[0][1]) / s, 0.25f * s);
+    } else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+        const f32 s = std::sqrt(1.0f + r[0][0] - r[1][1] - r[2][2]) * 2.0f;
+        q = ozz::math::Quaternion(0.25f * s, (r[0][1] + r[1][0]) / s, (r[0][2] + r[2][0]) / s, (r[2][1] - r[1][2]) / s);
+    } else if (r[1][1] > r[2][2]) {
+        const f32 s = std::sqrt(1.0f + r[1][1] - r[0][0] - r[2][2]) * 2.0f;
+        q = ozz::math::Quaternion((r[0][1] + r[1][0]) / s, 0.25f * s, (r[1][2] + r[2][1]) / s, (r[0][2] - r[2][0]) / s);
+    } else {
+        const f32 s = std::sqrt(1.0f + r[2][2] - r[0][0] - r[1][1]) * 2.0f;
+        q = ozz::math::Quaternion((r[0][2] + r[2][0]) / s, (r[1][2] + r[2][1]) / s, 0.25f * s, (r[1][0] - r[0][1]) / s);
+    }
+    return ozz::math::Normalize(q);
+}
+
+// Turns per joint from named ones (Vec3 zero for unnamed joints).
+std::vector<Vec3> turns_by_name(const char* const* names, u32 count, const BoneTurn* turns, u32 turn_count) {
+    std::vector<Vec3> out(count);
+    for (u32 j = 0; j < count; ++j) {
+        for (u32 t = 0; t < turn_count; ++t) {
+            if (std::strcmp(names[j], turns[t].bone) == 0) out[j] = turns[t].rotation;
+        }
+    }
+    return out;
 }
 
 // Triangles grouped by section (counting sort, file order kept inside each), so each section is one range.
@@ -1117,7 +1242,13 @@ bool blended_morph_weight(const BlendInput* inputs, u32 count, const char* morph
     return any;
 }
 
-u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims, u32 trim_count) {
+void rest_locals(const SkinnedModel& model, Mat4* out) {
+    if (!model.impl || !model.impl->skeleton) return;
+    const std::vector<ozz::math::Transform> rest = rest_poses(*model.impl->skeleton);
+    for (usize j = 0; j < rest.size(); ++j) out[j] = to_mat4(rest[j]);
+}
+
+u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims, u32 trim_count, const RetargetPoses* poses) {
     if (is_gltf(path)) return import_clips_gltf(path, model, out, capacity, trims, trim_count);
     char error[256];
     ufbx_scene* scene = load_scene(path, error, sizeof error);
@@ -1177,6 +1308,16 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
             target_rest_scale[j] = target_rest_scale[p] * rest[j].scale;
         }
     }
+    // Retarget poses: each side's bones matched in its own pose (an A-pose turned to a T-pose) instead of its rest pose.
+    const bool target_posed = poses && poses->target_count, source_posed = poses && poses->source_count;
+    if (target_posed) {
+        std::vector<i32> parent(joints);
+        std::vector<Mat4> local(joints), models(joints);
+        for (u32 j = 0; j < joints; ++j) parent[j] = parents[j], local[j] = to_mat4(rest[j]);
+        const std::vector<Vec3> turns = turns_by_name(skeleton.joint_names().data(), joints, poses->target, poses->target_count);
+        retarget_models(parent.data(), local.data(), turns.data(), joints, models.data());
+        for (u32 j = 0; j < joints; ++j) target_rest_world[j] = rotation_of(models[j]);
+    }
     auto world_rotation = [](const ufbx_node* node, const ufbx_anim* anim, f64 time) {
         om::Quaternion r = om::Quaternion::identity();
         for (const ufbx_node* n = node; n; n = n->parent) r = to_ozz(anim ? ufbx_evaluate_transform(anim, n, time) : n->local_transform).rotation * r;
@@ -1185,13 +1326,36 @@ u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 cap
     bool retarget = by_part || (source_rig != target_rig && source_rig != Rig::Other && target_rig != Rig::Other &&
                     !((source_rig == Rig::UE5Manny || source_rig == Rig::UE5MannySimple) && (target_rig == Rig::UE5Manny || target_rig == Rig::UE5MannySimple)));
     std::vector<om::Quaternion> source_rest_world(joints, om::Quaternion::identity());
+    std::vector<Mat4> source_models;  // the file's nodes (by typed_id) in its retarget pose
+    if (source_posed) {
+        const u32 count = static_cast<u32>(scene->nodes.count);
+        std::vector<u32> order(count);  // parents first
+        for (u32 i = 0; i < count; ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(), [&](u32 a, u32 b) { return scene->nodes.data[a]->node_depth < scene->nodes.data[b]->node_depth; });
+        std::vector<u32> slot(count);
+        for (u32 i = 0; i < count; ++i) slot[order[i]] = i;
+        std::vector<i32> parent(count);
+        std::vector<Mat4> local(count), models(count);
+        std::vector<const char*> names(count);
+        for (u32 i = 0; i < count; ++i) {
+            const ufbx_node* n = scene->nodes.data[order[i]];
+            parent[i] = n->parent ? static_cast<i32>(slot[n->parent->typed_id]) : -1;
+            local[i] = to_mat4(to_ozz(n->local_transform));
+            names[i] = n->name.data;
+        }
+        const std::vector<Vec3> turns = turns_by_name(names.data(), count, poses->source, poses->source_count);
+        retarget_models(parent.data(), local.data(), turns.data(), count, models.data());
+        source_models.resize(count);
+        for (u32 i = 0; i < count; ++i) source_models[order[i]] = models[i];
+    }
     for (u32 j = 0; j < joints; ++j) {
         if (!nodes[j]) continue;
-        source_rest_world[j] = world_rotation(nodes[j], nullptr, 0.0);
+        source_rest_world[j] = source_posed ? rotation_of(source_models[nodes[j]->typed_id]) : world_rotation(nodes[j], nullptr, 0.0);
         const om::Quaternion local = to_ozz(nodes[j]->local_transform).rotation;
         const f32 d = std::fabs(local.x * rest[j].rotation.x + local.y * rest[j].rotation.y + local.z * rest[j].rotation.z + local.w * rest[j].rotation.w);
         if (d < 0.996f) retarget = true;  // more than about 10 degrees apart at rest
     }
+    if (target_posed || source_posed) retarget = true;
     // The pelvis moves (walks, crouches) scaled by how much taller the target stands.
     f32 height_ratio = 1.0f;
     i32 pelvis = -1;
