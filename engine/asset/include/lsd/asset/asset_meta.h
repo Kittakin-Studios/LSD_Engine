@@ -64,6 +64,24 @@ struct MaterialSlot {
     LSD_PROPERTY(Edit, Tooltip = "The material's name in the mesh file") char name[64] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drawn with this (Material, Material Instance or Material Graph)") char material[33] = "";
 };
+// A control-rig control (Unreal's Control Rig control): a named, persistent, weight-blended procedural
+// adjustment driven by script. Kind 0 = Turn the bone; 1 = Aim (two-bone reach); 2 = Two-bone IK.
+// Stored per mesh asset so the same controls exist on every object using that mesh.
+LSD_STRUCT()
+struct Control {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The control's name; scripts target it with lsd.set_control / lsd.control_weight") char name[32] = "";
+    LSD_PROPERTY(Edit, Widget = "Choice:Rig,Turn,Aim,Two-Bone IK", Tooltip = "What it does: Turn rotates a bone, Aim points a two-bone chain at a target, Two-Bone IK reaches a tip to a point") u32 kind = 0;
+    LSD_PROPERTY(Edit, Tooltip = "The bone the control acts on (and, for Aim/Two-Bone IK, the upper bone of the chain)") char bone[48] = "";
+    LSD_PROPERTY(Edit, Tooltip = "For Aim/Two-Bone IK: the middle bone (elbow / knee). Unused by Turn") char elbow[48] = "";
+    LSD_PROPERTY(Edit, Tooltip = "For Aim/Two-Bone IK: the tip bone (hand / foot / muzzle). Unused by Turn") char tip[48] = "";
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "The target the control reaches toward (in the mesh's local space for Aim/Two-Bone IK)") Vec3 target;
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turn: rotation degrees about the model's X, Y, Z at the joint") Vec3 rotation;
+    LSD_PROPERTY(Edit, Tooltip = "For Aim/Two-Bone IK: which way is forward (the chain bends to keep the tip pointing this way)") Vec3 forward{1, 0, 0};
+    LSD_PROPERTY(Edit, Min = 0, Max = 360, Tooltip = "For Aim/Two-Bone IK: the chain bends at most this far (0 = no limit)") f32 limit = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "How strongly it blends over the animation (0 = off, 1 = full)") f32 weight = 1.0f;
+    LSD_PROPERTY(Edit, Tooltip = "On by default when this object starts") bool enabled = true;
+};
 constexpr u32 kMaxMaterialSlots = 48;
 
 LSD_STRUCT(Category = "Asset")
@@ -103,6 +121,8 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Named points on bones to attach props to (Unreal's Sockets)") List<MeshSocket, 16> sockets;
     LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Retarget pose (Unreal's Retarget Pose): bones turned from the rest pose (an A-pose made a T-pose) so animations retarget between rigs that rest differently")
     List<RetargetBoneTurn, 64> retarget_pose;
+    LSD_PROPERTY(Edit, Category = "Rig", Tooltip = "Control rig (Unreal's Control Rig): named, weight-blended procedural controls (turns, aims, two-bone IK) that script drives on top of the animation")
+    List<Control, 32> control_rig;
     LSD_PROPERTY(Edit, Category = "Materials", Tooltip = "The material for each of the file's materials (Unreal's Material Slots); Import Materials fills them")
     List<MaterialSlot, 48> material_slots;  // kMaxMaterialSlots (the reflection generator reads the number)
 

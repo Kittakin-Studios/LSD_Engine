@@ -1861,6 +1861,28 @@ bool Pose::aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forwar
     return rebuild(model, static_cast<i32>(joint));
 }
 
+bool Pose::apply_control(const SkinnedModel& model, u32 bone, u32 elbow, u32 tip, int kind, const Vec3& target,
+                         const Vec3& rotation, f32 weight, const Vec3& forward) {
+    if (!impl_ || bone >= joints_) return false;
+    const f32 w = weight < 0.0f ? 0.0f : weight > 1.0f ? 1.0f : weight;
+    if (w <= 0.0f) return true;
+    if (kind == 0) {  // Turn: rotate `bone` about its model axes by `rotation` (degrees).
+        const Mat4 r = rotation_euler(rotation);
+        const auto& col3 = impl_->models[bone].cols[3];
+        const Vec3 p{ozz::math::GetX(col3), ozz::math::GetY(col3), ozz::math::GetZ(col3)};
+        transform_models(model, static_cast<i32>(bone), translation(p) * r * translation(-p));
+        return true;
+    }
+    if (kind == 1) {  // Aim: `bone`'s forward axis toward `target`.
+        return aim_ik(model, bone, target, forward, w);
+    }
+    if (kind == 2) {  // Two-Bone IK: `elbow` bends so `tip` reaches `target`.
+        if (elbow >= joints_ || tip >= joints_) return false;
+        return two_bone_ik(model, tip, target, w);
+    }
+    return false;
+}
+
 bool Pose::transform_models(const SkinnedModel& model, i32 joint, const Mat4& m) {
     if (!impl_ || joint >= static_cast<i32>(joints_) || model.inverse_bind.size() < joints_) return false;
     for (u32 j = 0; j < joints_; ++j) {

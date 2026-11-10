@@ -243,6 +243,12 @@ public:
     // (in its own space) turns toward `target`. weight 0..1 blends with the animation.
     bool two_bone_ik(const SkinnedModel& model, u32 end_joint, Vec3 target, f32 weight);
     bool aim_ik(const SkinnedModel& model, u32 joint, Vec3 target, Vec3 forward, f32 weight);
+    // Apply one control-rig control (Unreal's Control Rig) on top of the sampled pose: kind 0 turns
+    // `bone` by `rotation` (degrees, model axes), kind 1 aims `bone` (forward axis) at `target`, kind 2
+    // two-bone IK: `elbow` bends so `tip` reaches `target`. weight 0..1 blends over the animation. False
+    // when a bone is missing (the pose is untouched). Call after sample.
+    bool apply_control(const SkinnedModel& model, u32 bone, u32 elbow, u32 tip, int kind, const Vec3& target,
+                       const Vec3& rotation, f32 weight, const Vec3& forward);
     // A clip over the sampled pose (Unreal's Layered Blend per Bone, as montages use): from
     // `from_joint` down its children (-1: every joint), mixed in by `weight` 0..1. Call after sample.
     bool layer(const SkinnedModel& model, const Clip* clip, f32 ratio, f32 weight, i32 from_joint);

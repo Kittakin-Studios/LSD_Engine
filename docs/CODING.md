@@ -108,7 +108,7 @@ under the Native Script as **Script properties**, with **Reset** back to the def
 `float`, `int32_t`, `bool`, `char name[N]`. The object's values are written into its state before
 `on_start`.
 
-## Command reference
+bioCommand reference
 
 C++ names in `namespace lsd::game`; C adds `lsd_` (`find` -> `lsd_find`); Lua uses the same name
 under `lsd.` (`lsd.find`). Vectors are `Vec3 {x, y, z}` (C: `lsd_vec3`), metres and degrees, Z up.
