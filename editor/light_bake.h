@@ -16,6 +16,7 @@
 #include "lsd/world/world.h"
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,14 @@ struct BakeScene {
 bool gather_bake_scene(const world::World& world, const asset::AssetRegistry& registry, const char* data_dir, Allocator& allocator, BakeScene& out);
 // Runs on any thread (it uses all cores); `done` counts finished probes for a progress bar.
 void bake_lighting(const BakeScene& scene, BakedLighting& out, std::atomic<u32>* done = nullptr, std::atomic<u32>* total = nullptr);
+
+// Dynamic GI (dynamic_gi.h) traces the same probes against a scene kept between sweeps: the BVH is built once per
+// scene (slow for big levels: on a thread), the lights swapped in each sweep. `indirect` (optional): the same grid's
+// last probes, which light what the rays hit (a bounce per sweep: they add up). Writes 12 floats per probe into `sh`.
+struct ProbeTracer;
+std::shared_ptr<ProbeTracer> make_probe_tracer(BakeScene scene);
+void set_tracer_lights(ProbeTracer& tracer, const rhi::LightSetup& lights, u32 static_lights);
+void relight_probe_grid(const ProbeTracer& tracer, const f32 origin[3], const f32 cell[3], const u32 dims[3], u32 rays, u32 seed, u32 threads, const f32* indirect, f32* sh);
 
 std::string baked_lighting_path(const char* level_path);  // Levels/Main.lsdlevel -> Levels/Main_BuiltData.lsdlight
 bool save_baked_lighting(const char* path, const BakedLighting& lighting);

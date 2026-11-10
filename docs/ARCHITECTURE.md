@@ -208,6 +208,20 @@ place to the mm). `draw_world` marks the cells whose nearest point is past Hlod 
 their members in the static mesh loop and draws their proxies (`HLOD:<cell>:<n>` in the mesh cache) as plain
 unbatched mesh draws, so every backend needs nothing new. Shadow passes still use the objects.
 
+**Dynamic GI** (`editor/dynamic_gi.*`, World Settings > Dynamic Global Illumination, Unreal's Lumen in spirit): a
+10 x 10 x 5 grid of L1 SH probes (`r.DynamicGI.Spacing`, 2 m) whose first probe is snapped to whole cells around the
+first viewport's camera (`gi_grid_origin`). `DynamicGi::update` (in `draw_world`, main view) runs one sweep at a time
+on a worker thread: it hands over the frame's light list (`world_lights`, which keeps Static lights real-time while it is on) and, only when a Static Mesh's
+transform / mesh / material / colour hash changed, the level's triangles (object-space triangles cached per mesh key,
+base colours per material) for a new `ProbeTracer` (light_bake's BVH, built on the worker). The sweep is Build
+Lighting's probe pass (`relight_probe_grid` = `trace_probe_grid`, shared with the bake): `r.DynamicGI.Rays` rays per
+probe on half the cores, every hit lit by the lights through shadow rays and by the last sweep's probes (a bounce
+per sweep, so bounces accumulate), invalid probes filled from neighbours, a new ray spiral per sweep. The old probes
+are moved to the new origin (`gi_scroll`, those that left the grid start fresh) and blended 50 / 50 with the new
+ones. The finished grid is written into `LightSetup::probes` (replacing the baked probes, and `lightmap_info.y = 0`
+turns the lightmaps off) for every view, so the lit shaders' existing `ambient_light` reads it on D3D12, Vulkan and
+OpenGL alike. `stat dump` prints the sweep time and the main thread's share; `r.DynamicGI 0` turns it off.
+
 The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
 backends). Its order: ambient occlusion (from depth: 12 samples rotated by a 4×4 Bayer pattern, then
 a 4×4 depth-aware blur that sees every rotation once, so no noise is left; multiplied into the

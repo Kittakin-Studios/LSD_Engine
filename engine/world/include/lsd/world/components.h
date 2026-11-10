@@ -1316,6 +1316,8 @@ struct WorldSettings {
     LSD_PROPERTY(Edit, Tooltip = "How the navmesh is built for AI (agent size, steps, slopes)") NavSettings navigation;
     LSD_PROPERTY(Edit, Widget = "Choice:Off,256,512,1024,2048,4096", Tooltip = "Build Lighting's lightmap atlas for the level's static meshes (sharp baked shadows and bounced light); Off: light probes only")
     u32 lightmap_resolution = 3;
+    LSD_PROPERTY(Edit, Tooltip = "Dynamic Global Illumination (Unreal's Lumen, much simpler): light probes around the camera, relit all the time, so bounced light and sky shadowing follow moving lights, the sun and moved meshes. Replaces Build Lighting's probes and lightmaps while on. Costs some CPU on worker threads (stat dump); r.DynamicGI 0 turns it off everywhere")
+    bool dynamic_gi = false;
     LSD_PROPERTY(Edit, Tooltip = "HLOD (Unreal's Hierarchical LOD): cells built by Build > Build HLODs draw one merged, simpler mesh instead of their objects when farther than HLOD Distance")
     bool hlod_enabled = true;
     LSD_PROPERTY(Edit, Units = "m", Min = 5, Tooltip = "Build HLODs groups static meshes into square cells this wide (a grid over the level); rebuild after changing it")
