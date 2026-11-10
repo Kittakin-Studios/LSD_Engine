@@ -51,6 +51,7 @@ struct SkinnedEntry {
     i64 modified = 0;
     bool failed = false;
     bool unreal_rig = false;  // UE4 / UE5 bone names: its front points down -Y in the file
+    List<asset::RetargetBoneTurn, 64> retarget_pose;  // from the .meta: clips from other files retarget in it
 };
 
 // The turn (degrees about Z) that makes a skeletal mesh face its object's +X: its Facing setting,

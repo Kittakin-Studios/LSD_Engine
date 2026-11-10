@@ -83,6 +83,30 @@ void human_bones(const char* const* names, u32 count, HumanBone* out);
 // Whether a rig has the parts retargeting needs (pelvis, head, both thighs and upper arms).
 bool is_humanoid(const HumanBone* parts, u32 count);
 
+// Retarget pose (Unreal's IK Retargeter Retarget Pose, a Skeleton's retarget base pose): the pose rigs are matched in when
+// clips are retargeted. Bones may be turned from the rest pose (an A-pose made a T-pose); a retargeted clip moves each bone
+// by its change from this pose, so rigs that rest differently map limb for limb.
+struct BoneTurn {
+    char bone[48] = "";
+    Vec3 rotation;  // Euler degrees (X then Y then Z) in model space, about the bone's joint; its children turn with it
+};
+// Each joint's model-space transform in the rest pose (`rest_local`: relative to the parent; parents before children) with
+// joint j turned by turns[j] degrees (`turns` may be null).
+void retarget_models(const i32* parents, const Mat4* rest_local, const Vec3* turns, u32 count, Mat4* out);
+// Auto Align: turns that put a humanoid (`parts`, from human_bones) in a T-pose: upper and lower arms straight out to the
+// sides and level, thighs and calves straight down. The other joints' turns are kept.
+void auto_align_turns(const i32* parents, const Mat4* rest_local, const HumanBone* parts, u32 count, Vec3* turns);
+// The model's rest pose, each joint relative to its parent (for retarget_models).
+void rest_locals(const SkinnedModel& model, Mat4* out);
+// The retarget poses import_clips matches the rigs in: `target` the model's (its .meta), `source` the animation file's
+// (bone names as that file has them). Either side empty = its rest pose.
+struct RetargetPoses {
+    const BoneTurn* target = nullptr;
+    u32 target_count = 0;
+    const BoneTurn* source = nullptr;
+    u32 source_count = 0;
+};
+
 // Reads an FBX with a skinned mesh. Meshes without a skin follow the root. False + `error` if the
 // file has no skeleton or cannot be read.
 // `normals` / `smoothing_angle`: as the mesh import settings (asset::MeshNormals; 1 = smooth).
@@ -180,7 +204,9 @@ struct ClipTrim {
     u32 clip = 0;
     f32 start = 0.0f, end = 0.0f;
 };
-u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims = nullptr, u32 trim_count = 0);
+// `poses`: retarget poses (FBX; any turned bone makes the clips retarget from one pose to the other).
+u32 import_clips(const char* path, const SkinnedModel& model, Clip* out, u32 capacity, const ClipTrim* trims = nullptr, u32 trim_count = 0,
+                 const RetargetPoses* poses = nullptr);
 
 // One clip's contribution to a blended pose.
 struct BlendInput {

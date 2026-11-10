@@ -47,8 +47,30 @@ struct MeshWindow {
     bool clip_playing = true;
     char curve[32] = "Footstep";  // Animations: the curve keyed with Key Curve Here
     f32 curve_key = 1.0f;
+    bool show_retarget = false;  // the preview stands in the Retarget Pose
 };
 MeshWindow g_mw;
+
+// The Retarget Pose's turn of `bone` (nullptr if it has none).
+asset::RetargetBoneTurn* retarget_turn(const char* bone) {
+    for (asset::RetargetBoneTurn& t : g_mw.meta.retarget_pose) {
+        if (std::strcmp(t.bone, bone) == 0) return &t;
+    }
+    return nullptr;
+}
+
+// The model's rest pose (relative to parents) and the Retarget Pose's turn per joint.
+void retarget_inputs(const anim::SkinnedModel& model, std::vector<i32>& parents, std::vector<Mat4>& local, std::vector<Vec3>& turns) {
+    const u32 joints = model.joint_count();
+    parents.resize(joints);
+    local.resize(joints);
+    turns.assign(joints, Vec3{});
+    anim::rest_locals(model, local.data());
+    for (u32 j = 0; j < joints; ++j) {
+        parents[j] = model.joint_parent(j);
+        if (const asset::RetargetBoneTurn* t = retarget_turn(model.joint_name(j))) turns[j] = t->rotation;
+    }
+}
 
 bool bounds(EditorState& s, Vec3& lo, Vec3& hi, const SkinnedEntry*& skinned, const CachedMesh*& mesh) {
     skinned = s.skinned ? s.skinned->get(g_mw.key) : nullptr;
@@ -102,6 +124,7 @@ void open_mesh_editor(EditorState& s, const asset::AssetRecord& record) {
     g_mw.morph[0] = '\0';
     g_mw.morphed_for = 0;
     g_mw.clip = -1;
+    g_mw.show_retarget = false;
     ImGui::SetWindowFocus("###MeshEditor");
 }
 
@@ -137,6 +160,14 @@ void render_mesh_editor(rhi::Device& device, const f32 background[4]) {
         const ClipSet* set = g_mw.clip >= 0 && s.skinned ? s.skinned->clips(g_mw.key, nullptr) : nullptr;
         const anim::Clip* clip = set && static_cast<u32>(g_mw.clip) < set->count ? &set->clips[g_mw.clip] : nullptr;
         g_mw.pose.sample(*skinned->model, clip, g_mw.clip_time, false);  // no clip: the rest pose
+        if (g_mw.show_retarget && !clip) {  // the Retarget Pose instead of the rest pose
+            std::vector<i32> parents;
+            std::vector<Mat4> local, models(skinned->model->joint_count());
+            std::vector<Vec3> turns;
+            retarget_inputs(*skinned->model, parents, local, turns);
+            anim::retarget_models(parents.data(), local.data(), turns.data(), skinned->model->joint_count(), models.data());
+            g_mw.pose.set_models(*skinned->model, models.data());
+        }
         draw.vertices = skinned->vertices;
         if (g_mw.morph[0]) {  // the previewed morph target mixed into the rest pose
             u32 bits;
@@ -284,6 +315,68 @@ void draw_mesh_editor(EditorState& s) {
         ImGui::BeginChild("bones", ImVec2(0, 200), ImGuiChildFlags_Borders);
         bone_tree(*skinned->model, -1);
         ImGui::EndChild();
+        // Retarget Pose (Unreal's IK Retargeter Retarget Pose): the pose animations from other rigs are matched in.
+        ImGui::SeparatorText("Retarget Pose");
+        with_tip(ImGui::Checkbox("Show Retarget Pose", &g_mw.show_retarget), "Shows the mesh in its Retarget Pose instead of the rest pose (when no animation plays)");
+        if (g_mw.bone >= 0) {
+            const char* bone = skinned->model->joint_name(static_cast<u32>(g_mw.bone));
+            asset::RetargetBoneTurn* turn = retarget_turn(bone);
+            Vec3 rotation = turn ? turn->rotation : Vec3{};
+            if (with_tip(ImGui::DragFloat3("Turn", &rotation.x, 0.5f, -180.0f, 180.0f, "%.1f deg"),
+                         "Turns the selected bone from its rest pose: degrees about the model's X, Y, Z (its children follow)")) {
+                asset::RetargetBoneTurn added;
+                std::snprintf(added.bone, sizeof added.bone, "%s", bone);
+                if (!turn && g_mw.meta.retarget_pose.push_back(added)) turn = &g_mw.meta.retarget_pose[g_mw.meta.retarget_pose.count - 1];
+                if (turn) turn->rotation = rotation;
+                g_mw.meta_dirty = true;
+                g_mw.show_retarget = true;
+            }
+            ImGui::BeginDisabled(!turn);
+            if (with_tip(ImGui::SmallButton("Reset Bone"), "Puts the selected bone back to its rest pose") && turn) {
+                g_mw.meta.retarget_pose.remove(static_cast<u32>(turn - g_mw.meta.retarget_pose.begin()));
+                g_mw.meta_dirty = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+        } else {
+            ImGui::TextDisabled("Select a bone to turn it.");
+        }
+        {
+            const u32 joints = skinned->model->joint_count();
+            std::vector<const char*> names(joints);
+            std::vector<anim::HumanBone> parts(joints);
+            for (u32 j = 0; j < joints; ++j) names[j] = skinned->model->joint_name(j);
+            anim::human_bones(names.data(), joints, parts.data());
+            const bool humanoid = anim::is_humanoid(parts.data(), joints);
+            ImGui::BeginDisabled(!humanoid);
+            if (with_tip(ImGui::SmallButton("Auto Align (T-pose)"), humanoid ? "Turns the arms out straight to the sides and the legs straight down (an A-pose made a T-pose)"
+                                                                             : "Needs a humanoid rig (pelvis, head, thighs and upper arms found by name)")) {
+                std::vector<i32> parents;
+                std::vector<Mat4> local;
+                std::vector<Vec3> turns;
+                retarget_inputs(*skinned->model, parents, local, turns);
+                anim::auto_align_turns(parents.data(), local.data(), parts.data(), joints, turns.data());
+                for (u32 j = 0; j < joints; ++j) {
+                    const bool turned = turns[j].x != 0.0f || turns[j].y != 0.0f || turns[j].z != 0.0f;
+                    asset::RetargetBoneTurn* t = retarget_turn(names[j]);
+                    if (!t && turned) {
+                        asset::RetargetBoneTurn added;
+                        std::snprintf(added.bone, sizeof added.bone, "%s", names[j]);
+                        if (g_mw.meta.retarget_pose.push_back(added)) t = &g_mw.meta.retarget_pose[g_mw.meta.retarget_pose.count - 1];
+                    }
+                    if (t) t->rotation = turns[j];
+                }
+                g_mw.meta_dirty = true;
+                g_mw.show_retarget = true;
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        if (with_tip(ImGui::SmallButton("Reset##retarget"), "Clears the Retarget Pose: every bone back to the rest pose")) {
+            g_mw.meta.retarget_pose.count = 0;
+            g_mw.meta_dirty = true;
+        }
+        ImGui::TextDisabled("%u bone(s) turned. Save to keep it; animations from other files retarget in it.", g_mw.meta.retarget_pose.count);
         if (!skinned->model->morphs.empty()) {
             ImGui::SeparatorText("Morph Targets");
             ImGui::SetNextItemWidth(-1.0f);

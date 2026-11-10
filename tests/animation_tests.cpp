@@ -413,6 +413,76 @@ static void human_bone_tests() {
     CHECK(parts[1] == H::Spine && parts[2] == H::Chest && parts[3] == H::UpperChest && parts[4] == H::Neck);
 }
 
+// Retarget pose: the same rig resting in an A-pose (arms 45 degrees down, elbows bent, legs apart) and in a T-pose. Auto
+// Align turns the A-pose into the T-pose; a clip retargeted from the A rig (matched in that pose) onto the T rig then points
+// every limb where the source's does.
+static void retarget_pose_tests() {
+    using H = anim::HumanBone;
+    constexpr u32 n = 13;
+    const i32 parents[n] = {-1, 0, 1, 2, 0, 4, 5, 0, 7, 8, 0, 10, 11};
+    const H parts[n] = {H::Pelvis, H::UpperArmL, H::LowerArmL, H::HandL, H::UpperArmR, H::LowerArmR, H::HandR,
+                        H::ThighL, H::CalfL, H::FootL, H::ThighR, H::CalfR, H::FootR};
+    const Vec3 offsets[n] = {{0, 0, 1}, {0.2f, 0, 0.5f}, {0.3f, 0, 0}, {0.25f, 0, 0}, {-0.2f, 0, 0.5f}, {-0.3f, 0, 0}, {-0.25f, 0, 0},
+                             {0.1f, 0, 0}, {0, 0, -0.45f}, {0, 0, -0.4f}, {-0.1f, 0, 0}, {0, 0, -0.45f}, {0, 0, -0.4f}};
+    Mat4 t_rig[n], a_rig[n];
+    for (u32 j = 0; j < n; ++j) t_rig[j] = a_rig[j] = translation(offsets[j]);
+    a_rig[1] = a_rig[1] * rotation_y(radians(45.0f));   // left arm down
+    a_rig[2] = a_rig[2] * rotation_z(radians(20.0f));   // elbow bent forward
+    a_rig[4] = a_rig[4] * rotation_y(radians(-45.0f));  // right arm down
+    a_rig[5] = a_rig[5] * rotation_z(radians(-20.0f));
+    a_rig[7] = a_rig[7] * rotation_y(radians(-10.0f));  // legs apart
+    a_rig[10] = a_rig[10] * rotation_y(radians(10.0f));
+    auto at = [](const Mat4& m) { return Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)}; };
+    auto turn_of = [](const Mat4& m) {  // the rotation alone
+        Mat4 r = m;
+        r.at(0, 3) = r.at(1, 3) = r.at(2, 3) = 0.0f;
+        return r;
+    };
+    auto transposed = [](const Mat4& m) {
+        Mat4 r;
+        for (int i = 0; i < 3; ++i) {
+            for (int k = 0; k < 3; ++k) r.at(i, k) = m.at(k, i);
+        }
+        return r;
+    };
+    const u32 limbs[][2] = {{1, 2}, {2, 3}, {4, 5}, {5, 6}, {7, 8}, {8, 9}, {10, 11}, {11, 12}};
+    auto same_limbs = [&](const Mat4* a, const Mat4* b) {
+        f32 worst = 1.0f;
+        for (const auto& l : limbs) worst = std::fmin(worst, dot(normalize(at(a[l[1]]) - at(a[l[0]])), normalize(at(b[l[1]]) - at(b[l[0]]))));
+        return worst;
+    };
+    // Auto Align: the A rig in its retarget pose stands like the T rig.
+    Vec3 turns[n] = {};
+    anim::auto_align_turns(parents, a_rig, parts, n, turns);
+    Mat4 a_ref[n], t_ref[n];
+    anim::retarget_models(parents, a_rig, turns, n, a_ref);
+    anim::retarget_models(parents, t_rig, nullptr, n, t_ref);
+    CHECK(same_limbs(a_ref, t_ref) > 0.9999f);
+    CHECK(std::fabs(turns[0].x) + std::fabs(turns[0].y) + std::fabs(turns[0].z) == 0.0f);  // the pelvis is left alone
+    // A frame of a clip on the A rig: left arm swung forward, right knee bent.
+    Vec3 moves[n] = {};
+    moves[1] = {0, 0, 60};
+    moves[11] = {0, -40, 0};
+    Mat4 source[n];
+    anim::retarget_models(parents, a_rig, moves, n, source);
+    // Retargeted as import_clips does: each bone's model-space change from the source's pose put onto the target's.
+    auto retarget = [&](const Mat4* source_ref, Mat4* out) {
+        for (u32 j = 0; j < n; ++j) {
+            const Mat4 rotation = turn_of(source[j]) * transposed(turn_of(source_ref[j])) * turn_of(t_ref[j]);
+            const Vec3 p = parents[j] >= 0 ? transform_point(out[parents[j]], offsets[j]) : offsets[j];
+            out[j] = translation(p) * rotation;
+        }
+    };
+    Mat4 target[n];
+    retarget(a_ref, target);
+    CHECK(same_limbs(source, target) > 0.9999f);
+    Mat4 a_rest[n];
+    anim::retarget_models(parents, a_rig, nullptr, n, a_rest);
+    retarget(a_rest, target);  // matched in the rest poses instead: the arms come out 45 degrees off
+    std::printf("  retarget pose: auto-aligned A-pose matches the T-pose, retargeted limbs match\n");
+    CHECK(same_limbs(source, target) < 0.8f);
+}
+
 static void ragdoll_tests(const std::string& data) {
     anim::SkinnedModel model(default_allocator());
     char error[256] = "";
@@ -745,6 +815,7 @@ int main() {
     motion_matching_tests(data);
     ragdoll_tests(data);
     human_bone_tests();
+    retarget_pose_tests();
     full_body_ik_tests(data);
     morph_tests(data);
     const char* files[] = {"max_transformed_skin_6100_binary.fbx", "maya_advanced_skinned_pivot_7700_binary.fbx", "blender_293_half_skinned_7400_binary.fbx"};
