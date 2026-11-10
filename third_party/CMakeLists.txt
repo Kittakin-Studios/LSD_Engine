@@ -243,6 +243,8 @@ set(ozz_build_samples OFF CACHE BOOL "" FORCE)
 set(ozz_build_howtos OFF CACHE BOOL "" FORCE)
 set(ozz_build_tests OFF CACHE BOOL "" FORCE)
 set(ozz_build_msvc_rt_dll ON CACHE BOOL "" FORCE)  # we link the DLL runtime (/MD, /MDd)
+# ozz compiles MSVC STL exception handlers, so we need unwind semantics (/EHsc).
+set(CMAKE_CXX_STANDARD 20)
 FetchContent_Declare(ozz
   GIT_REPOSITORY https://github.com/guillaumeblanc/ozz-animation.git
   GIT_TAG 0.17.0
@@ -250,6 +252,9 @@ FetchContent_Declare(ozz
   SYSTEM
 )
 FetchContent_MakeAvailable(ozz)
+if(MSVC)
+  target_compile_options(ozz_options PRIVATE /EHsc)
+endif()
 
 # Recast & Detour: navmesh building, path finding and crowd steering (zlib).
 set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
@@ -269,6 +274,9 @@ unset(CMAKE_POLICY_VERSION_MINIMUM)
 foreach(t ozz_base ozz_animation ozz_animation_offline ozz_geometry Recast Detour DetourCrowd DetourTileCache DebugUtils)
   if(TARGET ${t} AND NOT MSVC)
     target_compile_options(${t} PRIVATE -w)
+  elseif(TARGET ${t} AND MSVC)
+    # MSVC 18's STL headers use C++ exception handlers internally; /EHsc is required when /W4 is set.
+    target_compile_options(${t} PRIVATE /EHsc)
   endif()
 endforeach()
 
