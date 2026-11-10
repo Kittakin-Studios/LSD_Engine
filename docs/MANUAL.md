@@ -145,7 +145,7 @@ made in `Content/Characters/`.
   Eyes, `Jaw_Wide` to Face, `Lip_Full` and the visemes (`V_Open`...) to Mouth, `Ear_Point` to Ears.
   Everything else goes to Body (anatomy: `Chest`, `Belly`, `Arm_Muscle`...). Up to 12 per tab.
 - **Clothes**: one row per body area (Hair, Hat, Glasses, Shirt, Jacket, Gloves, Pants, Belt, Shoes,
-  Backpack). **<** and **>** step through the meshes in `Content/Characters/Clothes/<area>/` (and None).
+  Backpack). The arrow buttons (`<` and `>`) step through the meshes in `Content/Characters/Clothes/<area>/` (and None).
   Clothes skinned to the same UE5 skeleton follow the body's animation bone by bone. Rigid pieces
   (a hat, glasses, a watch) stick to that area's bone: head, spine_03 (chest), spine_05, hand_r,
   pelvis, foot_r. A rigid pair adds its left piece from a mesh named `<name>_L` (`Boot_Leather` +
