@@ -92,7 +92,7 @@ void DynamicGi::apply(rhi::LightSetup& s) const {
 }
 
 void DynamicGi::start_sweep(const world::World& w, const asset::AssetRegistry& registry, const char* data_dir, Vec3 eye, const rhi::LightSetup& lights) {
-    const u32 count = kGiDims[0] * kGiDims[1] * kGiDims[2];
+    constexpr u32 count = kGiDims[0] * kGiDims[1] * kGiDims[2];
     sweep_cell_ = std::max(spacing, 0.25f);
     gi_grid_origin(eye, sweep_cell_, kGiDims, sweep_origin_);
     history_.assign(static_cast<usize>(count) * 12, 0.0f);
@@ -158,7 +158,7 @@ void DynamicGi::start_sweep(const world::World& w, const asset::AssetRegistry& r
     // The lights drawn this frame (nearest the camera, the sky as the atmosphere has it now); world_lights keeps Static
     // lights real-time while dynamic GI is on, so none of their light belongs in the probes directly.
     auto light_setup = std::make_shared<rhi::LightSetup>(lights);  // copied straight onto the heap: it is too big for the stack
-    const u32 static_lights = 0;
+    constexpr u32 static_lights = 0;
 
     pending_tracer_ = scene ? nullptr : tracer_;
     result_.assign(static_cast<usize>(count) * 12, 0.0f);
@@ -167,7 +167,7 @@ void DynamicGi::start_sweep(const world::World& w, const asset::AssetRegistry& r
     const u32 seed = ++sweep_count_ * 7919u;  // a new ray spiral per sweep: the blend averages them
     const u32 ray_count = static_cast<u32>(std::clamp(rays, 8, 256));
     const u32 threads = std::max(1u, std::thread::hardware_concurrency() / 2);  // half the cores: the game keeps the rest
-    worker_ = std::thread([this, scene, light_setup, static_lights, any_kept, seed, ray_count, threads, count] {
+    worker_ = std::thread([this, scene, light_setup, any_kept, seed, ray_count, threads] {
         if (!pending_tracer_) pending_tracer_ = make_probe_tracer(std::move(*scene));
         set_tracer_lights(*pending_tracer_, *light_setup, static_lights);
         const f32 origin[3] = {static_cast<f32>(sweep_origin_[0]) * sweep_cell_, static_cast<f32>(sweep_origin_[1]) * sweep_cell_,

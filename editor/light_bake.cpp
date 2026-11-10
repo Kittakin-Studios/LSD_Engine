@@ -237,7 +237,7 @@ bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, u32 kRays,
     for (int i = 0; i < 12; ++i) sh[i] = 0.0f;
     const f32 twist = static_cast<f32>(seed % 997) * 0.618034f;  // a different spiral per probe: no shared banding
     for (u32 r = 0; r < kRays; ++r) {
-        const f32 z = 1.0f - 2.0f * (static_cast<f32>(r) + 0.5f) / kRays;  // Fibonacci sphere
+        const f32 z = 1.0f - 2.0f * (static_cast<f32>(r) + 0.5f) / static_cast<f32>(kRays);  // Fibonacci sphere
         const f32 radius = std::sqrt(std::max(0.0f, 1.0f - z * z));
         const f32 phi = static_cast<f32>(r) * 2.39996323f + twist;
         const Vec3 d{radius * std::cos(phi), radius * std::sin(phi), z};
@@ -261,7 +261,7 @@ bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, u32 kRays,
             for (int k = 0; k < 4; ++k) sh[ch * 4 + k] += rgb[ch] * basis[k];
         }
     }
-    const f32 weight = 4.0f * 3.14159265f / kRays;
+    const f32 weight = 4.0f * 3.14159265f / static_cast<f32>(kRays);
     for (int i = 0; i < 12; ++i) sh[i] *= weight;
     for (u32 li = 0; li < s.lights.count; ++li) {  // Static lights: their direct light, from their direction (a point source in SH)
         if (!(s.static_lights >> li & 1u)) continue;
