@@ -48,6 +48,14 @@ struct MeshSocket {
     LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turn from the bone") Vec3 rotation;
 };
 
+// A bone of the retarget pose (Unreal's IK Retargeter Retarget Pose): turned from the rest pose for matching rigs.
+LSD_STRUCT()
+struct RetargetBoneTurn {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The bone (its children turn with it)") char bone[48] = "";
+    LSD_PROPERTY(Edit, Units = "deg", Tooltip = "Turn from the rest pose: degrees about the model's X, Y, Z, at the bone's joint") Vec3 rotation;
+};
+
 // A mesh's material slot (Unreal's Material Slots, Element 0..N): the material its triangles that use
 // the file's material `name` are drawn with, unless the object overrides it.
 LSD_STRUCT()
@@ -93,6 +101,8 @@ struct AssetMeta {
     LSD_PROPERTY(Edit, Category = "Animation", Tooltip = "Animation curves (Unreal's Anim Curves): keys of named values along the clips; lsd.anim_curve reads them")
     List<AnimCurveKey, 64> curve_keys;
     LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Named points on bones to attach props to (Unreal's Sockets)") List<MeshSocket, 16> sockets;
+    LSD_PROPERTY(Edit, Category = "Skeleton", Tooltip = "Retarget pose (Unreal's Retarget Pose): bones turned from the rest pose (an A-pose made a T-pose) so animations retarget between rigs that rest differently")
+    List<RetargetBoneTurn, 64> retarget_pose;
     LSD_PROPERTY(Edit, Category = "Materials", Tooltip = "The material for each of the file's materials (Unreal's Material Slots); Import Materials fills them")
     List<MaterialSlot, 48> material_slots;  // kMaxMaterialSlots (the reflection generator reads the number)
 

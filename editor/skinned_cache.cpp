@@ -20,6 +20,24 @@ i64 file_time(const char* path) {
     return error ? 0 : static_cast<i64>(time.time_since_epoch().count());
 }
 
+bool same_pose(const List<asset::RetargetBoneTurn, 64>& a, const List<asset::RetargetBoneTurn, 64>& b) {
+    if (a.count != b.count) return false;
+    for (u32 i = 0; i < a.count; ++i) {
+        const Vec3 d = a[i].rotation - b[i].rotation;
+        if (std::strcmp(a[i].bone, b[i].bone) != 0 || d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) return false;
+    }
+    return true;
+}
+
+std::vector<anim::BoneTurn> bone_turns(const List<asset::RetargetBoneTurn, 64>& pose) {
+    std::vector<anim::BoneTurn> out(pose.count);
+    for (u32 i = 0; i < pose.count; ++i) {
+        std::snprintf(out[i].bone, sizeof out[i].bone, "%s", pose[i].bone);
+        out[i].rotation = pose[i].rotation;
+    }
+    return out;
+}
+
 const asset::AssetRecord* record_of(const asset::AssetRegistry& registry, const char* guid_text) {
     asset::Guid guid;
     return guid_text[0] && asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
@@ -148,6 +166,12 @@ void SkinnedCache::load_slots(SkinnedEntry& e) {
     e.meta_modified = file_time(path);
     asset::AssetMeta meta;
     registry_.load_meta(*r, meta);
+    if (!same_pose(e.retarget_pose, meta.retarget_pose)) {  // Retarget Pose edited: clips from other files are retargeted again
+        e.retarget_pose = meta.retarget_pose;
+        for (u32 k = 0; k < set_count_; ++k) {
+            if (std::strcmp(sets_[k]->model_guid, e.guid) == 0 && std::strcmp(sets_[k]->anim_guid, e.guid) != 0) sets_[k]->modified = -1;
+        }
+    }
     for (u32 s = 0; s < e.section_count; ++s) {
         const anim::MeshSection* section = model_section(e, s);
         for (u32 k = 0; section && k < meta.material_slots.count; ++k) {
@@ -216,7 +240,12 @@ void SkinnedCache::load(ClipSet& set, const SkinnedEntry& model) {
     registry_.load_meta(*r, set.meta);
     anim::ClipTrim trims[16];
     for (u32 i = 0; i < set.meta.clip_ranges.count; ++i) trims[i] = {set.meta.clip_ranges[i].clip, set.meta.clip_ranges[i].start, set.meta.clip_ranges[i].end};
-    set.count = anim::import_clips(path, *model.model, set.clips, 16, trims, set.meta.clip_ranges.count);
+    // Retarget poses: the mesh's and the animation file's; none for the mesh's own takes (both sides would match).
+    const bool own = std::strcmp(set.anim_guid, set.model_guid) == 0;
+    const std::vector<anim::BoneTurn> target = bone_turns(model.retarget_pose), source = bone_turns(set.meta.retarget_pose);
+    anim::RetargetPoses poses;
+    if (!own) poses = {target.data(), static_cast<u32>(target.size()), source.data(), static_cast<u32>(source.size())};
+    set.count = anim::import_clips(path, *model.model, set.clips, 16, trims, set.meta.clip_ranges.count, &poses);
 }
 
 const ClipSet* SkinnedCache::set_of(const anim::Clip* clip) const {
@@ -276,7 +305,7 @@ void SkinnedCache::check_files() {
             const asset::ClipRange &a = before.clip_ranges[k], &b = set.meta.clip_ranges[k];
             trimmed = a.clip != b.clip || a.start != b.start || a.end != b.end;
         }
-        if (trimmed) load(set, *model);  // its takes are cut again
+        if (trimmed || !same_pose(before.retarget_pose, set.meta.retarget_pose)) load(set, *model);  // its takes are cut / retargeted again
     }
     for (u32 i = 0; i < graph_count_; ++i) {  // graphs edited in Details save to disk: picked up here
         const asset::AssetRecord* r = record_of(registry_, graphs_[i]->guid);
