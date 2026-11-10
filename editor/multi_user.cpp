@@ -109,7 +109,13 @@ void receive_level(EditorState& s, const std::string& text) {  // "<level path>\
 void on_call(EditorState& s, const net::NetEvent& ev) {
     std::string text(ev.json, ev.size);
     if (std::strcmp(ev.name, "mu_more") == 0) {
-        g->inbox[ev.from] += text;
+        std::string& pending = g->inbox[ev.from];
+        if (pending.size() + text.size() > (usize{256} << 20)) {  // a level far past any real one: a broken or hostile sender
+            LSD_LOG_ERROR("multiuser", "User %u sent more than 256 MB in one message: dropped", ev.from);
+            g->inbox.erase(ev.from);
+            return;
+        }
+        pending += text;
         return;
     }
     if (const auto it = g->inbox.find(ev.from); it != g->inbox.end()) {

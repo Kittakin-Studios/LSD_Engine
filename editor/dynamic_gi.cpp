@@ -93,6 +93,7 @@ void DynamicGi::apply(rhi::LightSetup& s) const {
 
 void DynamicGi::start_sweep(const world::World& w, const asset::AssetRegistry& registry, const char* data_dir, Vec3 eye, const rhi::LightSetup& lights) {
     constexpr u32 count = kGiDims[0] * kGiDims[1] * kGiDims[2];
+    static_assert(count <= rhi::kMaxProbes, "the grid's probes must fit LightSetup::probes");
     sweep_cell_ = std::max(spacing, 0.25f);
     gi_grid_origin(eye, sweep_cell_, kGiDims, sweep_origin_);
     history_.assign(static_cast<usize>(count) * 12, 0.0f);

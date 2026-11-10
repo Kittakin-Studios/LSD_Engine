@@ -243,6 +243,8 @@ bool load_hlod(const char* path, HlodData& out) {
             proxy.vertices.resize(n[0]);
             proxy.indices.resize(n[1]);
             ok = get(f, proxy.vertices.data(), n[0]) && get(f, proxy.indices.data(), n[1]);
+            proxy.material[39] = 0;
+            for (u32 k = 0; ok && k < n[1]; ++k) ok = proxy.indices[k] < n[0];  // a damaged file must not index past its vertices
         }
     }
     std::fclose(f);
