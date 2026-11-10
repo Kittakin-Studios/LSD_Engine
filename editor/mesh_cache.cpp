@@ -139,6 +139,7 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     Triangles& t = triangles_[key];
     t.points.reserve(data.vertex_count);
     for (u32 i = 0; i < data.vertex_count; ++i) t.points.push_back({data.vertices[i].position[0], data.vertices[i].position[1], data.vertices[i].position[2]});
+    for (u32 i = 0; i < data.vertex_count; ++i) t.uvs.insert(t.uvs.end(), data.vertices[i].uv, data.vertices[i].uv + 2);
     t.indices.assign(data.indices, data.indices + data.index_count);
     render::free_mesh(allocator_, data);
     return &t;
@@ -179,7 +180,7 @@ const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key) {
 const CachedMesh* MeshCache::get(const char* key) {
     const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
     if (slot >= 0) return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
-    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "EditMesh:", 9) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "UiPanel:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0 || std::strncmp(key, "HLOD:", 5) == 0) return nullptr;  // not generated yet
+    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "EditMesh:", 9) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "UiPanel:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0 || std::strncmp(key, "HLOD:", 5) == 0 || std::strncmp(key, "Cloth:", 6) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
@@ -228,7 +229,9 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     entry->failed = false;
     Triangles& t = triangles_[key];
     t.points.clear();
+    t.uvs.clear();
     for (u32 i = 0; i < data.vertex_count; ++i) t.points.push_back({data.vertices[i].position[0], data.vertices[i].position[1], data.vertices[i].position[2]});
+    for (u32 i = 0; i < data.vertex_count; ++i) t.uvs.insert(t.uvs.end(), data.vertices[i].uv, data.vertices[i].uv + 2);
     t.indices.assign(data.indices, data.indices + data.index_count);
 }
 

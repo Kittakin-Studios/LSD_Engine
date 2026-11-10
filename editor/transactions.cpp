@@ -25,6 +25,7 @@ void Transactions::push(const world::World& world, const char* label) {
     std::memcpy(state.text, text.data(), state.size);
     std::snprintf(state.label, sizeof state.label, "%s", label);
     states_.push_back(state);
+    ++version_;
 }
 
 void Transactions::reset(const world::World& world, const char* label) {
@@ -51,6 +52,7 @@ void Transactions::commit(const world::World& world, const char* label) {
 bool Transactions::jump_to(world::World& world, u32 index) {
     if (index >= states_.size() || index == current_) return false;
     current_ = index;
+    ++version_;
     return world::load_level(world, states_[index].text, states_[index].size);
 }
 

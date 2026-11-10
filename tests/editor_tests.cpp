@@ -1,6 +1,7 @@
 // Editor tests that run without a GPU: undo / redo history and unsaved-change tracking.
 #include "assistant_core.h"
 #include "hlod.h"
+#include "dynamic_gi.h"
 #include "light_bake.h"
 #include "lsd/asset/texture.h"
 #include "lighting.h"
@@ -25,6 +26,9 @@
 #include "template_levels.h"
 #include "paper2d_core.h"
 #include "pcg_graph.h"
+#include "cloth_core.h"
+#include "editor_utility_core.h"
+#include "multi_user_core.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -236,6 +240,36 @@ static void test_light_bake() {  // Build Lighting: open sky over a black floor
     rhi::LightSetup setup;
     editor::apply_baked_lighting(baked, setup);
     CHECK(setup.probe_origin[3] == 1.0f && setup.probe_dims[0] == 3 && setup.probes[0][0] == baked.sh[0]);
+}
+
+static void test_dynamic_gi() {  // Dynamic GI: the grid follows the camera, keeps what it already lit, relights the sky
+    using namespace lsd;
+    const u32 dims[3] = {4, 4, 2};
+    i32 origin[3];
+    editor::gi_grid_origin(Vec3{5.1f, -0.5f, 1.0f}, 2.0f, dims, origin);
+    CHECK(origin[0] == 0 && origin[1] == -3 && origin[2] == -1);  // floor(eye / cell) - dims / 2
+    std::vector<f32> in(4 * 4 * 2 * 12), out(in.size());
+    for (usize i = 0; i < in.size(); ++i) in[i] = static_cast<f32>(i / 12);  // each probe holds its own index
+    std::vector<u8> kept(4 * 4 * 2);
+    const i32 from[3] = {0, 0, 0}, to[3] = {1, 0, 0};  // moved one cell along +x
+    editor::gi_scroll(from, to, dims, in.data(), out.data(), kept.data());
+    CHECK(kept[0] && out[0] == 1.0f && out[12 * 2] == 3.0f);  // new probe 0 is old probe 1
+    CHECK(!kept[3] && out[3 * 12] == 0.0f && !kept[7]);       // the last column is new
+    CHECK(kept[16] && out[16 * 12] == 17.0f);                 // the upper layer moves the same way
+    editor::BakeScene scene;  // a black floor under a white sky, traced as dynamic GI does
+    const Vec3 a{-100, -100, 0}, b{100, -100, 0}, c{100, 100, 0}, d{-100, 100, 0};
+    scene.positions = {a, b, c, a, c, d};
+    scene.albedo = {Vec3{}, Vec3{}};
+    rhi::LightSetup lights;
+    for (int i = 0; i < 3; ++i) lights.sky[i] = lights.ground[i] = 1.0f;
+    lights.count = 0;
+    auto tracer = editor::make_probe_tracer(std::move(scene));
+    editor::set_tracer_lights(*tracer, lights, 0);
+    const f32 at[3] = {0, 0, 1}, cell[3] = {1, 1, 1};
+    std::vector<f32> sh(4 * 4 * 2 * 12);
+    editor::relight_probe_grid(*tracer, at, cell, dims, 64, 7, 2, nullptr, sh.data());
+    const f32 up = (0.886227f * sh[0] + 1.023328f * sh[3]) / 3.14159265f, down = (0.886227f * sh[0] - 1.023328f * sh[3]) / 3.14159265f;
+    CHECK(up > 0.9f && up < 1.1f && down > -0.1f && down < 0.1f);
 }
 
 static void test_static_light_bake() {  // Mobility Static: a point light's direct light ends up in the probes (only when Static)
@@ -1186,8 +1220,166 @@ static void test_pcg_graph() {
     CHECK(!editor::run_pcg_graph(graph, in, out, error, sizeof error) && std::strstr(error, "loop"));
 }
 
+// Cloth meshes: a 1 m quad drawn as two triangles with a seam (6 vertices, the diagonal's corners twice),
+// subdivided twice: 32 triangles over a 5 x 5 grid of particles; Top pins its upper row.
+static void test_cloth_mesh() {
+    editor::ClothMesh m;
+    const f32 corners[6][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 0}, {1, 1}, {0, 1}};
+    for (const auto& c : corners) m.vertices.push_back(rhi::MeshVertex{{c[0], 0.0f, c[1]}, {0, -1, 0}, {c[0], c[1]}, {0, 0}});
+    m.indices = {0, 1, 2, 3, 4, 5};
+    editor::subdivide_cloth(m.vertices, m.indices, 2);
+    CHECK(m.indices.size() == 32 * 3);
+    editor::weld_cloth(m, 1e-4f);
+    CHECK(m.particles.size() == 25 && m.particle_of.size() == m.vertices.size());
+    CHECK(editor::pin_cloth(m, 0, 0.0f) == 5);   // the z = 1 row
+    CHECK(editor::pin_cloth(m, 3, 0.3f) == 10);  // -X: x <= 0.3, two columns
+    CHECK(editor::pin_cloth(m, 6, 0.5f) == 0);   // None
+    std::vector<Vec3> moved = m.particles;
+    for (Vec3& p : moved) p.y += p.z * 0.5f;  // tilted back: normals turn with it, the same on both sides of the seam
+    editor::update_cloth_vertices(m, moved.data());
+    bool same = true;
+    for (usize v = 0; v < m.vertices.size(); ++v) same = same && std::fabs(m.vertices[v].normal[1] - m.vertices[0].normal[1]) < 1e-4f;
+    CHECK(same && std::fabs(m.vertices[0].normal[1] + 0.894f) < 0.01f && std::fabs(m.vertices[0].normal[2] - 0.447f) < 0.01f);
+    const rhi::MeshVertex& mid = m.vertices[m.indices[2]];
+    CHECK(std::fabs(mid.uv[0] + mid.uv[1] - mid.position[0] - mid.position[2]) < 1e-5f);  // UVs follow the grid
+}
+
+// Editor utilities: a script spawns, moves and selects in a test world; the run is one undo step; its panel's
+// widgets set the script's variables and its button calls a function; lsd.editor raises outside the editor.
+static lsd::world::Entity named(const lsd::world::World& w, const char* name) {
+    for (lsd::u32 slot = 0; slot < w.slot_count(); ++slot) {
+        const lsd::world::Entity e = w.entity_at_slot(slot);
+        if (e.valid() && std::strcmp(w.name(e), name) == 0) return e;
+    }
+    return {};
+}
+
+static void test_editor_utility() {
+    using namespace lsd;
+    world::World w(default_allocator());
+    const world::Entity crate = w.create("Crate");
+    editor::Transactions history(default_allocator());
+    history.reset(w, "Open");
+    struct Ctx {
+        world::World* world;
+        world::Entity selected[8];
+        u32 count;
+    } ctx{&w, {}, 0};
+    ctx.selected[ctx.count++] = crate;
+    editor::UtilityHooks hooks;
+    hooks.user = &ctx;
+    hooks.selection = [](void* user, world::Entity* out, u32 capacity) {
+        auto& c = *static_cast<Ctx*>(user);
+        u32 n = 0;
+        for (; n < c.count && n < capacity; ++n) out[n] = c.selected[n];
+        return n;
+    };
+    hooks.select = [](void* user, const world::Entity* list, u32 count) {
+        auto& c = *static_cast<Ctx*>(user);
+        c.count = count < 8 ? count : 8;
+        for (u32 i = 0; i < c.count; ++i) c.selected[i] = list[i];
+    };
+    hooks.spawn = [](void* user, const char* name, Vec3 at) {
+        world::World& world = *static_cast<Ctx*>(user)->world;
+        char unique[64];
+        world.unique_name(name, unique, sizeof unique);
+        const world::Entity e = world.create(unique);
+        world.get<world::Transform>(e)->position = at;
+        return e;
+    };
+    editor::EditorUtilities utilities;
+    utilities.start(w, hooks);
+    const char* code = R"(
+function run(self)
+  for _, e in ipairs(lsd.editor.selection()) do lsd.set_position(e, 0, 0, 5) end
+  local box = lsd.spawn("Box", 1, 2, 3)
+  lsd.editor.select({box})
+  lsd.editor.panel("Tools ]]", {{"label", "Hi"}, {"number", "Height", "height", 2}, {"checkbox", "Tall", "tall", true},
+                                {"text", "Name", "label"}, {"button", "Raise", "raise"}})
+end
+function raise()
+  local e = lsd.find(label)
+  if tall then lsd.set_position(e, 0, 0, height) end
+end
+)";
+    CHECK(utilities.run_code("Content/EU_Test.lua", code));  // the level changed
+    history.commit(w, "Run EU_Test");
+    CHECK(w.get<world::Transform>(crate)->position.z == 5.0f);
+    CHECK(ctx.count == 1 && std::strcmp(w.name(ctx.selected[0]), "Box") == 0);
+    CHECK(utilities.panels().size() == 1);
+    if (utilities.panels().size() == 1) {
+        editor::UtilityPanel& panel = utilities.panels()[0];
+        CHECK(std::strcmp(panel.title, "Tools ]]") == 0 && panel.widgets.size() == 5);
+        CHECK(panel.widgets[1].kind == editor::UtilityWidget::Kind::Number && panel.widgets[1].number == 2.0);
+        CHECK(panel.widgets[2].kind == editor::UtilityWidget::Kind::Checkbox && panel.widgets[2].on);
+        CHECK(panel.widgets[4].kind == editor::UtilityWidget::Kind::Button);
+        panel.widgets[1].number = 7.5;
+        utilities.push_value(0, 1);
+        std::snprintf(panel.widgets[3].text, sizeof panel.widgets[3].text, "Crate");
+        utilities.push_value(0, 3);
+        CHECK(utilities.press(0, 4));
+        CHECK(w.get<world::Transform>(crate)->position.z == 7.5f);
+        history.commit(w, "Raise");
+        CHECK(!utilities.press(0, 4));  // already there: no undo step
+    }
+    CHECK(history.undo(w));
+    CHECK(w.get<world::Transform>(named(w, "Crate"))->position.z == 5.0f);
+    CHECK(history.undo(w));
+    CHECK(w.get<world::Transform>(named(w, "Crate"))->position.z == 0.0f && !named(w, "Box").valid());  // the spawn is undone too
+    CHECK(!utilities.run_code("Content/EU_Bad.lua", "function run( broken"));  // a syntax error is logged, nothing changes
+    // Play's scripts have no lsd.editor host: the call raises.
+    script::ScriptSystem play;
+    play.start(w, {}, nullptr, nullptr);
+    CHECK(!play.run("lsd._editor('selection')"));
+    play.stop();
+    CHECK(editor::lua_quote("a]") == "[=[\na]]=]" && editor::lua_quote("x") == "[[\nx]]");
+}
+
+// Multi-user editing: one editor's edits as ops, applied on another's copy of the level.
+static void test_multi_user_ops() {
+    HeapAllocator heap("multi_user");
+    world::World a(heap), b(heap);
+    const world::Entity floor = a.create("Floor");
+    const world::Entity crate = a.create("Crate");
+    const world::Entity lamp = a.create("Lamp");
+    Array<char> text(heap), other(heap);
+    world::save_level(a, text);
+    CHECK(world::load_level(b, text.data(), text.size()));  // a joiner gets the host's level
+    editor::multi_user::Baseline base_a, base_b;
+    editor::multi_user::capture(a, base_a);
+    editor::multi_user::capture(b, base_b);
+    CHECK(editor::multi_user::diff(a, base_a).empty());  // nothing changed yet
+
+    // Move, rename, add a component, delete, create a child, change World Settings.
+    a.get<world::Transform>(crate)->position = {1, 2, 3};
+    a.set_name(floor, "Ground");
+    a.add<world::PointLight>(lamp)->intensity = 42.0f;
+    a.destroy(crate);
+    const world::Entity child = a.create("Bulb");
+    a.set_parent(child, lamp, false);
+    a.settings().gravity = 1.62f;
+    const std::string ops = editor::multi_user::diff(a, base_a);
+    CHECK(!ops.empty() && ops.find("\"remove\"") != std::string::npos && ops.find("\"settings\"") != std::string::npos);
+    CHECK(editor::multi_user::diff(a, base_a).empty());  // the baseline moved with it
+    CHECK(editor::multi_user::apply(b, ops.data(), ops.size(), base_b));
+    world::save_level(a, text);
+    world::save_level(b, other);
+    CHECK(text.size() == other.size() && std::memcmp(text.data(), other.data(), text.size()) == 0);
+    CHECK(editor::multi_user::diff(b, base_b).empty());  // applied ops are not sent back
+
+    // A component removed on the other side; then a bad message changes nothing it cannot parse.
+    b.remove(lamp, reflect::type_of<world::PointLight>());
+    const std::string back = editor::multi_user::diff(b, base_b);
+    CHECK(editor::multi_user::apply(a, back.data(), back.size(), base_a));
+    CHECK(!a.get<world::PointLight>(lamp) && a.parent(child) == lamp && std::strcmp(a.name(floor), "Ground") == 0);
+    const char bad[] = "{\"set\": [{\"id\": oops";
+    CHECK(!editor::multi_user::apply(a, bad, sizeof bad - 1, base_a));
+}
+
 int main() {
     test_sound_synth();
+    test_cloth_mesh();
+    test_editor_utility();
     test_pcg_graph();
     test_paper2d();
     test_templates();
@@ -1203,8 +1395,10 @@ int main() {
     test_landscape_paint();
     test_assistant();
     test_undo_redo();
+    test_multi_user_ops();
     test_references();
     test_light_bake();
+    test_dynamic_gi();
     test_lightmaps();
     test_hlod();
     test_rml_edit();

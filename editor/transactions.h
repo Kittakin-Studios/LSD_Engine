@@ -32,6 +32,8 @@ public:
     // Unsaved changes: the current state is not the one last saved to disk.
     void mark_saved() { saved_ = current_; saved_valid_ = true; }
     bool dirty() const { return !saved_valid_ || saved_ != current_; }
+    // Changes whenever the level state changes (commit, undo, redo, reset): multi-user editing watches it.
+    u32 version() const { return version_; }
 
     static constexpr u32 kMaxHistory = 200;
 
@@ -49,6 +51,7 @@ private:
     u32 current_ = 0;
     u32 saved_ = 0;
     bool saved_valid_ = false;
+    u32 version_ = 0;
 };
 
 } // namespace lsd::editor

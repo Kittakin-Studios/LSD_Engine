@@ -3,6 +3,7 @@
 #include "keymap.h"
 #include "assistant.h"
 #include "assistant_lessons.h"
+#include "editor_utility.h"
 #include "templates.h"
 #include "editor_modes.h"
 #include "paper2d.h"
@@ -36,11 +37,13 @@
 #include "play_session.h"
 #include "ui_panels.h"
 #include "decals.h"
+#include "dynamic_gi.h"
 #include "hlod.h"
 #include "light_bake.h"
 #include "live_link.h"
 #include "sound_player.h"
 #include "debug_draw.h"
+#include "multi_user.h"
 #include "remote_console.h"
 #include "game_module.h"
 #include "source_control.h"
@@ -94,6 +97,7 @@
 
 bool g_gpu_culling = true;  // r.GPUCulling
 bool g_main_view = false;    // draw_world is drawing the first viewport (its Hi-Z: gpu_cull's occlusion test)
+lsd::editor::DynamicGi g_dynamic_gi;  // World Settings > Dynamic Global Illumination (r.DynamicGI)
 bool g_occlusion_culling = true;  // r.OcclusionCulling
 bool g_texture_streaming = true;  // r.TextureStreaming
 lsd::i32 g_texture_pool_mb = 0;    // r.TexturePoolSize (0: a quarter of the video memory budget)
@@ -912,6 +916,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
     const lsd::Vec3 eye = light_view.eye;
     const bool skip_hidden = !stats.playing || stats.ejected;
     lsd::rhi::LightSetup lights = lsd::editor::world_lights(world, light_view, skip_hidden);
+    if (g_main_view && g_registry) g_dynamic_gi.update(world, *g_registry, kDataDir, eye, lights);  // the grid follows the first viewport
+    else g_dynamic_gi.apply(lights);
     if (g_decals) g_decals->apply(world, skip_hidden, light_view.eye, lights);
     const bool sun_shadows = lights.shadow_info[1] >= 0.0f && shadow_atlas.valid() && !stats.view_mode_unlit_or_wire();
     const bool local_shadows = lights.local_tiles[0][3] > 0.0f && local_atlas.valid() && !stats.view_mode_unlit_or_wire();
@@ -1398,6 +1404,9 @@ void register_console(EditorState& s) {
     console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
     console::add_variable("r.ShadowCaching", &g_shadow_caching, "Spot / point light shadow tiles are kept while nothing they show moves (a skeletal mesh in range redraws them each frame)");
     console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
+    console::add_variable("r.DynamicGI", &lsd::editor::DynamicGi::enabled, "Dynamic global illumination where World Settings > Dynamic Global Illumination asks for it (0: off everywhere, the baked or sky ambient)");
+    console::add_variable("r.DynamicGI.Spacing", &g_dynamic_gi.spacing, "Dynamic GI: metres between its probes (10 x 10 x 5 of them around the camera; larger reaches further, coarser)");
+    console::add_variable("r.DynamicGI.Rays", &g_dynamic_gi.rays, "Dynamic GI: rays per probe per sweep (8..256; more is smoother and slower)");
     console::add_variable("r.GPUCulling", &g_gpu_culling, "Instanced Static Meshes (32+ copies): the GPU drops the copies outside the view (compute + indirect draws)");
     console::add_variable("editor.GameView", &s.game_view, "Hide editor helpers (G)");
     console::add_variable("editor.CameraSpeed", &s.settings.camera_speed, "Viewport fly speed in m/s");
@@ -1441,6 +1450,11 @@ void register_console(EditorState& s) {
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
                           st.stat_panel_ms[2], st.stat_panel_ms[3], st.stat_panel_ms[4]);
             lsd::editor::remote::print(line);
+            if (g_dynamic_gi.on()) {
+                std::snprintf(line, sizeof line, "dynamic gi: sweep %.2f ms (worker threads), main thread %.2f ms", g_dynamic_gi.sweep_ms(), g_dynamic_gi.main_ms());
+                lsd::editor::remote::print(line);
+                LSD_LOG_INFO("stat", "%s", line);
+            }
             if (st.stat_gpu_valid) {  // sections between the marks (a mark not set that frame: its section is folded into the next)
                 const lsd::f64* t = st.stat_gpu_ms;
                 auto span = [t](int from, int to) { return t[to] >= 0.0 && t[from] >= 0.0 ? t[to] - t[from] : 0.0; };
@@ -1861,6 +1875,21 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print(out.empty() ? "(the level is empty)" : out.c_str());
     }, &s, "Every object in the level: name, parent, world position, components");
+    console::add_command("object.Move", [](void* user, const char* args) {  // tests / the MCP bridge: an undoable move, like a gizmo drag
+        auto& st = *static_cast<EditorState*>(user);
+        char name[64] = "";
+        float x, y, z;
+        if (std::sscanf(args, "%63s %f %f %f", name, &x, &y, &z) == 4) {
+            for (lsd::u32 slot = 0; slot < st.world->slot_count(); ++slot) {
+                const lsd::world::Entity e = st.world->entity_at_slot(slot);
+                if (!e.valid() || std::strcmp(st.world->name(e), name) != 0) continue;
+                st.world->get<lsd::world::Transform>(e)->position = {x, y, z};
+                std::snprintf(st.pending_edit, sizeof st.pending_edit, "Move");
+                return;
+            }
+        }
+        lsd::editor::remote::print("object.Move <name> <x> <y> <z>: an object of the level by name (scene.List)");
+    }, &s, "object.Move <name> <x> <y> <z>: move an object of the level (undoable)");
     console::add_command("asset.List", [](void* user, const char* args) {
         const auto& st = *static_cast<EditorState*>(user);
         std::string filter(args), out;
@@ -2668,6 +2697,7 @@ int main(int argc, char** argv) {
     int exit_code = 0;
     std::thread unit_tests;
     register_console(state);
+    if (!game_mode) lsd::editor::register_utility_commands(state);  // editor utilities never run in a packaged game
     for (lsd::u32 slot = 0; select_arg && slot < world.slot_count(); ++slot) {
         const lsd::world::Entity e = world.entity_at_slot(slot);
         if (e.valid() && std::strcmp(world.name(e), select_arg) == 0) {
@@ -2703,6 +2733,7 @@ int main(int argc, char** argv) {
     auto* particle_editor = new lsd::editor::ParticleEditor(*device, allocator, *effects, grid);  // previews with the level's grid
     state.particle_editor = particle_editor;
     lsd::editor::remote::register_content_commands();  // a game with -remote takes files the editor pushes
+    if (!game_mode) lsd::editor::multi_user::register_commands(state);
     if (remote_arg > 0 && remote_arg < 65536) lsd::editor::remote::listen(static_cast<lsd::u16>(remote_arg), remote_password && remote_password[0] ? remote_password : nullptr);
 
     lsd::audio::AudioSystem audio;
@@ -2858,6 +2889,7 @@ int main(int argc, char** argv) {
         }
         lsd::editor::remote::poll();
         lsd::editor::remote::push_changes();  // Remote Console > Push Changes
+        lsd::editor::multi_user::update(state);  // before the UI: other users' edits and markers this frame
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (state.playing && !state.ejected && play.ui_cursor()) {  // a menu has the mouse, keys and the gamepad's D-pad / A
@@ -3994,7 +4026,9 @@ int main(int argc, char** argv) {
         g_lighting_build = nullptr;
     }
     lsd::editor::set_baked_lighting(nullptr);
+    g_dynamic_gi.stop();
     lsd::editor::remote::close();
+    lsd::editor::multi_user::leave();  // tells the others, before the level and ENet go
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;

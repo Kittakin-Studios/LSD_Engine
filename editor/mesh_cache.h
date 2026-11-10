@@ -50,6 +50,7 @@ public:
     struct Triangles {
         std::vector<Vec3> points;
         std::vector<u32> indices;
+        std::vector<f32> uvs;  // two per point (cloth draws from them)
     };
     const Triangles* triangles(const char* key);
 

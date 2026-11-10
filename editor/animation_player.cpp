@@ -291,6 +291,16 @@ void AnimationPlayer::add_ik(world::Entity e, const char* bone, Vec3 target, f32
     ik.forward = forward;
     ik.weight = weight;
     ik.aim = aim;
+    ik.move = false;
+}
+
+void AnimationPlayer::move_bone(world::Entity e, const char* bone, const Mat4& world_delta) {
+    if (ik_count_ == sizeof iks_ / sizeof iks_[0]) return;
+    Ik& ik = iks_[ik_count_++];
+    ik.entity = e;
+    std::snprintf(ik.bone, sizeof ik.bone, "%s", bone);
+    ik.move = true;
+    ik.delta = world_delta;
 }
 
 // After sampling: Foot IK, then the scripts' requests, all in the mesh's model space.
@@ -517,6 +527,10 @@ void AnimationPlayer::apply_ik(world::World& world, State& state, const SkinnedE
         if (ik.entity != state.entity || (mesh && mesh->full_body_ik && !ik.aim)) continue;
         const i32 j = model.find_joint(ik.bone);
         if (j < 0) continue;
+        if (ik.move) {
+            state.pose.transform_models(model, j, to_model * ik.delta * to_world);
+            continue;
+        }
         const Vec3 target = transform_point(to_model, ik.target);
         if (ik.aim) state.pose.aim_ik(model, static_cast<u32>(j), target, ik.forward, ik.weight);
         else state.pose.two_bone_ik(model, static_cast<u32>(j), target, ik.weight);

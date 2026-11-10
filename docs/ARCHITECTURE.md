@@ -208,6 +208,20 @@ place to the mm). `draw_world` marks the cells whose nearest point is past Hlod 
 their members in the static mesh loop and draws their proxies (`HLOD:<cell>:<n>` in the mesh cache) as plain
 unbatched mesh draws, so every backend needs nothing new. Shadow passes still use the objects.
 
+**Dynamic GI** (`editor/dynamic_gi.*`, World Settings > Dynamic Global Illumination, Unreal's Lumen in spirit): a
+10 x 10 x 5 grid of L1 SH probes (`r.DynamicGI.Spacing`, 2 m) whose first probe is snapped to whole cells around the
+first viewport's camera (`gi_grid_origin`). `DynamicGi::update` (in `draw_world`, main view) runs one sweep at a time
+on a worker thread: it hands over the frame's light list (`world_lights`, which keeps Static lights real-time while it is on) and, only when a Static Mesh's
+transform / mesh / material / colour hash changed, the level's triangles (object-space triangles cached per mesh key,
+base colours per material) for a new `ProbeTracer` (light_bake's BVH, built on the worker). The sweep is Build
+Lighting's probe pass (`relight_probe_grid` = `trace_probe_grid`, shared with the bake): `r.DynamicGI.Rays` rays per
+probe on half the cores, every hit lit by the lights through shadow rays and by the last sweep's probes (a bounce
+per sweep, so bounces accumulate), invalid probes filled from neighbours, a new ray spiral per sweep. The old probes
+are moved to the new origin (`gi_scroll`, those that left the grid start fresh) and blended 50 / 50 with the new
+ones. The finished grid is written into `LightSetup::probes` (replacing the baked probes, and `lightmap_info.y = 0`
+turns the lightmaps off) for every view, so the lit shaders' existing `ambient_light` reads it on D3D12, Vulkan and
+OpenGL alike. `stat dump` prints the sweep time and the main thread's share; `r.DynamicGI 0` turns it off.
+
 The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
 backends). Its order: ambient occlusion (from depth: 12 samples rotated by a 4×4 Bayer pattern, then
 a 4×4 depth-aware blur that sees every rotation once, so no noise is left; multiplied into the
@@ -372,7 +386,21 @@ kinematic body and a `Moving` record instead of a static body; `update_rides` ru
 step (E to board, Mover routes and start / repeat conditions, the driven vehicle's arcade model with
 `raycast(..., ignore_body)` for ground and walls) and moves their bodies with `move_kinematic`, so the
 character and objects on them are carried; `place_rider` after the step puts the driver / rider on its
-seat; `vehicle_view` follows behind. Scripts reach it through `ScriptHost.ride`.
+seat; `vehicle_view` follows behind. Scripts reach it through `ScriptHost.ride`. A Physics vehicle
+(`add_physics_vehicle`) finds its wheels (listed, or children / Skeletal Mesh bones named Wheel...),
+fits each to its mesh's box in the vehicle's space (`physics::fit_wheel`; a bone's vertices skinned by
+a sampled rest pose), keeps each wheel object's offset from its rest frame, and after the step
+`update_vehicle_wheels` puts the objects on Jolt's wheel transforms or asks the AnimationPlayer to move
+the bones (`move_bone`: a world-space delta applied after the animation with `Pose::transform_models`).
+
+**Cloth** (`editor/cloth_core.*`, `PlaySession::start_cloth` / `update_cloth`): at Play start a Cloth
+object's mesh triangles are subdivided, put in world space and welded into particles (seams in the
+drawn mesh share one), one side pinned; `PhysicsWorld::add_cloth` makes them a Jolt soft body (edge,
+shear and bend constraints from Stiffness, pinned particles with zero inverse mass), and before each
+step `set_cloth_wind` pushes every triangle along its normal by the air hitting it. After the step
+the particles come back (`cloth_points`), into the object's space, smooth normals are rebuilt and the
+mesh is re-uploaded as "Cloth:<n>" (`MeshCache::set_generated`), which the object's Static Mesh names
+for the rest of Play, so every backend draws it as an ordinary mesh.
 
 **Multiplayer** (`engine/net`, ENet): `NetSession` hosts or joins; channel 0 is reliable (welcome,
 spawn, destroy, events, chat, joins, teams), channel 1 unreliable sequenced (snapshots, owner states).
@@ -575,6 +603,17 @@ active, and not begun at all (returns false) while another is. A tab's x sets `*
 editor's next draw, so the editor runs its own close. While an editor tab is active the workspace row
 and the 3D viewport are skipped (`viewport_count` 0); Play selects the Level tab.
 
+### Editor utilities
+
+`editor/editor_utility_core.*` (tested in editor_tests) owns a second `ScriptSystem` on the editor's world.
+Its `ScriptHost` sets `editor`, a callback behind `lsd._editor(command, arg)`; with it set, `start()` runs
+none of the level's Script components. Lua glue builds `lsd.editor` on top and gives each utility file
+its own environment, kept so its panel's buttons (`lsd._utility_call`) and fields (`lsd._utility_set`)
+reach its functions and globals; C++ passes code and values as Lua long-bracket strings (`lua_quote`).
+A run or button saves the level text before and after: if it differs, `editor/editor_utility.cpp` names
+a pending edit (one undo step). Play's host never sets `editor`, so `lsd.editor` raises there, and
+`main.cpp` registers the `utility.Run` command only outside game mode.
+
 ## Editor plugins and the Claude MCP bridge
 
 Editor Preferences > Plugins is a table of plugins (`kPlugins` in `editor/editor_ui.cpp`: name,
@@ -595,6 +634,25 @@ calls for Anthropic and OpenAI-compatible APIs. Tools are the MCP bridge's set r
 (or run when allowed), their results go back as the next turn, up to 12 rounds a message. Lessons
 (`editor/assistant_lessons.*`) are teaching text whose code blocks are the files; Apply writes them,
 makes the input assets and sockets and attaches the component to the selection.
+
+## Multi-user editing
+
+`editor/multi_user.*` (network, panel, markers) over `editor/multi_user_core.*` (ops, no network,
+tested in editor_tests). A session is a `net::NetSession` on its own empty `World`, so nothing in
+the level replicates as game objects; only named events go over it (reliable; texts over 16 KB go as
+`mu_more` pieces first). The host is the hub: a joiner's events go to it, it applies and passes them on.
+
+- **Join**: on PlayerJoined the host sends `mu_level` (its level path and `save_level` text); the
+  joiner loads it, resets its undo history and starts syncing.
+- **Edits**: `Transactions::version()` changes with every commit, undo, redo and reset. When it does,
+  `multi_user::diff` compares each object's `world::save_entity` text with the baseline (the level as
+  everyone last agreed on it) and sends `mu_ops`: `{"settings": ..., "remove": [ids], "set": [objects]}`.
+  `apply` runs removes first (a new object may reuse a slot), then `world::load_entities` (an existing
+  id is emptied and rewritten, parents linked last), re-captures the baseline so nothing echoes back,
+  and commits an undo step. Ids are entity handles, the same everywhere because joiners load the
+  host's text. Ops that arrive during Play wait for Stop.
+- **Presence**: every 0.2 s each editor sends `mu_view` (`id|x y z yaw|selected|name`); markers are
+  one-frame `debug_draw` shapes. A user unheard for 5 s is dropped.
 
 ## Packaging and game mode
 

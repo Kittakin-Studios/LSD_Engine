@@ -181,6 +181,7 @@ struct EditorState {
     bool show_template_picker = false;  // the New Project template picker (first launch, File > New from Template)
     bool show_message_log = false;
     bool show_remote_console = false;  // Tools > Remote Console
+    bool show_multi_user = false;      // Window > Multi-User Editing
     bool show_memory = false;          // Window > Memory (memreport)
     char load_layout[260] = "";        // Window > Layout > a saved layout: applied before the next frame
     bool reset_layout = false;         // Window > Layout > Reset to Default (of the active workspace)

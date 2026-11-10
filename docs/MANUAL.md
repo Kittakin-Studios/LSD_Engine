@@ -763,12 +763,22 @@ their Static Mesh):
     Physics** makes it a real car: a body on wheels with suspension, an engine (torque, max RPM), an
     automatic gearbox and brakes. It rolls down slopes, bounces over bumps, slides, and can be pushed.
     W / S throttle (pressing against the way it rolls brakes first), A / D steer, **Ctrl** brake,
-    **Space** handbrake, **Shift** boost. Mass, steering angle, wheel radius / width and the suspension
-    (travel, stiffness, damping) are there too. With no **Wheels** listed it gets four at the corners
-    of its box (front ones steer; Drive picks rear, front or all-wheel). List wheels to place them
-    yourself; a wheel's **Object** names a child mesh (a wheel from Create Prefab from Parts, its pivot
-    at the wheel's centre) that spins, steers and moves with it, like Unreal's wheel bones. Without a
-    wheel mesh, a ring shows each wheel in Play.
+    **Space** handbrake, **Shift** boost. Mass, steering angle, wheel radius / width, the suspension
+    (travel, stiffness, damping), **Tire Friction** (Unreal's Friction Force Multiplier: 1 tarmac, 0.3
+    ice), **Gear Ratios** (Unreal's Transmission Setup: first gear first; empty = five gears) and
+    **Reverse Gear Ratio** are there too.
+  - **Your own car mesh** (like a Chaos Vehicle Blueprint with its wheel bones): put the body mesh on the
+    vehicle object and the four wheel meshes as its children, where the wheels are, and name them
+    **Wheel...** (Wheel FL, Wheel_RR...). With no **Wheels** listed, Play finds them, takes each one's
+    place, radius and width from its mesh, makes the front half steer and the back half take the
+    handbrake (Drive picks which are driven), and spins, steers and bounces each mesh with its wheel,
+    whatever its pivot or rotation. A rigged car works the same way: a **Skeletal Mesh** on the vehicle
+    (or a child) whose wheel bones are named **wheel...** (wheel_fl, Wheel_RR...) has those bones turned.
+    To set wheels up by hand, list them: a wheel's **Object** (a child mesh) or **Bone** is what turns,
+    and **Fit** takes its place and size from that mesh or bone instead of Position / Radius. With
+    nothing found it gets four wheels at the corners of its box and a ring shows each one in Play.
+    Keep the vehicle's scale uniform (scale the mesh in its import settings): a wheel under a squashed
+    parent cannot spin without stretching.
   - **Multiplayer**: give the vehicle **Net Replicated**. The server hands out the seats: the first
     player in drives (their machine simulates the car, everyone else sees it move), the next ones sit
     on the **Passenger Seats** (positions in the vehicle's space) with the follow camera. Getting out,
@@ -874,6 +884,32 @@ best first:
 
 Everyone needs the same build (File > Package Project, then send the Build folder). If the
 host's firewall asks, allow the game on private and public networks.
+
+### Multi-User Editing
+
+Unreal's Multi-User Editing: two or more editors of the same project edit one level together.
+**Window > Multi-User Editing**:
+
+1. One person clicks **Host** (UDP port 7790; their firewall may ask: allow it). The panel lists
+   their **join codes** (one per network address, Tailscale's included: see
+   [Multiplayer.md](Multiplayer.md) for getting across the internet).
+2. The others paste a code or an address (`192.168.1.20` or `192.168.1.20:7790`) and click **Join**.
+   Their level is replaced by the host's, as it is now (save yours first).
+3. Edit as usual. Each finished change (the steps Undo History lists: moves, Details edits, placing,
+   deleting, renaming, Undo / Redo, opening another level) appears on everyone else's editor; it is
+   an undo step there too ("Multi-User edit").
+4. The others' cameras show in the viewport as a coloured ball with their name, and what they have
+   selected as a box of the same colour. The panel's **Users** list says what each has selected;
+   **Go To** moves your camera to theirs. **Your Name** is what they see.
+5. **Leave** ends it (the host leaving ends it for everyone). Everyone saves their own copy.
+
+Every editor needs the same Content/ (use source control): assets are not sent, only the level.
+There are no locks: when two people change one object, the last change wins. Edits that arrive
+while you are playing are applied when you press Stop.
+
+Console: `multiuser.Host [port]`, `multiuser.Join <code or address>`, `multiuser.Leave`,
+`multiuser.Users` (who is there, their camera and selection), `multiuser.Name <name>`, and
+`object.Move <name> <x> <y> <z>` (an undoable move, for scripts and tests).
 
 ### 2D games (Paper2D)
 
@@ -982,6 +1018,24 @@ dark contact under the statue's feet come from the lightmap.*
   in the FBX.
 - An object moved, renamed or given another mesh after the bake goes back to the probes until the
   next Build Lighting. Real-time shadows inside the Shadow Distance stay as they were.
+
+### Dynamic Global Illumination (Unreal's Lumen)
+
+When lights or walls move (a day / night cycle, a door, a torch carried around), baked light is wrong. Tick
+**World Settings > Dynamic Global Illumination** instead: a grid of light probes follows the camera (10 x 10 probes
+across, 5 high, 2 m apart: 18 m around you) and is relit all the time on worker threads. Each probe sees the sky
+(dark under a roof), the light bounced off the surfaces around it (from every light, through their shadows, and the
+light those surfaces already got: bounces add up) and the colours of the meshes, as Build Lighting's probes do, but
+live: move the sun or a wall and the bounce and the room's darkness follow within a few frames.
+
+- While it is on it replaces Build Lighting's probes and lightmaps (no bake needed), and Static lights light in real time like Movable ones; untick it to go back to the bake.
+- Beyond the grid the ambient fades back to the Sky Light's.
+- Console: `r.DynamicGI 0` turns it off everywhere (a quality switch), `r.DynamicGI.Spacing <m>` sets the distance
+  between probes (larger reaches further, coarser), `r.DynamicGI.Rays <n>` the rays per probe (8 .. 256, default 64:
+  more is smoother and slower). `stat dump` prints how long a sweep takes.
+- Limits: it sees Static Meshes only (not skeletal meshes, landscapes or instanced meshes) with their Color and
+  Material base colour (no textures); the light is soft and coarse (2 m), so small contact shadows still need SSAO or
+  the lightmaps.
 
 ---
 
@@ -1245,6 +1299,15 @@ capsule for each big bone, fitted to the skin that bone moves most (head, hands 
 bones ride along with their parent), joined at the joints by cone joints (40 degrees of swing, 25 of twist), about 70 kg
 in all; a ragdoll's parts do not collide with each other. It starts from the pose the mesh had that frame. Clothes on
 the body (Leader Pose) follow it. For now it starts at rest and the object itself stays where it was.
+**Cloth** (Unreal's Chaos Cloth): add a **Cloth** component to an object with a Static Mesh (a flag, curtain, banner,
+sail; a Plane works). In Play its vertices move as one soft sheet: **Pin** holds one side in place (Top for a banner or
+curtain, the pole's side for a flag; in world directions) and **Pin Amount** how much of it (0: just the edge);
+**Subdivide** splits each triangle into four that many times first (a Plane needs 4 or 5; your own cloth mesh may need
+none); **Mass**, **Stiffness** (silk 0 to canvas 1), **Damping**, **Gravity Scale**, **Wind** (m/s, world directions)
+with **Gustiness**, and **Thickness**. It falls onto and drapes over the level's bodies and Rigid Bodies, and is drawn
+from the moving vertices with the mesh's material and UVs on D3D12, Vulkan and OpenGL. For now the pinned side stays
+where Play started (cloth on a moving object does not follow it) and capes skinned to a character's bones are not done.
+
 Select the object and click the joint's yellow ring in the viewport to move its pivot with the gizmo. Scripts get `on_hit` when contacts begin and can `lsd.raycast`, sweep a sphere, box or
 capsule (`lsd.sphere_trace` / `box_trace` / `capsule_trace`) or list what overlaps a shape
 (`lsd.overlap_sphere` / `overlap_box`). Visual scripts have **Line Trace**, **Sphere Trace**, **Capsule
@@ -1406,6 +1469,54 @@ Existing files are kept, so your edits survive a second Apply. The console does 
 
   ![The Lessons tab](images/lesson_gun_apply.jpg)
   *The Lessons tab: pick a lesson, Apply to Selected Character, read how each part is coded.*
+
+### Editor utility scripts and widgets
+
+Unreal's Editor Utility Blueprints / Widgets / Scripted Actions: a Lua script or a visual script that
+runs **in the editor**, on the level you are editing (not in Play), to automate level work. It gets the
+whole `lsd` API (`lsd.find`, `lsd.spawn`, `lsd.position` / `set_position`, `lsd.get` / `set` / `add` /
+`remove` for any component's properties, `lsd.assets`, `lsd.log`...) plus `lsd.editor`:
+
+| Call | What it does |
+| --- | --- |
+| `function run(self)` | What Run does (a visual script: its **Event Start**) |
+| `lsd.editor.selection()` | The selected objects, `{e, ...}` |
+| `lsd.editor.select({e, ...})` | Replaces the selection |
+| `lsd.editor.open_asset(name)` | Opens an asset as a double-click would |
+| `lsd.editor.console(line)` | Runs a console command |
+| `lsd.editor.panel(title, widgets)` | A dockable panel (the Editor Utility Widget) |
+
+Run one: Content Browser > right-click the script > **Run Editor Utility**, or `utility.Run <name>` in
+the console. Name it `EU_<something>` and it is also listed in **Tools > Editor Utilities**, in the
+toolbar's **Utilities** menu (next to Play) and in the Outliner's right-click **Scripted Actions**
+(run on the selection). Everything one run (or one panel button) changes in the level is **one undo
+step** (Ctrl+Z). Utilities never run while playing, and never in a packaged game (`lsd.editor` raises
+there).
+
+A panel declares its widgets as a list: `{"label", text}`, `{"button", label, function}`,
+`{"checkbox" | "number" | "text", label, variable, default}`. Checkboxes, numbers and text fields
+set the script's global of that name; a button calls the script's function:
+
+```lua
+-- Content/Tools/EU_LineUp.lua
+function run(self)
+  lsd.editor.panel("Line Up", {
+    {"number", "Spacing", "spacing", 2},
+    {"checkbox", "Flat", "flat", true},
+    {"button", "Line Up Selection", "line_up"},
+  })
+end
+
+function line_up()
+  for i, e in ipairs(lsd.editor.selection()) do
+    local x, y, z = lsd.position(e)
+    lsd.set_position(e, (i - 1) * spacing, y, flat and 0 or z)
+  end
+end
+```
+
+Running it again rebuilds its panel. `lsd.spawn(name, x, y, z)` places a prefab, a mesh asset or a
+built-in shape ("Cube").
 
 ### C and C++ scripts
 
@@ -2511,7 +2622,7 @@ in the project folder, the splash too).
 | Animation | Foot IK (Unreal's foot placement, in Play: the pelvis drops for the lower foot, each foot reaches its ground and turns to its slope, eased so stairs do not pop; foot bone names, max step, ankle height, Max Foot Angle, Speed) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
 | Volumes | Blocking, Kill, Trigger, Audio Volume |
-| Physics | Rigid Body, Physics Joint |
+| Physics | Rigid Body, Physics Joint, Cloth |
 | Gameplay | Player Start, Character, Script, Tags (the **+** button picks from Project Settings > Gameplay Tags), Spline, Spline Follower, Attribute Set, Ability System ([abilities](#abilities-effects-and-attributes-gameplay-ability-system)) |
 | Audio / Effects | Sound Emitter, Particle Effect |
 | AI | Nav Mesh Bounds, Nav Modifier Volume, Nav Agent, AI Controller, Smart Object |

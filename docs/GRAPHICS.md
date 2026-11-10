@@ -120,6 +120,12 @@ Without baking, the inside of a closed room is as bright as an open field.
    objects.
 6. Build again whenever walls or lights move.
 
+**Lights or walls that move?** (a day / night cycle, doors, torches) Skip the bake and tick **World Settings >
+Dynamic Global Illumination** (Unreal's Lumen): probes around the camera are relit all the time, so bounces and dark
+interiors follow the sun and the walls. It replaces the bake while on. For smoother light raise
+`r.DynamicGI.Rays` (96 or 128); for a wider reach raise `r.DynamicGI.Spacing` (3 or 4 m, coarser). `stat dump`
+shows its cost.
+
 **Check:** the **Lightmap Density** view mode shows even texels where you look most. Corners and
 contact areas should darken softly.
 

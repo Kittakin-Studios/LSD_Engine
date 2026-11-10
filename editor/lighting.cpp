@@ -1,4 +1,5 @@
 #include "lighting.h"
+#include "dynamic_gi.h"
 #include "scalability.h"
 
 #include "light_bake.h"
@@ -319,7 +320,8 @@ void set_reflection_probes(const f32 (*probes)[4], const f32 (*boxes)[4], u32 co
 }
 
 rhi::LightSetup world_lights(const world::World& w, const LightView& view, bool skip_hidden) {
-    rhi::LightSetup s = lights_only(w, view, skip_hidden, g_baked == nullptr);  // Static lights are in the bake once there is one
+    const bool live_gi = DynamicGi::enabled && w.settings().dynamic_gi;  // dynamic GI replaces the bake: Static lights light in real time
+    rhi::LightSetup s = lights_only(w, view, skip_hidden, g_baked == nullptr || live_gi);  // Static lights are in the bake once there is one
     static_assert(sizeof s.global_params == script::kMaxGlobalParams * 4 * sizeof(f32), "LightSetup::global_params holds every global material parameter");
     std::memcpy(s.global_params, script::global_param_values(), sizeof s.global_params);
     s.reflection_info[0] = static_cast<f32>(g_reflection_count);

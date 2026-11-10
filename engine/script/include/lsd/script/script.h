@@ -216,6 +216,8 @@
 //   lsd.net_join(code) -> ok, why        a join code ("K7QF2-MXA9P") or an address ("1.2.3.4[:port]"): restarts as a client,
 //                                        then follows the server to its level (on_connected / on_disconnected tell how it went)
 //   lsd.net_leave([level]) -> ok         back to single player
+//   lsd.editor.*                          editor utility scripts only (editor/editor_utility_core.h): selection,
+//                                         panels, open assets, console; raises in Play and in a packaged game
 //   lsd.editor_workspace() -> name       the editor's workspace tab while playing in it ("Layout", "Multiplayer"...); "" in a packaged game
 //   lsd.net_join_code() -> { upnp = "off" | "working" | "open" | "failed", message, internet = code | nil,
 //                            lan = { {address, code, tailscale = bool}, ... } }   server: codes to give playtesters;
@@ -366,6 +368,9 @@ struct ScriptHost {
     i32 (*ui_open_text)(void* user, const char* rml) = nullptr;  // a document from markup (the HUD widgets); -1 if none
     // Widget animations: property nullptr plays `value` as an RCSS animation; else tweens property to value.
     bool (*ui_animate)(void* user, i32 doc, const char* id, const char* property, const char* value, f32 seconds, const char* tween) = nullptr;
+    // Editor utility scripts only (lsd._editor(command, arg) -> text): set by the editor, never in Play or a packaged
+    // game, so lsd.editor.* raises there. With it set, start() runs no Script components (the level is being edited).
+    bool (*editor)(void* user, const char* command, const char* arg, char* out, usize capacity) = nullptr;
 };
 
 class ScriptSystem {

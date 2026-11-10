@@ -232,13 +232,12 @@ Vec3 bounce(const Bvh& bvh, const BakeScene& s, Vec3 p, Vec3 n, Vec3 albedo, con
 }
 
 // Returns false if the probe is inside geometry (most of its rays hit the back of a surface).
-bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh, const ProbeGrid* indirect) {
+bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, u32 kRays, f32* sh, const ProbeGrid* indirect) {
     u32 back_hits = 0;
-    constexpr u32 kRays = 256;
     for (int i = 0; i < 12; ++i) sh[i] = 0.0f;
     const f32 twist = static_cast<f32>(seed % 997) * 0.618034f;  // a different spiral per probe: no shared banding
     for (u32 r = 0; r < kRays; ++r) {
-        const f32 z = 1.0f - 2.0f * (static_cast<f32>(r) + 0.5f) / kRays;  // Fibonacci sphere
+        const f32 z = 1.0f - 2.0f * (static_cast<f32>(r) + 0.5f) / static_cast<f32>(kRays);  // Fibonacci sphere
         const f32 radius = std::sqrt(std::max(0.0f, 1.0f - z * z));
         const f32 phi = static_cast<f32>(r) * 2.39996323f + twist;
         const Vec3 d{radius * std::cos(phi), radius * std::sin(phi), z};
@@ -262,7 +261,7 @@ bool bake_probe(const Bvh& bvh, const BakeScene& s, Vec3 p, u32 seed, f32* sh, c
             for (int k = 0; k < 4; ++k) sh[ch * 4 + k] += rgb[ch] * basis[k];
         }
     }
-    const f32 weight = 4.0f * 3.14159265f / kRays;
+    const f32 weight = 4.0f * 3.14159265f / static_cast<f32>(kRays);
     for (int i = 0; i < 12; ++i) sh[i] *= weight;
     for (u32 li = 0; li < s.lights.count; ++li) {  // Static lights: their direct light, from their direction (a point source in SH)
         if (!(s.static_lights >> li & 1u)) continue;
@@ -730,6 +729,78 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
 
 constexpr u32 kProbePasses = 2;  // probe bakes: the second reads the first (two bounces in probes, three in lightmaps)
 
+namespace {
+
+// Traces every probe of `grid` (its sh unused) into `sh` (12 per probe) on `threads` threads; `seed` turns each probe's
+// ray spiral (dynamic GI: a new one per sweep, so the sweeps average out). Probes inside walls would read black and
+// darken the rooms beside them: each is filled from its valid neighbours (Unreal's invalid-sample fix), a few cells deep.
+void trace_probe_grid(const Bvh& bvh, const BakeScene& s, const ProbeGrid& grid, u32 rays, u32 seed, u32 threads, const ProbeGrid* indirect, f32* sh,
+                      std::atomic<u32>* done) {
+    const u32* dims = grid.dims;
+    const u32 count = dims[0] * dims[1] * dims[2];
+    std::vector<u8> valid(count, 0);
+    std::atomic<u32> next{0};
+    auto worker = [&] {
+        for (u32 i = next++; i < count; i = next++) {
+            const u32 x = i % dims[0], y = (i / dims[0]) % dims[1], z = i / (dims[0] * dims[1]);
+            const Vec3 p{grid.origin[0] + grid.cell[0] * static_cast<f32>(x), grid.origin[1] + grid.cell[1] * static_cast<f32>(y),
+                         grid.origin[2] + grid.cell[2] * static_cast<f32>(z)};
+            valid[i] = bake_probe(bvh, s, p, i + seed, rays, &sh[static_cast<usize>(i) * 12], indirect) ? 1 : 0;
+            if (done) ++*done;
+        }
+    };
+    std::vector<std::thread> pool;
+    for (u32 t = 1; t < threads; ++t) pool.emplace_back(worker);
+    worker();
+    for (std::thread& t : pool) t.join();
+    for (int pass = 0; pass < 4; ++pass) {
+        std::vector<u8> next_valid = valid;
+        for (u32 i = 0; i < count; ++i) {
+            if (valid[i]) continue;
+            const i32 x = static_cast<i32>(i % dims[0]), y = static_cast<i32>((i / dims[0]) % dims[1]), z = static_cast<i32>(i / (dims[0] * dims[1]));
+            f32 sum[12] = {};
+            u32 n = 0;
+            const i32 offsets[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            for (const auto& o : offsets) {
+                const i32 nx = x + o[0], ny = y + o[1], nz = z + o[2];
+                if (nx < 0 || ny < 0 || nz < 0 || nx >= static_cast<i32>(dims[0]) || ny >= static_cast<i32>(dims[1]) || nz >= static_cast<i32>(dims[2])) continue;
+                const u32 j = static_cast<u32>(nx) + static_cast<u32>(ny) * dims[0] + static_cast<u32>(nz) * dims[0] * dims[1];
+                if (!valid[j]) continue;
+                for (int k = 0; k < 12; ++k) sum[k] += sh[static_cast<usize>(j) * 12 + static_cast<usize>(k)];
+                ++n;
+            }
+            if (!n) continue;
+            for (int k = 0; k < 12; ++k) sh[static_cast<usize>(i) * 12 + static_cast<usize>(k)] = sum[k] / static_cast<f32>(n);
+            next_valid[i] = 1;
+        }
+        valid.swap(next_valid);
+    }
+}
+
+} // namespace
+
+struct ProbeTracer {
+    BakeScene scene;
+    Bvh bvh;
+};
+
+std::shared_ptr<ProbeTracer> make_probe_tracer(BakeScene scene) {
+    auto t = std::make_shared<ProbeTracer>();
+    t->scene = std::move(scene);
+    t->bvh.build(t->scene);
+    return t;
+}
+
+void set_tracer_lights(ProbeTracer& tracer, const rhi::LightSetup& lights, u32 static_lights) {
+    tracer.scene.lights = lights;
+    tracer.scene.static_lights = static_lights;
+}
+
+void relight_probe_grid(const ProbeTracer& t, const f32 origin[3], const f32 cell[3], const u32 dims[3], u32 rays, u32 seed, u32 threads, const f32* indirect, f32* sh) {
+    const ProbeGrid grid{{origin[0], origin[1], origin[2]}, {cell[0], cell[1], cell[2]}, {dims[0], dims[1], dims[2]}, indirect};
+    trace_probe_grid(t.bvh, t.scene, grid, rays, seed, threads, indirect ? &grid : nullptr, sh, nullptr);
+}
+
 void bake_lighting(const BakeScene& s, BakedLighting& out, std::atomic<u32>* done, std::atomic<u32>* total) {
     out = BakedLighting{};
     const Vec3 size = s.hi - s.lo;
@@ -754,36 +825,9 @@ void bake_lighting(const BakeScene& s, BakedLighting& out, std::atomic<u32>* don
     const u32 count = out.probe_count();
     if (total) *total = count * kProbePasses;
     std::vector<f32> sh(static_cast<usize>(count) * 12);
-    std::vector<u8> valid(count, 0);
     Bvh bvh;
     bvh.build(s);
     const u32 threads = std::max(1u, std::thread::hardware_concurrency());
-    // Probes inside walls would read black and darken the rooms beside them: fill each from its
-    // valid neighbours (Unreal's invalid-sample fix), spreading a few cells into solid regions.
-    auto fill_invalid = [&] {
-        for (int pass = 0; pass < 4; ++pass) {
-            std::vector<u8> next_valid = valid;
-            for (u32 i = 0; i < count; ++i) {
-                if (valid[i]) continue;
-                const i32 x = static_cast<i32>(i % dims[0]), y = static_cast<i32>((i / dims[0]) % dims[1]), z = static_cast<i32>(i / (dims[0] * dims[1]));
-                f32 sum[12] = {};
-                u32 n = 0;
-                const i32 offsets[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-                for (const auto& o : offsets) {
-                    const i32 nx = x + o[0], ny = y + o[1], nz = z + o[2];
-                    if (nx < 0 || ny < 0 || nz < 0 || nx >= static_cast<i32>(dims[0]) || ny >= static_cast<i32>(dims[1]) || nz >= static_cast<i32>(dims[2])) continue;
-                    const u32 j = static_cast<u32>(nx) + static_cast<u32>(ny) * dims[0] + static_cast<u32>(nz) * dims[0] * dims[1];
-                    if (!valid[j]) continue;
-                    for (int k = 0; k < 12; ++k) sum[k] += sh[static_cast<usize>(j) * 12 + static_cast<usize>(k)];
-                    ++n;
-                }
-                if (!n) continue;
-                for (int k = 0; k < 12; ++k) sh[static_cast<usize>(i) * 12 + static_cast<usize>(k)] = sum[k] / static_cast<f32>(n);
-                next_valid[i] = 1;
-            }
-            valid.swap(next_valid);
-        }
-    };
     // Pass 1: direct light and the sky, one bounce. Pass 2 again, each hit lit by pass 1's grid: a second
     // bounce (light around corners into rooms). The lightmaps then read pass 2's grid: a third.
     std::vector<f32> previous;
@@ -794,20 +838,7 @@ void bake_lighting(const BakeScene& s, BakedLighting& out, std::atomic<u32>* don
             previous = sh;
             grid.sh = previous.data();
         }
-        std::atomic<u32> next{0};
-        auto worker = [&] {
-            for (u32 i = next++; i < count; i = next++) {
-                const u32 x = i % dims[0], y = (i / dims[0]) % dims[1], z = i / (dims[0] * dims[1]);
-                const Vec3 p{out.origin[0] + out.cell[0] * x, out.origin[1] + out.cell[1] * y, out.origin[2] + out.cell[2] * z};
-                valid[i] = bake_probe(bvh, s, p, i, &sh[static_cast<usize>(i) * 12], indirect) ? 1 : 0;
-                if (done) ++*done;
-            }
-        };
-        std::vector<std::thread> pool;
-        for (u32 t = 1; t < threads; ++t) pool.emplace_back(worker);
-        worker();
-        for (std::thread& t : pool) t.join();
-        fill_invalid();
+        trace_probe_grid(bvh, s, grid, 256, 0, threads, indirect, sh.data(), done);
     }
     previous = sh;
     grid.sh = previous.data();
