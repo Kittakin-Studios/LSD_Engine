@@ -2576,6 +2576,14 @@ in the project folder, the splash too).
   setting scales it (Low a quarter of the detail .. Epic double). `stat dump` lists the textures on the
   GPU, how many are streamed down and the texels they hold. When video memory runs short while playing
   (over 90% of what the system allows), the detail halves until it fits, and comes back when there is room.
+- **Texture pool** (Unreal's texture streaming pool, `r.Streaming.PoolSize`): streamed textures stay within
+  `r.TexturePoolSize` MB of video memory (0, the default: a quarter of the video memory budget; `-vram=<MB>`
+  changes that budget). Over it, the textures drawn least recently give up their sharpest mips first (down
+  to 64 px); a texture that needs to get sharper waits until it fits. So a level with more texture than
+  the card holds still opens and plays: what you look at up close is sharp, the rest is blurrier.
+  Per texture: Details > Texture > **Mip Streaming** (on by default; off = Unreal's Never Stream: always all of
+  it, never squeezed, for UI-like or hero textures). Saving a texture's settings reloads it. `stat dump`
+  prints `texture pool: resident X MB of Y MB, n requests (n loading), n held back by the pool`.
 - **Occlusion culling** (Unreal's, on by default; `r.OcclusionCulling 0` turns it off): static and skeletal meshes, and each copy of an Instanced Static Mesh, hidden
   behind the nearest big opaque meshes (up to 16 a frame, each up to 4096 triangles: walls, blockout
   shapes, buildings) are not drawn. It only skips what is surely hidden, so nothing pops; `stat dump`

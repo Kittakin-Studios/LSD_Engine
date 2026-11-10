@@ -222,6 +222,21 @@ ones. The finished grid is written into `LightSetup::probes` (replacing the bake
 turns the lightmaps off) for every view, so the lit shaders' existing `ambient_light` reads it on D3D12, Vulkan and
 OpenGL alike. `stat dump` prints the sweep time and the main thread's share; `r.DynamicGI 0` turns it off.
 
+**Texture streaming and the texture pool** (Unreal's texture streaming / Streaming Virtual Texturing in spirit):
+`TextureCache` (`editor/material_cache.*`) decodes textures on a worker thread. Each draw passes `want`, about the
+texels across the object covers on screen (bounds over distance times the viewport height, scaled by the Quality
+detail and the memory scale); the cache keeps the largest `want` and the frame of the last use per texture. About
+twice a second `render::plan_texture_streaming` (`engine/render/texture_streaming.*`, pure, tested in render_tests)
+gets every texture's resident side, bytes (every mip), wanted side (`stream_size`: a power of two, at least 64),
+last use, completeness and Mip Streaming flag, and returns the side to load each at: over the pool
+(`r.TexturePoolSize` MB, 0 = a quarter of the video memory budget) the least recently drawn (then the largest) halve,
+one step a plan, down to 64; drawn ones go smaller once a quarter of their side is enough, then sharper ones grow
+to what they want if it fits, else one step, else they are counted as held back. Each change is a whole load at
+that Max Size from `DerivedData/Textures` (a cached copy per size; the old texture stays until the new one is up),
+so every backend needs nothing new. A texture's `.meta` Mip Streaming off loads all of it always and is never
+squeezed. `stat dump` prints `texture pool: resident ... of ... MB`. Shortcut: whole-texture loads per size, not
+tiles of a virtual texture with a page table and feedback pass; sharper requests are first come first served.
+
 The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
 backends). Its order: ambient occlusion (from depth: 12 samples rotated by a 4×4 Bayer pattern, then
 a 4×4 depth-aware blur that sees every rotation once, so no noise is left; multiplied into the

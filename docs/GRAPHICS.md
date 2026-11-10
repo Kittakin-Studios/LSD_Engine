@@ -226,7 +226,10 @@ Epic should still hit your frame rate. These are all on by default; check them w
 - **Shadow caching** (`r.ShadowCaching`): still lights cost nothing per frame.
 - **LODs**: meshes of 512+ triangles get LODs. Use **Max Draw Distance** and **Cull Distance
   Volumes** on small props.
-- **Texture streaming** and **BC compression** keep video memory in check.
+- **Texture streaming** and **BC compression** keep video memory in check. Streamed textures stay
+  inside the **texture pool** (`r.TexturePoolSize` MB, default a quarter of video memory, like Unreal's
+  streaming pool); if close-up textures stay blurry, `stat dump` shows "held back by the pool": raise it,
+  or turn **Mip Streaming** off on the few textures that must always be sharp.
 - **Instanced Static Mesh** for repeated props, **Foliage** painting for vegetation.
 - Use fewer, better shadowed lights. **Static** lights cost nothing after a bake.
 
