@@ -384,6 +384,29 @@ A small whole game (`Content/CoinRun`, EXAMPLES 9) built with the engine's own t
 - [x] A menu hidden (`display: none`) and shown again ignored the arrow keys / D-pad: RmlUi kept the button focused but lost its document's focus chain, which navigation follows
 - [x] Closing a menu (`lsd.ui_show_cursor(false)`) did not give the game the mouse and keys back: one more click was needed before WASD moved the player
 
+## Found by Carioca Express (Nov 2026)
+
+A larger game in its own project folder (a GTA-like in Rio: jobs, phone, vehicles, enemies, multiplayer), written by
+several people at once. What its scripts had to work around:
+
+- [ ] A shape spawned in Play keeps its collision body where it appeared, at scale 1 (`PlaySession::spawn` > `add_entity_bodies`): later moves, scale and Collision off do not reach the body. Games spawn props 60 m underground and move them
+- [ ] `lsd.move_to` logs "Nav Agent is not on the navmesh" on every failed call (`PlaySession::agent_of`): once per agent is enough
+- [ ] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions)
+- [ ] `lsd.set_rotation` on a vehicle being driven does nothing
+- [ ] `on_overlap_begin` only reaches a script on the trigger object itself
+- [ ] `lsd.play_sound` plays at a fixed point: no sound that follows an object from Lua; Lua cannot loop a sound or read its length (`lsd.play_music` plays a non-looping sound once)
+- [ ] `lsd.assets("Sound")` leaves out Sound Synths (they are listed under "Sound Cue")
+- [ ] No `lsd.set_parent` in Lua (clothes, helmets and held items are moved every frame)
+- [ ] The remote console's `lua` returns no value
+- [ ] No way to run the editor without a visible window (automated runs interrupt whoever is at the PC)
+- [ ] The multiplayer port is fixed per project: no command-line flag, so two test copies clash
+- [ ] A Script component holds at most 16 properties (`List<ScriptProperty, 16>`)
+- [ ] `lsd.spawn`'s documentation does not say the Cube's pivot is its bottom face
+- [ ] Game UI: no CSS transforms, gradients, box-shadow or rounded clipping; scripts cannot move focus or scroll a list; `autofocus` only on first open; a document opened later sits above earlier ones and its full-screen body takes every click (only `z-index` in its own style helps); Lua cannot open a document from text
+- [ ] No pause / time scale from scripts; Esc always stops Play (a game cannot use it for its pause menu)
+- [ ] The mouse wheel is not an input key (`engine/input/src/input.cpp`)
+- [ ] `lsd.apply_damage` only reaches objects with a script; Editor Utilities cannot list every object in the level
+
 ## Later
 
 World Partition + Data Layers, Nanite-style virtualised geometry, Lumen-style software ray-traced GI, hardware
