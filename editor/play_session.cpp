@@ -1065,7 +1065,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     apply_rebinds();
     apply_input();
     input_stamp_ = input_files_stamp();
-    key_held_[0] = key_pressed_[0] = 0;
+    key_pressed_[0] = 0;
+    devices_ = devices_before_ = {};
     spawn_ = feet_;
     placed_ = world.alive(character_);  // where it stands in the level: a script moving it before the first frame teleports too
     if (placed_) {
@@ -1187,6 +1188,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         }
         return n;
     };
+    host.key_down = [](void* user, const char* key) { return input::key_down(static_cast<const PlaySession*>(user)->devices_, key); };
     host.key_pressed = [](void* user) -> const char* {
         const auto& self = *static_cast<const PlaySession*>(user);
         return self.key_pressed_[0] ? self.key_pressed_ : nullptr;
@@ -2124,15 +2126,21 @@ void PlaySession::apply_live_edits(world::World& world) {
 }
 
 bool PlaySession::touch_point(u32 i, f32* x, f32* y) const {
-    if (i >= touch_.touch_count) return false;
-    *x = touch_.touch_xy[i][0];
-    *y = touch_.touch_xy[i][1];
+    if (i >= devices_.touch_count) return false;
+    *x = devices_.touch_xy[i][0];
+    *y = devices_.touch_xy[i][1];
     return true;
 }
 
 void PlaySession::update(world::World& world, const input::InputFrame& frame, f32 dt) {
-    touch_.touch_count = frame.touch_count;  // not the whole frame: it holds pointers
-    std::memcpy(touch_.touch_xy, frame.touch_xy, sizeof touch_.touch_xy);
+    devices_before_ = devices_;
+    std::memcpy(keys_[1], keys_[0], sizeof keys_[0]);
+    devices_before_.keys = keys_[1];
+    devices_ = frame;
+    devices_.key_count = frame.keys ? (frame.key_count < 512 ? frame.key_count : 512) : 0;
+    std::memset(keys_[0], 0, sizeof keys_[0]);
+    if (devices_.key_count > 0) std::memcpy(keys_[0], frame.keys, static_cast<usize>(devices_.key_count));
+    devices_.keys = keys_[0];
     net_receive(world, dt);  // other machines' moves and events first
     talk(frame);
     LSD_PROFILE_SCOPE("play");
@@ -2147,10 +2155,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         input_.update(frame, dt);
         if (recording_on_) input_.record(recording_, dt);
     }
-    char held[32] = "";
-    input::held_key(frame, held, sizeof held);
-    std::snprintf(key_pressed_, sizeof key_pressed_, "%s", held[0] && std::strcmp(held, key_held_) != 0 ? held : "");
-    std::snprintf(key_held_, sizeof key_held_, "%s", held);
+    key_pressed_[0] = 0;  // only a key that went down since the last frame: letting one go is not a press of another
+    input::held_key(devices_, key_pressed_, sizeof key_pressed_, &devices_before_);
     const input::Value move = input_.value(settings_.move_action);
     const input::Value look = input_.value(settings_.look_action);
     const bool aboard = world.alive(driving_) || world.alive(riding_);  // in a vehicle or on a ride: no walking

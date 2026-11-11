@@ -2747,6 +2747,7 @@ UI, saving, settings, languages
 | `lsd.enum(name)`, `lsd.struct(name)` | editor-made types: New Data Asset > UserEnum (names, numbered from 0) / UserStruct (fields with defaults); returns nil if missing |
 | `lsd.broadcast(name, ...)`, `lsd.call(e, name, ...)`, `lsd.implements(e, name)` | events between objects (event dispatchers, interface messages): name(self, ...) on every script, or e's |
 | `lsd.draw_line(x1, y1, z1, x2, y2, z2 [, r, g, b [, seconds]])`, `lsd.draw_sphere(x, y, z, radius ...)`, `lsd.draw_box(x, y, z, hx, hy, hz ...)`, `lsd.draw_text(x, y, z, text ...)` | debug drawing over the viewport (seconds 0: this frame) |
+| `lsd.key_down(name)` | true while a key or button is held (Unreal's Is Input Key Down): "F", "Left Shift", "Left Mouse Button", "Gamepad Face Bottom". For quick prototypes and hold-to-do timers; an Input Action is still the way for anything the player may rebind |
 | `lsd.bindings(action)`, `lsd.rebind(action, old_key, new_key)`, `lsd.key_pressed()` | key rebinding (Enhanced Input's player mappings): saved in GameUserSettings.json, applied every Play; Move / Look / Jump name the built-in controls |
 | `lsd.input_record(file)`, `lsd.input_play(file)`, `lsd.input_stop()` | input recording: the Input Actions' values and frame times to / from `Saved/<file>` (tests, demos) |
 

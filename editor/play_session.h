@@ -85,7 +85,7 @@ public:
     Vec3 feet() const { return feet_; }
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
-    u32 touch_count() const { return touch_.touch_count; }
+    u32 touch_count() const { return devices_.touch_count; }
     bool touch_point(u32 i, f32* x, f32* y) const;
     f32 view_fov() const { return view_fov_; }  // radians; 0: the editor's
     f64 clock() const { return play_clock_; }  // seconds of game time since Play started (flipbooks, events)
@@ -322,8 +322,8 @@ private:
     void update_view(const world::World& world, f32 dt);
     void find_view(const world::World& world);  // the camera to look through, before blends and shakes
     input::InputMappingContext context_;  // the Character's controls, the player's rebinds applied
-    char key_held_[32] = "";
-    input::InputFrame touch_;  // this frame's fingers, for lsd.touch
+    input::InputFrame devices_, devices_before_;  // this frame's and the last one's devices (lsd.touch, lsd.key_down, lsd.key_pressed)
+    bool keys_[2][512] = {};                       // their keys, copied: the frame's own pointer is the caller's
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
     char level_request_[300] = "";
     char current_level_[300] = "*";  // the level playing now ("*": the one Play started on)

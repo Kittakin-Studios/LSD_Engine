@@ -129,9 +129,15 @@ bool is_2d_key(const char* key) {
 
 bool is_key(const char* key) { return key && key[0] && resolve(key) != kNoSource; }
 
-bool held_key(const InputFrame& frame, char* out, usize capacity) {
+bool key_down(const InputFrame& frame, const char* key) {
+    const u32 source = key && key[0] ? resolve(key) : kNoSource;
+    return source != kNoSource && !is_2d_source(source) && !is_raw_source(source) && read(source, frame).x > 0.5f;
+}
+
+bool held_key(const InputFrame& frame, char* out, usize capacity, const InputFrame* before) {
+    const auto was_down = [before](u32 source) { return before && read(source, *before).x > 0.5f; };
     for (i32 k = 0; frame.keys && k < frame.key_count; ++k) {
-        const char* name = frame.keys[k] ? SDL_GetScancodeName(static_cast<SDL_Scancode>(k)) : nullptr;
+        const char* name = frame.keys[k] && !was_down(static_cast<u32>(k)) ? SDL_GetScancodeName(static_cast<SDL_Scancode>(k)) : nullptr;
         if (name && name[0]) {
             SDL_snprintf(out, capacity, "%s", name);
             return true;
@@ -139,7 +145,7 @@ bool held_key(const InputFrame& frame, char* out, usize capacity) {
     }
     for (const NamedSource& s : kSpecial) {  // buttons only: sticks and the mouse drift
         const bool button = (s.source >= kMouseLeft && s.source <= kMouseRight) || s.source >= kGamepadButton;
-        if (button && read(s.source, frame).x > 0.5f) {
+        if (button && read(s.source, frame).x > 0.5f && !was_down(s.source)) {
             SDL_snprintf(out, capacity, "%s", s.name);
             return true;
         }

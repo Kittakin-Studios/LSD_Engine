@@ -176,6 +176,21 @@ static void test_held_key() {  // rebinding's "press a key"
     keys[SDL_SCANCODE_E] = true;
     CHECK(held_key(frame, name, sizeof name) && std::strcmp(name, "E") == 0 && is_key(name));
     CHECK(!is_key("Not A Key") && !is_key(""));
+    // lsd.key_down: any named key, whatever else is held; a mouse axis is not a key.
+    keys[SDL_SCANCODE_F] = true;
+    CHECK(key_down(frame, "F") && key_down(frame, "E") && key_down(frame, "Right Mouse Button"));
+    CHECK(!key_down(frame, "W") && !key_down(frame, "Mouse XY") && !key_down(frame, "Not A Key") && !key_down(frame, nullptr));
+    // lsd.key_pressed: only what went down since the last frame (F while E stays held; nothing when F is let go).
+    static bool keys_before[SDL_SCANCODE_COUNT];
+    InputFrame before = frame;
+    before.keys = keys_before;
+    keys_before[SDL_SCANCODE_E] = true;
+    CHECK(held_key(frame, name, sizeof name, &before) && std::strcmp(name, "F") == 0);
+    keys_before[SDL_SCANCODE_F] = true;
+    keys[SDL_SCANCODE_F] = false;
+    CHECK(!held_key(frame, name, sizeof name, &before));
+    before.mouse_buttons = 0;
+    CHECK(held_key(frame, name, sizeof name, &before) && std::strcmp(name, "Right Mouse Button") == 0);
 }
 
 static void test_data_asset() {

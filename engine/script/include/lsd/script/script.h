@@ -117,6 +117,7 @@
 //   lsd.bindings(action) -> {"W", "Gamepad Left Stick", ...}   the keys an Input Action listens to
 //   lsd.rebind(action, old_key, new_key) -> ok   swaps a key now and saves it in the player's settings
 //   lsd.key_pressed() -> name | nil       a key / button that went down this frame ("press a key" menus)
+//   lsd.key_down(name) -> bool            the named key / button is held ("F", "Left Shift", "Left Mouse Button")
 //   lsd.input_record(file) / lsd.input_play(file) -> ok, lsd.input_stop()   records the Input Actions' values
 //                                         each frame to Saved/<file>, or plays a recording back (tests, demos)
 // UI events: an element's onclick="start_game" (onchange, onsubmit...) calls start_game(self, element_id)
@@ -328,6 +329,7 @@ struct ScriptHost {
     void (*draw_debug)(void* user, int shape, Vec3 a, Vec3 b, f32 radius, const char* text, Vec3 color, f32 seconds) = nullptr;
     u32 (*bindings)(void* user, const char* action, const char** out, u32 capacity) = nullptr;
     const char* (*key_pressed)(void* user) = nullptr;
+    bool (*key_down)(void* user, const char* key) = nullptr;
     void (*push_mix)(void* user, const char* name) = nullptr;
     void (*pop_mix)(void* user, const char* name) = nullptr;
     void (*set_audio_param)(void* user, const char* name, f32 value) = nullptr;
