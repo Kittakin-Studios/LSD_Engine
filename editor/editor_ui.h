@@ -169,6 +169,7 @@ struct EditorState {
     f32 material_import_progress = -1.0f;   // 0..1 while Import Materials and Textures runs (update_mesh_materials), -1 otherwise
     char material_import_label[160] = "";
     bool game_mode = false;          // a packaged game (or -game): Play only, no editor
+    bool hidden = false;             // -hidden: no window on screen, no dialogs, no Explorer / browser (automated runs)
     bool quit_after_save = false;
     char recovery_path[260] = "";  // autosave left by a crash: the UI offers to restore it
     bool restore_requested = false;

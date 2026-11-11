@@ -3932,7 +3932,7 @@ void open_external(EditorState& s, const asset::AssetRecord& r) {
     char path[300];
     s.registry->source_path(r, path, sizeof path);
     std::error_code error;
-    SDL_OpenURL(("file:///" + std::filesystem::absolute(path, error).generic_string()).c_str());
+    if (!s.hidden) SDL_OpenURL(("file:///" + std::filesystem::absolute(path, error).generic_string()).c_str());
 }
 
 // Content Browser preview: plays the sound with its settings (not spatialised), or stops it.
@@ -3949,7 +3949,8 @@ void toggle_preview(EditorState& s, const asset::AssetRecord& r) {
     s.preview_voice = s.sounds->play(guid, false, {});
 }
 
-void show_in_explorer(const char* folder) {
+void show_in_explorer(const EditorState& s, const char* folder) {
+    if (s.hidden) return;
     std::error_code error;
     const std::string path = std::filesystem::absolute(std::filesystem::path(kContentDir) / folder, error).generic_string();
     SDL_OpenURL(("file:///" + path).c_str());
@@ -5030,7 +5031,7 @@ void draw_asset_grid(EditorState& s) {
         ImGui::SetItemTooltip("A .js file with on_start / on_update and the same lsd API as Lua; add a Script component to an object and pick it");
         if (ImGui::MenuItem("New Input Setup (Move, Look, Jump)")) create_default_input(s);
         ImGui::SetItemTooltip("Creates IA_Move, IA_Look, IA_Jump and IMC_Default mapped to WASD, mouse, Space and a gamepad");
-        if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(s.content_folder);
+        if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(s, s.content_folder);
         ImGui::EndPopup();
     }
     if (s.selected_asset.valid() && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_F2)) {
@@ -5095,7 +5096,7 @@ void draw_asset_grid(EditorState& s) {
             }
             if (with_tip(ImGui::MenuItem("Size Map..."), "How much disk the folder's assets take with everything they use (Unreal's Size Map)")) open_size_map_for(s, folder_path.c_str());
             if (with_tip(ImGui::MenuItem("Fix Up Redirectors"), "Updates names and paths of renamed or moved assets in scripts, UI and text assets (GUID references never need it)")) fix_up_asset_redirectors(s);
-            if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(folder_path.c_str());
+            if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens this folder in Windows Explorer")) show_in_explorer(s, folder_path.c_str());
             ImGui::EndPopup();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -5243,7 +5244,7 @@ void draw_asset_grid(EditorState& s) {
                 s.delete_asset = r.guid;
                 s.open_delete = true;
             }
-            if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens the asset's folder in Windows Explorer")) show_in_explorer(r.folder);
+            if (with_tip(ImGui::MenuItem("Show in Explorer"), "Opens the asset's folder in Windows Explorer")) show_in_explorer(s, r.folder);
             ImGui::EndPopup();
         }
         if (ImGui::BeginDragDropSource()) {

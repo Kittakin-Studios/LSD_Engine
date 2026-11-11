@@ -138,7 +138,7 @@ void draw_table_editor(EditorState& s) {
     if (with_tip(ImGui::Button("Open in External Program"), "Opens the .csv in Excel or your spreadsheet program")) {
         if (t.dirty) save(s);
         std::error_code error;
-        SDL_OpenURL(("file:///" + std::filesystem::absolute(t.path, error).generic_string()).c_str());
+        if (!s.hidden) SDL_OpenURL(("file:///" + std::filesystem::absolute(t.path, error).generic_string()).c_str());
     }
     ImGui::SameLine();
     if (with_tip(ImGui::Button("Export JSON"), "Writes the rows as JSON with typed values, next to the .csv")) {  // next to the .csv: the same rows with typed values

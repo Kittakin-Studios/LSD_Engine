@@ -398,7 +398,7 @@ several people at once. What its scripts had to work around:
 - [ ] `lsd.assets("Sound")` leaves out Sound Synths (they are listed under "Sound Cue")
 - [ ] No `lsd.set_parent` in Lua (clothes, helmets and held items are moved every frame)
 - [ ] The remote console's `lua` returns no value
-- [ ] No way to run the editor without a visible window (automated runs interrupt whoever is at the PC)
+- [x] No way to run the editor without a visible window (automated runs interrupt whoever is at the PC): `-hidden`
 - [ ] The multiplayer port is fixed per project: no command-line flag, so two test copies clash
 - [ ] A Script component holds at most 16 properties (`List<ScriptProperty, 16>`)
 - [ ] `lsd.spawn`'s documentation does not say the Cube's pivot is its bottom face

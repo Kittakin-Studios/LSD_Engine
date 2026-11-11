@@ -2794,6 +2794,7 @@ on a graph node and a debugger line.
 | `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, debug layer (D3D12; Vulkan with the Vulkan SDK). Vulkan draws everything D3D12 does: lit, textured, animated and instanced meshes, the same lit look as D3D12 (one shared shader: specular, normal / ORM maps, fog, probes, decals, reflections, lightmaps), shadows, particles, game UI and post-processing, and Material Graph materials when the Vulkan SDK is installed (its DXC compiles them; without it they draw with the built-in material) (install the [Vulkan SDK](https://vulkan.lunarg.com) to build it: `winget install KhronosGroup.VulkanSDK`) |
 | `-level=<path>`, `-play`, `-game` | open a level, start Play, run as the game |
 | `-nosound` | no audio device |
+| `-hidden` | the window is created hidden and never shown, raised or focused: no splash, no file dialog, no Explorer / browser, the mouse is never captured. It still renders, so `-frames`, `-exec`, `-remote`, `-screenshot` and `screenshot` work; Play in a New Window and the extra multiplayer players start hidden too. For automated runs on a PC someone is using: `lsd_editor.exe -hidden -nosound -frames=300` |
 | `-exec="<console line>"` | run a console command on the first frame, after `-play` has started (repeatable) |
 | `-smoketest=<seconds>`, `-frames=<n>`, `-screenshot=<n>` | automation |
 | `-remote[=port]` | listen for the editor's **Tools > Remote Console** (this PC only, port 7780 by default): type console commands into a running game, e.g. `stat unit`, `r.ForceLOD 2` |

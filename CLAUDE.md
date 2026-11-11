@@ -53,7 +53,8 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 - Both Debug and Release build with **0 warnings**; keep it that way (`/W4`, `-Wall -Wextra -Wpedantic
   -Wshadow -Wconversion`). Third-party code gets its warnings silenced where it is built.
 
-**Automated runs must be silent**: always pass `-nosound` (test audio once reached her speakers).
+**Automated runs must be silent and hidden**: always pass `-nosound -hidden` (test audio once reached her speakers; `-hidden`
+creates the window hidden: no window, splash, dialog or focus change, child game windows inherit it, rendering and `screenshot` still work).
 Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
 (quit after n frames), `-screenshot=<n>` (OpenGL or Vulkan: Saved/screenshot.bmp; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`

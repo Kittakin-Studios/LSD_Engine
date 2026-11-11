@@ -79,6 +79,9 @@
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 #include <atomic>
 #include <mutex>
@@ -2404,6 +2407,7 @@ int main(int argc, char** argv) {
     const char* place_arg = nullptr;   // -place=<asset name>: place that mesh asset at (-2, 0, 0) on startup
     const char* level_arg = nullptr;   // -level=<path>: open this level instead of the last one
     bool no_sound = false;             // -nosound: no audio device (automated runs stay quiet)
+    bool hidden_arg = false;           // -hidden: the window is never shown, no splash, no dialogs (automated runs)
     bool play_arg = false;             // -play: start Play-in-Editor right away
     bool game_arg = false;             // -game: run as the game (as a package does), no editor
     const char* connect_arg = nullptr; // -connect=<host[:port]>: multiplayer, join that server
@@ -2428,6 +2432,7 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-place=", 7) == 0) place_arg = argv[i] + 7;
         else if (std::strncmp(argv[i], "-level=", 7) == 0) level_arg = argv[i] + 7;
         else if (std::strcmp(argv[i], "-nosound") == 0) no_sound = true;
+        else if (std::strcmp(argv[i], "-hidden") == 0) hidden_arg = true;
         else if (std::strcmp(argv[i], "-play") == 0) play_arg = true;
         else if (std::strcmp(argv[i], "-game") == 0) game_arg = true;
         else if (std::strncmp(argv[i], "-connect=", 9) == 0) connect_arg = argv[i] + 9;
@@ -2442,6 +2447,12 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-select=", 8) == 0) select_arg = argv[i] + 8;
         else if (std::strncmp(argv[i], "-exec=", 6) == 0 && exec_count < 8) exec_args[exec_count++] = argv[i] + 6;
         else LSD_LOG_WARN("editor", "Unknown argument: %s", argv[i]);
+    }
+    const char* child_flags[2] = {};  // Play's game windows run as this one does: silent and / or hidden
+    {
+        int n = 0;
+        if (no_sound) child_flags[n++] = "-nosound";
+        if (hidden_arg) child_flags[n++] = "-hidden";
     }
 
     // A packaged game: game.json next to the exe. Its folder is the project (Content/, Config/...).
@@ -2472,6 +2483,14 @@ int main(int argc, char** argv) {
     lsd::Allocator& allocator = lsd::default_allocator();
     lsd::JobSystem jobs(allocator, lsd::recommended_worker_count(info));
 
+#if defined(_MSC_VER) && defined(_DEBUG)
+    if (hidden_arg) {  // Debug runtime checks report to the console and the log, not in an "Assertion failed" dialog
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    }
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_SENSOR)) {
         LSD_LOG_ERROR("editor", "SDL_Init failed: %s", SDL_GetError());
         return 1;
@@ -2486,16 +2505,17 @@ int main(int argc, char** argv) {
     fs::create_directories("Config", ignored);
     fs::create_directories(kContentDir, ignored);  // the project's assets, like Unreal's Content/
 
-    SDL_Window* splash = game_mode ? lsd::editor::open_splash() : nullptr;  // the packaged game's splash, up while it loads
+    SDL_Window* splash = game_mode && !hidden_arg ? lsd::editor::open_splash() : nullptr;  // the packaged game's splash, up while it loads
     lsd::rhi::Device* device = lsd::rhi::create_device(desc, allocator);
     if (!device) {
         LSD_LOG_ERROR("editor", "Could not start the graphics device.");
         SDL_Quit();
         return 1;
     }
+    // -hidden: created hidden and never shown (SDL then never raises it or gives it focus); it still renders.
     SDL_Window* window = SDL_CreateWindow("LSD_Engine Editor", 1600, 900,
-                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_MAXIMIZED |
-                                              window_flags_for(device->backend()));
+                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                              (hidden_arg ? SDL_WINDOW_HIDDEN : SDL_WINDOW_MAXIMIZED) | window_flags_for(device->backend()));
     int width = 0, height = 0;
     if (window) SDL_GetWindowSizeInPixels(window, &width, &height);
     if (!window || !device->create_swapchain(window, static_cast<lsd::u32>(width), static_cast<lsd::u32>(height))) {
@@ -2527,6 +2547,7 @@ int main(int argc, char** argv) {
     lsd::reflect::load_file(state.project, "Config/project.json");
     apply_material_parameters(state.project, true);  // before any material compiles
     state.game_mode = game_mode;
+    state.hidden = hidden_arg;
     if (game_mode) SDL_SetWindowTitle(window, state.project.project_name);
 
     // Types that can be created as data assets (Content Browser > New Data Asset).
@@ -3050,10 +3071,10 @@ int main(int argc, char** argv) {
             constexpr ImGuiConfigFlags kGameMouse = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
             if (state.playing && state.mouse_captured && !state.ejected) {
                 gio.ConfigFlags |= kGameMouse;
-                SDL_HideCursor();
+                if (!hidden_arg) SDL_HideCursor();
             } else if (gio.ConfigFlags & kGameMouse) {
                 gio.ConfigFlags &= ~kGameMouse;
-                SDL_ShowCursor();
+                if (!hidden_arg) SDL_ShowCursor();
             }
         }
         ImGui_ImplSDL3_NewFrame();
@@ -3073,7 +3094,8 @@ int main(int argc, char** argv) {
                 {"Meshes, textures, sounds, tables", "fbx;gltf;glb;png;jpg;jpeg;tga;bmp;psd;wav;ogg;flac;mp3;csv"},
                 {"All files", "*"},
             };
-            SDL_ShowOpenFileDialog(on_import_chosen, nullptr, window, filters, 2, nullptr, true);
+            if (hidden_arg) LSD_LOG_WARN("editor", "Import: no file dialog with -hidden (use -import=<file>)");
+            else SDL_ShowOpenFileDialog(on_import_chosen, nullptr, window, filters, 2, nullptr, true);
         }
         {
             std::vector<std::string> chosen;
@@ -3285,7 +3307,7 @@ int main(int argc, char** argv) {
                 std::fclose(f);
             }
             const std::string level_flag = "-level=" + level;
-            const char* args[] = {argv[0], "-game", level_flag.c_str(), no_sound ? "-nosound" : nullptr, nullptr};
+            const char* args[] = {argv[0], "-game", level_flag.c_str(), child_flags[0], child_flags[1], nullptr};
             g_play_window = SDL_CreateProcess(args, false);
             if (g_play_window) LSD_LOG_INFO("editor", "Playing in a new window");
             else LSD_LOG_ERROR("editor", "Could not open the play window: %s", SDL_GetError());
@@ -3376,7 +3398,7 @@ int main(int argc, char** argv) {
                 std::snprintf(connect, sizeof connect, "-connect=127.0.0.1:%u", pr.port);
                 std::snprintf(level_flag, sizeof level_flag, "-level=%s", level.c_str());
                 for (lsd::u32 k = 1; k < pr.play_players; ++k) {
-                    const char* args[] = {argv[0], "-game", level_flag, connect, level_name_flag, no_sound ? "-nosound" : nullptr, nullptr};
+                    const char* args[] = {argv[0], "-game", level_flag, connect, level_name_flag, child_flags[0], child_flags[1], nullptr};
                     if (SDL_Process* p = SDL_CreateProcess(args, false)) g_play_clients.push_back(p);
                     else LSD_LOG_ERROR("net", "Could not open player %u's window: %s", k + 1, SDL_GetError());
                 }
@@ -3471,7 +3493,7 @@ int main(int argc, char** argv) {
             apply_user_settings();
             lsd::reflect::save_file(user_settings, kUserSettingsPath);
         }
-        SDL_SetWindowRelativeMouseMode(window, state.playing && state.mouse_captured && !state.ejected);
+        SDL_SetWindowRelativeMouseMode(window, !hidden_arg && state.playing && state.mouse_captured && !state.ejected);  // -hidden: never take the PC's mouse
 
         {
             int win_w = 1, win_h = 1;
