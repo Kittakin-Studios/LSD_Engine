@@ -2413,6 +2413,7 @@ int main(int argc, char** argv) {
     const char* connect_arg = nullptr; // -connect=<host[:port]>: multiplayer, join that server
     const char* net_level_arg = nullptr; // -netlevel=<name>: the level's name for multiplayer (Play's extra windows play a copy)
     bool dedicated_arg = false;        // -dedicated: host without a player of its own
+    int port_arg = 0;                  // -port=<n>: multiplayer port instead of the project's (two test copies on one PC)
     const char* select_arg = nullptr;  // -select=<object name>: select it on startup (screenshots)
     int remote_arg = 0;                // -remote[=port]: listen for the editor's Remote Console
     const char* remote_password = nullptr;  // -remotepassword=<text>: other PCs too, after "auth <text>"
@@ -2439,6 +2440,7 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "-netlevel=", 10) == 0) net_level_arg = argv[i] + 10;
         else if (std::strcmp(argv[i], "-server") == 0) {}  // multiplayer host (a listen server): already the default without -connect
         else if (std::strcmp(argv[i], "-dedicated") == 0) dedicated_arg = true;
+        else if (std::strncmp(argv[i], "-port=", 6) == 0) port_arg = std::atoi(argv[i] + 6);
         else if (std::strncmp(argv[i], "-vram=", 6) == 0) vram_arg = std::atol(argv[i] + 6);
         else if (std::strcmp(argv[i], "-remote") == 0) remote_arg = lsd::editor::remote::kDefaultPort;
         else if (std::strncmp(argv[i], "-remote=", 8) == 0) remote_arg = std::atoi(argv[i] + 8);
@@ -2859,7 +2861,7 @@ int main(int argc, char** argv) {
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
     bool travelled = false;  // lsd.open_level went to another level during this Play
     bool menu_had_cursor = false;  // last frame a game menu had the mouse (lsd.ui_show_cursor)
-    lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
+    lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f, mouse_wheel = 0.0f;
     SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player
     SDL_Sensor* accel_sensor = nullptr;  // a device accelerometer (tablets, phones); the gamepad's own is used first
     {
@@ -2947,6 +2949,9 @@ int main(int argc, char** argv) {
                 case SDL_EVENT_MOUSE_MOTION:
                     mouse_dx += event.motion.xrel;
                     mouse_dy += event.motion.yrel;
+                    break;
+                case SDL_EVENT_MOUSE_WHEEL:  // the game's Mouse Wheel Up / Down keys
+                    mouse_wheel += event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
                     break;
                 case SDL_EVENT_FINGER_DOWN: g_touch.down(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y); break;
                 case SDL_EVENT_FINGER_MOTION: g_touch.move(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y); break;
@@ -3359,7 +3364,8 @@ int main(int argc, char** argv) {
                 std::snprintf(net_play.address, sizeof net_play.address, "%s", state.net_join);
                 state.net_join[0] = '\0';
             }
-            net_play.settings.port = static_cast<lsd::u16>(pr.port);
+            const lsd::u32 port = port_arg > 0 && port_arg < 65536 ? static_cast<lsd::u32>(port_arg) : pr.port;
+            net_play.settings.port = static_cast<lsd::u16>(port);
             net_play.settings.max_players = pr.max_players;
             net_play.settings.tick_rate = pr.tick_rate;
             net_play.settings.interpolation_delay = pr.interpolation_ms * 0.001f;
@@ -3395,7 +3401,7 @@ int main(int argc, char** argv) {
                 level_name = level_name.substr(level_name.find_last_of("/\\") == std::string::npos ? 0 : level_name.find_last_of("/\\") + 1);
                 if (level_name.find('.') != std::string::npos) level_name.resize(level_name.rfind('.'));
                 std::snprintf(level_name_flag, sizeof level_name_flag, "-netlevel=%s", level_name.c_str());
-                std::snprintf(connect, sizeof connect, "-connect=127.0.0.1:%u", pr.port);
+                std::snprintf(connect, sizeof connect, "-connect=127.0.0.1:%u", port);
                 std::snprintf(level_flag, sizeof level_flag, "-level=%s", level.c_str());
                 for (lsd::u32 k = 1; k < pr.play_players; ++k) {
                     const char* args[] = {argv[0], "-game", level_flag, connect, level_name_flag, child_flags[0], child_flags[1], nullptr};
@@ -3519,6 +3525,7 @@ int main(int argc, char** argv) {
                 devices.key_count = SDL_SCANCODE_COUNT;
                 devices.mouse_dx = mouse_dx;
                 devices.mouse_dy = mouse_dy;
+                devices.mouse_wheel = mouse_wheel;
                 const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
                 devices.mouse_buttons = ((buttons & SDL_BUTTON_LMASK) ? 1u : 0u) | ((buttons & SDL_BUTTON_MMASK) ? 2u : 0u) | ((buttons & SDL_BUTTON_RMASK) ? 4u : 0u);
                 for (int b = 0; b < 3; ++b) devices.mouse_buttons |= g_mouse_held_until[b] > ticks ? 1u << b : 0u;
@@ -3568,7 +3575,7 @@ int main(int argc, char** argv) {
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.view_forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
         audio.update(dt);
-        mouse_dx = mouse_dy = 0.0f;
+        mouse_dx = mouse_dy = mouse_wheel = 0.0f;
 
         // Window title: level name and unsaved marker, like Unreal.
         char wanted_title[400];

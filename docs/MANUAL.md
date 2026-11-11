@@ -832,7 +832,8 @@ game is single player and nothing networked runs. On:
   stutter. The chat box shows *Talking* while you transmit. The microphone opens only when voice chat
   is on and the game is multiplayer (never in `-nosound` runs).
 - Packaged games: `-server` hosts, `-dedicated` hosts without a player, `-connect=address[:port]`
-  joins (port 7777 by default). Tick rate, port and max players are in the same settings.
+  joins (port 7777 by default). Tick rate, port and max players are in the same settings; `-port=<n>`
+  overrides the port for that run (two test copies on one PC, each Play's extra player windows follow it).
 - **Replicated Fields** (Unreal's Replicated properties): Net Replicated > Replicated Fields lists more
   values to share, `Component.field` comma-separated (`StaticMesh.color, PointLight.intensity,
   Tags.tags`); the server sends each when it changes, reliably, and players joining later get them.
@@ -1235,6 +1236,10 @@ While playing, the mouse belongs to the game: the cursor is hidden and the edito
   again (a test: `-play -exec="input.Play walk.inputrec" -frames=<n>`). From scripts:
   `lsd.input_record(file)`, `lsd.input_play(file)`, `lsd.input_stop()`. Only Input Actions are
   recorded (not UI clicks, raw keys or `lsd.key_pressed`), and changing level ends a recording.
+
+**Mouse wheel**: **Mouse Wheel Up** and **Mouse Wheel Down** are keys like any other (Unreal's Mouse Wheel Up /
+Down): pressed for the frame the wheel turned that way. Use them in a mapping (next / previous weapon, zoom
+steps), with `lsd.key_down("Mouse Wheel Up")`, and `lsd.key_pressed()` returns them.
 
 **Touch and gyro** (Unreal's touch input, Touch Interface and motion controls). Use these key names in a
 mapping, like any other key:

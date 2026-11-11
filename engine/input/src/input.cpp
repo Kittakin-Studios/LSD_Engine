@@ -13,7 +13,8 @@ namespace lsd::input {
 namespace {
 
 // Sources: keyboard scancodes (0..SDL_SCANCODE_COUNT-1), then these.
-constexpr u32 kMouseX = 1000, kMouseY = 1001, kMouseXY = 1002, kMouseLeft = 1003, kMouseMiddle = 1004, kMouseRight = 1005;
+constexpr u32 kMouseX = 1000, kMouseY = 1001, kMouseXY = 1002, kMouseLeft = 1003, kMouseMiddle = 1004, kMouseRight = 1005,
+              kWheelUp = 1006, kWheelDown = 1007;  // the wheel: "pressed" for the frame it turned (Unreal's Mouse Wheel Up / Down)
 constexpr u32 kLeftStickX = 1010, kLeftStickY = 1011, kRightStickX = 1012, kRightStickY = 1013, kLeftStick = 1014, kRightStick = 1015,
               kLeftTrigger = 1016, kRightTrigger = 1017;
 // Touch gestures (bit = source - kTouchTap, as TouchBit), then pinch / drag, the gyro and the tilt.
@@ -30,6 +31,7 @@ struct NamedSource {
 const NamedSource kSpecial[] = {
     {"Mouse X", kMouseX}, {"Mouse Y", kMouseY}, {"Mouse XY", kMouseXY},
     {"Left Mouse Button", kMouseLeft}, {"Middle Mouse Button", kMouseMiddle}, {"Right Mouse Button", kMouseRight},
+    {"Mouse Wheel Up", kWheelUp}, {"Mouse Wheel Down", kWheelDown},
     {"Touch Tap", 1020}, {"Touch Hold", 1021}, {"Touch Swipe Up", 1022}, {"Touch Swipe Down", 1023}, {"Touch Swipe Left", 1024},
     {"Touch Swipe Right", kSrcSwipeRight}, {"Touch Pinch", kTouchPinch}, {"Touch Drag XY", kTouchDrag},
     {"Gyro Yaw", kGyroYaw}, {"Gyro Pitch", kGyroPitch}, {"Gyro Roll", kGyroRoll}, {"Gyro XY", kGyroXY},
@@ -52,7 +54,7 @@ const NamedSource kSpecial[] = {
 const char* const kKeyNames[] = {
     "W", "A", "S", "D", "Q", "E", "R", "F", "C", "V", "Z", "X", "Space", "Left Shift", "Left Ctrl", "Left Alt", "Tab",
     "Return", "Escape", "Up", "Down", "Left", "Right", "1", "2", "3", "4", "5", "F1", "F2", "F3", "F4",
-    "Mouse X", "Mouse Y", "Mouse XY", "Left Mouse Button", "Middle Mouse Button", "Right Mouse Button",
+    "Mouse X", "Mouse Y", "Mouse XY", "Left Mouse Button", "Middle Mouse Button", "Right Mouse Button", "Mouse Wheel Up", "Mouse Wheel Down",
     "Touch Tap", "Touch Hold", "Touch Swipe Up", "Touch Swipe Down", "Touch Swipe Left", "Touch Swipe Right", "Touch Pinch", "Touch Drag XY",
     "Gyro Yaw", "Gyro Pitch", "Gyro Roll", "Gyro XY", "Tilt X", "Tilt Y", "Tilt XY",
     "Gamepad Left Stick", "Gamepad Right Stick", "Gamepad Left Stick X", "Gamepad Left Stick Y", "Gamepad Right Stick X",
@@ -91,6 +93,8 @@ Value read(u32 source, const InputFrame& f) {
         case kMouseLeft: return {(f.mouse_buttons & 1u) ? 1.0f : 0.0f, 0};
         case kMouseMiddle: return {(f.mouse_buttons & 2u) ? 1.0f : 0.0f, 0};
         case kMouseRight: return {(f.mouse_buttons & 4u) ? 1.0f : 0.0f, 0};
+        case kWheelUp: return {f.mouse_wheel > 0.0f ? 1.0f : 0.0f, 0};
+        case kWheelDown: return {f.mouse_wheel < 0.0f ? 1.0f : 0.0f, 0};
         case kLeftStick: return dead_zone(f.gamepad_axes[0], f.gamepad_axes[1]);
         case kRightStick: return dead_zone(f.gamepad_axes[2], f.gamepad_axes[3]);
         case kLeftStickX: return {dead_zone(f.gamepad_axes[0], 0).x, 0};
@@ -144,7 +148,7 @@ bool held_key(const InputFrame& frame, char* out, usize capacity, const InputFra
         }
     }
     for (const NamedSource& s : kSpecial) {  // buttons only: sticks and the mouse drift
-        const bool button = (s.source >= kMouseLeft && s.source <= kMouseRight) || s.source >= kGamepadButton;
+        const bool button = (s.source >= kMouseLeft && s.source <= kWheelDown) || s.source >= kGamepadButton;
         if (button && read(s.source, frame).x > 0.5f && !was_down(s.source)) {
             SDL_snprintf(out, capacity, "%s", s.name);
             return true;

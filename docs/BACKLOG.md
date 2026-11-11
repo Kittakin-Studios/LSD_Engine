@@ -399,12 +399,12 @@ several people at once. What its scripts had to work around:
 - [x] No `lsd.set_parent` in Lua (clothes, helmets and held items are moved every frame) (done: `lsd.set_parent` / `lsd.parent`)
 - [ ] The remote console's `lua` returns no value
 - [x] No way to run the editor without a visible window (automated runs interrupt whoever is at the PC): `-hidden`
-- [ ] The multiplayer port is fixed per project: no command-line flag, so two test copies clash
+- [x] The multiplayer port is fixed per project: no command-line flag, so two test copies clash (done: `-port=<n>`)
 - [ ] A Script component holds at most 16 properties (`List<ScriptProperty, 16>`)
 - [ ] `lsd.spawn`'s documentation does not say the Cube's pivot is its bottom face
 - [ ] Game UI: no CSS transforms, gradients, box-shadow or rounded clipping; scripts cannot move focus or scroll a list; `autofocus` only on first open; a document opened later sits above earlier ones and its full-screen body takes every click (only `z-index` in its own style helps); Lua cannot open a document from text
 - [ ] No pause / time scale from scripts; Esc always stops Play (a game cannot use it for its pause menu)
-- [ ] The mouse wheel is not an input key (`engine/input/src/input.cpp`)
+- [x] The mouse wheel is not an input key (`engine/input/src/input.cpp`) (done: Mouse Wheel Up / Down)
 - [ ] `lsd.apply_damage` only reaches objects with a script; Editor Utilities cannot list every object in the level
 
 ## Later

@@ -49,6 +49,7 @@ struct InputFrame {
     i32 key_count = 0;
     f32 mouse_dx = 0, mouse_dy = 0;  // pixels moved this frame
     u32 mouse_buttons = 0;           // bit 0 left, 1 middle, 2 right
+    f32 mouse_wheel = 0;             // wheel notches turned this frame (+ = up, away from you)
     f32 gamepad_axes[6] = {};        // left x, left y, right x, right y (-1..1, +y = up), left / right trigger (0..1)
     u32 gamepad_buttons = 0;         // bit per SDL_GamepadButton
     u32 touch_bits = 0;              // TouchBit gestures: tap / swipes last one frame, hold while it lasts

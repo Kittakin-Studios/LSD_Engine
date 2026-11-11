@@ -191,6 +191,25 @@ static void test_held_key() {  // rebinding's "press a key"
     CHECK(!held_key(frame, name, sizeof name, &before));
     before.mouse_buttons = 0;
     CHECK(held_key(frame, name, sizeof name, &before) && std::strcmp(name, "Right Mouse Button") == 0);
+    // The mouse wheel: a key for the frame it turned, up or down.
+    before.mouse_buttons = 4;
+    frame.mouse_wheel = -1.0f;
+    CHECK(held_key(frame, name, sizeof name, &before) && std::strcmp(name, "Mouse Wheel Down") == 0 && is_key(name));
+    CHECK(key_down(frame, "Mouse Wheel Down") && !key_down(frame, "Mouse Wheel Up"));
+    frame.mouse_wheel = 2.0f;
+    CHECK(key_down(frame, "mouse wheel up") && !key_down(frame, "Mouse Wheel Down"));
+    frame.mouse_wheel = 0.0f;
+    CHECK(!key_down(frame, "Mouse Wheel Up") && !held_key(frame, name, sizeof name, &before));
+    InputMappingContext weapons;  // in an Input Action: next weapon on a notch up
+    weapons.mappings.push_back(map(kJump, "Mouse Wheel Up"));
+    InputSystem input;
+    input.add_context(weapons);
+    frame.mouse_wheel = 1.0f;
+    input.update(frame);
+    CHECK(input.pressed(kJump));
+    frame.mouse_wheel = 0.0f;
+    input.update(frame);
+    CHECK(!input.down(kJump));
 }
 
 static void test_data_asset() {
