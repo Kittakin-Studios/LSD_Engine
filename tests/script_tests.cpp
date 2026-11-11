@@ -1511,6 +1511,27 @@ assert(lsd.has_tag(t, "Friend"))
         CHECK(!scripts.run("lsd.set(lsd.find('Target'), 'RigidBody', {weight = 1})"));
         CHECK(!scripts.run("lsd.get(lsd.find('Target'), 'Banana')"));
         CHECK(scripts.run("lsd.remove(lsd.find('Target'), 'RigidBody')") && !w.get<RigidBody>(target));
+        // find_all / find_tagged / set_name, and the level's World Settings.
+        const Entity copy2 = w.create("Target2"), copy3 = w.create("Target 3"), other = w.create("Targets");
+        std::snprintf(w.add<Tags>(copy3)->tags, sizeof(Tags::tags), "Friend");
+        CHECK(scripts.run(R"(
+local all = lsd.find_all("Target")
+assert(#all == 3 and all[1] == lsd.find("Target") and all[2] == lsd.find("Target2"), #all)
+local friends = lsd.find_tagged("Friend")
+assert(#friends == 2 and friends[2] == lsd.find("Target 3"), #friends)
+assert(#lsd.find_all("Nobody") == 0)
+lsd.set_name(lsd.find("Targets"), "Target 4")
+assert(#lsd.find_all("Target") == 4 and lsd.name(lsd.find("Target 4")) == "Target 4")
+local s = lsd.get_world_settings()
+assert(s.gravity > 9.8 and s.level_script == "")
+lsd.set_world_settings({kill_z = -5, level_script = "0123456789abcdef0123456789abcdef"})
+)"));
+        CHECK(std::strcmp(w.name(other), "Target 4") == 0 && w.settings().kill_z == -5.0f && w.settings().gravity == 9.81f);
+        CHECK(std::strcmp(w.settings().level_script, "0123456789abcdef0123456789abcdef") == 0);
+        CHECK(!scripts.run("lsd.set_world_settings({kill_z = -1, gravity = 'heavy'})") && w.settings().kill_z == -5.0f);
+        w.destroy(copy2);
+        w.destroy(copy3);
+        w.destroy(other);
         // Splines in world space (the object's Transform applies).
         w.add<Spline>(target);  // a 4 m line along X
         CHECK(scripts.run(R"(

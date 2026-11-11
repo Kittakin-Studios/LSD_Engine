@@ -640,6 +640,20 @@ static void motion_matching_tests(const std::string& data) {
         eased.inertialize(model, false, 1.0f / 60.0f, 0.05f);
     }
     CHECK(distance(eased, b) < apart * 0.01f);
+    // A mesh swapped mid-blend (another skeleton): the old offset is dropped, not indexed past (a crash in Play).
+    {
+        anim::SkinnedModel rig(default_allocator());
+        char err[256] = "";
+        CHECK(anim::import_skinned((data + "/blender_293_barbarian_7400_binary.fbx").c_str(), 1.0f, rig, err, sizeof err));
+        const anim::BlendInput still{nullptr, 0.0f, 1.0f};
+        anim::Pose swapped;
+        swapped.sample_blend(rig, &still, 1);
+        swapped.inertialize(rig, false, 0.0f, 0.05f);
+        CHECK(swapped.inertialize(rig, true, 0.0f, 0.05f));  // an offset sized for the smaller rig
+        swapped.sample_blend(model, &from, 1);                // then the bigger one
+        std::printf("  inertial swap: %u joints -> %u\n", rig.joint_count(), swapped.joint_count());
+        CHECK(swapped.joint_count() > rig.joint_count() && swapped.inertialize(model, false, 1.0f / 60.0f, 0.05f));
+    }
 
     // Mirroring: the mirrored rows are the originals with sideways values negated and the feet
     // swapped; a pose mirrored twice is itself; the mirrored left foot is where the right one was,

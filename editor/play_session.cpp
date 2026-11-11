@@ -1066,6 +1066,11 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     input_stamp_ = input_files_stamp();
     key_held_[0] = key_pressed_[0] = 0;
     spawn_ = feet_;
+    placed_ = world.alive(character_);  // where it stands in the level: a script moving it before the first frame teleports too
+    if (placed_) {
+        const Mat4 m = world.world_matrix(character_);
+        placed_feet_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+    }
     spawn_yaw_ = yaw_;
     physics::CharacterDesc desc;
     desc.feet = feet_;
@@ -2191,6 +2196,14 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         decompose_trs(world.world_matrix(s.entity), t, r, scale);
         physics_->move_kinematic(s.body, translation(t) * rotation_euler(r) * translation(mul(s.centre, s.scale)), dt);
     }
+    if (placed_ && !aboard && world.alive(character_)) {  // a script moved the player (lsd.set_position): teleport, like Unreal's Teleport
+        const Mat4 m = world.world_matrix(character_);
+        const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        if (length(at - placed_feet_) > 1e-3f) {
+            physics_->teleport_character(at);
+            feet_ = at;
+        }
+    }
 
     // Swimming: the chest inside a Water Volume. Move where you look; Jump (held) rises.
     const Vec3 chest = feet_ + Vec3{0, 0, settings_.height * 0.6f};
@@ -2296,6 +2309,9 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         Vec3 t, r, scale;
         decompose_trs(world.world_matrix(character_), t, r, scale);
         world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
+        const Mat4 m = world.world_matrix(character_);
+        placed_feet_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};  // read back, so float round trips never look like a move
+        placed_ = true;
     }
     // Camera: the head (or a Camera placed on the Character), moved by Camera Offset, then behind it
     // on the spring arm, pulled in when a wall is in the way. Mouse Look: the mouse turns it (Unreal's

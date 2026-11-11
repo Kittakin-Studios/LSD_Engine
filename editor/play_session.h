@@ -476,6 +476,8 @@ private:
     u32 overlap_count_ = 0;
     u32 simulated_count_ = 0;
     Vec3 feet_, spawn_, eye_;
+    Vec3 placed_feet_;      // where the last frame put the player's Transform: a script moving it away teleports
+    bool placed_ = false;
     f32 yaw_ = 0, pitch_ = 0, spawn_yaw_ = 0;
 };
 

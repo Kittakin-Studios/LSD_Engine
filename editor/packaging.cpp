@@ -569,9 +569,14 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     // The engine: the Release build next to this one if there is one (it runs without Visual Studio).
     const char* base = SDL_GetBasePath();
     const fs::path here = base ? fs::path(base) : fs::current_path(error);
+#ifdef NDEBUG
+    fs::path exe = here / "lsd_editor.exe";  // this engine is a Release build (the root copy too): it ships itself
+    const bool release = true;
+#else
     fs::path exe = here.parent_path().parent_path() / "Release" / "lsd_editor.exe";
     const bool release = fs::exists(exe, error);
     if (!release) exe = here / "lsd_editor.exe";
+#endif
     if (!fs::exists(exe, error)) {
         std::snprintf(message, capacity, "Could not find the engine executable (%s)", exe.generic_string().c_str());
         return false;

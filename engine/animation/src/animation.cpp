@@ -1520,6 +1520,7 @@ bool Pose::inertialize(const SkinnedModel& model, bool switched, f32 dt, f32 hal
         impl_->offset_age = 0.0f;
     }
     bool changed = false;
+    if (off.size() != now.size()) off.clear();  // an offset from another skeleton (the mesh was swapped): would index past it
     if (!off.empty()) {
         impl_->offset_age += dt;
         const f32 left = half_life > 0.0f ? std::exp2(-impl_->offset_age / half_life) : 0.0f;

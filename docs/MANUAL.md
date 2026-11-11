@@ -1475,7 +1475,8 @@ Existing files are kept, so your edits survive a second Apply. The console does 
 Unreal's Editor Utility Blueprints / Widgets / Scripted Actions: a Lua script or a visual script that
 runs **in the editor**, on the level you are editing (not in Play), to automate level work. It gets the
 whole `lsd` API (`lsd.find`, `lsd.spawn`, `lsd.position` / `set_position`, `lsd.get` / `set` / `add` /
-`remove` for any component's properties, `lsd.assets`, `lsd.log`...) plus `lsd.editor`:
+`remove` for any component's properties, `lsd.set_name`, `lsd.set_world_settings` (the level's Game Mode or
+Level Script), `lsd.assets`, `lsd.log`...) plus `lsd.editor`:
 
 | Call | What it does |
 | --- | --- |
@@ -2652,7 +2653,11 @@ Objects and transforms
 | --- | --- |
 | `lsd.find(name)` | entity by name, or nil |
 | `lsd.name(e)`, `lsd.alive(e)`, `lsd.destroy(e)` | |
-| `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres |
+| `lsd.find_all(name)` | list of every entity named `name` or a numbered copy ("Sphere2", "Sphere 2"): Get All Actors |
+| `lsd.find_tagged(tag)` | list of every entity with that gameplay tag (matched like `has_tag`) |
+| `lsd.set_name(e, name)` | renames it in the Outliner (names may repeat) |
+| `lsd.get_world_settings()` / `lsd.set_world_settings(t)` | the level's World Settings (`kill_z`, `gravity`, `game_mode`, `level_script`...; asset fields are GUIDs from `lsd.assets`); set writes only the fields given |
+| `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres; on the player's Character, set_position teleports it (respawns, checkpoints; Unreal's Teleport) |
 | `lsd.rotation(e)` / `lsd.set_rotation(e, x, y, z)` | local rotation, degrees |
 | `lsd.spawn(name, x, y, z)` | a prefab, mesh asset, particle system (an explosion at a point) or shape ("Cube"); the new entity |
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |

@@ -58,7 +58,6 @@ void sun_and_sky(world::World& w) {
 Entity player(world::World& w, Vec3 feet, f32 yaw_degrees, bool body) {
     const Entity e = w.create("Player");
     w.get<world::Transform>(e)->position = feet;
-    w.get<world::Transform>(e)->rotation = {0, 0, yaw_degrees};
     w.add<world::Character>(e);
     if (body) {
         const Entity b = box(w, "Body", feet + Vec3{0, 0, 0.9f}, {0.6f, 0.45f, 1.8f}, 0xE07A2E);
@@ -68,6 +67,7 @@ Entity player(world::World& w, Vec3 feet, f32 yaw_degrees, bool body) {
         w.set_parent(b, e);
         w.set_parent(nose, e);
     }
+    w.get<world::Transform>(e)->rotation = {0, 0, yaw_degrees};  // after parenting: the body and its Facing nose turn with it
     return e;
 }
 

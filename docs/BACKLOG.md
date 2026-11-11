@@ -365,6 +365,16 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Plugins [Plugins]: `Plugins/<Name>/plugin.json` (name, version, description, Enabled), its own `Content/` (mounted into the Content Browser under `Plugins/<Name>/`, found by the Asset Registry through `AssetRegistry::set_mounts`, .meta files stay in the plugin) and optional `Source/*.c|cpp` (added to the Game.dll build by Compile Game Code while enabled); Edit > Plugins lists them with an Enabled checkbox (applied at once) and New Plugin; packaging includes enabled plugins' content (`engine/asset/plugins.*`). Shortcut: plugin code shares the project's one Game.dll and has no include paths or dependencies of its own
 - [x] DLC / patch packages [Chunking / patch .pak]: File > Package DLC writes `Build/DLC/<Name>/` (the assets of one content folder or plugin, or with a base `manifest.lsdmanifest` only those new or changed since) with its own manifest (path, hash, size per file); every Package Project writes a manifest too. The shipped game mounts the packages in its `DLC/` folder at start, name order, a later one overriding the same path. Shortcut: a plain folder, not one compressed archive; no signature check
 
+## Found by the Coin Run test game (Nov 2026)
+
+A small whole game (`Content/CoinRun`, EXAMPLES 9) built with the engine's own tools, to find what is missing.
+
+- [x] `lsd.set_position` on the player's Character teleports it (it was put back by the capsule next frame)
+- [x] `lsd.find_all(name)`, `lsd.find_tagged(tag)`, `lsd.set_name(e, name)`, `lsd.get_world_settings` / `set_world_settings`
+- [x] Crash: `Pose::inertialize` read past a smaller skeleton's offset after a mesh swap mid-blend (test in animation_tests)
+- [x] Templates: the player's body and Facing nose did not turn with the player's starting yaw
+- [x] Packaging from a Release editor (the root `lsd_editor.exe`) shipped it as "Debug" without the Visual C++ runtime
+
 ## Later
 
 World Partition + Data Layers, Nanite-style virtualised geometry, Lumen-style software ray-traced GI, hardware

@@ -2224,9 +2224,58 @@ struct Api {
         lua_pushnil(L);
         return 1;
     }
+    // unique_name() numbers copies "Sphere2"; "Sphere 2" (typed by hand) counts too.
+    static bool named_or_numbered(const char* name, const char* base) {
+        const usize n = std::strlen(base);
+        if (std::strncmp(name, base, n) != 0) return false;
+        const char* rest = name + n + (name[n] == ' ' && name[n + 1] ? 1 : 0);
+        while (*rest >= '0' && *rest <= '9') ++rest;
+        return *rest == '\0';
+    }
+    static int find_all(lua_State* L) {
+        const char* name = luaL_checkstring(L, 1);
+        const world::World& w = world(L);
+        lua_newtable(L);
+        int n = 0;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const world::Entity e = w.entity_at_slot(slot);
+            if (!e.valid() || !named_or_numbered(w.name(e), name)) continue;
+            lua_pushnumber(L, e.value);
+            lua_rawseti(L, -2, ++n);
+        }
+        return 1;
+    }
+    static int find_tagged(lua_State* L) {
+        const char* tag = luaL_checkstring(L, 1);
+        const world::World& w = world(L);
+        lua_newtable(L);
+        int n = 0;
+        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
+            const world::Entity e = w.entity_at_slot(slot);
+            if (!e.valid() || !world::has_tag(w, e, tag)) continue;
+            lua_pushnumber(L, e.value);
+            lua_rawseti(L, -2, ++n);
+        }
+        return 1;
+    }
     static int name(lua_State* L) {
         lua_pushstring(L, world(L).name(live_entity(L, 1)));
         return 1;
+    }
+    static int set_name(lua_State* L) {  // the World allows duplicate names, so it is kept as given
+        world(L).set_name(live_entity(L, 1), luaL_checkstring(L, 2));
+        return 0;
+    }
+    static int get_world_settings(lua_State* L) {
+        push_struct(L, reflect::type_of<world::WorldSettings>(), reinterpret_cast<const u8*>(&world(L).settings()));
+        return 1;
+    }
+    static int set_world_settings(lua_State* L) {  // into a copy first, so a bad field changes nothing
+        luaL_checktype(L, 1, LUA_TTABLE);
+        world::WorldSettings copy = world(L).settings();
+        read_struct(L, 1, reflect::type_of<world::WorldSettings>(), reinterpret_cast<u8*>(&copy));
+        world(L).settings() = copy;
+        return 0;
     }
     static int alive(lua_State* L) {
         lua_pushboolean(L, world(L).alive(entity(L, 1)));
@@ -2350,7 +2399,9 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
     luaL_openlibs(lua_);
 
     const luaL_Reg api[] = {
-        {"log", Api::log}, {"find", Api::find}, {"name", Api::name}, {"alive", Api::alive}, {"destroy", Api::destroy},
+        {"log", Api::log}, {"find", Api::find}, {"find_all", Api::find_all}, {"find_tagged", Api::find_tagged}, {"name", Api::name},
+        {"set_name", Api::set_name}, {"get_world_settings", Api::get_world_settings}, {"set_world_settings", Api::set_world_settings},
+        {"alive", Api::alive}, {"destroy", Api::destroy},
         {"position", Api::position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
         {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"input", Api::input},

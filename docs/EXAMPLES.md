@@ -15,6 +15,7 @@ are only names, use your own.
 6. [A campfire: particles, sound and light](#6-a-campfire-particles-sound-and-light)
 7. [A door that opens with a visual script](#7-a-door-that-opens-with-a-visual-script)
 8. [Ship it](#8-ship-it)
+9. [Coin Run: a whole small game](#9-coin-run-a-whole-small-game)
 
 ---
 
@@ -379,3 +380,26 @@ text in the editor walks through every line of its code, with these pictures.
    ```
 
    Exit code 0 means no errors were logged in 10 seconds of play.
+
+---
+
+## 9. Coin Run: a whole small game
+
+*Unreal: the Third Person template turned into a game with a Level Blueprint, overlap events, an AI
+chaser and a UMG HUD; an Editor Utility builds it.*
+
+Take all 8 coins in 60 seconds without the red guard catching you; Space plays again. Everything is in
+`Content/CoinRun/`:
+
+| File | What it is |
+| --- | --- |
+| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds |
+| `CoinRun_Game.lua` | the Level Script (World Settings): HUD, timer, win / lose, `lsd.open_level("CoinRun")` to restart; counts the coins with `lsd.find_all("Coin")` |
+| `CoinRun_Coin.lua` | spins; `on_overlap_begin` counts it and destroys it |
+| `CoinRun_Guard.lua` | a Nav Agent: walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
+| `UI_CoinRun.rml` | the HUD and the end message |
+| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, `lsd.set_world_settings({level_script = ...})` |
+
+To build it again: `template.New Third Person`, save the level as `CoinRun`, run **EU_BuildCoinRun**
+(Tools > Editor Utilities), Ctrl+S. Package it with Project Settings > Maps > Game Default Level set to
+`CoinRun` (example 8).
