@@ -186,6 +186,8 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Description", Tooltip = "Who makes it (shown in the packaged game's file details)") char company[64] = "Kittakin Studios";
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the packaged game opens first (Content/Levels/...)") char game_default_level[260] = "";
     LSD_PROPERTY(Edit, Category = "Maps", Tooltip = "Level the editor opens when there is no last level") char editor_startup_level[260] = "";
+    LSD_PROPERTY(Edit, Category = "Input", Tooltip = "Esc ends the packaged game. Off: Esc is the game's key (scripts see \"Escape\", e.g. a pause menu) and the game ends with lsd.quit; in the editor Esc still stops Play")
+    bool escape_quits_game = true;
     LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "The game's icon: the window, the taskbar and the packaged .exe in Explorer (a square PNG, 256 x 256 is plenty)") char icon[33] = "";
     LSD_PROPERTY(Edit, Category = "Platform", Widget = "Asset:Texture", Tooltip = "Splash screen: shown while the packaged game starts (loading the level), centred, at its own size up to 1280 px. Empty: none")
     char splash[33] = "";

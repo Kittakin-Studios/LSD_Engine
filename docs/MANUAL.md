@@ -2506,7 +2506,8 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
    It also writes `Packages/`: one list per level of the assets it uses (Bitsquid's resource packages); the game
    loads a level's meshes from it while the level opens, so they do not load in the middle of play.
 5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
-   without the editor; **Esc** quits. Logs and saves go into its own `Saved/`.
+   without the editor; **Esc** quits (Project Settings > Input > **Escape Quits Game** off: Esc is the game's
+   own key, for a pause menu, and scripts end the game with `lsd.quit()`). Logs and saves go into its own `Saved/`.
 
 **Plugins** (Unreal's Plugins): a folder `Plugins/<Name>/` with `plugin.json` (name, version, description,
 enabled), its own `Content/` and, if it has game code, `Source/*.cpp` / `*.c`. **Edit > Plugins** lists them with an

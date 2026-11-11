@@ -6422,7 +6422,7 @@ void draw_game(EditorState& s) {
     s.viewport_rects[0][1] = 0.0f;
     s.viewport_rects[0][2] = io.DisplaySize.x;
     s.viewport_rects[0][3] = io.DisplaySize.y;
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) s.stop_requested = true;  // ends the game
+    if (s.project.escape_quits_game && ImGui::IsKeyPressed(ImGuiKey_Escape)) s.stop_requested = true;  // ends the game (unless the game takes Esc)
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) s.mouse_captured = true;
 }
 

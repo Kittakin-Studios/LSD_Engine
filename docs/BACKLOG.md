@@ -403,7 +403,7 @@ several people at once. What its scripts had to work around:
 - [ ] A Script component holds at most 16 properties (`List<ScriptProperty, 16>`)
 - [ ] `lsd.spawn`'s documentation does not say the Cube's pivot is its bottom face
 - [ ] Game UI: no CSS transforms, gradients, box-shadow or rounded clipping; scripts cannot move focus or scroll a list; `autofocus` only on first open; a document opened later sits above earlier ones and its full-screen body takes every click (only `z-index` in its own style helps); Lua cannot open a document from text
-- [ ] No pause / time scale from scripts; Esc always stops Play (a game cannot use it for its pause menu)
+- [~] No pause / time scale from scripts; Esc always stops Play (a game cannot use it for its pause menu). Done: Project Settings > Input > Escape Quits Game (packaged games); open: `lsd.time_scale`
 - [x] The mouse wheel is not an input key (`engine/input/src/input.cpp`) (done: Mouse Wheel Up / Down)
 - [ ] `lsd.apply_damage` only reaches objects with a script; Editor Utilities cannot list every object in the level
 
