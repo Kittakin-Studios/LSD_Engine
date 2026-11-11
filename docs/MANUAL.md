@@ -2695,7 +2695,8 @@ Audio and animation
 
 | Function | Returns / does |
 | --- | --- |
-| `lsd.play_sound(name [, x, y, z])` | voice id (2D, or at a position) |
+| `lsd.play_sound(name [, x, y, z] [, loop])` | voice id (2D, or at a position); a last argument `true` loops a sound file until `lsd.stop_sound(id)` (a Sound Cue loops with its own Looping node) |
+| `lsd.play_sound_on(e, name [, loop])` | voice id, spatial at e and following it (an engine, a radio in a car; Unreal's Spawn Sound Attached); stops when e is destroyed |
 | `lsd.stop_sound(id)`, `lsd.push_mix(name)`, `lsd.pop_mix(name)` | |
 | `lsd.set_audio_param(name, v)`, `lsd.set_class_volume(name, v)` | Sound Cue Switches and Sound Synth Parameters read audio parameters |
 | `lsd.trigger_audio(name)` | fires Sound Synth Trigger nodes of that name |
@@ -2721,7 +2722,7 @@ Audio and animation
 | `lsd.set_material_parameter(name, value)` / `(name, r, g, b[, a])` | A global material parameter (Project Settings > Materials) for every material; false if no such name |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
 | `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |
-| `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"..., or a data asset's own type: "AnimGraph", "InputAction"...) under a Content/ folder, by name |
+| `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"..., or a data asset's own type: "AnimGraph", "InputAction"...) under a Content/ folder, by name. "Sound" also lists Sound Synths (they stay under "Sound Cue" too) |
 
 AI
 

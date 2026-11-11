@@ -196,7 +196,7 @@ void SoundPlayer::set_music_layer(const char* name, f32 volume, f32 fade) {
     audio_->fade_voice(layer->voice, volume, fade);
 }
 
-u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position) {
+u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position, bool loop) {
     if (!audio_ || !registry_ || !sound || !sound[0]) return 0;
     const asset::AssetRecord* r = find(sound);
     if (!r) {
@@ -212,7 +212,7 @@ u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position) {
     }
     asset::AssetMeta meta;
     registry_->load_meta(*r, meta);
-    return play_file(*r, nullptr, spatial, position, 1.0f, 1.0f, meta.looping, 0.0f, 0);
+    return play_file(*r, nullptr, spatial, position, 1.0f, 1.0f, meta.looping || loop, 0.0f, 0);
 }
 
 // One sound file. Class, attenuation and concurrency come from the cue that plays it (or the wave's

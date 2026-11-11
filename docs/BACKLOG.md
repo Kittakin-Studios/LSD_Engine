@@ -394,8 +394,8 @@ several people at once. What its scripts had to work around:
 - [x] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions) (done: `lsd.velocity(e)`)
 - [ ] `lsd.set_rotation` on a vehicle being driven does nothing
 - [ ] `on_overlap_begin` only reaches a script on the trigger object itself
-- [ ] `lsd.play_sound` plays at a fixed point: no sound that follows an object from Lua; Lua cannot loop a sound or read its length (`lsd.play_music` plays a non-looping sound once)
-- [ ] `lsd.assets("Sound")` leaves out Sound Synths (they are listed under "Sound Cue")
+- [~] `lsd.play_sound` plays at a fixed point: no sound that follows an object from Lua; Lua cannot loop a sound or read its length (`lsd.play_music` plays a non-looping sound once). Done: `lsd.play_sound_on(e, name, loop)`, `lsd.play_sound(..., true)` loops sound files; open: a sound's length
+- [x] `lsd.assets("Sound")` leaves out Sound Synths (they are listed under "Sound Cue")
 - [x] No `lsd.set_parent` in Lua (clothes, helmets and held items are moved every frame) (done: `lsd.set_parent` / `lsd.parent`)
 - [ ] The remote console's `lua` returns no value
 - [x] No way to run the editor without a visible window (automated runs interrupt whoever is at the PC): `-hidden`

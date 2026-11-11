@@ -825,9 +825,20 @@ struct Api {
     static int play_sound(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const char* name = luaL_checkstring(L, 1);
-        const bool spatial = lua_gettop(L) >= 4;
+        const int top = lua_gettop(L);
+        const bool loop = top >= 2 && lua_isboolean(L, top) && lua_toboolean(L, top);  // the last argument
+        const bool spatial = top >= 4 && lua_isnumber(L, 2);
         const Vec3 at = spatial ? check_vec3(L, 2) : Vec3{};
-        lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
+        if (loop && host.play_sound_ex) lua_pushnumber(L, host.play_sound_ex(host.user, name, spatial, at, {}, true));
+        else lua_pushnumber(L, host.play_sound ? host.play_sound(host.user, name, spatial, at) : 0);
+        return 1;
+    }
+    static int play_sound_on(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        const world::Entity e = live_entity(L, 1);
+        const char* name = luaL_checkstring(L, 2);
+        const Mat4 m = world(L).world_matrix(e);
+        lua_pushnumber(L, host.play_sound_ex ? host.play_sound_ex(host.user, name, true, {m.at(0, 3), m.at(1, 3), m.at(2, 3)}, e, lua_toboolean(L, 3)) : 0);
         return 1;
     }
     static int text(lua_State* L) {
@@ -2466,7 +2477,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"_net_send", Api::net_send}, {"chat", Api::chat}, {"set_team", Api::set_team}, {"team", Api::team},
         {"net_seen_position", Api::net_seen_position}, {"net_find_games", Api::net_find_games}, {"net_host", Api::net_host}, {"net_join", Api::net_join}, {"net_leave", Api::net_leave}, {"net_join_code", Api::net_join_code}, {"editor_workspace", Api::editor_workspace}, {"_editor", Api::editor_call}, {"implements", Api::implements}, {"rebind", Api::rebind}, {"key_pressed", Api::key_pressed}, {"key_down", Api::key_down},
         {"input_record", Api::input_record}, {"input_play", Api::input_play}, {"input_stop", Api::input_stop},
-        {"play_sound", Api::play_sound}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
+        {"play_sound", Api::play_sound}, {"play_sound_on", Api::play_sound_on}, {"stop_sound", Api::stop_sound}, {"push_mix", Api::push_mix}, {"pop_mix", Api::pop_mix},
         {"set_audio_param", Api::set_audio_param}, {"set_anim_param", Api::set_anim_param}, {"ragdoll", Api::ragdoll}, {"set_material_parameter", Api::set_material_parameter}, {"play_montage", Api::play_montage}, {"stop_montage", Api::stop_montage}, {"montage_playing", Api::montage_playing}, {"anim_curve", Api::anim_curve}, {"set_motion_tag", Api::set_motion_tag}, {"set_morph", Api::set_morph}, {"morph_names", Api::morph_names}, {"set_outfit", Api::set_outfit}, {"assets", Api::assets}, {"set_class_volume", Api::set_class_volume}, {"spline_point", Api::spline_point}, {"spline_length", Api::spline_length},
         {"apply_effect", Api::apply_effect}, {"remove_effect", Api::remove_effect}, {"attribute", Api::attribute}, {"set_attribute", Api::set_attribute},
         {"give_ability", Api::give_ability}, {"try_activate_ability", Api::try_activate_ability}, {"end_ability", Api::end_ability},

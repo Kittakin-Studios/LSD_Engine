@@ -807,7 +807,11 @@ u32 list_assets(const asset::AssetRegistry& registry, const char* type, const ch
     for (usize i = 0; i < registry.count(); ++i) {
         const asset::AssetRecord& r = registry.get(i);
         // A data asset also answers to the type inside it ("AnimGraph", "InputAction"), as the asset pickers name them.
-        if ((std::strcmp(asset::to_string(r.type), type) != 0 && std::strcmp(r.data_type, type) != 0) || std::strncmp(r.folder, folder, folder_len) != 0) continue;
+        // Sound Synths are Sound Cue records (.lsdsynth) but play like sounds: "Sound" lists them too.
+        const usize path_len = std::strlen(r.path);
+        const bool synth = r.type == asset::AssetType::Cue && path_len > 9 && SDL_strcasecmp(r.path + path_len - 9, ".lsdsynth") == 0;
+        const bool wanted = std::strcmp(asset::to_string(r.type), type) == 0 || std::strcmp(r.data_type, type) == 0 || (synth && std::strcmp(type, "Sound") == 0);
+        if (!wanted || std::strncmp(r.folder, folder, folder_len) != 0) continue;
         if (folder_len && r.folder[folder_len] && r.folder[folder_len] != '/') continue;  // "Clothes" is not "ClothesOld"
         hits.push_back(&r);
     }
@@ -1265,6 +1269,14 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.play_sound = [](void* user, const char* name, bool spatial, Vec3 position) {
         auto& self = *static_cast<PlaySession*>(user);
         return self.sounds_ ? self.sounds_->play(name, spatial, position) : 0u;
+    };
+    host.play_sound_ex = [](void* user, const char* name, bool spatial, Vec3 position, world::Entity follow, bool loop) {
+        auto& self = *static_cast<PlaySession*>(user);
+        const u32 voice = self.sounds_ ? self.sounds_->play(name, spatial, position, loop) : 0u;
+        if (voice && follow.valid() && self.emitter_count_ < sizeof self.emitters_ / sizeof self.emitters_[0]) {
+            self.emitters_[self.emitter_count_++] = {follow, voice};  // moves with it, like a Sound Emitter
+        }
+        return voice;
     };
     host.push_mix = [](void* user, const char* name) {
         if (auto* sounds = static_cast<PlaySession*>(user)->sounds_) sounds->push_mix(name);
@@ -2491,14 +2503,18 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_timelines(world, dt);
     update_movement(world, dt);
     update_view(world, dt);
-    for (u32 i = 0; i < emitter_count_ && sounds_; ++i) {  // emitters follow their objects
+    u32 kept_emitters = 0;  // emitters follow their objects; finished ones leave the list (lsd.play_sound_on adds more)
+    for (u32 i = 0; i < emitter_count_ && sounds_; ++i) {
         if (!world.alive(emitters_[i].entity)) {
             sounds_->audio()->stop(emitters_[i].voice);
             continue;
         }
+        if (!sounds_->audio()->playing(emitters_[i].voice)) continue;
         const Mat4 m = world.world_matrix(emitters_[i].entity);
         sounds_->audio()->set_position(emitters_[i].voice, {m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        emitters_[kept_emitters++] = emitters_[i];
     }
+    if (sounds_) emitter_count_ = kept_emitters;
     update_audio_volumes(world, dt);
     update_subtitles();
     if (animations_) animations_->apply_root_motion(world, character_);  // root motion of objects without the player's Character

@@ -17,7 +17,7 @@ public:
 
     // `sound` is an asset GUID or the name of a sound or Sound Cue. Spatial sounds play at `position`
     // unless their attenuation turns spatialisation off. Returns the voice (a cue's voices share it; 0 if none).
-    u32 play(const char* sound, bool spatial, Vec3 position);
+    u32 play(const char* sound, bool spatial, Vec3 position, bool loop = false);  // loop: sound files (cues have a Looping node)
 
     // Sound Mixes by asset name; pop removes the latest push of that mix.
     void push_mix(const char* name);

@@ -26,7 +26,8 @@
 //   lsd.overlap_sphere(x, y, z, radius) -> {e, ...}  /  lsd.overlap_box(x, y, z, hx, hy, hz) -> {e, ...}
 //   lsd.spline_point(e, distance) -> x, y, z, dx, dy, dz   world point and direction along e's Spline
 //   lsd.spline_length(e)                  metres
-//   lsd.play_sound(name [, x, y, z]) -> id   a sound asset by name, 2D or at a position; 0 if none
+//   lsd.play_sound(name [, x, y, z] [, loop]) -> id   a sound asset by name, 2D or at a position; 0 if none
+//   lsd.play_sound_on(e, name [, loop]) -> id   at e, following it until it ends (or e is destroyed)
 //   lsd.stop_sound(id)
 //   lsd.play_music(name [, fade = 1])     crossfades from the current track (seconds); same track: nothing. A Music asset plays its segments and stems
 //   lsd.stop_music([fade = 1])
@@ -285,6 +286,8 @@ struct ScriptHost {
     bool (*table_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Data Table file by asset name
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name
     u32 (*play_sound)(void* user, const char* name, bool spatial, Vec3 position) = nullptr;  // voice, 0 if none
+    // The same, looping (sound files; cues loop with their Looping node) and / or following `follow` (invalid: none).
+    u32 (*play_sound_ex)(void* user, const char* name, bool spatial, Vec3 position, world::Entity follow, bool loop) = nullptr;
     void (*stop_sound)(void* user, u32 voice) = nullptr;
     bool (*move_to)(void* user, world::Entity e, Vec3 target) = nullptr;
     void (*stop_move)(void* user, world::Entity e) = nullptr;

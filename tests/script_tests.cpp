@@ -745,6 +745,21 @@ assert(lsd.set_parent(b, nil) and lsd.parent(b) == nil and math.abs(lsd.position
 assert(lsd.set_parent(b, h, false) and math.abs(lsd.position(b) - 1) < 1e-4)  -- keep_world = false: the Transform as it was
 )") && w.parent(block) == hand);
     scripts.stop();
+    // Looping and following sounds: lsd.play_sound's last argument `true` loops; play_sound_on follows an object.
+    static world::Entity followed{};
+    static bool looped = false, spatial_ex = false;
+    static u32 plain = 0;
+    host.play_sound = [](void*, const char*, bool, Vec3) { return ++plain; };
+    host.play_sound_ex = [](void*, const char*, bool spatial, Vec3 at, world::Entity follow, bool loop) {
+        followed = follow, looped = loop, spatial_ex = spatial && at.x == 10.0f;
+        return 7u;
+    };
+    scripts.start(w, host, path_of, nullptr);
+    CHECK(scripts.run("assert(lsd.play_sound('Rain') == 1 and lsd.play_sound('Rain', 1, 2, 3) == 2)") && plain == 2);
+    CHECK(scripts.run("assert(lsd.play_sound('Rain', true) == 7)") && looped && !spatial_ex && !followed.valid());
+    CHECK(scripts.run("assert(lsd.play_sound_on(lsd.find('Hand'), 'Engine', true) == 7)") && followed == hand && looped && spatial_ex);
+    CHECK(scripts.run("assert(lsd.play_sound_on(lsd.find('Hand'), 'Horn') == 7)") && !looped);
+    scripts.stop();
 }
 
 // Event dispatchers: Call Event reaches every object's Custom Event; lsd.call reaches one.
