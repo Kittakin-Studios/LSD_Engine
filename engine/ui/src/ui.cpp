@@ -699,8 +699,20 @@ bool UiContext::get_property(DocumentId d, const char* id, const char* name, cha
     return true;
 }
 
+namespace {
+// A focused button hidden with its menu (display: none) and shown again keeps the context's focus, but its
+// document's focus chain is gone and arrow navigation follows the chain: it found nothing to move from, so
+// the arrows / D-pad (and Tab) did nothing. Joined up again here before a navigation key.
+void mend_focus_chain(Rml::Context& c) {
+    Rml::Element* focus = c.GetFocusElement();
+    Rml::ElementDocument* doc = focus ? focus->GetOwnerDocument() : nullptr;
+    if (doc && doc->GetFocusLeafNode() != focus) focus->Focus(true);
+}
+} // namespace
+
 void UiContext::navigate(i32 dx, i32 dy) {
     if (!impl_->context) return;
+    mend_focus_chain(*impl_->context);
     using namespace Rml::Input;
     const KeyIdentifier key = dy < 0 ? KI_UP : dy > 0 ? KI_DOWN : dx < 0 ? KI_LEFT : KI_RIGHT;
     impl_->context->ProcessKeyDown(key, 0);
@@ -766,6 +778,7 @@ bool UiContext::process_event(const SDL_Event& event) {
                 activate();  // a focused button, as if clicked
                 return true;
             }
+            if (k == SDLK_UP || k == SDLK_DOWN || k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_TAB) mend_focus_chain(*c);
             passed = c->ProcessKeyDown(key_of(k), modifiers());
             break;
         }

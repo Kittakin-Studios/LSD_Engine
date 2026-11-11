@@ -3,10 +3,26 @@
 <style>
 body { font-family: sans; width: 100%; height: 100%; }
 div { display: block; }
-#hud { position: absolute; left: 30px; top: 30px; color: #FFE51A; font-size: 30px; white-space: nowrap;
+#hud { position: absolute; left: 30px; top: 30px; color: #FFE51A; font-size: 30px; white-space: pre;
        background-color: rgba(0, 0, 0, 140); padding: 6px 14px; border-radius: 6px; }
-#msg { position: absolute; left: 0; right: 0; top: 40%; text-align: center; color: #FFFFFF; font-size: 48px; }
+#menu { position: absolute; left: 50%; top: 25%; width: 420px; margin-left: -210px; padding: 20px 28px;
+        background-color: rgba(13, 4, 4, 220); border: 2px #F3C312; border-radius: 10px; text-align: center; }
+#title { color: #FFE51A; font-size: 48px; font-weight: bold; }
+#msg { color: #FFFFFF; font-size: 28px; margin-top: 8px; }
+#best { color: #EEA70E; font-size: 22px; margin-top: 8px; }
+button { display: block; margin-top: 14px; padding: 10px; font-size: 26px; text-align: center;
+         background-color: #025291; color: white; border-radius: 6px; nav: auto; tab-index: auto; focus: auto; }
+button:hover, button:focus { background-color: #EEA70E; }
 </style>
 </head>
-<body><div id="hud">Coins 0 / 8</div><div id="msg"></div></body>
+<body>
+<div id="hud">Coins 0 / 8</div>
+<div id="menu">
+  <div id="title">Coin Run</div>
+  <div id="msg">Take every coin in 60 seconds.<br/>Do not let the guard catch you.</div>
+  <div id="best">No best time yet</div>
+  <button id="play" onclick="coinrun_play" autofocus>Play</button>
+  <button id="quit" onclick="coinrun_quit">Quit</button>
+</div>
+</body>
 </rml>

@@ -710,6 +710,13 @@ static void test_game_instance() {
     scripts.start(w, {}, path_of, nullptr);
     CHECK(scripts.run("assert(lsd.game_instance().score == nil)"));
     scripts.stop();
+    bool quit = false;  // Quit Game: lsd.quit asks the host (Play stops, a packaged game exits)
+    script::ScriptHost host;
+    host.user = &quit;
+    host.quit = [](void* user) { *static_cast<bool*>(user) = true; };
+    scripts.start(w, host, path_of, nullptr);
+    CHECK(scripts.run("lsd.quit()") && quit);
+    scripts.stop();
 }
 
 // Event dispatchers: Call Event reaches every object's Custom Event; lsd.call reaches one.

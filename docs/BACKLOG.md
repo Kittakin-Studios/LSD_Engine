@@ -380,6 +380,9 @@ A small whole game (`Content/CoinRun`, EXAMPLES 9) built with the engine's own t
 - [x] A Skeletal Mesh given a mesh without a skeleton drew nothing without a word: Details says so now
 - [ ] `Content/Character` has no run or jump takes (Walk plays at 2x, Jump is a held pose)
 - [ ] Scripts cannot read the Animation Graph's state (Unreal's Get Current State Name); only Details shows it
+- [x] No Quit Game for scripts: a menu's Quit button could not end the game. `lsd.quit()` stops Play / exits a packaged game (test in script_tests)
+- [x] A menu hidden (`display: none`) and shown again ignored the arrow keys / D-pad: RmlUi kept the button focused but lost its document's focus chain, which navigation follows
+- [x] Closing a menu (`lsd.ui_show_cursor(false)`) did not give the game the mouse and keys back: one more click was needed before WASD moved the player
 
 ## Later
 

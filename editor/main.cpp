@@ -2837,6 +2837,7 @@ int main(int argc, char** argv) {
                               "Play back an input recording from Saved/<file> in place of the keys, with its frame times, e.g. input.Play walk.inputrec");
     lsd::Array<char> play_snapshot(allocator);  // the level before Play, restored on Stop
     bool travelled = false;  // lsd.open_level went to another level during this Play
+    bool menu_had_cursor = false;  // last frame a game menu had the mouse (lsd.ui_show_cursor)
     lsd::f32 mouse_dx = 0.0f, mouse_dy = 0.0f;
     SDL_Gamepad* gamepad = nullptr;  // the first one plugged in drives the player
     SDL_Sensor* accel_sensor = nullptr;  // a device accelerometer (tablets, phones); the gamepad's own is used first
@@ -3250,6 +3251,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (state.playing && play.take_quit_request()) state.stop_requested = true;  // lsd.quit: a packaged game then exits
         // lsd.open_level: another level inside the same Play (Unreal's Open Level). Stop still reverts to the
         // level being edited (play_snapshot); game_instance / player_state travel with the scripts.
         // The new level brings its baked lighting (BuiltData) and its reflection captures, as opening it would.
@@ -3453,7 +3455,12 @@ int main(int argc, char** argv) {
             splash = nullptr;
         }
         state.stop_requested = false;
-        if (state.playing && play.ui_cursor()) state.mouse_captured = false;  // a menu: the cursor is free
+        const bool menu_cursor = state.playing && play.ui_cursor();
+        if (menu_cursor) state.mouse_captured = false;  // a menu: the cursor is free
+        // The menu closed (lsd.ui_show_cursor(false)): the game takes the mouse and keys back, as it had them
+        // before; without this the player had to click once more before the keys moved anything.
+        else if (menu_had_cursor && state.playing && !state.ejected && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS)) state.mouse_captured = true;
+        menu_had_cursor = menu_cursor;
         if (state.auto_detect_quality) {  // Settings > Auto-detect
             state.auto_detect_quality = false;
             detect_quality();

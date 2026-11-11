@@ -1,0 +1,29 @@
+{
+  "type": "ParticleSystem",
+  "data": {
+    "emitters": [
+      {
+        "name": "Sparkles",
+        "spawn_rate": 0,
+        "burst": 40,
+        "duration": 0.1,
+        "looping": false,
+        "lifetime_min": 0.4,
+        "lifetime_max": 0.8,
+        "shape": 1,
+        "shape_size": {"x": 0.2, "y": 0.2, "z": 0.2},
+        "direction": {"x": 0, "y": 0, "z": 1},
+        "spread": 90,
+        "speed_min": 2,
+        "speed_max": 4,
+        "gravity_scale": 1,
+        "drag": 1,
+        "blend": 1,
+        "color_start": {"r": 1.6, "g": 1.2, "b": 0.2, "a": 1},
+        "color_end": {"r": 1, "g": 0.5, "b": 0, "a": 0},
+        "size_start": 0.1,
+        "size_end": 0.03
+      }
+    ]
+  }
+}

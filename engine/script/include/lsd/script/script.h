@@ -178,6 +178,7 @@
 //   lsd.player_state() -> table           the same, for the player's own data (Player State)
 //   lsd.subsystem(name) -> table          one kept table per name (Game Instance Subsystems)
 //   lsd.open_level(name) -> ok            loads another level (by asset name) after this frame; kept tables travel
+//   lsd.quit()                            ends the game after this frame (Quit Game; the editor's Play stops)
 //   lsd.player() -> e                     the player's Character (possessed), or nil
 //
 // Events sent by the game: on_overlap_begin(self, other), on_overlap_end(self, other) (Trigger Volumes),
@@ -275,6 +276,7 @@ struct ScriptHost {
     bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
     u32 (*overlap)(void* user, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) = nullptr;
     bool (*open_level)(void* user, const char* name) = nullptr;  // false if there is no such level
+    void (*quit)(void* user) = nullptr;  // lsd.quit: end the game (Play stops in the editor)
     world::Entity (*player)(void* user) = nullptr;
     bool (*table_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Data Table file by asset name
     bool (*curve_path)(void* user, const char* name, char* out, usize capacity) = nullptr;  // Curve data asset by name

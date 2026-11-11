@@ -768,6 +768,11 @@ struct Api {
         lua_pushboolean(L, host.open_level && host.open_level(host.user, luaL_checkstring(L, 1)));
         return 1;
     }
+    static int quit(lua_State* L) {
+        const ScriptHost& host = system(L).host_;
+        if (host.quit) host.quit(host.user);
+        return 0;
+    }
     static int player(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const world::Entity e = host.player ? host.player(host.user) : world::Entity{};
@@ -2413,7 +2418,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
-        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location}, {"camera_forward", Api::camera_forward}, {"touch_count", Api::touch_count}, {"touch", Api::touch},
+        {"overlap_sphere", Api::overlap_sphere}, {"overlap_box", Api::overlap_box}, {"open_level", Api::open_level}, {"quit", Api::quit}, {"player", Api::player}, {"camera_shake", Api::camera_shake}, {"set_camera_view", Api::set_camera_view}, {"camera_view", Api::camera_view}, {"camera_location", Api::camera_location}, {"camera_forward", Api::camera_forward}, {"touch_count", Api::touch_count}, {"touch", Api::touch},
         {"table", Api::table}, {"curve", Api::curve}, {"save_game", Api::save_game}, {"save_game_async", Api::save_game_async}, {"load_game", Api::load_game},
         {"has_save", Api::has_save}, {"delete_save", Api::delete_save}, {"move_to", Api::move_to}, {"stop_move", Api::stop_move},
         {"is_moving", Api::is_moving}, {"find_path", Api::find_path}, {"bb_set", Api::bb_set}, {"bb_get", Api::bb_get},

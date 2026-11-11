@@ -6,6 +6,7 @@ function on_start(self)
 end
 
 function on_update(self, dt)
+  if not _G.coin_run_playing then lsd.stop_move(self.entity) return end  -- waits while a menu is up
   local x, y = lsd.position(self.entity)
   local px, py, pz = lsd.position(self.player)
   local d = math.sqrt((px - x) ^ 2 + (py - y) ^ 2)

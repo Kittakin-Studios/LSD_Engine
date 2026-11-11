@@ -2348,8 +2348,11 @@ button:focus, button:hover { background-color: #EEA70E; }
   document's own `.js`: `ui.playAnimation(id, "pop 0.4s")` and `ui.animate(id, property, value, seconds,
   tween)`; in visual scripts: the **Play UI Animation** node. `onanimationend="fn"` on the element calls
   `fn` when an animation ends (Unreal's On Animation Finished).
-- **Menus**: `lsd.ui_show_cursor(true)` frees the mouse for the UI. Arrow keys / D-pad move the
-  focus between elements with `nav: auto`; Enter / Space / gamepad A press it.
+- **Menus**: `lsd.ui_show_cursor(true)` frees the mouse for the UI; `lsd.ui_show_cursor(false)` gives the
+  mouse and keys back to the game (Unreal's Set Input Mode Game Only). Arrow keys / D-pad move the
+  focus between elements with `nav: auto`; Enter / Space / gamepad A press it. A menu can be hidden and
+  shown again with `lsd.ui_style(doc, "menu", "display", "none" / "block")`; it keeps its focus.
+  A Quit button calls `lsd.quit()` (Unreal's Quit Game): Play stops in the editor, a packaged game closes.
 - **Over objects**: `lsd.ui_follow(doc, "tag", enemy, 2.2)` keeps an element above an object.
 - **UI in the level** (Unreal's Widget Component in World space): add a **UI Panel** component (Add
   Component > UI) and pick a **Document**. The document is drawn on a flat panel **Width** x **Height**
@@ -2733,7 +2736,8 @@ UI, saving, settings, languages
 | `lsd.ui_close(doc)`, `lsd.ui_set_text(doc, id, text)`, `lsd.ui_set(doc, id, attr, value)` | |
 | `lsd.ui_value(doc, id)` | a text field's text |
 | `lsd.ui_data(name, value)` | a data binding: `{{game.name}}` in documents with `data-model="game"`; a table is a list for `data-for` |
-| `lsd.ui_show_cursor(on)` | menus: free the mouse |
+| `lsd.ui_show_cursor(on)` | menus: free the mouse (false: the game has it again) |
+| `lsd.quit()` | Quit Game: Play stops in the editor, a packaged game closes |
 | `lsd.ui_follow(doc, id, e [, height])`, `lsd.ui_unfollow(doc, id)` | world-anchored UI |
 | `lsd.ui_style(doc, id, property, value)`, `lsd.ui_rml(doc, id, markup)` | one style property; an element's contents as markup |
 | `lsd.ui_play_animation(doc, id, anim)`, `lsd.ui_animate(doc, id, property, value [, seconds, tween])` | widget animations: RCSS @keyframes, or one property tweened |

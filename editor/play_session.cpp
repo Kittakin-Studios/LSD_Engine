@@ -937,6 +937,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     }
     if (!net_play_.enabled || !net_play_.host) upnp_.stop();  // left or joined: the forward goes
     level_request_[0] = '\0';
+    quit_requested_ = false;
     registry_ = &registry;
     world_ = &world;
     meshes_ = &meshes;
@@ -1240,6 +1241,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         self.registry_->source_path(*r, self.level_request_, sizeof self.level_request_);
         return true;
     };
+    host.quit = [](void* user) { static_cast<PlaySession*>(user)->quit_requested_ = true; };
     host.player = [](void* user) { return static_cast<const PlaySession*>(user)->character_; };
     host.table_path = [](void* user, const char* name, char* out, usize capacity) {
         const auto& self = *static_cast<const PlaySession*>(user);

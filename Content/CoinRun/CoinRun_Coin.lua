@@ -6,6 +6,9 @@ end
 
 function on_overlap_begin(self, other)
   if not lsd.has(other, "Character") then return end
+  local x, y, z = lsd.position(self.entity)
+  lsd.play_sound("S_Coin", x, y, z)
+  lsd.spawn("PS_CoinBurst", x, y, z)  -- a burst that deletes itself once it has played
   if _G.coin_taken then _G.coin_taken() end
   lsd.destroy(self.entity)
 end

@@ -26,6 +26,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include "lsd/physics/physics.h"
 #include "lsd/script/script.h"
 #include "lsd/world/components.h"
@@ -150,6 +151,7 @@ public:
     // A level lsd.open_level asked for (its file path), once; the caller stops, loads it and starts with travel = true.
     // "*" asks for the level Play started on again (a host / join / leave restart on it).
     bool take_level_request(char* path, usize capacity);
+    bool take_quit_request() { return std::exchange(quit_requested_, false); }  // lsd.quit, once
     // The level's asset name (a joining player follows the server's); set before start.
     void set_level_name(const char* name) { std::snprintf(level_name_, sizeof level_name_, "%s", name); }
     void close_port() { upnp_.stop(); }  // Play ended: the router forward (lsd.net_join_code) goes
@@ -326,6 +328,7 @@ private:
     bool keys_[2][512] = {};                       // their keys, copied: the frame's own pointer is the caller's
     char key_pressed_[32] = "";  // went down this frame (lsd.key_pressed)
     char level_request_[300] = "";
+    bool quit_requested_ = false;
     char current_level_[300] = "*";  // the level playing now ("*": the one Play started on)
     char level_name_[64] = "";
     char workspace_[32] = "";

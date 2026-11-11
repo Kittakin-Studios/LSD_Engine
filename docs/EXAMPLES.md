@@ -386,19 +386,24 @@ text in the editor walks through every line of its code, with these pictures.
 ## 9. Coin Run: a whole small game
 
 *Unreal: the Third Person template turned into a game with a Level Blueprint, overlap events, an AI
-chaser and a UMG HUD; an Editor Utility builds it.*
+chaser, a UMG main menu and HUD, a SaveGame for the best time, a sound and a Niagara burst; an
+Editor Utility builds it.*
 
-Take all 8 coins in 60 seconds without the red guard catching you; Space plays again. Everything is in
+A menu (Play / Quit, mouse or arrow keys and Enter) comes first, with the best time. Play: take all 8
+coins in 60 seconds without the red guard catching you. Each coin chimes and bursts into sparks. The
+end message, the best time and Play again / Quit come back in the same menu. Everything is in
 `Content/CoinRun/`:
 
 | File | What it is |
 | --- | --- |
 | `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the rigged soldier |
 | `ABP_CoinRun.lsdasset` | the player's Animation Graph (Unreal's Anim Blueprint state machine): Idle, Walk, Jump |
-| `CoinRun_Game.lua` | the Level Script (World Settings): HUD, timer, win / lose, `lsd.open_level("CoinRun")` to restart; counts the coins with `lsd.find_all("Coin")` |
-| `CoinRun_Coin.lua` | spins; `on_overlap_begin` counts it and destroys it |
-| `CoinRun_Guard.lua` | a Nav Agent: walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
-| `UI_CoinRun.rml` | the HUD and the end message |
+| `CoinRun_Game.lua` | the Level Script (World Settings): menu, HUD, timer, win / lose; counts the coins with `lsd.find_all("Coin")` |
+| `CoinRun_Coin.lua` | spins; `on_overlap_begin` plays `S_Coin`, spawns `PS_CoinBurst`, counts it and destroys it |
+| `CoinRun_Guard.lua` | a Nav Agent: waits while a menu is up, walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
+| `UI_CoinRun.rml` | the HUD and the menu (`#menu`, its buttons call `coinrun_play` / `coinrun_quit`) |
+| `S_Coin.wav` | the pickup blip (two short sine notes, made by a script) |
+| `PS_CoinBurst` | a Particle System: one burst of 40 additive sparks, not looping, so the spawned effect deletes itself |
 | `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, the player's Skeletal Mesh (`lsd.assets("AnimGraph")` finds the graph), `lsd.set_world_settings({level_script = ...})` |
 
 **The player** (Unreal: a Skeletal Mesh on the Character with an Anim Blueprint): the template's cube
@@ -417,6 +422,18 @@ by bone name when they load. Select `Body` while playing: Details > Skeletal Mes
 Walk (blending from Idle)"). `Content/Character` has no run or jump take, so Walk plays twice as fast for the
 5 m/s Walk Speed (the feet still slide a little) and Jump is a held pose; drop a run take in and make Walk a
 blend space on Speed (walk at 1.5, run at 5) when you have one.
+
+How the parts work:
+
+- **The menu** is a `<div id="menu">` in the HUD document. `lsd.ui_style(hud, "menu", "display", "none")`
+  hides it, `"block"` shows it; `lsd.ui_show_cursor(true / false)` frees the mouse for it or gives the
+  mouse and keys back to the game. While it is up the player's Character has `walk_speed = 0`.
+- **Quit** calls `lsd.quit()`: Play stops in the editor, the packaged game closes.
+- **Play again** sets `lsd.game_instance().replay = true` and `lsd.open_level("CoinRun")`: the level comes
+  back with every coin and its `on_start` sees the flag and starts the round without the menu.
+- **Best time**: `lsd.save_game("CoinRun", {time = t})` when it beats `lsd.load_game("CoinRun")` (in
+  `Saved/SaveGames/CoinRun.json`).
+- **Pickup**: `lsd.play_sound("S_Coin", x, y, z)` and `lsd.spawn("PS_CoinBurst", x, y, z)` at the coin.
 
 To build it again: `template.New Third Person`, save the level as `CoinRun`, run **EU_BuildCoinRun**
 (Tools > Editor Utilities), Ctrl+S. Package it with Project Settings > Maps > Game Default Level set to
