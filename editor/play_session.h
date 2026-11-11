@@ -297,6 +297,19 @@ private:
     world::World* world_ = nullptr;
     MeshCache* meshes_ = nullptr;
     world::Entity body_entities_[kMaxBodies];  // which object each physics body belongs to
+    // Static collision that follows script writes (ScriptHost::touched): an object's static bodies (the range
+    // add_entity_bodies made) with the pose, scale and collision they were built for. Nothing runs per frame for
+    // objects no script touched.
+    struct StaticBodies {
+        u32 first = 0, count = 0;
+        Vec3 position, rotation, scale;
+        u64 key = 0;  // collision_key() when built: a change rebuilds the bodies
+    };
+    std::unordered_map<u32, StaticBodies> static_bodies_;  // by entity value
+    std::unordered_multimap<u32, u32> static_below_;       // an ancestor -> an object under it with static bodies
+    std::vector<u32> touched_;                             // entities scripts wrote since the last update
+    void remember_static(const world::World& world, world::Entity e, u32 first, u32 count);
+    void follow_touched(world::World& world);
     input::InputSystem input_;
     input::InputRecording recording_;
     char recording_path_[300] = "";

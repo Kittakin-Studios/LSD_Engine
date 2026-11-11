@@ -358,7 +358,21 @@ static void test_one_way() {
     CHECK(std::fabs(world.character_feet().z - 1.7f) < 0.1f && world.character_on_ground());  // and landed on top
 }
 
+// A static body a script moved (set_body_transform): rays find it at its new place, not the old one.
+static void test_move_static() {
+    PhysicsWorld world;
+    const u32 block = world.add_body(box({0, 0, 0.5f}, {0.5f, 0.5f, 0.5f}, Motion::Static));
+    world.step(1.0f / 60.0f);
+    world.set_body_transform(block, translation({10, 0, 0.5f}) * rotation_euler({0, 0, 45}));
+    world.step(1.0f / 60.0f);
+    RayHit hit;
+    CHECK(!world.raycast({0, 0, 5}, {0, 0, -1}, 10, hit));
+    CHECK(world.raycast({10, 0, 5}, {0, 0, -1}, 10, hit) && hit.body == block && std::fabs(hit.point.z - 1.0f) < 0.01f);
+    CHECK(std::fabs(centre(world, block).x - 10.0f) < 1e-4f);
+}
+
 int main() {
+    test_move_static();
     test_one_way();
     test_vehicle_setup();
     test_cloth();

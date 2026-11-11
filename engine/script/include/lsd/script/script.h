@@ -271,6 +271,9 @@ struct ScriptHost {
     Vec3 (*input)(void* user, const char* action) = nullptr;   // x, y (z unused)
     bool (*pressed)(void* user, const char* action) = nullptr;
     world::Entity (*spawn)(void* user, const char* name, Vec3 position) = nullptr;
+    // A script wrote e's Transform or a component (lsd.set_position / set_rotation / set / add / remove): Play's
+    // static collision of e and its children follows it. Called per write; the host batches them.
+    void (*touched)(void* user, world::Entity e) = nullptr;
     bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
     // shape: 0 sphere (size.x = radius), 1 box (size = half extents), 2 capsule (size.x = radius, size.y = half height).
     bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;

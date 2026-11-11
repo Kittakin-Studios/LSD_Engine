@@ -645,6 +645,10 @@ constexpr u32 kMaxCurves = 32;
 struct Api {
     static ScriptSystem& system(lua_State* L) { return *static_cast<ScriptSystem*>(lua_touserdata(L, lua_upvalueindex(1))); }
     static world::World& world(lua_State* L) { return *system(L).world_; }
+    static void touched(lua_State* L, world::Entity e) {  // tells Play a script changed e (its static collision follows)
+        const ScriptHost& host = system(L).host_;
+        if (host.touched) host.touched(host.user, e);
+    }
 
     static world::Entity entity(lua_State* L, int index) {
         world::Entity e;
@@ -712,6 +716,7 @@ struct Api {
         void* data = world(L).get(e, type);
         if (!data) luaL_error(L, "%s has no %s (lsd.add it first)", world(L).name(e), type.name);
         write(L, e, type, data, 3);
+        touched(L, e);
         return 0;
     }
     static int add(lua_State* L) {
@@ -719,11 +724,13 @@ struct Api {
         const reflect::TypeInfo& type = component_type(L, 2);
         void* data = world(L).add(e, type);
         if (lua_istable(L, 3)) write(L, e, type, data, 3);
+        touched(L, e);
         return 0;
     }
     static int remove(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
         world(L).remove(e, component_type(L, 2));
+        touched(L, e);
         return 0;
     }
     static int spawn(lua_State* L) {
@@ -2300,7 +2307,9 @@ struct Api {
         return 3;
     }
     static int set_position(lua_State* L) {
-        world(L).get<world::Transform>(live_entity(L, 1))->position = check_vec3(L, 2);
+        const world::Entity e = live_entity(L, 1);
+        world(L).get<world::Transform>(e)->position = check_vec3(L, 2);
+        touched(L, e);
         return 0;
     }
     static int rotation(lua_State* L) {
@@ -2308,7 +2317,9 @@ struct Api {
         return 3;
     }
     static int set_rotation(lua_State* L) {
-        world(L).get<world::Transform>(live_entity(L, 1))->rotation = check_vec3(L, 2);
+        const world::Entity e = live_entity(L, 1);
+        world(L).get<world::Transform>(e)->rotation = check_vec3(L, 2);
+        touched(L, e);
         return 0;
     }
     static int has_any_tag(lua_State* L) {

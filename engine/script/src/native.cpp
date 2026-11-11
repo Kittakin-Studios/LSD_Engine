@@ -333,12 +333,18 @@ struct NativeApi {
     }
     static double time() { return active ? active->time_ : 0.0; }
     static lsd_vec3 position(lsd_entity e) { return live(e) ? vec(world()->get<world::Transform>(entity(e))->position) : lsd_vec3{}; }
+    static void touched(lsd_entity e) {  // tells Play a script changed e (its static collision follows)
+        const ScriptHost* h = host();
+        if (h && h->touched && live(e)) h->touched(h->user, entity(e));
+    }
     static void set_position(lsd_entity e, lsd_vec3 p) {
         if (live(e)) world()->get<world::Transform>(entity(e))->position = vec(p);
+        touched(e);
     }
     static lsd_vec3 rotation(lsd_entity e) { return live(e) ? vec(world()->get<world::Transform>(entity(e))->rotation) : lsd_vec3{}; }
     static void set_rotation(lsd_entity e, lsd_vec3 r) {
         if (live(e)) world()->get<world::Transform>(entity(e))->rotation = vec(r);
+        touched(e);
     }
     static int has_tag(lsd_entity e, const char* tag) { return live(e) && world::has_tag(*world(), entity(e), tag); }
 
@@ -359,11 +365,14 @@ struct NativeApi {
     }
     static int add(lsd_entity e, const char* c) {
         const reflect::TypeInfo* t = world::find_component_type(c);
-        return live(e) && t && world()->add(entity(e), *t) != nullptr;
+        const bool added = live(e) && t && world()->add(entity(e), *t) != nullptr;
+        touched(e);
+        return added;
     }
     static void remove(lsd_entity e, const char* c) {
         const reflect::TypeInfo* t = world::find_component_type(c);
         if (live(e) && t) world()->remove(entity(e), *t);
+        touched(e);
     }
     static int get_number(lsd_entity e, const char* c, const char* f, double* out) {
         const reflect::TypeInfo* t;
@@ -387,6 +396,7 @@ struct NativeApi {
         unsigned char* data = static_cast<unsigned char*>(component(e, c, &t));
         const reflect::Property* p = data ? field(*t, f) : nullptr;
         if (!p) return 0;
+        touched(e);
         unsigned char* at = data + p->offset;
         switch (p->type) {
         case reflect::FieldType::Bool: *reinterpret_cast<bool*>(at) = v != 0.0; return 1;
@@ -416,6 +426,7 @@ struct NativeApi {
         Vec3* v = vec3_field(e, c, f);
         if (!v) return 0;
         *v = vec(value);
+        touched(e);
         return 1;
     }
     static char* text_field(lsd_entity e, const char* c, const char* f, u32& capacity) {

@@ -389,7 +389,7 @@ A small whole game (`Content/CoinRun`, EXAMPLES 9) built with the engine's own t
 A larger game in its own project folder (a GTA-like in Rio: jobs, phone, vehicles, enemies, multiplayer), written by
 several people at once. What its scripts had to work around:
 
-- [ ] A shape spawned in Play keeps its collision body where it appeared, at scale 1 (`PlaySession::spawn` > `add_entity_bodies`): later moves, scale and Collision off do not reach the body. Games spawn props 60 m underground and move them
+- [x] A shape spawned in Play keeps its collision body where it appeared, at scale 1 (`PlaySession::spawn` > `add_entity_bodies`): later moves, scale and Collision off do not reach the body. Games spawn props 60 m underground and move them. Fixed: script writes (`ScriptHost::touched`) move / rebuild that object's static bodies (`PlaySession::follow_touched`)
 - [ ] `lsd.move_to` logs "Nav Agent is not on the navmesh" on every failed call (`PlaySession::agent_of`): once per agent is enough
 - [ ] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions)
 - [ ] `lsd.set_rotation` on a vehicle being driven does nothing

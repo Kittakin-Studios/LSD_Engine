@@ -2660,7 +2660,7 @@ Objects and transforms
 | `lsd.find_tagged(tag)` | list of every entity with that gameplay tag (matched like `has_tag`) |
 | `lsd.set_name(e, name)` | renames it in the Outliner (names may repeat) |
 | `lsd.get_world_settings()` / `lsd.set_world_settings(t)` | the level's World Settings (`kill_z`, `gravity`, `game_mode`, `level_script`...; asset fields are GUIDs from `lsd.assets`); set writes only the fields given |
-| `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres; on the player's Character, set_position teleports it (respawns, checkpoints; Unreal's Teleport) |
+| `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres; on the player's Character, set_position teleports it (respawns, checkpoints; Unreal's Teleport). On an object with static collision (a mesh with Collision, a Blocking Volume) the collision moves with it, and with its children; `lsd.set` of its Transform scale or its Static Mesh Collision rebuilds it the next frame |
 | `lsd.rotation(e)` / `lsd.set_rotation(e, x, y, z)` | local rotation, degrees |
 | `lsd.spawn(name, x, y, z)` | a prefab, mesh asset, particle system (an explosion at a point) or shape ("Cube"); the new entity |
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |

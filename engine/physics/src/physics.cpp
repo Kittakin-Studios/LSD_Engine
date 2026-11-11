@@ -388,6 +388,14 @@ void PhysicsWorld::move_kinematic(u32 body, const Mat4& transform, f32 dt) {
     impl_->system.GetBodyInterface().MoveKinematic(impl_->bodies[body], position, rotation, dt);
 }
 
+void PhysicsWorld::set_body_transform(u32 body, const Mat4& transform) {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
+    JPH::RVec3 position;
+    JPH::Quat rotation;
+    to_jolt(transform, position, rotation);
+    impl_->system.GetBodyInterface().SetPositionAndRotation(impl_->bodies[body], position, rotation, JPH::EActivation::DontActivate);
+}
+
 void PhysicsWorld::remove_body(u32 body) {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return;
     for (auto& joint : impl_->joints) {  // Jolt joints point at their bodies: they go first

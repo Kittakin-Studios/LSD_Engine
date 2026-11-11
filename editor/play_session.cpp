@@ -774,6 +774,9 @@ void PlaySession::stop() {
     view_camera_ = {};
     overlap_count_ = 0;
     follower_count_ = 0;
+    static_bodies_.clear();
+    static_below_.clear();
+    touched_.clear();
     input_.clear();
 }
 
@@ -1195,6 +1198,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         return self.key_pressed_[0] ? self.key_pressed_ : nullptr;
     };
     host.spawn = [](void* user, const char* name, Vec3 position) { return static_cast<PlaySession*>(user)->spawn(name, position); };
+    host.touched = [](void* user, world::Entity e) { static_cast<PlaySession*>(user)->touched_.push_back(e.value); };
     host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
         const auto& self = *static_cast<const PlaySession*>(user);
         physics::RayHit ray;
@@ -1627,6 +1631,94 @@ world::Entity PlaySession::body_entity(u32 body) const {
     return body < kMaxBodies ? body_entities_[body] : world::Entity{};
 }
 
+namespace {
+// What an object's static bodies depend on besides its pose: when it changes they are built again.
+// shortcut: Static Mesh, Blocking Volume and Sprite collision; tile maps and instanced copies only follow moves
+u64 collision_key(const world::World& world, world::Entity e) {
+    u64 key = 1469598103934665603ull;  // FNV-1a
+    auto mix = [&key](const void* data, usize bytes) {
+        for (usize i = 0; i < bytes; ++i) key = (key ^ static_cast<const u8*>(data)[i]) * 1099511628211ull;
+    };
+    if (const auto* m = world.get<world::StaticMesh>(e)) {
+        const u8 flags[4] = {1, m->collision, m->one_way, static_cast<u8>(m->collision_shape)};
+        mix(flags, sizeof flags);
+        mix(m->mesh, std::strlen(m->mesh));
+    }
+    if (const auto* b = world.get<world::BlockingVolume>(e)) {
+        const u8 on = b->enabled ? 3 : 2;
+        mix(&on, 1);
+    }
+    if (const auto* s = world.get<world::Sprite>(e)) {
+        const u8 on = s->collision ? 5 : 4;
+        mix(&on, 1);
+    }
+    return key;
+}
+
+// Objects whose only bodies are static ones (the rest follow their Transform already, or are the player).
+bool static_bodies_only(const world::World& world, world::Entity e) {
+    return !world.get<world::Character>(e) && !world.get<world::RigidBody>(e) && !world.get<world::SplineFollower>(e) &&
+           !world.get<world::Mover>(e) && !world.get<world::Vehicle>(e) && !(world.get<world::Cloth>(e) && world.get<world::StaticMesh>(e));
+}
+} // namespace
+
+void PlaySession::remember_static(const world::World& world, world::Entity e, u32 first, u32 count) {
+    const auto [at, added] = static_bodies_.try_emplace(e.value);
+    StaticBodies& s = at->second;
+    s.first = first;
+    s.count = count;
+    s.key = collision_key(world, e);
+    decompose_trs(world.world_matrix(e), s.position, s.rotation, s.scale);
+    if (added) {  // a script moving a parent moves these too
+        for (world::Entity p = world.parent(e); p.valid(); p = world.parent(p)) static_below_.emplace(p.value, e.value);
+    }
+}
+
+// Static bodies of the objects scripts wrote this frame (and of the objects under them) go where their Transform
+// now is; a new scale, Collision or shape builds them again.
+void PlaySession::follow_touched(world::World& world) {
+    if (touched_.empty()) return;
+    const usize written = touched_.size();
+    for (usize i = 0; i < written; ++i) {
+        const auto [from, to] = static_below_.equal_range(touched_[i]);
+        for (auto it = from; it != to; ++it) touched_.push_back(it->second);
+    }
+    std::sort(touched_.begin(), touched_.end());
+    touched_.erase(std::unique(touched_.begin(), touched_.end()), touched_.end());
+    for (const u32 value : touched_) {
+        const world::Entity e{value};
+        if (!world.alive(e) || !static_bodies_only(world, e)) continue;
+        Vec3 position, rotation, scale;
+        decompose_trs(world.world_matrix(e), position, rotation, scale);
+        const auto found = static_bodies_.find(value);
+        if (found != static_bodies_.end()) {
+            StaticBodies& s = found->second;
+            const Vec3 grown = scale - s.scale;
+            if (s.key == collision_key(world, e) && std::fabs(grown.x) + std::fabs(grown.y) + std::fabs(grown.z) < 1e-4f) {
+                // A move: each body keeps its place relative to the object.
+                const Mat4 delta = translation(position) * rotation_euler(rotation) * affine_inverse(translation(s.position) * rotation_euler(s.rotation));
+                for (u32 b = s.first; b < s.first + s.count; ++b) physics_->set_body_transform(b, delta * physics_->body_transform(b));
+                s.position = position;
+                s.rotation = rotation;
+                continue;
+            }
+            // shortcut: removed bodies' indices are not reused, so rescaling an object every frame grows the body
+            // list; reuse indices in PhysicsWorld if a game does that
+            for (u32 b = s.first; b < s.first + s.count; ++b) {
+                physics_->remove_body(b);
+                if (b < kMaxBodies) body_entities_[b] = {};
+            }
+            s.count = 0;  // Collision off stays so until a write turns it on
+            s.key = collision_key(world, e);
+            s.position = position;
+            s.rotation = rotation;
+            s.scale = scale;
+        }
+        add_entity_bodies(world, e);  // new or changed collision (remember_static records it)
+    }
+    touched_.clear();
+}
+
 // Meshes with collision and Blocking Volumes become static bodies, RigidBody objects dynamic ones.
 void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) {
     if (world.get<world::Character>(e)) return;  // the player is the character controller, not a body
@@ -1696,6 +1788,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         add_moving(world, e, cached, !mesh || mesh->collision);
         return;
     }
+    const u32 first_static = physics_->body_count();  // the static bodies below, for follow_touched
     if (cached && mesh->collision) {
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
@@ -1758,6 +1851,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
         add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
     }
+    if (physics_->body_count() > first_static) remember_static(world, e, first_static, physics_->body_count() - first_static);
 }
 
 // A prefab, mesh asset, particle system or built-in shape by name, placed at `position` (world objects only).
@@ -2148,6 +2242,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     LSD_PROFILE_SCOPE("play");
     if (!physics_) return;
     apply_live_edits(world);  // Details edits made while playing apply now
+    follow_touched(world);    // static collision of objects scripts moved, rescaled or switched
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
     if (replaying_ && replay_frame_ < recording_.frame_count()) {
         dt = recording_.dt(replay_frame_);  // the recorded frame times: physics and scripts step as they did

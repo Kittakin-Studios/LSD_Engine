@@ -717,6 +717,17 @@ static void test_game_instance() {
     scripts.start(w, host, path_of, nullptr);
     CHECK(scripts.run("lsd.quit()") && quit);
     scripts.stop();
+    // Writes that move or change an object tell the host (Play's static collision follows them); reads do not.
+    static u32 touches = 0;
+    static world::Entity last{};
+    host.touched = [](void*, world::Entity e) { ++touches, last = e; };
+    scripts.start(w, host, path_of, nullptr);
+    const world::Entity block = w.create("Block");
+    w.add<world::StaticMesh>(block);
+    CHECK(scripts.run("local e = lsd.find('Block') lsd.position(e) lsd.get(e, 'StaticMesh') lsd.set_position(e, 1, 2, 3)") && touches == 1 && last == block);
+    CHECK(scripts.run("local e = lsd.find('Block') lsd.set_rotation(e, 0, 0, 90) lsd.set(e, 'StaticMesh', {collision = false})") && touches == 3);
+    CHECK(scripts.run("local e = lsd.find('Block') lsd.set(e, 'Transform', {scale = {x = 2, y = 2, z = 2}})") && touches == 4);
+    scripts.stop();
 }
 
 // Event dispatchers: Call Event reaches every object's Custom Event; lsd.call reaches one.

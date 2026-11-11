@@ -158,6 +158,8 @@ public:
     u32 add_body(const BodyDesc& desc);
     // Moves a Kinematic body to `transform` over the next step (it pushes and carries what it meets).
     void move_kinematic(u32 body, const Mat4& transform, f32 dt);
+    // Places a body at `transform` at once (a teleport: no sweep, nothing pushed). For static bodies a script moved.
+    void set_body_transform(u32 body, const Mat4& transform);
     // Takes a body out of the simulation; its index is not reused.
     void remove_body(u32 body);
     // Position + rotation of a body's centre after the last step (identity once removed).
