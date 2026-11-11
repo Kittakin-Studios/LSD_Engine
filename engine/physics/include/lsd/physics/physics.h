@@ -164,6 +164,8 @@ public:
     void remove_body(u32 body);
     // Position + rotation of a body's centre after the last step (identity once removed).
     Mat4 body_transform(u32 body) const;
+    // Linear velocity of a body's centre, metres per second (zero for static or removed bodies).
+    Vec3 body_velocity(u32 body) const;
     u32 body_count() const;
 
     // Nearest body along the ray (direction need not be unit length; the player is not hit).

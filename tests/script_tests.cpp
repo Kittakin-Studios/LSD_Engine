@@ -727,6 +727,23 @@ static void test_game_instance() {
     CHECK(scripts.run("local e = lsd.find('Block') lsd.position(e) lsd.get(e, 'StaticMesh') lsd.set_position(e, 1, 2, 3)") && touches == 1 && last == block);
     CHECK(scripts.run("local e = lsd.find('Block') lsd.set_rotation(e, 0, 0, 90) lsd.set(e, 'StaticMesh', {collision = false})") && touches == 3);
     CHECK(scripts.run("local e = lsd.find('Block') lsd.set(e, 'Transform', {scale = {x = 2, y = 2, z = 2}})") && touches == 4);
+    // lsd.velocity asks the host; lsd.set_parent / parent attach and detach (keeping the world placement by default).
+    CHECK(scripts.run("local x, y, z = lsd.velocity(lsd.find('Block')) assert(x == 0 and y == 0 and z == 0)"));
+    host.velocity = [](void*, world::Entity) { return Vec3{1, 2, 3}; };
+    scripts.stop();
+    scripts.start(w, host, path_of, nullptr);
+    const world::Entity hand = w.create("Hand");
+    w.get<world::Transform>(hand)->position = {10, 0, 0};
+    CHECK(scripts.run("local x, y, z = lsd.velocity(lsd.find('Block')) assert(x == 1 and y == 2 and z == 3)"));
+    CHECK(scripts.run(R"(
+local b, h = lsd.find('Block'), lsd.find('Hand')
+assert(lsd.parent(b) == nil and lsd.set_parent(b, h) and lsd.parent(b) == h)
+local x = lsd.position(b)
+assert(math.abs(x + 9) < 1e-4)  -- the same world place (x = 1) under a parent at x = 10
+assert(not lsd.set_parent(h, b))           -- no loops
+assert(lsd.set_parent(b, nil) and lsd.parent(b) == nil and math.abs(lsd.position(b) - 1) < 1e-4)
+assert(lsd.set_parent(b, h, false) and math.abs(lsd.position(b) - 1) < 1e-4)  -- keep_world = false: the Transform as it was
+)") && w.parent(block) == hand);
     scripts.stop();
 }
 

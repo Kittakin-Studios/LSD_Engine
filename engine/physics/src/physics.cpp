@@ -593,6 +593,12 @@ u32 PhysicsWorld::take_broken_joints(u32* out, u32 capacity) {
     return n;
 }
 
+Vec3 PhysicsWorld::body_velocity(u32 body) const {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return {};
+    const JPH::Vec3 v = impl_->system.GetBodyInterface().GetLinearVelocity(impl_->bodies[body]);
+    return {v.GetX(), v.GetY(), v.GetZ()};
+}
+
 Mat4 PhysicsWorld::body_transform(u32 body) const {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return Mat4{};
     const JPH::RMat44 m = impl_->system.GetBodyInterface().GetWorldTransform(impl_->bodies[body]);

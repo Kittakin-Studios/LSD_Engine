@@ -2662,6 +2662,8 @@ Objects and transforms
 | `lsd.get_world_settings()` / `lsd.set_world_settings(t)` | the level's World Settings (`kill_z`, `gravity`, `game_mode`, `level_script`...; asset fields are GUIDs from `lsd.assets`); set writes only the fields given |
 | `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres; on the player's Character, set_position teleports it (respawns, checkpoints; Unreal's Teleport). On an object with static collision (a mesh with Collision, a Blocking Volume) the collision moves with it, and with its children; `lsd.set` of its Transform scale or its Static Mesh Collision rebuilds it the next frame |
 | `lsd.rotation(e)` / `lsd.set_rotation(e, x, y, z)` | local rotation, degrees |
+| `lsd.velocity(e)` | vx, vy, vz in m/s: the player's Character, a vehicle, a mover or a rigid body; 0, 0, 0 for anything else (Unreal's Get Velocity) |
+| `lsd.set_parent(e, parent [, keep_world])` / `lsd.parent(e)` | attaches e under parent (nil detaches); by default it stays where it is in the world, `false` keeps its Transform as it was (now relative to the parent). False if it would make a loop. Helmets, held items (Unreal's Attach To Actor) |
 | `lsd.spawn(name, x, y, z)` | a prefab, mesh asset, particle system (an explosion at a point) or shape ("Cube"); the new entity |
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |

@@ -390,13 +390,13 @@ A larger game in its own project folder (a GTA-like in Rio: jobs, phone, vehicle
 several people at once. What its scripts had to work around:
 
 - [x] A shape spawned in Play keeps its collision body where it appeared, at scale 1 (`PlaySession::spawn` > `add_entity_bodies`): later moves, scale and Collision off do not reach the body. Games spawn props 60 m underground and move them. Fixed: script writes (`ScriptHost::touched`) move / rebuild that object's static bodies (`PlaySession::follow_touched`)
-- [ ] `lsd.move_to` logs "Nav Agent is not on the navmesh" on every failed call (`PlaySession::agent_of`): once per agent is enough
-- [ ] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions)
+- [x] `lsd.move_to` logs "Nav Agent is not on the navmesh" on every failed call (`PlaySession::agent_of`): once per agent is enough (done: once per agent per Play)
+- [x] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions) (done: `lsd.velocity(e)`)
 - [ ] `lsd.set_rotation` on a vehicle being driven does nothing
 - [ ] `on_overlap_begin` only reaches a script on the trigger object itself
 - [ ] `lsd.play_sound` plays at a fixed point: no sound that follows an object from Lua; Lua cannot loop a sound or read its length (`lsd.play_music` plays a non-looping sound once)
 - [ ] `lsd.assets("Sound")` leaves out Sound Synths (they are listed under "Sound Cue")
-- [ ] No `lsd.set_parent` in Lua (clothes, helmets and held items are moved every frame)
+- [x] No `lsd.set_parent` in Lua (clothes, helmets and held items are moved every frame) (done: `lsd.set_parent` / `lsd.parent`)
 - [ ] The remote console's `lua` returns no value
 - [x] No way to run the editor without a visible window (automated runs interrupt whoever is at the PC): `-hidden`
 - [ ] The multiplayer port is fixed per project: no command-line flag, so two test copies clash

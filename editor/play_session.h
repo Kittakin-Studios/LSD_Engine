@@ -415,6 +415,7 @@ private:
     std::vector<world::Entity> nav_always_moving_;  // left out of the navmesh for the rest of Play
     Agent agents_[ai::kMaxAgents];
     u32 agent_count_ = 0;
+    std::vector<u32> off_navmesh_;  // agents already warned about (lsd.move_to logs it once per agent)
     i32 agent_of(world::Entity e);  // adds it on first use; -1 if it cannot walk here
     void update_agents(world::World& world, f32 dt);
     // AI Controllers: a behaviour tree, a blackboard and perception each.
@@ -492,6 +493,7 @@ private:
     u32 overlap_count_ = 0;
     u32 simulated_count_ = 0;
     Vec3 feet_, spawn_, eye_;
+    Vec3 player_velocity_;  // the character's last step, m/s (lsd.velocity)
     Vec3 placed_feet_;      // where the last frame put the player's Transform: a script moving it away teleports
     bool placed_ = false;
     f32 yaw_ = 0, pitch_ = 0, spawn_yaw_ = 0;

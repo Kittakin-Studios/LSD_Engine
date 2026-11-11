@@ -144,7 +144,10 @@ i32 PlaySession::agent_of(world::Entity e) {
     const Mat4 m = world_->world_matrix(e);
     const i32 id = nav_.add_agent({m.at(0, 3), m.at(1, 3), m.at(2, 3)}, agent->radius, agent->height, agent->max_speed);
     if (id < 0) {
-        LSD_LOG_WARN("play", "%s: Nav Agent is not on the navmesh", world_->name(e));
+        if (std::find(off_navmesh_.begin(), off_navmesh_.end(), e.value) == off_navmesh_.end()) {  // once, not per call
+            off_navmesh_.push_back(e.value);
+            LSD_LOG_WARN("play", "%s: Nav Agent is not on the navmesh", world_->name(e));
+        }
         return -1;
     }
     agents_[agent_count_++] = {e, id, false, {}};
@@ -776,6 +779,7 @@ void PlaySession::stop() {
     follower_count_ = 0;
     static_bodies_.clear();
     static_below_.clear();
+    off_navmesh_.clear();
     touched_.clear();
     input_.clear();
 }
@@ -1199,6 +1203,11 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     };
     host.spawn = [](void* user, const char* name, Vec3 position) { return static_cast<PlaySession*>(user)->spawn(name, position); };
     host.touched = [](void* user, world::Entity e) { static_cast<PlaySession*>(user)->touched_.push_back(e.value); };
+    host.velocity = [](void* user, world::Entity e) {  // the player's last step; else its body's (vehicles, movers, rigid bodies)
+        const auto& self = *static_cast<const PlaySession*>(user);
+        if (e == self.character_) return self.player_velocity_;
+        return self.physics_ ? self.physics_->body_velocity(self.body_of(e)) : Vec3{};
+    };
     host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
         const auto& self = *static_cast<const PlaySession*>(user);
         physics::RayHit ray;
@@ -1669,6 +1678,7 @@ void PlaySession::remember_static(const world::World& world, world::Entity e, u3
     s.count = count;
     s.key = collision_key(world, e);
     decompose_trs(world.world_matrix(e), s.position, s.rotation, s.scale);
+    // shortcut: the hierarchy as it was when the bodies were built; lsd.set_parent later is not followed for children
     if (added) {  // a script moving a parent moves these too
         for (world::Entity p = world.parent(e); p.valid(); p = world.parent(p)) static_below_.emplace(p.value, e.value);
     }
@@ -2356,6 +2366,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     const Vec3 moved = physics_->character_feet() - feet_;
     feet_ = physics_->character_feet();
+    player_velocity_ = dt > 0.0f ? moved * (1.0f / dt) : Vec3{};
     place_rider(world);  // a driver or rider stays on its seat
     if (animations_ && character_.valid() && dt > 0.0f) {
         animations_->set_param(world, character_, "Speed", std::sqrt(moved.x * moved.x + moved.y * moved.y) / dt);

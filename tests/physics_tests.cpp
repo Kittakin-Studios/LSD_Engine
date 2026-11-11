@@ -369,6 +369,10 @@ static void test_move_static() {
     CHECK(!world.raycast({0, 0, 5}, {0, 0, -1}, 10, hit));
     CHECK(world.raycast({10, 0, 5}, {0, 0, -1}, 10, hit) && hit.body == block && std::fabs(hit.point.z - 1.0f) < 0.01f);
     CHECK(std::fabs(centre(world, block).x - 10.0f) < 1e-4f);
+    CHECK(world.body_velocity(block).z == 0.0f);
+    const u32 falling = world.add_body(box({0, 0, 20}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    for (int i = 0; i < 30; ++i) world.step(1.0f / 60.0f);
+    CHECK(world.body_velocity(falling).z < -4.0f && world.body_velocity(falling).z > -5.5f);  // about g * 0.5 s
 }
 
 int main() {

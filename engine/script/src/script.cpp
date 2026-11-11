@@ -2312,6 +2312,28 @@ struct Api {
         touched(L, e);
         return 0;
     }
+    static int velocity(lua_State* L) {
+        const world::Entity e = live_entity(L, 1);
+        const ScriptHost& host = system(L).host_;
+        push_vec3(L, host.velocity ? host.velocity(host.user, e) : Vec3{});
+        return 3;
+    }
+    // lsd.set_parent(e, parent [, keep_world = true]): parent nil detaches. False if it would make a loop.
+    static int set_parent(lua_State* L) {
+        const world::Entity e = live_entity(L, 1);
+        const world::Entity parent = lua_isnoneornil(L, 2) ? world::Entity{} : live_entity(L, 2);
+        const bool keep = lua_isnoneornil(L, 3) || lua_toboolean(L, 3);
+        const bool ok = world(L).set_parent(e, parent, keep);
+        if (ok) touched(L, e);
+        lua_pushboolean(L, ok);
+        return 1;
+    }
+    static int parent(lua_State* L) {
+        const world::Entity p = world(L).parent(live_entity(L, 1));
+        if (p.valid()) lua_pushnumber(L, p.value);
+        else lua_pushnil(L);
+        return 1;
+    }
     static int rotation(lua_State* L) {
         push_vec3(L, world(L).get<world::Transform>(live_entity(L, 1))->rotation);
         return 3;
@@ -2424,6 +2446,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_name", Api::set_name}, {"get_world_settings", Api::get_world_settings}, {"set_world_settings", Api::set_world_settings},
         {"alive", Api::alive}, {"destroy", Api::destroy},
         {"position", Api::position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
+        {"velocity", Api::velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
         {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
