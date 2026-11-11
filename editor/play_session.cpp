@@ -799,7 +799,8 @@ u32 list_assets(const asset::AssetRegistry& registry, const char* type, const ch
     const usize folder_len = std::strlen(folder);
     for (usize i = 0; i < registry.count(); ++i) {
         const asset::AssetRecord& r = registry.get(i);
-        if (std::strcmp(asset::to_string(r.type), type) != 0 || std::strncmp(r.folder, folder, folder_len) != 0) continue;
+        // A data asset also answers to the type inside it ("AnimGraph", "InputAction"), as the asset pickers name them.
+        if ((std::strcmp(asset::to_string(r.type), type) != 0 && std::strcmp(r.data_type, type) != 0) || std::strncmp(r.folder, folder, folder_len) != 0) continue;
         if (folder_len && r.folder[folder_len] && r.folder[folder_len] != '/') continue;  // "Clothes" is not "ClothesOld"
         hits.push_back(&r);
     }

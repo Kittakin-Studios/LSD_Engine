@@ -1018,70 +1018,33 @@
       "position": {
         "x": 0,
         "y": 0,
-        "z": 0.899999976
+        "z": 0
       },
       "rotation": {
         "x": 0,
-        "y": -0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.600000024,
-        "y": 0.449999988,
-        "z": 1.79999995
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.87843138,
-        "g": 0.478431374,
-        "b": 0.180392161,
-        "a": 1
-      },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 27, "name": "Facing", "parent": 25,
-     "Transform": {
-      "position": {
-        "x": 0.319999993,
         "y": 0,
-        "z": 1.45000005
-      },
-      "rotation": {
-        "x": 0,
-        "y": -0,
         "z": 0
       },
       "scale": {
-        "x": 0.119999997,
-        "y": 0.300000012,
-        "z": 0.119999997
+        "x": 1,
+        "y": 1,
+        "z": 1
       }
     },
-     "StaticMesh": {
-      "mesh": "Cube",
+     "SkeletalMesh": {
+      "mesh": "68c55f138f7dc46fa023ad12c9da1467",
+      "facing": 0,
       "material": "",
-      "color": {
-        "r": 0.180392161,
-        "g": 0.180392161,
-        "b": 0.200000003,
-        "a": 1
-      },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "root_motion": false,
+      "anim_graph": "b3d7338ec0564bb1b58f5d8d626ff732",
+      "morphs": [],
+      "leader_pose": ""
     }},
     {"id": 28, "name": "Coin", "parent": -1,
      "Transform": {

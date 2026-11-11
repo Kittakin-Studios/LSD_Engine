@@ -1,6 +1,6 @@
 -- Editor utility: turns the Third Person template level into Coin Run (run once, then save the level).
-local function guid(type, name)
-  for _, a in ipairs(lsd.assets(type, "CoinRun")) do
+local function guid(type, name, folder)
+  for _, a in ipairs(lsd.assets(type, folder or "CoinRun")) do
     if a.name == name then return a.guid end
   end
   error("no " .. type .. " named " .. name)
@@ -25,6 +25,14 @@ function run(self)
   lsd.set(g, "StaticMesh", {collision = false, color = {r = 0.8, g = 0.1, b = 0.1, a = 1}})
   lsd.add(g, "NavAgent", {max_speed = 4})
   lsd.add(g, "Script", {script = guard})
+
+  -- The player: the template's cube body becomes the rigged soldier, animated by ABP_CoinRun
+  -- (Idle / Walk / Jump from the Character's Speed and InAir).
+  local body = lsd.find("Body")
+  lsd.remove(body, "StaticMesh")
+  lsd.set(body, "Transform", {position = {x = 0, y = 0, z = 0}, scale = {x = 1, y = 1, z = 1}})
+  lsd.add(body, "SkeletalMesh", {mesh = guid("Mesh", "FBX_Char01_Update_Rig", "Character"), anim_graph = guid("AnimGraph", "ABP_CoinRun")})
+  lsd.destroy(lsd.find("Facing"))
 
   local nav = lsd.spawn("Cube", 0, 0, -0.5)
   lsd.set_name(nav, "Nav Mesh Bounds")

@@ -1,0 +1,73 @@
+{
+  "type": "AnimGraph",
+  "data": {
+    "animation": "e98b11221934626eba676646d756c6bb",
+    "entry_state": "Idle",
+    "states": [
+      {
+        "name": "Idle",
+        "animation": "e98b11221934626eba676646d756c6bb",
+        "clip": 0,
+        "blend_parameter": "",
+        "blend_parameter_y": "",
+        "samples": [],
+        "play_rate": 1,
+        "looping": true
+      },
+      {
+        "name": "Walk",
+        "animation": "9a9aafcebbe283553f88459f618e11aa",
+        "clip": 0,
+        "blend_parameter": "",
+        "blend_parameter_y": "",
+        "samples": [],
+        "play_rate": 2,
+        "looping": true
+      },
+      {
+        "name": "Jump",
+        "animation": "9a9aafcebbe283553f88459f618e11aa",
+        "clip": 0,
+        "blend_parameter": "",
+        "blend_parameter_y": "",
+        "samples": [],
+        "play_rate": 0,
+        "looping": false
+      }
+    ],
+    "transitions": [
+      {
+        "from": "",
+        "to": "Jump",
+        "parameter": "InAir",
+        "condition": 2,
+        "value": 0,
+        "blend_time": 0.150000006
+      },
+      {
+        "from": "Jump",
+        "to": "Idle",
+        "parameter": "InAir",
+        "condition": 3,
+        "value": 0,
+        "blend_time": 0.150000006
+      },
+      {
+        "from": "Idle",
+        "to": "Walk",
+        "parameter": "Speed",
+        "condition": 0,
+        "value": 0.300000012,
+        "blend_time": 0.200000003
+      },
+      {
+        "from": "Walk",
+        "to": "Idle",
+        "parameter": "Speed",
+        "condition": 1,
+        "value": 0.300000012,
+        "blend_time": 0.200000003
+      }
+    ]
+  }
+}

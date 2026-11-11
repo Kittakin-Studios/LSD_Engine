@@ -2711,7 +2711,7 @@ Audio and animation
 | `lsd.set_material_parameter(name, value)` / `(name, r, g, b[, a])` | A global material parameter (Project Settings > Materials) for every material; false if no such name |
 | `lsd.morph_names(e)` | The skeletal mesh's morph target names (a creator's sliders) |
 | `lsd.set_outfit(e, slot, mesh [, r, g, b])` | What the Outfit wears in a body area (mesh name or GUID, "" = none) |
-| `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"...) under a Content/ folder, by name |
+| `lsd.assets(type [, folder])` | `{{name, guid, folder}, ...}` of a type ("Mesh", "Prefab", "Sound"..., or a data asset's own type: "AnimGraph", "InputAction"...) under a Content/ folder, by name |
 
 AI
 

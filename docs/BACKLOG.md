@@ -374,6 +374,12 @@ A small whole game (`Content/CoinRun`, EXAMPLES 9) built with the engine's own t
 - [x] Crash: `Pose::inertialize` read past a smaller skeleton's offset after a mesh swap mid-blend (test in animation_tests)
 - [x] Templates: the player's body and Facing nose did not turn with the player's starting yaw
 - [x] Packaging from a Release editor (the root `lsd_editor.exe`) shipped it as "Debug" without the Visual C++ runtime
+- [x] The player is a rigged character (Skeletal Mesh + `ABP_CoinRun`: Idle / Walk / Jump from Speed and InAir)
+- [x] Animation Graph: a state removed (or the graph swapped) while it was fading out was still read past the states (test in animation_tests)
+- [x] `lsd.assets("AnimGraph")` found nothing: data assets now answer to the type inside them too
+- [x] A Skeletal Mesh given a mesh without a skeleton drew nothing without a word: Details says so now
+- [ ] `Content/Character` has no run or jump takes (Walk plays at 2x, Jump is a held pose)
+- [ ] Scripts cannot read the Animation Graph's state (Unreal's Get Current State Name); only Details shows it
 
 ## Later
 

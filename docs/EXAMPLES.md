@@ -393,12 +393,30 @@ Take all 8 coins in 60 seconds without the red guard catching you; Space plays a
 
 | File | What it is |
 | --- | --- |
-| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds |
+| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the rigged soldier |
+| `ABP_CoinRun.lsdasset` | the player's Animation Graph (Unreal's Anim Blueprint state machine): Idle, Walk, Jump |
 | `CoinRun_Game.lua` | the Level Script (World Settings): HUD, timer, win / lose, `lsd.open_level("CoinRun")` to restart; counts the coins with `lsd.find_all("Coin")` |
 | `CoinRun_Coin.lua` | spins; `on_overlap_begin` counts it and destroys it |
 | `CoinRun_Guard.lua` | a Nav Agent: walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
 | `UI_CoinRun.rml` | the HUD and the end message |
-| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, `lsd.set_world_settings({level_script = ...})` |
+| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, the player's Skeletal Mesh (`lsd.assets("AnimGraph")` finds the graph), `lsd.set_world_settings({level_script = ...})` |
+
+**The player** (Unreal: a Skeletal Mesh on the Character with an Anim Blueprint): the template's cube
+body is now a Skeletal Mesh, `Content/Character/FBX_Char01_Update_Rig` (its materials come from its Material
+Slots), on the `Body` child of `Player` at the feet (position 0, scale 1, Facing Auto: a UE5 rig is turned to
+face +X). Its **Anim Graph** is `ABP_CoinRun`; double-click it for the State Machine window:
+
+| State | Plays | Gets there when |
+| --- | --- | --- |
+| Idle (entry) | `Anim_Idle_Sheath` | Speed < 0.3, or from Jump when InAir is False |
+| Walk | `Anim_Walk` at Play Rate 2 | Speed > 0.3 |
+| Jump | `Anim_Walk` held on its first frame (Play Rate 0, not looping) | InAir is True, from any state |
+
+The Character fills Speed and InAir every frame; the clips are UE5 Manny takes, retargeted onto the soldier
+by bone name when they load. Select `Body` while playing: Details > Skeletal Mesh shows the state ("State:
+Walk (blending from Idle)"). `Content/Character` has no run or jump take, so Walk plays twice as fast for the
+5 m/s Walk Speed (the feet still slide a little) and Jump is a held pose; drop a run take in and make Walk a
+blend space on Speed (walk at 1.5, run at 5) when you have one.
 
 To build it again: `template.New Third Person`, save the level as `CoinRun`, run **EU_BuildCoinRun**
 (Tools > Editor Utilities), Ctrl+S. Package it with Project Settings > Maps > Game Default Level set to

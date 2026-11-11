@@ -3621,6 +3621,12 @@ void draw_material_slots(EditorState& s, world::SkeletalMesh& mesh) {
 // while an Animation Graph runs, the state it is in (Unreal's live Anim Blueprint debugging).
 void draw_skeletal_readout(EditorState& s, Entity e, world::SkeletalMesh& mesh) {
     if (!s.skinned) return;
+    if (mesh.mesh[0] && !s.skinned->get(mesh.mesh)) {  // Unreal only lists skeletal meshes here; a static one drew nothing, silently
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.3f, 1.0f));
+        ImGui::TextWrapped("This mesh has no skeleton: nothing is drawn. Use a Static Mesh for it, or an FBX / glTF with a skin");
+        ImGui::PopStyleColor();
+        return;
+    }
     char motion[160];
     if (s.animations && s.animations->motion_readout(e, motion, sizeof motion)) {  // the Character's Motion Matching picks the clips
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Motion Matching: %s", motion);

@@ -189,6 +189,7 @@ u32 step_graph(const AnimGraph& g, const Clip* const* clips, u32 clip_count, Gra
         gs.fade = 1.0f;
         gs.finished = false;
     }
+    if (gs.previous >= static_cast<i32>(g.states.count)) gs.previous = -1;  // a state removed (or another graph) while fading: drop the fade
     // Transitions: the first whose state and condition match.
     for (const AnimTransition& t : g.transitions) {
         if (t.from[0] && find_state(g, t.from) != gs.current) continue;

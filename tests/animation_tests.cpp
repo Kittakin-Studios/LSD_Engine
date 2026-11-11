@@ -159,6 +159,12 @@ static void graph_tests() {
     gs.set("Speed", 0.0f);  // back to idle, instantly (blend_time 0.2 default -> crossfade)
     anim::step_graph(g, clips, 3, gs, 0.0f, in);
     CHECK(std::strcmp(anim::state_name(g, gs), "Idle") == 0 && gs.previous == 1);
+    {  // the state fading out removed mid-fade (State Machine window in Play): the fade goes, nothing reads past the states
+        anim::AnimGraph cut = g;
+        anim::GraphState cs = gs;
+        anim::remove_state(cut, 1);
+        CHECK(anim::step_graph(cut, clips, 3, cs, 0.0f, in) == 1 && cs.previous == -1 && in[0].clip == &clips[0]);
+    }
 
     // Finished: a one-shot state hands back when its clip ends.
     anim::AnimGraph once;
