@@ -165,6 +165,75 @@ bool list_mesh_materials(const char* path, ImportedMaterials& out, char* error, 
     return false;
 }
 
+namespace {
+struct Suffix {
+    const char* text;
+    MapRole role;
+};
+const Suffix kSuffixes[] = {
+    {"basecolor", MapRole::BaseColor}, {"base_color", MapRole::BaseColor}, {"basecol", MapRole::BaseColor}, {"albedo", MapRole::BaseColor},
+    {"diffuse", MapRole::BaseColor}, {"color", MapRole::BaseColor}, {"colour", MapRole::BaseColor}, {"col", MapRole::BaseColor}, {"b", MapRole::BaseColor}, {"d", MapRole::BaseColor},
+    {"normal", MapRole::Normal}, {"normalmap", MapRole::Normal}, {"norm", MapRole::Normal}, {"nrm", MapRole::Normal}, {"n", MapRole::Normal},
+    {"roughness", MapRole::Roughness}, {"rough", MapRole::Roughness}, {"r", MapRole::Roughness},
+    {"metallic", MapRole::Metallic}, {"metalness", MapRole::Metallic}, {"metal", MapRole::Metallic}, {"m", MapRole::Metallic},
+    {"ambientocclusion", MapRole::Occlusion}, {"ambient_occlusion", MapRole::Occlusion}, {"occlusion", MapRole::Occlusion}, {"ao", MapRole::Occlusion},
+    {"orm", MapRole::Orm}, {"arm", MapRole::Orm}, {"occlusionroughnessmetallic", MapRole::Orm},
+    {"metallicroughness", MapRole::MetallicRoughness},
+    {"specular", MapRole::Specular}, {"spec", MapRole::Specular},
+    {"opacity", MapRole::Opacity}, {"alpha", MapRole::Opacity}, {"mask", MapRole::Opacity},
+    {"emissive", MapRole::Emissive}, {"emissivecolor", MapRole::Emissive}, {"emission", MapRole::Emissive}, {"emit", MapRole::Emissive}, {"glow", MapRole::Emissive},
+    {"height", MapRole::Height}, {"displacement", MapRole::Height}, {"disp", MapRole::Height}, {"bump", MapRole::Height},
+    {"glossiness", MapRole::Glossiness}, {"gloss", MapRole::Glossiness}, {"smoothness", MapRole::Glossiness},
+};
+
+bool same_text(const char* a, const char* b) {
+    for (; *a && *b; ++a, ++b) {
+        if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b))) return false;
+    }
+    return *a == *b;
+}
+} // namespace
+
+MapName classify_map_name(const char* stem) {
+    MapName out;
+    const usize n = std::strlen(stem);
+    usize best = 0;
+    for (const Suffix& s : kSuffixes) {  // the longest suffix wins ("MetallicRoughness" over "Roughness")
+        const usize e = std::strlen(s.text);
+        if (e <= best || n <= e + 1 || (stem[n - e - 1] != '_' && stem[n - e - 1] != '-')) continue;
+        bool same = true;
+        for (usize i = 0; i < e && same; ++i) same = std::tolower(static_cast<unsigned char>(stem[n - e + i])) == s.text[i];
+        if (!same) continue;
+        best = e;
+        out.role = s.role;
+        out.suffixed = true;
+    }
+    const usize base_length = best ? n - best - 1 : n;
+    std::snprintf(out.base, sizeof out.base, "%.*s", static_cast<int>(base_length), stem);
+    return out;
+}
+
+const char* map_role_name(MapRole role) {
+    static const char* names[] = {"Base Color", "Normal", "Roughness", "Metallic", "Ambient Occlusion", "ORM", "Metallic-Roughness", "Specular", "Opacity", "Emissive", "Height (unused)", "Glossiness"};
+    return static_cast<u32>(role) < static_cast<u32>(MapRole::kCount) ? names[static_cast<u32>(role)] : "";
+}
+
+void group_map_names(const char* const* stems, usize count, std::vector<MapSet>& out) {
+    out.clear();
+    for (usize i = 0; i < count; ++i) {
+        const MapName name = classify_map_name(stems[i]);
+        MapSet* set = nullptr;
+        for (MapSet& s : out) set = same_text(s.base, name.base) ? &s : set;
+        if (!set) {
+            out.emplace_back();
+            set = &out.back();
+            std::snprintf(set->base, sizeof set->base, "%s", name.base);
+        }
+        i32& slot = set->map[static_cast<u32>(name.role)];
+        if (slot < 0) slot = static_cast<i32>(i);
+    }
+}
+
 Image::~Image() { stbi_image_free(pixels); }
 
 bool load_image(const char* path, Image& out) {

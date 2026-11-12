@@ -3181,6 +3181,8 @@ bool draw_multi_curve_editor(world::CurveKeys* const* channels, const char* cons
 
 } // namespace
 
+bool pick_asset(EditorState& s, const char* type, char* guid_text, usize capacity) { return asset_picker(s, type, guid_text, capacity); }
+
 namespace {
 
 // An instance of a Material Graph: a button adding the graph's parameters (at their defaults) to its list.
@@ -3617,6 +3619,65 @@ void draw_material_slots(EditorState& s, world::SkeletalMesh& mesh) {
     ImGui::TreePop();
 }
 
+// Static Mesh > Materials (Unreal's Materials list on a Static Mesh Component): a row per material slot of the mesh file, with
+// the material it is drawn with (the mesh's Material Slot); picking another overrides that slot on this object only,
+// shown gold, the arrow goes back to the mesh's own.
+void draw_static_material_slots(EditorState& s, world::StaticMesh& mesh) {
+    const std::vector<MeshCache::SlotPart>* parts = s.meshes ? s.meshes->slot_parts(mesh.mesh, true) : nullptr;
+    if (!parts) return;
+    std::vector<const MeshCache::SlotPart*> slots;  // one row per slot name (several parts may share a material)
+    for (const MeshCache::SlotPart& part : *parts) {
+        bool seen = false;
+        for (const MeshCache::SlotPart* other : slots) seen = seen || std::strcmp(other->slot, part.slot) == 0;
+        if (!seen) slots.push_back(&part);
+    }
+    if (slots.size() < 2 && !mesh.material_overrides.count) return;  // one material: the Material property above is enough
+    if (!ImGui::TreeNodeEx("Materials", ImGuiTreeNodeFlags_DefaultOpen, "Materials (%u slots)", static_cast<u32>(slots.size()))) return;
+    if (mesh.material[0]) ImGui::TextDisabled("Material above is set: it covers every slot (clear it to use these)");
+    u32 index = 0;
+    for (const MeshCache::SlotPart* part : slots) {
+        const u32 k = index++;
+        world::MaterialOverride* own = nullptr;
+        u32 own_index = 0;
+        for (u32 i = 0; i < mesh.material_overrides.count; ++i) {
+            if (std::strcmp(mesh.material_overrides[i].slot, part->slot) == 0) own = &mesh.material_overrides[i], own_index = i;
+        }
+        const bool overridden = own && own->material[0];
+        char value[33];
+        std::snprintf(value, sizeof value, "%s", overridden ? own->material : part->material);
+        ImGui::PushID(static_cast<int>(k));
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Text, overridden ? ImVec4(0.953f, 0.765f, 0.071f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        ImGui::Text("%u %s", k, part->slot[0] ? part->slot : "(no material)");
+        ImGui::PopStyleColor();
+        ImGui::SetItemTooltip("Element %u: the triangles using \"%s\" in the file%s", k, part->slot, overridden ? " (overridden on this object)" : "");
+        ImGui::SameLine(160.0f);
+        ImGui::SetNextItemWidth(overridden ? -28.0f : -1.0f);
+        if (part->slot[0] && asset_picker(s, "Material", value, sizeof value)) {
+            if (std::strcmp(value, part->material) == 0) {
+                if (own) mesh.material_overrides.remove(own_index);  // back to the mesh's own
+            } else if (own) {
+                std::snprintf(own->material, sizeof own->material, "%s", value);
+            } else {
+                world::MaterialOverride o;
+                std::snprintf(o.slot, sizeof o.slot, "%s", part->slot);
+                std::snprintf(o.material, sizeof o.material, "%s", value);
+                if (!mesh.material_overrides.push_back(o)) std::snprintf(s.status, sizeof s.status, "Too many material overrides on one object");
+            }
+            edited(s, "Change Material Slot");
+        }
+        if (overridden) {
+            ImGui::SameLine();
+            if (with_tip(ImGui::SmallButton("<"), "Revert: back to the mesh's own material for this slot")) {
+                mesh.material_overrides.remove(own_index);
+                edited(s, "Reset Material Slot");
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::TreePop();
+}
+
 // Skeletal Mesh extras above its properties: the animation file's clips by name (picks Clip), and
 // while an Animation Graph runs, the state it is in (Unreal's live Anim Blueprint debugging).
 void draw_skeletal_readout(EditorState& s, Entity e, world::SkeletalMesh& mesh) {
@@ -3771,6 +3832,7 @@ void draw_entity_details(EditorState& s) {
             g_details_type = types[i];
             std::memcpy(before, component, types[i]->size);
             if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_mesh_slot(s, *static_cast<world::StaticMesh*>(component));
+            if (types[i] == &reflect::type_of<world::StaticMesh>()) draw_static_material_slots(s, *static_cast<world::StaticMesh*>(component));
             if (types[i] == &reflect::type_of<world::SkeletalMesh>()) {
                 draw_skeletal_readout(s, e, *static_cast<world::SkeletalMesh*>(component));
                 draw_material_slots(s, *static_cast<world::SkeletalMesh*>(component));
@@ -5185,19 +5247,19 @@ void draw_asset_grid(EditorState& s) {
                     }
                 }
             }
-            if (r.type == asset::AssetType::Texture && with_tip(ImGui::MenuItem("Create Material"), "Makes a Material that uses this texture")) {  // like Unreal: a material using this texture
-                render::Material m;
-                asset::to_string(r.guid, m.base_color_texture);
-                char base[64];
-                std::snprintf(base, sizeof base, "M_%s", r.name);
-                const std::string path = new_asset_path(s, base);
-                if (asset::save_data_asset(path.c_str(), reflect::type_of<render::Material>(), &m)) {
-                    s.registry->scan();
-                    if (const asset::AssetRecord* created = record_at(s, path)) {
-                        select(s, {});
-                        s.selected_asset = created->guid;
-                        load_selected_data(s, *created);
-                    }
+            if (r.type == asset::AssetType::Texture &&
+                with_tip(ImGui::MenuItem("Create Material"), "Makes a Material from this texture. Textures named like Unreal's exports (Name_BaseColor, _Normal, _Roughness, _Metallic, _AmbientOcclusion, _Opacity, _Emissive, _Specular) are grouped: one Material per Name, with each map on its own input")) {
+                std::vector<asset::AssetRecord> picked{r};
+                for (u32 k = 0; k < s.asset_selection_count; ++k) {
+                    const asset::AssetRecord* each = s.registry->find(s.asset_selection[k]);
+                    if (each && each->type == asset::AssetType::Texture && !(each->guid == r.guid)) picked.push_back(*each);
+                }
+                TextureMaterialReport report;
+                create_materials_from_textures(*s.registry, picked, report, s.status, sizeof s.status);
+                if (const asset::AssetRecord* created = report.last_path.empty() ? nullptr : record_at(s, report.last_path)) {
+                    select(s, {});
+                    s.selected_asset = created->guid;
+                    load_selected_data(s, *created);
                 }
             }
             if (r.type == asset::AssetType::Table && with_tip(ImGui::MenuItem("Open in External Program"), "Opens the table's .csv in Excel or your spreadsheet program")) open_external(s, r);

@@ -135,6 +135,7 @@ struct MeshDraw {
     u32 blend = 0;
     f32 alpha_cutoff = 0.0f;  // Masked: pixels with alpha below this are not drawn (0 = off)
     bool pixel_art = false;   // the base colour texture sampled at whole texels, no blur (2D sprites, tiles)
+    f32 specular = 0.5f;      // Specular (Unreal): scales the 4% dielectric reflectance F0 (0.5 = 0.04, 1 = 0.08); packed into the flags (n1.w)
     bool hair = false;        // the Hair shading model: highlights along the strand (the texture's V), soft diffuse
     // Skinning: when set, the vertices are SkinnedVertex and each joint's skinning matrix is given
     // as its first three rows (12 floats, joint_count <= kMaxJoints); mvp / world apply after it.

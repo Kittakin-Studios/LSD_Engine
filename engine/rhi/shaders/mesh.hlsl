@@ -732,7 +732,8 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const bool blended = fmod(floor(n1.w * 0.5), 2.0) > 0.5;
     const float cutoff = fmod(floor(n1.w * 0.25), 256.0) / 255.0;
     const bool pixel_art = fmod(floor(n1.w / 1024.0), 2.0) > 0.5;  // 1024: whole texels of the base colour texture
-    const bool hair = n1.w > 2047.5;  // 2048: the Hair shading model
+    const bool hair = fmod(floor(n1.w / 2048.0), 2.0) > 0.5;  // 2048: the Hair shading model
+    const float specular = floor(n1.w / 4096.0) / 255.0;  // 4096 x Specular (0..255)
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = float3(i.uv, 0.0); mi.wpos = i.wpos; mi.normal = n; mi.view = normalize(mat1.yzw - i.wpos); mi.time = n2.w; mi.depth = scene_depth_m(i.pos);
@@ -744,6 +745,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float metallic = saturate(surf.metallic);
     const float roughness = clamp(surf.roughness, 0.04, 1.0);
     const float ao = saturate(surf.ao);
+    const float spec_map = 1.0;
     const float3 emissive = surf.emissive;
 #else
     float2 texel_size;
@@ -755,10 +757,12 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
         const float2 nxy = normal_tex.Sample(samp, i.uv).xy * 2.0 - 1.0;
         n = perturb_normal(n, i.wpos, i.uv, float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy)))));
     }
-    const float3 orm = orm_tex.Sample(samp, i.uv).rgb;
+    const float4 orm4 = orm_tex.Sample(samp, i.uv);  // A: the Specular map (white = none)
+    const float3 orm = orm4.rgb;
     const float metallic = saturate(mat0.x * orm.b);
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
     const float ao = orm.r;
+    const float spec_map = orm4.a;
     const float3 emissive = float3(mat0.zw, mat1.x) * emissive_tex.Sample(samp, i.uv).rgb;
 #endif
     if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
@@ -766,7 +770,7 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     if (n0.w > 2.5) base.rgb = float3(0.5, 0.5, 0.5);  // Lighting Only view mode: every surface a neutral grey
     const float3 v = normalize(mat1.yzw - i.wpos);
     const float ndv = max(dot(n, v), 1e-4);
-    const float3 f0 = lerp(float3(0.04, 0.04, 0.04), base.rgb, metallic);
+    const float3 f0 = lerp(float3(0.08, 0.08, 0.08) * (specular * spec_map), base.rgb, metallic);
     const float a2 = roughness * roughness * roughness * roughness;
     const float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     float3 lit = 0;

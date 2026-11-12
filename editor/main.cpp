@@ -829,7 +829,7 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
         for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const lsd::u8*>(p)[i]) * 1099511628211ull;
     };
     mix(&d.vertices.value, 4), mix(&d.indices.value, 4), mix(&d.index_count, 4), mix(d.color, sizeof d.color);
-    mix(&d.metallic, 4), mix(&d.roughness, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
+    mix(&d.metallic, 4), mix(&d.roughness, 4), mix(&d.specular, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
     mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4);
     const lsd::u32 flags = (d.unlit ? 1u : 0u) | (d.pixel_art ? 2u : 0u) | (d.debug_view << 2);
     mix(&flags, 4);
@@ -1078,7 +1078,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             ++stats.stat_draws;
             stats.stat_triangles += draw.index_count / 3;
         };
-        const auto* slot_parts = component->material[0] ? nullptr : meshes.slot_parts(component->mesh);
+        const auto* slot_parts = component->material[0] ? nullptr : meshes.slot_parts(component->mesh, component->material_overrides.count > 0);
         if (!slot_parts) {  // one Material for all (the object's, or none): the whole mesh at its LOD
             submit(draw, *mesh, m, component->material);
             continue;
@@ -1089,7 +1089,11 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             const lsd::Mat4 pm = m * part.local;
             lsd::rhi::MeshDraw part_draw{};
             if (!pick_static_lod(*part_mesh, *component, pm, eye, stats.force_lod, part_draw.indices, part_draw.index_count)) continue;
-            submit(part_draw, *part_mesh, pm, part.material);
+            const char* part_material = part.material;
+            for (const lsd::world::MaterialOverride& o : component->material_overrides) {  // this object's own Material for the slot
+                if (o.material[0] && part.slot[0] && std::strcmp(o.slot, part.slot) == 0) part_material = o.material;
+            }
+            submit(part_draw, *part_mesh, pm, part_material);
         }
     }
     for (lsd::usize c = 0; any_hlod_far && c < g_hlod.cells.size(); ++c) {  // the far cells' proxies (world space: no matrix)
@@ -3163,7 +3167,7 @@ int main(int argc, char** argv) {
             state.build_hlod_requested = false;
             lsd::editor::HlodStorage storage;
             std::vector<lsd::editor::HlodSource> sources;
-            const auto plain = [&meshes](const lsd::world::StaticMesh& m) { return m.material[0] || !meshes.slot_parts(m.mesh); };  // per-slot Materials are not merged
+            const auto plain = [&meshes](const lsd::world::StaticMesh& m) { return m.material[0] || m.material_overrides.count || !meshes.slot_parts(m.mesh); };  // per-slot Materials are not merged
             if (!state.level_path[0]) {
                 std::snprintf(state.status, sizeof state.status, "Build HLODs: save the level first (the result goes next to it)");
             } else if (!lsd::editor::gather_hlod_sources(world, registry, kDataDir, allocator, plain, storage, sources)) {

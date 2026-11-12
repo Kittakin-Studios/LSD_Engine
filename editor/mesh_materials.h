@@ -38,4 +38,16 @@ f32 mesh_materials_progress(const MaterialImport* import, char* label, usize lab
 void queue_mesh_materials(const asset::AssetRecord& mesh, const char* original_folder, bool only_with_textures);
 void update_mesh_materials(asset::AssetRegistry& registry, char* status, usize status_capacity, f32& progress, char* label, usize label_capacity);
 
+// Create Material on textures: the selected textures and the others in their folders are grouped by name
+// (T_Bike_Body01_BaseColor / _Normal / _Roughness / _Metallic / _AmbientOcclusion / _Opacity / _Emissive / _Specular...
+// asset::group_map_names), and one Material per set is made next to them (existing ones are kept). Roughness, metallic and
+// occlusion maps go to the Material's own inputs; opacity is packed into the colour's alpha (Masked), glTF metallic-roughness
+// and smoothness into an ORM texture.
+struct TextureMaterialReport {
+    u32 created = 0, reused = 0;
+    std::string last_path;  // the last material made or found (to select it)
+};
+bool create_materials_from_textures(asset::AssetRegistry& registry, const std::vector<asset::AssetRecord>& selected, TextureMaterialReport& report, char* status,
+                                    usize status_capacity);
+
 } // namespace lsd::editor

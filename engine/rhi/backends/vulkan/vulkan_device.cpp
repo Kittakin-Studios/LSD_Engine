@@ -911,7 +911,7 @@ public:
         const Texture* normal = lookup_texture(draw.normal_texture);
         if (normal && normal->shadow_size) normal = nullptr;
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
-        c[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f);  // see n1.w in the shader
+        c[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f) + 4096.0f * std::round((draw.specular < 0.0f ? 0.0f : draw.specular > 1.0f ? 1.0f : draw.specular) * 255.0f);  // see n1.w in the shader
         c[27] = draw.time;  // the normal matrix's spare w
         c[44] = draw.metallic;
         c[45] = draw.roughness;

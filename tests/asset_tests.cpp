@@ -540,6 +540,51 @@ static void test_material_import(const fs::path& root) {
     }
 }
 
+// Unreal-style texture names (one map per file) become one Material per base name.
+static void test_map_names() {
+    using namespace lsd;
+    using asset::MapRole;
+    struct Case { const char* stem; const char* base; MapRole role; };
+    const Case cases[] = {
+        {"MI_ClassicMotorBike01_Body01_BaseColor", "MI_ClassicMotorBike01_Body01", MapRole::BaseColor},
+        {"MI_ClassicMotorBike01_Body01_Normal", "MI_ClassicMotorBike01_Body01", MapRole::Normal},
+        {"MI_ClassicMotorBike01_Body01_Roughness", "MI_ClassicMotorBike01_Body01", MapRole::Roughness},
+        {"MI_ClassicMotorBike01_Body01_Metallic", "MI_ClassicMotorBike01_Body01", MapRole::Metallic},
+        {"MI_ClassicMotorBike01_Body01_AmbientOcclusion", "MI_ClassicMotorBike01_Body01", MapRole::Occlusion},
+        {"MI_ClassicMotorBike01_Lights_EmissiveColor", "MI_ClassicMotorBike01_Lights", MapRole::Emissive},
+        {"MI_ClassicMotorBike01_Lights_Opacity", "MI_ClassicMotorBike01_Lights", MapRole::Opacity},
+        {"mi_bike_body02_SPECULAR", "mi_bike_body02", MapRole::Specular},
+        {"Rock-albedo", "Rock", MapRole::BaseColor},
+        {"Rock-nrm", "Rock", MapRole::Normal},
+        {"Rock_ARM", "Rock", MapRole::Orm},
+        {"Rock_OcclusionRoughnessMetallic", "Rock", MapRole::Orm},
+        {"Rock_MetallicRoughness", "Rock", MapRole::MetallicRoughness},
+        {"Rock_Displacement", "Rock", MapRole::Height},
+        {"Rock_Smoothness", "Rock", MapRole::Glossiness},
+        {"T_Brick_D", "T_Brick", MapRole::BaseColor},
+        {"T_Brick_N", "T_Brick", MapRole::Normal},
+        {"T_Brick_R", "T_Brick", MapRole::Roughness},
+        {"T_Brick_M", "T_Brick", MapRole::Metallic},
+        {"T_Brick_B", "T_Brick", MapRole::BaseColor},
+        {"Door", "Door", MapRole::BaseColor},      // no suffix: a colour map named as a whole
+        {"Backdrop", "Backdrop", MapRole::BaseColor},  // "drop" is not a suffix: nothing before it is cut
+    };
+    for (const Case& c : cases) {
+        const asset::MapName n = asset::classify_map_name(c.stem);
+        if (std::strcmp(n.base, c.base) != 0 || n.role != c.role) std::printf("  %s -> %s / %s\n", c.stem, n.base, asset::map_role_name(n.role));
+        CHECK(std::strcmp(n.base, c.base) == 0 && n.role == c.role);
+    }
+    const char* stems[] = {"MI_Bike_Body01_BaseColor", "MI_Bike_Body02_BaseColor", "MI_Bike_Body01_Normal", "mi_bike_body01_roughness", "MI_Bike_Body02_Normal",
+                           "MI_Bike_Body01_AmbientOcclusion", "MI_Bike_Lights_EmissiveColor"};
+    std::vector<asset::MapSet> sets;
+    asset::group_map_names(stems, 7, sets);
+    CHECK(sets.size() == 3);
+    CHECK(sets[0].map[static_cast<u32>(MapRole::BaseColor)] == 0 && sets[0].map[static_cast<u32>(MapRole::Normal)] == 2 && sets[0].map[static_cast<u32>(MapRole::Roughness)] == 3);
+    CHECK(sets[0].map[static_cast<u32>(MapRole::Occlusion)] == 5 && sets[0].map[static_cast<u32>(MapRole::Metallic)] == -1);
+    CHECK(sets[1].map[static_cast<u32>(MapRole::BaseColor)] == 1 && sets[1].map[static_cast<u32>(MapRole::Normal)] == 4);
+    CHECK(sets[2].map[static_cast<u32>(MapRole::Emissive)] == 6);
+}
+
 // IES: candela averaged around the axis, normalised, resampled every 12 degrees; nothing outside the file's angles.
 static void test_ies() {
     using namespace lsd;
@@ -652,6 +697,7 @@ static void test_plugins_dlc(const fs::path& root) {
 int main() {
     test_plugins_dlc(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_ies();
+    test_map_names();
     test_material_import(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_localization();
     test_anim_curves();

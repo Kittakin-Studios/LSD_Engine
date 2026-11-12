@@ -17,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace lsd::editor {
@@ -110,6 +111,91 @@ void bone_tree(const anim::SkinnedModel& model, i32 parent) {
     }
 }
 
+// Material Slots (Unreal's Static Mesh Editor Material Slots): one row per material of the file, by its name there, with its
+// triangles and the Material it is drawn with. The slots are the file's materials: a slot cannot be added by hand, because
+// the mesh format cannot move triangles between slots (that is done in Blender); a slot the file no longer has can be removed.
+void draw_slots_panel(EditorState& s, const SkinnedEntry* skinned) {
+    struct Row {
+        std::string name;
+        u32 triangles = 0;
+    };
+    std::vector<Row> rows;
+    auto add = [&](const char* name, u32 triangles) {
+        for (Row& r : rows) {
+            if (r.name == name) {
+                r.triangles += triangles;
+                return;
+            }
+        }
+        rows.push_back({name, triangles});
+    };
+    if (skinned) {
+        for (const anim::MeshSection& section : skinned->model->sections) {
+            if (section.index_count) add(section.material, section.index_count / 3);
+        }
+    } else if (s.meshes) {
+        if (const std::vector<MeshCache::SlotPart>* parts = s.meshes->slot_parts(g_mw.key, true)) {
+            for (const MeshCache::SlotPart& part : *parts) {
+                const CachedMesh* m = s.meshes->get(part.key);
+                add(part.slot, m ? m->gpu.index_count / 3 : 0);
+            }
+        }
+    }
+    ImGui::SeparatorText("Material Slots");
+    if (rows.empty()) {
+        ImGui::TextDisabled("No material slots (a basic shape, or one part of a file)");
+        return;
+    }
+    ImGui::TextDisabled("UV0: the file's first UV set (every texture map). UV1: the lightmap, made by Build Lighting.");
+    ImGui::SetItemTooltip("The importer reads the first UV set of the file as UV0 (Unreal's channel 0). Build Lighting unwraps its own UV1 for baked light; a second UV set in the file is not read");
+    u32 index = 0;
+    for (const Row& row : rows) {
+        asset::MaterialSlot* slot = nullptr;
+        for (asset::MaterialSlot& m : g_mw.meta.material_slots) slot = std::strcmp(m.name, row.name.c_str()) == 0 ? &m : slot;
+        char value[33];
+        std::snprintf(value, sizeof value, "%s", slot ? slot->material : "");
+        ImGui::PushID(static_cast<int>(index));
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%u  %s", index, row.name.empty() ? "(no material)" : row.name.c_str());
+        ImGui::SetItemTooltip("Element %u: the triangles that use the material \"%s\" in the file", index, row.name.c_str());
+        ImGui::SameLine(190.0f);
+        ImGui::TextDisabled("%u tris", row.triangles);
+        ImGui::SameLine(260.0f);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (!row.name.empty() && pick_asset(s, "Material", value, sizeof value)) {
+            if (!slot && g_mw.meta.material_slots.count < g_mw.meta.material_slots.capacity()) {
+                slot = &g_mw.meta.material_slots.items[g_mw.meta.material_slots.count++];
+                *slot = asset::MaterialSlot{};
+                std::snprintf(slot->name, sizeof slot->name, "%s", row.name.c_str());
+            }
+            if (slot) {
+                std::snprintf(slot->material, sizeof slot->material, "%s", value);
+                g_mw.meta_dirty = true;
+            }
+        }
+        ImGui::PopID();
+        ++index;
+    }
+    for (u32 k = 0; k < g_mw.meta.material_slots.count; ++k) {  // slots the file no longer has
+        const asset::MaterialSlot& slot = g_mw.meta.material_slots[k];
+        bool in_file = false;
+        for (const Row& row : rows) in_file = in_file || row.name == slot.name;
+        if (in_file) continue;
+        ImGui::PushID(1000 + static_cast<int>(k));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s (not in the file)", slot.name);
+        ImGui::SameLine();
+        if (with_tip(ImGui::SmallButton("Remove Slot"), "Takes this slot out of the .meta: the file has no material of this name any more")) {
+            g_mw.meta.material_slots.remove(k);
+            g_mw.meta_dirty = true;
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    ImGui::TextDisabled("Save writes the slots. Context menu on the mesh > Import Materials and Textures fills them from the file.");
+}
+
 } // namespace
 
 void open_mesh_editor(EditorState& s, const asset::AssetRecord& record) {
@@ -201,6 +287,38 @@ void render_mesh_editor(rhi::Device& device, const f32 background[4]) {
         device.set_render_target({}, nullptr);
         return;
     } else {
+        const std::vector<MeshCache::SlotPart>* parts = s.meshes ? s.meshes->slot_parts(g_mw.key, true) : nullptr;
+        if (parts && parts->size() > 1) {  // each material slot with its Material (as edited here, before Save)
+            for (const MeshCache::SlotPart& part : *parts) {
+                const CachedMesh* part_mesh = s.meshes->get(part.key);
+                if (!part_mesh) continue;
+                rhi::MeshDraw section = draw;
+                const Mat4 pmvp = g_mw.view_proj * part.local;
+                const Mat4 inv = affine_inverse(part.local);
+                std::memcpy(section.mvp, pmvp.m, sizeof section.mvp);
+                for (i32 c = 0; c < 3; ++c) {
+                    for (i32 r = 0; r < 3; ++r) section.normal_matrix[c * 4 + r] = inv.at(c, r);
+                    section.normal_matrix[c * 4 + 3] = 0.0f;
+                }
+                for (i32 r = 0; r < 3; ++r) {
+                    for (i32 c = 0; c < 4; ++c) section.world[r * 4 + c] = part.local.at(r, c);
+                }
+                section.vertices = part_mesh->gpu.vertices;
+                section.indices = part_mesh->gpu.indices;
+                section.index_count = part_mesh->gpu.index_count;
+                const char* material = part.material;
+                for (const asset::MaterialSlot& slot : g_mw.meta.material_slots) {
+                    if (part.slot[0] && std::strcmp(slot.name, part.slot) == 0) material = slot.material;
+                }
+                if (material[0] && s.materials) {
+                    section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;
+                    s.materials->apply(material, section);
+                }
+                device.draw_mesh(section);
+            }
+            device.set_render_target({}, nullptr);
+            return;
+        }
         draw.vertices = mesh->gpu.vertices;
         draw.indices = mesh->gpu.indices;
         draw.index_count = mesh->gpu.index_count;
@@ -305,6 +423,7 @@ void draw_mesh_editor(EditorState& s) {
         std::filesystem::last_write_time(source, std::filesystem::file_time_type::clock::now(), error);
         std::snprintf(s.status, sizeof s.status, "Reimporting %s", g_mw.name);
     }
+    if (loaded) draw_slots_panel(s, skinned);
     if (skinned) {
         ImGui::SeparatorText("Skeleton");
         {  // which humanoid rig: animations from the other Unreal rigs retarget onto it

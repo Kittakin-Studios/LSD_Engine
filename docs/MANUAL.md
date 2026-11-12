@@ -476,10 +476,10 @@ already in Content, right-click it > **Import Materials and Textures** (or the c
 1. Its texture maps are found: where the file says (the exporter's path, e.g. `F:\Art\Char.fbm\`),
    next to the file, in its `<name>.fbm` folder, then any texture in Content with the same file name.
    Images embedded in the file (FBX *Embed Textures*, GLB) are written out. Maps the file does not
-   connect are found by the texture set's naming next to the colour map: `Hat_Diffuse.png` brings
-   `Hat_Metallic`, `Hat_Roughness` (or `Hat_Glossiness`, inverted), `Hat_AO`, `Hat_Opacity`, `Hat_Normal`,
-   `Hat_Emissive`
-   (FBX has no metallic / roughness slot, so Blender's never arrive connected).
+   connect are found by the texture set's naming (see **Texture names** below): the set named after the
+   colour map the file gives, or after the material itself, so an Unreal export whose FBX names no
+   textures at all still finds `MI_Bike_Body01_BaseColor.png`, `_Normal`, `_Roughness` for the material
+   `MI_Bike_Body01`.
 2. They are copied into `<mesh folder>/Textures/`, packed into the engine's slots: metallic,
    roughness and occlusion into one `T_<material>_ORM` (R occlusion, G roughness, B metallic, as
    Unreal's ORM), an opacity map into the colour's alpha (`T_<material>_BaseColor`, and the material
@@ -488,10 +488,39 @@ already in Content, right-click it > **Import Materials and Textures** (or the c
 3. A Material `M_<material>` is made in `<mesh folder>/Materials/` (one that exists is kept, with your
    edits) and set on the mesh's **Material Slots**.
 
+**Texture names.** One map per file, the kind after the last `_` or `-` (any case), the rest is the
+set's name; maps with the same name are one material:
+
+| Suffix | Map | Goes to |
+| --- | --- | --- |
+| `BaseColor`, `BaseCol`, `Albedo`, `Diffuse`, `Color`, `_B`, `_D` | colour | Base Color Texture |
+| `Normal`, `Norm`, `Nrm`, `_N` | normal | Normal Texture |
+| `Roughness`, `Rough`, `_R` (`Glossiness`, `Smoothness`: inverted) | roughness | ORM green |
+| `Metallic`, `Metalness`, `Metal`, `_M` | metallic | ORM blue |
+| `AmbientOcclusion`, `Occlusion`, `AO` | occlusion | ORM red |
+| `ORM`, `ARM`, `OcclusionRoughnessMetallic` | already packed (R, G, B as above) | ORM |
+| `MetallicRoughness` | glTF packed (G roughness, B metallic) | ORM (occlusion white) |
+| `Specular`, `Spec` | specular | Specular Texture |
+| `Opacity`, `Alpha`, `Mask` | cut-out | the colour's alpha, Blend Mode Masked |
+| `Emissive`, `EmissiveColor`, `Emission` | glow | Emissive Texture |
+| `Height`, `Displacement`, `Bump` | ignored (the lit shader has no height input) | not used |
+
+**Create Material** on a texture (Content Browser right-click) does the same without a mesh: the
+selected textures and the ones next to them are grouped by name, and one `M_<name>` is made per set
+with every map on its own input (right-click `MI_Bike_Body01_AmbientOcclusion.png` and you get the
+whole `MI_Bike_Body01` material, not a material per texture).
+
 The mesh asset's Details > **Materials** lists its slots (one per material of the file, like a
 Skeletal Mesh's Material Slots in Unreal); change one there for every object using the mesh. A Static
 Mesh of the whole file uses them too while its own **Material** is empty (each part draws with its
-slot); set a Material on the object to paint all of it with one. Textures
+slot); set a Material on the object to paint all of it with one. On a placed object, Details > Static
+Mesh > **Materials** has a row per slot (Unreal's Materials list on the component): pick another material
+to override that slot on this object only (the row turns gold; **<** reverts it); saved in the level and undoable.
+The **Mesh Editor** (double-click the mesh) has a **Material Slots** list: each material of the file by its
+name there, its index, its triangles and a material picker (or drop one from the Content Browser; Save writes
+them), and the preview wears them. UV0 is the file's first UV set; Build Lighting makes the lightmap UV1. A
+slot cannot be added by hand: slots are the file's materials (triangles are assigned to them in Blender or
+Maya); one the file no longer has can be removed. Textures
 use the mesh's own UVs, so each part looks as it did in Blender, Maya or Substance. Missing textures
 are listed in the Output Log; put them next to the file and run the menu again. It works one material
 at a time while the editor keeps running: a progress bar in the menu bar names the material it is on
@@ -1067,7 +1096,12 @@ moved or renamed object is not recognised until you build again.
 *A Material asset is edited in Details: base colour (or texture), metallic, roughness, normal / ORM textures, emissive (+ texture), blend mode, opacity.*
 
 **New Material** creates a physically based material: base colour (+ texture), metallic, roughness,
-normal map, ORM map (occlusion / roughness / metallic packed like glTF), emissive (+ **Emissive
+normal map, ORM map (occlusion / roughness / metallic packed like glTF) or the separate **Roughness
+Texture**, **Metallic Texture** and **Ambient Occlusion Texture** (one channel each, multiplying Roughness
+and Metallic; they are packed into one ORM texture when the material loads, kept in `DerivedData/Materials`,
+and win over the ORM Texture's channel when both are set), **Specular** (0..1, Unreal's: 0.5 is the usual
+4% reflectivity of non-metals, 0 removes the highlight, 1 doubles it; metals ignore it) with an optional
+**Specular Texture** multiplying it, emissive (+ **Emissive
 Texture**: where it glows, multiplying Emissive; set Emissive to white for the map's own colours.
 Lighting is in physical units, so a glow you see in daylight needs an Emissive Strength in the
 thousands, as in Unreal). Drop it on an

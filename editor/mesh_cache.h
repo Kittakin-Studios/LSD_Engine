@@ -62,8 +62,10 @@ public:
         char key[48];
         Mat4 local;          // the part in the mesh's space
         char material[33];   // its slot's Material ("" = none)
+        char slot[64];       // its material's name in the file: the slot a placed object's Material Override names
     };
-    const std::vector<SlotPart>* slot_parts(const char* key);
+    // `all`: also when no slot has a Material (an object overriding slots needs the parts to draw them one by one).
+    const std::vector<SlotPart>* slot_parts(const char* key, bool all = false);
 
     // Puts `data` under `key` (drawn, picked and collided like any mesh), replacing what was there.
     // Keys starting "Landscape:" are only ever generated: get() is quiet about them until then.

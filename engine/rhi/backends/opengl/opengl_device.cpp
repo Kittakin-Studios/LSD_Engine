@@ -739,7 +739,8 @@ void main() {
     bool blended = mod(floor(u_flags.y * 0.5), 2.0) > 0.5;
     float cutoff = mod(floor(u_flags.y * 0.25), 256.0) / 255.0;
     bool pixel_art = mod(floor(u_flags.y / 1024.0), 2.0) > 0.5;  // 1024: whole texels of the base colour texture
-    bool hair = u_flags.y > 2047.5;  // 2048: the Hair shading model
+    bool hair = mod(floor(u_flags.y / 2048.0), 2.0) > 0.5;  // 2048: the Hair shading model
+    float specular = floor(u_flags.y / 4096.0) / 255.0;  // 4096 x Specular (0..255)
 #ifdef LSD_MATERIAL
     MaterialIn mi;
     mi.uv = vec3(v_uv, 0.0); mi.wpos = v_wpos; mi.normal = n; mi.view = normalize(u_mat[1].yzw - v_wpos); mi.time = u_time; mi.depth = scene_depth_m();
@@ -751,6 +752,7 @@ void main() {
     float metallic = clamp(surf.metallic, 0.0, 1.0);
     float roughness = clamp(surf.roughness, 0.04, 1.0);
     float ao = clamp(surf.ao, 0.0, 1.0);
+    float spec_map = 1.0;
     vec3 emissive = surf.emissive;
 #else
     vec2 texel_size = vec2(textureSize(base_tex, 0));
@@ -761,10 +763,12 @@ void main() {
         vec2 nxy = texture(normal_tex, v_uv).xy * 2.0 - 1.0;
         n = perturb_normal(n, v_wpos, v_uv, vec3(nxy, sqrt(clamp(1.0 - dot(nxy, nxy), 0.0, 1.0))));
     }
-    vec3 orm = texture(orm_tex, v_uv).rgb;
+    vec4 orm4 = texture(orm_tex, v_uv);  // A: the Specular map (white = none)
+    vec3 orm = orm4.rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
+    float spec_map = orm4.a;
     vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, v_uv).rgb;
 #endif
     if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
@@ -772,7 +776,7 @@ void main() {
     if (u_flags.x > 2.5) base.rgb = vec3(0.5);  // Lighting Only view mode: every surface a neutral grey
     vec3 v = normalize(u_mat[1].yzw - v_wpos);
     float ndv = max(dot(n, v), 1e-4);
-    vec3 f0 = mix(vec3(0.04), base.rgb, metallic);
+    vec3 f0 = mix(vec3(0.08) * (specular * spec_map), base.rgb, metallic);
     float a2 = roughness * roughness * roughness * roughness;
     float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
     vec3 lit = vec3(0.0);
@@ -2150,7 +2154,7 @@ public:
         const Texture* orm = lookup_texture(draw.orm_texture);
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;  // packed as in the shader
         gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view),
-                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f));
+                        (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f) + 4096.0f * std::round((draw.specular < 0.0f ? 0.0f : draw.specular > 1.0f ? 1.0f : draw.specular) * 255.0f));
         if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
         if (graph) {
             f32 values[kMaxMaterialParams * 4] = {};

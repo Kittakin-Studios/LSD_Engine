@@ -1,7 +1,9 @@
 #include "material_cache.h"
 
 #include "lsd/asset/data_asset.h"
+#include "lsd/asset/material_import.h"
 #include "lsd/asset/texture.h"
+#include "lsd/foundation/hash_id.h"
 #include "lsd/foundation/log.h"
 #include "lsd/render/texture_streaming.h"
 #include "lsd/script/material_graph.h"
@@ -77,6 +79,13 @@ TextureCache::~TextureCache() {
 }
 
 bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) {
+    if (const auto it = files_.find(e.guid); it != files_.end()) {  // packed on the fly: no asset, no .meta
+        std::snprintf(path, capacity, "%s", it->second.c_str());
+        e.modified = texture_time(path);
+        max_size = size_cap_;
+        e.streams = true;
+        return true;
+    }
     if (!path_of(registry_, e.guid, path, capacity)) return false;
     e.modified = texture_time(path);
     asset::Guid guid;
@@ -399,9 +408,47 @@ void MaterialCache::load(Entry& e) {
         std::snprintf(e.parent, sizeof e.parent, "%s", instance.parent);
         e.parent_modified = file_time(parent_path);
         e.material = render::resolve(parent, instance);
+        pack_maps(e);
         return;
     }
     e.failed = !asset::load_data_asset(path, e.material);
+    if (!e.failed) pack_maps(e);
+}
+
+void MaterialCache::pack_maps(Entry& e) {
+    render::Material& m = e.material;
+    const char* separate[4] = {m.ambient_occlusion_texture, m.roughness_texture, m.metallic_texture, m.specular_texture};  // R, G, B, A
+    if (!separate[0][0] && !separate[1][0] && !separate[2][0] && !separate[3][0]) return;
+    char paths[5][300] = {};
+    const char* guids[5] = {separate[0], separate[1], separate[2], separate[3], m.orm_texture};
+    std::string signature;
+    for (u32 i = 0; i < 5; ++i) {
+        if (guids[i][0] && path_of(registry_, guids[i], paths[i], sizeof paths[i])) signature += std::string(paths[i]) + std::to_string(file_time(paths[i])) + ";";
+        else signature += ";";
+    }
+    char key[33];
+    std::snprintf(key, sizeof key, "P%016llx", static_cast<unsigned long long>(hash64(signature)));
+    const std::filesystem::path out = std::filesystem::path("DerivedData") / "Materials" / (std::string(key) + ".png");
+    std::error_code error;
+    if (!std::filesystem::exists(out, error)) {
+        std::filesystem::create_directories(out.parent_path(), error);
+        asset::Image images[5];
+        for (u32 i = 0; i < 5; ++i) {
+            if (paths[i][0] && !asset::load_image(paths[i], images[i])) LSD_LOG_WARN("material", "Could not read %s for packing", paths[i]);
+        }
+        auto source = [&](u32 own, u32 channel) {  // the separate map, else the ORM texture's own channel, else white
+            asset::PackSource s{};
+            if (images[own].pixels) s.image = &images[own], s.channel = 0;
+            else if (images[4].pixels && own < 3) s.image = &images[4], s.channel = channel;
+            return s;
+        };
+        if (!asset::pack_channels(out.string().c_str(), source(0, 0), source(1, 1), source(2, 2), source(3, 3))) {
+            LSD_LOG_WARN("material", "Could not pack the maps of material %s", e.guid);
+            return;
+        }
+    }
+    textures_.set_file(key, out.generic_string().c_str());
+    std::snprintf(m.orm_texture, sizeof m.orm_texture, "%s", key);
 }
 
 void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
@@ -428,6 +475,7 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
     draw.color[3] *= m.base_color.a;
     draw.metallic = m.metallic;
     draw.roughness = m.roughness;
+    draw.specular = m.specular;
     draw.hair = m.shading_model == 1;
     draw.emissive[0] = m.emissive.r * m.emissive_strength;
     draw.emissive[1] = m.emissive.g * m.emissive_strength;

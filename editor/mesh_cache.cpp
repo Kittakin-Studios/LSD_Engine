@@ -145,9 +145,10 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     return &t;
 }
 
-const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key) {
-    if (const auto it = slot_parts_.find(key); it != slot_parts_.end()) return it->second.empty() ? nullptr : &it->second;
-    std::vector<SlotPart>& out = slot_parts_[key];
+const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key, bool all) {
+    const std::string cache_key = all ? std::string(key) + "|all" : std::string(key);
+    if (const auto it = slot_parts_.find(cache_key); it != slot_parts_.end()) return it->second.empty() ? nullptr : &it->second;
+    std::vector<SlotPart>& out = slot_parts_[cache_key];
     asset::Guid guid;
     i32 part = -1;
     const asset::AssetRecord* record = asset::parse_mesh_key(key, guid, part) && part < 0 ? registry_.find(guid) : nullptr;
@@ -156,7 +157,7 @@ const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key) {
     registry_.load_meta(*record, meta);
     bool any = false;
     for (const asset::MaterialSlot& s : meta.material_slots) any = any || s.material[0];
-    if (!any) return nullptr;
+    if (!any && !all) return nullptr;
     char source[300], error[256];
     registry_.source_path(*record, source, sizeof source);
     Array<asset::MeshPart> parts(allocator_);
@@ -169,6 +170,7 @@ const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key) {
             std::snprintf(p.key, sizeof p.key, "%s#%zu", key, k);
             p.local = trs(parts[k].position * meta.import_scale, parts[k].rotation, parts[k].scale);  // its mesh is scaled by import_scale too
         }
+        std::snprintf(p.slot, sizeof p.slot, "%s", parts[k].material);
         for (const asset::MaterialSlot& s : meta.material_slots) {
             if (parts[k].material[0] && std::strcmp(s.name, parts[k].material) == 0) std::snprintf(p.material, sizeof p.material, "%s", s.material);
         }

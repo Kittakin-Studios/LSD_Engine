@@ -9,7 +9,9 @@
 #include "lsd/rhi/rhi.h"
 
 #include <condition_variable>
+#include <map>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -36,6 +38,8 @@ public:
     static constexpr u32 kFull = 0xFFFFFFFFu;
     rhi::TextureHandle get(const char* guid, bool srgb, bool normal_map = false, u32 want = kFull);
     void check_files();
+    // A texture made on the fly (a Material's packed maps): `key` stands for the file at `path` in get().
+    void set_file(const char* key, const char* path) { files_[key] = path; }
     // Once a frame: uploads up to `budget` textures the worker finished.
     void update(u32 budget = 4);
     u32 streaming() const;  // textures still on their way
@@ -61,6 +65,7 @@ public:
     f32 detail_scale_ = 1.0f;
 
 private:
+    std::map<std::string, std::string> files_;  // shortcut: keys of packed maps stay for the run (a few per material)
     const bool compress_;  // colour textures as BC1 / BC3, normal maps as BC5 (the device takes them): 4 to 8 times less video memory
     struct Entry {
         char guid[33];
@@ -150,6 +155,8 @@ private:
         bool graph_instance;  // a MaterialInstance whose parent (`parent`) is a Material Graph
     };
     void load_graph(Entry& entry, const char* path);
+    // Separate Roughness / Metallic / Ambient Occlusion / Specular maps packed into one ORM texture (R, G, B, A) when the material loads.
+    void pack_maps(Entry& entry);
     void resolve_textures(Entry& entry);
     Entry* find(const char* guid);
     void load(Entry& entry);

@@ -15,6 +15,15 @@ struct Transform {
     LSD_PROPERTY(Edit, Tooltip = "Size along each axis (1 = as made)") Vec3 scale = {1, 1, 1};
 };
 
+// One material slot of a mesh drawn with another material on this object only (Unreal's Override
+// Materials on a component). Picked in Details > Materials, which lists the mesh's slots.
+LSD_STRUCT()
+struct MaterialOverride {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Tooltip = "The mesh's material slot (its material's name in the file)") char slot[64] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drawn with this instead of the slot's material") char material[33] = "";
+};
+
 LSD_STRUCT(Component, Category = "Rendering", Tooltip = "Shows a mesh (a model or a basic shape), with material, collision and shadows")
 struct StaticMesh {
     LSD_GENERATED()
@@ -33,6 +42,7 @@ struct StaticMesh {
     f32 max_draw_distance = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "Build Lighting bakes a lightmap for it (Unreal's Mobility: Static): baked shadows and bounced light. Off for things that move; physics bodies and movers never get one")
     bool static_lighting = true;
+    LSD_PROPERTY(Save, Tooltip = "Material slots drawn with another material on this object (Unreal's Override Materials): Details > Materials lists the mesh's slots") List<MaterialOverride, 48> material_overrides;
 };
 
 // Volumes are boxes the size of the entity's scale (a 1 m cube from z = 0 to 1, like the Cube shape),
@@ -719,14 +729,6 @@ struct MorphWeight {
     LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "0 = rest, 1 = the full shape") f32 weight = 0.0f;
 };
 
-// One material slot of a mesh drawn with another material on this object only (Unreal's Override
-// Materials on a component). Picked in Details > Materials, which lists the mesh's slots.
-LSD_STRUCT()
-struct MaterialOverride {
-    LSD_GENERATED()
-    LSD_PROPERTY(Edit, Tooltip = "The mesh's material slot (its material's name in the file)") char slot[64] = "";
-    LSD_PROPERTY(Edit, Widget = "Asset:Material", Tooltip = "Drawn with this instead of the slot's material") char material[33] = "";
-};
 
 // A rigged, animated mesh (Unreal's Skeletal Mesh Component in Animation Asset mode): drag a
 // rigged FBX into the viewport; its animations can come from the same file or another (Mixamo).

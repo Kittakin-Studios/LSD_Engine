@@ -16,6 +16,16 @@ struct Material {
     LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Tangent-space normal map (OpenGL style, green up)") char normal_texture[33] = "";
     LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Packed: R ambient occlusion, G roughness, B metallic (glTF / Substance ORM); G and B multiply the values above")
     char orm_texture[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Roughness map (one channel, white = rough): multiplies Roughness. Overrides the ORM Texture's green channel; the maps are packed together when the material loads")
+    char roughness_texture[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Metallic map (one channel, white = metal): multiplies Metallic. Overrides the ORM Texture's blue channel")
+    char metallic_texture[33] = "";
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Ambient occlusion map (one channel, white = open): darkens ambient light in crevices. Overrides the ORM Texture's red channel")
+    char ambient_occlusion_texture[33] = "";
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Strength of the highlight on non-metals (Unreal's Specular): 0.5 is the usual 4% reflectivity, 1 doubles it, 0 removes it. Metals ignore it")
+    f32 specular = 0.5f;
+    LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Specular map (one channel, white = full): multiplies Specular")
+    char specular_texture[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Glow colour (not lit by anything)") LinearColor emissive = LinearColor::hex(0x000000);
     LSD_PROPERTY(Edit, Min = 0, Max = 100, Tooltip = "How bright the glow is (above 1 blooms)") f32 emissive_strength = 1.0f;
     LSD_PROPERTY(Edit, Widget = "Asset:Texture", Tooltip = "Where it glows: multiplies Emissive (set Emissive to white to use the map's own colours)")

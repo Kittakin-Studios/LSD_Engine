@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL_stdinc.h>
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -35,7 +36,7 @@ struct Plan {
     const asset::ImportedMaterial* source = nullptr;
     std::string material_path;  // Content/<folder>/Materials/M_<name>.lsdasset
     bool exists = false;        // kept as it is
-    std::string base_color, normal, orm, emissive;
+    std::string base_color, normal, orm, emissive, specular;
     bool masked = false;
     bool metal_map = false, rough_map = false;  // packed into the ORM: the values become 1 (they multiply the map)
 };
@@ -96,31 +97,56 @@ public:
         return {};
     }
 
-    // A map the file does not connect, found by its texture set's naming next to the colour map
-    // (Pouches_001_Diffuse.png -> Pouches_001_Metallic.png): Substance, Character Creator and most
-    // exporters name sets like this, and FBX has no metallic / roughness slot Blender fills.
-    std::string sibling(const std::string& colour, std::initializer_list<const char*> kinds) {
-        if (colour.empty()) return {};
-        const fs::path file(colour);
-        std::string stem = file.stem().string();
-        for (const char* suffix : {"_Diffuse", "_BaseColor", "_Base_Color", "_Albedo", "_Color", "_Col", "_D"}) {
-            const usize n = std::strlen(suffix);
-            if (stem.size() > n && SDL_strcasecmp(stem.c_str() + stem.size() - n, suffix) == 0) {
-                stem.resize(stem.size() - n);
-                std::error_code error;
-                for (const char* kind : kinds) {
-                    for (const char* ext : {".png", ".jpg", ".jpeg", ".tga"}) {
-                        const fs::path candidate = file.parent_path() / (stem + "_" + kind + ext);
-                        if (fs::exists(candidate, error)) {
-                            LSD_LOG_INFO("editor", "%s: using %s (named like the colour map)", mesh_.path, candidate.filename().string().c_str());
-                            return candidate.generic_string();
-                        }
-                    }
-                }
-                break;
+    // Texture sets by naming (Unreal / Substance: <Material>_BaseColor.png, _Normal, _Roughness, _Metallic, _AmbientOcclusion...):
+    // every image next to the file, in its folders and in Content, grouped by base name (asset::group_map_names).
+    // The FBX of an Unreal export names no textures at all: a material finds its set by its own name.
+    void build_sets() {
+        if (sets_built_) return;
+        sets_built_ = true;
+        std::error_code error;
+        auto add = [&](const fs::path& p) {
+            std::string ext = p.extension().string();
+            for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".tga" && ext != ".bmp" && ext != ".exr") return;
+            const std::string path = p.generic_string();
+            for (const std::string& f : set_files_) {
+                if (SDL_strcasecmp(f.c_str(), path.c_str()) == 0) return;
             }
+            set_files_.push_back(path);
+            set_stems_.push_back(p.stem().string());
+        };
+        for (const fs::path& dir : search_) {
+            for (fs::directory_iterator it(dir, error), end; !error && it != end; it.increment(error)) {
+                if (it->is_regular_file(error)) add(it->path());
+            }
+            error.clear();
+        }
+        for (usize i = 0; i < registry_.count(); ++i) {
+            const asset::AssetRecord& r = registry_.get(i);
+            if (r.type != asset::AssetType::Texture) continue;
+            char path[300];
+            registry_.source_path(r, path, sizeof path);
+            add(fs::path(path));
+        }
+        std::vector<const char*> stems;
+        for (const std::string& st : set_stems_) stems.push_back(st.c_str());
+        asset::group_map_names(stems.data(), stems.size(), sets_);
+    }
+
+    // The file with `role` in the set named `base` ("" = none).
+    std::string named(const char* base, asset::MapRole role) {
+        build_sets();
+        for (const asset::MapSet& set : sets_) {
+            if (SDL_strcasecmp(set.base, base) != 0) continue;
+            const i32 k = set.map[static_cast<u32>(role)];
+            if (k >= 0) return set_files_[static_cast<usize>(k)];
         }
         return {};
+    }
+
+    // The set name a colour map belongs to (Body01_BaseColor.png -> Body01).
+    static std::string base_of(const std::string& colour) {
+        return colour.empty() ? std::string() : std::string(asset::classify_map_name(fs::path(colour).stem().string().c_str()).base);
     }
 
     // A located image as a texture in Content: kept where it is when already inside Content, else
@@ -193,6 +219,9 @@ private:
     std::vector<fs::path> search_;
     std::map<std::string, std::unique_ptr<asset::Image>> images_;
     u32 copied_ = 0, missing_ = 0;
+    bool sets_built_ = false;
+    std::vector<std::string> set_files_, set_stems_;
+    std::vector<asset::MapSet> sets_;
 };
 
 } // namespace
@@ -221,12 +250,17 @@ void plan_material(MaterialImport& job, const asset::ImportedMaterial& m) {
     plan.exists = fs::exists(plan.material_path, fs_error);
     if (!plan.exists) {
         LSD_LOG_INFO("editor", "Importing material %s", m.name);
-        const std::string base = in.locate(m.base_color_map);
-        auto find = [&](const asset::ImportedMap& map, std::initializer_list<const char*> kinds) {
-            const std::string found = in.locate(map);
-            return found.empty() ? in.sibling(base, kinds) : found;
+        std::string base = in.locate(m.base_color_map);
+        // The set of maps this material owns: named after the colour map the file gives, else after the material itself.
+        std::string set = Importer::base_of(base);
+        if (set.empty() || in.named(set.c_str(), asset::MapRole::BaseColor).empty()) set = name;
+        if (base.empty()) base = in.named(name.c_str(), asset::MapRole::BaseColor);
+        using asset::MapRole;
+        auto find = [&](const asset::ImportedMap& map, MapRole role) {
+            const std::string found = in.locate(map, true);
+            return found.empty() ? in.named(set.c_str(), role) : found;
         };
-        const std::string opacity = find(m.opacity_map, {"Opacity", "Alpha", "Mask"});
+        const std::string opacity = find(m.opacity_map, MapRole::Opacity);
         if (!opacity.empty()) {  // colour + its cut-out mask in alpha (Masked)
             const asset::Image* colour = in.image(base);
             const asset::Image* mask = in.image(opacity);
@@ -236,17 +270,30 @@ void plan_material(MaterialImport& job, const asset::ImportedMaterial& m) {
         } else {
             plan.base_color = in.into_content(base);
         }
-        plan.normal = in.into_content(find(m.normal_map, {"Normal", "Normals", "Nrm", "N"}));
-        plan.emissive = in.into_content(find(m.emissive_map, {"Emissive", "Emission", "Glow"}));
-        const std::string metal = find(m.metallic_map, {"Metallic", "Metalness", "Metal"});
-        const std::string occlusion = find(m.occlusion_map, {"AO", "AmbientOcclusion", "Occlusion"});
-        std::string rough = find(m.roughness_map, {"Roughness", "Rough"});
+        plan.normal = in.into_content(find(m.normal_map, MapRole::Normal));
+        plan.emissive = in.into_content(find(m.emissive_map, MapRole::Emissive));
+        plan.specular = in.into_content(in.named(set.c_str(), MapRole::Specular));
+        if (!in.named(set.c_str(), MapRole::Height).empty()) LSD_LOG_INFO("editor", "%s: height / displacement map ignored (the lit shader has no height input)", m.name);
+        const std::string metal = find(m.metallic_map, MapRole::Metallic);
+        const std::string occlusion = find(m.occlusion_map, MapRole::Occlusion);
+        std::string rough = find(m.roughness_map, MapRole::Roughness);
         bool glossy = m.roughness_is_glossiness;
         if (rough.empty()) {  // smoothness maps (Unity, older Substance presets) are inverted roughness
-            rough = in.sibling(base, {"Glossiness", "Gloss", "Smoothness"});
+            rough = in.named(set.c_str(), MapRole::Glossiness);
             glossy = !rough.empty();
         }
-        if (!metal.empty() || !rough.empty() || !occlusion.empty()) {  // R occlusion, G roughness, B metallic
+        // Already packed (ORM / ARM: R occlusion, G roughness, B metallic; glTF's metallic-roughness: G, B): one image feeds the channels.
+        const bool separate = !metal.empty() || !rough.empty() || !occlusion.empty();
+        std::string packed = separate ? std::string() : in.named(set.c_str(), MapRole::Orm);
+        const bool gltf_packed = packed.empty() && !separate;
+        if (gltf_packed) packed = in.named(set.c_str(), MapRole::MetallicRoughness);
+        if (!packed.empty()) {
+            const asset::Image* image = in.image(packed);
+            asset::PackSource r = gltf_packed ? asset::PackSource{} : asset::PackSource{image, 0};
+            asset::PackSource g{image, 1}, b{image, 2};
+            plan.orm = in.pack("T_" + name + "_ORM", r, g, b, asset::PackSource{});
+            plan.metal_map = plan.rough_map = !plan.orm.empty() && image;
+        } else if (separate) {  // R occlusion, G roughness, B metallic
             asset::PackSource r{in.image(occlusion), m.occlusion_map.channel};
             asset::PackSource g{in.image(rough), m.roughness_map.channel, 255, glossy};
             asset::PackSource b{in.image(metal), m.metallic_map.channel};
@@ -288,6 +335,7 @@ void finish(MaterialImport& job, MaterialImportReport& report, char* status, usi
         std::snprintf(material.normal_texture, sizeof material.normal_texture, "%s", job.in.guid_at(plan.normal).c_str());
         std::snprintf(material.orm_texture, sizeof material.orm_texture, "%s", job.in.guid_at(plan.orm).c_str());
         std::snprintf(material.emissive_texture, sizeof material.emissive_texture, "%s", job.in.guid_at(plan.emissive).c_str());
+        std::snprintf(material.specular_texture, sizeof material.specular_texture, "%s", job.in.guid_at(plan.specular).c_str());
         const f32 glow = std::max(m.emissive[0], std::max(m.emissive[1], m.emissive[2]));
         const f32 scale = glow > 1.0f ? 1.0f / glow : 1.0f;  // brighter than 1: the colour normalised, the rest as Emissive Strength
         material.emissive.r = m.emissive[0] * scale;
@@ -425,6 +473,137 @@ bool import_mesh_materials(asset::AssetRegistry& registry, const asset::AssetRec
     while (!step_mesh_materials(job, report, status, status_capacity)) {
     }
     return true;
+}
+
+bool create_materials_from_textures(asset::AssetRegistry& registry, const std::vector<asset::AssetRecord>& selected, TextureMaterialReport& report, char* status, usize status_capacity) {
+    report = TextureMaterialReport{};
+    std::error_code error;
+    const fs::path content = fs::absolute(registry.content_dir(), error);
+    // The pool: every texture in the folders of the selected ones, so one right-click finds the whole set (BaseColor, Normal, Roughness...).
+    std::vector<asset::AssetRecord> pool;
+    std::vector<bool> chosen;
+    for (usize i = 0; i < registry.count(); ++i) {
+        const asset::AssetRecord& r = registry.get(i);
+        if (r.type != asset::AssetType::Texture) continue;
+        bool beside = false, picked = false;
+        for (const asset::AssetRecord& s : selected) {
+            beside = beside || fs::path(s.path).parent_path() == fs::path(r.path).parent_path();
+            picked = picked || s.guid == r.guid;
+        }
+        if (!beside) continue;
+        pool.push_back(r);
+        chosen.push_back(picked);
+    }
+    std::vector<std::string> stems;
+    for (const asset::AssetRecord& r : pool) stems.push_back(fs::path(r.path).stem().string());
+    std::vector<const char*> names;
+    for (const std::string& st : stems) names.push_back(st.c_str());
+    std::vector<asset::MapSet> sets;
+    asset::group_map_names(names.data(), names.size(), sets);
+    auto source = [&](const asset::AssetRecord& r) {
+        char path[300];
+        registry.source_path(r, path, sizeof path);
+        return fs::path(path).generic_string();
+    };
+    using asset::MapRole;
+    auto at = [&](const asset::MapSet& set, MapRole role) -> const asset::AssetRecord* {
+        const i32 m = set.map[static_cast<u32>(role)];
+        return m < 0 ? nullptr : &pool[static_cast<usize>(m)];
+    };
+    // A set is made when one of the selected textures is in it; `first` is any member (its folder is the Material's).
+    auto picked = [&](const asset::MapSet& set, const asset::AssetRecord*& first) {
+        bool any = false;
+        first = nullptr;
+        for (const i32 m : set.map) {
+            any = any || (m >= 0 && chosen[static_cast<usize>(m)]);
+            if (m >= 0 && !first) first = &pool[static_cast<usize>(m)];
+        }
+        return any && first;
+    };
+    // Maps that need packing first (they become textures, found by the scan below): opacity into the colour's alpha,
+    // glTF metallic-roughness / smoothness into ORM.
+    struct Made { std::string colour_opacity, orm; };
+    std::vector<Made> made(sets.size());
+    for (usize k = 0; k < sets.size(); ++k) {
+        const asset::MapSet& set = sets[k];
+        const asset::AssetRecord* first = nullptr;
+        if (!picked(set, first)) continue;
+        const fs::path dir = fs::path(source(*first)).parent_path();
+        if (at(set, MapRole::Opacity) && at(set, MapRole::BaseColor)) {
+            asset::Image colour, mask;
+            if (asset::load_image(source(*at(set, MapRole::BaseColor)).c_str(), colour) && asset::load_image(source(*at(set, MapRole::Opacity)).c_str(), mask)) {
+                const std::string out = (dir / ("T_" + safe_name(set.base) + "_ColorOpacity.png")).generic_string();
+                if (asset::pack_channels(out.c_str(), {&colour, 0}, {&colour, 1}, {&colour, 2}, {&mask, 0})) made[k].colour_opacity = out;
+            }
+        }
+        const asset::AssetRecord* gloss = at(set, MapRole::Roughness) ? nullptr : at(set, MapRole::Glossiness);
+        const asset::AssetRecord* packed = at(set, MapRole::Orm) ? nullptr : at(set, MapRole::MetallicRoughness);
+        if (packed || gloss) {  // R occlusion (white unless a map), G roughness, B metallic
+            asset::Image occlusion, rough, metal;
+            if (at(set, MapRole::Occlusion)) asset::load_image(source(*at(set, MapRole::Occlusion)).c_str(), occlusion);
+            if (packed) asset::load_image(source(*packed).c_str(), rough);
+            else asset::load_image(source(*gloss).c_str(), rough);
+            if (!packed && at(set, MapRole::Metallic)) asset::load_image(source(*at(set, MapRole::Metallic)).c_str(), metal);
+            const asset::Image* metal_image = packed ? &rough : metal.pixels ? &metal : nullptr;
+            const std::string out = (dir / ("T_" + safe_name(set.base) + "_ORM.png")).generic_string();
+            const asset::PackSource r{occlusion.pixels ? &occlusion : nullptr, 0};
+            const asset::PackSource g{rough.pixels ? &rough : nullptr, packed ? 1u : 0u, 255, gloss != nullptr};
+            const asset::PackSource b{metal_image, packed ? 2u : 0u};
+            if (asset::pack_channels(out.c_str(), r, g, b, asset::PackSource{})) made[k].orm = out;
+        }
+    }
+    registry.scan();
+    auto guid_of = [&](const std::string& path) {
+        if (path.empty()) return std::string();
+        const std::string relative = fs::relative(path, content, error).generic_string();
+        for (usize i = 0; i < registry.count(); ++i) {
+            if (relative == registry.get(i).path) {
+                char id[33];
+                asset::to_string(registry.get(i).guid, id);
+                return std::string(id);
+            }
+        }
+        return std::string();
+    };
+    for (usize k = 0; k < sets.size(); ++k) {
+        const asset::MapSet& set = sets[k];
+        const asset::AssetRecord* first = nullptr;
+        if (!picked(set, first)) continue;
+        auto guid = [&](MapRole role) {
+            char id[33] = "";
+            if (const asset::AssetRecord* r = at(set, role)) asset::to_string(r->guid, id);
+            return std::string(id);
+        };
+        const std::string path = (fs::path(source(*first)).parent_path() / ("M_" + safe_name(set.base) + asset::kDataAssetExtension)).generic_string();
+        report.last_path = path;
+        if (fs::exists(path, error)) {
+            ++report.reused;
+            continue;
+        }
+        render::Material material;
+        const std::string colour_opacity = guid_of(made[k].colour_opacity), orm = guid_of(made[k].orm);
+        auto put = [](char* out, const std::string& id) { std::snprintf(out, 33, "%s", id.c_str()); };
+        put(material.base_color_texture, !colour_opacity.empty() ? colour_opacity : guid(MapRole::BaseColor));
+        material.blend_mode = colour_opacity.empty() ? 0u : 1u;  // Masked
+        put(material.normal_texture, guid(MapRole::Normal));
+        put(material.emissive_texture, guid(MapRole::Emissive));
+        if (at(set, MapRole::Emissive)) material.emissive = LinearColor::hex(0xFFFFFF);  // the map's own colours
+        put(material.specular_texture, guid(MapRole::Specular));
+        put(material.orm_texture, !orm.empty() ? orm : guid(MapRole::Orm));
+        if (orm.empty()) {  // separate maps: the Material's own inputs (packed together when it loads)
+            put(material.roughness_texture, guid(MapRole::Roughness));
+            put(material.metallic_texture, guid(MapRole::Metallic));
+            put(material.ambient_occlusion_texture, guid(MapRole::Occlusion));
+        }
+        material.roughness = material.orm_texture[0] || material.roughness_texture[0] ? 1.0f : 0.5f;  // the maps multiply these
+        material.metallic = material.orm_texture[0] || material.metallic_texture[0] ? 1.0f : 0.0f;
+        if (at(set, MapRole::Height)) LSD_LOG_INFO("editor", "%s: the height / displacement map is not used (the lit shader has no height input)", set.base);
+        if (asset::save_data_asset(path.c_str(), reflect::type_of<render::Material>(), &material)) ++report.created;
+        else LSD_LOG_WARN("editor", "Could not write %s", path.c_str());
+    }
+    registry.scan();
+    std::snprintf(status, status_capacity, "%u material%s made from the texture sets, %u already there", report.created, report.created == 1 ? "" : "s", report.reused);
+    return report.created + report.reused > 0;
 }
 
 } // namespace lsd::editor

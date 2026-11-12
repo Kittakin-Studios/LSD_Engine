@@ -4,6 +4,8 @@
 // the texture packing that turns separate maps into the engine's slots (ORM, colour + opacity).
 #include "lsd/foundation/array.h"
 
+#include <vector>
+
 namespace lsd::asset {
 
 // A texture map a material uses: the path the file wrote (absolute or relative to the file), or
@@ -46,6 +48,37 @@ struct ImportedMaterials {
     Array<u8*> blobs;  // copies of embedded images
 };
 bool list_mesh_materials(const char* path, ImportedMaterials& out, char* error, usize error_capacity);
+
+// Texture names in Unreal / Substance style, one map per file: "MI_Bike_Body01_BaseColor", "..._Normal", "..._Roughness".
+// The part after the last '_' or '-' says what the map is; the rest is the set's base name, and maps with the same base
+// name belong to one Material. Case-insensitive. A name with no known suffix is a colour map named as a whole.
+enum class MapRole : u32 {
+    BaseColor, Normal, Roughness, Metallic, Occlusion,
+    Orm,                // already packed: R occlusion, G roughness, B metallic (ARM, ORM, OcclusionRoughnessMetallic)
+    MetallicRoughness,  // glTF: G roughness, B metallic
+    Specular, Opacity, Emissive,
+    Height,             // Height / Displacement / Bump: recognised so it is not mistaken for a colour map, but not used
+    Glossiness,         // smoothness: roughness inverted
+    kCount
+};
+struct MapName {
+    char base[128] = "";
+    MapRole role = MapRole::BaseColor;
+    bool suffixed = false;  // the name had a known suffix
+};
+// `stem` is a file name without its extension.
+MapName classify_map_name(const char* stem);
+const char* map_role_name(MapRole role);
+
+// One Material's maps found among `stems` (indices into that list per role, -1 = none).
+struct MapSet {
+    char base[128] = "";
+    i32 map[static_cast<u32>(MapRole::kCount)];
+    MapSet() { for (i32& m : map) m = -1; }
+};
+// Groups names by base name (case-insensitive), in order of first appearance. When two names claim one role of a
+// set, the first stays.
+void group_map_names(const char* const* stems, usize count, std::vector<MapSet>& out);  // shortcut: editor-time, std::vector
 
 // An image file in memory as RGBA8 (any format stb_image reads), freed by the destructor.
 struct Image {

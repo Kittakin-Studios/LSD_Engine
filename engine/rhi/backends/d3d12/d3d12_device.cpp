@@ -692,7 +692,7 @@ public:
         constants[19] = draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view);
         const Texture* normal = lookup_texture(draw.normal_texture);
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
-        constants[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f);  // see n1.w in the shader
+        constants[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f) + 4096.0f * std::round((draw.specular < 0.0f ? 0.0f : draw.specular > 1.0f ? 1.0f : draw.specular) * 255.0f);  // see n1.w in the shader
         constants[44] = draw.metallic;
         constants[45] = draw.roughness;
         constants[46] = draw.emissive[0];
