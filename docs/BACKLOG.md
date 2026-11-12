@@ -370,7 +370,10 @@ the Rio level) and a generated project of 50,000 assets in 500 folders with a le
 - [ ] glTF `doubleSided`: read, but materials draw one-sided (needs a two-sided option in the renderer)
 - [ ] `UCX_` hulls as the mesh's simple collision (needs compound convex bodies in physics); today Box or Mesh
 - [ ] Cooked packages do not carry the BC-compressed texture cache (it is keyed by path, not GUID): a player's first run compresses the textures again
-- [ ] D3D12: about 17 s of shader / pipeline compiling in the first frame of every start (no shader cache on disk); OpenGL has none
+- [x] Shader cache on disk (D3D12 bytecode, Vulkan Material Graph SPIR-V; built-ins per user, project shaders in DerivedData/Shaders, shipped in packages), slow D3D12 shaders compiled side by side: favela level on D3D12 Release, device 23.3 s -> 0.5 s (2.3 s the very first time), first frame done 32.8 s -> 1.4 s (5.9 s the first time); Vulkan first frame 1.8 s -> 0.5 s
+- [x] Play start: navmesh tiles built on every core (favela: 3.3 s -> 0.36 s); first Play frame 7.5 s -> 0.86 s
+- [ ] Play start: ~0.4 s of the first Play frame is meshes loading on the main thread (the ones the player's view needs first)
+- [ ] A Material Graph met for the first time (not in the cache) still compiles in the frame that draws it (~1.5 s on D3D12, its four shaders side by side); an asynchronous compile with the default material meanwhile would hide it
 - [ ] Skeletal meshes (Unreal `SK_` FBX with LODs) still bake every LOD node into one mesh
 
 ## Vehicles, transports, movers

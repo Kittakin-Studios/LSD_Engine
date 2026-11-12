@@ -608,6 +608,15 @@ smooth. What happens on its own:
   have no size limits; console commands that take a name (`asset.Open`, `mesh.Open`...) prefer the exact name.
 - **The asset scan** reads one directory listing per folder, reads new `.meta` files on every core, and skips
   applying a scan when nothing on disk changed.
+- **Shaders are compiled once and kept** (Unreal's DerivedDataCache for shaders). The built-in ones go to your
+  user folder, shared by every project: `%LOCALAPPDATA%\LSD_Engine\ShaderCache` on Windows,
+  `~/.cache/lsd_engine/shaders` on Linux. Material Graph and post-process shaders go to the project's
+  `DerivedData/Shaders`. On D3D12 the first start compiles them (a few seconds; the slow ones side by side), every
+  later start reads them back (the favela level: first frame at 1.4 s instead of 33 s). Vulkan keeps its Material Graph
+  shaders there too. To clear it, close the editor and delete those folders; a damaged file is noticed and compiled
+  again on its own. The log says how many were compiled and how many read (`Built-in pipelines: ...`), and the
+  `[startup]` lines give the time to the device, the level and each of the first frames.
+- **Play builds the navmesh on every core** (only the tiles whose floors changed since the last Play).
 
 **Build > Compile All Assets** (console `asset.CompileAll`; `asset.CompileStatus [wait]` reports it) compiles every
 mesh and every texture the project's Materials use that is not in DerivedData yet, in parallel, with the progress
@@ -2583,6 +2592,9 @@ APPLES,"{0} {0}|plural(one=apple,other=apples)","{0} {0}|plural(one=pomme,other=
    the game exe, `Content/`, `Config/`, the Visual C++ runtime and `game.json`.
    It also writes `Packages/`: one list per level of the assets it uses (Bitsquid's resource packages); the game
    loads a level's meshes from it while the level opens, so they do not load in the middle of play.
+   And `DerivedData/Shaders/`: the shaders your editor compiled (the project's and the built-in ones), so a player's
+   first start reads them instead of compiling (open the levels once on D3D12 and on Vulkan before packaging, so
+   their Material Graphs are in it; on Vulkan a player then needs no Vulkan SDK for Material Graphs).
 5. Copy that folder to another PC and run the exe. It opens the default level in Play, full window,
    without the editor; **Esc** quits (Project Settings > Input > **Escape Quits Game** off: Esc is the game's
    own key, for a pause menu, and scripts end the game with `lsd.quit()`). Logs and saves go into its own `Saved/`.

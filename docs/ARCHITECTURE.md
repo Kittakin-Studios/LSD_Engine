@@ -164,6 +164,17 @@ Per-frame data (lights, skinning matrices, material parameters, particle and UI 
 into ring buffers that cycle with the swapchain. The editor's ImGui panels are drawn by the same
 device.
 
+**Shader cache** (`lsd/rhi/shader_cache.h`): every runtime compile (D3D12's FXC, Vulkan's DXC for Material Graph
+and post shaders) first looks for `<key>.lsdshader`, the key an FNV-1a hash of the source, entry point, target,
+defines and a compiler id (each part with its length). The file holds a magic, the key, the size and a checksum of
+the bytecode, so a damaged, cut or foreign file is a miss and is compiled and written again; writes go to a
+uniquely named temp file renamed over the real one (two editors starting at once, the D3D12 compile threads).
+Built-in shaders go to the user's folder (`%LOCALAPPDATA%/LSD_Engine/ShaderCache`), project shaders to
+`DerivedData/Shaders`; lookups try the project's first, which is what `package_project` fills with both. FXC
+takes ~1.4 s for each variant of the lit pixel shader, so D3D12 compiles the slow ones (lit mesh static / skinned /
+instanced, sky; a Material Graph's four) on a thread each before the pipelines are built from the cache. Pipeline
+state creation itself is ~20 ms for all built-ins (the driver caches it), so there is no PSO library.
+
 **Culling**: frustum culling per mesh (`in_view`), then CPU occlusion culling
 (`engine/render/occlusion.*`, `r.OcclusionCulling`): the 16 nearest big opaque static meshes (up to
 4096 triangles each, from `MeshCache::triangles`) are rasterised into a 256 x 128 depth buffer, each
@@ -732,6 +743,8 @@ with its .meta and its DerivedData, plus Content/Fonts and `cook_report.txt` lis
 | `Saved/SaveGames/<slot>.json` | save games (`{"lsd_save": 1, "data": ...}`) |
 | `Saved/editor_settings.json`, `Saved/editor_layout.ini` | editor preferences and panel layout |
 | `DerivedData/` | compiled meshes and other caches |
+| `DerivedData/Shaders/` | compiled Material Graph / post shaders (`<key>.lsdshader`); packages also carry the built-ins here |
+| `%LOCALAPPDATA%/LSD_Engine/ShaderCache/` (`~/.cache/lsd_engine/shaders`) | compiled built-in shaders, shared by every project |
 
 ## Tests
 
