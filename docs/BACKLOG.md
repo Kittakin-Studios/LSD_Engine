@@ -349,6 +349,30 @@ differs only at edges of distant houses.
 - [ ] Mesh streaming (drop far meshes' LOD 0 from the GPU) and virtualised geometry (meshlets, Nanite-like clusters with a GPU hierarchy cut): what a scene of many unique 200k-triangle meshes up close needs. With the LODs above, this level does not; a multi-week renderer project
 - [ ] HLOD for Instanced Static Meshes (Build HLODs merges static meshes only)
 
+## Capacity (large projects)
+
+Measured in Release (OpenGL, hidden) with Carioca Express's Unreal pack (2,406 assets: 549 FBX, 1,183 PNG, 4.6 GB;
+the Rio level) and a generated project of 50,000 assets in 500 folders with a level of 50,000 objects.
+
+- [x] Content Browser flat with asset count: filtered list cached, folder tree from the scan, tiles clipped: 16-22 ms -> 0.03-0.05 ms a frame (2,406 assets); no 1,024-asset / 64-folder caps
+- [x] No silent caps: `lsd.assets` past 64 KB, name lookups (spawn, sounds, timelines, input actions, materials) hashed and exact, the Outliner past 4,096 rows, asset pickers and the texture pin combo (256) searchable and clipped, texture / material / skeletal mesh caches 512 / 256 / 64 -> 16,384 / 8,192 / 1,024 with a warning when full
+- [x] No once-a-second hitch: hot reload looks only at changed meshes; textures and materials use the scan's times: 9-14 frames over 50 ms per 10 s (worst ~100 ms) -> 0 (worst 28-31 ms), warm and idle
+- [x] Unreal FBX `_LOD<n>` nodes and LOD groups become the mesh's own LODs, `UCX_` / `UBX_` / `USP_` / `UCP_` nodes are not drawn (they were baked into LOD 0: double triangles, z-fighting); also for glTF node names
+- [x] Background compiles on half the cores (meshes and their generated LODs), textures decoded on a quarter: with DerivedData deleted, every mesh and texture of the Rio level ready 5.5 s after start (textures took ~27 s), main-thread mesh loading 184 ms in all over a four-view fly-through (was 2.7 s, 2.6 s of it LOD building), 6 frames over 50 ms in the whole fly-through
+- [x] Build > Compile All Assets (`asset.CompileAll`, `asset.CompileStatus`): every mesh and every texture the Materials use, in parallel, with progress
+- [x] Asset scan: one directory listing per folder (no stat per file), new `.meta` read / written on every core, an unchanged walk not applied again, the Content Browser's folder tree from the scan (it re-read 500 folders from disk every second, ~80 ms): 50,000 assets, second launch scan 18.5 s -> 1.8 s, editor up 20.4 s -> 3.8 s; first launch (writing 50,000 `.meta` files) 63.7 s -> 51.5 s
+- [x] 50,000 assets and 50,000 objects: Content Browser 0.08-0.27 ms a frame in any folder or searching all of them (was 77-120 ms), Outliner 2.3-4 ms
+- [ ] 50,000 objects: the render CPU is ~50 ms a frame (static meshes ~30 ms, occluders ~13 ms), so the editor runs at ~15-20 fps there
+- [ ] First launch of 50,000 new assets still takes ~50 s writing their `.meta` files (file creation; Windows Defender scans each new file)
+- [x] glTF `alphaMode` MASK / BLEND -> Masked (at `alphaCutoff`) / Translucent Materials
+- [x] Navmesh: the limit is the tiles with floors (16,384), not the bounds box (was 128 x 128 tiles, 1.2 km square): two towns 3 km apart under one bounds build
+- [x] Project Settings > Packaging > Cook Max Texture Size (packaged copies halved until they fit)
+- [ ] glTF `doubleSided`: read, but materials draw one-sided (needs a two-sided option in the renderer)
+- [ ] `UCX_` hulls as the mesh's simple collision (needs compound convex bodies in physics); today Box or Mesh
+- [ ] Cooked packages do not carry the BC-compressed texture cache (it is keyed by path, not GUID): a player's first run compresses the textures again
+- [ ] D3D12: about 17 s of shader / pipeline compiling in the first frame of every start (no shader cache on disk); OpenGL has none
+- [ ] Skeletal meshes (Unreal `SK_` FBX with LODs) still bake every LOD node into one mesh
+
 ## Vehicles, transports, movers
 
 - [x] Drivable Vehicle (Place tab): E in / out, WASD + Shift boost + Ctrl / Space brake, ground following, walls, flying kind, follow camera; Enter / Exit / Get Driven Vehicle nodes [Vehicle Blueprint]

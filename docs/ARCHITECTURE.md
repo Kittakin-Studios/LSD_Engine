@@ -121,6 +121,26 @@ the same format for a sub-tree; instances remember per-field overrides.
   loaded from there on the next start. Behaviour trees and Lua scripts are drawn as text tiles.
 - `validate_assets` scans text assets for GUIDs no asset has (part keys too), oversize textures and
   name prefixes.
+- **Scale (large projects)**: `AssetRegistry` keeps a GUID hash index (`find`) and a name index (`find_named`,
+  rebuilt when `generation()` moves; `best_match` for console commands: exact, any case, then part of a name).
+  A walk (`walk_folder`) takes each file's size and time and its `.meta`'s time from one directory listing, lists
+  the folders (`folders()`, the Content Browser's tree) and hashes it all; `apply` skips a walk whose hash it
+  already applied, reads new files' `.meta` on every core and writes missing ones in parallel. `scan_async`
+  (the editor's once-a-second refresh) walks on a thread; the main thread only applies.
+- **Unreal LOD / collision nodes** (`mesh_import.cpp`, `fbx_role`): `_LOD<n>` names and FBX LOD groups route a
+  node's triangles to LOD n's soup, `UCX_` / `UBX_` / `USP_` / `UCP_` nodes are dropped; neither is a part.
+  The compiled mesh (format v3) stores the authored LODs after LOD 0 (`load_compiled_lods`); `MeshCache`
+  uploads LOD 0 and them into one vertex buffer with an index buffer per LOD (`upload_authored_lods`), else
+  it builds generated LODs, cached in `<compiled>.lod` (`editor/lod_cache.*`).
+- **Background loading** (`editor/asset_compiler.*`): `MeshCache::get` asks `compiler::queue_mesh`; a mesh
+  whose compiled file (or LOD cache) is missing or stale becomes a job (`prepare_mesh_compile` on the main
+  thread reads the registry and `.meta`; `run_mesh_compile` + `warm_lod_cache` on a worker touch nothing
+  shared and write beside the file, then rename over it). Until the job is done the entry draws nothing; `get`
+  then loads it, at most ~4 ms of loads per 16 ms. `MeshCache::finish_pending` (Play start, navmesh builds)
+  waits for the jobs. Thumbnails wait the same way. `compile_all` queues every mesh and every texture the
+  Materials use (Build > Compile All Assets). `TextureCache` decodes on a quarter of the cores. Hot reload
+  looks only at meshes whose source or `.meta` time changed, and textures / materials compare the registry's
+  walked times instead of a file stat each second.
 
 ## Rendering
 

@@ -183,7 +183,7 @@ Select. `presets_folder` changes where the presets come from.
 | ![File menu](images/menu_file.jpg) | **File**: new / open / save levels, recent levels, Validate Assets, Import, Package Project. |
 | ![Edit menu](images/menu_edit.jpg) | **Edit**: undo / redo, duplicate, group, copy / paste, Drop to Floor, **Editor Preferences**, **Project Settings**. |
 | ![Tools menu](images/menu_tools.jpg) | **Tools**: smoke test and unit tests, Compile Game Code, New C / C++ Script, Set Up Debugging (VS Code), Lua Debugger, Remote Console; Asset Audit, Size Map, Fix Up Redirectors. |
-| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build HLODs, Build Navigation, Build Release Engine, Validate Assets, Package Project. |
+| ![Build menu](images/menu_build.jpg) | **Build**: Build Lighting, Build HLODs, Build Navigation, Compile All Assets, Build Release Engine, Validate Assets, Package Project. |
 | ![Settings menu](images/menu_settings.jpg) | **Settings**: Engine Scalability (Low / Medium / High / Epic), and per group: Shadows, Post Processing, View Distance, Effects. |
 | ![Window menu](images/menu_window.jpg) | **Window**: Undo History, World Settings, Message Log, Memory, Layout (save / load panel layouts). |
 
@@ -583,6 +583,43 @@ in one go, or **Revert** a single row. New assets have nothing to revert to.
 
 **File > Validate Assets** reports references to missing assets, oversize textures and (optional,
 Project Settings > Validation) name prefixes such as `SM_`, `T_`, `M_`, `BT_`, `UI_`.
+
+### Large projects (thousands of meshes and textures)
+
+LSD_Engine is meant to hold a whole Unreal asset pack (hundreds of FBX meshes, thousands of 4K textures) and stay
+smooth. What happens on its own:
+
+- **Unreal FBX conventions are understood on import.** Nodes named `<name>_LOD1`, `_LOD2`, `_LOD3` (and the
+  children of an FBX LOD group after the first) become the mesh's **own LODs**: LOD 0 is drawn near, the file's
+  LODs farther away at the mesh's LOD 1 / 2 / 3 Screen Size (Mesh Editor), instead of generated ones. Nodes named
+  `UCX_`, `UBX_`, `USP_`, `UCP_` (Unreal's collision hulls, boxes, spheres, capsules) are **not drawn**; the Output
+  Log says how many were left out. Collision in Play comes from the Static Mesh's Collision Shape (Box, or Mesh for
+  the triangles themselves). Neither kind shows up as a part (Create Prefab from Parts). glTF files follow the same
+  node names. Deeper than LOD 3 is left out (logged).
+- **Meshes compile in the background.** The first time a mesh is drawn (a project opened for the first time, a
+  mesh imported or changed), it is compiled into `DerivedData/` on worker threads (half the CPU cores) together
+  with its generated LODs, and shows up when it is ready; the editor keeps drawing meanwhile. The menu bar shows
+  **Compiling assets n / m** while that runs. Play, Simulate and Build Navigation wait for the meshes still
+  compiling, so collision and the navmesh always have every mesh.
+- **Textures decode and compress in parallel** (a quarter of the cores), each once into `DerivedData/Textures`.
+- **The Content Browser and the Outliner cost the same with 50 assets or 50,000**: only the rows on screen are
+  built, the filtered list is kept until the search, filters or files change, the folder tree comes from the
+  background scan (no disk access in a frame). Searches, pickers (with a search box), `lsd.assets` and the Outliner
+  have no size limits; console commands that take a name (`asset.Open`, `mesh.Open`...) prefer the exact name.
+- **The asset scan** reads one directory listing per folder, reads new `.meta` files on every core, and skips
+  applying a scan when nothing on disk changed.
+
+**Build > Compile All Assets** (console `asset.CompileAll`; `asset.CompileStatus [wait]` reports it) compiles every
+mesh and every texture the project's Materials use that is not in DerivedData yet, in parallel, with the progress
+in the menu bar: run it before a playtest, or after pulling a big change, so nobody waits for first-use compiles.
+DerivedData is safe to delete; it is rebuilt.
+
+**Project Settings > Packaging > Cook Max Texture Size** halves packaged textures until they fit (Unreal's
+per-platform max texture size): a smaller download and less video memory; the project's own files stay as they
+are. 0 keeps them as imported.
+
+Meshes imported before this version had their `_LOD` and `UCX_` nodes baked into LOD 0: they recompile once
+(the compiled format changed) and look right afterwards; parts numbered `#k` of such files are renumbered.
 
 ---
 

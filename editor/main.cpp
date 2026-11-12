@@ -2090,6 +2090,14 @@ void register_console(EditorState& s) {
                       lsd::editor::compiler::compile_all(*st.registry, kDataDir, st.device && st.device->supports_bc()));
         lsd::editor::remote::print(line);
     }, &s, "Compiles every mesh, and every texture the materials use, that is not in DerivedData yet, on worker threads (before a playtest)");
+    console::add_command("asset.Browse", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        char folder[256] = "", search[64] = "";
+        std::sscanf(args, "%255s %63s", folder, search);
+        std::snprintf(st.content_folder, sizeof st.content_folder, "%s", std::strcmp(folder, "/") == 0 ? "" : folder);
+        std::snprintf(st.search, sizeof st.search, "%s", search);
+        st.show_content_tab = true;
+    }, &s, "asset.Browse <folder | /> [search]: shows that Content Browser folder (/ = Content), with a search when given (all folders)");
     console::add_command("asset.CompileStatus", [](void*, const char* args) {
         if (std::strcmp(args, "wait") == 0) lsd::editor::compiler::wait();
         const lsd::editor::compiler::Progress p = lsd::editor::compiler::progress();
@@ -2752,7 +2760,9 @@ int main(int argc, char** argv) {
     }, &registry);
     lsd::editor::set_timeline_registry(&registry);  // sub-sequences load by name
     if (import_arg) import_file(import_arg, "", state.status, sizeof state.status);
+    const lsd::u64 scan_started = SDL_GetTicksNS();
     registry.scan();
+    const double scan_ms = static_cast<double>(SDL_GetTicksNS() - scan_started) * 1e-6;
     import_pending_materials(registry);
     register_script_nodes(registry);
     // Material Function nodes find their graph by name (a Material Graph asset).
@@ -2776,7 +2786,7 @@ int main(int argc, char** argv) {
             }
         }
     }
-    LSD_LOG_INFO("editor", "%zu assets in %s/", registry.count(), kContentDir);
+    LSD_LOG_INFO("editor", "%zu assets in %s/ (scanned in %.0f ms)", registry.count(), kContentDir, scan_ms);
     state.registry = &registry;
     lsd::editor::set_light_profile_registry(&registry);
 
