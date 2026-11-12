@@ -343,11 +343,19 @@ void finish(MaterialImport& job, MaterialImportReport& report, char* status, usi
         material.emissive.b = m.emissive[2] * scale;
         if (glow > 1.0f) material.emissive_strength = glow;
         if (!plan.emissive.empty() && glow <= 0.0f) material.emissive = LinearColor::hex(0xFFFFFF);  // a map with no colour: its own colours
-        if (plan.masked) material.blend_mode = 1;
+        if (m.alpha_mode == 1) {  // glTF MASK: cut-outs at its cutoff (leaves, fences)
+            material.blend_mode = 1;
+            material.opacity_mask_clip = m.alpha_cutoff;
+        } else if (m.alpha_mode == 2) {  // glTF BLEND: see-through
+            material.blend_mode = 2;
+            material.opacity = m.opacity;
+        } else if (plan.masked) material.blend_mode = 1;
         else if (m.opacity < 0.999f) {
             material.blend_mode = 2;  // Translucent
             material.opacity = m.opacity;
         }
+        // shortcut: materials are drawn one-sided; doubleSided only noted, until the renderer gets a two-sided (no culling) option
+        if (m.double_sided) LSD_LOG_INFO("editor", "%s is double-sided in the file: drawn one-sided (back faces culled)", m.name);
         if (!asset::save_data_asset(plan.material_path.c_str(), reflect::type_of<render::Material>(), &material)) {
             LSD_LOG_WARN("editor", "Could not write %s", plan.material_path.c_str());
             continue;

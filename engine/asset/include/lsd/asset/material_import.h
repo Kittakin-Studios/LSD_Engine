@@ -35,6 +35,9 @@ struct ImportedMaterial {
     ImportedMap opacity_map;
     ImportedMap emissive_map;
     bool roughness_is_glossiness = false;  // the map / value is smoothness (1 = mirror): inverted when packed
+    u32 alpha_mode = 0;          // glTF alphaMode: 0 OPAQUE, 1 MASK, 2 BLEND (FBX: 0, its opacity decides)
+    f32 alpha_cutoff = 0.5f;     // MASK: alpha below this is cut out
+    bool double_sided = false;   // glTF doubleSided
 };
 
 // Every material of an FBX / glTF / GLB file, in the file's order (the names are the mesh's

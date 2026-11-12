@@ -403,7 +403,24 @@ static void env_query_tests() {
     CHECK(run_query(q, host, {0, 0, 0}, {0, 1, 0}, {0, 0, 0}, points, kMaxQueryPoints, count) == -1);
 }
 
+// Two towns 3 km apart under one bounds box (Nav Mesh Bounds merged): only the tiles with floors count, so it builds
+// (the box is about 300 x 300 tiles; it used to be refused above 128 x 128) and each town has its paths.
+static void nav_far_apart_tests() {
+    std::vector<f32> verts;
+    std::vector<u32> idx;
+    add_box(verts, idx, {-20, -20, -0.2f}, {20, 20, 0});
+    add_box(verts, idx, {2980, 2980, -0.2f}, {3020, 3020, 0});
+    ai::NavMesh nav;
+    CHECK(nav.build(verts.data(), static_cast<u32>(verts.size() / 3), idx.data(), static_cast<u32>(idx.size() / 3), {-25, -25, -1}, {3025, 3025, 3}, {}));
+    Vec3 path[32];
+    u32 n = nav.find_path({-10, 0, 0}, {10, 0, 0}, path, 32);
+    CHECK(n >= 2 && std::fabs(path[n - 1].x - 10.0f) < 0.3f);
+    n = nav.find_path({2990, 3000, 0}, {3010, 3000, 0}, path, 32);
+    CHECK(n >= 2 && std::fabs(path[n - 1].x - 3010.0f) < 0.3f);
+}
+
 int main() {
+    nav_far_apart_tests();
     state_tree_tests();
     smart_object_tests();
     env_query_tests();

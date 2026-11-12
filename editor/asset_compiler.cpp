@@ -1,5 +1,7 @@
 #include "asset_compiler.h"
 
+#include "lod_cache.h"
+
 #include "lsd/asset/data_asset.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/asset/texture.h"
@@ -11,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -25,6 +28,7 @@ namespace {
 struct Job {
     bool texture = false;
     asset::MeshCompileJob mesh;
+    bool compile_mesh = false;  // else only its generated LODs
     std::string path;  // textures: the source file
     bool srgb = false, normal_map = false;
     u32 max_size = 0;
@@ -64,7 +68,10 @@ void work() {
             asset::TextureData data(default_allocator());
             ok = asset::load_texture_cached(job.path.c_str(), job.srgb, job.max_size, true, "DerivedData/Textures", data, job.normal_map, true);
         } else {
-            ok = asset::run_mesh_compile(job.mesh, default_allocator());
+            // The mesh, then its generated LODs (simplifying a dense mesh is most of its first load: not on the main thread).
+            f32 sizes[render::kMaxLods];
+            render::lod_screen_sizes(job.mesh.lod_screen_size[0], job.mesh.lod_screen_size[1], job.mesh.lod_screen_size[2], sizes);
+            ok = (!job.compile_mesh || asset::run_mesh_compile(job.mesh, default_allocator())) && warm_lod_cache(job.mesh.compiled, sizes, default_allocator());
         }
         std::lock_guard<std::mutex> lock(p.mutex);
         p.busy.erase(job.key);
@@ -117,7 +124,20 @@ bool queue_mesh(const asset::AssetRegistry& registry, const char* key, const cha
     const asset::AssetRecord* record = asset::parse_mesh_key(key, guid, part) ? registry.find(guid) : nullptr;
     if (!record || record->type != asset::AssetType::Mesh) return false;
     Job job;
-    if (!asset::prepare_mesh_compile(registry, *record, data_dir, part, job.mesh)) return false;  // up to date
+    job.compile_mesh = asset::prepare_mesh_compile(registry, *record, data_dir, part, job.mesh);
+    if (!job.compile_mesh) {  // compiled: are its generated LODs too?
+        f32 sizes[render::kMaxLods];
+        render::lod_screen_sizes(job.mesh.lod_screen_size[0], job.mesh.lod_screen_size[1], job.mesh.lod_screen_size[2], sizes);
+        std::error_code error;
+        const i64 time = static_cast<i64>(std::filesystem::last_write_time(job.mesh.compiled, error).time_since_epoch().count());
+        if (lod_cache_current((std::string(job.mesh.compiled) + ".lod").c_str(), time, sizes)) return false;  // up to date
+        u32 authored = 0;
+        render::MeshData unused[asset::kMaxAuthoredLods];
+        if (asset::load_compiled_lods(job.mesh.compiled, default_allocator(), unused, authored) && authored) {  // drawn with the file's own LODs
+            for (u32 l = 0; l < authored; ++l) render::free_mesh(default_allocator(), unused[l]);
+            return false;
+        }
+    }
     job.key = job.mesh.compiled;
     push(std::move(job));
     return true;

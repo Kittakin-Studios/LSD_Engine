@@ -40,6 +40,7 @@ struct NavMesh::Impl {
     f32 bmin[3] = {};
     NavSettings settings;
     std::vector<u64> hashes;
+    int max_tiles = 0;  // what the Detour mesh was made for
     u32 rebuilt_tiles = 0;
 
     void release() {
@@ -220,8 +221,10 @@ bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u
     cfg.detailSampleMaxError = cfg.ch;
     rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
     const int tw = (cfg.width + kTileCells - 1) / kTileCells, th = (cfg.height + kTileCells - 1) / kTileCells;
-    if (static_cast<i64>(tw) * th > (1 << 14)) {
-        LSD_LOG_WARN("ai", "Navmesh area too large (%d x %d tiles): raise the cell size or add Nav Mesh Bounds", tw, th);
+    // Detour keeps only the tiles that have something in them, so the box may be large (two towns far apart under one
+    // Nav Mesh Bounds): the limit is on the tiles in use, below. The grid itself is a list per tile while building.
+    if (static_cast<i64>(tw) * th > (1 << 22)) {
+        LSD_LOG_WARN("ai", "Navmesh area too large (%d x %d tiles): raise the cell size or use smaller Nav Mesh Bounds", tw, th);
         m.release();
         return false;
     }
@@ -263,9 +266,16 @@ bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u
         to_recast(links[l].start, v);
         tiles_over(v[0], v[2], v[0], v[2], [&](int i) { hashes[static_cast<usize>(i)] = mix(hashes[static_cast<usize>(i)], &links[l], sizeof links[l]); });
     }
+    int used = 0;  // tiles with triangles: the ones Detour holds
+    for (const std::vector<int>& bucket : buckets) used += bucket.empty() ? 0 : 1;
+    if (used > (1 << 14)) {
+        LSD_LOG_WARN("ai", "Navmesh too large (%d tiles with floors): raise the cell size or use smaller Nav Mesh Bounds", used);
+        m.release();
+        return false;
+    }
     // The same grid and settings as last time: only the tiles whose inputs changed are rebuilt.
     const bool same_layout = m.mesh && m.tw == tw && m.th == th && std::memcmp(&m.settings, &s, sizeof s) == 0 &&
-                             std::memcmp(m.bmin, cfg.bmin, sizeof m.bmin) == 0 && m.hashes.size() == hashes.size();
+                             std::memcmp(m.bmin, cfg.bmin, sizeof m.bmin) == 0 && m.hashes.size() == hashes.size() && used <= m.max_tiles;
     if (!same_layout) {
         m.release();
         m.mesh = dtAllocNavMesh();
@@ -273,10 +283,11 @@ bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u
         rcVcopy(params.orig, cfg.bmin);
         params.tileWidth = tile;
         params.tileHeight = tile;
-        int tile_bits = 0;
-        while ((1 << tile_bits) < tw * th) ++tile_bits;
-        tile_bits = std::min(tile_bits, 14);
+        int tile_bits = 0;  // room for the tiles in use and as many again (things added later), within Detour's 22 bits
+        while ((1 << tile_bits) < std::min(tw * th, used * 2 + 1)) ++tile_bits;
+        tile_bits = std::min(tile_bits, 14);  // 256 polygons a tile: 32-bit refs have 22 bits for both
         params.maxTiles = 1 << tile_bits;
+        m.max_tiles = params.maxTiles;
         params.maxPolys = 1 << (22 - tile_bits);
         if (dtStatusFailed(m.mesh->init(&params))) {
             m.release();

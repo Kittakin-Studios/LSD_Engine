@@ -633,6 +633,9 @@ bool prepare_mesh_compile(const AssetRegistry& registry, const AssetRecord& reco
     job.normals = meta.normals;
     job.smoothing_angle = meta.smoothing_angle;
     job.part = part;
+    job.lod_screen_size[0] = meta.lod1_screen_size;
+    job.lod_screen_size[1] = meta.lod2_screen_size;
+    job.lod_screen_size[2] = meta.lod3_screen_size;
     job.stamp = CompiledMeshSource{record.source_size, record.source_time, 0};
     char settings[96];
     std::snprintf(settings, sizeof settings, "scale=%.6g part=%d local normals=%u/%.3g", static_cast<f64>(meta.import_scale), part, meta.normals,

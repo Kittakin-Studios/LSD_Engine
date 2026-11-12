@@ -519,6 +519,18 @@ static void test_material_import(const fs::path& root) {
         asset::ImportedMaterials none(heap);
         CHECK(!asset::list_mesh_materials("missing.fbx", none, error, sizeof error));
     }
+    {  // glTF alphaMode / alphaCutoff / doubleSided reach the import (Masked or Translucent Materials)
+        fs::create_directories(root);
+        const fs::path gltf = root / "alpha.gltf";
+        std::ofstream(gltf) << R"({"asset": {"version": "2.0"}, "materials": [{"name": "Glass", "alphaMode": "BLEND"},
+            {"name": "Leaves", "alphaMode": "MASK", "alphaCutoff": 0.25, "doubleSided": true}, {"name": "Stone"}]})";
+        asset::ImportedMaterials file(heap);
+        CHECK(asset::list_mesh_materials(gltf.string().c_str(), file, error, sizeof error) && file.materials.size() == 3);
+        CHECK(file.materials[0].alpha_mode == 2 && !file.materials[0].double_sided);
+        CHECK(file.materials[1].alpha_mode == 1 && std::fabs(file.materials[1].alpha_cutoff - 0.25f) < 1e-6f && file.materials[1].double_sided);
+        CHECK(file.materials[2].alpha_mode == 0);
+        fs::remove(gltf);
+    }
     CHECK(heap.allocated_bytes() == 0);
     // A 2x2 map and a 4x4 map packed: the output takes the larger size, the small one sampled by UV.
     auto make = [](asset::Image& image, u32 size, u8 base) {
@@ -800,7 +812,21 @@ static void test_authored_lods(const fs::path& root) {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Cook Max Texture Size: a 64 x 32 image cooked at 16 becomes 16 x 8; one already small enough is left alone.
+static void test_cook_texture_cap(const fs::path& root) {
+    fs::create_directories(root);
+    const std::string path = (root / "T_Big.png").string();
+    std::vector<u8> pixels(64 * 32 * 4, 200);
+    CHECK(asset::write_png(path.c_str(), 64, 32, pixels.data()));
+    CHECK(asset::downscale_texture_file(path.c_str(), 16));
+    u32 w = 0, h = 0;
+    CHECK(asset::texture_size(path.c_str(), w, h) && w == 16 && h == 8);
+    CHECK(!asset::downscale_texture_file(path.c_str(), 16) && !asset::downscale_texture_file(path.c_str(), 0));
+    fs::remove(path);
+}
+
 int main() {
+    test_cook_texture_cap(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_authored_lods(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_registry_scale(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_plugins_dlc(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");

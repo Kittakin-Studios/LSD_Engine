@@ -196,6 +196,9 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "Packaging",
                  Tooltip = "Cook (Unreal's): the package gets only the assets the game uses, found from these settings (Game Default Level, Game Mode...) through references and through names in scripts and UI, with their compiled data so nothing compiles on first run. What was left out is listed in cook_report.txt. Off: all of Content/")
     bool cook_used_only = false;
+    LSD_PROPERTY(Edit, Category = "Packaging", Min = 0, Max = 16384,
+                 Tooltip = "Packaged textures larger than this on a side are halved until they fit (Unreal's per-platform Max Texture Size / LOD bias at cook time): a smaller download and less video memory. 0: as imported. The project's own files are not changed")
+    u32 cook_max_texture_size = 0;
     LSD_PROPERTY(Edit, Category = "Packaging", Widget = "Choice:Development,Shipping",
                  Tooltip = "Development: the package takes -remote (the editor's Remote Console), -exec and test commands, for testing on other PCs. Shipping: what players get; those are ignored (logs and crash reports stay)")
     u32 build_configuration = 0;

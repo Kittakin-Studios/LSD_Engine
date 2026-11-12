@@ -142,6 +142,9 @@ bool list_gltf(const char* path, ImportedMaterials& out, char* error, usize erro
         read_map(out, m.metallic_map, pbr.metallic_roughness_texture.texture, 2);
         read_map(out, m.occlusion_map, mat.occlusion_texture.texture, 0);
         read_map(out, m.emissive_map, mat.emissive_texture.texture, 0);
+        m.alpha_mode = mat.alpha_mode == cgltf_alpha_mode_mask ? 1u : mat.alpha_mode == cgltf_alpha_mode_blend ? 2u : 0u;
+        m.alpha_cutoff = mat.alpha_cutoff;
+        m.double_sided = mat.double_sided != 0;
         const f32 strength = mat.has_emissive_strength ? mat.emissive_strength.emissive_strength : 1.0f;
         for (u32 k = 0; k < 3; ++k) m.emissive[k] = mat.emissive_factor[k] * strength;
         out.materials.push_back(m);
