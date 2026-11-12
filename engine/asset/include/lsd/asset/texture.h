@@ -44,6 +44,9 @@ bool load_grey16(const char* path, u32& width, u32& height, Array<u16>& out);
 bool encode_png(const char* path, u32 max_side, Array<u8>& png);
 // RGBA8 pixels (rows top to bottom) to a PNG file.
 bool write_png(const char* path, u32 width, u32 height, const u8* rgba);
+// Cooking: an 8-bit image larger than `max_size` on a side is written back halved until it fits (as PNG data, whatever
+// its extension: images are read by content). True when it was rewritten; HDR / EXR images are left as they are.
+bool downscale_texture_file(const char* path, u32 max_size);
 // Same from RGBA8 pixels in memory (tests, generated textures).
 bool build_texture(const u8* rgba, u32 width, u32 height, bool srgb, u32 max_size, TextureData& out);
 

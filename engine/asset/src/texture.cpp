@@ -374,6 +374,15 @@ bool write_png(const char* path, u32 width, u32 height, const u8* rgba) {
     return stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, rgba, static_cast<int>(width * 4)) != 0;
 }
 
+bool downscale_texture_file(const char* path, u32 max_size) {
+    u32 width = 0, height = 0;
+    bool exr = false;
+    if (!max_size || is_float_image(path, exr) || !texture_size(path, width, height) || (width <= max_size && height <= max_size)) return false;
+    TextureData data(default_allocator());
+    if (!load_texture(path, false, max_size, data) || data.encoding != TextureEncoding::RGBA8) return false;
+    return write_png(path, data.width, data.height, data.mip(0));
+}
+
 bool texture_size(const char* path, u32& width, u32& height) {
     int w = 0, h = 0, channels = 0;
     if (bool exr; is_float_image(path, exr) && exr) {  // the header only

@@ -621,6 +621,16 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
         asset::save_manifest(manifest, (out / kManifestFile).generic_string().c_str());
     }
     if (!error) strip_editor_only(out / "Content");
+    if (!error && project.cook_max_texture_size) {  // Cook Max Texture Size: the packaged copies only
+        u32 scaled = 0;
+        for (usize i = 0; i < registry.count(); ++i) {
+            const asset::AssetRecord& r = registry.get(i);
+            std::error_code ignored;
+            const fs::path cooked = out / "Content" / r.path;
+            if (r.type == asset::AssetType::Texture && fs::exists(cooked, ignored)) scaled += asset::downscale_texture_file(cooked.string().c_str(), project.cook_max_texture_size) ? 1u : 0u;
+        }
+        LSD_LOG_INFO("editor", "Cook Max Texture Size %u: %u texture%s scaled down", project.cook_max_texture_size, scaled, scaled == 1 ? "" : "s");
+    }
     if (!error) write_level_packages(registry, out);
     if (!error) fs::copy("Config", out / "Config", copy_options, error);
     if (!error && fs::exists("Binaries", error)) fs::copy("Binaries", out / "Binaries", copy_options, error);  // the C / C++ game code
