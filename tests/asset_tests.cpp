@@ -726,6 +726,11 @@ static void test_registry_scale(const fs::path& root) {
         asset::AssetRegistry registry(heap, content.generic_string().c_str());
         CHECK(registry.scan());
         CHECK(registry.count() == kFiles + 3);
+        CHECK(registry.folders().size() == 30 && registry.folders()[0] == "F0");  // the folder walk lists them, A-Z
+        const u32 generation = registry.generation();
+        CHECK(!registry.scan() && registry.generation() == generation);  // nothing changed on disk: not applied again
+        registry.add_folder("F0/New");
+        CHECK(registry.folders().size() == 31 && registry.generation() != generation);
         std::vector<usize> all;
         registry.search("S_", asset::AssetType::Script, nullptr, all);
         CHECK(all.size() == kFiles);  // the capped search stopped at its buffer

@@ -2,6 +2,7 @@
 #include "lsd/asset/data_asset.h"
 #include "lsd/foundation/log.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdio>
@@ -97,6 +98,14 @@ const AssetRecord* AssetRegistry::find(Guid guid) const {
     return it != by_guid_.end() && it->second < records_.size() ? &records_[it->second] : nullptr;
 }
 
+void AssetRegistry::add_folder(const char* relative) {
+    const std::string folder(relative);
+    const auto at = std::lower_bound(folders_.begin(), folders_.end(), folder);
+    if (at != folders_.end() && *at == folder) return;
+    folders_.insert(at, folder);
+    ++generation_;
+}
+
 void AssetRegistry::index_guids() {
     by_guid_.clear();
     by_guid_.reserve(records_.size());
@@ -182,6 +191,8 @@ struct AssetRegistry::Walk {
     };
     bool ok = false;  // false when Content/ is missing: then nothing is dropped
     std::vector<File> files;
+    std::vector<std::string> folders;  // every folder, '/' separators, A-Z (mounts under their prefix)
+    u64 hash = 0;                      // of everything above: an unchanged walk is not applied again
 };
 
 struct AssetRegistry::Async {
@@ -193,17 +204,42 @@ struct AssetRegistry::Async {
 
 namespace {
 
-// Only touches the file system and its own result, so it is safe on a worker thread.
+bool is_meta_extension(const std::string& extension) {
+    if (extension.size() != 5) return false;
+    for (usize i = 0; i < 5; ++i) {
+        if (std::tolower(static_cast<unsigned char>(extension[i])) != ".meta"[i]) return false;
+    }
+    return true;
+}
+
+// Only touches the file system and its own result, so it is safe on a worker thread. One directory listing gives each
+// file's size and time and its .meta's time (no call per file: with 50,000 assets those calls were most of a scan).
 void walk_folder(const char* dir, const std::string& prefix, u8 mount, AssetRegistry::Walk& out) {
     std::error_code error;
+    const fs::path root(dir);
+    std::unordered_map<std::string, i64> meta_times;  // "<file>" -> its .meta's time
+    const usize first = out.files.size();
     for (const fs::directory_entry& entry : fs::recursive_directory_iterator(dir, error)) {
+        const std::string inside = entry.path().lexically_relative(root).generic_string();
+        const std::string relative = prefix.empty() ? inside : prefix + "/" + inside;
+        if (entry.is_directory(error)) {
+            out.folders.push_back(relative);
+            continue;
+        }
         if (!entry.is_regular_file(error)) continue;
-        const AssetType type = type_from_extension(entry.path().extension().string().c_str());
+        const std::string extension = entry.path().extension().string();
+        const i64 time = static_cast<i64>(entry.last_write_time(error).time_since_epoch().count());
+        if (is_meta_extension(extension)) {
+            meta_times[relative.substr(0, relative.size() - 5)] = time;
+            continue;
+        }
+        const AssetType type = type_from_extension(extension.c_str());
         if (type == AssetType::Unknown) continue;
-        const fs::path meta = fs::path(entry.path().string() + ".meta");
-        const std::string relative = fs::relative(entry.path(), dir, error).generic_string();
-        out.files.push_back({prefix.empty() ? relative : prefix + "/" + relative, type, static_cast<u64>(entry.file_size(error)),
-                             write_time(entry.path()), fs::exists(meta, error) ? write_time(meta) : 0, mount});
+        out.files.push_back({relative, type, static_cast<u64>(entry.file_size(error)), time, 0, mount});
+    }
+    for (usize i = first; i < out.files.size(); ++i) {
+        const auto it = meta_times.find(out.files[i].relative);
+        out.files[i].meta_time = it != meta_times.end() ? it->second : 0;
     }
 }
 
@@ -216,6 +252,17 @@ void walk_content(const char* content_dir, const std::vector<AssetMount>& mounts
     for (usize i = 0; i < mounts.size(); ++i) {
         if (fs::is_directory(mounts[i].dir, error)) walk_folder(mounts[i].dir, mounts[i].prefix, static_cast<u8>(i + 1), out);
     }
+    std::sort(out.folders.begin(), out.folders.end());
+    u64 hash = 1469598103934665603ull;  // FNV-1a over what apply() reads
+    auto mix = [&hash](const void* p, usize n) {
+        for (usize i = 0; i < n; ++i) hash = (hash ^ static_cast<const u8*>(p)[i]) * 1099511628211ull;
+    };
+    for (const AssetRegistry::Walk::File& f : out.files) {
+        mix(f.relative.data(), f.relative.size() + 1);
+        mix(&f.size, sizeof f.size), mix(&f.time, sizeof f.time), mix(&f.meta_time, sizeof f.meta_time), mix(&f.mount, 1);
+    }
+    for (const std::string& folder : out.folders) mix(folder.data(), folder.size() + 1);
+    out.hash = hash;
     if (mounts.empty()) return;
     std::unordered_map<std::string, usize> at;
     std::vector<AssetRegistry::Walk::File> unique;
@@ -265,7 +312,10 @@ bool AssetRegistry::scan_async() {
 
 bool AssetRegistry::apply(const Walk& walk) {
     if (!walk.ok) return false;
-    bool changed = false;
+    if (walk.hash == applied_hash_ && !records_.empty()) return false;  // nothing on disk changed since the last walk
+    applied_hash_ = walk.hash;
+    bool changed = walk.folders != folders_;
+    if (changed) folders_ = walk.folders;
 
     std::unordered_map<std::string, const Walk::File*> on_disk;
     on_disk.reserve(walk.files.size());
@@ -281,6 +331,50 @@ bool AssetRegistry::apply(const Walk& walk) {
     }
     if (changed) index_guids();  // removals moved records around
     for (usize i = 0; i < records_.size(); ++i) known.emplace(records_[i].path, i);
+
+    // New files' .meta (and data assets' types) read on worker threads first: a project opened for the first time,
+    // or with thousands of assets copied in, has thousands of them. The GUID checks and writes below stay in order.
+    struct Fresh {
+        bool had_meta = false;
+        struct {
+            char guid[33] = "";
+            char tags[96] = "";
+        } meta;
+        char data_type[32] = "";
+        bool data_ok = true;
+    };
+    std::vector<const Walk::File*> fresh_files;
+    for (const Walk::File& f : walk.files) {
+        if (!known.count(f.relative)) fresh_files.push_back(&f);
+    }
+    std::vector<Fresh> fresh(fresh_files.size());
+    {
+        auto read = [&](usize from, usize step) {
+            AssetMeta meta;
+            for (usize k = from; k < fresh_files.size(); k += step) {
+                AssetRecord probe;
+                probe.mount = fresh_files[k]->mount;
+                copy_string(probe.path, sizeof probe.path, fresh_files[k]->relative.c_str());
+                meta = AssetMeta{};
+                fresh[k].had_meta = load_meta(probe, meta);
+                copy_string(fresh[k].meta.guid, sizeof fresh[k].meta.guid, meta.guid);
+                copy_string(fresh[k].meta.tags, sizeof fresh[k].meta.tags, meta.tags);
+                if (fresh_files[k]->type == AssetType::Data) {
+                    char full[300];
+                    source_path(probe, full, sizeof full);
+                    fresh[k].data_ok = read_data_asset_type(full, fresh[k].data_type, sizeof fresh[k].data_type);
+                }
+            }
+        };
+        const u32 cores = std::thread::hardware_concurrency();
+        const usize threads = fresh_files.size() < 64 ? 1 : static_cast<usize>(cores > 1 ? cores : 1);
+        std::vector<std::thread> pool;
+        for (usize t = 1; t < threads; ++t) pool.emplace_back(read, t, threads);
+        read(0, threads);
+        for (std::thread& t : pool) t.join();
+    }
+    usize next_fresh = 0;
+    std::vector<usize> new_metas;  // records_ indices whose .meta is still to write
 
     for (const Walk::File& f : walk.files) {
         const auto it = known.find(f.relative);
@@ -311,6 +405,7 @@ bool AssetRegistry::apply(const Walk& walk) {
             continue;
         }
 
+        const Fresh& read = fresh[next_fresh++];  // the same order as fresh_files
         AssetRecord record;
         record.type = f.type;
         record.source_size = f.size;
@@ -318,18 +413,23 @@ bool AssetRegistry::apply(const Walk& walk) {
         record.meta_time = f.meta_time;
         record.mount = f.mount;
         copy_string(record.path, sizeof record.path, f.relative.c_str());
-        copy_string(record.folder, sizeof record.folder, fs::path(f.relative).parent_path().generic_string().c_str());
-        copy_string(record.name, sizeof record.name, fs::path(f.relative).stem().string().c_str());
-        if (f.type == AssetType::Data && !read_data_asset_type(full, record.data_type, sizeof record.data_type)) {
-            LSD_LOG_WARN("asset", "%s is not a valid data asset", f.relative.c_str());
-        }
+        const usize slash = f.relative.rfind('/');
+        copy_string(record.folder, sizeof record.folder, slash == std::string::npos ? "" : f.relative.substr(0, slash).c_str());
+        const std::string file = slash == std::string::npos ? f.relative : f.relative.substr(slash + 1);
+        copy_string(record.name, sizeof record.name, file.substr(0, file.rfind('.')).c_str());
+        copy_string(record.data_type, sizeof record.data_type, read.data_type);
+        if (!read.data_ok) LSD_LOG_WARN("asset", "%s is not a valid data asset", f.relative.c_str());
 
         // Read the GUID from the .meta; create one if missing, invalid, or already taken
         // (a file copied together with its .meta must become a new asset).
-        AssetMeta meta;
-        const bool had_meta = load_meta(record, meta);
-        const bool guid_ok = had_meta && parse_guid(meta.guid, record.guid) && !find(record.guid);
-        if (!guid_ok) {
+        const bool had_meta = read.had_meta;
+        const bool guid_ok = had_meta && parse_guid(read.meta.guid, record.guid) && !find(record.guid);
+        if (!had_meta) {  // a new file: its .meta is written below, on worker threads with the others
+            record.guid = new_guid();
+            new_metas.push_back(records_.size());
+        } else if (!guid_ok) {
+            AssetMeta meta;  // a fresh .meta (one that was not valid is replaced whole, as before)
+            if (had_meta) load_meta(record, meta);
             record.guid = new_guid();
             to_string(record.guid, meta.guid);
             copy_string(meta.type, sizeof meta.type, to_string(f.type));
@@ -339,11 +439,33 @@ bool AssetRegistry::apply(const Walk& walk) {
             else record.meta_time = write_time(path);
             if (had_meta) LSD_LOG_INFO("asset", "%s had a duplicate or invalid GUID; assigned a new one.", record.path);
         }
-        copy_string(record.tags, sizeof record.tags, meta.tags);
+        copy_string(record.tags, sizeof record.tags, read.meta.tags);
         known.emplace(f.relative, records_.size());
         by_guid_.emplace(record.guid, static_cast<u32>(records_.size()));
         records_.push_back(record);
         changed = true;
+    }
+    // Fresh .meta files (a GUID and the type), many at once.
+    auto write = [&](usize from, usize step) {
+        AssetMeta meta;
+        for (usize k = from; k < new_metas.size(); k += step) {
+            AssetRecord& r = records_[new_metas[k]];
+            meta = AssetMeta{};
+            to_string(r.guid, meta.guid);
+            copy_string(meta.type, sizeof meta.type, to_string(r.type));
+            char path[300];
+            meta_path(r, path, sizeof path);
+            if (!reflect::save_file(meta, path)) LSD_LOG_WARN("asset", "Could not write %s.meta", r.path);
+            else r.meta_time = write_time(path);
+        }
+    };
+    {
+        const u32 cores = std::thread::hardware_concurrency();
+        const usize threads = new_metas.size() < 64 ? 1 : static_cast<usize>(cores > 1 ? cores : 1);
+        std::vector<std::thread> pool;
+        for (usize t = 1; t < threads; ++t) pool.emplace_back(write, t, threads);
+        write(0, threads);
+        for (std::thread& t : pool) t.join();
     }
     if (changed) ++generation_;
     return changed;

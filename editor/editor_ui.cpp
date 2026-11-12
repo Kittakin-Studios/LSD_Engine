@@ -4341,6 +4341,7 @@ void draw_file_dialogs(EditorState& s) {
             } else {
                 std::error_code ec;
                 done = std::filesystem::remove(std::filesystem::path(kContentDir) / s.delete_folder, ec);  // fails unless empty
+                s.reload_assets_now = done;  // the tree drops it with the next scan
                 std::snprintf(error, sizeof error, "%s", done ? s.delete_folder : "folder is not empty");
             }
             std::snprintf(s.status, sizeof s.status, done ? "Deleted %s" : "Delete failed: %s", error);
@@ -4355,38 +4356,47 @@ void draw_file_dialogs(EditorState& s) {
 // Draws the sub-folders of `dir` as tree nodes; clicking one selects it. Returns false if none.
 // shortcut: reads the disk every frame; move to the registry's index when folders get many.
 // `root` is the folder the tree starts in and `prefix` its path in the registry ("" for Content, "Plugins/<Name>" for a plugin's Content).
-void read_folders(const std::filesystem::path& dir, const std::string& relative, FolderNode& node) {
-    std::error_code error;
-    for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
-        if (!entry.is_directory(error)) continue;
-        FolderNode child;
-        child.name = entry.path().filename().string();
-        child.path = relative.empty() ? child.name : relative + "/" + child.name;
-        read_folders(entry.path(), child.path, child);
-        node.children.push_back(std::move(child));
-    }
-    std::sort(node.children.begin(), node.children.end(), [](const FolderNode& a, const FolderNode& b) { return strcmp_nocase(a.name.c_str(), b.name.c_str()) < 0; });
-}
-
-// Content/ and each mount's folders, re-read when the registry changes and at most once a second otherwise
-// (folders made outside the editor show up): walking the tree every frame cost milliseconds with 100+ folders.
+// Content/ and each mount's folders as a tree, from the registry's last folder walk (its background scan): rebuilt only
+// when the registry changes, no disk access in a frame (reading 500 folders from disk took ~80 ms each time).
 const std::vector<FolderNode>& folder_roots(EditorState& s) {
     static std::vector<FolderNode> roots;  // [0] Content/, then one per mount, in s.registry->mounts() order
     static u32 generation = ~0u;
-    static u64 read_at = 0;
-    const u64 now = ImGui::GetTime() > 0.0 ? static_cast<u64>(ImGui::GetTime() * 1000.0) : 0;
-    if (generation == s.registry->generation() && now - read_at < 1000 && !roots.empty()) return roots;
+    if (generation == s.registry->generation() && !roots.empty()) return roots;
     generation = s.registry->generation();
-    read_at = now;
-    roots.clear();
-    roots.emplace_back();
-    read_folders(kContentDir, "", roots.back());
-    for (const asset::AssetMount& m : s.registry->mounts()) {
-        roots.emplace_back();
-        roots.back().name = m.prefix;
-        roots.back().path = m.prefix;
-        if (m.prefix[0]) read_folders(m.dir, m.prefix, roots.back());
+    roots.assign(1 + s.registry->mounts().size(), FolderNode{});
+    for (usize m = 0; m < s.registry->mounts().size(); ++m) roots[m + 1].name = roots[m + 1].path = s.registry->mounts()[m].prefix;
+    for (const std::string& folder : s.registry->folders()) {  // A-Z: a parent comes before its children
+        FolderNode* node = &roots[0];
+        usize at = 0;
+        for (usize m = 0; m < s.registry->mounts().size(); ++m) {  // under a mount's prefix: that root
+            const std::string& prefix = roots[m + 1].path;
+            if (!prefix.empty() && folder.compare(0, prefix.size(), prefix) == 0 && (folder.size() == prefix.size() || folder[prefix.size()] == '/')) {
+                node = &roots[m + 1];
+                at = prefix.size() + 1;
+            }
+        }
+        while (at < folder.size()) {
+            const usize slash = folder.find('/', at);
+            const std::string part = folder.substr(at, slash == std::string::npos ? std::string::npos : slash - at);
+            FolderNode* next = nullptr;
+            for (FolderNode& child : node->children) {
+                if (child.name == part) next = &child;
+            }
+            if (!next) {
+                node->children.push_back(FolderNode{part, folder.substr(0, slash == std::string::npos ? folder.size() : slash), {}});
+                next = &node->children.back();
+            }
+            node = next;
+            at = slash == std::string::npos ? folder.size() : slash + 1;
+        }
     }
+    struct Sort {
+        static void tree(FolderNode& n) {
+            std::sort(n.children.begin(), n.children.end(), [](const FolderNode& a, const FolderNode& b) { return strcmp_nocase(a.name.c_str(), b.name.c_str()) < 0; });
+            for (FolderNode& c : n.children) tree(c);
+        }
+    };
+    for (FolderNode& root : roots) Sort::tree(root);
     return roots;
 }
 
@@ -5032,6 +5042,7 @@ void draw_asset_grid(EditorState& s) {
             std::filesystem::path dir = base / "NewFolder";
             for (int n = 2; std::filesystem::exists(dir, error); ++n) dir = base / ("NewFolder" + std::to_string(n));
             std::filesystem::create_directories(dir, error);
+            s.registry->add_folder(join_folder(s.content_folder, dir.filename().string().c_str()).c_str());  // shown now, before the next scan
             start_rename(s, {}, join_folder(s.content_folder, dir.filename().string().c_str()).c_str(), dir.filename().string().c_str());
         }
         if (with_tip(ImGui::BeginMenu("New Data Asset"), "Makes a data asset (Material, Input Action, Sound Class, Curve, Game Mode...) here")) {

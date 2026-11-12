@@ -71,6 +71,10 @@ public:
     // before are stale.
     u32 generation() const { return generation_; }
     const AssetRecord* find(Guid guid) const;
+    // Every folder under the content root and the mounts (relative, '/' separators, A-Z), as the last scan saw them.
+    const std::vector<std::string>& folders() const { return folders_; }
+    // A folder just made (New Folder): listed now, without waiting for the next scan.
+    void add_folder(const char* relative);
     const char* content_dir() const { return content_dir_; }
 
     // Indices of assets whose name or tags contain `text` (case-insensitive) and whose type matches
@@ -119,6 +123,8 @@ private:
     mutable std::unordered_multimap<std::string, u32> by_name_;      // record indices by name, rebuilt when generation_ moves on
     mutable u32 by_name_generation_ = ~0u;
     u32 generation_ = 0;
+    u64 applied_hash_ = 0;              // the last applied walk's hash
+    std::vector<std::string> folders_;
     u32 sync_scans_ = 0;  // bumped by scan(): an async walk started before it is stale
 };
 
