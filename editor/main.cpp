@@ -440,7 +440,7 @@ struct FrameInstances {
         // LOD k's index buffer and count.
         lsd::rhi::BufferHandle indices(lsd::u32 k) const { return k ? mesh->lod_indices[k] : mesh->gpu.indices; }
         lsd::u32 index_count(lsd::u32 k) const { return k ? mesh->lod_index_count[k] : mesh->gpu.index_count; }
-        const lsd::f32* rows_of(const std::vector<lsd::f32>& rows, lsd::u32 k) const { return rows.data() + first_row + static_cast<lsd::usize>(lods.first[k]) * 12; }
+        const lsd::f32* rows_of(const std::vector<lsd::f32>& all_rows, lsd::u32 k) const { return all_rows.data() + first_row + static_cast<lsd::usize>(lods.first[k]) * 12; }
         lsd::u32 copies(lsd::u32 k) const { return lods.first[k + 1] - lods.first[k]; }
     };
     std::vector<Entry> entries;
