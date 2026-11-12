@@ -50,17 +50,59 @@ u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const { return
 
 namespace {
 
-// Simpler LODs for meshes with enough triangles to gain from them (render::build_lods), as index buffers over its vertices.
-void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false) {
+// The LODs' indices kept in DerivedData beside the compiled mesh ("<compiled>.lod"), so a mesh loaded again reads them
+// instead of simplifying it again (most of a dense mesh's load time). Stale when the compiled mesh, its size or the
+// LOD screen sizes changed.
+struct LodFileHeader {
+    char magic[4];
+    u32 version;
+    i64 compiled_time;
+    u32 index_count, lod_count;
+    f32 sizes[CachedMesh::kMaxLods];
+    u32 counts[CachedMesh::kMaxLods - 1];
+};
+constexpr char kLodMagic[4] = {'L', 'S', 'D', 'L'};
+constexpr u32 kLodVersion = 1;  // bump when render::build_lods changes what it makes
+
+// Simpler LODs for meshes with enough triangles to gain from them (render::build_lods), as index buffers over its
+// vertices; `cache` (may be null): the file they are read from when current, else written to.
+void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false, const char* cache = nullptr,
+                i64 compiled_time = 0) {
     m.lod_count = 1;
     u32* out[CachedMesh::kMaxLods - 1];
-    u32 counts[CachedMesh::kMaxLods - 1] = {};
     u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count * (CachedMesh::kMaxLods - 1), alignof(u32)));
     for (u32 k = 0; k + 1 < CachedMesh::kMaxLods; ++k) out[k] = indices + static_cast<usize>(k) * data.index_count;
-    m.lod_count = render::build_lods(data, m.lod_screen_size, out, counts, lock_border);
+    LodFileHeader h{};
+    bool cached = false;
+    if (FILE* f = cache ? std::fopen(cache, "rb") : nullptr) {
+        cached = std::fread(&h, sizeof h, 1, f) == 1 && std::memcmp(h.magic, kLodMagic, 4) == 0 && h.version == kLodVersion && h.compiled_time == compiled_time &&
+                 h.index_count == data.index_count && h.lod_count >= 1 && h.lod_count <= CachedMesh::kMaxLods &&
+                 std::memcmp(h.sizes, m.lod_screen_size, sizeof h.sizes) == 0;
+        for (u32 k = 1; cached && k < h.lod_count; ++k) {
+            cached = h.counts[k - 1] <= data.index_count && std::fread(out[k - 1], sizeof(u32), h.counts[k - 1], f) == h.counts[k - 1];
+            for (u32 i = 0; cached && i < h.counts[k - 1]; ++i) cached = out[k - 1][i] < data.vertex_count;  // a damaged file must not index past the vertices
+        }
+        std::fclose(f);
+    }
+    if (!cached) {
+        h = LodFileHeader{};
+        std::memcpy(h.magic, kLodMagic, 4);
+        h.version = kLodVersion;
+        h.compiled_time = compiled_time;
+        h.index_count = data.index_count;
+        std::memcpy(h.sizes, m.lod_screen_size, sizeof h.sizes);
+        h.lod_count = render::build_lods(data, m.lod_screen_size, out, h.counts, lock_border);
+        if (FILE* f = cache ? std::fopen(cache, "wb") : nullptr) {
+            bool ok = std::fwrite(&h, sizeof h, 1, f) == 1;
+            for (u32 k = 1; ok && k < h.lod_count; ++k) ok = std::fwrite(out[k - 1], sizeof(u32), h.counts[k - 1], f) == h.counts[k - 1];
+            std::fclose(f);
+            if (!ok) std::remove(cache);  // a disk full: built again next time
+        }
+    }
+    m.lod_count = h.lod_count;
     for (u32 k = 1; k < m.lod_count; ++k) {
-        m.lod_indices[k] = device.create_buffer(rhi::BufferUsage::Index, out[k - 1], sizeof(u32) * counts[k - 1]);
-        m.lod_index_count[k] = counts[k - 1];
+        m.lod_indices[k] = device.create_buffer(rhi::BufferUsage::Index, out[k - 1], sizeof(u32) * h.counts[k - 1]);
+        m.lod_index_count[k] = h.counts[k - 1];
     }
     allocator.deallocate(indices);
 }
@@ -97,6 +139,7 @@ bool MeshCache::load(CachedMesh& entry) {
     asset::AssetMeta meta;  // LOD screen sizes, re-read on every reload (editing them does not recompile; defaults for shapes)
     if (const asset::AssetRecord* record = is_asset ? registry_.find(guid) : nullptr) registry_.load_meta(*record, meta);
     render::lod_screen_sizes(meta.lod1_screen_size, meta.lod2_screen_size, meta.lod3_screen_size, entry.lod_screen_size);
+    char lod_cache[320] = "";
     if (!is_asset) {
         if (entry.gpu.index_count) return true;  // built-ins never change
         if (!make_builtin(key, allocator_, data)) return false;
@@ -108,6 +151,7 @@ bool MeshCache::load(CachedMesh& entry) {
         if (entry.gpu.index_count && time == entry.compiled_time) return true;  // already current
         if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
         entry.compiled_time = time;
+        std::snprintf(lod_cache, sizeof lod_cache, "%s.lod", compiled);  // Box UV variants share it: same positions
     }
     if (boxed) render::box_project_uv(data, box.x, box.y, box.z);
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
@@ -116,7 +160,7 @@ bool MeshCache::load(CachedMesh& entry) {
     entry.vertex_bytes = static_cast<u64>(data.vertex_count) * sizeof(rhi::MeshVertex);
     entry.index_bytes = static_cast<u64>(data.index_count) * sizeof(u32);
     const auto lods_started = std::chrono::steady_clock::now();
-    build_lods(device_, allocator_, data, entry);
+    build_lods(device_, allocator_, data, entry, false, lod_cache[0] ? lod_cache : nullptr, entry.compiled_time);
     lod_ms_ += ms_since(lods_started);
     entry.bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry.bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};

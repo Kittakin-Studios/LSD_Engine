@@ -1754,15 +1754,22 @@ size, triangles and LODs, and its import settings (Save / Reimport). **Normals**
 (Blender's Shade Smooth / Flat / Auto Smooth). Every mesh, static or rigged, is **Smooth** by
 default (averaged across faces by topology, so UV seams do not show); **Solid (Flat)** gives
 faceted faces, **Import** keeps the file's normals, **Auto Smooth** keeps edges sharper than
-**Smoothing Angle** hard. Meshes of 512+ triangles get
-up to three simpler LODs; **LOD 1 / 2 / 3 Screen Size** (Unreal's LOD Screen Size) set how small the
-mesh must look before each takes over (larger = sooner). Shadows use the LOD the camera sees.
+**Smoothing Angle** hard. Static meshes of 64+ triangles get
+up to five simpler LODs, automatically; **LOD 1 / 2 / 3 Screen Size** (Unreal's LOD Screen Size) set how small the
+mesh must look before each takes over (larger = sooner); LOD 4 and 5 take over at half and a quarter of LOD 3's
+size. Each LOD is built to about one triangle per four pixels at the size it takes over (so a dense 200 000-triangle
+prop far away costs a few hundred), but never further than its outline staying within about a pixel of the real
+shape; very far LODs of meshes that will not simplify cleanly (many separate pieces) are clustered instead. They are
+built the first time the mesh is drawn and kept in DerivedData (`<mesh>.lsdmesh.lod`), so the next load reads them.
+Shadows use the LOD the camera sees; Instanced Static Mesh copies each pick their own (their shadows too).
 Rigged (skeletal) meshes get them too, per material section, with the same settings: the simpler
 triangles reuse the mesh's own vertices, so skinning, morph targets and clothes following the body
 behave as at full detail; their shadows use the LOD the camera sees too. A
 Static Mesh's **Max Draw Distance** hides it (and its shadow) beyond that distance; a **Cull Distance
 Volume** (Place tab) does it for every static mesh inside by size (Size / Distance rules: pebbles
-vanish sooner than houses). For rigged meshes: the bone
+vanish sooner than houses). Anything smaller on screen than about three pixels across is not drawn, nor its
+shadow (Unreal's Min Screen Radius; `r.MinScreenSize`, bounding radius over distance, 0.0015 by default, 0 = draw
+everything). For rigged meshes: the bone
 tree (click a bone to see it in the preview) and **Sockets**: select a bone, **+ Socket**, move it
 with Offset / Turn, Save. Then give a prop **Attach To Socket** (the character's object name and
 the socket) to carry it, or ask a script: `lsd.socket(e, "Hand_R")` -> x, y, z, fx, fy, fz.
@@ -2656,7 +2663,10 @@ in the project folder, the splash too).
 - **stat dump** (console): writes one frame's numbers to the Output Log: CPU times, GPU wait, GPU
   time per stage (shadows, scene, post, UI; timestamp queries on D3D12 and OpenGL), draws, objects
   culled, shadow casters skipped (skinned meshes and instanced copies outside a shadow view) and the
-  editor UI's time per panel (Unreal's `stat gpu` + `stat unit` in one line).
+  editor UI's time per panel (Unreal's `stat gpu` + `stat unit` in one line). For big scenes it adds the
+  triangles from Instanced Static Meshes, the shadow passes' draws and triangles, the first view's CPU time by
+  part (shadows, occluders, static meshes, instanced, the rest), the meshes on the GPU (vertex, index and LOD
+  index MB, time spent loading them and building LODs) and the video memory in use.
 - **Tracy** (Unreal Insights): configure with `-DLSD_TRACY=ON`, build, run, and connect the Tracy
   profiler v0.11.1 to see every frame's timeline.
 - Logs: `Saved/Logs/Editor.log` (Game.log in a packaged game); the previous run is kept as
@@ -2677,7 +2687,7 @@ in the project folder, the splash too).
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
 | Camera | Camera (FOV, Auto Activate: Play looks through it; `lsd.set_view(e [, blend])` / `lsd.set_view(nil [, blend])` cut or blend between views, like Set View Target with Blend; `lsd.camera_shake(strength [, seconds, frequency])`; nodes Set View Target with Blend, Set View Target to Player, Camera Shake). A Camera attached to the Character (child object) is the player's view (Player View: First / Third Person, Motion, Follow Bone); `lsd.set_camera_view("first" \| "third" \| "camera")`, `lsd.camera_view()`, `lsd.camera_location()`, `lsd.camera_forward()` (where the view looks: shoot along it for a crosshair) (nodes Set Camera View, Is Third Person, Get Camera Location) |
 | Rendering | Decal (a texture projected down onto what is inside its box: scale the box to fit, the alpha cuts it out; 16 visible at once) |
-| Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; with 32+ copies the GPU drops those outside the view or hidden behind nearer objects and picks each copy's LOD, `r.GPUCulling 0` to compare) |
+| Rendering | Instanced Static Mesh (many copies of one mesh in one draw: rocks, grass, props; Details > Scatter fills a circle at random; no collision; each copy is drawn at its own LOD and left out when outside the view, behind the occluders or under `r.MinScreenSize`; a draw of 1024+ copies is culled on the GPU instead, against last frame's depth too, `r.GPUCulling 0` to compare) |
 | Animation | Attach To Socket (keeps this object on a socket of another object's skeletal mesh: a sword in a hand) |
 | Animation | Foot IK (Unreal's foot placement, in Play: the pelvis drops for the lower foot, each foot reaches its ground and turns to its slope, eased so stairs do not pop; foot bone names, max step, ankle height, Max Foot Angle, Speed) |
 | Movement | Rotating Movement (degrees per second), Projectile Movement (start velocity, gravity scale, follows velocity, stops and sends on_hit when it hits, optional destroy) |
