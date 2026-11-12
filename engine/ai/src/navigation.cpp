@@ -9,8 +9,10 @@
 #include <Recast.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace lsd::ai {
@@ -299,18 +301,36 @@ bool NavMesh::build(const f32* vertices, u32 vertex_count, const u32* indices, u
         std::memcpy(m.bmin, cfg.bmin, sizeof m.bmin);
         m.hashes.assign(hashes.size(), 0);  // nothing built yet: every tile differs
     }
-    for (int ty = 0; ty < th; ++ty) {
-        for (int tx = 0; tx < tw; ++tx) {
-            const usize i = static_cast<usize>(ty * tw + tx);
-            if (m.hashes[i] == hashes[i]) continue;
-            m.hashes[i] = hashes[i];
-            if (const dtTileRef old = m.mesh->getTileRefAt(tx, ty, 0)) m.mesh->removeTile(old, nullptr, nullptr);
-            unsigned char* data = nullptr;
-            int size = 0;
-            if (!build_tile(cfg, cfg.bmin, tx, ty, verts, tris, buckets[i], s, cutouts, cutout_count, links, link_count, &data, &size)) continue;
-            ++m.rebuilt_tiles;
-            if (data && dtStatusFailed(m.mesh->addTile(data, size, DT_TILE_FREE_DATA, 0, nullptr))) dtFree(data);
+    // The changed tiles are built on every core (each only reads the inputs), then added to the mesh in order.
+    struct Built {
+        usize index;
+        unsigned char* data = nullptr;
+        int size = 0;
+        bool ok = false;
+    };
+    std::vector<Built> changed;
+    for (usize i = 0; i < hashes.size(); ++i) {
+        if (m.hashes[i] != hashes[i]) changed.push_back({i});
+    }
+    std::atomic<usize> next{0};
+    auto work = [&] {
+        for (usize k = next++; k < changed.size(); k = next++) {
+            Built& job = changed[k];
+            const int tx = static_cast<int>(job.index % static_cast<usize>(tw)), ty = static_cast<int>(job.index / static_cast<usize>(tw));
+            job.ok = build_tile(cfg, cfg.bmin, tx, ty, verts, tris, buckets[job.index], s, cutouts, cutout_count, links, link_count, &job.data, &job.size);
         }
+    };
+    std::vector<std::thread> workers(std::min<usize>(changed.size() / 4, std::max(1u, std::thread::hardware_concurrency()) - 1));
+    for (std::thread& t : workers) t = std::thread(work);
+    work();
+    for (std::thread& t : workers) t.join();
+    for (Built& done : changed) {
+        m.hashes[done.index] = hashes[done.index];
+        const int tx = static_cast<int>(done.index % static_cast<usize>(tw)), ty = static_cast<int>(done.index / static_cast<usize>(tw));
+        if (const dtTileRef old = m.mesh->getTileRefAt(tx, ty, 0)) m.mesh->removeTile(old, nullptr, nullptr);
+        if (!done.ok) continue;
+        ++m.rebuilt_tiles;
+        if (done.data && dtStatusFailed(m.mesh->addTile(done.data, done.size, DT_TILE_FREE_DATA, 0, nullptr))) dtFree(done.data);
     }
     bool walkable = false;  // nothing walkable anywhere: no navmesh, as before
     for (int t = 0; t < m.mesh->getMaxTiles() && !walkable; ++t) {
