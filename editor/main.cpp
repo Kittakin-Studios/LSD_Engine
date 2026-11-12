@@ -1957,6 +1957,18 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("no mesh with that name (asset.List)");
     }, &s, "asset.ImportMaterials <mesh>: Import Materials and Textures for a mesh (as its Content Browser menu)");
+    console::add_command("asset.CreateMaterial", [](void* user, const char* args) {
+        auto& st = *static_cast<EditorState*>(user);
+        for (lsd::usize i = 0; i < st.registry->count(); ++i) {
+            const lsd::asset::AssetRecord r = st.registry->get(i);
+            if (r.type != lsd::asset::AssetType::Texture || std::strcmp(r.name, args) != 0) continue;
+            lsd::editor::TextureMaterialReport report;
+            lsd::editor::create_materials_from_textures(*st.registry, {r}, report, st.status, sizeof st.status);
+            lsd::editor::remote::print(st.status);
+            return;
+        }
+        lsd::editor::remote::print("no texture with that name (asset.List)");
+    }, &s, "asset.CreateMaterial <texture>: Create Material on a texture (as its Content Browser menu): the whole texture set by name (Name_BaseColor, _Normal, _Roughness...)");
     console::add_command("asset.CreatePrefabFromParts", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
