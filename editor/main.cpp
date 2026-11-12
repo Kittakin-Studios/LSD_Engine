@@ -944,19 +944,24 @@ void submit_mesh(lsd::rhi::Device& device, const lsd::rhi::MeshDraw& draw) {
 }
 
 void draw_batches(lsd::rhi::Device& device, std::vector<BatchItem>& items, const lsd::Mat4& view_proj, EditorState& stats) {
-    std::sort(items.begin(), items.end(), [](const BatchItem& a, const BatchItem& b) { return a.key < b.key; });
+    // Sorted by key through (key, index) pairs: moving the items themselves (a whole MeshDraw each) cost more than the rest.
+    static std::vector<std::pair<lsd::u64, lsd::u32>> order;
+    order.resize(items.size());
+    for (size_t k = 0; k < items.size(); ++k) order[k] = {items[k].key, static_cast<lsd::u32>(k)};
+    std::sort(order.begin(), order.end());
     static std::vector<lsd::f32> rows;
-    for (size_t i = 0; i < items.size();) {
+    for (size_t i = 0; i < order.size();) {
         size_t end = i + 1;
-        while (end < items.size() && items[end].key == items[i].key) ++end;
-        lsd::rhi::MeshDraw draw = items[i].draw;
+        while (end < order.size() && order[end].first == order[i].first) ++end;
+        lsd::rhi::MeshDraw draw = items[order[i].second].draw;
         if (end - i == 1) {
             submit_mesh(device, draw);  // alone: its own mvp / normals, as before
         } else {
             rows.clear();
             for (size_t k = i; k < end; ++k) {
+                const lsd::Mat4& w = items[order[k].second].world;
                 for (int r = 0; r < 3; ++r) {
-                    for (int c = 0; c < 4; ++c) rows.push_back(items[k].world.at(r, c));
+                    for (int c = 0; c < 4; ++c) rows.push_back(w.at(r, c));
                 }
             }
             std::memcpy(draw.mvp, view_proj.m, sizeof draw.mvp);
@@ -1584,8 +1589,8 @@ void register_console(EditorState& s) {
                 const lsd::f64* t = st.stat_gpu_ms;
                 auto span = [t](int from, int to) { return t[to] >= 0.0 && t[from] >= 0.0 ? t[to] - t[from] : 0.0; };
                 const int scene_from = t[1] >= 0.0 ? 1 : 0, post_from = t[2] >= 0.0 ? 2 : scene_from;
-                std::snprintf(line, sizeof line, "gpu: shadows %.2f, scene %.2f, post %.2f, ui %.2f, total %.2f ms", span(0, 1), span(scene_from, 2), span(post_from, 3),
-                              span(t[3] >= 0.0 ? 3 : post_from, 4), t[4]);
+                std::snprintf(line, sizeof line, "gpu: shadows %.2f, scene %.2f (meshes %.2f, effects %.2f, normals / velocity %.2f), post %.2f, ui %.2f, total %.2f ms", span(0, 1),
+                              span(scene_from, 2), span(scene_from, 5), span(5, 6), span(6, 7), span(post_from, 3), span(t[3] >= 0.0 ? 3 : post_from, 4), t[4]);
             } else {
                 std::snprintf(line, sizeof line, "gpu: no timings from this graphics backend yet");
             }
@@ -3993,6 +3998,7 @@ int main(int argc, char** argv) {
             g_normals.used = 0;
             g_main_view = v == 0;
             draw_world(*device, view_proj, light_view, pixels, shadow_atlas, local_shadow_atlas, world, meshes, materials, state, scene, scene_clear);
+            if (v == 0) device->gpu_timestamp(5);  // the scene's parts (stat dump): its meshes, then effects, then the normals / velocity passes
             g_main_view = false;
             g_normals.on = false;
             if (v == 0 && g_gpu_culling && device->supports_gpu_culling()) {  // its depth becomes next frame's Hi-Z
@@ -4011,6 +4017,7 @@ int main(int argc, char** argv) {
             }
             effects->set_fog(g_view_fog, g_view_fog + 4);
             effects->draw(*device, world, view_proj, view, light_view.eye, !state.playing || state.ejected);  // after the opaque meshes
+            if (v == 0) device->gpu_timestamp(6);
             if (normals_pass) {  // the kept draws again, each pixel's view-space normal into its own target
                 const lsd::rhi::TextureHandle normals = normal_targets.get(*device, v, static_cast<lsd::u32>(pixels[2]), static_cast<lsd::u32>(pixels[3]));
                 const lsd::f32 facing[4] = {0.5f, 0.5f, 1.0f, 1.0f};
@@ -4075,6 +4082,7 @@ int main(int argc, char** argv) {
                 device->set_lights(g_view_lights);
                 post.velocity = velocity;
             }
+            if (v == 0) device->gpu_timestamp(7);
             if (scene.valid()) {
                 post.scene = scene;
                 for (int c = 0; c < 4; ++c) post.viewport[c] = pixels[c];
