@@ -6,6 +6,7 @@
 #include "lsd/asset/asset_registry.h"
 #include "lsd/foundation/array.h"
 #include "lsd/foundation/math.h"
+#include "lsd/render/lod.h"
 #include "lsd/render/mesh.h"
 
 #include <string>
@@ -16,7 +17,7 @@
 namespace lsd::editor {
 
 struct CachedMesh {
-    static constexpr u32 kMaxLods = 4;  // LOD 0 is `gpu`; the others share its vertices
+    static constexpr u32 kMaxLods = render::kMaxLods;  // LOD 0 is `gpu`; the others share its vertices
     char key[80];  // the component's mesh, plus "|box:x,y,z" for a Box UV variant
     render::GpuMesh gpu;
     rhi::BufferHandle lod_indices[kMaxLods];  // [0] unused
@@ -24,8 +25,9 @@ struct CachedMesh {
     u32 lod_count;                            // 1 = no simpler LODs
     // Which LOD to draw from how big the mesh looks: its bounding radius over its distance.
     u32 pick_lod(f32 radius_over_distance, i32 force_lod) const;
-    f32 lod_screen_size[kMaxLods];            // [1..3]: from the asset's import settings (LOD category)
+    f32 lod_screen_size[kMaxLods];            // [1..3]: from the asset's import settings (LOD category); [4], [5]: half and a quarter of [3]
     Vec3 bounds_min, bounds_max;  // local space
+    u64 vertex_bytes, index_bytes;  // LOD 0's on the GPU, for stat dump
     i64 compiled_time;
     bool failed;  // asset missing or import failed: drawn as nothing, retried on hot_reload
     bool generated;  // built in code (set_generated: a landscape), never loaded from a file
@@ -48,6 +50,13 @@ public:
     // shortcut: one variant per distinct scale (rounded to 1 cm); fine for blockouts, not for thousands of sizes
     const CachedMesh* get_box_uv(const char* mesh, Vec3 scale);
     void hot_reload();
+    // stat dump: meshes on the GPU and their bytes (index bytes include the LODs').
+    struct Memory {
+        u32 meshes = 0;
+        u64 vertex_bytes = 0, index_bytes = 0, lod_index_bytes = 0;
+        f64 load_ms = 0.0, lod_ms = 0.0;  // spent loading meshes so far, and of that building their LODs
+    };
+    Memory memory() const;
 
     // The mesh's positions and triangles on the CPU, for mesh and convex collision; read on first
     // ask and kept until the next hot reload. Null if the mesh cannot be loaded.
@@ -92,6 +101,7 @@ private:
     Allocator& allocator_;
     asset::AssetRegistry& registry_;
     char data_dir_[256];
+    f64 load_ms_ = 0.0, lod_ms_ = 0.0;  // Memory's
     Array<CachedMesh> meshes_;  // reserved up front: pointers handed out stay valid as it fills
     KeyIndex index_;            // key -> slot in meshes_
 };

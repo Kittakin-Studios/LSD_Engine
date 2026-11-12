@@ -1,5 +1,6 @@
 // Math and mesh-generation tests (no GPU needed).
 #include "lsd/foundation/math.h"
+#include "lsd/render/lod.h"
 #include "lsd/render/mesh.h"
 #include "lsd/render/occlusion.h"
 #include "lsd/render/reflection.h"
@@ -314,6 +315,57 @@ static void test_texture_streaming() {
     CHECK(out[0] == 0 && out[1] == 0);
 }
 
+static void test_lods() {
+    using namespace lsd::render;
+    float sizes[kMaxLods];
+    lod_screen_sizes(0.12f, 0.06f, 0.03f, sizes);
+    CHECK(near(sizes[4], 0.015f) && near(sizes[5], 0.0075f));
+    CHECK(pick_lod(sizes, 6, 0.5f, -1) == 0 && pick_lod(sizes, 6, 0.1f, -1) == 1 && pick_lod(sizes, 6, 0.001f, -1) == 5);
+    CHECK(pick_lod(sizes, 3, 0.001f, -1) == 2 && pick_lod(sizes, 3, 0.5f, 7) == 2 && pick_lod(sizes, 6, 0.001f, 0) == 0);
+    // A unit box (radius sqrt(3) / 2) scaled by 2, 10 m away: 0.173.
+    const float rows[12] = {2, 0, 0, 10, 0, 2, 0, 0, 0, 0, 2, 0};
+    const float lo[3] = {-0.5f, -0.5f, -0.5f}, hi[3] = {0.5f, 0.5f, 0.5f}, eye[3] = {0, 0, 0};
+    CHECK(near(screen_size(rows, lo, hi, eye, 1.0f), 0.1732f, 1e-3f) && near(screen_size(rows, lo, hi, eye, 2.0f), 0.3464f, 1e-3f));
+    // Budgets: a quarter the triangles at half the size; the allowed error doubles.
+    CHECK(lod_triangle_budget(0.12f) > 9000 && lod_triangle_budget(0.12f) < 11000);
+    CHECK(lod_triangle_budget(0.06f) * 4 <= lod_triangle_budget(0.12f) + 4 && lod_triangle_budget(0.0f) == 12);
+    CHECK(near(lod_max_error(0.03f), 2.0f * lod_max_error(0.06f), 1e-5f));
+    // Copies by LOD: near, middle, far and a speck; LOD 0 first, the speck left out.
+    float copies[4 * 12];
+    const float distance[4] = {1.0f, 2.0f, 40.0f, 5000.0f};
+    for (int k = 0; k < 4; ++k) {
+        for (int i = 0; i < 12; ++i) copies[k * 12 + i] = i % 5 == 0 ? 1.0f : 0.0f;
+        copies[k * 12 + 3] = distance[3 - k];  // given far to near
+    }
+    float sorted[4 * 12];
+    LodBuckets b;
+    sort_by_lod(copies, 4, lo, hi, eye, 1.0f, sizes, 6, -1, 0.0015f, sorted, b);
+    CHECK(b.culled == 1 && b.first[1] == 2 && b.first[kMaxLods] == 3);
+    CHECK(sorted[3] == 2.0f && sorted[12 + 3] == 1.0f && sorted[24 + 3] == 40.0f);  // the two near ones kept in their order
+    sort_by_lod(copies, 4, lo, hi, eye, 1.0f, sizes, 6, 2, 0.0015f, sorted, b);  // r.ForceLOD 2: all, none culled
+    CHECK(b.culled == 0 && b.first[2] == 0 && b.first[3] == 4);
+    // Auto LODs of a dense sphere: fewer triangles each step, LOD 1 near its budget.
+    lsd::HeapAllocator heap("lods");
+    MeshData sphere = make_sphere(heap, 128, 64);
+    std::vector<lsd::u32> storage(static_cast<size_t>(sphere.index_count) * (kMaxLods - 1));
+    lsd::u32* out[kMaxLods - 1];
+    lsd::u32 counts[kMaxLods - 1] = {};
+    for (lsd::u32 k = 0; k + 1 < kMaxLods; ++k) out[k] = storage.data() + static_cast<size_t>(k) * sphere.index_count;
+    const lsd::u32 lods = build_lods(sphere, sizes, out, counts);
+    CHECK(lods >= 4);
+    lsd::u32 previous = sphere.index_count;
+    for (lsd::u32 k = 1; k < lods; ++k) {
+        CHECK(counts[k - 1] % 3 == 0 && counts[k - 1] < previous);
+        for (lsd::u32 i = 0; i < counts[k - 1]; ++i) CHECK(out[k - 1][i] < sphere.vertex_count);
+        previous = counts[k - 1];
+    }
+    CHECK(counts[0] <= sphere.index_count * 11 / 20);  // about half gone (or more)
+    float no_far[kMaxLods];
+    lod_screen_sizes(0.12f, 0.0f, 0.0f, no_far);  // LOD 2 and on never drawn: not built
+    CHECK(build_lods(sphere, no_far, out, counts) == 2);
+    free_mesh(heap, sphere);
+}
+
 int main() {
     test_color_vision();
     test_reflection();
@@ -322,6 +374,7 @@ int main() {
     test_culling();
     test_occlusion();
     test_texture_streaming();
+    test_lods();
     if (g_failures == 0) std::printf("All render tests passed.\n");
     return g_failures == 0 ? 0 : 1;
 }

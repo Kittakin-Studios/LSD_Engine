@@ -149,10 +149,15 @@ device.
 4096 triangles each, from `MeshCache::triangles`) are rasterised into a 256 x 128 depth buffer, each
 triangle at its farthest corner's distance and only on pixels whose centre it covers; a mesh is
 skipped when every pixel its box touches holds something nearer. That keeps it conservative: it can
-miss a hidden mesh but never drop a visible one. Instanced Static Meshes and instancing batches with
-32+ copies are culled on the GPU (`r.GPUCulling`, engine/rhi/shaders/cull.hlsl): frustum, LOD by
-screen size and a Hi-Z pyramid built from the main viewport's depth the frame before; each LOD's
-survivors are drawn indirectly. Shadow passes cull Instanced Static Mesh copies the same way (frustum only).
+miss a hidden mesh but never drop a visible one. Instanced Static Mesh copies are prepared once per
+`draw_world` call (`FrameInstances` in main.cpp): their world rows, grouped by the LOD each copy needs from the
+camera (`render::sort_by_lod`, engine/render/lod.*), copies under `r.MinScreenSize` left out, and a hash of it all
+for shadow caching. The main view tests each copy against the frustum and the occluders on the CPU and draws one
+instanced call per LOD; every shadow tile draws the same LOD groups (frustum-tested against the light's view).
+Draws of 1024+ copies (`kGpuCullMinCopies`) are culled on the GPU instead (`r.GPUCulling`,
+engine/rhi/shaders/cull.hlsl: frustum and a Hi-Z pyramid built from the main viewport's depth the frame before,
+survivors drawn indirectly): each such draw's compute passes share one output buffer, so it waits for the draw
+before it, which made smaller GPU-culled draws slower than plain ones (5 ms a frame over ~150 draws).
 
 **Reflection captures** (no cubemaps in the RHI): each Reflection Capture renders six 128 x 128 faces
 with `draw_world` into render targets, read back after the frame and unwrapped by
@@ -190,11 +195,14 @@ forward shaders tonemap and grade directly, as before.
 
 The editor builds the light setup each frame (`editor/lighting.cpp`): lights from components (the
 nearest local lights first), cascades fitted to the camera, the camera's Post Process Volume, the
-fog, and the player's quality setting. Meshes outside the camera's frustum are culled first. Static meshes of 512+ triangles get up to
-three simpler LODs when they load (meshoptimizer simplify, sharing the LOD 0 vertices); the draw picks
+fog, and the player's quality setting. Meshes outside the camera's frustum are culled first. Static meshes of 64+ triangles get up to
+five simpler LODs when they load (`render::build_lods`: meshoptimizer simplify to a triangle budget of about one
+per four pixels at the LOD's screen size, bounded by a one-pixel error, else half the LOD before as before; sloppy
+clustering for far LODs that stall; all sharing the LOD 0 vertices), cached as `<compiled mesh>.lod` in
+DerivedData (keyed by the compiled mesh's time, its index count and the screen sizes); the draw picks
 one from the mesh's bounding radius over its distance against the mesh's own LOD screen sizes (its
 import settings; `r.ForceLOD n` to inspect one). `pick_static_lod` does this for the main view and
-both shadow passes (casters use the camera's LOD), and culls a mesh past its Max Draw Distance or the
+both shadow passes (casters use the camera's LOD), and culls a mesh below `r.MinScreenSize`, past its Max Draw Distance or the
 distance a Cull Distance Volume gives its size (the volumes are gathered once per frame). **Box UV**
 meshes are cached variants (`MeshCache::get_box_uv`, key `<mesh>|box:x,y,z` at the object's scale
 rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis.

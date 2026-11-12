@@ -47,30 +47,63 @@ void destroy_lods(rhi::Device& device, CachedMesh& m) {
 
 } // namespace
 
-u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const {
-    if (force_lod >= 0) return static_cast<u32>(force_lod) < lod_count ? static_cast<u32>(force_lod) : lod_count - 1;
-    u32 lod = 0;
-    while (lod + 1 < lod_count && radius_over_distance < lod_screen_size[lod + 1]) ++lod;
-    return lod;
-}
+u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const { return render::pick_lod(lod_screen_size, lod_count, radius_over_distance, force_lod); }
 
 namespace {
 
-// Simpler LODs for meshes with enough triangles to gain from them.
-void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false) {
+// The LODs' indices kept in DerivedData beside the compiled mesh ("<compiled>.lod"), so a mesh loaded again reads them
+// instead of simplifying it again (most of a dense mesh's load time). Stale when the compiled mesh, its size or the
+// LOD screen sizes changed.
+struct LodFileHeader {
+    char magic[4];
+    u32 version;
+    i64 compiled_time;
+    u32 index_count, lod_count;
+    f32 sizes[CachedMesh::kMaxLods];
+    u32 counts[CachedMesh::kMaxLods - 1];
+};
+constexpr char kLodMagic[4] = {'L', 'S', 'D', 'L'};
+constexpr u32 kLodVersion = 1;  // bump when render::build_lods changes what it makes
+
+// Simpler LODs for meshes with enough triangles to gain from them (render::build_lods), as index buffers over its
+// vertices; `cache` (may be null): the file they are read from when current, else written to.
+void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false, const char* cache = nullptr,
+                i64 compiled_time = 0) {
     m.lod_count = 1;
-    constexpr u32 kMinTriangles = 512;
-    if (data.index_count / 3 < kMinTriangles) return;
-    u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count, alignof(u32)));
-    u32 previous = data.index_count;
-    f32 ratio = 0.5f;
-    for (u32 lod = 1; lod < CachedMesh::kMaxLods; ++lod, ratio *= 0.5f) {
-        const u32 count = asset::simplify_mesh(data, ratio, indices, lock_border);
-        if (count == 0 || count > previous * 3 / 4) break;  // the shape will not get simpler: stop
-        m.lod_indices[lod] = device.create_buffer(rhi::BufferUsage::Index, indices, sizeof(u32) * count);
-        m.lod_index_count[lod] = count;
-        m.lod_count = lod + 1;
-        previous = count;
+    u32* out[CachedMesh::kMaxLods - 1];
+    u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count * (CachedMesh::kMaxLods - 1), alignof(u32)));
+    for (u32 k = 0; k + 1 < CachedMesh::kMaxLods; ++k) out[k] = indices + static_cast<usize>(k) * data.index_count;
+    LodFileHeader h{};
+    bool cached = false;
+    if (FILE* f = cache ? std::fopen(cache, "rb") : nullptr) {
+        cached = std::fread(&h, sizeof h, 1, f) == 1 && std::memcmp(h.magic, kLodMagic, 4) == 0 && h.version == kLodVersion && h.compiled_time == compiled_time &&
+                 h.index_count == data.index_count && h.lod_count >= 1 && h.lod_count <= CachedMesh::kMaxLods &&
+                 std::memcmp(h.sizes, m.lod_screen_size, sizeof h.sizes) == 0;
+        for (u32 k = 1; cached && k < h.lod_count; ++k) {
+            cached = h.counts[k - 1] <= data.index_count && std::fread(out[k - 1], sizeof(u32), h.counts[k - 1], f) == h.counts[k - 1];
+            for (u32 i = 0; cached && i < h.counts[k - 1]; ++i) cached = out[k - 1][i] < data.vertex_count;  // a damaged file must not index past the vertices
+        }
+        std::fclose(f);
+    }
+    if (!cached) {
+        h = LodFileHeader{};
+        std::memcpy(h.magic, kLodMagic, 4);
+        h.version = kLodVersion;
+        h.compiled_time = compiled_time;
+        h.index_count = data.index_count;
+        std::memcpy(h.sizes, m.lod_screen_size, sizeof h.sizes);
+        h.lod_count = render::build_lods(data, m.lod_screen_size, out, h.counts, lock_border);
+        if (FILE* f = cache ? std::fopen(cache, "wb") : nullptr) {
+            bool ok = std::fwrite(&h, sizeof h, 1, f) == 1;
+            for (u32 k = 1; ok && k < h.lod_count; ++k) ok = std::fwrite(out[k - 1], sizeof(u32), h.counts[k - 1], f) == h.counts[k - 1];
+            std::fclose(f);
+            if (!ok) std::remove(cache);  // a disk full: built again next time
+        }
+    }
+    m.lod_count = h.lod_count;
+    for (u32 k = 1; k < m.lod_count; ++k) {
+        m.lod_indices[k] = device.create_buffer(rhi::BufferUsage::Index, out[k - 1], sizeof(u32) * h.counts[k - 1]);
+        m.lod_index_count[k] = h.counts[k - 1];
     }
     allocator.deallocate(indices);
 }
@@ -112,8 +145,15 @@ MeshCache::~MeshCache() {
     }
 }
 
+namespace {
+
+f64 ms_since(std::chrono::steady_clock::time_point start) { return std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count(); }
+
+} // namespace
+
 bool MeshCache::load(CachedMesh& entry) {
     if (entry.generated) return true;  // nothing on disk to reload
+    const auto started = std::chrono::steady_clock::now();
     render::MeshData data;
     asset::MeshBounds bounds;
     asset::Guid guid;
@@ -127,10 +167,8 @@ bool MeshCache::load(CachedMesh& entry) {
     const bool is_asset = asset::parse_mesh_key(key, guid, part);
     asset::AssetMeta meta;  // LOD screen sizes, re-read on every reload (editing them does not recompile; defaults for shapes)
     if (const asset::AssetRecord* record = is_asset ? registry_.find(guid) : nullptr) registry_.load_meta(*record, meta);
-    entry.lod_screen_size[0] = 1e30f;
-    entry.lod_screen_size[1] = meta.lod1_screen_size;
-    entry.lod_screen_size[2] = meta.lod2_screen_size;
-    entry.lod_screen_size[3] = meta.lod3_screen_size;
+    render::lod_screen_sizes(meta.lod1_screen_size, meta.lod2_screen_size, meta.lod3_screen_size, entry.lod_screen_size);
+    char lod_cache[320] = "";
     if (!is_asset) {
         if (entry.gpu.index_count) return true;  // built-ins never change
         if (!make_builtin(key, allocator_, data)) return false;
@@ -143,17 +181,23 @@ bool MeshCache::load(CachedMesh& entry) {
         if (entry.gpu.index_count && time == entry.compiled_time) return true;  // already current
         if (!asset::load_compiled_mesh(compiled, allocator_, data, &bounds)) return false;
         entry.compiled_time = time;
+        std::snprintf(lod_cache, sizeof lod_cache, "%s.lod", compiled);  // Box UV variants share it: same positions
     }
     if (boxed) render::box_project_uv(data, box.x, box.y, box.z);
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
     destroy_lods(device_, entry);
-    if (boxed || !compiled[0] || !upload_authored_lods(device_, allocator_, compiled, data, entry)) {  // the file's own LODs, else generated ones
+    const auto lods_started = std::chrono::steady_clock::now();
+    if (boxed || !compiled[0] || !upload_authored_lods(device_, allocator_, compiled, data, entry)) {  // the file's own LODs, else generated ones (cached)
         entry.gpu = render::upload_mesh(device_, data);
-        build_lods(device_, allocator_, data, entry);
+        build_lods(device_, allocator_, data, entry, false, lod_cache[0] ? lod_cache : nullptr, entry.compiled_time);
     }
+    entry.vertex_bytes = static_cast<u64>(data.vertex_count) * sizeof(rhi::MeshVertex);
+    entry.index_bytes = static_cast<u64>(data.index_count) * sizeof(u32);
+    lod_ms_ += ms_since(lods_started);
     entry.bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry.bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
     render::free_mesh(allocator_, data);
+    load_ms_ += ms_since(started);
     return true;
 }
 
@@ -300,13 +344,13 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     if (entry->gpu.index_count) render::destroy_mesh(device_, entry->gpu);
     destroy_lods(device_, *entry);
     entry->gpu = render::upload_mesh(device_, data);
+    entry->vertex_bytes = static_cast<u64>(data.vertex_count) * sizeof(rhi::MeshVertex);
+    entry->index_bytes = static_cast<u64>(data.index_count) * sizeof(u32);
     entry->lod_count = 1;
     entry->lod_screen_size[0] = 1e30f;
     if (std::strncmp(key, "Landscape:", 10) == 0) {  // terrain LODs (Unreal's landscape LODs); edges locked so neighbouring tiles meet
         const asset::AssetMeta defaults;
-        entry->lod_screen_size[1] = defaults.lod1_screen_size;
-        entry->lod_screen_size[2] = defaults.lod2_screen_size;
-        entry->lod_screen_size[3] = defaults.lod3_screen_size;
+        render::lod_screen_sizes(defaults.lod1_screen_size, defaults.lod2_screen_size, defaults.lod3_screen_size, entry->lod_screen_size);
         build_lods(device_, allocator_, data, *entry, true);
     }
     const asset::MeshBounds bounds = asset::compute_bounds(data);
@@ -330,6 +374,20 @@ i64 MeshCache::source_stamp(const char* key) const {
     i32 part = -1;
     const asset::AssetRecord* record = asset::parse_mesh_key(plain, guid, part) ? registry_.find(guid) : nullptr;
     return record ? static_cast<i64>(static_cast<u64>(record->source_time) * 31u + static_cast<u64>(record->meta_time) + 1u) : 0;
+}
+
+MeshCache::Memory MeshCache::memory() const {
+    Memory out;
+    out.load_ms = load_ms_;
+    out.lod_ms = lod_ms_;
+    for (const CachedMesh& m : meshes_) {
+        if (!m.gpu.index_count) continue;
+        ++out.meshes;
+        out.vertex_bytes += m.vertex_bytes;
+        out.index_bytes += m.index_bytes;
+        for (u32 k = 1; k < m.lod_count; ++k) out.lod_index_bytes += static_cast<u64>(m.lod_index_count[k]) * sizeof(u32);
+    }
+    return out;
 }
 
 void MeshCache::hot_reload() {
