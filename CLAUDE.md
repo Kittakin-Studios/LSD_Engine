@@ -203,5 +203,9 @@ Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material
 Lightmaps: Build Lighting charts every static mesh into one atlas (xatlas, World Settings > Lightmap Resolution) and bakes the sky,
 one bounce and the sun's visibility per texel; each lightmapped object is drawn from a copy of its mesh (MeshVertex::lightmap_uv,
 "Lightmap:<n>" in the mesh cache), the lit shader reads t7 / unit 7 (LightSetup::lightmap_info).
+Capacity (BACKLOG "Capacity (large projects)"): Unreal `_LOD<n>` / LOD group nodes become authored LODs and `UCX_` nodes are not drawn
+(compiled mesh v3); meshes, their generated LODs (`editor/lod_cache.*`) and textures compile on worker threads (`editor/asset_compiler.*`,
+Build > Compile All Assets, `asset.CompileAll`); `AssetRegistry` has hashed `find` / `find_named` / `best_match`, folders from the scan,
+parallel `.meta` reads; the Content Browser and Outliner are clipped and cached (50,000 assets / objects tested in a generated project).
 Later (see BACKLOG, partial items): remote console to other machines, Perforce /
 LFS locking, per-mesh LOD screen sizes.
