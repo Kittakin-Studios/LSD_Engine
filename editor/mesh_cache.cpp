@@ -4,6 +4,8 @@
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/log.h"
 
+#include <chrono>
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -44,30 +46,21 @@ void destroy_lods(rhi::Device& device, CachedMesh& m) {
 
 } // namespace
 
-u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const {
-    if (force_lod >= 0) return static_cast<u32>(force_lod) < lod_count ? static_cast<u32>(force_lod) : lod_count - 1;
-    u32 lod = 0;
-    while (lod + 1 < lod_count && radius_over_distance < lod_screen_size[lod + 1]) ++lod;
-    return lod;
-}
+u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const { return render::pick_lod(lod_screen_size, lod_count, radius_over_distance, force_lod); }
 
 namespace {
 
-// Simpler LODs for meshes with enough triangles to gain from them.
+// Simpler LODs for meshes with enough triangles to gain from them (render::build_lods), as index buffers over its vertices.
 void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false) {
     m.lod_count = 1;
-    constexpr u32 kMinTriangles = 512;
-    if (data.index_count / 3 < kMinTriangles) return;
-    u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count, alignof(u32)));
-    u32 previous = data.index_count;
-    f32 ratio = 0.5f;
-    for (u32 lod = 1; lod < CachedMesh::kMaxLods; ++lod, ratio *= 0.5f) {
-        const u32 count = asset::simplify_mesh(data, ratio, indices, lock_border);
-        if (count == 0 || count > previous * 3 / 4) break;  // the shape will not get simpler: stop
-        m.lod_indices[lod] = device.create_buffer(rhi::BufferUsage::Index, indices, sizeof(u32) * count);
-        m.lod_index_count[lod] = count;
-        m.lod_count = lod + 1;
-        previous = count;
+    u32* out[CachedMesh::kMaxLods - 1];
+    u32 counts[CachedMesh::kMaxLods - 1] = {};
+    u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count * (CachedMesh::kMaxLods - 1), alignof(u32)));
+    for (u32 k = 0; k + 1 < CachedMesh::kMaxLods; ++k) out[k] = indices + static_cast<usize>(k) * data.index_count;
+    m.lod_count = render::build_lods(data, m.lod_screen_size, out, counts, lock_border);
+    for (u32 k = 1; k < m.lod_count; ++k) {
+        m.lod_indices[k] = device.create_buffer(rhi::BufferUsage::Index, out[k - 1], sizeof(u32) * counts[k - 1]);
+        m.lod_index_count[k] = counts[k - 1];
     }
     allocator.deallocate(indices);
 }
@@ -81,8 +74,15 @@ MeshCache::~MeshCache() {
     }
 }
 
+namespace {
+
+f64 ms_since(std::chrono::steady_clock::time_point start) { return std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count(); }
+
+} // namespace
+
 bool MeshCache::load(CachedMesh& entry) {
     if (entry.generated) return true;  // nothing on disk to reload
+    const auto started = std::chrono::steady_clock::now();
     render::MeshData data;
     asset::MeshBounds bounds;
     asset::Guid guid;
@@ -96,10 +96,7 @@ bool MeshCache::load(CachedMesh& entry) {
     const bool is_asset = asset::parse_mesh_key(key, guid, part);
     asset::AssetMeta meta;  // LOD screen sizes, re-read on every reload (editing them does not recompile; defaults for shapes)
     if (const asset::AssetRecord* record = is_asset ? registry_.find(guid) : nullptr) registry_.load_meta(*record, meta);
-    entry.lod_screen_size[0] = 1e30f;
-    entry.lod_screen_size[1] = meta.lod1_screen_size;
-    entry.lod_screen_size[2] = meta.lod2_screen_size;
-    entry.lod_screen_size[3] = meta.lod3_screen_size;
+    render::lod_screen_sizes(meta.lod1_screen_size, meta.lod2_screen_size, meta.lod3_screen_size, entry.lod_screen_size);
     if (!is_asset) {
         if (entry.gpu.index_count) return true;  // built-ins never change
         if (!make_builtin(key, allocator_, data)) return false;
@@ -116,10 +113,15 @@ bool MeshCache::load(CachedMesh& entry) {
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
     destroy_lods(device_, entry);
     entry.gpu = render::upload_mesh(device_, data);
+    entry.vertex_bytes = static_cast<u64>(data.vertex_count) * sizeof(rhi::MeshVertex);
+    entry.index_bytes = static_cast<u64>(data.index_count) * sizeof(u32);
+    const auto lods_started = std::chrono::steady_clock::now();
     build_lods(device_, allocator_, data, entry);
+    lod_ms_ += ms_since(lods_started);
     entry.bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry.bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
     render::free_mesh(allocator_, data);
+    load_ms_ += ms_since(started);
     return true;
 }
 
@@ -215,13 +217,13 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     if (entry->gpu.index_count) render::destroy_mesh(device_, entry->gpu);
     destroy_lods(device_, *entry);
     entry->gpu = render::upload_mesh(device_, data);
+    entry->vertex_bytes = static_cast<u64>(data.vertex_count) * sizeof(rhi::MeshVertex);
+    entry->index_bytes = static_cast<u64>(data.index_count) * sizeof(u32);
     entry->lod_count = 1;
     entry->lod_screen_size[0] = 1e30f;
     if (std::strncmp(key, "Landscape:", 10) == 0) {  // terrain LODs (Unreal's landscape LODs); edges locked so neighbouring tiles meet
         const asset::AssetMeta defaults;
-        entry->lod_screen_size[1] = defaults.lod1_screen_size;
-        entry->lod_screen_size[2] = defaults.lod2_screen_size;
-        entry->lod_screen_size[3] = defaults.lod3_screen_size;
+        render::lod_screen_sizes(defaults.lod1_screen_size, defaults.lod2_screen_size, defaults.lod3_screen_size, entry->lod_screen_size);
         build_lods(device_, allocator_, data, *entry, true);
     }
     const asset::MeshBounds bounds = asset::compute_bounds(data);
@@ -235,6 +237,20 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     for (u32 i = 0; i < data.vertex_count; ++i) t.points.push_back({data.vertices[i].position[0], data.vertices[i].position[1], data.vertices[i].position[2]});
     for (u32 i = 0; i < data.vertex_count; ++i) t.uvs.insert(t.uvs.end(), data.vertices[i].uv, data.vertices[i].uv + 2);
     t.indices.assign(data.indices, data.indices + data.index_count);
+}
+
+MeshCache::Memory MeshCache::memory() const {
+    Memory out;
+    out.load_ms = load_ms_;
+    out.lod_ms = lod_ms_;
+    for (const CachedMesh& m : meshes_) {
+        if (!m.gpu.index_count) continue;
+        ++out.meshes;
+        out.vertex_bytes += m.vertex_bytes;
+        out.index_bytes += m.index_bytes;
+        for (u32 k = 1; k < m.lod_count; ++k) out.lod_index_bytes += static_cast<u64>(m.lod_index_count[k]) * sizeof(u32);
+    }
+    return out;
 }
 
 void MeshCache::hot_reload() {
