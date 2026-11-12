@@ -1,6 +1,7 @@
 #include "mesh_cache.h"
 
 #include "asset_compiler.h"
+#include "lod_cache.h"
 
 #include "lsd/asset/asset_meta.h"
 #include "lsd/asset/mesh_import.h"
@@ -51,59 +52,24 @@ u32 CachedMesh::pick_lod(f32 radius_over_distance, i32 force_lod) const { return
 
 namespace {
 
-// The LODs' indices kept in DerivedData beside the compiled mesh ("<compiled>.lod"), so a mesh loaded again reads them
-// instead of simplifying it again (most of a dense mesh's load time). Stale when the compiled mesh, its size or the
-// LOD screen sizes changed.
-struct LodFileHeader {
-    char magic[4];
-    u32 version;
-    i64 compiled_time;
-    u32 index_count, lod_count;
-    f32 sizes[CachedMesh::kMaxLods];
-    u32 counts[CachedMesh::kMaxLods - 1];
-};
-constexpr char kLodMagic[4] = {'L', 'S', 'D', 'L'};
-constexpr u32 kLodVersion = 1;  // bump when render::build_lods changes what it makes
-
 // Simpler LODs for meshes with enough triangles to gain from them (render::build_lods), as index buffers over its
-// vertices; `cache` (may be null): the file they are read from when current, else written to.
+// vertices; `cache` (may be null): the file they are read from when current, else written to (lod_cache.h).
 void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshData& data, CachedMesh& m, bool lock_border = false, const char* cache = nullptr,
                 i64 compiled_time = 0) {
     m.lod_count = 1;
     u32* out[CachedMesh::kMaxLods - 1];
     u32* indices = static_cast<u32*>(allocator.allocate(sizeof(u32) * data.index_count * (CachedMesh::kMaxLods - 1), alignof(u32)));
     for (u32 k = 0; k + 1 < CachedMesh::kMaxLods; ++k) out[k] = indices + static_cast<usize>(k) * data.index_count;
-    LodFileHeader h{};
-    bool cached = false;
-    if (FILE* f = cache ? std::fopen(cache, "rb") : nullptr) {
-        cached = std::fread(&h, sizeof h, 1, f) == 1 && std::memcmp(h.magic, kLodMagic, 4) == 0 && h.version == kLodVersion && h.compiled_time == compiled_time &&
-                 h.index_count == data.index_count && h.lod_count >= 1 && h.lod_count <= CachedMesh::kMaxLods &&
-                 std::memcmp(h.sizes, m.lod_screen_size, sizeof h.sizes) == 0;
-        for (u32 k = 1; cached && k < h.lod_count; ++k) {
-            cached = h.counts[k - 1] <= data.index_count && std::fread(out[k - 1], sizeof(u32), h.counts[k - 1], f) == h.counts[k - 1];
-            for (u32 i = 0; cached && i < h.counts[k - 1]; ++i) cached = out[k - 1][i] < data.vertex_count;  // a damaged file must not index past the vertices
-        }
-        std::fclose(f);
+    LodSet lods;
+    if (!read_lod_cache(cache, compiled_time, data, m.lod_screen_size, out, lods)) {
+        lods = LodSet{};
+        lods.lod_count = render::build_lods(data, m.lod_screen_size, out, lods.counts, lock_border);
+        write_lod_cache(cache, compiled_time, data, m.lod_screen_size, out, lods);
     }
-    if (!cached) {
-        h = LodFileHeader{};
-        std::memcpy(h.magic, kLodMagic, 4);
-        h.version = kLodVersion;
-        h.compiled_time = compiled_time;
-        h.index_count = data.index_count;
-        std::memcpy(h.sizes, m.lod_screen_size, sizeof h.sizes);
-        h.lod_count = render::build_lods(data, m.lod_screen_size, out, h.counts, lock_border);
-        if (FILE* f = cache ? std::fopen(cache, "wb") : nullptr) {
-            bool ok = std::fwrite(&h, sizeof h, 1, f) == 1;
-            for (u32 k = 1; ok && k < h.lod_count; ++k) ok = std::fwrite(out[k - 1], sizeof(u32), h.counts[k - 1], f) == h.counts[k - 1];
-            std::fclose(f);
-            if (!ok) std::remove(cache);  // a disk full: built again next time
-        }
-    }
-    m.lod_count = h.lod_count;
+    m.lod_count = lods.lod_count;
     for (u32 k = 1; k < m.lod_count; ++k) {
-        m.lod_indices[k] = device.create_buffer(rhi::BufferUsage::Index, out[k - 1], sizeof(u32) * h.counts[k - 1]);
-        m.lod_index_count[k] = h.counts[k - 1];
+        m.lod_indices[k] = device.create_buffer(rhi::BufferUsage::Index, out[k - 1], sizeof(u32) * lods.counts[k - 1]);
+        m.lod_index_count[k] = lods.counts[k - 1];
     }
     allocator.deallocate(indices);
 }

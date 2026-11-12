@@ -113,6 +113,7 @@ struct MeshCompileJob {
     f32 smoothing_angle = 30.0f;
     i32 part = -1;
     CompiledMeshSource stamp;
+    f32 lod_screen_size[3] = {};  // the .meta's LOD 1..3 Screen Size (generated LODs are cached per these)
 };
 bool prepare_mesh_compile(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, i32 part, MeshCompileJob& job);
 bool run_mesh_compile(const MeshCompileJob& job, Allocator& allocator);

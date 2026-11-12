@@ -1403,9 +1403,12 @@ static void test_asset_compiler() {
     const editor::compiler::Progress p = editor::compiler::progress();
     CHECK(p.done == p.total && p.failed == 0 && !editor::compiler::busy());
     CHECK(editor::compiler::compile_all(registry, data.c_str(), false) == 0);  // nothing left
-    u32 files = 0;
-    for (const auto& entry : fs::directory_iterator(data)) files += entry.path().extension() == ".lsdmesh" ? 1u : 0u;
-    CHECK(files == kMeshes);
+    u32 files = 0, lod_files = 0;  // each compiled mesh with its generated LODs beside it (built on the workers too)
+    for (const auto& entry : fs::directory_iterator(data)) {
+        files += entry.path().extension() == ".lsdmesh" ? 1u : 0u;
+        lod_files += entry.path().extension() == ".lod" ? 1u : 0u;
+    }
+    CHECK(files == kMeshes && lod_files == kMeshes);
     editor::compiler::shutdown();
     fs::remove_all(root);
 }
