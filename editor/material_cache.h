@@ -85,6 +85,7 @@ private:
         u64 bytes = 0;          // and what it holds there, every mip
         u32 last_used = 0;      // frame it was last asked for (the pool squeezes the least recent first)
         bool streams = true;    // its .meta's Mip Streaming
+        u32 cap = 0;            // the most it may load (its Max Size, the small-video-memory cap); 0: no limit
     };
     u32 frame_ = 0;
     u32 requests_ = 0, denied_ = 0;

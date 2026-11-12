@@ -97,6 +97,7 @@ bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) 
         e.modified = texture_time(path);
         max_size = size_cap_;
         e.streams = true;
+        e.cap = max_size;
         return true;
     }
     if (!path_of(registry_, e.guid, path, capacity)) return false;
@@ -108,6 +109,7 @@ bool TextureCache::prepare(Entry& e, char* path, usize capacity, u32& max_size) 
     max_size = meta.max_size;
     e.streams = meta.mip_streaming;
     if (size_cap_ && (!max_size || max_size > size_cap_)) max_size = size_cap_;  // little video memory: smaller mips
+    e.cap = max_size;
     return true;
 }
 
@@ -210,7 +212,7 @@ void TextureCache::update(u32 budget) {
         Entry& e = entries_[f.entry];
         e.pending = false;
         if (f.data) {
-            e.complete = !e.requested || (f.data->width < e.requested && f.data->height < e.requested);  // smaller than the cap: all of it
+            e.complete = render::stream_load_complete(f.data->width, f.data->height, e.requested, e.cap);
             upload(e, *f.data);
         } else {
             e.failed = !e.texture.valid();
@@ -229,6 +231,7 @@ void TextureCache::update(u32 budget) {
         t.side = e.failed || !e.texture.valid() ? 0u : e.side;
         t.bytes = e.texture.valid() ? e.bytes : 0;
         t.wanted = e.want ? render::stream_size(e.want) : 0u;
+        if (e.cap && t.wanted > e.cap) t.wanted = e.cap;  // never asks past its cap (each such ask was a reload or a denial, every plan)
         t.last_used = e.last_used;
         t.complete = e.complete;
         t.streams = e.streams;

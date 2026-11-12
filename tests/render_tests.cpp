@@ -313,6 +313,9 @@ static void test_texture_streaming() {
     kept[1].side = 512; kept[1].bytes = mb; kept[1].wanted = 2048; kept[1].complete = true;
     p = plan_texture_streaming(kept, 2, 100 * mb, out);
     CHECK(out[0] == 0 && out[1] == 0);
+    // A load is all there is when smaller than asked, or asked at the texture's cap (its Max Size, little video memory).
+    CHECK(stream_load_complete(512, 512, 0, 0) && stream_load_complete(256, 128, 512, 0) && !stream_load_complete(512, 512, 512, 0));
+    CHECK(stream_load_complete(1024, 1024, 1024, 1024) && !stream_load_complete(512, 512, 512, 1024));
 }
 
 static void test_lods() {

@@ -2,6 +2,10 @@
 
 namespace lsd::render {
 
+bool stream_load_complete(u32 width, u32 height, u32 requested, u32 cap) {
+    return !requested || (width < requested && height < requested) || (cap && requested >= cap);
+}
+
 u32 stream_size(u32 want) {
     if (want == kStreamWhole) return kStreamWhole;
     u32 size = kStreamMinSide;

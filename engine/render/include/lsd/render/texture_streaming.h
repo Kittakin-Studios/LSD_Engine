@@ -29,6 +29,11 @@ struct StreamPlan {
     u64 resident_bytes = 0;  // before this plan
 };
 
+// Whether a load of `width` x `height`, asked for at `requested` (0: all of it) with the texture allowed at most `cap`
+// (its Max Size or the small-video-memory cap; 0: none), is all the texture will ever be: smaller than asked, or
+// exactly the cap. Without the cap case a capped texture counted as incomplete and was loaded again every plan.
+bool stream_load_complete(u32 width, u32 height, u32 requested, u32 cap);
+
 // One look at every texture: out[i] = the side to load texture i at now (kStreamWhole: all of it),
 // or 0 to keep what it has. Drawn ones get what the view needs: sharper as soon as it fits in `pool_bytes`, smaller
 // once a quarter of it is enough. While the resident total is over the pool, the least recently drawn (then the largest)

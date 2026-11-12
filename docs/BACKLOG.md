@@ -314,7 +314,40 @@ Measured in Release on D3D12 with `stat dump` and a stress level of 3000 objects
 - [x] Each Static Mesh's world matrix and mesh worked out once a frame and shared by every pass: render CPU 3.3 -> 1.95 ms at 3000 objects
 - [x] Navmesh reused between Plays while its inputs hash the same (Play start 191 -> 5 ms at 3000 objects)
 - [x] GPU timings: timestamp queries in D3D12 and OpenGL (read a frame or two later, no stall), `stat dump` prints shadows / scene / post / UI (3000 objects: 1.3 ms of GPU on this PC; post is the largest part)
-- [x] GPU-driven culling: Instanced Static Meshes and automatic instancing batches with 32+ copies are culled on the GPU (`r.GPUCulling`, on): a compute pass (engine/rhi/shaders/cull.hlsl, `rhi::CullConstants`) tests each copy's box against the view frustum (`rhi::frustum_planes` / `instance_visible`, the same test on the CPU for the tests), picks its LOD from its screen size (`rhi::instance_lod`, as pick_lod), tests it against a Hi-Z depth pyramid built from the main viewport's depth (`PostDraw::build_hiz`, the HIZ_PASS kernel; one frame late, so a copy coming out from behind a wall can show a frame late), packs the visible rows per LOD, and the draws run through indirect arguments per LOD and batch of 256 (D3D12 ExecuteIndirect, OpenGL glDrawElementsIndirect, Vulkan vkCmdDrawIndexedIndirect); shadow passes cull Instanced Static Mesh copies against the light's view on the GPU (D3D12, OpenGL; Vulkan on the CPU). Shortcut: ordinary objects take part only as automatic instancing batches, not through one GPU scene buffer
+- [x] GPU-driven culling (since Nov 2026 for draws of 1024+ copies only: see Capacity): Instanced Static Meshes and automatic instancing batches with 32+ copies are culled on the GPU (`r.GPUCulling`, on): a compute pass (engine/rhi/shaders/cull.hlsl, `rhi::CullConstants`) tests each copy's box against the view frustum (`rhi::frustum_planes` / `instance_visible`, the same test on the CPU for the tests), picks its LOD from its screen size (`rhi::instance_lod`, as pick_lod), tests it against a Hi-Z depth pyramid built from the main viewport's depth (`PostDraw::build_hiz`, the HIZ_PASS kernel; one frame late, so a copy coming out from behind a wall can show a frame late), packs the visible rows per LOD, and the draws run through indirect arguments per LOD and batch of 256 (D3D12 ExecuteIndirect, OpenGL glDrawElementsIndirect, Vulkan vkCmdDrawIndexedIndirect); shadow passes cull Instanced Static Mesh copies against the light's view on the GPU (D3D12, OpenGL; Vulkan on the CPU). Shortcut: ordinary objects take part only as automatic instancing batches, not through one GPU scene buffer
+
+## Capacity (large scenes)
+
+Benchmark: a copy of Carioca Express's Rio level (a city of cube buildings, two favela hills from an Unreal pack:
+445 kit houses as ~1 900 objects and 7 142 Instanced Static Mesh copies, 531 meshes of 5k-200k triangles, ~200
+materials with 2K-4K textures, 45 cars), Release, D3D12, RX 7900 XTX, editor view 1245 x 490, `stat dump`.
+
+| View | Before: triangles view + shadows, GPU ms | After |
+| --- | --- | --- |
+| Favela far (`camera -250 90 25 130 -15`) | 5.66 M + 6.37 M, 12.8-13.8 | 0.94 M + 1.10 M, 3.1-4.6 |
+| Favela mid (`-270 150 15 130 -10`) | 4.85 M + 7.62 M, 10.8-11.2 | 0.75 M + 1.82 M, 2.9-4.5 |
+| Street (`-291 195 2 90 0`) | 4.04 M, 4.6-5.1 | 0.50 M, 2.3-2.7 |
+| City (`200 -100 30 30 -10`) | 3.21 M, 2.9-3.2 | 0.02 M, 0.6-1.1 |
+| Play, walking | 9.8 M (estimate), GPU 10.1 | 0.56 M + 2.6 M shadows, 4.3-5.1 |
+
+(Before, the triangle counts are what the CPU and the GPU culling's frustum / LOD tests keep; the old `stat dump`
+counted every instanced copy at LOD 0.) Meshes on the GPU: 250, 19 MB vertices, 8 MB indices, 5.5 MB LOD indices;
+textures 480 MB resident; video memory in use 1.1 GB. Screenshots compared on OpenGL: street identical, far view
+differs only at edges of distant houses.
+
+- [x] Instanced Static Mesh copies pick their LOD each (were LOD 0 below 32 copies, and always LOD 0 in shadows): `FrameInstances` once per view, `render::sort_by_lod`, drawn per LOD in the view and every shadow tile
+- [x] Auto LODs to a triangle budget (about one per four pixels at the LOD's screen size, outline within a pixel), up to 5 of them, from 64 triangles (was 512: the pack's 452-triangle wall piece, 3 113 copies, had none), sloppy clustering for far LODs that stall (`render::build_lods`, tested in render_tests)
+- [x] `r.MinScreenSize` (0.0015): specks and their shadows are not drawn
+- [x] GPU culling only for draws of 1024+ copies: each GPU-culled draw drained the pipeline (its compute passes share one output buffer), 5 ms of the far view's 10 ms scene
+- [x] Generated LODs cached in DerivedData (`<compiled>.lod`) and built on the compile workers: loading the benchmark's meshes 1 767 ms -> 598 ms warm
+- [x] Texture streaming under a small `-vram`: a texture capped by Max Size or the video-memory cap was reloaded (or denied) every half second; 6 990 requests -> 170 at `-vram=2048`, 1 704 held back -> 0 at `-vram=4096`. Both run stable at 2 GB (pool 512 MB, 131 MB resident) and 4 GB
+- [x] `stat dump`: shadow draws / triangles, instanced triangles, the first view's CPU time by part, the scene's GPU time split (meshes, effects, normals / velocity), mesh memory and load time, video memory in use
+- [ ] Normals and velocity in one pass, or from the main pass as extra render targets: today SSR / AO and TAA / motion blur each redraw the opaque meshes (1.0-1.5 ms, about half the scene at the far view). Needs multiple render targets in the RHI (three backends) and the lit shader writing them: a few days
+- [ ] One GPU cull dispatch per view for every instanced draw (a shared output buffer per draw, indirect draws from slices), so GPU culling pays off below 1 024 copies too
+- [ ] Persistent render proxies (Unreal's scene proxies): static meshes' bounds, LOD sizes, material lookups and batch keys kept between frames instead of rebuilt per view (static meshes CPU 2-4 ms for ~3 800 objects at the far view)
+- [ ] 16-bit indices for meshes under 65 536 vertices and quantised vertices (half positions / octahedral normals): would save about 6 MB + 10 MB here; small next to textures, not done
+- [ ] Mesh streaming (drop far meshes' LOD 0 from the GPU) and virtualised geometry (meshlets, Nanite-like clusters with a GPU hierarchy cut): what a scene of many unique 200k-triangle meshes up close needs. With the LODs above, this level does not; a multi-week renderer project
+- [ ] HLOD for Instanced Static Meshes (Build HLODs merges static meshes only)
 
 ## Vehicles, transports, movers
 

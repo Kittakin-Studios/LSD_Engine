@@ -2672,6 +2672,59 @@ in the project folder, the splash too).
 - Logs: `Saved/Logs/Editor.log` (Game.log in a packaged game); the previous run is kept as
   `-previous`. Crashes: `Saved/Crashes/<date-time>/crash.dmp` + log (open the dump in Visual Studio).
 
+### Large scenes (many dense meshes and big textures)
+
+A city of kit buildings from a Marketplace pack (thousands of objects, meshes of 5 000 to 200 000 triangles,
+2K-4K textures) runs without hand work; this is what the engine does for it and what you can set.
+
+**Automatic** (nothing to set):
+
+- **Auto LODs** for every static mesh of 64+ triangles: up to five simpler versions, each built to about one
+  triangle per four pixels at the size it takes over, never further than about a pixel off the real outline
+  (section 11, Mesh Editor). A mesh with its own LODs in the file (Unreal's `_LOD1` nodes, FBX LOD groups) uses
+  those instead. They are built in the background and kept in DerivedData, so a project opens faster the
+  second time.
+- **Each copy of an Instanced Static Mesh** (Foliage, PCG output, kit pieces placed by the thousand) picks its
+  own LOD by its own distance, in the view and in every shadow, and copies outside the view or behind the big
+  nearby walls are left out.
+- **Shadows** draw the LOD the camera sees, so a far house casts its simple shape.
+- **Specks are not drawn**: anything under about three pixels across on screen, and its shadow.
+- **Automatic instancing**: separate objects with the same mesh, LOD and material are drawn in one call.
+- **Texture streaming** and the **texture pool** (above) keep video memory in budget; `-vram=<MB>` pretends the
+  card has that much, to check a level still runs on a 2 GB or 4 GB card.
+
+**What you set** (Unreal's equivalents in brackets):
+
+| Setting | Where | What it does |
+| --- | --- | --- |
+| LOD 1 / 2 / 3 Screen Size | Mesh Editor (the mesh's import settings) | How small the mesh must look before each LOD takes over; larger = sooner. LOD 4 / 5 follow at half and a quarter of LOD 3's |
+| Max Draw Distance | Static Mesh in Details | Not drawn (nor its shadow) beyond it (Max Draw Distance) |
+| Cull Distance Volume | Place tab | The same by object size inside a box (Cull Distance Volume) |
+| HLOD | World Settings > HLOD, then Build > Build HLODs | Far cells of static meshes become one merged proxy each (Hierarchical LOD) |
+| View Distance | Engine Scalability | Every LOD switch and cull distance x 0.5 .. x 1.5 |
+| `r.MinScreenSize` | console | Smallest drawn size, bounding radius over distance (0.0015; 0 = draw everything) |
+| `r.ForceLOD n` | console | Draw everything at LOD n, to look at an LOD (-1: by distance) |
+| `r.GPUCulling` | console | Draws of 1024+ copies culled on the GPU (on); smaller ones are culled on the CPU, which is faster for them |
+| Mip Streaming / Max Size | Texture in Details | Never Stream a hero texture; cap a texture's size |
+
+**Reading `stat dump`** on a big scene (look from where it is slowest, then type `stat dump`):
+
+- `draws, triangles`: the first view's. `instanced triangles`: how many of those come from Instanced Static
+  Meshes. `shadows: draws, triangles`: every shadow pass of the frame together.
+- `render cpu: shadows, occluders, static meshes, instanced, rest`: where the CPU's drawing time goes.
+- `gpu: shadows, scene (meshes, effects, normals / velocity), post`: where the GPU's goes. The normals /
+  velocity part redraws the scene's opaque meshes for SSR / AO and TAA / motion blur (about half the scene).
+- `meshes n: vertices, indices, LOD indices MB, loading took .. ms (LODs ..)`: mesh memory and load time.
+  `video memory used X of Y MB`: the whole process's, as the driver reports it (D3D12, Vulkan).
+- `since the last dump: worst frame, frames over 50 ms`: hitches (the first look at a new area loads its meshes
+  and textures).
+- `texture pool: resident X MB of Y MB, n requests (n loading), n held back`: requests should settle when the
+  camera stands still; many held back means the pool is too small for what is in view.
+
+Measured on the favela benchmark (D3D12, RX 7900 XTX, far view over 1 900 kit objects and 7 142 instanced copies):
+5.7 million triangles in view and 6.4 million in the shadows, 12.8 ms of GPU, became 0.94 million and 1.1 million,
+about 3.5 ms; the street view went from 4.6 to 2.4 ms. See BACKLOG, "Capacity (large scenes)".
+
 ---
 
 ## 19. Reference

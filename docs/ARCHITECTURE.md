@@ -242,7 +242,9 @@ one step a plan, down to 64; drawn ones go smaller once a quarter of their side 
 to what they want if it fits, else one step, else they are counted as held back. Each change is a whole load at
 that Max Size from `DerivedData/Textures` (a cached copy per size; the old texture stays until the new one is up),
 so every backend needs nothing new. A texture's `.meta` Mip Streaming off loads all of it always and is never
-squeezed. `stat dump` prints `texture pool: resident ... of ... MB`. Shortcut: whole-texture loads per size, not
+squeezed. A texture's cap (its Max Size, or the small-video-memory cap from `-vram` / the budget) bounds its wanted side,
+and a load asked at the cap counts as complete (`render::stream_load_complete`): without that, capped textures were
+asked for again every plan. `stat dump` prints `texture pool: resident ... of ... MB`. Shortcut: whole-texture loads per size, not
 tiles of a virtual texture with a page table and feedback pass; sharper requests are first come first served.
 
 The post pass (`draw_post`) can read the scene target's depth (a sampleable depth texture on both
