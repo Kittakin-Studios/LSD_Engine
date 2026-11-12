@@ -3,6 +3,7 @@ add_library(lsd_rhi STATIC
   src/culling.cpp
   src/color_vision.cpp
   src/device_factory.cpp
+  src/shader_cache.cpp
 )
 target_include_directories(lsd_rhi PUBLIC include)
 target_link_libraries(lsd_rhi PUBLIC lsd_foundation PRIVATE SDL3::SDL3-static imgui)

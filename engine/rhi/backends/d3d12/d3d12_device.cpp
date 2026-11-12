@@ -1,6 +1,7 @@
 // Direct3D 12 backend: adapter enumeration, live memory budget, swapchain, depth buffer,
 // immutable buffers, built-in lit-mesh / line / test-triangle pipelines and ImGui.
 #include "lsd/rhi/rhi.h"
+#include "lsd/rhi/shader_cache.h"
 #include "lsd/foundation/log.h"
 
 #include <windows.h>
@@ -13,12 +14,15 @@
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <utility>
 #include <vector>
 #include <string>
 #include <new>
+#include <thread>
 
 using Microsoft::WRL::ComPtr;
 
@@ -189,6 +193,11 @@ float4 ps_main(VsOut i) : SV_Target { return i.color * tex.Sample(samp, i.uv); }
 
 #include "post_hlsl.h"  // kPostHlsl: engine/rhi/shaders/post.hlsl
 
+std::atomic<u32> g_shader_compiles{0}, g_shader_cache_hits{0};  // the start-up line: shaders compiled, read back, and the time compiling took
+std::atomic<u64> g_shader_compile_ns{0};
+// The compiler and its flags, part of each cached shader's key (a change here compiles every shader again).
+constexpr char kShaderCompilerId[] = "d3dcompiler_47 flags 0 0";
+
 bool check(HRESULT hr, const char* what) {
     if (SUCCEEDED(hr)) return true;
     LSD_LOG_ERROR("d3d12", "%s failed (HRESULT 0x%08X)", what, static_cast<unsigned>(hr));
@@ -304,6 +313,7 @@ public:
         if (!check(device_->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&target_rtv_heap_)), "CreateDescriptorHeap (target RTV)")) return false;
         dsv_size_ = device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
+        const u64 started = SDL_GetTicksNS();
         if (!create_pipelines()) return false;
         if (!create_culling()) {  // optional: gpu_cull draws then draw every instance
             cull_signature_.Reset();
@@ -311,6 +321,8 @@ public:
         }
         if (!create_morphs()) morph_pso_.Reset();  // optional: morphs then mix on the CPU
         if (!create_gpu_particles()) gpu_particle_add_.Reset();  // optional: GPU emitters then run on the CPU
+        LSD_LOG_INFO("d3d12", "Built-in pipelines: %.0f ms (%u shaders compiled in %.0f ms, %u read from the shader cache)", static_cast<double>(SDL_GetTicksNS() - started) * 1e-6,
+                     g_shader_compiles.load(), static_cast<double>(g_shader_compile_ns.load()) * 1e-6, g_shader_cache_hits.load());
         return true;
     }
 
@@ -797,6 +809,10 @@ public:
         if (slot == kMaxMaterialShaders || !code) return {};
         std::string source = kMeshHlsl;
         source.insert(source.find("//@MATERIAL"), std::string(kMaterialPreludeHlsl) + code);
+        project_shaders_ = true;  // the project's: DerivedData/Shaders
+        const ShaderJob jobs[] = {{source.c_str(), source.size(), "vs_main", "vs_5_0", nullptr}, {source.c_str(), source.size(), "ps_main", "ps_5_0", nullptr},
+                                  {source.c_str(), source.size(), "vs_main", "vs_5_0", kSkinnedDefines}, {source.c_str(), source.size(), "ps_main", "ps_5_0", kSkinnedDefines}};
+        precompile(jobs, std::size(jobs));
         MaterialShader& m = material_shaders_[slot];
         bool ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.mesh) &&
                   create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.skinned, false, kSkinnedDefines);
@@ -804,6 +820,7 @@ public:
             ok = create_pipeline(source.c_str(), source.size() + 1, {kMeshLayout, 4}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[0][b], false, nullptr, b + 1) &&
                  create_pipeline(source.c_str(), source.size() + 1, {kSkinnedLayout, 5}, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true, m.blended[1][b], false, kSkinnedDefines, b + 1);
         }
+        project_shaders_ = false;
         if (!ok) {
             m.mesh.Reset();
             m.skinned.Reset();
@@ -828,7 +845,10 @@ public:
         source.insert(source.find("//@POST"), std::string(code) + "\n");
         PostShader& s = post_shaders_[slot];
         ComPtr<ID3DBlob> vs, ps;
-        if (!compile(source.c_str(), source.size(), "vs_full", "vs_5_0", vs) || !compile(source.c_str(), source.size(), "ps_composite", "ps_5_0", ps) ||
+        project_shaders_ = true;
+        const bool compiled = compile(source.c_str(), source.size(), "vs_full", "vs_5_0", vs) && compile(source.c_str(), source.size(), "ps_composite", "ps_5_0", ps);
+        project_shaders_ = false;
+        if (!compiled ||
             !make_post_pso(vs.Get(), ps.Get(), false, s.pso) || !make_post_pso(vs.Get(), ps.Get(), false, s.pso_window, kBackBufferFormat)) {
             s.pso.Reset();
             return {};
@@ -1968,6 +1988,14 @@ private:
             particle_buffers_[i]->Map(0, &no_read, reinterpret_cast<void**>(&particle_mapped_[i]));
         }
 
+        {
+            const usize n = sizeof kMeshHlsl - 1;
+            const ShaderJob slow[] = {{kMeshHlsl, n, "vs_main", "vs_5_0", nullptr},           {kMeshHlsl, n, "ps_main", "ps_5_0", nullptr},
+                                      {kMeshHlsl, n, "vs_main", "vs_5_0", kSkinnedDefines},   {kMeshHlsl, n, "ps_main", "ps_5_0", kSkinnedDefines},
+                                      {kMeshHlsl, n, "vs_main", "vs_5_0", kInstancedDefines}, {kMeshHlsl, n, "ps_main", "ps_5_0", kInstancedDefines},
+                                      {kMeshHlsl, n, "vs_sky", "vs_5_0", nullptr},            {kMeshHlsl, n, "ps_sky", "ps_5_0", nullptr}};
+            precompile(slow, std::size(slow));
+        }
         const D3D12_INPUT_ELEMENT_DESC* mesh_layout = kMeshLayout;
         const D3D12_INPUT_ELEMENT_DESC* skinned_layout = kSkinnedLayout;
         const D3D_SHADER_MACRO* skinned_defines = kSkinnedDefines;
@@ -2530,15 +2558,50 @@ private:
         return true;
     }
 
-    static bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out,
-                        const D3D_SHADER_MACRO* defines = nullptr) {
+    // From the shader cache when it has it, else compiled and stored there (project_shaders_: the project's folder).
+    bool compile(const char* source, usize length, const char* entry, const char* target, ComPtr<ID3DBlob>& out,
+                 const D3D_SHADER_MACRO* defines = nullptr) const {
+        std::string macros;
+        for (const D3D_SHADER_MACRO* d = defines; d && d->Name; ++d) macros.append(d->Name).append("=").append(d->Definition ? d->Definition : "").append(";");
+        const u64 key = shader_cache_key({source, length}, entry, target, macros, kShaderCompilerId);
+        std::vector<u8> cached;
+        if (find_cached_shader(key, cached) && SUCCEEDED(D3DCreateBlob(cached.size(), &out))) {
+            std::memcpy(out->GetBufferPointer(), cached.data(), cached.size());
+            ++g_shader_cache_hits;
+            return true;
+        }
         ComPtr<ID3DBlob> errors;
+        const u64 started = SDL_GetTicksNS();
         const HRESULT hr = D3DCompile(source, length, "builtin.hlsl", defines, nullptr, entry, target, 0, 0, &out, &errors);
         if (FAILED(hr)) {
             LSD_LOG_ERROR("d3d12", "Shader %s failed: %s", entry, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "unknown error");
             return false;
         }
+        ++g_shader_compiles;
+        g_shader_compile_ns += SDL_GetTicksNS() - started;
+        store_cached_shader(shader_cache_folder(project_shaders_), key, out->GetBufferPointer(), out->GetBufferSize());
         return true;
+    }
+
+    // The slow shaders (FXC takes over a second for the lit mesh's pixel shader) compiled side by side into the
+    // shader cache; the pipelines built after them read them back. A cached one costs a file read.
+    struct ShaderJob {
+        const char* source;
+        usize length;
+        const char* entry;
+        const char* target;
+        const D3D_SHADER_MACRO* defines;
+    };
+    void precompile(const ShaderJob* jobs, usize count) const {
+        std::vector<std::thread> threads;
+        threads.reserve(count);
+        for (usize i = 0; i < count; ++i) {
+            threads.emplace_back([this, job = jobs[i]] {
+                ComPtr<ID3DBlob> blob;
+                compile(job.source, job.length, job.entry, job.target, blob, job.defines);
+            });
+        }
+        for (std::thread& t : threads) t.join();
     }
 
     void create_back_buffer_views() {
@@ -2659,6 +2722,7 @@ private:
     ComPtr<ID3D12PipelineState> post_motion_, post_prefilter_, post_down_, post_up_, post_composite_, post_fxaa_, post_ao_, post_ao_apply_, post_taa_, post_dof_, post_ssr_, post_meter_, post_expose_, post_outline_, post_velocity_;
     ComPtr<ID3D12PipelineState> post_composite_window_, post_fxaa_window_, ui_target_pipeline_;  // the window's format (kBackBufferFormat)
     DXGI_FORMAT pso_format_ = kTargetFormat;  // what create_pipeline builds for
+    bool project_shaders_ = false;  // compile() stores into the project's shader cache (Material Graphs, post materials), else the user's
     PostChain post_chains_[4];
     u32 post_chain_next_ = 0;
     bool hdr_output_ = false;  // the current LightSetup draws into a scene target

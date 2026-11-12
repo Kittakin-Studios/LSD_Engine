@@ -339,6 +339,7 @@ lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped 
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
 lsd::f32 g_worst_frame_ms = 0.0f;   // stat dump: the slowest frame and the hitches since the last dump
 lsd::u32 g_hitch_frames = 0;
+lsd::u32 g_timed_frames = 4;  // frames whose times go to the log ("startup"): the first ones, and the first ones of each Play
 // stat dump's breakdown of the frame's drawing: the shadow passes (every view's) and the CPU time of the first view's
 // draw_world by part. GPU-culled copies are counted as the frustum and LOD tests keep them (the Hi-Z test may drop more).
 struct DrawCounters {
@@ -2692,6 +2693,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     LSD_LOG_INFO("editor", "Graphics: %s on %s", lsd::rhi::to_string(device->backend()), device->adapter().name);
+    LSD_LOG_INFO("startup", "device and window ready at %.0f ms", static_cast<double>(SDL_GetTicksNS()) * 1e-6);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -2846,11 +2848,13 @@ int main(int argc, char** argv) {
                                                          : state.project.editor_startup_level;
     // Game code first: its own components must be known before a level that uses them is read.
     lsd::editor::game_module::load();  // the project's C / C++ scripts and components (Binaries/Game.dll), if any
+    LSD_LOG_INFO("startup", "assets scanned, opening the level at %.0f ms", static_cast<double>(SDL_GetTicksNS()) * 1e-6);
     if (!startup_level[0] || !fs::exists(startup_level) || !open_level(state, startup_level)) {
         new_level(state);
         // Nothing saved to come back to (first launch): pick a template. A saved project opens as it was.
         state.show_template_picker = !game_mode && !level_arg;
     }
+    LSD_LOG_INFO("startup", "level open at %.0f ms", static_cast<double>(SDL_GetTicksNS()) * 1e-6);
     if (state.settings.viewport_kinds) lsd::editor::set_viewport_kinds(state, state.settings.viewport_kinds);  // the views the project was left with
 
     // Crash recovery: a lock file left behind means the last session did not exit cleanly.
@@ -3152,6 +3156,10 @@ int main(int argc, char** argv) {
         last_tick = now;
         g_worst_frame_ms = dt * 1000.0f > g_worst_frame_ms ? dt * 1000.0f : g_worst_frame_ms;
         g_hitch_frames += dt > 0.05f ? 1u : 0u;
+        if (g_timed_frames) {  // the first frames of a launch or a Play: where the wait goes
+            --g_timed_frames;
+            LSD_LOG_INFO("startup", "frame took %.0f ms (at %.0f ms)", static_cast<double>(dt) * 1000.0, static_cast<double>(now) * 1e-6);
+        }
 
         // Pick up new, changed and deleted files once a second; recompile what changed.
         if (SDL_GetTicks() - last_scan > 1000 || state.reload_assets_now) {
@@ -3586,6 +3594,7 @@ int main(int argc, char** argv) {
             state.ejected = state.simulate_requested;
             state.mouse_captured = !state.ejected;
             LSD_LOG_INFO("editor", state.simulate_requested ? "Simulate" : "Play");
+            g_timed_frames = 8;
         }
         state.simulate_requested = false;
         state.play_requested = false;

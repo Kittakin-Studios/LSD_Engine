@@ -6,6 +6,7 @@
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
 #include "lsd/reflect/reflect.h"
+#include "lsd/rhi/shader_cache.h"
 #include "lsd/world/level.h"
 #include "lsd/world/world.h"
 
@@ -634,6 +635,12 @@ bool package_project(const ProjectSettings& project, const asset::AssetRegistry&
     if (!error) write_level_packages(registry, out);
     if (!error) fs::copy("Config", out / "Config", copy_options, error);
     if (!error && fs::exists("Binaries", error)) fs::copy("Binaries", out / "Binaries", copy_options, error);  // the C / C++ game code
+    if (!error) {  // compiled shaders (the project's and this PC's built-in ones): a player's first start reads them instead of compiling
+        // shortcut: copies the whole user cache, older engine builds' shaders too (a few MB at most); copy only what this build used if that grows.
+        std::error_code ignored;
+        fs::create_directories(out / "DerivedData" / "Shaders", ignored);
+        for (const bool project_folder : {true, false}) fs::copy(rhi::shader_cache_folder(project_folder), out / "DerivedData" / "Shaders", copy_options, ignored);
+    }
     if (error) {
         std::snprintf(message, capacity, "Copying into %s failed: %s", out.generic_string().c_str(), error.message().c_str());
         return false;

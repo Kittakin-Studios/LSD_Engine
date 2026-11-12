@@ -8,10 +8,12 @@
 
 #include <vector>
 #include "lsd/rhi/rhi.h"
+#include "lsd/rhi/shader_cache.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -369,7 +371,63 @@ static void test_lods() {
     free_mesh(heap, sphere);
 }
 
+// The shader cache: keys, hits and misses, damaged and foreign files (a temp folder, no GPU).
+static void test_shader_cache() {
+    using lsd::rhi::shader_cache_key;
+    const lsd::u64 key = shader_cache_key("float4 main() : SV_Target { return 1; }", "main", "ps_5_0", "", "fxc");
+    CHECK(key == shader_cache_key("float4 main() : SV_Target { return 1; }", "main", "ps_5_0", "", "fxc"));  // stable
+    CHECK(key != shader_cache_key("float4 main() : SV_Target { return 0; }", "main", "ps_5_0", "", "fxc"));  // source
+    CHECK(key != shader_cache_key("float4 main() : SV_Target { return 1; }", "main", "vs_5_0", "", "fxc"));  // target
+    CHECK(key != shader_cache_key("float4 main() : SV_Target { return 1; }", "main", "ps_5_0", "SKINNED=1;", "fxc"));  // defines
+    CHECK(key != shader_cache_key("float4 main() : SV_Target { return 1; }", "main", "ps_5_0", "", "dxc"));  // compiler
+    CHECK(shader_cache_key("ab", "c", "", "", "") != shader_cache_key("a", "bc", "", "", ""));  // parts do not run together
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / "lsd_shader_cache_test";
+    fs::remove_all(dir, ec);
+    const std::string folder = dir.string();
+    const lsd::u8 code[] = {0x44, 0x58, 0x42, 0x43, 1, 2, 3, 4, 5, 6, 7, 8};
+    std::vector<lsd::u8> out;
+    CHECK(!lsd::rhi::load_cached_shader(folder.c_str(), key, out));  // miss: nothing stored yet
+    CHECK(lsd::rhi::store_cached_shader(folder.c_str(), key, code, sizeof code));  // creates the folder
+    CHECK(lsd::rhi::load_cached_shader(folder.c_str(), key, out) && out.size() == sizeof code && std::memcmp(out.data(), code, sizeof code) == 0);
+    CHECK(!lsd::rhi::load_cached_shader(folder.c_str(), key + 1, out));  // another key: no file
+    fs::path file;
+    for (const fs::directory_entry& e : fs::directory_iterator(dir, ec)) file = e.path();
+    CHECK(file.extension() == ".lsdshader");  // one file, no temp left behind
+    {  // a file copied under another key's name is not that key's
+        fs::copy_file(file, dir / "0000000000000001.lsdshader", ec);
+        CHECK(!lsd::rhi::load_cached_shader(folder.c_str(), 1, out));
+    }
+    const auto damage = [&](long at, int byte) {
+        FILE* f = std::fopen(file.string().c_str(), "r+b");
+        if (!f) return;
+        std::fseek(f, at, SEEK_END);
+        std::fputc(byte, f);
+        std::fclose(f);
+    };
+    damage(-1, 0xEE);  // a flipped byte in the bytecode: the checksum catches it
+    CHECK(!lsd::rhi::load_cached_shader(folder.c_str(), key, out));
+    CHECK(lsd::rhi::store_cached_shader(folder.c_str(), key, code, sizeof code));  // compiled again: replaces it
+    CHECK(lsd::rhi::load_cached_shader(folder.c_str(), key, out) && out.size() == sizeof code);
+    fs::resize_file(file, fs::file_size(file, ec) - 3, ec);  // cut short (a crash mid-write of an older engine, a full disk)
+    CHECK(!lsd::rhi::load_cached_shader(folder.c_str(), key, out));
+    {  // longer than its header says
+        CHECK(lsd::rhi::store_cached_shader(folder.c_str(), key, code, sizeof code));
+        FILE* f = std::fopen(file.string().c_str(), "ab");
+        if (f) {
+            std::fputc(0, f);
+            std::fclose(f);
+        }
+        CHECK(!lsd::rhi::load_cached_shader(folder.c_str(), key, out));
+    }
+    CHECK(!lsd::rhi::store_cached_shader(folder.c_str(), key, code, 0));  // nothing to store
+    fs::remove_all(dir, ec);
+}
+
 int main() {
+    test_shader_cache();
     test_color_vision();
     test_reflection();
     test_math();

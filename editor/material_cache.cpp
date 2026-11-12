@@ -8,6 +8,7 @@
 #include "lsd/render/texture_streaming.h"
 #include "lsd/script/material_graph.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -353,7 +354,9 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
         e.failed = true;
         return;
     }
+    const auto started = std::chrono::steady_clock::now();
     e.shader = device_.create_material_shader(code.code.data());
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     if (!e.shader.valid()) {
         LSD_LOG_ERROR("material", "%s: the shader did not compile (see the messages above)", path);
         e.failed = true;
@@ -370,7 +373,7 @@ void MaterialCache::load_graph(Entry& e, const char* path) {
         e.texture_srgb[i] = code.textures[i].srgb;
     }
     resolve_textures(e);
-    LSD_LOG_INFO("material", shader_asset ? "Compiled shader %s" : "Compiled material graph %s", path);
+    LSD_LOG_INFO("material", shader_asset ? "Compiled shader %s (%.0f ms)" : "Compiled material graph %s (%.0f ms)", path, ms);
 }
 
 void MaterialCache::load(Entry& e) {

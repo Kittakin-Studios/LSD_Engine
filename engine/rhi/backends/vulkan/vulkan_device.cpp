@@ -10,6 +10,7 @@
 // Material Graph shaders compile at runtime through the Vulkan SDK's DXC when it is installed; GPU
 // culling of instanced draws runs shaders/cull.hlsl as compute with indirect draws.
 #include "lsd/rhi/rhi.h"
+#include "lsd/rhi/shader_cache.h"
 #include "lsd/foundation/log.h"
 
 #include <SDL3/SDL.h>
@@ -2454,6 +2455,15 @@ private:
     // shortcut: a process and temp files per stage (a few hundred ms a material); load dxcompiler in-process if it gets slow
     // `entry` (default <stage>_main) is renamed <stage>_main; `post`: post.hlsl's register shifts (t at 0, s from 16).
     bool compile_spirv(const std::string& source, const char* stage, const char* define, std::vector<u32>& out, const char* entry_name = nullptr, bool post = false) {
+        // The shader cache first (DerivedData/Shaders: a packaged game ships it, so it needs no DXC); the key holds DXC's arguments.
+        const std::string options = std::string(stage) + (entry_name ? entry_name : "") + (post ? " post-shifts" : "");
+        const u64 key = shader_cache_key(source, options, "spirv vulkan1.3", define ? define : "", "dxc");
+        std::vector<u8> cached;
+        if (find_cached_shader(key, cached) && cached.size() % 4 == 0) {
+            out.resize(cached.size() / 4);
+            std::memcpy(out.data(), cached.data(), cached.size());
+            return true;
+        }
         const std::filesystem::path dxc = dxc_path();
         if (dxc.empty()) {
             if (!warned_dxc_) LSD_LOG_INFO("vulkan", "Material Graph materials draw with the built-in material on Vulkan: the Vulkan SDK's DXC compiles them (not installed).");
@@ -2507,6 +2517,8 @@ private:
             std::string why((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             if (why.size() > 2000) why.resize(2000);
             LSD_LOG_ERROR("vulkan", "Material Graph shader (%s%s%s) did not compile:\n%s", stage, define ? " " : "", define ? define : "", why.c_str());
+        } else {
+            store_cached_shader(shader_cache_folder(true), key, out.data(), out.size() * 4);
         }
         std::filesystem::remove(hlsl, ec);
         std::filesystem::remove(spv, ec);
