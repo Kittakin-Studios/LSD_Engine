@@ -70,6 +70,7 @@ u64 navmesh_inputs_hash(const world::World& world, MeshCache& meshes, const std:
 namespace {
 // out null: only the inputs' hash into *input_hash.
 bool gather_and_build(const world::World& world, MeshCache& meshes, ai::NavMesh* out_mesh, u64* input_hash, bool* reused, const std::vector<world::Entity>* skip) {
+    meshes.finish_pending();  // every mesh's bounds, not only the compiled ones
     if (reused) *reused = false;
     // What physics collides with: each mesh's box, or its triangles when its Collision Shape is Mesh.
     std::vector<f32> verts;

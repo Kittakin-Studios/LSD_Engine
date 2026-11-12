@@ -45,6 +45,7 @@
 #include "debug_draw.h"
 #include "multi_user.h"
 #include "remote_console.h"
+#include "asset_compiler.h"
 #include "game_module.h"
 #include "source_control.h"
 #include "thumbnails.h"
@@ -1966,6 +1967,20 @@ void register_console(EditorState& s) {
         }
         lsd::editor::remote::print("no mesh with that name (asset.List)");
     }, &s, "asset.ImportMaterials <mesh>: Import Materials and Textures for a mesh (as its Content Browser menu)");
+    console::add_command("asset.CompileAll", [](void* user, const char*) {
+        auto& st = *static_cast<EditorState*>(user);
+        char line[160];
+        std::snprintf(line, sizeof line, "%u assets to compile (asset.CompileStatus; Build > Compile All Assets shows the progress)",
+                      lsd::editor::compiler::compile_all(*st.registry, kDataDir, st.device && st.device->supports_bc()));
+        lsd::editor::remote::print(line);
+    }, &s, "Compiles every mesh, and every texture the materials use, that is not in DerivedData yet, on worker threads (before a playtest)");
+    console::add_command("asset.CompileStatus", [](void*, const char* args) {
+        if (std::strcmp(args, "wait") == 0) lsd::editor::compiler::wait();
+        const lsd::editor::compiler::Progress p = lsd::editor::compiler::progress();
+        char line[128];
+        std::snprintf(line, sizeof line, "%s: %u of %u done, %u failed", lsd::editor::compiler::busy() ? "compiling" : "idle", p.done, p.total, p.failed);
+        lsd::editor::remote::print(line);
+    }, &s, "asset.CompileStatus [wait]: how far the background asset compiles are (wait: until they are done)");
     console::add_command("asset.CreateMaterial", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
         for (lsd::usize i = 0; i < st.registry->count(); ++i) {
@@ -4078,6 +4093,7 @@ int main(int argc, char** argv) {
     lsd::editor::shutdown_mesh_editor();
     lsd::editor::shutdown_prefab_editor();
     lsd::editor::source_control::stop();
+    lsd::editor::compiler::shutdown();  // background compiles: the running ones finish, the queued ones are dropped
     if (g_lighting_build) {  // let a running bake finish (it cannot be interrupted)
         g_lighting_build->thread.join();
         delete g_lighting_build;

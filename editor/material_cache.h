@@ -106,7 +106,7 @@ private:
         u32 entry;
         asset::TextureData* data;  // null: the file could not be read
     };
-    std::thread worker_;
+    std::vector<std::thread> workers_;  // decode / compress in parallel (a cold project's first BC compress of 4K maps)
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     std::vector<Job> jobs_;

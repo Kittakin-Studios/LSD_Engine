@@ -1,5 +1,7 @@
 #include "thumbnails.h"
 
+#include "asset_compiler.h"
+
 #include "material_cache.h"
 
 #include "lsd/asset/mesh_import.h"
@@ -110,6 +112,11 @@ void ThumbnailCache::render(const f32 background[4], u32 budget) {
         if (const asset::AssetRecord* r = registry_.find(e.guid)) e.source_time = r->source_time;  // also on failure: retry only after a change
         if (load_cached(e, e.source_time)) continue;  // another start saved this version already
         const asset::AssetRecord* r = registry_.find(e.guid);
+        if (r && r->type == asset::AssetType::Mesh) {  // not compiled yet: on a worker thread (no main-thread import), pictured when done
+            char key[33];
+            asset::to_string(r->guid, key);
+            if (compiler::queue_mesh(registry_, key, data_dir_)) continue;
+        }
         if (r && r->type == asset::AssetType::Sound) {  // drawn on the CPU: no render target, nothing to read back
             e.failed = !draw_waveform(e, *r, background);
             e.ready = !e.failed;

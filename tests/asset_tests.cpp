@@ -738,7 +738,70 @@ static void test_registry_scale(const fs::path& root) {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// Unreal-style files: _LOD<n> nodes become the mesh's own LODs (not baked into LOD 0), UCX_ hulls are not drawn,
+// neither shows up as a part; the compiled mesh keeps the LODs after LOD 0. Also an FBX LOD group (Maya).
+static void test_authored_lods(const fs::path& root) {
+    CHECK(asset::lod_from_node_name("SM_Rock_LOD1") == 1 && asset::lod_from_node_name("sm_rock_lod12") == 12 && asset::lod_from_node_name("SM_Rock_LOD0") == 0);
+    CHECK(asset::lod_from_node_name("SM_Lodge") == -1 && asset::lod_from_node_name("LOD1") == -1 && asset::lod_from_node_name("SM_Rock") == -1);
+    CHECK(asset::is_collision_node_name("UCX_SM_Rock_00") && asset::is_collision_node_name("ubx_Wall") && !asset::is_collision_node_name("UCXRock"));
+    HeapAllocator heap("lods");
+    fs::create_directories(root);
+    const fs::path obj = root / "SM_Box.obj";
+    {
+        std::ofstream f(obj);
+        f << "o SM_Box_LOD0\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3\nf 1 3 4\n"   // 2 triangles
+          << "o SM_Box_LOD1\nv 0 0 0\nv 1 0 0\nv 1 1 0\nf 5 6 7\n"                       // 1 triangle
+          << "o UCX_SM_Box_00\nv 100 0 0\nv 101 0 0\nv 101 1 0\nf 8 9 10\n"              // far away: not drawn
+          << "o SM_Box_LOD7\nv 0 0 0\nv 1 0 0\nv 1 1 0\nf 11 12 13\n";                   // deeper than LOD 3: left out
+    }
+    char error[256];
+    render::MeshData mesh;
+    asset::MeshImportExtras extras;
+    CHECK(asset::import_mesh(obj.string().c_str(), 1.0f, heap, mesh, error, sizeof error, -1, asset::kNormalsSmooth, 30.0f, &extras));
+    CHECK(mesh.index_count == 6 && extras.lod_count == 1 && extras.lods[0].index_count == 3);
+    CHECK(extras.collision_nodes == 1 && extras.skipped_lods == 1);
+    CHECK(asset::compute_bounds(mesh).max[0] < 2.0f);  // the hull at x = 100 is not in the mesh
+    {
+        Array<asset::MeshPart> parts(heap);
+        CHECK(asset::list_mesh_parts(obj.string().c_str(), parts, error, sizeof error) && parts.size() == 1);
+    }
+    // Compiled: LOD 0 as before, the LODs after it.
+    const std::string compiled = (root / "SM_Box.lsdmesh").string();
+    CHECK(asset::save_compiled_mesh(compiled.c_str(), mesh, {1, 2, 3}, extras.lods, extras.lod_count));
+    render::MeshData lod0;
+    CHECK(asset::load_compiled_mesh(compiled.c_str(), heap, lod0) && lod0.index_count == 6);
+    render::MeshData lods[asset::kMaxAuthoredLods];
+    u32 lod_count = 0;
+    CHECK(asset::load_compiled_lods(compiled.c_str(), heap, lods, lod_count) && lod_count == 1 && lods[0].index_count == 3 && lods[0].vertex_count == 3);
+    for (u32 l = 0; l < lod_count; ++l) render::free_mesh(heap, lods[l]);
+    render::free_mesh(heap, lod0);
+    render::free_mesh(heap, mesh);
+    for (u32 l = 0; l < extras.lod_count; ++l) render::free_mesh(heap, extras.lods[l]);
+    // Only LOD 1.. in the file: the most detailed becomes the mesh.
+    {
+        std::ofstream f(obj);
+        f << "o SM_Box_LOD1\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3\nf 1 3 4\no SM_Box_LOD2\nv 0 0 0\nv 1 0 0\nv 1 1 0\nf 5 6 7\n";
+    }
+    CHECK(asset::import_mesh(obj.string().c_str(), 1.0f, heap, mesh, error, sizeof error, -1, asset::kNormalsSmooth, 30.0f, &extras));
+    CHECK(mesh.index_count == 6 && extras.lod_count == 1 && extras.lods[0].index_count == 3);
+    render::free_mesh(heap, mesh);
+    for (u32 l = 0; l < extras.lod_count; ++l) render::free_mesh(heap, extras.lods[l]);
+    fs::remove(obj);
+    fs::remove(compiled);
+    // An FBX LOD group: its first child is LOD 0, the next ones its LODs.
+    const std::string group = std::string(LSD_UFBX_DATA_DIR) + "/maya_lod_group_7500_binary.fbx";
+    render::MeshData whole;
+    CHECK(asset::import_mesh(group.c_str(), 1.0f, heap, whole, error, sizeof error, -1, asset::kNormalsSmooth, 30.0f, &extras));
+    std::printf("  LOD group: LOD 0 %u triangles, %u LODs (LOD 1 %u triangles)\n", whole.index_count / 3, extras.lod_count,
+                extras.lod_count ? extras.lods[0].index_count / 3 : 0);
+    CHECK(extras.lod_count >= 1 && extras.lods[0].index_count < whole.index_count);
+    render::free_mesh(heap, whole);
+    for (u32 l = 0; l < extras.lod_count; ++l) render::free_mesh(heap, extras.lods[l]);
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
+    test_authored_lods(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_registry_scale(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_plugins_dlc(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_ies();

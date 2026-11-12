@@ -13,13 +13,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
+#include <thread>
 
 namespace lsd::asset {
 
 namespace {
 
 constexpr char kMagic[4] = {'L', 'S', 'D', 'M'};
-constexpr u32 kVersion = 2;  // 2: MeshVertex gained lightmap_uv
+constexpr u32 kVersion = 3;  // 2: MeshVertex gained lightmap_uv; 3: authored LODs after LOD 0 (and LOD / collision nodes no longer baked in)
 
 struct CompiledHeader {
     char magic[4];
@@ -31,6 +33,7 @@ struct CompiledHeader {
     u32 index_count;
     f32 bounds_min[3];
     f32 bounds_max[3];
+    u32 lod_count;  // authored LODs after LOD 0's data: each u32 vertex count, u32 index count, vertices, indices
 };
 
 bool has_extension(const char* path, const char* ext) {
@@ -104,9 +107,46 @@ void file_name(char* out, usize capacity, const char* path) {
     std::snprintf(out, capacity, "%s", name);
 }
 
+bool starts_with_nocase(const char* text, const char* prefix) {
+    for (; *prefix; ++text, ++prefix) {
+        if (std::toupper(static_cast<unsigned char>(*text)) != *prefix) return false;
+    }
+    return true;
+}
+
+// What a mesh node is for: drawn in LOD `lod` (0 = the mesh itself), or a collision shape (lod < 0).
+struct NodeRole {
+    i32 lod = 0;
+    bool collision = false;
+};
+
+// The soups an import fills: [0] LOD 0, [1..] authored LODs (null: not wanted); counts of what was left out.
+struct Soups {
+    Array<rhi::MeshVertex>* lod[1 + kMaxAuthoredLods] = {};
+    u32 collision_nodes = 0;
+    u32 skipped_lods = 0;
+};
+
+// FBX: the node or a parent named by the rules (UCX_..., _LOD<n>), or its place under an LOD group.
+NodeRole fbx_role(const ufbx_node* node) {
+    NodeRole role;
+    for (const ufbx_node* at = node; at && !at->is_root; at = at->parent) {
+        if (is_collision_node_name(at->name.data)) role.collision = true;
+        const i32 named = lod_from_node_name(at->name.data);
+        if (named > 0 && role.lod == 0) role.lod = named;
+        const ufbx_node* group = at->parent;
+        if (role.lod == 0 && group && group->attrib_type == UFBX_ELEMENT_LOD_GROUP) {  // children of an LOD group, in order
+            for (usize c = 0; c < group->children.count; ++c) {
+                if (group->children.data[c] == at) role.lod = static_cast<i32>(c);
+            }
+        }
+    }
+    return role;
+}
+
 // FBX: ufbx converts axes to Z-up right-handed and units to metres for us. A part is one material
-// slot of one mesh node. Fills `soup` with the triangles of `part` (all when < 0) and / or `parts`.
-bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error,
+// slot of one mesh node. Fills `soups` with the triangles of `part` (all when < 0) and / or `parts`.
+bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Soups* soups, Array<MeshPart>* parts, char* error,
               usize error_capacity) {
     ufbx_load_opts opts{};
     opts.target_axes = ufbx_axes_right_handed_z_up;
@@ -126,6 +166,15 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
         const ufbx_node* node = scene->nodes.data[n];
         const ufbx_mesh* mesh = node->mesh;
         if (!mesh) continue;
+        const NodeRole role = fbx_role(node);
+        if (role.collision || role.lod > 0) {  // not LOD 0: never a part; its triangles go to its LOD's soup (whole-file imports only)
+            if (soups && part < 0) {
+                if (role.collision) ++soups->collision_nodes;
+                else if (role.lod > static_cast<i32>(kMaxAuthoredLods)) ++soups->skipped_lods;
+            }
+            if (role.collision || role.lod > static_cast<i32>(kMaxAuthoredLods) || !soups || part >= 0 || !soups->lod[role.lod]) continue;
+        }
+        Array<rhi::MeshVertex>* soup = soups ? soups->lod[role.lod] : nullptr;
         // A single part stays in its node's space (the prefab places it); the whole file is baked together.
         MeshPart placed;
         const Mat4 residual = split_node_transform(from_ufbx(node->node_to_world), placed);
@@ -138,7 +187,7 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
         for (usize m = 0; m < mesh->material_parts.count; ++m) {
             const ufbx_mesh_part& mp = mesh->material_parts.data[m];
             if (mp.num_triangles == 0) continue;
-            if (parts) {
+            if (parts && role.lod == 0) {
                 MeshPart info;
                 // Per-instance materials live on the node, at the mesh's material indices.
                 if (const ufbx_material* mat = m < node->materials.count ? node->materials.data[m] : nullptr) {
@@ -181,7 +230,7 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
                     }
                 }
             }
-            ++k;
+            if (role.lod == 0) ++k;
         }
     }
     ufbx_free_scene(scene);
@@ -190,7 +239,7 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Array
 
 // glTF is Y-up right-handed in metres: rotate +90 degrees about X so Y becomes Z. A part is one
 // triangle primitive of one mesh node (each primitive has one material).
-bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error, usize error_capacity) {
+bool load_gltf(const char* path, f32 scale, i32 part, Soups* soups, Array<MeshPart>* parts, char* error, usize error_capacity) {
     cgltf_options options{};
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, path, &data) != cgltf_result_success || cgltf_load_buffers(&options, data, path) != cgltf_result_success) {
@@ -202,6 +251,20 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
     for (cgltf_size n = 0; n < data->nodes_count; ++n) {
         const cgltf_node& node = data->nodes[n];
         if (!node.mesh) continue;
+        NodeRole role;  // the same naming rules as FBX (UCX_..., _LOD<n>) on the node or a parent
+        for (const cgltf_node* at = &node; at; at = at->parent) {
+            const char* name = at->name ? at->name : "";
+            if (is_collision_node_name(name)) role.collision = true;
+            if (role.lod == 0 && lod_from_node_name(name) > 0) role.lod = lod_from_node_name(name);
+        }
+        if (role.collision || role.lod > 0) {
+            if (soups && part < 0) {
+                if (role.collision) ++soups->collision_nodes;
+                else if (role.lod > static_cast<i32>(kMaxAuthoredLods)) ++soups->skipped_lods;
+            }
+            if (role.collision || role.lod > static_cast<i32>(kMaxAuthoredLods) || !soups || part >= 0 || !soups->lod[role.lod]) continue;
+        }
+        Array<rhi::MeshVertex>* soup = soups ? soups->lod[role.lod] : nullptr;
         cgltf_float m[16];  // column-major world matrix
         cgltf_node_transform_world(&node, m);
         Mat4 node_world;  // in engine space: C * world * C^-1, C turning Y-up into Z-up
@@ -230,8 +293,8 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
             const cgltf_primitive& prim = node.mesh->primitives[p];
             const cgltf_accessor* pos = position_of(prim);
             if (!pos) continue;
-            const i32 this_part = k++;
-            if (parts) {
+            const i32 this_part = role.lod == 0 ? k++ : -1;
+            if (parts && role.lod == 0) {
                 MeshPart info;
                 if (const cgltf_material* mat = prim.material) {
                     if (mat->name) std::snprintf(info.material, sizeof info.material, "%s", mat->name);
@@ -288,11 +351,11 @@ bool load_gltf(const char* path, f32 scale, i32 part, Array<rhi::MeshVertex>* so
 
 namespace {
 
-bool load_source(const char* path, f32 scale, i32 part, Allocator& allocator, Array<rhi::MeshVertex>* soup, Array<MeshPart>* parts, char* error,
+bool load_source(const char* path, f32 scale, i32 part, Allocator& allocator, Soups* soups, Array<MeshPart>* parts, char* error,
                  usize error_capacity) {
     error[0] = '\0';
-    if (has_extension(path, ".fbx") || has_extension(path, ".obj")) return load_fbx(path, scale, part, allocator, soup, parts, error, error_capacity);  // ufbx reads OBJ too
-    if (has_extension(path, ".gltf") || has_extension(path, ".glb")) return load_gltf(path, scale, part, soup, parts, error, error_capacity);
+    if (has_extension(path, ".fbx") || has_extension(path, ".obj")) return load_fbx(path, scale, part, allocator, soups, parts, error, error_capacity);  // ufbx reads OBJ too
+    if (has_extension(path, ".gltf") || has_extension(path, ".glb")) return load_gltf(path, scale, part, soups, parts, error, error_capacity);
     std::snprintf(error, error_capacity, "Unsupported file type: %s", path);
     return false;
 }
@@ -302,6 +365,23 @@ bool load_source(const char* path, f32 scale, i32 part, Allocator& allocator, Ar
 bool list_mesh_parts(const char* path, Array<MeshPart>& out, char* error, usize error_capacity) {
     out.clear();
     return load_source(path, 1.0f, -1, out.allocator(), nullptr, &out, error, error_capacity);
+}
+
+bool is_collision_node_name(const char* name) {
+    if (!name) return false;
+    for (const char* prefix : {"UCX_", "UBX_", "USP_", "UCP_"}) {
+        if (starts_with_nocase(name, prefix)) return true;
+    }
+    return false;
+}
+
+i32 lod_from_node_name(const char* name) {
+    if (!name) return -1;
+    const usize n = std::strlen(name);
+    usize digits = 0;
+    while (digits < n && std::isdigit(static_cast<unsigned char>(name[n - 1 - digits]))) ++digits;
+    if (digits == 0 || digits > 2 || n < digits + 4 || !starts_with_nocase(name + n - digits - 4, "_LOD")) return -1;
+    return std::atoi(name + n - digits);
 }
 
 bool parse_mesh_key(const char* key, Guid& guid, i32& part) {
@@ -375,18 +455,11 @@ void compute_normals(void* vertices, usize count, usize stride, usize position_o
     }
 }
 
-bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part, u32 normals,
-                 f32 smoothing_angle) {
-    Array<rhi::MeshVertex> soup(allocator);  // unindexed triangle list
-    if (!load_source(path, scale, part, allocator, &soup, nullptr, error, error_capacity)) return false;
-    if (soup.empty()) {
-        if (part >= 0) std::snprintf(error, error_capacity, "No part %d in %s", part, path);
-        else std::snprintf(error, error_capacity, "No triangles found in %s", path);
-        return false;
-    }
-    compute_normals(soup.data(), soup.size(), normals, smoothing_angle, allocator);
+namespace {
 
-    // Weld identical vertices into an index buffer, then reorder triangles for the vertex cache.
+// Normals as asked, identical vertices welded into an index buffer, triangles reordered for the vertex cache.
+void weld(Array<rhi::MeshVertex>& soup, u32 normals, f32 smoothing_angle, Allocator& allocator, render::MeshData& out) {
+    compute_normals(soup.data(), soup.size(), normals, smoothing_angle, allocator);
     const usize count = soup.size();
     Array<u32> remap(allocator);
     remap.resize(count);
@@ -395,6 +468,35 @@ bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::Mesh
     meshopt_remapVertexBuffer(out.vertices, soup.data(), count, sizeof(rhi::MeshVertex), remap.data());
     meshopt_remapIndexBuffer(out.indices, nullptr, count, remap.data());
     meshopt_optimizeVertexCache(out.indices, out.indices, count, unique);
+}
+
+} // namespace
+
+bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part, u32 normals,
+                 f32 smoothing_angle, MeshImportExtras* extras) {
+    Array<rhi::MeshVertex> soup(allocator);  // unindexed triangle list
+    Array<rhi::MeshVertex> lod_soup[kMaxAuthoredLods] = {Array<rhi::MeshVertex>(allocator), Array<rhi::MeshVertex>(allocator), Array<rhi::MeshVertex>(allocator)};
+    Soups soups;
+    soups.lod[0] = &soup;
+    for (u32 l = 0; part < 0 && l < kMaxAuthoredLods; ++l) soups.lod[l + 1] = &lod_soup[l];
+    if (!load_source(path, scale, part, allocator, &soups, nullptr, error, error_capacity)) return false;
+    // Only "_LOD1".. nodes (no LOD 0): the most detailed one found is the mesh.
+    Array<rhi::MeshVertex>* levels[1 + kMaxAuthoredLods] = {&soup, &lod_soup[0], &lod_soup[1], &lod_soup[2]};
+    u32 first = 0;
+    while (first < 1 + kMaxAuthoredLods && levels[first]->empty()) ++first;
+    if (first == 1 + kMaxAuthoredLods) {
+        if (part >= 0) std::snprintf(error, error_capacity, "No part %d in %s", part, path);
+        else std::snprintf(error, error_capacity, "No triangles found in %s", path);
+        return false;
+    }
+    weld(*levels[first], normals, smoothing_angle, allocator, out);
+    if (!extras) return true;
+    *extras = MeshImportExtras{};
+    extras->collision_nodes = soups.collision_nodes;
+    extras->skipped_lods = soups.skipped_lods;
+    for (u32 l = first + 1; l < 1 + kMaxAuthoredLods && !levels[l]->empty(); ++l) {  // the next LODs in order: a gap ends the chain
+        weld(*levels[l], normals, smoothing_angle, allocator, extras->lods[extras->lod_count++]);
+    }
     return true;
 }
 
@@ -417,7 +519,7 @@ MeshBounds compute_bounds(const render::MeshData& mesh) {
     return b;
 }
 
-bool save_compiled_mesh(const char* path, const render::MeshData& mesh, const CompiledMeshSource& source) {
+bool save_compiled_mesh(const char* path, const render::MeshData& mesh, const CompiledMeshSource& source, const render::MeshData* lods, u32 lod_count) {
     CompiledHeader h{};
     std::memcpy(h.magic, kMagic, sizeof kMagic);
     h.version = kVersion;
@@ -429,14 +531,28 @@ bool save_compiled_mesh(const char* path, const render::MeshData& mesh, const Co
     const MeshBounds b = compute_bounds(mesh);
     std::memcpy(h.bounds_min, b.min, sizeof b.min);
     std::memcpy(h.bounds_max, b.max, sizeof b.max);
+    h.lod_count = lods ? lod_count : 0;
 
-    FILE* file = std::fopen(path, "wb");
+    // Written beside it and renamed over it: a reader on another thread never sees half a file.
+    char temp[320];
+    std::snprintf(temp, sizeof temp, "%s.%zx.tmp", path, std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    FILE* file = std::fopen(temp, "wb");
     if (!file) return false;
     bool ok = std::fwrite(&h, sizeof h, 1, file) == 1 &&
               std::fwrite(mesh.vertices, sizeof(rhi::MeshVertex), mesh.vertex_count, file) == mesh.vertex_count &&
               std::fwrite(mesh.indices, sizeof(u32), mesh.index_count, file) == mesh.index_count;
+    for (u32 l = 0; ok && l < h.lod_count; ++l) {
+        const u32 counts[2] = {lods[l].vertex_count, lods[l].index_count};
+        ok = std::fwrite(counts, sizeof counts, 1, file) == 1 &&
+             std::fwrite(lods[l].vertices, sizeof(rhi::MeshVertex), lods[l].vertex_count, file) == lods[l].vertex_count &&
+             std::fwrite(lods[l].indices, sizeof(u32), lods[l].index_count, file) == lods[l].index_count;
+    }
     ok = std::fclose(file) == 0 && ok;
-    return ok;
+    std::error_code error;
+    if (ok) std::filesystem::rename(temp, path, error);  // replaces the old file
+    std::error_code ignored;
+    if (!ok || error) std::filesystem::remove(temp, ignored);
+    return ok && (!error || compiled_mesh_up_to_date(path, source));  // the old file was open: fine if another compile wrote the same
 }
 
 static bool read_header(FILE* file, CompiledHeader& h) {
@@ -473,34 +589,87 @@ bool load_compiled_mesh(const char* path, Allocator& allocator, render::MeshData
     return ok;
 }
 
-bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, Allocator& allocator,
-                        char* compiled_path, usize compiled_path_capacity, i32 part) {
-    char guid[33];
-    to_string(record.guid, guid);
-    if (part >= 0) std::snprintf(compiled_path, compiled_path_capacity, "%s/%s_%d.lsdmesh", data_dir, guid, part);
-    else std::snprintf(compiled_path, compiled_path_capacity, "%s/%s.lsdmesh", data_dir, guid);
+bool load_compiled_lods(const char* path, Allocator& allocator, render::MeshData* out, u32& count) {
+    count = 0;
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    CompiledHeader h{};
+    bool ok = read_header(file, h) && h.lod_count <= kMaxAuthoredLods &&
+              std::fseek(file, static_cast<long>(sizeof(rhi::MeshVertex) * h.vertex_count + sizeof(u32) * h.index_count), SEEK_CUR) == 0;
+    for (u32 l = 0; ok && l < h.lod_count; ++l) {
+        u32 counts[2] = {};
+        ok = std::fread(counts, sizeof counts, 1, file) == 1 && counts[0] > 0 && counts[1] > 0 && counts[1] % 3 == 0;
+        if (!ok) break;
+        out[l] = render::allocate_mesh(allocator, counts[0], counts[1]);
+        ok = std::fread(out[l].vertices, sizeof(rhi::MeshVertex), counts[0], file) == counts[0] && std::fread(out[l].indices, sizeof(u32), counts[1], file) == counts[1];
+        for (u32 i = 0; ok && i < counts[1]; ++i) ok = out[l].indices[i] < counts[0];  // never trust file data
+        if (!ok) render::free_mesh(allocator, out[l]);
+        else count = l + 1;
+    }
+    std::fclose(file);
+    if (!ok) {
+        for (u32 l = 0; l < count; ++l) render::free_mesh(allocator, out[l]);
+        count = 0;
+    }
+    return ok;
+}
 
+void compiled_mesh_path(const char* data_dir, Guid guid, i32 part, char* out, usize capacity) {
+    char text[33];
+    to_string(guid, text);
+    if (part >= 0) std::snprintf(out, capacity, "%s/%s_%d.lsdmesh", data_dir, text, part);
+    else std::snprintf(out, capacity, "%s/%s.lsdmesh", data_dir, text);
+}
+
+bool prepare_mesh_compile(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, i32 part, MeshCompileJob& job) {
+    job = MeshCompileJob{};
+    compiled_mesh_path(data_dir, record.guid, part, job.compiled, sizeof job.compiled);
+    std::snprintf(job.data_dir, sizeof job.data_dir, "%s", data_dir);
+    std::snprintf(job.name, sizeof job.name, "%s", record.path);
+    registry.source_path(record, job.source, sizeof job.source);
     AssetMeta meta;
     registry.load_meta(record, meta);
-    CompiledMeshSource source{record.source_size, record.source_time, 0};
+    job.scale = meta.import_scale;
+    job.normals = meta.normals;
+    job.smoothing_angle = meta.smoothing_angle;
+    job.part = part;
+    job.stamp = CompiledMeshSource{record.source_size, record.source_time, 0};
     char settings[96];
     std::snprintf(settings, sizeof settings, "scale=%.6g part=%d local normals=%u/%.3g", static_cast<f64>(meta.import_scale), part, meta.normals,
                   static_cast<f64>(meta.smoothing_angle));  // "local": parts in node space
-    source.settings_hash = static_cast<u32>(hash64(settings));
-    if (compiled_mesh_up_to_date(compiled_path, source)) return true;
+    job.stamp.settings_hash = static_cast<u32>(hash64(settings));
+    return !compiled_mesh_up_to_date(job.compiled, job.stamp);
+}
 
-    char path[300], error[256];
-    registry.source_path(record, path, sizeof path);
+bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, Allocator& allocator,
+                        char* compiled_path, usize compiled_path_capacity, i32 part) {
+    MeshCompileJob job;
+    const bool stale = prepare_mesh_compile(registry, record, data_dir, part, job);
+    std::snprintf(compiled_path, compiled_path_capacity, "%s", job.compiled);
+    return !stale || run_mesh_compile(job, allocator);
+}
+
+bool run_mesh_compile(const MeshCompileJob& job, Allocator& allocator) {
+    char error[256];
     render::MeshData mesh;
-    if (!import_mesh(path, meta.import_scale, allocator, mesh, error, sizeof error, part, meta.normals, meta.smoothing_angle)) {
-        LSD_LOG_ERROR("asset", "Import failed for %s: %s", record.path, error);
+    MeshImportExtras extras;
+    if (!import_mesh(job.source, job.scale, allocator, mesh, error, sizeof error, job.part, job.normals, job.smoothing_angle, &extras)) {
+        LSD_LOG_ERROR("asset", "Import failed for %s: %s", job.name, error);
         return false;
     }
     std::error_code ignored;
-    std::filesystem::create_directories(data_dir, ignored);
-    const bool ok = save_compiled_mesh(compiled_path, mesh, source);
-    LSD_LOG_INFO("asset", "Compiled %s: %u vertices, %u triangles", record.path, mesh.vertex_count, mesh.index_count / 3);
+    std::filesystem::create_directories(job.data_dir, ignored);
+    const bool ok = save_compiled_mesh(job.compiled, mesh, job.stamp, extras.lods, extras.lod_count);
+    LSD_LOG_INFO("asset", "Compiled %s: %u vertices, %u triangles%s", job.name, mesh.vertex_count, mesh.index_count / 3,
+                 extras.lod_count ? ", with its own LODs" : "");
+    for (u32 l = 0; l < extras.lod_count; ++l) LSD_LOG_INFO("asset", "  LOD %u: %u triangles (from the file)", l + 1, extras.lods[l].index_count / 3);
+    if (extras.collision_nodes) {
+        LSD_LOG_INFO("asset", "  %u collision node%s (UCX_ / UBX_ / USP_ / UCP_) not drawn: the Static Mesh's Collision Shape (Box or Mesh) is used in Play",
+                     extras.collision_nodes, extras.collision_nodes == 1 ? "" : "s");
+    }
+    if (extras.skipped_lods) LSD_LOG_WARN("asset", "  %u node%s deeper than LOD %u left out", extras.skipped_lods, extras.skipped_lods == 1 ? "" : "s", kMaxAuthoredLods);
     render::free_mesh(allocator, mesh);
+    for (u32 l = 0; l < extras.lod_count; ++l) render::free_mesh(allocator, extras.lods[l]);
     return ok;
 }
 

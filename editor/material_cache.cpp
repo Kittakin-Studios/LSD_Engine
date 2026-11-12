@@ -51,7 +51,10 @@ i64 walked_time(const asset::AssetRegistry& registry, const char* guid_text, boo
 
 TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& registry)
     : compress_(device.supports_bc()), device_(device), registry_(registry) {
-    worker_ = std::thread([this] {  // decodes queued files, one at a time
+    // Decoders: a quarter of the cores (at least 2), each taking the next queued file; the mesh compiler and the frame keep the rest.
+    const u32 cores = std::thread::hardware_concurrency();
+    const u32 count = cores / 4 > 2 ? cores / 4 : 2;
+    for (u32 w = 0; w < count; ++w) workers_.emplace_back([this] {
         for (;;) {
             Job job;
             {
@@ -79,7 +82,9 @@ TextureCache::~TextureCache() {
         quit_ = true;
     }
     wake_.notify_all();
-    if (worker_.joinable()) worker_.join();
+    for (std::thread& worker : workers_) {
+        if (worker.joinable()) worker.join();
+    }
     for (const Finished& f : finished_) delete f.data;
     for (u32 i = 0; i < count_; ++i) {
         if (entries_[i].texture.valid()) device_.destroy_texture(entries_[i].texture);

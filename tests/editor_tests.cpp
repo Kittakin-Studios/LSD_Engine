@@ -29,6 +29,7 @@
 #include "cloth_core.h"
 #include "editor_utility_core.h"
 #include "multi_user_core.h"
+#include "asset_compiler.h"
 #include "lsd/world/level.h"
 
 #include "lsd/world/components.h"
@@ -1376,7 +1377,41 @@ static void test_multi_user_ops() {
     CHECK(!editor::multi_user::apply(a, bad, sizeof bad - 1, base_a));
 }
 
+// Background compiles: meshes not in DerivedData are queued (busy until a worker wrote them), then up to date;
+// Compile All finds every one that is not compiled yet. Many at once, on the worker threads.
+static void test_asset_compiler() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::path(LSD_TEST_TEMP_DIR) / "compiler_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "Content");
+    constexpr int kMeshes = 40;
+    for (int i = 0; i < kMeshes; ++i) {
+        std::ofstream f(root / "Content" / ("SM_" + std::to_string(i) + ".obj"));
+        f << "o SM_" << i << "\nv 0 0 0\nv 1 0 0\nv 1 1 " << i << "\nf 1 2 3\n";
+    }
+    HeapAllocator heap("compiler");
+    asset::AssetRegistry registry(heap, (root / "Content").generic_string().c_str());
+    registry.scan();
+    const std::string data = (root / "DerivedData").generic_string();
+    char key[33];
+    asset::to_string(registry.get(0).guid, key);
+    CHECK(editor::compiler::queue_mesh(registry, key, data.c_str()));  // not compiled: queued
+    editor::compiler::wait();
+    CHECK(!editor::compiler::mesh_busy(key, data.c_str()) && !editor::compiler::queue_mesh(registry, key, data.c_str()));  // done, up to date
+    CHECK(editor::compiler::compile_all(registry, data.c_str(), false) == kMeshes - 1);  // the others
+    editor::compiler::wait();
+    const editor::compiler::Progress p = editor::compiler::progress();
+    CHECK(p.done == p.total && p.failed == 0 && !editor::compiler::busy());
+    CHECK(editor::compiler::compile_all(registry, data.c_str(), false) == 0);  // nothing left
+    u32 files = 0;
+    for (const auto& entry : fs::directory_iterator(data)) files += entry.path().extension() == ".lsdmesh" ? 1u : 0u;
+    CHECK(files == kMeshes);
+    editor::compiler::shutdown();
+    fs::remove_all(root);
+}
+
 int main() {
+    test_asset_compiler();
     test_sound_synth();
     test_cloth_mesh();
     test_editor_utility();

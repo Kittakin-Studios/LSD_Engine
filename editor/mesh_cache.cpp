@@ -1,9 +1,12 @@
 #include "mesh_cache.h"
 
+#include "asset_compiler.h"
+
 #include "lsd/asset/asset_meta.h"
 #include "lsd/asset/mesh_import.h"
 #include "lsd/foundation/log.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -72,6 +75,34 @@ void build_lods(rhi::Device& device, Allocator& allocator, const render::MeshDat
     allocator.deallocate(indices);
 }
 
+// A mesh with LODs made in the modelling program (Unreal's _LOD1.. nodes, FBX LOD groups): its vertices and
+// theirs in one vertex buffer, each LOD's indices pointing into its own part of it, so the draws are the same
+// as for generated LODs. False when the compiled mesh has none.
+bool upload_authored_lods(rhi::Device& device, Allocator& allocator, const char* compiled, const render::MeshData& lod0, CachedMesh& m) {
+    render::MeshData lods[asset::kMaxAuthoredLods];
+    u32 n = 0;
+    if (!asset::load_compiled_lods(compiled, allocator, lods, n) || n == 0) return false;
+    u32 keep = n < CachedMesh::kMaxLods - 1 ? n : CachedMesh::kMaxLods - 1;
+    u32 vertex_count = lod0.vertex_count;
+    for (u32 l = 0; l < keep; ++l) vertex_count += lods[l].vertex_count;
+    render::MeshData all = render::allocate_mesh(allocator, vertex_count, lod0.index_count);
+    std::memcpy(all.vertices, lod0.vertices, sizeof(rhi::MeshVertex) * lod0.vertex_count);
+    std::memcpy(all.indices, lod0.indices, sizeof(u32) * lod0.index_count);
+    u32 base = lod0.vertex_count;
+    for (u32 l = 0; l < keep; ++l) {
+        std::memcpy(all.vertices + base, lods[l].vertices, sizeof(rhi::MeshVertex) * lods[l].vertex_count);
+        for (u32 i = 0; i < lods[l].index_count; ++i) lods[l].indices[i] += base;
+        m.lod_indices[l + 1] = device.create_buffer(rhi::BufferUsage::Index, lods[l].indices, sizeof(u32) * lods[l].index_count);
+        m.lod_index_count[l + 1] = lods[l].index_count;
+        base += lods[l].vertex_count;
+    }
+    m.gpu = render::upload_mesh(device, all);
+    m.lod_count = 1 + keep;
+    render::free_mesh(allocator, all);
+    for (u32 l = 0; l < n; ++l) render::free_mesh(allocator, lods[l]);
+    return true;
+}
+
 } // namespace
 
 MeshCache::~MeshCache() {
@@ -104,8 +135,9 @@ bool MeshCache::load(CachedMesh& entry) {
         if (entry.gpu.index_count) return true;  // built-ins never change
         if (!make_builtin(key, allocator_, data)) return false;
         bounds = asset::compute_bounds(data);
-    } else {
-        char compiled[300];
+    }
+    char compiled[300] = "";
+    if (is_asset) {
         if (!asset::compile_mesh_key(registry_, key, data_dir_, allocator_, compiled, sizeof compiled)) return false;
         const i64 time = file_time(compiled);
         if (entry.gpu.index_count && time == entry.compiled_time) return true;  // already current
@@ -115,8 +147,10 @@ bool MeshCache::load(CachedMesh& entry) {
     if (boxed) render::box_project_uv(data, box.x, box.y, box.z);
     if (entry.gpu.index_count) render::destroy_mesh(device_, entry.gpu);
     destroy_lods(device_, entry);
-    entry.gpu = render::upload_mesh(device_, data);
-    build_lods(device_, allocator_, data, entry);
+    if (boxed || !compiled[0] || !upload_authored_lods(device_, allocator_, compiled, data, entry)) {  // the file's own LODs, else generated ones
+        entry.gpu = render::upload_mesh(device_, data);
+        build_lods(device_, allocator_, data, entry);
+    }
     entry.bounds_min = {bounds.min[0], bounds.min[1], bounds.min[2]};
     entry.bounds_max = {bounds.max[0], bounds.max[1], bounds.max[2]};
     render::free_mesh(allocator_, data);
@@ -179,15 +213,64 @@ const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key, b
     return &out;
 }
 
+namespace {
+
+// The mesh key without a "|box:" suffix (what the compiler and the registry know).
+void plain_key(const char* key, char (&out)[80]) {
+    std::snprintf(out, sizeof out, "%s", key);
+    if (char* suffix = std::strstr(out, "|box:")) *suffix = '\0';
+}
+
+i64 now_ns() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+} // namespace
+
+bool MeshCache::finish(u32 slot) {
+    CachedMesh& m = meshes_[slot];
+    char plain[80];
+    plain_key(m.key, plain);
+    if (compiler::mesh_busy(plain, data_dir_)) return false;
+    // Loading a big mesh (read, upload, LODs) takes milliseconds: at most ~4 ms of them per 16 ms, so a burst of
+    // finished compiles does not stall a frame.
+    const i64 now = now_ns();
+    if (now - finish_window_ > 16000000) finish_window_ = now, finish_spent_ = 0;
+    if (finish_spent_ > 4000000) return false;
+    pending_.erase(slot);
+    m.failed = !load(m);
+    finish_spent_ += now_ns() - now;
+    stamps_[slot] = m.failed ? 0 : source_stamp(m.key);
+    if (m.failed) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", m.key);
+    return true;
+}
+
+void MeshCache::finish_pending() {
+    if (pending_.empty()) return;
+    compiler::wait();
+    finish_spent_ = 0;
+    const std::vector<u32> slots(pending_.begin(), pending_.end());
+    for (const u32 slot : slots) {
+        finish_window_ = now_ns();  // no frame to spread over: all of them now
+        finish_spent_ = 0;
+        finish(slot);
+    }
+}
+
 const CachedMesh* MeshCache::get(const char* key) {
     const i64 slot = index_.find(key, 0, [&](u32 i) { return std::strcmp(meshes_[i].key, key) == 0; });
-    if (slot >= 0) return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
+    if (slot >= 0) {
+        if (meshes_[static_cast<usize>(slot)].failed && pending_.count(static_cast<u32>(slot))) finish(static_cast<u32>(slot));
+        return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
+    }
     if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "EditMesh:", 9) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "UiPanel:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0 || std::strncmp(key, "HLOD:", 5) == 0 || std::strncmp(key, "Cloth:", 6) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
-    entry.failed = !load(entry);
-    if (entry.failed) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", key);
+    char plain[80];
+    plain_key(key, plain);
+    const bool later = compiler::queue_mesh(registry_, plain, data_dir_);  // not compiled yet: on a worker thread, drawn when done
+    if (later) pending_.insert(static_cast<u32>(meshes_.size()));
+    entry.failed = later || !load(entry);
+    if (entry.failed && !later) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", key);
     index_.add(key, 0, static_cast<u32>(meshes_.size()));
     meshes_.push_back(entry);
     stamps_.resize(meshes_.size(), 0);
@@ -258,7 +341,7 @@ void MeshCache::hot_reload() {
     for (usize i = 0; i < meshes_.size(); ++i) {
         CachedMesh& m = meshes_[i];
         const i64 stamp = m.generated ? 0 : source_stamp(m.key);
-        if (m.generated || (stamp && stamp == stamps_[i] && !m.failed)) continue;
+        if (m.generated || (stamp && stamp == stamps_[i] && !m.failed) || pending_.count(static_cast<u32>(i))) continue;
         const i64 before = m.compiled_time;
         m.failed = !load(m);
         if (m.compiled_time != before || m.failed) triangles_.erase(m.key);  // reimported: its triangles are re-read on the next ask

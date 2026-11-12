@@ -38,8 +38,22 @@ struct MeshPart {
 // Normals (Blender's Shade Smooth / Flat / Auto Smooth): 0 keeps the file's, 1 smooth (the default
 // for every mesh), 2 solid (flat faces), 3 smooth except across edges sharper than `smoothing_angle`.
 enum MeshNormals : u32 { kNormalsImport = 0, kNormalsSmooth = 1, kNormalsFlat = 2, kNormalsAutoSmooth = 3 };
+// Unreal's naming in a file (also how its FBX exports look): nodes named UCX_ / UBX_ / USP_ / UCP_ (collision hulls,
+// boxes, spheres, capsules) are not drawn; nodes named <name>_LOD<n> (n >= 1), or the children after the first of an
+// FBX LOD group, are the mesh's authored LODs, not part of LOD 0. Both are left out of the parts too.
+constexpr u32 kMaxAuthoredLods = 3;  // LOD 1..3 (deeper ones are skipped)
+struct MeshImportExtras {
+    render::MeshData lods[kMaxAuthoredLods];  // authored LOD 1.. (welded like LOD 0); free each with render::free_mesh
+    u32 lod_count = 0;
+    u32 collision_nodes = 0;  // UCX_ / UBX_ / USP_ / UCP_ nodes left out
+    u32 skipped_lods = 0;     // LOD nodes deeper than kMaxAuthoredLods
+};
+// The node naming rule above: 1 for a collision name, else 0.
+bool is_collision_node_name(const char* name);
+// n for a name ending "_LOD<n>" (any case), else -1.
+i32 lod_from_node_name(const char* name);
 bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part = -1,
-                 u32 normals = kNormalsSmooth, f32 smoothing_angle = 30.0f);
+                 u32 normals = kNormalsSmooth, f32 smoothing_angle = 30.0f, MeshImportExtras* extras = nullptr);
 
 // Recomputes the normals of an unindexed triangle list (3 vertices a triangle) as `normals` asks,
 // for any vertex layout (positions and normals as 3 floats at those byte offsets). Smoothing follows
@@ -73,14 +87,37 @@ struct CompiledMeshSource {
     u32 settings_hash = 0;
 };
 
-bool save_compiled_mesh(const char* path, const render::MeshData& mesh, const CompiledMeshSource& source);
+// `lods`: authored LODs stored after LOD 0 (load_compiled_lods reads them; load_compiled_mesh only LOD 0).
+bool save_compiled_mesh(const char* path, const render::MeshData& mesh, const CompiledMeshSource& source, const render::MeshData* lods = nullptr,
+                        u32 lod_count = 0);
 bool load_compiled_mesh(const char* path, Allocator& allocator, render::MeshData& out, MeshBounds* bounds = nullptr);
+// The authored LODs of a compiled mesh (up to kMaxAuthoredLods, each with its own vertices); count 0 when it has none.
+bool load_compiled_lods(const char* path, Allocator& allocator, render::MeshData* out, u32& count);
 bool compiled_mesh_up_to_date(const char* path, const CompiledMeshSource& source);
 
 // Data compiler step for one mesh asset: imports it if DerivedData/<guid>.lsdmesh (<guid>_<part>.lsdmesh
 // for a part) is missing or stale and writes that file. `compiled_path` receives the output path.
 bool compile_mesh_asset(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, Allocator& allocator,
                         char* compiled_path, usize compiled_path_capacity, i32 part = -1);
+
+// compile_mesh_asset in two steps, for compiling on worker threads: prepare (main thread: it reads the
+// registry and the .meta) fills `job` and says whether the compiled file is missing or stale; run imports and
+// writes it, touching nothing shared (safe on any thread; the file is written beside and renamed over).
+struct MeshCompileJob {
+    char source[300] = "";
+    char compiled[300] = "";
+    char data_dir[256] = "";
+    char name[256] = "";  // for the log: the asset's path in Content/
+    f32 scale = 1.0f;
+    u32 normals = kNormalsSmooth;
+    f32 smoothing_angle = 30.0f;
+    i32 part = -1;
+    CompiledMeshSource stamp;
+};
+bool prepare_mesh_compile(const AssetRegistry& registry, const AssetRecord& record, const char* data_dir, i32 part, MeshCompileJob& job);
+bool run_mesh_compile(const MeshCompileJob& job, Allocator& allocator);
+// DerivedData/<guid>.lsdmesh, or <guid>_<part>.lsdmesh.
+void compiled_mesh_path(const char* data_dir, Guid guid, i32 part, char* out, usize capacity);
 
 // compile_mesh_asset for a mesh key that names an asset (or a part of one); false for a basic shape.
 bool compile_mesh_key(const AssetRegistry& registry, const char* key, const char* data_dir, Allocator& allocator, char* compiled_path,

@@ -1,3 +1,4 @@
+#include "asset_compiler.h"
 #include "loc_gather.h"
 #include "editor_ui.h"
 #include "templates.h"
@@ -5923,6 +5924,9 @@ void draw_menu_bar(EditorState& s) {
         if (ImGui::MenuItem("Build Lighting", nullptr, false, !s.playing && s.build_lighting_progress < 0.0f)) s.build_lighting_requested = true;
         if (with_tip(ImGui::MenuItem("Build HLODs", nullptr, false, !s.playing), "Merges each World Settings > HLOD Cell Size cell's static meshes into a simpler proxy drawn instead of them beyond HLOD Distance; saved next to the level (<level>_BuiltData.lsdhlod), so save it first")) s.build_hlod_requested = true;
         if (with_tip(ImGui::MenuItem("Build Reflection Captures"), "Captures what each Reflection Capture sees again (after moving things)")) s.capture_reflections = true;
+        if (with_tip(ImGui::MenuItem("Compile All Assets"), "Compiles every mesh, and every texture the materials use, that is not in DerivedData yet, on worker threads, so a playtest or the first look at a level does not wait for them (Unreal's Derived Data Cache fill). The menu bar shows the progress")) {
+            std::snprintf(s.status, sizeof s.status, "Compile All Assets: %u to compile", compiler::compile_all(*s.registry, "DerivedData", s.device && s.device->supports_bc()));
+        }
         ImGui::SetItemTooltip("Bakes light probes (sky, and light bounced off the level) into <level>_BuiltData.lsdlight; save the level first");
         if (ImGui::MenuItem("Build Navigation", command_text(Command::ToggleNavigation))) s.show_navigation = true;  // the navmesh rebuilds while it is shown
         if (with_tip(ImGui::MenuItem("Build Release Engine"), "Builds the Release engine Package Project copies (it runs on PCs without Visual Studio), from the engine's source with CMake; the menu bar shows its progress")) {
@@ -6059,6 +6063,13 @@ void draw_menu_bar(EditorState& s) {
         ImGui::PushStyleColor(ImGuiCol_Text, g_unread_errors ? ImVec4(1.0f, 0.42f, 0.38f, 1) : ImVec4(1.0f, 0.82f, 0.35f, 1));
         if (ImGui::MenuItem(badge)) s.show_message_log = true;
         ImGui::PopStyleColor();
+    }
+    if (compiler::busy()) {  // background asset compiles (Compile All Assets, a level's meshes the first time)
+        const compiler::Progress p = compiler::progress();
+        char label[64];
+        std::snprintf(label, sizeof label, "Compiling assets %u / %u", p.done, p.total);
+        ImGui::ProgressBar(p.total ? static_cast<f32>(p.done) / static_cast<f32>(p.total) : 0.0f, ImVec2(220.0f, 0.0f), label);
+        ImGui::SetItemTooltip("Meshes and textures compiling into DerivedData on worker threads; meshes show up as they finish");
     }
     const f32 progress = s.material_import_progress >= 0.0f ? s.material_import_progress : s.build_lighting_progress;
     if (progress >= 0.0f) {  // long jobs: Import Materials and Textures, Build Lighting

@@ -10,6 +10,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lsd::editor {
@@ -37,8 +38,11 @@ public:
     MeshCache(const MeshCache&) = delete;
     MeshCache& operator=(const MeshCache&) = delete;
 
-    // nullptr if the mesh cannot be loaded.
+    // nullptr if the mesh cannot be loaded, or while a mesh asset compiles in the background (its first use in a
+    // project, or after its file changed): it shows up once compiled, a few at a time per frame.
     const CachedMesh* get(const char* key);
+    // Waits for the background compiles and loads those meshes (Play and navigation need every mesh now).
+    void finish_pending();
     // A copy of `mesh` with box-projected UVs at `scale` (one texture tile per metre on every face;
     // Unreal's BSP / Modeling auto UVs), so scaled blockout shapes do not stretch their textures.
     // shortcut: one variant per distinct scale (rounded to 1 cm); fine for blockouts, not for thousands of sizes
@@ -77,7 +81,10 @@ private:
     bool load(CachedMesh& entry);
     i64 source_stamp(const char* key) const;  // the asset's source and .meta times together; 0 for shapes and generated meshes
     u32 slot_parts_generation_ = ~0u;
-    std::vector<i64> stamps_;  // source_stamp of each meshes_ entry when it was last loaded: hot_reload skips the unchanged
+    std::vector<i64> stamps_;
+    std::unordered_set<u32> pending_;  // meshes_ entries compiling in the background (drawn as nothing until then)
+    bool finish(u32 slot);             // loads a pending entry whose compile is done; false while it still compiles
+    i64 finish_window_ = 0, finish_spent_ = 0;  // steady-clock ns: loads of finished compiles spread over frames  // source_stamp of each meshes_ entry when it was last loaded: hot_reload skips the unchanged
     std::unordered_map<std::string, Triangles> triangles_;  // shortcut: std containers, editor-time collision data
     std::unordered_map<std::string, std::vector<SlotPart>> slot_parts_;  // empty: draws whole
 

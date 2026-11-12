@@ -11,6 +11,9 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <string>
+#include <thread>
 #include <vector>
 #include <cstdlib>
 #include <cstring>
@@ -344,7 +347,9 @@ bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compres
     if (!load_texture(path, srgb, max_size, out, keep_float)) return false;
     compress_texture(out, normal_map);  // stays RGBA8 when its size is not a multiple of 4 (cached that way too)
     fs::create_directories(cache_dir, ec);
-    if (FILE* f = std::fopen(cached.string().c_str(), "wb")) {  // a failed write only means encoding again next time
+    // Written beside it and renamed over it: texture workers on other threads never read half a file.
+    const fs::path temp = fs::path(cached.string() + "." + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + ".tmp");
+    if (FILE* f = std::fopen(temp.string().c_str(), "wb")) {  // a failed write only means encoding again next time
         TextureCacheHeader h{};
         std::memcpy(h.magic, kTextureCacheMagic, 8);
         h.source_time = time;
@@ -358,8 +363,9 @@ bool load_texture_cached(const char* path, bool srgb, u32 max_size, bool compres
         for (u32 m = 0; m < kMaxTextureMips; ++m) h.mip_offset[m] = out.mip_offset[m];
         h.bytes = out.pixels.size();
         std::fwrite(&h, sizeof h, 1, f);
-        std::fwrite(out.pixels.data(), 1, out.pixels.size(), f);
-        std::fclose(f);
+        const bool written = std::fwrite(out.pixels.data(), 1, out.pixels.size(), f) == out.pixels.size();
+        if (std::fclose(f) == 0 && written) fs::rename(temp, cached, ec);
+        if (fs::exists(temp, ec)) fs::remove(temp, ec);
     }
     return true;
 }

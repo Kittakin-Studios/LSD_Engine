@@ -934,6 +934,7 @@ bool PlaySession::rebind(const char* action, const char* from, const char* to) {
 }
 
 void PlaySession::start(world::World& world, MeshCache& meshes, const asset::AssetRegistry& registry, Vec3 eye, f32 yaw, f32 pitch, bool travel) {
+    meshes.finish_pending();  // bodies and collision need every mesh: wait for the ones still compiling in the background
     stop();
     ragdoll_scan_ = true;  // Simulate Physics meshes fall once they have a pose
     const u64 start_ns = SDL_GetTicksNS();  // how long Play takes to start (logged at the end)
