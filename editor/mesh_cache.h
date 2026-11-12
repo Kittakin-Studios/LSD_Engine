@@ -75,6 +75,9 @@ public:
 
 private:
     bool load(CachedMesh& entry);
+    i64 source_stamp(const char* key) const;  // the asset's source and .meta times together; 0 for shapes and generated meshes
+    u32 slot_parts_generation_ = ~0u;
+    std::vector<i64> stamps_;  // source_stamp of each meshes_ entry when it was last loaded: hot_reload skips the unchanged
     std::unordered_map<std::string, Triangles> triangles_;  // shortcut: std containers, editor-time collision data
     std::unordered_map<std::string, std::vector<SlotPart>> slot_parts_;  // empty: draws whole
 

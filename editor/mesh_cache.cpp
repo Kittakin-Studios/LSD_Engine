@@ -190,6 +190,8 @@ const CachedMesh* MeshCache::get(const char* key) {
     if (entry.failed) LSD_LOG_WARN("editor", "Mesh '%s' is not a basic shape or a mesh asset", key);
     index_.add(key, 0, static_cast<u32>(meshes_.size()));
     meshes_.push_back(entry);
+    stamps_.resize(meshes_.size(), 0);
+    stamps_.back() = entry.failed ? 0 : source_stamp(key);
     return entry.failed ? nullptr : &meshes_[meshes_.size() - 1];
 }
 
@@ -237,12 +239,30 @@ void MeshCache::set_generated(const char* key, const render::MeshData& data) {
     t.indices.assign(data.indices, data.indices + data.index_count);
 }
 
+i64 MeshCache::source_stamp(const char* key) const {
+    char plain[80];  // without a "|box:" suffix
+    std::snprintf(plain, sizeof plain, "%s", key);
+    if (char* suffix = std::strstr(plain, "|box:")) *suffix = '\0';
+    asset::Guid guid;
+    i32 part = -1;
+    const asset::AssetRecord* record = asset::parse_mesh_key(plain, guid, part) ? registry_.find(guid) : nullptr;
+    return record ? static_cast<i64>(static_cast<u64>(record->source_time) * 31u + static_cast<u64>(record->meta_time) + 1u) : 0;
+}
+
 void MeshCache::hot_reload() {
-    slot_parts_.clear();  // Material Slots or parts may have changed
-    for (CachedMesh& m : meshes_) {
+    // Only meshes whose file or .meta changed are looked at again: re-reading every cached mesh's .meta and compiled
+    // header once a second was a 50-100 ms hitch each second with a few hundred meshes.
+    stamps_.resize(meshes_.size(), 0);
+    if (registry_.generation() != slot_parts_generation_) slot_parts_.clear();  // a file or .meta changed: Material Slots or parts may have
+    slot_parts_generation_ = registry_.generation();
+    for (usize i = 0; i < meshes_.size(); ++i) {
+        CachedMesh& m = meshes_[i];
+        const i64 stamp = m.generated ? 0 : source_stamp(m.key);
+        if (m.generated || (stamp && stamp == stamps_[i] && !m.failed)) continue;
         const i64 before = m.compiled_time;
         m.failed = !load(m);
         if (m.compiled_time != before || m.failed) triangles_.erase(m.key);  // reimported: its triangles are re-read on the next ask
+        stamps_[i] = m.failed ? 0 : stamp;
     }
 }
 

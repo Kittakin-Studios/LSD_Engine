@@ -39,6 +39,14 @@ i64 texture_time(const char* path) {
     return file_time(path) + file_time((std::string(path) + ".meta").c_str());
 }
 
+// The same times as the registry's last folder walk saw them (no file system call): the once-a-second checks
+// of every texture and material in use cost a stat per file each second otherwise. -1: no such asset.
+i64 walked_time(const asset::AssetRegistry& registry, const char* guid_text, bool with_meta) {
+    asset::Guid guid;
+    const asset::AssetRecord* r = guid_text[0] && asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
+    return r ? r->source_time + (with_meta ? r->meta_time : 0) : -1;
+}
+
 } // namespace
 
 TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& registry)
@@ -252,7 +260,11 @@ rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_ma
         seen.last_used = frame_;
         return seen.texture;
     }
-    if (count_ == sizeof entries_ / sizeof entries_[0]) return {};
+    if (count_ == entries_.size()) {
+        if (!full_warned_) LSD_LOG_WARN("editor", "More than %zu textures in use: the rest are drawn without", entries_.size());
+        full_warned_ = true;
+        return {};
+    }
     index_.add(guid, use, count_);
     Entry& e = entries_[count_++];
     e = Entry{};
@@ -268,8 +280,9 @@ rhi::TextureHandle TextureCache::get(const char* guid, bool srgb, bool normal_ma
 void TextureCache::check_files() {
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];
+        const i64 time = e.pending ? -1 : walked_time(registry_, e.guid, true);
         char path[300];
-        if (!e.pending && path_of(registry_, e.guid, path, sizeof path) && texture_time(path) != e.modified) {
+        if (time >= 0 && time != e.modified && path_of(registry_, e.guid, path, sizeof path)) {
             LSD_LOG_INFO("editor", "Reloading texture %s", path);
             if (!e.want) e.want = e.complete ? kFull : e.side;  // back at the size it had, not the smallest
             if (stream) queue(i);  // the old one stays until the new one is up
@@ -281,7 +294,11 @@ void TextureCache::check_files() {
 MaterialCache::Entry* MaterialCache::find(const char* guid) {
     const i64 slot = index_.find(guid, 0, [&](u32 i) { return std::strcmp(entries_[i].guid, guid) == 0; });
     if (slot >= 0) return &entries_[slot];
-    if (count_ == sizeof entries_ / sizeof entries_[0]) return nullptr;
+    if (count_ == entries_.size()) {
+        if (!full_warned_) LSD_LOG_WARN("editor", "More than %zu materials in use: the rest are drawn with the default material", entries_.size());
+        full_warned_ = true;
+        return nullptr;
+    }
     index_.add(guid, 0, count_);
     Entry& e = entries_[count_++];
     e = Entry{};
@@ -492,10 +509,11 @@ void MaterialCache::reload_all() {
 void MaterialCache::check_files() {
     for (u32 i = 0; i < count_; ++i) {
         Entry& e = entries_[i];
-        char path[300], parent_path[300];
-        if (!path_of(registry_, e.guid, path, sizeof path)) continue;
-        const bool parent_changed = e.parent[0] && path_of(registry_, e.parent, parent_path, sizeof parent_path) && file_time(parent_path) != e.parent_modified;
-        if (file_time(path) != e.modified || parent_changed) load(e);
+        const i64 time = walked_time(registry_, e.guid, false);
+        if (time < 0) continue;
+        const i64 parent_time = e.parent[0] ? walked_time(registry_, e.parent, false) : -1;
+        const bool parent_changed = parent_time >= 0 && parent_time != e.parent_modified;
+        if (time != e.modified || parent_changed) load(e);
         else if (e.shader.valid()) resolve_textures(e);  // a texture imported after the graph was compiled
     }
 }

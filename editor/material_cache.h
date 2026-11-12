@@ -116,8 +116,10 @@ private:
     rhi::Device& device_;
     const asset::AssetRegistry& registry_;
     u32 size_cap_ = 0;
-    Entry entries_[512];
+    // shortcut: a fixed 16,384 slots on the heap, never moved (the worker reads them by index); grow by chunks if a project needs more.
+    std::vector<Entry> entries_ = std::vector<Entry>(16384);
     u32 count_ = 0;
+    bool full_warned_ = false;
     KeyIndex index_;  // guid (salted by colour / data use) -> slot
 };
 
@@ -164,8 +166,10 @@ private:
     TextureCache& textures_;
     rhi::Device& device_;
     const asset::AssetRegistry& registry_;
-    Entry entries_[256];
+    // shortcut: a fixed 8,192 slots on the heap, never moved (find hands out pointers); grow by chunks if a project needs more.
+    std::vector<Entry> entries_ = std::vector<Entry>(8192);
     u32 count_ = 0;
+    bool full_warned_ = false;
     KeyIndex index_;  // guid -> slot
 };
 

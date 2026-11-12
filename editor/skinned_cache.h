@@ -9,6 +9,8 @@
 #include "lsd/world/components.h"
 #include "lsd/world/world.h"
 
+#include <vector>
+
 namespace lsd::editor {
 
 struct SkinnedEntry {
@@ -101,8 +103,10 @@ private:
 
     rhi::Device& device_;
     const asset::AssetRegistry& registry_;
-    SkinnedEntry entries_[64];
+    // shortcut: a fixed 1,024 slots on the heap, never moved (get hands out pointers); grow by chunks if a project needs more.
+    std::vector<SkinnedEntry> entries_ = std::vector<SkinnedEntry>(1024);
     u32 count_ = 0;
+    bool full_warned_ = false;
     ClipSet* sets_[64] = {};
     u32 set_count_ = 0;
     struct GraphEntry {

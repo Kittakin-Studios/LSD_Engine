@@ -222,7 +222,11 @@ const SkinnedEntry* SkinnedCache::get(const char* guid) {
     for (u32 i = 0; i < count_; ++i) {
         if (std::strcmp(entries_[i].guid, guid) == 0) return entries_[i].failed ? nullptr : &entries_[i];
     }
-    if (count_ == sizeof entries_ / sizeof entries_[0]) return nullptr;
+    if (count_ == entries_.size()) {
+        if (!full_warned_) LSD_LOG_WARN("editor", "More than %zu skeletal meshes in use: the rest are not drawn", entries_.size());
+        full_warned_ = true;
+        return nullptr;
+    }
     SkinnedEntry& e = entries_[count_++];
     std::snprintf(e.guid, sizeof e.guid, "%s", guid);
     load(e);
