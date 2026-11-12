@@ -31,11 +31,7 @@ const asset::AssetRecord* SoundPlayer::find(const char* sound, bool cues) const 
     }
     for (const asset::AssetType type : {asset::AssetType::Cue, asset::AssetType::Sound}) {  // a cue wins over a wave of the same name
         if (type == asset::AssetType::Cue && !cues) continue;
-        usize hits[16];
-        const usize n = registry_->search(sound, type, nullptr, hits, 16);
-        for (usize i = 0; i < n; ++i) {
-            if (std::strcmp(registry_->get(hits[i]).name, sound) == 0) return &registry_->get(hits[i]);
-        }
+        if (const asset::AssetRecord* r = registry_->find_named(sound, type)) return r;
     }
     return nullptr;
 }
@@ -77,13 +73,7 @@ u32 SoundPlayer::concurrency_index(const char* guid) {
 }
 
 const asset::AssetRecord* SoundPlayer::find_data(const char* name, const char* data_type) const {
-    usize hits[16];
-    const usize n = registry_ ? registry_->search(name, asset::AssetType::Data, nullptr, hits, 16) : 0;
-    for (usize i = 0; i < n; ++i) {
-        const asset::AssetRecord& r = registry_->get(hits[i]);
-        if (std::strcmp(r.name, name) == 0 && std::strcmp(r.data_type, data_type) == 0) return &r;
-    }
-    return nullptr;
+    return registry_ ? registry_->find_named(name, asset::AssetType::Data, data_type) : nullptr;
 }
 
 // A Music segment's track and its stems, `delay` seconds from now (sample-accurate), looping.
@@ -359,13 +349,9 @@ void SoundPlayer::pop_mix(const char* name) {
 
 void SoundPlayer::set_class_volume(const char* name, f32 volume, bool warn) {
     if (!audio_) return;
-    usize hits[16];
-    const usize n = registry_->search(name, asset::AssetType::Data, nullptr, hits, 16);
-    for (usize i = 0; i < n; ++i) {
-        const asset::AssetRecord& r = registry_->get(hits[i]);
-        if (std::strcmp(r.name, name) != 0 || std::strcmp(r.data_type, "SoundClass") != 0) continue;
+    if (const asset::AssetRecord* r = registry_->find_named(name, asset::AssetType::Data, "SoundClass")) {
         char guid[33];
-        asset::to_string(r.guid, guid);
+        asset::to_string(r->guid, guid);
         audio_->set_class_volume(class_index(guid), volume);
         return;
     }

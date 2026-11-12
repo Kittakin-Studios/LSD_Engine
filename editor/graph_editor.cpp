@@ -275,16 +275,10 @@ bool value_widget(const script::PinDef& pin, char* value, usize capacity) {
             if (std::strcmp(pin.name, "Texture") == 0 && g_registry) {  // a texture asset by name
                 ImGui::SetNextItemWidth(140.0f);
                 if (ImGui::BeginCombo("##v", value[0] ? value : "(pick a texture)")) {
-                    usize hits[256];
-                    const usize count = g_registry->search(nullptr, asset::AssetType::Texture, nullptr, hits, 256);
-                    for (usize i = 0; i < count; ++i) {
-                        const char* name = g_registry->get(hits[i]).name;
-                        if (ImGui::Selectable(name, std::strcmp(value, name) == 0)) {
-                            std::snprintf(value, capacity, "%s", name);
-                            changed = true;
-                        }
+                    if (const asset::AssetRecord* r = asset_combo_items(*g_registry, "Texture", g_registry->find_named(value, asset::AssetType::Texture))) {
+                        std::snprintf(value, capacity, "%s", r->name);
+                        changed = true;
                     }
-                    if (!count) ImGui::TextDisabled("No textures: drop a PNG / JPG into the Content Browser");
                     ImGui::EndCombo();
                 }
                 break;

@@ -240,6 +240,9 @@ bool select_asset(EditorState& state, const char* name);
 void* edited_data_asset(const asset::Guid& guid, const reflect::TypeInfo& type);
 void mark_data_asset_edited();  // a change made to edited_data_asset's object elsewhere (saved like a Details edit)
 bool asset_matches(const asset::AssetRecord& record, const char* type);
+// Inside an open combo: a search box and the assets of `type` (asset_matches) that contain its text, A-Z; only the
+// rows on screen are built, so 50,000 assets cost what 20 do. Returns the one clicked, else null.
+const asset::AssetRecord* asset_combo_items(const asset::AssetRegistry& registry, const char* type, const asset::AssetRecord* current);
 // A combo of the assets of one type ("None" clears it; accepts a drag from the Content Browser) for other editors; true when changed.
 bool pick_asset(EditorState& state, const char* type, char* guid_text, usize capacity);
 // The Details panel's look and widgets (asset pickers, choices) for draw_details / draw_properties elsewhere.

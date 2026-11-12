@@ -842,14 +842,9 @@ bool PlaySession::script_path(void* user, const char* guid_text, char* out, usiz
 
 // Scripts name Input Actions by asset name ("IA_Move"); the input system knows them by GUID.
 bool PlaySession::action_guid(const asset::AssetRegistry& registry, const char* name, char* out) {
-    usize hits[8];
-    const usize n = registry.search(name, asset::AssetType::Data, nullptr, hits, 8);
-    for (usize i = 0; i < n; ++i) {
-        const asset::AssetRecord& r = registry.get(hits[i]);
-        if (std::strcmp(r.name, name) == 0 && std::strcmp(r.data_type, "InputAction") == 0) {
-            asset::to_string(r.guid, out);
-            return true;
-        }
+    if (const asset::AssetRecord* r = registry.find_named(name, asset::AssetType::Data, "InputAction")) {
+        asset::to_string(r->guid, out);
+        return true;
     }
     const char* defaults[][2] = {{"Move", kDefaultMove}, {"Look", kDefaultLook}, {"Jump", kDefaultJump}};  // the built-in controls
     for (const auto& d : defaults) {
@@ -1633,12 +1628,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
 }
 
 const asset::AssetRecord* PlaySession::find_asset(asset::AssetType type, const char* name) const {
-    usize hits[16];
-    const usize n = registry_->search(name, type, nullptr, hits, 16);
-    for (usize i = 0; i < n; ++i) {
-        if (std::strcmp(registry_->get(hits[i]).name, name) == 0) return &registry_->get(hits[i]);
-    }
-    return nullptr;
+    return registry_->find_named(name, type);
 }
 
 u32 PlaySession::add_body(world::Entity e, const physics::BodyDesc& desc) {

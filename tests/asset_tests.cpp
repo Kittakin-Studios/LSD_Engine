@@ -18,6 +18,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
 #include <thread>
 
 static int g_failures = 0;
@@ -694,7 +697,49 @@ static void test_plugins_dlc(const fs::path& root) {
     CHECK(patch.size() == 2 && patch[0] == "a.csv" && patch[1] == "more.csv");
 }
 
+// Thousands of assets: lookups by GUID and by exact name stay right after removals, searches have no cap,
+// and an exact name wins over names that only contain it.
+static void test_registry_scale(const fs::path& root) {
+    HeapAllocator heap("registry");
+    const fs::path content = root / "ScaleContent";
+    fs::remove_all(content);
+    constexpr int kFiles = 3000;
+    for (int i = 0; i < kFiles; ++i) {
+        const fs::path dir = content / ("F" + std::to_string(i % 30));
+        fs::create_directories(dir);
+        std::ofstream(dir / ("S_" + std::to_string(i) + ".lua")) << "-- " << i << "\n";
+    }
+    for (const char* name : {"Rock_Big", "Rock", "Rockery"}) std::ofstream(content / (std::string(name) + ".lua")) << "--\n";
+    {
+        asset::AssetRegistry registry(heap, content.generic_string().c_str());
+        CHECK(registry.scan());
+        CHECK(registry.count() == kFiles + 3);
+        std::vector<usize> all;
+        registry.search("S_", asset::AssetType::Script, nullptr, all);
+        CHECK(all.size() == kFiles);  // the capped search stopped at its buffer
+        const asset::AssetRecord* rock = registry.find_named("Rock", asset::AssetType::Script);
+        CHECK(rock && std::strcmp(rock->name, "Rock") == 0);
+        CHECK(!registry.find_named("rock") && !registry.find_named("Rock", asset::AssetType::Mesh));
+        CHECK(registry.best_match("rock") == rock);                                       // the whole name, any case
+        CHECK(registry.best_match("Rocke") && std::strcmp(registry.best_match("Rocke")->name, "Rockery") == 0);
+        CHECK(registry.best_match("S_2999") && std::strcmp(registry.best_match("S_2999")->name, "S_2999") == 0);
+        // Remove some (records move around): every GUID still finds its own record.
+        for (int i = 0; i < kFiles; i += 7) {
+            const fs::path file = content / ("F" + std::to_string(i % 30)) / ("S_" + std::to_string(i) + ".lua");
+            fs::remove(file);
+            fs::remove(file.string() + ".meta");
+        }
+        registry.scan();
+        bool all_found = true;
+        for (usize i = 0; i < registry.count(); ++i) all_found = all_found && registry.find(registry.get(i).guid) == &registry.get(i);
+        CHECK(all_found && !registry.find_named("S_7") && registry.find_named("S_8"));
+    }
+    fs::remove_all(content);
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 int main() {
+    test_registry_scale(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_plugins_dlc(fs::path(LSD_TEST_TEMP_DIR) / "asset_tests");
     test_ies();
     test_map_names();

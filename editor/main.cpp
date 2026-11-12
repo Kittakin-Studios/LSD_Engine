@@ -329,6 +329,8 @@ const lsd::editor::TextureCache* g_texture_cache_stats = nullptr;  // stat dump'
 lsd::u32 g_nav_vertex_count = 0;
 lsd::u32 g_casters_culled = 0;  // skinned and instanced shadow casters skipped so far this frame
 lsd::u32 g_casters_culled_frame = 0;  // ... and in the last whole frame (stat dump)
+lsd::f32 g_worst_frame_ms = 0.0f;   // stat dump: the slowest frame and the hitches since the last dump
+lsd::u32 g_hitch_frames = 0;
 
 extern lsd::f32 g_view_distance_scale;  // below (Engine Scalability > View Distance)
 // The LOD a skeletal mesh is drawn at seen from `eye`: by how big it looks (its bind bounds, grown by half for the pose).
@@ -1457,6 +1459,10 @@ void register_console(EditorState& s) {
             std::snprintf(line, sizeof line, "ui: outliner %.2f, details %.2f, content %.2f, viewports %.2f, rest %.2f ms", st.stat_panel_ms[0], st.stat_panel_ms[1],
                           st.stat_panel_ms[2], st.stat_panel_ms[3], st.stat_panel_ms[4]);
             lsd::editor::remote::print(line);
+            std::snprintf(line, sizeof line, "since the last dump: worst frame %.1f ms, %u frames over 50 ms", static_cast<double>(g_worst_frame_ms), g_hitch_frames);
+            lsd::editor::remote::print(line);
+            g_worst_frame_ms = 0.0f;
+            g_hitch_frames = 0;
             if (g_dynamic_gi.on()) {
                 std::snprintf(line, sizeof line, "dynamic gi: sweep %.2f ms (worker threads), main thread %.2f ms", g_dynamic_gi.sweep_ms(), g_dynamic_gi.main_ms());
                 lsd::editor::remote::print(line);
@@ -1504,10 +1510,11 @@ void register_console(EditorState& s) {
     }, &s, "asset.Select <name>: select an asset and show it in Details");
     console::add_command("particles.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hits[64];
-        const lsd::usize count = st.registry->search(args, lsd::asset::AssetType::Data, nullptr, hits, 64);
-        for (lsd::usize i = 0; i < count; ++i) {
-            const lsd::asset::AssetRecord& r = st.registry->get(hits[i]);
+        std::vector<lsd::usize> hits;
+        st.registry->search(args, lsd::asset::AssetType::Data, nullptr, hits);
+        if (const lsd::asset::AssetRecord* exact = st.registry->find_named(args, lsd::asset::AssetType::Data, "ParticleSystem")) hits.insert(hits.begin(), static_cast<lsd::usize>(exact - &st.registry->get(0)));
+        for (const lsd::usize i : hits) {
+            const lsd::asset::AssetRecord& r = st.registry->get(i);
             if (!lsd::editor::asset_matches(r, "ParticleSystem") || !st.particle_editor) continue;
             st.particle_editor->open(st, r);
             return;
@@ -1516,19 +1523,19 @@ void register_console(EditorState& s) {
     }, &s, "Open a particle system in the Particle Editor");
     console::add_command("graph.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Graph, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::Cue, nullptr, &hit, 1) == 1 ||
-            st.registry->search(args, lsd::asset::AssetType::MaterialGraph, nullptr, &hit, 1) == 1 ||
-            st.registry->search(args, lsd::asset::AssetType::BehaviorTree, nullptr, &hit, 1) == 1) {
-            lsd::editor::open_graph(st, st.registry->get(hit));
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = st.registry->best_match(args, lsd::asset::AssetType::Graph)) || (hit = st.registry->best_match(args, lsd::asset::AssetType::Cue)) ||
+            (hit = st.registry->best_match(args, lsd::asset::AssetType::MaterialGraph)) ||
+            (hit = st.registry->best_match(args, lsd::asset::AssetType::BehaviorTree))) {
+            lsd::editor::open_graph(st, *hit);
         } else {
             LSD_LOG_WARN("editor", "graph.Open: no visual script or sound cue named like '%s'", args);
         }
     }, &s, "Open a visual script, sound cue or material graph in the graph editor");
     console::add_command("table.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Table, nullptr, &hit, 1) == 1) lsd::editor::open_table(st, st.registry->get(hit));
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = st.registry->best_match(args, lsd::asset::AssetType::Table))) lsd::editor::open_table(st, *hit);
         else LSD_LOG_WARN("editor", "table.Open: no data table named like '%s'", args);
     }, &s, "Open a data table in the table editor");
     console::add_command("memreport", [](void*, const char*) {  // every allocator to the log, biggest first
@@ -1616,22 +1623,23 @@ void register_console(EditorState& s) {
     }, &s, "Toggle a Lua breakpoint (Tools > Lua Debugger shows them)");
     console::add_command("mesh.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Mesh, nullptr, &hit, 1) == 1) lsd::editor::open_mesh_editor(st, st.registry->get(hit));
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = st.registry->best_match(args, lsd::asset::AssetType::Mesh))) lsd::editor::open_mesh_editor(st, *hit);
         else LSD_LOG_WARN("editor", "mesh.Open: no mesh named like '%s'", args);
     }, &s, "Open a mesh in the Mesh Editor");
     console::add_command("prefab.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Prefab, nullptr, &hit, 1) == 1) lsd::editor::open_prefab_editor(st, st.registry->get(hit));
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = st.registry->best_match(args, lsd::asset::AssetType::Prefab))) lsd::editor::open_prefab_editor(st, *hit);
         else LSD_LOG_WARN("editor", "prefab.Open: no prefab named like '%s'", args);
     }, &s, "Open a prefab in the Prefab editor");
     console::add_command("timeline.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hits[16];
-        const lsd::usize n = st.registry->search(args, lsd::asset::AssetType::Data, nullptr, hits, 16);
-        for (lsd::usize i = 0; i < n; ++i) {
-            const lsd::asset::AssetRecord& r = st.registry->get(hits[i]);
+        std::vector<lsd::usize> hits;
+        st.registry->search(args, lsd::asset::AssetType::Data, nullptr, hits);
+        if (const lsd::asset::AssetRecord* exact = st.registry->find_named(args, lsd::asset::AssetType::Data, "Timeline")) hits.insert(hits.begin(), static_cast<lsd::usize>(exact - &st.registry->get(0)));
+        for (const lsd::usize i : hits) {
+            const lsd::asset::AssetRecord& r = st.registry->get(i);
             if (std::strcmp(r.data_type, "Timeline") == 0) return lsd::editor::open_timeline_editor(st, r);
         }
         LSD_LOG_WARN("editor", "timeline.Open: no Timeline named like '%s'", args);
@@ -1645,19 +1653,20 @@ void register_console(EditorState& s) {
             LSD_LOG_WARN("editor", "sequence.Render <timeline> [fps] [width] [height]");
             return;
         }
-        lsd::usize hits[16];
-        const lsd::usize n = st.registry->search(name, lsd::asset::AssetType::Data, nullptr, hits, 16);
-        for (lsd::usize i = 0; i < n; ++i) {
-            const lsd::asset::AssetRecord& r = st.registry->get(hits[i]);
+        std::vector<lsd::usize> hits;
+        st.registry->search(name, lsd::asset::AssetType::Data, nullptr, hits);
+        if (const lsd::asset::AssetRecord* exact = st.registry->find_named(name, lsd::asset::AssetType::Data, "Timeline")) hits.insert(hits.begin(), static_cast<lsd::usize>(exact - &st.registry->get(0)));
+        for (const lsd::usize i : hits) {
+            const lsd::asset::AssetRecord& r = st.registry->get(i);
             if (std::strcmp(r.data_type, "Timeline") == 0) return lsd::editor::render_timeline_movie(st, r, fps, width, height);
         }
         LSD_LOG_WARN("editor", "sequence.Render: no Timeline named like '%s'", name);
     }, &s, "sequence.Render <timeline> [fps] [width] [height]: renders it frame by frame to PNGs in Saved/MovieRenders (Movie Render Queue)");
     console::add_command("ui.Open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::UiDocument, nullptr, &hit, 1) == 1 || st.registry->search(args, lsd::asset::AssetType::UiStyle, nullptr, &hit, 1) == 1) {
-            lsd::editor::open_ui_editor(st, st.registry->get(hit));
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = st.registry->best_match(args, lsd::asset::AssetType::UiDocument)) || (hit = st.registry->best_match(args, lsd::asset::AssetType::UiStyle))) {
+            lsd::editor::open_ui_editor(st, *hit);
         } else {
             LSD_LOG_WARN("editor", "ui.Open: no UI document or style named like '%s'", args);
         }
@@ -1852,8 +1861,8 @@ void register_console(EditorState& s) {
     }, &s, "Save the current level");
     console::add_command("open", [](void* user, const char* args) {
         auto& st = *static_cast<EditorState*>(user);
-        lsd::usize hit = 0;
-        if (st.registry->search(args, lsd::asset::AssetType::Level, nullptr, &hit, 1) == 1) st.registry->source_path(st.registry->get(hit), st.open_level_requested, sizeof st.open_level_requested);
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = st.registry->best_match(args, lsd::asset::AssetType::Level))) st.registry->source_path(*hit, st.open_level_requested, sizeof st.open_level_requested);
         else LSD_LOG_WARN("console", "open: no level named like '%s'", args);
     }, &s, "open <level name>: open a level (discards unsaved changes)");
     // Listings for tools (the Claude MCP plugin): answered to the remote client, else the Output Log.
@@ -2618,14 +2627,9 @@ int main(int argc, char** argv) {
     // Material Function nodes find their graph by name (a Material Graph asset).
     lsd::script::set_material_function_resolver([](void* user, const char* name, char* out, lsd::usize capacity) {
         const auto& reg = *static_cast<const lsd::asset::AssetRegistry*>(user);
-        lsd::usize hits[16];
-        const lsd::usize n = reg.search(name, lsd::asset::AssetType::MaterialGraph, nullptr, hits, 16);
-        for (lsd::usize i = 0; i < n; ++i) {
-            if (std::strcmp(reg.get(hits[i]).name, name) != 0) continue;
-            reg.source_path(reg.get(hits[i]), out, capacity);
-            return true;
-        }
-        return false;
+        const lsd::asset::AssetRecord* r = reg.find_named(name, lsd::asset::AssetType::MaterialGraph);
+        if (r) reg.source_path(*r, out, capacity);
+        return r != nullptr;
     }, &registry);
     // The window icon (Project Settings > Platform), editor and game alike.
     lsd::asset::Guid icon_guid;
@@ -2716,9 +2720,9 @@ int main(int argc, char** argv) {
     if (FILE* lock = game_mode ? nullptr : std::fopen(kLockPath, "wb")) std::fclose(lock);
     lsd::u64 last_autosave = SDL_GetTicks();
     if (place_arg) {
-        lsd::usize hit = 0;
-        if (registry.search(place_arg, lsd::asset::AssetType::Mesh, nullptr, &hit, 1) == 1) {
-            const lsd::asset::AssetRecord& r = registry.get(hit);
+        const lsd::asset::AssetRecord* hit = nullptr;
+        if ((hit = registry.best_match(place_arg, lsd::asset::AssetType::Mesh))) {
+            const lsd::asset::AssetRecord& r = *hit;
             char name[64];
             world.unique_name(r.name, name, sizeof name);
             const lsd::world::Entity e = world.create(name);
@@ -3002,6 +3006,8 @@ int main(int argc, char** argv) {
         const lsd::u64 now = SDL_GetTicksNS();
         const lsd::f32 dt = static_cast<lsd::f32>(static_cast<double>(now - last_tick) * 1e-9);
         last_tick = now;
+        g_worst_frame_ms = dt * 1000.0f > g_worst_frame_ms ? dt * 1000.0f : g_worst_frame_ms;
+        g_hitch_frames += dt > 0.05f ? 1u : 0u;
 
         // Pick up new, changed and deleted files once a second; recompile what changed.
         if (SDL_GetTicks() - last_scan > 1000 || state.reload_assets_now) {

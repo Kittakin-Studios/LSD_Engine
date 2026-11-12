@@ -629,6 +629,27 @@ static void test_forward_vector() {
     }
 }
 
+// lsd.assets with thousands of assets: every one is listed (the answer used to stop at 64 KB, about 800 assets).
+static void test_many_assets() {
+    HeapAllocator heap("assets");
+    World w(heap);
+    script::ScriptHost host;
+    host.assets = [](void*, const char*, const char*, char* out, usize capacity) {  // like the editor's list_assets: whole lines that fit
+        usize used = 0;
+        u32 n = 0;
+        for (; n < 5000; ++n) {
+            const int wrote = std::snprintf(out + used, capacity - used, "%sSM_Building_%04u|0123456789abcdef0123456789abcdef|Levels/Map/Game/Meshes", n ? "\n" : "", n);
+            if (wrote < 0 || used + static_cast<usize>(wrote) >= capacity) break;
+            used += static_cast<usize>(wrote);
+        }
+        return n;
+    };
+    script::ScriptSystem scripts;
+    scripts.start(w, host, path_of, nullptr);
+    CHECK(scripts.run("local t = lsd.assets('Mesh') assert(#t == 5000, #t) assert(t[5000].name == 'SM_Building_4999')"));
+    scripts.stop();
+}
+
 // Functions, a For Loop, reroutes and a comment: Start sums add_one(i) for i = 0..2 into the "sum" variable (1 + 2 + 3).
 static void test_functions() {
     using namespace lsd::script;
@@ -1466,6 +1487,7 @@ function on_ability_ended(self, ability, cancelled) lsd.game_instance().ended = 
 }
 
 int main() {
+    test_many_assets();
     test_abilities();
     test_javascript();
     test_js_nodes();

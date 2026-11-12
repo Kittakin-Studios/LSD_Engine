@@ -292,13 +292,8 @@ MaterialCache::Entry* MaterialCache::find(const char* guid) {
 
 bool find_texture_guid(const asset::AssetRegistry& registry, const char* name, char out[33]) {
     out[0] = '\0';
-    usize hits[16];
-    const usize count = registry.search(name, asset::AssetType::Texture, nullptr, hits, 16);
-    for (usize k = 0; k < count; ++k) {  // the exact name (search also matches parts of names)
-        const asset::AssetRecord& r = registry.get(hits[k]);
-        if (std::strcmp(r.name, name) == 0 || k + 1 == count) asset::to_string(r.guid, out);
-        if (std::strcmp(r.name, name) == 0) break;
-    }
+    // The exact name, else one whose name contains it (as before: "Brick" finds "T_Brick").
+    if (const asset::AssetRecord* r = registry.best_match(name, asset::AssetType::Texture)) asset::to_string(r->guid, out);
     return out[0] != '\0';
 }
 

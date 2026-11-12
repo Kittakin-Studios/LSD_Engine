@@ -22,12 +22,7 @@ namespace {
 EditorUtilities& g_utilities = *new EditorUtilities;  // never destroyed: its Lua state may outlive the statics it reports to at exit
 
 const asset::AssetRecord* find_named(const asset::AssetRegistry& registry, asset::AssetType type, const char* name) {
-    usize hits[16];
-    const usize n = registry.search(name, type, nullptr, hits, 16);
-    for (usize i = 0; i < n; ++i) {
-        if (std::strcmp(registry.get(hits[i]).name, name) == 0) return &registry.get(hits[i]);
-    }
-    return nullptr;
+    return registry.find_named(name, type);
 }
 
 // lsd.spawn in the editor: a prefab or mesh asset by name, or a built-in shape ("Cube"); not selected.

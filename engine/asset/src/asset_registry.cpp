@@ -93,10 +93,48 @@ AssetRegistry::AssetRegistry(Allocator& allocator, const char* content_dir) : re
 }
 
 const AssetRecord* AssetRegistry::find(Guid guid) const {
-    for (const AssetRecord& r : records_) {
-        if (r.guid == guid) return &r;
+    const auto it = by_guid_.find(guid);
+    return it != by_guid_.end() && it->second < records_.size() ? &records_[it->second] : nullptr;
+}
+
+void AssetRegistry::index_guids() {
+    by_guid_.clear();
+    by_guid_.reserve(records_.size());
+    for (usize i = 0; i < records_.size(); ++i) by_guid_.emplace(records_[i].guid, static_cast<u32>(i));
+}
+
+const AssetRecord* AssetRegistry::find_named(const char* name, AssetType type, const char* data_type) const {
+    if (!name || !*name) return nullptr;
+    if (by_name_generation_ != generation_ || by_name_.size() != records_.size()) {
+        by_name_.clear();
+        by_name_.reserve(records_.size());
+        for (usize i = 0; i < records_.size(); ++i) by_name_.emplace(records_[i].name, static_cast<u32>(i));
+        by_name_generation_ = generation_;
     }
-    return nullptr;
+    const AssetRecord* best = nullptr;  // several of a name (different folders): the first by path, the same every run
+    const auto [from, to] = by_name_.equal_range(name);
+    for (auto it = from; it != to; ++it) {
+        const AssetRecord& r = records_[it->second];
+        if (type != AssetType::Unknown && r.type != type) continue;
+        if (data_type && std::strcmp(r.data_type, data_type) != 0) continue;
+        if (!best || std::strcmp(r.path, best->path) < 0) best = &r;
+    }
+    return best;
+}
+
+const AssetRecord* AssetRegistry::best_match(const char* name, AssetType type) const {
+    if (const AssetRecord* exact = find_named(name, type)) return exact;
+    const AssetRecord* best = nullptr;
+    bool best_exact = false;  // the whole name ignoring case beats a part of a name
+    for (const AssetRecord& r : records_) {
+        if ((type != AssetType::Unknown && r.type != type) || !contains_ignore_case(r.name, name)) continue;
+        const bool exact = std::strlen(r.name) == std::strlen(name);
+        if (!best || (exact && !best_exact) || (exact == best_exact && std::strcmp(r.name, best->name) < 0)) {
+            best = &r;
+            best_exact = exact;
+        }
+    }
+    return best;
 }
 
 // The record's path inside its mount's folder (a mount with a prefix drops "prefix/").
@@ -241,6 +279,7 @@ bool AssetRegistry::apply(const Walk& walk) {
             changed = true;
         }
     }
+    if (changed) index_guids();  // removals moved records around
     for (usize i = 0; i < records_.size(); ++i) known.emplace(records_[i].path, i);
 
     for (const Walk::File& f : walk.files) {
@@ -302,6 +341,7 @@ bool AssetRegistry::apply(const Walk& walk) {
         }
         copy_string(record.tags, sizeof record.tags, meta.tags);
         known.emplace(f.relative, records_.size());
+        by_guid_.emplace(record.guid, static_cast<u32>(records_.size()));
         records_.push_back(record);
         changed = true;
     }
@@ -382,19 +422,29 @@ bool AssetRegistry::delete_asset(AssetRecord record, char* error, usize error_ca
     return true;
 }
 
+namespace {
+
+bool search_matches(const AssetRecord& r, const char* text, AssetType type, const char* folder) {
+    if (type != AssetType::Unknown && r.type != type) return false;
+    if (text && *text) return contains_ignore_case(r.name, text) || contains_ignore_case(r.tags, text);
+    return !folder || std::strcmp(r.folder, folder) == 0;
+}
+
+} // namespace
+
 usize AssetRegistry::search(const char* text, AssetType type, const char* folder, usize* out, usize max) const {
     usize found = 0;
     for (usize i = 0; i < records_.size() && found < max; ++i) {
-        const AssetRecord& r = records_[i];
-        if (type != AssetType::Unknown && r.type != type) continue;
-        if (text && *text) {
-            if (!contains_ignore_case(r.name, text) && !contains_ignore_case(r.tags, text)) continue;
-        } else if (folder && std::strcmp(r.folder, folder) != 0) {
-            continue;
-        }
-        out[found++] = i;
+        if (search_matches(records_[i], text, type, folder)) out[found++] = i;
     }
     return found;
+}
+
+void AssetRegistry::search(const char* text, AssetType type, const char* folder, std::vector<usize>& out) const {
+    out.clear();
+    for (usize i = 0; i < records_.size(); ++i) {
+        if (search_matches(records_[i], text, type, folder)) out.push_back(i);
+    }
 }
 
 } // namespace lsd::asset

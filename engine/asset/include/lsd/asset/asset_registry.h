@@ -7,6 +7,8 @@
 #include "lsd/asset/guid.h"
 #include "lsd/foundation/array.h"
 
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace lsd::asset {
@@ -74,6 +76,14 @@ public:
     // Indices of assets whose name or tags contain `text` (case-insensitive) and whose type matches
     // (Unknown = any). With empty text, only assets directly in `folder` match.
     usize search(const char* text, AssetType type, const char* folder, usize* out, usize max) const;
+    // The same with no limit: every match (the Content Browser, pickers).
+    void search(const char* text, AssetType type, const char* folder, std::vector<usize>& out) const;
+    // The asset named exactly `name` (case-sensitive) of that type (Unknown = any) and, when given, that data
+    // type ("InputAction"); null if none. Hashed: as fast with 50,000 assets as with 50.
+    const AssetRecord* find_named(const char* name, AssetType type = AssetType::Unknown, const char* data_type = nullptr) const;
+    // For console commands that take part of a name: the exact name, else the same ignoring case, else the
+    // first (A-Z) whose name contains it. Null if none.
+    const AssetRecord* best_match(const char* name, AssetType type = AssetType::Unknown) const;
 
     // Absolute-or-relative path of the source file and its .meta sidecar.
     void source_path(const AssetRecord& record, char* out, usize capacity) const;
@@ -101,6 +111,13 @@ private:
     const char* rel_of(const AssetRecord& record) const;
     const char* dir_of(u8 mount) const { return mount == 0 || mount > mounts_.size() ? content_dir_ : mounts_[mount - 1].dir; }
     Async* async_ = nullptr;
+    struct GuidHash {
+        usize operator()(Guid g) const { return static_cast<usize>(g.hi ^ (g.lo * 0x9E3779B97F4A7C15ull)); }
+    };
+    void index_guids();
+    std::unordered_map<Guid, u32, GuidHash> by_guid_;                // record index of each GUID, kept by apply()
+    mutable std::unordered_multimap<std::string, u32> by_name_;      // record indices by name, rebuilt when generation_ moves on
+    mutable u32 by_name_generation_ = ~0u;
     u32 generation_ = 0;
     u32 sync_scans_ = 0;  // bumped by scan(): an async walk started before it is stale
 };

@@ -1946,13 +1946,25 @@ struct Api {
         }
         return 1;
     }
+    // host.assets into a buffer that grows until every line fits: a project's thousands of assets are all listed.
+    static std::string asset_lines(const ScriptHost& host, const char* type, const char* folder) {
+        std::string text(64 * 1024, '\0');
+        while (host.assets) {
+            text[0] = '\0';
+            host.assets(host.user, type, folder, text.data(), text.size());
+            const usize used = std::strlen(text.c_str());
+            if (used + 1024 < text.size()) {  // a line is far shorter than 1 KB: none was left out
+                text.resize(used);
+                return text;
+            }
+            text.assign(text.size() * 2, '\0');
+        }
+        return {};
+    }
     static int assets(lua_State* L) {
-        const ScriptHost& host = system(L).host_;
-        static char text[64 * 1024];
-        text[0] = 0;
-        if (host.assets) host.assets(host.user, luaL_checkstring(L, 1), luaL_optstring(L, 2, ""), text, sizeof text);
+        const std::string text = asset_lines(system(L).host_, luaL_checkstring(L, 1), luaL_optstring(L, 2, ""));
         static const char* const kKeys[] = {"name", "guid", "folder"};
-        return push_lines(L, text, kKeys, 3);
+        return push_lines(L, text.c_str(), kKeys, 3);
     }
     static int morph_names(lua_State* L) {
         const ScriptHost& host = system(L).host_;
@@ -1979,11 +1991,8 @@ struct Api {
         asset::Guid parsed;
         if (asset::parse_guid(mesh, parsed)) std::snprintf(guid, sizeof guid, "%s", mesh);
         else if (mesh[0]) {  // by name
-            const ScriptHost& host = system(L).host_;
-            static char text[64 * 1024];
-            text[0] = 0;
-            if (host.assets) host.assets(host.user, "Mesh", "", text, sizeof text);
-            for (const char* line = text; *line && !guid[0];) {
+            const std::string text = asset_lines(system(L).host_, "Mesh", "");
+            for (const char* line = text.c_str(); *line && !guid[0];) {
                 const char* bar = std::strchr(line, '|');
                 const char* end = std::strchr(line, '\n');
                 if (!end) end = line + std::strlen(line);

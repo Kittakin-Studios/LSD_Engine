@@ -2464,13 +2464,12 @@ struct OutlineRow {
 // number of objects (scanning every slot for every parent was quadratic: 25 ms with 3000 objects).
 using ChildLists = std::unordered_map<u32, std::vector<Entity>>;
 
-void collect_rows(const ChildLists& children, Entity parent, int depth, OutlineRow* rows, int& count, int max) {
+void collect_rows(const ChildLists& children, Entity parent, int depth, std::vector<OutlineRow>& rows) {
     const auto it = children.find(parent.value);
     if (it == children.end()) return;
     for (const Entity e : it->second) {
-        if (count >= max) return;
-        rows[count++] = {e, depth};
-        collect_rows(children, e, depth + 1, rows, count, max);
+        rows.push_back({e, depth});
+        collect_rows(children, e, depth + 1, rows);
     }
 }
 
@@ -2479,34 +2478,33 @@ char g_renaming_folder[64] = "";         // the folder whose name is being edite
 char g_folder_name[64] = "";
 
 // Hierarchy tab: folders (A-Z) with their root objects inside, then the objects in no folder.
-void collect_hierarchy(const world::World& w, OutlineRow* rows, int& count, int max) {
+void collect_hierarchy(const world::World& w, std::vector<OutlineRow>& rows) {
     static ChildLists children;
     for (auto& [parent, list] : children) list.clear();  // keeps the lists' memory frame to frame
+    struct Folder {
+        const char* label;  // a record's copy, stable for this frame
+        std::vector<Entity> roots;
+    };
+    std::map<std::string, Folder> folders;  // one pass: each folder's root objects in slot order (not a walk per folder)
     for (u32 slot = 0; slot < w.slot_count(); ++slot) {
         const Entity e = w.entity_at_slot(slot);
-        if (e.valid() && w.parent(e).valid()) children[w.parent(e).value].push_back(e);
+        if (!e.valid()) continue;
+        if (w.parent(e).valid()) children[w.parent(e).value].push_back(e);
+        else if (w.folder(e)[0]) folders.try_emplace(w.folder(e), Folder{w.folder(e), {}}).first->second.roots.push_back(e);
     }
-    std::map<std::string, const char*> folders;  // name -> a record's copy, stable for this frame
-    for (u32 slot = 0; slot < w.slot_count(); ++slot) {
-        const Entity e = w.entity_at_slot(slot);
-        if (e.valid() && !w.parent(e).valid() && w.folder(e)[0]) folders.emplace(w.folder(e), w.folder(e));
-    }
-    for (const auto& [name, label] : folders) {
-        if (count >= max) return;
-        rows[count++] = {{}, 0, label};
+    for (const auto& [name, folder] : folders) {
+        rows.push_back({{}, 0, folder.label});
         if (g_closed_folders.count(name)) continue;
-        for (u32 slot = 0; slot < w.slot_count() && count < max; ++slot) {
-            const Entity e = w.entity_at_slot(slot);
-            if (!e.valid() || w.parent(e).valid() || name != w.folder(e)) continue;
-            rows[count++] = {e, 1};
-            collect_rows(children, e, 2, rows, count, max);
+        for (const Entity e : folder.roots) {
+            rows.push_back({e, 1});
+            collect_rows(children, e, 2, rows);
         }
     }
-    for (u32 slot = 0; slot < w.slot_count() && count < max; ++slot) {
+    for (u32 slot = 0; slot < w.slot_count(); ++slot) {
         const Entity e = w.entity_at_slot(slot);
         if (!e.valid() || w.parent(e).valid() || w.folder(e)[0]) continue;
-        rows[count++] = {e, 0};
-        collect_rows(children, e, 1, rows, count, max);
+        rows.push_back({e, 0});
+        collect_rows(children, e, 1, rows);
     }
 }
 
@@ -2772,7 +2770,8 @@ void draw_outliner(EditorState& s) {
     const EditorTheme& t = s.theme;
     static int active_tab = 1;
     static char filter[64] = "";
-    static OutlineRow rows[4096];
+    static std::vector<OutlineRow> rows;  // every object: no cap (the list is clipped to the rows on screen)
+    rows.clear();
     if (!begin_panel(kOutlinerWindow)) { ImGui::End(); return; }
     static bool first_frame = true;  // ImGui opens the first tab; start on the one active_tab names
     const int wanted = first_frame ? active_tab : -1;  // read before the tabs below overwrite active_tab
@@ -2795,20 +2794,18 @@ void draw_outliner(EditorState& s) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::InputTextWithHint("##filter", "Search objects", filter, sizeof filter);
-            int count = 0;
-            for (u32 slot = 0; slot < s.world->slot_count() && count < 4096; ++slot) {
+            for (u32 slot = 0; slot < s.world->slot_count(); ++slot) {
                 const Entity e = s.world->entity_at_slot(slot);
                 if (!e.valid() || !contains_ignore_case(s.world->name(e), filter)) continue;
                 if (type_filter && !s.world->get(e, *type_filter)) continue;
-                rows[count++] = {e, 0};
+                rows.push_back({e, 0});
             }
-            draw_rows(s, rows, count, false);
+            draw_rows(s, rows.data(), static_cast<int>(rows.size()), false);
             ImGui::EndTabItem();
         }
         if (themed_tab("Hierarchy", 1, active_tab, t.outline_tab, t.panel_background, LinearColor::hex(0xFFFFFF), wanted == 1)) {
-            int count = 0;
-            collect_hierarchy(*s.world, rows, count, 4096);
-            draw_rows(s, rows, count, true);
+            collect_hierarchy(*s.world, rows);
+            draw_rows(s, rows.data(), static_cast<int>(rows.size()), true);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -2844,6 +2841,55 @@ bool asset_matches(const asset::AssetRecord& r, const char* type) {
 }
 
 namespace {
+int strcmp_nocase(const char* a, const char* b);
+// The Content Browser's folder tree, read from disk at most once a second (folder_roots).
+struct FolderNode {
+    std::string name;  // "Props"
+    std::string path;  // "Levels/Props" (relative to Content/, or "Plugins/<Name>/..." in a mount)
+    std::vector<FolderNode> children;  // A-Z
+};
+const FolderNode* content_folder_node(EditorState& s, const char* relative);
+}
+
+const asset::AssetRecord* asset_combo_items(const asset::AssetRegistry& registry, const char* type, const asset::AssetRecord* current) {
+    // One combo is open at a time: its list is kept while the text, the type and the registry stay the same.
+    static char filter[64] = "";
+    static std::vector<usize> shown;
+    static std::string shown_type;
+    static u32 shown_generation = ~0u;
+    const bool appearing = ImGui::IsWindowAppearing();
+    if (appearing) {
+        filter[0] = '\0';
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(-1.0f);
+    const bool typed = with_tip(ImGui::InputTextWithHint("##find", "Search", filter, sizeof filter), "Type part of a name");
+    if (typed || appearing || shown_type != type || shown_generation != registry.generation()) {
+        shown.clear();
+        for (usize i = 0; i < registry.count(); ++i) {
+            if (asset_matches(registry.get(i), type) && contains_ignore_case(registry.get(i).name, filter)) shown.push_back(i);
+        }
+        std::sort(shown.begin(), shown.end(), [&](usize a, usize b) { return strcmp_nocase(registry.get(a).name, registry.get(b).name) < 0; });
+        shown_type = type;
+        shown_generation = registry.generation();
+    }
+    const asset::AssetRecord* clicked = nullptr;
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(shown.size()));
+    while (clipper.Step()) {
+        for (int k = clipper.DisplayStart; k < clipper.DisplayEnd; ++k) {
+            const asset::AssetRecord& r = registry.get(shown[static_cast<usize>(k)]);
+            ImGui::PushID(k);
+            if (ImGui::Selectable(r.name, current == &r)) clicked = &r;
+            ImGui::SetItemTooltip("Content/%s", r.path);
+            ImGui::PopID();
+        }
+    }
+    if (shown.empty()) ImGui::TextDisabled(filter[0] ? "No %s matches" : "No %s assets yet", type);
+    return clicked;
+}
+
+namespace {
 
 // Combo of the assets of one type ("None" clears it); also accepts an asset dragged from the Content Browser.
 bool asset_picker(EditorState& s, const char* type, char* guid_text, usize capacity) {
@@ -2855,16 +2901,9 @@ bool asset_picker(EditorState& s, const char* type, char* guid_text, usize capac
             guid_text[0] = '\0';
             changed = true;
         }
-        for (usize i = 0; i < s.registry->count(); ++i) {
-            const asset::AssetRecord& r = s.registry->get(i);
-            if (!asset_matches(r, type)) continue;
-            ImGui::PushID(static_cast<int>(i));
-            if (ImGui::Selectable(r.name, current == &r)) {
-                asset::to_string(r.guid, guid_text);
-                changed = true;
-            }
-            ImGui::SetItemTooltip("Content/%s", r.path);
-            ImGui::PopID();
+        if (const asset::AssetRecord* r = asset_combo_items(*s.registry, type, current)) {
+            asset::to_string(r->guid, guid_text);
+            changed = true;
         }
         ImGui::EndCombo();
     }
@@ -4315,29 +4354,82 @@ void draw_file_dialogs(EditorState& s) {
 // Draws the sub-folders of `dir` as tree nodes; clicking one selects it. Returns false if none.
 // shortcut: reads the disk every frame; move to the registry's index when folders get many.
 // `root` is the folder the tree starts in and `prefix` its path in the registry ("" for Content, "Plugins/<Name>" for a plugin's Content).
-bool draw_folder_tree(EditorState& s, const std::filesystem::path& dir, ImGuiTreeNodeFlags flags, const std::filesystem::path& root = kContentDir,
-                      const std::string& prefix = "") {
+void read_folders(const std::filesystem::path& dir, const std::string& relative, FolderNode& node) {
     std::error_code error;
-    bool any = false;
     for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
         if (!entry.is_directory(error)) continue;
-        any = true;
-        const std::string name = entry.path().filename().string();
-        const std::string inside = std::filesystem::relative(entry.path(), root, error).generic_string();
-        const std::string relative = prefix.empty() ? inside : prefix + "/" + inside;
-        const bool selected = relative == s.content_folder;
-        const bool open = ImGui::TreeNodeEx(name.c_str(), flags | (selected ? ImGuiTreeNodeFlags_Selected : 0));
+        FolderNode child;
+        child.name = entry.path().filename().string();
+        child.path = relative.empty() ? child.name : relative + "/" + child.name;
+        read_folders(entry.path(), child.path, child);
+        node.children.push_back(std::move(child));
+    }
+    std::sort(node.children.begin(), node.children.end(), [](const FolderNode& a, const FolderNode& b) { return strcmp_nocase(a.name.c_str(), b.name.c_str()) < 0; });
+}
+
+// Content/ and each mount's folders, re-read when the registry changes and at most once a second otherwise
+// (folders made outside the editor show up): walking the tree every frame cost milliseconds with 100+ folders.
+const std::vector<FolderNode>& folder_roots(EditorState& s) {
+    static std::vector<FolderNode> roots;  // [0] Content/, then one per mount, in s.registry->mounts() order
+    static u32 generation = ~0u;
+    static u64 read_at = 0;
+    const u64 now = ImGui::GetTime() > 0.0 ? static_cast<u64>(ImGui::GetTime() * 1000.0) : 0;
+    if (generation == s.registry->generation() && now - read_at < 1000 && !roots.empty()) return roots;
+    generation = s.registry->generation();
+    read_at = now;
+    roots.clear();
+    roots.emplace_back();
+    read_folders(kContentDir, "", roots.back());
+    for (const asset::AssetMount& m : s.registry->mounts()) {
+        roots.emplace_back();
+        roots.back().name = m.prefix;
+        roots.back().path = m.prefix;
+        if (m.prefix[0]) read_folders(m.dir, m.prefix, roots.back());
+    }
+    return roots;
+}
+
+// The cached folder at `relative` ("" = Content/), or null.
+const FolderNode* content_folder_node(EditorState& s, const char* relative) {
+    const std::vector<FolderNode>& roots = folder_roots(s);
+    const FolderNode* best = nullptr;
+    for (const FolderNode& root : roots) {  // the root, or the mount whose prefix starts the path
+        if (root.path.empty() && !best) best = &root;
+        const usize n = root.path.size();
+        if (n && std::strncmp(relative, root.path.c_str(), n) == 0 && (relative[n] == '\0' || relative[n] == '/')) best = &root;
+    }
+    if (!best) return nullptr;
+    const char* at = relative + best->path.size();
+    while (*at == '/') ++at;
+    while (*at) {
+        const char* slash = std::strchr(at, '/');
+        const std::string part = slash ? std::string(at, slash) : std::string(at);
+        const FolderNode* next = nullptr;
+        for (const FolderNode& child : best->children) {
+            if (child.name == part) next = &child;
+        }
+        if (!next) return nullptr;
+        best = next;
+        at = slash ? slash + 1 : at + part.size();
+    }
+    return best;
+}
+
+bool draw_folder_tree(EditorState& s, const FolderNode& node, ImGuiTreeNodeFlags flags) {
+    for (const FolderNode& child : node.children) {
+        const bool selected = child.path == s.content_folder;
+        const bool open = ImGui::TreeNodeEx(child.name.c_str(), flags | (selected ? ImGuiTreeNodeFlags_Selected : 0) | (child.children.empty() ? ImGuiTreeNodeFlags_Leaf : 0));
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-            std::snprintf(s.content_folder, sizeof s.content_folder, "%s", relative.c_str());
+            std::snprintf(s.content_folder, sizeof s.content_folder, "%s", child.path.c_str());
             s.search[0] = '\0';
         }
-        folder_drop_target(s, relative.c_str());
+        folder_drop_target(s, child.path.c_str());
         if (open) {
-            draw_folder_tree(s, entry.path(), flags, root, prefix);
+            draw_folder_tree(s, child, flags);
             ImGui::TreePop();
         }
     }
-    return any;
+    return !node.children.empty();
 }
 
 // ---- Content Browser extras: selection of several assets, duplicate, reimport, favourites, collections ----
@@ -4882,7 +4974,6 @@ void draw_asset_grid(EditorState& s) {
     ImGui::Separator();
     if (!s.registry) return;
 
-    static usize hits[1024];
     const asset::AssetType type = s.type_filter == 1 ? asset::AssetType::Mesh : s.type_filter == 2 ? asset::AssetType::Level
                                 : s.type_filter == 3 ? asset::AssetType::Data : s.type_filter == 4 ? asset::AssetType::Prefab
                                 : s.type_filter == 5 ? asset::AssetType::Script
@@ -4890,42 +4981,48 @@ void draw_asset_grid(EditorState& s) {
                                 : s.type_filter == 7 ? asset::AssetType::Table
                                 : s.type_filter == 8 ? asset::AssetType::Sound
                                 : s.type_filter == 9 ? asset::AssetType::Texture : asset::AssetType::Unknown;
-    usize count = 0;
-    if (s.active_collection[0]) {  // a collection: its assets wherever they are, filtered by the search and type
-        for (usize i = 0; i < s.registry->count() && count < 1024; ++i) {
-            const asset::AssetRecord& r = s.registry->get(i);
-            const bool name_ok = !s.search[0] || std::strstr(r.name, s.search) != nullptr;
-            if (in_collection(s, s.active_collection, r.guid) && name_ok && (type == asset::AssetType::Unknown || r.type == type)) hits[count++] = i;
+    // The filtered, sorted list is kept until the search, filters, folder or registry change: with thousands of
+    // assets, filtering and sorting every frame was most of the Content Browser's time.
+    static std::vector<usize> hits;
+    static std::string hits_key;
+    std::string key = std::to_string(s.registry->generation()) + '|' + std::to_string(s.type_filter) + '|' + std::to_string(s.settings.sort_by) + '|' +
+                      std::to_string(s.settings.collections.count) + '|' + s.search + '|' + s.content_folder + '|' + s.active_collection;
+    if (key != hits_key) {
+        hits_key.swap(key);
+        hits.clear();
+        if (s.active_collection[0]) {  // a collection: its assets wherever they are, filtered by the search and type
+            for (usize i = 0; i < s.registry->count(); ++i) {
+                const asset::AssetRecord& r = s.registry->get(i);
+                const bool name_ok = !s.search[0] || std::strstr(r.name, s.search) != nullptr;
+                if (in_collection(s, s.active_collection, r.guid) && name_ok && (type == asset::AssetType::Unknown || r.type == type)) hits.push_back(i);
+            }
+        } else {
+            s.registry->search(s.search, type, s.content_folder, hits);
         }
-    } else {
-        count = s.registry->search(s.search, type, s.content_folder, hits, 1024);
+        std::sort(hits.begin(), hits.end(), [&](usize a, usize b) {
+            const asset::AssetRecord &x = s.registry->get(a), &y = s.registry->get(b);
+            switch (s.settings.sort_by) {
+                case 1: if (x.type != y.type) return x.type < y.type; break;
+                case 2: if (x.source_time != y.source_time) return x.source_time > y.source_time; break;  // newest first
+                case 3: if (x.source_size != y.source_size) return x.source_size > y.source_size; break;  // biggest first
+                default: break;
+            }
+            return strcmp_nocase(x.name, y.name) < 0;
+        });
     }
+    const usize count = hits.size();
     // The registry as `hits` saw it: menus below (New..., Delete, Duplicate, Reimport) rescan, and the
     // tiles stop drawing for this frame when they did.
     const u32 generation = s.registry->generation();
-    std::sort(hits, hits + count, [&](usize a, usize b) {
-        const asset::AssetRecord &x = s.registry->get(a), &y = s.registry->get(b);
-        switch (s.settings.sort_by) {
-            case 1: if (x.type != y.type) return x.type < y.type; break;
-            case 2: if (x.source_time != y.source_time) return x.source_time > y.source_time; break;  // newest first
-            case 3: if (x.source_size != y.source_size) return x.source_size > y.source_size; break;  // biggest first
-            default: break;
-        }
-        return strcmp_nocase(x.name, y.name) < 0;
-    });
 
-    // Sub-folders first (not while searching), like Unreal; double-click opens one.
-    // shortcut: listed from disk every frame, like the folder tree.
-    static char folders[64][96];
-    usize folder_count = 0;
+    // Sub-folders first (not while searching), like Unreal; double-click opens one. From the cached folder tree.
+    std::vector<std::string> folders;
     if (!s.search[0] && !s.active_collection[0]) {
-        std::error_code error;
-        for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(kContentDir) / s.content_folder, error)) {
-            if (folder_count < 64 && entry.is_directory(error)) {
-                std::snprintf(folders[folder_count++], sizeof folders[0], "%s", entry.path().filename().string().c_str());
-            }
+        if (const FolderNode* here = content_folder_node(s, s.content_folder)) {
+            for (const FolderNode& child : here->children) folders.push_back(child.name);
         }
     }
+    const usize folder_count = folders.size();
     // Right-click on empty space: New Folder.
     if (ImGui::BeginPopupContextWindow("grid_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (with_tip(ImGui::MenuItem("New Folder"), "Makes a folder here")) {
@@ -5139,18 +5236,16 @@ void draw_asset_grid(EditorState& s) {
         hl->AddText(ImVec2(h.x + row_width * 0.68f, h.y), dim, "Folder");
         ImGui::Dummy(ImVec2(row_width, row_height));
     }
-    usize tile = 0;
-    for (usize f = 0; f < folder_count; ++f, ++tile) {
-        ImGui::PushID(folders[f]);
-        if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();
+    auto draw_folder_tile = [&](usize f) {
+        ImGui::PushID(folders[f].c_str());
         ImGui::BeginGroup();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::Selectable("##folder", false, ImGuiSelectableFlags_AllowDoubleClick, list ? ImVec2(row_width, row_height) : ImVec2(kTile, kTile + ImGui::GetTextLineHeightWithSpacing()));
-        const std::string folder_path = join_folder(s.content_folder, folders[f]);
+        const std::string folder_path = join_folder(s.content_folder, folders[f].c_str());
         folder_drop_target(s, folder_path.c_str());
         if (ImGui::BeginPopupContextItem("folder_menu")) {
             if (ImGui::MenuItem(is_favourite(s, folder_path.c_str()) ? "Remove from Favourites" : "Add to Favourites")) toggle_favourite(s, folder_path.c_str());
-            if (with_tip(ImGui::MenuItem("Rename"), "Renames the folder (assets inside keep working)")) start_rename(s, {}, folder_path.c_str(), folders[f]);
+            if (with_tip(ImGui::MenuItem("Rename"), "Renames the folder (assets inside keep working)")) start_rename(s, {}, folder_path.c_str(), folders[f].c_str());
             if (with_tip(ImGui::MenuItem("Delete..."), "Deletes the folder (only when it is empty)")) {
                 s.delete_asset = {};
                 std::snprintf(s.delete_folder, sizeof s.delete_folder, "%s", folder_path.c_str());
@@ -5167,30 +5262,26 @@ void draw_asset_grid(EditorState& s) {
         if (list) {
             ImDrawList* rl = ImGui::GetWindowDrawList();
             rl->AddRectFilled(ImVec2(p.x + 4, p.y + 4), ImVec2(p.x + 16, p.y + row_height - 4), u32_color(t.folder_tree_text), 2.0f);
-            rl->AddText(ImVec2(p.x + 22, p.y), ImGui::GetColorU32(ImGuiCol_Text), folders[f]);
+            rl->AddText(ImVec2(p.x + 22, p.y), ImGui::GetColorU32(ImGuiCol_Text), folders[f].c_str());
             rl->AddText(ImVec2(p.x + row_width * 0.35f, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "Folder");
             ImGui::EndGroup();
             ImGui::PopID();
-            continue;
+            return;
         }
         // Folder shape: tab on top of a body, in the tree's folder colours.
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(p.x + 12, p.y + 22), ImVec2(p.x + 46, p.y + 32), u32_color(t.folder_tree_text), 3.0f);
         dl->AddRectFilled(ImVec2(p.x + 12, p.y + 30), ImVec2(p.x + kTile - 12, p.y + kTile - 18), u32_color(t.folder_tree_text), 3.0f);
         dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + kTile, p.y + kTile + ImGui::GetTextLineHeightWithSpacing()), true);
-        dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), folders[f]);
+        dl->AddText(ImVec2(p.x + 4, p.y + kTile), ImGui::GetColorU32(ImGuiCol_Text), folders[f].c_str());
         dl->PopClipRect();
         ImGui::EndGroup();
         ImGui::PopID();
-    }
-    for (usize n = 0; n < count; ++n, ++tile) {
-        // A tile's menu can rescan (Duplicate, Create Material, Reimport...): the rest of `hits` is
-        // stale then, so stop and draw the new list next frame. `r` is a copy for the same reason.
-        if (s.registry->generation() != generation) break;
-        const asset::AssetRecord r = s.registry->get(hits[n]);
+    };
+    auto draw_asset_tile = [&](usize n) {
+        const asset::AssetRecord r = s.registry->get(hits[n]);  // a copy: a menu below can rescan
         const bool level = r.type == asset::AssetType::Level;
         ImGui::PushID(static_cast<int>(hits[n]));
-        if (tile % static_cast<usize>(columns) != 0) ImGui::SameLine();
         ImGui::BeginGroup();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool selected = r.guid == s.selected_asset || asset_selected(s, r.guid);
@@ -5330,7 +5421,7 @@ void draw_asset_grid(EditorState& s) {
             }
             ImGui::EndGroup();
             ImGui::PopID();
-            continue;
+            return;
         }
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 lo(p.x + 6, p.y + 6), hi(p.x + kTile - 6, p.y + kTile - 6);
@@ -5385,6 +5476,26 @@ void draw_asset_grid(EditorState& s) {
         dl->PopClipRect();
         ImGui::EndGroup();
         ImGui::PopID();
+    };
+    // Rows of `columns` tiles (folders first); only the rows on screen are built, so 50,000 assets cost what 50 do.
+    const usize total = folder_count + count;
+    const usize per_row = static_cast<usize>(columns);
+    const f32 item_height = (list ? row_height : kTile + ImGui::GetTextLineHeightWithSpacing()) + ImGui::GetStyle().ItemSpacing.y;
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>((total + per_row - 1) / per_row), item_height);
+    while (clipper.Step()) {
+        for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+            for (usize c = 0; c < per_row; ++c) {
+                const usize item = static_cast<usize>(row) * per_row + c;
+                if (item >= total) break;
+                // A tile's menu can rescan (Duplicate, Create Material, Reimport...): `hits` is stale then, so
+                // stop and draw the new list next frame.
+                if (s.registry->generation() != generation) break;
+                if (c) ImGui::SameLine();
+                if (item < folder_count) draw_folder_tile(item);
+                else draw_asset_tile(item - folder_count);
+            }
+        }
     }
 }
 
@@ -5626,11 +5737,13 @@ void draw_content_browser(EditorState& s) {
             folder_drop_target(s, "");
             ImGui::PopStyleColor();
             ImGui::PushStyleColor(ImGuiCol_Text, vec4(t.folder_tree_text));
+            const std::vector<FolderNode>& folder_tree = folder_roots(s);
             if (root) {
-                if (!draw_folder_tree(s, kContentDir, node)) ImGui::TextDisabled("(no folders)");
+                if (!draw_folder_tree(s, folder_tree[0], node)) ImGui::TextDisabled("(no folders)");
                 ImGui::TreePop();
             }
-            for (const asset::AssetMount& m : s.registry->mounts()) {  // each enabled plugin's Content/, under Plugins/<Name>
+            for (usize mount = 0; mount < s.registry->mounts().size(); ++mount) {  // each enabled plugin's Content/, under Plugins/<Name>
+                const asset::AssetMount& m = s.registry->mounts()[mount];
                 if (!m.prefix[0]) continue;
                 const bool plugin_open = ImGui::TreeNodeEx(m.prefix, node | (s.content_folder == std::string(m.prefix) ? ImGuiTreeNodeFlags_Selected : 0));
                 if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
@@ -5638,7 +5751,7 @@ void draw_content_browser(EditorState& s) {
                     s.search[0] = s.active_collection[0] = '\0';
                 }
                 if (plugin_open) {
-                    draw_folder_tree(s, m.dir, node, m.dir, m.prefix);
+                    if (mount + 1 < folder_tree.size()) draw_folder_tree(s, folder_tree[mount + 1], node);
                     ImGui::TreePop();
                 }
             }
@@ -6426,9 +6539,9 @@ void create_input_setup(EditorState& s) { create_default_input(s); }
 u32 refresh_prefabs(EditorState& s) { return refresh_instances(s, nullptr, {}); }
 
 bool select_asset(EditorState& s, const char* name) {
-    usize hit = 0;
-    if (s.registry->search(name, asset::AssetType::Unknown, nullptr, &hit, 1) != 1) return false;
-    const asset::AssetRecord& r = s.registry->get(hit);
+    const asset::AssetRecord* found = s.registry->best_match(name);
+    if (!found) return false;
+    const asset::AssetRecord r = *found;
     select(s, {});
     s.selected_asset = r.guid;
     s.selected_meta = asset::AssetMeta{};

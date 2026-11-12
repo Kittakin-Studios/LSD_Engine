@@ -91,13 +91,9 @@ const world::Timeline* find_timeline(const char* name) {
     auto found = g_timelines.find(name);
     if (found != g_timelines.end()) return found->second.get();
     std::unique_ptr<world::Timeline> loaded;  // stays null when missing: no retry every frame
-    usize hits[16];
-    const usize n = g_registry->search(name, asset::AssetType::Data, nullptr, hits, 16);
-    for (usize i = 0; i < n && !loaded; ++i) {
-        const asset::AssetRecord& r = g_registry->get(hits[i]);
-        if (std::strcmp(r.name, name) != 0 || std::strcmp(r.data_type, "Timeline") != 0) continue;
+    if (const asset::AssetRecord* r = g_registry->find_named(name, asset::AssetType::Data, "Timeline")) {
         char path[300];
-        g_registry->source_path(r, path, sizeof path);
+        g_registry->source_path(*r, path, sizeof path);
         loaded = std::make_unique<world::Timeline>();
         if (!asset::load_data_asset(path, *loaded)) loaded.reset();
     }
