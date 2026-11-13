@@ -88,7 +88,12 @@
 //   lsd.release_smart_object(e)           frees every slot e holds
 //   lsd.run_query(e, query) -> x, y, z | nil   an Environment Query asset (by name) run for e: its best point
 //   lsd.rebuild_navmesh() -> ok           builds the navmesh again now (after moving walls or doors); agents keep walking
-//   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
+//   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it;
+//                                         a Destructible breaks once the damage adds up to its Damage Threshold
+//   lsd.fracture(e, x, y, z [, ix, iy, iz [, radius]]) -> ok   a Destructible breaks at world point x, y, z: its pieces
+//                                         within radius (m; default its Break Radius, 0 = all) fly off, pushed by the
+//                                         impulse (N s) and away from the point; on_fracture(self, x, y, z) runs on it.
+//                                         False if e is not a Destructible. Multiplayer: the server breaks it everywhere
 // Ability system (Unreal's Gameplay Ability System; lsd/world/abilities.h): effects and abilities by asset name.
 //   lsd.attribute(e, name) -> current, base | nil, lsd.set_attribute(e, name, base)   an Attribute Set's values
 //   lsd.apply_effect(target, effect) -> ok, lsd.remove_effect(target, effect) -> count   Gameplay Effects
@@ -293,6 +298,7 @@ struct ScriptHost {
     Vec3 (*velocity)(void* user, world::Entity e) = nullptr;  // m/s: the player, a vehicle or a body; zero otherwise
     // e's dynamic body: what 0 an impulse (through *at when given), 1 linear velocity, 2 angular velocity (degrees/s). False: no dynamic body.
     bool (*body_motion)(void* user, world::Entity e, int what, Vec3 value, const Vec3* at) = nullptr;
+    bool (*fracture)(void* user, world::Entity e, Vec3 point, Vec3 impulse, f32 radius) = nullptr;  // radius < 0: the component's
     bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
     // shape: 0 sphere (size.x = radius), 1 box (size = half extents), 2 capsule (size.x = radius, size.y = half height).
     bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;

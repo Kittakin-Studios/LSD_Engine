@@ -138,8 +138,13 @@ JPH::RefConst<JPH::Shape> z_capsule(f32 half_height, f32 radius, JPH::Vec3 offse
 // Collects new contacts from Jolt's job threads (bodies) and from the character update (main thread).
 class Contacts final : public JPH::ContactListener, public JPH::CharacterContactListener {
 public:
-    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&, JPH::ContactSettings&) override {
-        add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()));
+    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold, JPH::ContactSettings&) override {
+        // Before the solver runs: the velocities are still the ones they met with.
+        const JPH::RVec3 at = manifold.GetWorldSpaceContactPointOn1(0);
+        const f32 closing = std::fabs((a.GetPointVelocity(at) - b.GetPointVelocity(at)).Dot(manifold.mWorldSpaceNormal));
+        const f32 inverse = (a.IsDynamic() ? a.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f) + (b.IsDynamic() ? b.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f);
+        add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()), inverse > 0.0f ? closing / inverse : 0.0f,
+            Vec3{static_cast<f32>(at.GetX()), static_cast<f32>(at.GetY()), static_cast<f32>(at.GetZ())});
     }
     using JPH::ContactListener::OnContactValidate;  // the other overloads stay as Jolt has them
     using JPH::CharacterContactListener::OnContactValidate;
@@ -159,9 +164,9 @@ public:
         JPH::BodyLockRead lock(system->GetBodyLockInterfaceNoLock(), contact.mBodyB);
         if (lock.Succeeded()) add(static_cast<u32>(lock.GetBody().GetUserData()), kCharacterBody);
     }
-    void add(u32 a, u32 b) {
+    void add(u32 a, u32 b, f32 impulse = 0.0f, Vec3 point = {}) {
         std::lock_guard<std::mutex> guard(mutex);
-        if (pending.size() < 4096) pending.push_back({a, b});
+        if (pending.size() < 4096) pending.push_back({a, b, impulse, point});
     }
     JPH::PhysicsSystem* system = nullptr;
     const std::vector<f32>* one_way_top = nullptr;  // per body: a one-way platform's top height, NaN for others

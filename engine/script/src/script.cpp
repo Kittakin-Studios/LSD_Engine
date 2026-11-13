@@ -2385,6 +2385,15 @@ struct Api {
         return 1;
     }
     static int add_impulse(lua_State* L) { return body_motion(L, 0); }
+    static int fracture(lua_State* L) {
+        const world::Entity e = live_entity(L, 1);
+        const ScriptHost& host = system(L).host_;
+        const Vec3 point = check_vec3(L, 2);
+        const Vec3 impulse = lua_isnoneornil(L, 5) ? Vec3{} : check_vec3(L, 5);
+        const f32 radius = lua_isnoneornil(L, 8) ? -1.0f : static_cast<f32>(luaL_checknumber(L, 8));
+        lua_pushboolean(L, host.fracture && host.fracture(host.user, e, point, impulse, radius));
+        return 1;
+    }
     static int set_velocity(lua_State* L) { return body_motion(L, 1); }
     static int set_angular_velocity(lua_State* L) { return body_motion(L, 2); }
     // lsd.set_parent(e, parent [, keep_world = true]): parent nil detaches. False if it would make a loop.
@@ -2535,7 +2544,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_name", Api::set_name}, {"get_world_settings", Api::get_world_settings}, {"set_world_settings", Api::set_world_settings},
         {"alive", Api::alive}, {"destroy", Api::destroy},
         {"position", Api::position}, {"world_position", Api::world_position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
-        {"velocity", Api::velocity}, {"add_impulse", Api::add_impulse}, {"set_velocity", Api::set_velocity}, {"set_angular_velocity", Api::set_angular_velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
+        {"velocity", Api::velocity}, {"add_impulse", Api::add_impulse}, {"fracture", Api::fracture}, {"set_velocity", Api::set_velocity}, {"set_angular_velocity", Api::set_angular_velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
         {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"real_time", Api::real_time}, {"time_scale", Api::time_scale}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},

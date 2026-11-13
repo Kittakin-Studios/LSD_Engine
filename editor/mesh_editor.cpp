@@ -2,6 +2,7 @@
 #include "tips.h"
 #include "workspaces.h"
 
+#include "fracture_cache.h"
 #include "material_cache.h"
 #include "mesh_cache.h"
 #include "skinned_cache.h"
@@ -50,6 +51,11 @@ struct MeshWindow {
     char curve[32] = "Footstep";  // Animations: the curve keyed with Key Curve Here
     f32 curve_key = 1.0f;
     bool show_retarget = false;  // the preview stands in the Retarget Pose
+    // Fracture (Unreal's Fracture Mode > Uniform / Cluster): the settings tried here, the pieces shown apart by `explode`.
+    world::Destructible fracture;
+    bool fracture_preview = false;
+    f32 explode = 0.5f;
+    const FracturedMesh* fractured = nullptr;
 };
 MeshWindow g_mw;
 
@@ -212,6 +218,8 @@ void open_mesh_editor(EditorState& s, const asset::AssetRecord& record) {
     g_mw.morphed_for = 0;
     g_mw.clip = -1;
     g_mw.show_retarget = false;
+    g_mw.fracture_preview = false;
+    g_mw.fractured = nullptr;
     ImGui::SetWindowFocus("###MeshEditor");
 }
 
@@ -287,6 +295,37 @@ void render_mesh_editor(rhi::Device& device, const f32 background[4]) {
         device.set_render_target({}, nullptr);
         return;
     } else {
+        if (g_mw.fracture_preview && g_mw.fractured && s.meshes) {  // the pieces, pushed out from the middle by Explode
+            const FracturedMesh& f = *g_mw.fractured;
+            for (u32 p = 0; p < f.pieces.size(); ++p) {
+                const Mat4 moved = translation((f.pieces[p].centre_of_mass - centre) * g_mw.explode);
+                const Mat4 pmvp = g_mw.view_proj * moved;
+                for (const u16 k : f.pieces[p].sections) {
+                    char key[40];
+                    f.key(p, k, key);
+                    const CachedMesh* piece = s.meshes->get(key);
+                    if (!piece) continue;
+                    rhi::MeshDraw section = draw;
+                    std::memcpy(section.mvp, pmvp.m, sizeof section.mvp);
+                    for (i32 r = 0; r < 3; ++r) {
+                        for (i32 c = 0; c < 4; ++c) section.world[r * 4 + c] = moved.at(r, c);
+                    }
+                    section.vertices = piece->gpu.vertices;
+                    section.indices = piece->gpu.indices;
+                    section.index_count = piece->gpu.index_count;
+                    if (k + 1u == f.materials.size() && !g_mw.fracture.inside_material[0]) {  // no Inside Material: the cut faces in a warm brick red
+                        const f32 inside[4] = {0.75f, 0.32f, 0.2f, 1.0f};
+                        std::memcpy(section.color, inside, sizeof inside);
+                    } else if (!f.materials[k].empty() && s.materials) {
+                        section.color[0] = section.color[1] = section.color[2] = section.color[3] = 1.0f;
+                        s.materials->apply(f.materials[k].c_str(), section);
+                    }
+                    device.draw_mesh(section);
+                }
+            }
+            device.set_render_target({}, nullptr);
+            return;
+        }
         const std::vector<MeshCache::SlotPart>* parts = s.meshes ? s.meshes->slot_parts(g_mw.key, true) : nullptr;
         if (parts && parts->size() > 1) {  // each material slot with its Material (as edited here, before Save)
             for (const MeshCache::SlotPart& part : *parts) {
@@ -424,6 +463,63 @@ void draw_mesh_editor(EditorState& s) {
         std::snprintf(s.status, sizeof s.status, "Reimporting %s", g_mw.name);
     }
     if (loaded) draw_slots_panel(s, skinned);
+    if (loaded && !skinned && s.meshes) {
+        // Fracture (Unreal's Fracture Mode: Uniform / Cluster Voronoi): try settings, see the pieces apart, then put
+        // them on the objects using this mesh (their Destructible component breaks them in Play).
+        ImGui::SeparatorText("Fracture");
+        world::Destructible& d = g_mw.fracture;
+        bool changed = false;
+        i32 pieces = static_cast<i32>(d.pieces), seed = static_cast<i32>(d.seed);
+        changed |= with_tip(ImGui::SliderInt("Pieces", &pieces, 2, 200), "How many Voronoi pieces the mesh is cut into (Unreal's Voronoi Sites)");
+        changed |= with_tip(ImGui::InputInt("Seed", &seed), "Another number cuts another way; the same number always cuts the same way");
+        d.pieces = static_cast<u32>(pieces < 2 ? 2 : pieces);
+        d.seed = static_cast<u32>(seed < 0 ? 0 : seed);
+        changed |= with_tip(ImGui::Checkbox("Cluster", &d.cluster), "Most pieces small around Cluster Point, a few big ones elsewhere (where a wall is hit)");
+        if (d.cluster) {
+            changed |= with_tip(ImGui::DragFloat3("Cluster Point", &d.cluster_point.x, 0.01f), "Where the small pieces go, in the mesh's own space (metres)");
+            changed |= with_tip(ImGui::DragFloat("Cluster Radius", &d.cluster_radius, 0.01f, 0.01f, 100.0f, "%.2f m"), "How far around Cluster Point the small pieces reach");
+        }
+        ImGui::TextUnformatted("Inside Material");
+        ImGui::SetItemTooltip("Drawn on the cut faces (brick, concrete core); none: the mesh's own");
+        changed |= pick_asset(s, "Material", d.inside_material, sizeof d.inside_material);
+        if (with_tip(ImGui::Button(g_mw.fracture_preview ? "Fracture again" : "Fracture"), "Cuts the mesh with these settings and shows the pieces (kept in DerivedData/Fracture)") ||
+            (changed && g_mw.fracture_preview)) {
+            world::StaticMesh as_placed;
+            std::snprintf(as_placed.mesh, sizeof as_placed.mesh, "%s", g_mw.key);
+            g_mw.fractured = fracture_cache(*s.meshes).get(as_placed, d);
+            g_mw.fracture_preview = g_mw.fractured != nullptr;
+            if (!g_mw.fractured) std::snprintf(s.status, sizeof s.status, "%s could not be fractured (see the Output Log)", g_mw.name);
+        }
+        if (g_mw.fracture_preview) {
+            ImGui::SameLine();
+            if (with_tip(ImGui::Button("Show Whole"), "Back to the mesh as it is")) g_mw.fracture_preview = false;
+            with_tip(ImGui::SliderFloat("Explode", &g_mw.explode, 0.0f, 2.0f), "Pushes the pieces apart from the middle to see them (Unreal's Explode Amount)");
+            if (g_mw.fractured) ImGui::Text("%zu pieces%s", g_mw.fractured->pieces.size(), g_mw.fractured->build_ms > 0.0 ? "" : " (from DerivedData)");
+        }
+        u32 placed = 0;
+        for (u32 i = 0; s.world && i < s.selection_count; ++i) {
+            const auto* sm = s.world->alive(s.selection[i]) ? s.world->get<world::StaticMesh>(s.selection[i]) : nullptr;
+            placed += sm && std::strcmp(sm->mesh, g_mw.key) == 0 ? 1u : 0u;
+        }
+        ImGui::BeginDisabled(placed == 0);
+        // shortcut: not on the undo stack; Ctrl+Z will not take the Destructible off again, record a transaction if that matters
+        if (with_tip(ImGui::Button("Make Selected Destructible"),
+                     "Adds a Destructible with these settings to the selected objects that use this mesh (Unreal's Generate Geometry Collection); Play breaks them")) {
+            for (u32 i = 0; i < s.selection_count; ++i) {
+                const world::Entity e = s.selection[i];
+                const auto* sm = s.world->alive(e) ? s.world->get<world::StaticMesh>(e) : nullptr;
+                if (!sm || std::strcmp(sm->mesh, g_mw.key) != 0) continue;
+                auto* target = s.world->get<world::Destructible>(e);
+                if (!target) target = s.world->add<world::Destructible>(e);
+                target->pieces = d.pieces, target->seed = d.seed, target->cluster = d.cluster;
+                target->cluster_point = d.cluster_point, target->cluster_radius = d.cluster_radius;
+                std::snprintf(target->inside_material, sizeof target->inside_material, "%s", d.inside_material);
+            }
+            std::snprintf(s.status, sizeof s.status, "%u object(s) are Destructible now: save the level", placed);
+        }
+        ImGui::EndDisabled();
+        if (placed == 0) ImGui::TextDisabled("Select objects using this mesh in the level to make them Destructible.");
+    }
     if (skinned) {
         ImGui::SeparatorText("Skeleton");
         {  // which humanoid rig: animations from the other Unreal rigs retarget onto it

@@ -453,6 +453,22 @@ static void test_reuse_and_impulses() {
     CHECK(world.body_velocity(d).y > 0.9f && std::fabs(world.body_angular_velocity(d).z) > 0.5f);
     world.step(1.0f / 60.0f);
     CHECK(centre(world, c).z > 0.02f);
+
+    // Contacts say how hard (Destructible breaking): a 10 kg box meeting the floor at about 5 m/s is about 50 N s.
+    PhysicsWorld fall;
+    const u32 floor = fall.add_body(box({0, 0, -0.5f}, {10, 10, 0.5f}, Motion::Static));
+    const u32 crate = fall.add_body(box({0, 0, 0.6f}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    fall.set_velocity(crate, {0, 0, -5});
+    f32 hardest = 0.0f;
+    Vec3 where;
+    for (int i = 0; i < 10; ++i) {
+        fall.step(1.0f / 60.0f);
+        Contact contacts[8];
+        for (u32 n = fall.take_contacts(contacts, 8), k = 0; k < n; ++k) {
+            if ((contacts[k].a == floor || contacts[k].b == floor) && contacts[k].impulse > hardest) hardest = contacts[k].impulse, where = contacts[k].point;
+        }
+    }
+    CHECK(hardest > 40.0f && hardest < 60.0f && std::fabs(where.z) < 0.1f);
 }
 
 int main() {

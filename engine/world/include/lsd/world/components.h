@@ -132,6 +132,32 @@ struct RigidBody {
     bool kinematic = false;
 };
 
+// Breaks apart in Play (Unreal's Geometry Collection + Fracture Mode's Uniform / Cluster Voronoi): the object's Static
+// Mesh is cut once, in the editor, into Voronoi pieces (DerivedData/Fracture, keyed by the mesh and these settings).
+// Hit hard enough (a physics contact, lsd.apply_damage, lsd.fracture), the pieces near the hit fly off as rigid
+// bodies; the rest stays standing as one static body, so later hits break more. Cut faces get the Inside Material.
+LSD_STRUCT(Component, Category = "Physics", Tooltip = "Breaks into pieces in Play where it is hit (Unreal's Geometry Collection); needs a Static Mesh")
+struct Destructible {
+    LSD_GENERATED()
+    LSD_PROPERTY(Edit, Category = "Fracture", Min = 2, Max = 200, Tooltip = "How many Voronoi pieces the mesh is cut into (Unreal's Voronoi Sites)") u32 pieces = 20;
+    LSD_PROPERTY(Edit, Category = "Fracture", Tooltip = "Another number cuts another way; the same number always cuts the same way (every machine in multiplayer)") u32 seed = 1;
+    LSD_PROPERTY(Edit, Category = "Fracture", Tooltip = "Most pieces small around Cluster Point, a few big ones elsewhere (Unreal's Cluster fracture)") bool cluster = false;
+    LSD_PROPERTY(Edit, Category = "Fracture", Units = "m", Tooltip = "Where the small pieces go, in the mesh's own space (unscaled)") Vec3 cluster_point;
+    LSD_PROPERTY(Edit, Category = "Fracture", Units = "m", Min = 0.01, Tooltip = "How far around Cluster Point the small pieces reach (mesh space)") f32 cluster_radius = 0.5f;
+    LSD_PROPERTY(Edit, Category = "Fracture", Widget = "Asset:Material", Tooltip = "Drawn on the cut faces (brick, concrete core); empty: the object's own Material") char inside_material[33] = "";
+    LSD_PROPERTY(Edit, Category = "Fracture", Min = 0.01, Tooltip = "Texture tiles per metre on the cut faces") f32 inside_uv_scale = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Breaking", Min = 0, Tooltip = "A contact this hard (N s: mass x speed of what hits it), or this much lsd.apply_damage in total, breaks it; 0 = only lsd.fracture")
+    f32 damage_threshold = 500.0f;
+    LSD_PROPERTY(Edit, Category = "Breaking", Units = "m", Min = 0, Tooltip = "Pieces this close to the hit break off (world metres); 0 = the whole object at once") f32 break_radius = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Breaking", Units = "s", Min = 0, Tooltip = "Broken pieces shrink away after this long; 0 = they stay") f32 piece_lifetime = 10.0f;
+    LSD_PROPERTY(Edit, Category = "Breaking", Min = 0, Tooltip = "At most this many of its pieces fly at once (older ones go first); 0 = no limit of its own (the global fracture.MaxPieces still holds)")
+    u32 max_pieces_alive = 100;
+    LSD_PROPERTY(Edit, Category = "Breaking", Units = "kg/m3", Min = 1, Tooltip = "Piece mass from its volume: concrete 2400, brick 1900, wood 600, glass 2500") f32 density = 2000.0f;
+    LSD_PROPERTY(Edit, Category = "Breaking", Widget = "Choice:Block All,Debris", Tooltip = "Debris: pieces hit only the static level (cheap; not the player, not each other)") u32 collision_preset = 0;
+    LSD_PROPERTY(Edit, Category = "Breaking", Tooltip = "Standing pieces no longer joined (through touching pieces) to one at the mesh's bottom fall too: no floating chunks (Unreal's connection graph, simplified)")
+    bool collapse_unsupported = true;
+};
+
 // Surface properties shared by many objects (Unreal's Physical Material): ice, rubber, mud.
 LSD_STRUCT(Category = "Physics")
 struct PhysicalMaterial {

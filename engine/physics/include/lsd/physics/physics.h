@@ -126,6 +126,8 @@ struct RayHit {
 // Two things started touching during the last step (b may be kCharacterBody).
 struct Contact {
     u32 a, b;
+    f32 impulse = 0.0f;  // N s: how hard (closing speed along the normal x the bodies' reduced mass); 0 for the player
+    Vec3 point;          // where (world space)
 };
 
 // Cone: a ball joint whose swing stays inside a cone and whose twist is limited (ragdoll shoulders, hanging lamps).

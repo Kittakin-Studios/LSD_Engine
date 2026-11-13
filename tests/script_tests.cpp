@@ -772,6 +772,18 @@ static void test_game_instance() {
     CHECK(scripts.run("assert(lsd.add_impulse(lsd.find('Block'), 1, 2, 3, 4, 5, 6))") && motion_has_at && motion_at.x == 4.0f && motion_at.z == 6.0f);
     CHECK(scripts.run("assert(lsd.set_velocity(lsd.find('Block'), 0, 0, 9))") && motion_what == 1 && motion_value.z == 9.0f);
     CHECK(scripts.run("assert(lsd.set_angular_velocity(lsd.find('Block'), 0, 0, 90))") && motion_what == 2 && motion_value.z == 90.0f);
+    // lsd.fracture passes the point, impulse and radius (-1 when left out: the component's Break Radius).
+    CHECK(scripts.run("assert(lsd.fracture(lsd.find('Block'), 1, 2, 3) == false)"));
+    static Vec3 broke_at, broke_push;
+    static f32 broke_radius = 0.0f;
+    host.fracture = [](void*, world::Entity, Vec3 point, Vec3 impulse, f32 radius) {
+        broke_at = point, broke_push = impulse, broke_radius = radius;
+        return true;
+    };
+    scripts.stop();
+    scripts.start(w, host, path_of, nullptr);
+    CHECK(scripts.run("assert(lsd.fracture(lsd.find('Block'), 1, 2, 3))") && broke_at.z == 3.0f && broke_push.x == 0.0f && broke_radius == -1.0f);
+    CHECK(scripts.run("assert(lsd.fracture(lsd.find('Block'), 1, 2, 3, 0, 500, 0, 0.5))") && broke_push.y == 500.0f && broke_radius == 0.5f);
     CHECK(scripts.run(R"(
 local b, h = lsd.find('Block'), lsd.find('Hand')
 assert(lsd.parent(b) == nil and lsd.set_parent(b, h) and lsd.parent(b) == h)
