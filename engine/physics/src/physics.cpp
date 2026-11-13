@@ -138,8 +138,13 @@ JPH::RefConst<JPH::Shape> z_capsule(f32 half_height, f32 radius, JPH::Vec3 offse
 // Collects new contacts from Jolt's job threads (bodies) and from the character update (main thread).
 class Contacts final : public JPH::ContactListener, public JPH::CharacterContactListener {
 public:
-    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&, JPH::ContactSettings&) override {
-        add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()));
+    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold, JPH::ContactSettings&) override {
+        // Before the solver runs: the velocities are still the ones they met with.
+        const JPH::RVec3 at = manifold.GetWorldSpaceContactPointOn1(0);
+        const f32 closing = std::fabs((a.GetPointVelocity(at) - b.GetPointVelocity(at)).Dot(manifold.mWorldSpaceNormal));
+        const f32 inverse = (a.IsDynamic() ? a.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f) + (b.IsDynamic() ? b.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f);
+        add(static_cast<u32>(a.GetUserData()), static_cast<u32>(b.GetUserData()), inverse > 0.0f ? closing / inverse : 0.0f,
+            Vec3{static_cast<f32>(at.GetX()), static_cast<f32>(at.GetY()), static_cast<f32>(at.GetZ())});
     }
     using JPH::ContactListener::OnContactValidate;  // the other overloads stay as Jolt has them
     using JPH::CharacterContactListener::OnContactValidate;
@@ -159,9 +164,9 @@ public:
         JPH::BodyLockRead lock(system->GetBodyLockInterfaceNoLock(), contact.mBodyB);
         if (lock.Succeeded()) add(static_cast<u32>(lock.GetBody().GetUserData()), kCharacterBody);
     }
-    void add(u32 a, u32 b) {
+    void add(u32 a, u32 b, f32 impulse = 0.0f, Vec3 point = {}) {
         std::lock_guard<std::mutex> guard(mutex);
-        if (pending.size() < 4096) pending.push_back({a, b});
+        if (pending.size() < 4096) pending.push_back({a, b, impulse, point});
     }
     JPH::PhysicsSystem* system = nullptr;
     const std::vector<f32>* one_way_top = nullptr;  // per body: a one-way platform's top height, NaN for others
@@ -189,7 +194,24 @@ struct PhysicsWorld::Impl {
                                   static_cast<int>(std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1)};
     JPH::PhysicsSystem system;
     std::vector<JPH::BodyID> bodies;
+    std::vector<u32> free_bodies;  // removed bodies' indices, handed out again (spawned debris would grow `bodies` forever)
+    u32 live_bodies = 0;
     std::vector<f32> one_way_top;  // per body (see Contacts::OnContactValidate)
+    u32 next_index() const { return free_bodies.empty() ? static_cast<u32>(bodies.size()) : free_bodies.back(); }
+    // Records a new body under next_index() (its user data); returns that index.
+    u32 store(JPH::BodyID id, f32 top) {
+        const u32 index = next_index();
+        if (!id.IsInvalid()) ++live_bodies;
+        if (index == bodies.size()) {
+            bodies.push_back(id);
+            one_way_top.push_back(top);
+        } else {
+            free_bodies.pop_back();
+            bodies[index] = id;
+            one_way_top[index] = top;
+        }
+        return index;
+    }
     JPH::Ref<JPH::CharacterVirtual> character;
     Contacts contacts;
     struct Joint {
@@ -317,7 +339,7 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     const JPH::ObjectLayer layer = desc.motion == Motion::Static ? kStaticLayer : desc.debris ? kDebrisLayer : kMovingLayer;
     JPH::BodyCreationSettings settings(shape, position, rotation, motion, layer);
     settings.mFriction = desc.friction;
-    settings.mUserData = impl_->bodies.size();  // our index, for contacts and ray hits
+    settings.mUserData = impl_->next_index();  // our index, for contacts and ray hits
     settings.mRestitution = desc.restitution;
     if (desc.group) settings.mCollisionGroup = JPH::CollisionGroup(impl_->group_filter, desc.group, 0);
     if (desc.plane_2d) settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationZ | JPH::EAllowedDOFs::RotationY;
@@ -328,14 +350,12 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
     const JPH::BodyID id = impl_->system.GetBodyInterface().CreateAndAddBody(
         settings, desc.motion == Motion::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     if (id.IsInvalid()) LSD_LOG_ERROR("physics", "Out of bodies");
-    impl_->bodies.push_back(id);
     f32 top = std::numeric_limits<f32>::quiet_NaN();
     if (desc.one_way && !id.IsInvalid()) {
         top = static_cast<f32>(impl_->system.GetBodyInterface().GetTransformedShape(id).GetWorldSpaceBounds().mMax.GetZ());
         impl_->contacts.one_way_top = &impl_->one_way_top;
     }
-    impl_->one_way_top.push_back(top);
-    return static_cast<u32>(impl_->bodies.size() - 1);
+    return impl_->store(id, top);
 }
 
 u32 PhysicsWorld::add_cloth(const ClothDesc& desc) {
@@ -357,7 +377,7 @@ u32 PhysicsWorld::add_cloth(const ClothDesc& desc) {
     shared->CreateConstraints(&attributes, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
     shared->Optimize();
     JPH::SoftBodyCreationSettings settings(shared, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), kMovingLayer);
-    settings.mUserData = impl_->bodies.size();
+    settings.mUserData = impl_->next_index();
     settings.mNumIterations = std::max(desc.iterations, 1u);
     settings.mLinearDamping = std::fmax(desc.damping, 0.0f);
     settings.mGravityFactor = desc.gravity_scale;
@@ -368,9 +388,7 @@ u32 PhysicsWorld::add_cloth(const ClothDesc& desc) {
     settings.mFriction = 0.5f;
     const JPH::BodyID id = impl_->system.GetBodyInterface().CreateAndAddSoftBody(settings, JPH::EActivation::Activate);
     if (id.IsInvalid()) LSD_LOG_ERROR("physics", "Out of bodies");
-    impl_->bodies.push_back(id);
-    impl_->one_way_top.push_back(std::numeric_limits<f32>::quiet_NaN());
-    return static_cast<u32>(impl_->bodies.size() - 1);
+    return impl_->store(id, std::numeric_limits<f32>::quiet_NaN());
 }
 
 void PhysicsWorld::set_cloth_wind(u32 body, Vec3 wind) {
@@ -398,6 +416,49 @@ u32 PhysicsWorld::cloth_points(u32 body, Vec3* out, u32 capacity) const {
 }
 
 u32 PhysicsWorld::body_count() const { return static_cast<u32>(impl_->bodies.size()); }
+u32 PhysicsWorld::live_body_count() const { return impl_->live_bodies; }
+
+namespace {
+// The body's id when it is dynamic (impulses and velocities mean nothing to static or kinematic ones).
+JPH::BodyID dynamic_id(const std::vector<JPH::BodyID>& bodies, const JPH::BodyInterface& bi, u32 body) {
+    if (body >= bodies.size() || bodies[body].IsInvalid() || bi.GetMotionType(bodies[body]) != JPH::EMotionType::Dynamic) return {};
+    return bodies[body];
+}
+} // namespace
+
+bool PhysicsWorld::add_impulse(u32 body, Vec3 impulse) {
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    const JPH::BodyID id = dynamic_id(impl_->bodies, bi, body);
+    if (!id.IsInvalid()) bi.AddImpulse(id, to_jolt(impulse));
+    return !id.IsInvalid();
+}
+
+bool PhysicsWorld::add_impulse(u32 body, Vec3 impulse, Vec3 at) {
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    const JPH::BodyID id = dynamic_id(impl_->bodies, bi, body);
+    if (!id.IsInvalid()) bi.AddImpulse(id, to_jolt(impulse), JPH::RVec3(at.x, at.y, at.z));
+    return !id.IsInvalid();
+}
+
+bool PhysicsWorld::set_velocity(u32 body, Vec3 velocity) {
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    const JPH::BodyID id = dynamic_id(impl_->bodies, bi, body);
+    if (!id.IsInvalid()) bi.SetLinearVelocity(id, to_jolt(velocity));  // wakes it
+    return !id.IsInvalid();
+}
+
+bool PhysicsWorld::set_angular_velocity(u32 body, Vec3 velocity) {
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    const JPH::BodyID id = dynamic_id(impl_->bodies, bi, body);
+    if (!id.IsInvalid()) bi.SetAngularVelocity(id, to_jolt(velocity));
+    return !id.IsInvalid();
+}
+
+Vec3 PhysicsWorld::body_angular_velocity(u32 body) const {
+    if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid()) return {};
+    const JPH::Vec3 w = impl_->system.GetBodyInterface().GetAngularVelocity(impl_->bodies[body]);
+    return {w.GetX(), w.GetY(), w.GetZ()};
+}
 
 void PhysicsWorld::move_kinematic(u32 body, const Mat4& transform, f32 dt) {
     if (body >= impl_->bodies.size() || impl_->bodies[body].IsInvalid() || dt <= 0.0f) return;
@@ -426,10 +487,23 @@ void PhysicsWorld::remove_body(u32 body) {
     for (auto& v : impl_->vehicles) {
         if (v.body == body) impl_->remove_vehicle(v);
     }
+    auto& wind = impl_->cloth_wind;  // a later body under this index is not this cloth
+    wind.erase(std::remove_if(wind.begin(), wind.end(), [body](const Impl::ClothWind& w) { return w.body == body; }), wind.end());
+    for (auto& joint : impl_->joints) {  // joints that went with it no longer name it (a reused index is another body)
+        if (!joint.constraint) {
+            if (joint.a == body) joint.a = kWorldBody;
+            if (joint.b == body) joint.b = kWorldBody;
+        }
+    }
+    for (auto& v : impl_->vehicles) {
+        if (v.body == body) v.body = kWorldBody;
+    }
     JPH::BodyInterface& bodies = impl_->system.GetBodyInterface();
     bodies.RemoveBody(impl_->bodies[body]);
     bodies.DestroyBody(impl_->bodies[body]);
     impl_->bodies[body] = JPH::BodyID();
+    impl_->free_bodies.push_back(body);
+    --impl_->live_bodies;
 }
 
 bool PhysicsWorld::raycast(Vec3 origin, Vec3 direction, f32 max_distance, RayHit& hit, u32 ignore_body) const {

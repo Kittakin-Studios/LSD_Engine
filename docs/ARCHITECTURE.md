@@ -340,6 +340,34 @@ movie renders). Render Movie poses frame n at n / fps, then asks main.cpp for a 
 fixed size and path (`shot_size` / `shot_path`, its own projection, no TAA) and waits until that
 frame was read back and written as PNG before posing the next.
 
+### Destruction (fracture)
+
+- **Cutting** (`engine/render/fracture.*`, pure geometry, `render_tests`): `slice_mesh` cuts a triangle mesh by a plane.
+  Vertices within 1e-5 of the mesh size of the plane count as above it (no special on-plane case); each crossed edge
+  gets one cut point, computed from its lower position id so both triangles on the edge agree to the bit; surface
+  triangles are split into polygons and fanned; each split triangle adds a directed segment (where the surface came in
+  to where it left), the segments chain into loops (open ends of meshes with holes are joined to the nearest start),
+  loops are projected on the plane, counter-clockwise ones are outlines and clockwise ones holes (each in the smallest
+  outline around it), holes are bridged in and ear-clipped. Cap triangles are `kInsideSection` with planar UVs. The
+  output is welded and watertight (zero-area slivers aside: the tests check the area vectors sum to zero).
+- **Voronoi** (`fracture_voronoi`): seeds uniform in the bounds (or most of them in a ball around a cluster point),
+  deterministic for a seed. Each cell is the *mesh* clipped by the bisector planes to the other seeds, nearest seeds
+  first, stopping once the cell is closer to its seed than half the distance to the next one (so concave meshes work: a
+  cell that falls apart becomes several pieces through `split_islands`). Each piece gets its volume and centre of mass
+  (signed tetrahedra) and about 70 hull points (the farthest vertex along a Fibonacci sphere of directions and the box
+  corners) for a Jolt convex hull.
+- **Cache** (`editor/fracture_cache.*`): the Static Mesh (per material slot part when the slots carry the materials) is
+  cut at the object's scale and stored in `DerivedData/Fracture/<id>.bin`; each piece's sections become generated
+  meshes `Fracture:<id>:<piece>:<section>`, what stands of a broken object `Fracture:<id>:r<entity>:<section>`.
+- **Play** (`PlaySession::fracture`): the pieces near the point (by their boxes) and, with Collapse Unsupported, those
+  no longer joined to a bottom piece (a flood fill over touching boxes) leave; the object loses its Static Mesh to
+  `<name>_rest<k>` children drawing what stands; its static bodies are rebuilt by `add_entity_bodies` as one compound
+  of the standing hulls; each loose piece is an object with a dynamic convex body in the rigid body slots, its impulse
+  shared by mass plus an outward kick. Contacts carry an impulse estimate (closing speed x reduced mass, read in
+  `OnContactAdded` before the solver) and a point; `send_hits` breaks Destructibles over their threshold.
+  `update_fracture` shrinks pieces past their lifetime and destroys them; `fracture.MaxPieces` and Max Pieces Alive
+  retire the oldest. In multiplayer the break travels as the `__fracture` engine event (name, point, impulse, radius).
+
 ## Scripting
 
 - **Lua** (LuaJIT, built by our CMake): each Script component gets its own environment table with
