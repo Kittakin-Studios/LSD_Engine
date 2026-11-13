@@ -354,8 +354,8 @@ void finish(MaterialImport& job, MaterialImportReport& report, char* status, usi
             material.blend_mode = 2;  // Translucent
             material.opacity = m.opacity;
         }
-        // shortcut: materials are drawn one-sided; doubleSided only noted, until the renderer gets a two-sided (no culling) option
-        if (m.double_sided) LSD_LOG_INFO("editor", "%s is double-sided in the file: drawn one-sided (back faces culled)", m.name);
+        // Nothing to set for doubleSided: every backend draws meshes without back-face culling, back faces lit with the flipped normal.
+        // shortcut: no one-sided option (culled backs) yet; a Material flag when imported winding is verified on every importer
         if (!asset::save_data_asset(plan.material_path.c_str(), reflect::type_of<render::Material>(), &material)) {
             LSD_LOG_WARN("editor", "Could not write %s", plan.material_path.c_str());
             continue;

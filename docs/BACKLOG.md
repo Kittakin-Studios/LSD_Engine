@@ -471,6 +471,7 @@ several people at once. What its scripts had to work around:
 - [x] `lsd.prompt(text, e)` pops in and out and shows at any distance (done: 0.15 s fades, `{max_distance = m}`, no rebuild when called every frame; `lsd.world_position`)
 - [x] Riding a closed Transport (the metro car) puts the view inside its mesh (done: Transport > Camera Offset and Camera Distance, the transport's own body ignored by the spring arm; Vehicle passengers already had the follow camera)
 - [x] `UCX_` / `UBX_` / `USP_` / `UCP_` nodes were only left out of the drawn mesh (done: Static Mesh > Collision Shape > Collision Nodes makes them a compound of convex hulls, FBX / OBJ; open: glTF, rigid bodies and movers)
+- [x] Two-sided materials (Unreal's Two Sided, glTF `doubleSided`): already how every mesh draws: D3D12, Vulkan and OpenGL cull no faces and light back faces with the flipped normal (shadows too); the import's "drawn one-sided" log was wrong and is gone. Open: a one-sided (culled) option, once imported winding is verified
 
 ## Later
 
