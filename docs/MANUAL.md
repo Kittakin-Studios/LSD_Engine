@@ -2473,7 +2473,9 @@ button:focus, button:hover { background-color: #EEA70E; }
     empties. Call it again to update it; `lsd.remove_health_bar(enemy)` takes it away.
   - `lsd.damage_number(enemy, 25)` shows a number that rises from the object and fades within a second.
   - `lsd.prompt("Press E to open")` shows a prompt at the bottom of the screen, `lsd.prompt(nil)` hides it.
-    `lsd.prompt("Pick up", item)` floats over an object instead.
+    `lsd.prompt("Pick up", item)` floats over an object instead; it fades in and out (0.15 s, still while
+    paused), and calling it every frame costs nothing. `lsd.prompt("Board", train, {max_distance = 8})` also
+    fades it out while the camera is more than 8 m from the object.
 
   Widgets of destroyed objects go by themselves.
 
@@ -2824,6 +2826,7 @@ Objects and transforms
 | `lsd.set_name(e, name)` | renames it in the Outliner (names may repeat) |
 | `lsd.get_world_settings()` / `lsd.set_world_settings(t)` | the level's World Settings (`kill_z`, `gravity`, `game_mode`, `level_script`...; asset fields are GUIDs from `lsd.assets`); set writes only the fields given |
 | `lsd.position(e)` / `lsd.set_position(e, x, y, z)` | local position, metres; on the player's Character, set_position teleports it (respawns, checkpoints; Unreal's Teleport). On an object with static collision (a mesh with Collision, a Blocking Volume) the collision moves with it, and with its children; `lsd.set` of its Transform scale or its Static Mesh Collision rebuilds it the next frame |
+| `lsd.world_position(e)` | x, y, z in the world (with its parents' moves; Unreal's Get Actor Location) |
 | `lsd.rotation(e)` / `lsd.set_rotation(e, x, y, z)` | local rotation, degrees |
 | `lsd.velocity(e)` | vx, vy, vz in m/s: the player's Character, a vehicle, a mover or a rigid body; 0, 0, 0 for anything else (Unreal's Get Velocity) |
 | `lsd.set_parent(e, parent [, keep_world])` / `lsd.parent(e)` | attaches e under parent (nil detaches); by default it stays where it is in the world, `false` keeps its Transform as it was (now relative to the parent). False if it would make a loop. Helmets, held items (Unreal's Attach To Actor) |
@@ -2910,7 +2913,7 @@ UI, saving, settings, languages
 | `lsd.ui_style(doc, id, property, value)`, `lsd.ui_rml(doc, id, markup)` | one style property; an element's contents as markup |
 | `lsd.ui_play_animation(doc, id, anim)`, `lsd.ui_animate(doc, id, property, value [, seconds, tween])` | widget animations: RCSS @keyframes, or one property tweened |
 | `lsd.health_bar(e, fraction [, height, color])`, `lsd.remove_health_bar(e)` | a health bar over e |
-| `lsd.damage_number(e, amount [, color])`, `lsd.prompt(text [, e])` | a rising damage number; a prompt (nil hides) |
+| `lsd.damage_number(e, amount [, color])`, `lsd.prompt(text [, e [, {max_distance = m}]])` | a rising damage number; a prompt (nil hides; over an object it fades in / out and hides past max_distance from the camera) |
 | `lsd.save_game(slot, v [, version])`, `lsd.save_game_async(slot, v [, version])`, `lsd.load_game(slot)` -> value, version, `lsd.has_save(slot)`, `lsd.delete_save(slot)` | |
 | `lsd.save_objects(slot, objects, [components], [extra])`, `lsd.load_objects(slot)` | whole objects' components by name |
 | `lsd.get_settings()`, `lsd.set_settings(t)` | player settings |

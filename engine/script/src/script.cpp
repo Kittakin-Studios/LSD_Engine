@@ -336,7 +336,7 @@ function lsd.load_objects(slot)
   return data.extra, found
 end
 -- Ready-made HUD widgets: one built-in document, an element per widget, rebuilt when the set changes.
-local hud = {doc = nil, list = {}, order = {}, prompt = false}
+local hud = {doc = nil, list = {}, order = {}, prompt = false, real = 0}  -- real: lsd.real_time() at the last hud_tick
 local HUD_RML = [[<rml><head><style>
 body { width: 100%; height: 100%; font-family: sans; }
 div { display: block; }
@@ -363,6 +363,8 @@ local function hud_apply(key, w)
     lsd.ui_style(doc, key .. "_fill", "background-color", hud_bar_color(w))
   elseif w.kind == "dmg" then
     if w.color then lsd.ui_style(doc, key, "color", w.color) end
+  elseif w.kind == "prompt" then
+    lsd.ui_style(doc, key, "opacity", string.format("%.2f", w.alpha))
   end
   lsd.ui_follow(doc, key, w.e, w.height)
 end
@@ -415,10 +417,26 @@ function lsd.damage_number(e, amount, color)
   local x, y, z = lsd.position(e)
   hud_add("dn" .. hud_number, {kind = "dmg", e = e, text = hud_escape(amount), color = color, height = 2.0, born = lsd.time(), base = 2.0})
 end
-function lsd.prompt(text, e)
+-- Prompts over objects fade in and out (hud_tick, on the real clock so they still fade while paused);
+-- opts.max_distance hides one while the camera is farther than that from the object.
+function lsd.prompt(text, e, opts)
   if e then
     local key = "pr" .. tostring(e)
-    if text == nil then hud_remove(key) else hud_add(key, {kind = "prompt", e = e, text = hud_escape(text), height = 2.4}) end
+    local w = hud.list[key]
+    if text == nil then
+      if w then w.target = 0 end  -- fades out; hud_tick removes it
+      return
+    end
+    local escaped, far = hud_escape(text), type(opts) == "table" and tonumber(opts.max_distance) or nil
+    if w then  -- shown again, or every frame: no rebuild unless the text changed
+      w.target, w.max_distance = 1, far
+      if w.text ~= escaped then
+        w.text = escaped
+        if hud.doc then lsd.ui_rml(hud.doc, key, escaped) end
+      end
+    else
+      hud_add(key, {kind = "prompt", e = e, text = escaped, height = 2.4, alpha = 0, target = 1, max_distance = far})
+    end
     return
   end
   local doc = hud_doc()
@@ -499,12 +517,28 @@ lsd.on_ui("__lsd_slider", function(id)
   if v then lsd.set_settings({[id] = v}) end
 end)
 lsd.on_ui("__lsd_settings_close", function() lsd.settings_menu(false) end)
+local PROMPT_FADE = 0.15  -- seconds a prompt takes to appear or go
 local function hud_tick(now)
+  local real = lsd.real_time()
+  local step = (real - (hud.real or real)) / PROMPT_FADE
+  hud.real = real
   if #hud.order == 0 then return end
   local gone = {}
   for _, key in ipairs(hud.order) do
     local w = hud.list[key]
     if not lsd.alive(w.e) then gone[#gone + 1] = key
+    elseif w.kind == "prompt" then
+      local target = w.target
+      if target > 0 and w.max_distance then
+        local cx, cy, cz = lsd.camera_location()
+        local x, y, z = lsd.world_position(w.e)
+        if (x - cx) ^ 2 + (y - cy) ^ 2 + (z - cz) ^ 2 > w.max_distance ^ 2 then target = 0 end
+      end
+      if w.alpha ~= target then
+        w.alpha = target > w.alpha and math.min(target, w.alpha + step) or math.max(target, w.alpha - step)
+        if hud.doc then lsd.ui_style(hud.doc, key, "opacity", string.format("%.2f", w.alpha)) end
+      end
+      if w.alpha <= 0 and w.target == 0 then gone[#gone + 1] = key end
     elseif w.kind == "dmg" then
       local age = now - w.born
       if age >= 1.0 then gone[#gone + 1] = key
@@ -2326,6 +2360,11 @@ struct Api {
         push_vec3(L, world(L).get<world::Transform>(live_entity(L, 1))->position);
         return 3;
     }
+    static int world_position(lua_State* L) {
+        const Mat4 m = world(L).world_matrix(live_entity(L, 1));
+        push_vec3(L, Vec3{m.at(0, 3), m.at(1, 3), m.at(2, 3)});
+        return 3;
+    }
     static int set_position(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
         world(L).get<world::Transform>(e)->position = check_vec3(L, 2);
@@ -2485,7 +2524,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"log", Api::log}, {"find", Api::find}, {"find_all", Api::find_all}, {"find_tagged", Api::find_tagged}, {"name", Api::name},
         {"set_name", Api::set_name}, {"get_world_settings", Api::get_world_settings}, {"set_world_settings", Api::set_world_settings},
         {"alive", Api::alive}, {"destroy", Api::destroy},
-        {"position", Api::position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
+        {"position", Api::position}, {"world_position", Api::world_position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
         {"velocity", Api::velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
         {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"real_time", Api::real_time}, {"time_scale", Api::time_scale}, {"input", Api::input},

@@ -12,6 +12,7 @@
 //   lsd.find(name)                        entity by name, or nil
 //   lsd.name(e), lsd.alive(e), lsd.destroy(e)
 //   lsd.position(e) / lsd.set_position(e, x, y, z)     local Transform, metres
+//   lsd.world_position(e) -> x, y, z      where it is in the world (parents included)
 //   lsd.rotation(e) / lsd.set_rotation(e, x, y, z)     local Transform, degrees
 //   lsd.has_tag(e, tag)                   gameplay tags ("Damage" matches "Damage.Fire")
 //   lsd.has_any_tag(e, "A, B") / lsd.has_all_tags(e, "A, B") / lsd.has_no_tag(e, "A, B")   several at once
@@ -110,8 +111,9 @@
 //   lsd.health_bar(e, fraction [, height = 2.2 [, "#RRGGBB"]])   a bar over e (0..1), updated by calling
 //                                         again; green to red as it empties; lsd.remove_health_bar(e)
 //   lsd.damage_number(e, amount [, "#RRGGBB"])   a number that rises from e and fades in a second
-//   lsd.prompt(text [, e])                "Press E to open": at the bottom of the screen, or over e;
-//                                         lsd.prompt(nil [, e]) hides it
+//   lsd.prompt(text [, e [, {max_distance = m}]])   "Press E to open": at the bottom of the screen, or over e
+//                                         (fading in and out in 0.15 s; hidden while the camera is farther than
+//                                         max_distance from e); lsd.prompt(nil [, e]) hides it
 //   lsd.settings_menu([open]) -> open     a ready-made options menu (quality, fullscreen, volumes, mouse, accessibility);
 //                                         no argument: opens or closes it
 //   lsd.on_ui(action, function(element_id) end)   a UI action handled once, engine-wide (before scripts')

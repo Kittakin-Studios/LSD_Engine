@@ -468,6 +468,7 @@ several people at once. What its scripts had to work around:
 - [x] The mouse wheel is not an input key (`engine/input/src/input.cpp`) (done: Mouse Wheel Up / Down)
 - [ ] `lsd.apply_damage` only reaches objects with a script; Editor Utilities cannot list every object in the level
 - [x] The Character reaches full speed and stops at once, turns with the view at once and steers fully in the air: no weight for a GTA-like walk (done: Character > Acceleration, Braking, Turn Rate, Air Control; defaults keep the old feel)
+- [x] `lsd.prompt(text, e)` pops in and out and shows at any distance (done: 0.15 s fades, `{max_distance = m}`, no rebuild when called every frame; `lsd.world_position`)
 
 ## Later
 

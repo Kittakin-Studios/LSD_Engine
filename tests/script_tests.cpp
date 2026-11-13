@@ -843,6 +843,59 @@ static void test_time_scale() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// lsd.prompt over an object fades in and out (0.15 s, on the real clock), and hides past max_distance.
+static float g_prompt_opacity = -1.0f;
+static Vec3 g_prompt_camera{};
+static void test_prompt_fade() {
+    HeapAllocator heap("prompt");
+    {
+        World w(heap);
+        const Entity door = w.create("Door");
+        w.get<Transform>(door)->position = {10, 0, 0};
+        script::ScriptHost host;
+        host.ui_open_text = [](void*, const char*) { return 1; };
+        host.ui_rml = [](void*, i32, const char*, const char*) { return true; };
+        host.ui_follow = [](void*, i32, const char*, world::Entity e, f32) { if (!e.valid()) g_prompt_opacity = -1.0f; };  // unfollow: removed
+        host.ui_style = [](void*, i32, const char* id, const char* property, const char* value) {
+            if (std::strncmp(id, "pr", 2) == 0 && std::strcmp(property, "opacity") == 0) g_prompt_opacity = static_cast<float>(std::atof(value));
+            return true;
+        };
+        host.camera_location = [](void*) { return g_prompt_camera; };
+        script::ScriptSystem scripts;
+        scripts.start(w, host, path_of, nullptr);
+        char line[160];
+        std::snprintf(line, sizeof line, "lsd.prompt('Press E', %u)", door.value);
+        CHECK(scripts.run(line) && g_prompt_opacity == 0.0f);  // appears transparent
+        scripts.update(0.0f, 0.05f);  // the real clock: it fades in even while paused
+        CHECK(std::fabs(g_prompt_opacity - 0.33f) < 0.011f);
+        for (int i = 0; i < 3; ++i) scripts.update(0.05f, 0.05f);
+        CHECK(g_prompt_opacity == 1.0f);
+        CHECK(scripts.run(line));  // called every frame: stays as it is
+        CHECK(g_prompt_opacity == 1.0f);
+        std::snprintf(line, sizeof line, "lsd.prompt(nil, %u)", door.value);
+        CHECK(scripts.run(line));
+        scripts.update(0.05f, 0.05f);
+        CHECK(std::fabs(g_prompt_opacity - 0.67f) < 0.011f);  // fading out
+        for (int i = 0; i < 3; ++i) scripts.update(0.05f, 0.05f);
+        CHECK(g_prompt_opacity == -1.0f);  // gone
+        // max_distance: hidden while the camera is 10 m away, shown from 3 m.
+        std::snprintf(line, sizeof line, "lsd.prompt('Press E', %u, {max_distance = 5})", door.value);
+        CHECK(scripts.run(line));
+        for (int i = 0; i < 5; ++i) scripts.update(0.05f, 0.05f);
+        CHECK(g_prompt_opacity == 0.0f);
+        g_prompt_camera = {7, 0, 0};
+        for (int i = 0; i < 5; ++i) scripts.update(0.05f, 0.05f);
+        CHECK(g_prompt_opacity == 1.0f);
+        std::snprintf(line, sizeof line, "lsd.prompt('Press E', %u)", door.value);  // the old two-argument form still works: no distance limit
+        g_prompt_camera = {100, 0, 0};
+        CHECK(scripts.run(line));
+        scripts.update(0.05f, 0.05f);
+        CHECK(g_prompt_opacity == 1.0f);
+        scripts.stop();
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Exposed properties: the script's defaults, then each object's own values, on self before on_start.
 static void test_properties() {
     write(kPropsLua, R"(
@@ -1521,6 +1574,7 @@ int main() {
     test_graph_variables();
     test_events();
     test_time_scale();
+    test_prompt_fade();
     test_traces();
     test_forward_vector();
     test_native_behaviours();
