@@ -2626,8 +2626,15 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     talk(frame);
     LSD_PROFILE_SCOPE("play");
     if (!physics_) return;
+    u64 lap_start = SDL_GetTicksNS();
+    auto lap = [&](int k) {  // update_ms[k]: the time since the last lap
+        const u64 now = SDL_GetTicksNS();
+        update_ms[k] = static_cast<f32>(static_cast<f64>(now - lap_start) * 1e-6);
+        lap_start = now;
+    };
     apply_live_edits(world);  // Details edits made while playing apply now
     follow_touched(world);    // static collision of objects scripts moved, rescaled or switched
+    lap(0);
     dt = dt > 0.05f ? 0.05f : dt;  // a long frame (breakpoint, window drag) must not tunnel through floors
     if (replaying_ && replay_frame_ < recording_.frame_count()) {
         dt = recording_.dt(replay_frame_);  // the recorded frame times: physics and scripts step as they did
@@ -2697,6 +2704,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_followers(world, dt);  // before the step: moving platforms carry the player and objects
     update_rides(world, frame, move, dt);  // vehicles, transports, movers
     update_sublevels(world);               // level streaming by distance
+    lap(1);
     for (u32 i = 0; i < simulated_count_; ++i) {  // kinematic rigid bodies go where scripts / timelines put their Transform
         const Simulated& s = simulated_[i];
         if (!s.kinematic || !world.alive(s.entity)) continue;
@@ -2788,6 +2796,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         animations_->set_param(world, character_, "Direction", direction);
     }
     remove_bodies_of_dead(world);
+    lap(2);
 
     // Kill Z and Kill Volumes.
     bool killed = feet_.z < world.settings().kill_z;
@@ -2812,6 +2821,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_vehicle_wheels(world);
     update_cloth(world);
     update_fracture(world);
+    lap(3);
     if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; car && car->vehicle != ~0u) place_rider(world);  // on the car where it is now
     if (world.alive(character_)) {
         Vec3 t, r, scale;
@@ -2915,8 +2925,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     update_audio_volumes(world, dt);
     update_subtitles();
     if (animations_) animations_->apply_root_motion(world, character_);  // root motion of objects without the player's Character
+    lap(4);
     send_hits();
     update_triggers(world);
+    lap(5);
     {
         LSD_PROFILE_SCOPE("scripts");
         update_flipbook_events(world);
@@ -2928,9 +2940,11 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         }
         scripts_.update(dt, real_dt);
     }
+    lap(6);
     update_brains(world, dt);
     update_agents(world, dt);
     net_send(world, real_dt);
+    lap(7);
 }
 
 // Flipbook events: when a sprite's Flipbook reaches a frame with an Event, its scripts run that function.

@@ -1691,11 +1691,13 @@ assert(lsd.has_tag(t, "Friend"))
         // find_all / find_tagged / set_name, and the level's World Settings.
         const Entity copy2 = w.create("Target2"), copy3 = w.create("Target 3"), other = w.create("Targets");
         std::snprintf(w.add<Tags>(copy3)->tags, sizeof(Tags::tags), "Friend");
+        std::snprintf(w.add<Tags>(copy2)->tags, sizeof(Tags::tags), "Friend");  // tagged after copy3, and with an Attribute Set too:
+        w.add<AttributeSet>(copy2);                                               // still listed once, in slot order
         CHECK(scripts.run(R"(
 local all = lsd.find_all("Target")
 assert(#all == 3 and all[1] == lsd.find("Target") and all[2] == lsd.find("Target2"), #all)
 local friends = lsd.find_tagged("Friend")
-assert(#friends == 2 and friends[2] == lsd.find("Target 3"), #friends)
+assert(#friends == 3 and friends[2] == lsd.find("Target2") and friends[3] == lsd.find("Target 3"), #friends)
 assert(#lsd.find_all("Nobody") == 0)
 lsd.set_name(lsd.find("Targets"), "Target 4")
 assert(#lsd.find_all("Target") == 4 and lsd.name(lsd.find("Target 4")) == "Target 4")

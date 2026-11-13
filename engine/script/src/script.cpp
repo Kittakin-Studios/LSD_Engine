@@ -18,6 +18,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2319,11 +2320,24 @@ struct Api {
     static int find_tagged(lua_State* L) {
         const char* tag = luaL_checkstring(L, 1);
         const world::World& w = world(L);
-        lua_newtable(L);
+        // Only objects with Tags, an Attribute Set or an Ability System can have tags (world::owned_tags): their pools
+        // are walked instead of every object (11 000 of them in a city: 2 ms a call), the matches put back in slot order.
+        static std::vector<world::Entity> found;
+        found.clear();
+        const reflect::TypeInfo& tags_type = reflect::type_of<world::Tags>();
+        for (u32 i = 0, count = w.count(tags_type); i < count; ++i) {  // the Tags pool read in place
+            if (world::tags_match(static_cast<const world::Tags*>(w.at(tags_type, i))->tags, tag)) found.push_back(w.owner(tags_type, i));
+        }
+        for (const reflect::TypeInfo* type : {&reflect::type_of<world::AttributeSet>(), &reflect::type_of<world::AbilitySystem>()}) {  // granted tags
+            for (u32 i = 0, count = w.count(*type); i < count; ++i) {
+                if (world::has_tag(w, w.owner(*type, i), tag)) found.push_back(w.owner(*type, i));
+            }
+        }
+        std::sort(found.begin(), found.end(), [](world::Entity a, world::Entity b) { return a.index() < b.index(); });
+        found.erase(std::unique(found.begin(), found.end()), found.end());  // found twice: listed once
+        lua_createtable(L, static_cast<int>(found.size()), 0);
         int n = 0;
-        for (u32 slot = 0; slot < w.slot_count(); ++slot) {
-            const world::Entity e = w.entity_at_slot(slot);
-            if (!e.valid() || !world::has_tag(w, e, tag)) continue;
+        for (const world::Entity e : found) {
             lua_pushnumber(L, e.value);
             lua_rawseti(L, -2, ++n);
         }

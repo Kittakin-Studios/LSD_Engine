@@ -355,6 +355,8 @@ struct DrawCounters {
     lsd::f32 detail_ms[8] = {};
 };
 DrawCounters g_draw_counters, g_draw_counters_frame;
+lsd::f32 g_game_ms[2] = {};             // stat dump's game cpu detail: animation; effects and audio
+const lsd::f32* g_play_ms = nullptr;    // ... and PlaySession::update_ms
 struct DetailTimer {  // adds its scope's time to detail_ms[k]
     int k;
     lsd::u64 start = SDL_GetTicksNS();
@@ -1758,6 +1760,15 @@ void register_console(EditorState& s) {
                               c.detail_ms[0], c.detail_ms[1], c.detail_ms[2], c.detail_ms[3], c.detail_ms[4], c.detail_ms[5], c.detail_ms[6], c.detail_ms[7]);
                 lsd::editor::remote::print(line);
                 LSD_LOG_INFO("stat", "%s", line);
+                if (g_play_ms && st.playing) {  // where the game thread's time goes
+                    const lsd::f32* p = g_play_ms;
+                    char game[400];
+                    std::snprintf(game, sizeof game, "game cpu detail: play: live edits %.2f, movers / rides / streaming %.2f, physics %.2f, written back %.2f, camera / movement / sounds %.2f, "
+                                  "triggers %.2f, scripts %.2f, ai / net %.2f; animation %.2f; effects / audio %.2f ms",
+                                  p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], g_game_ms[0], g_game_ms[1]);
+                    lsd::editor::remote::print(game);
+                    LSD_LOG_INFO("stat", "%s", game);
+                }
                 if (g_mesh_cache_stats && g_device_stats) {
                     const lsd::editor::MeshCache::Memory m = g_mesh_cache_stats->memory();
                     const lsd::rhi::MemoryBudget vram = g_device_stats->query_memory_budget();
@@ -3963,12 +3974,15 @@ int main(int argc, char** argv) {
             if (shown) lsd::asset::to_string(tree, guid);
             lsd::editor::set_graph_active_nodes(active, shown ? play.active_bt_nodes(guid, active, 64) : 0);
         }
+        FrameTimer game_parts;  // stat dump's game cpu detail: animation, then effects and audio
         animations->update_outfits(world, *skinned_cache);  // clothes follow their Outfit slots
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
         const lsd::f32 world_dt = state.playing ? dt * play.time_scale() : dt;  // lsd.time_scale (1 outside Play)
         animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : world_dt,
                            state.playing && !state.paused ? &sounds : nullptr);
         animations->attach_to_sockets(world, *skinned_cache);  // weapons in hands follow this frame's pose
+        g_game_ms[0] = game_parts.lap();
+        g_play_ms = play.update_ms;
         effects->set_collider(state.playing ? &lsd::editor::PlaySession::segment_hit : nullptr, &play);  // particles' World collision
         effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : world_dt, state.playing);
         lsd::world::Entity finished[64];  // Auto Destroy effects that are over (Play only)
@@ -3979,6 +3993,7 @@ int main(int argc, char** argv) {
         if (state.playing && !state.ejected) audio.set_listener(play.eye(), play.view_forward());
         else audio.set_listener(state.camera.position, lsd::editor::camera_forward(state.camera));
         audio.update(dt);
+        g_game_ms[1] = game_parts.lap();
         mouse_dx = mouse_dy = mouse_wheel = 0.0f;
 
         // Window title: level name and unsaved marker, like Unreal.

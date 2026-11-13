@@ -175,6 +175,10 @@ public:
     // The running nodes of the first AI Controller using behaviour tree `guid` (graph node ids), for
     // the graph window's live debugging.
     u32 active_bt_nodes(const char* guid, u32* out, u32 capacity) const;
+    // stat dump's game cpu detail, the last update's milliseconds: live edits and touched collision, movers / rides /
+    // streaming, physics (with the player), written back (bodies, wheels, cloth, fracture), camera / timelines /
+    // movement / sounds, triggers, scripts, AI and network.
+    f32 update_ms[8] = {};
 
 private:
     struct Simulated {
