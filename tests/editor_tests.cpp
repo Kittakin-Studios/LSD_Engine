@@ -31,6 +31,7 @@
 #include "multi_user_core.h"
 #include "asset_compiler.h"
 #include "lsd/world/level.h"
+#include "lsd/ui/ui_sounds.h"
 
 #include "lsd/world/components.h"
 
@@ -1413,7 +1414,33 @@ static void test_asset_compiler() {
     fs::remove_all(root);
 }
 
+// Button sounds: which elements count as clickable, and one hover sound per element entered.
+static void test_ui_sounds() {
+    using lsd::ui::is_clickable;
+    CHECK(is_clickable("button", "", false, false, false));
+    CHECK(is_clickable("select", "", false, false, false));
+    CHECK(is_clickable("div", "", true, false, false));                    // onclick
+    CHECK(is_clickable("div", "", false, true, false));                    // data-click-sound / data-hover-sound
+    CHECK(is_clickable("input", "checkbox", false, false, false));
+    CHECK(is_clickable("input", "submit", false, false, false));
+    CHECK(!is_clickable("input", "text", false, false, false));            // a text field
+    CHECK(!is_clickable("input", "range", false, false, false));
+    CHECK(!is_clickable("div", "", false, false, false));
+    CHECK(!is_clickable("span", "button", false, false, false));           // type means nothing outside <input>
+    CHECK(!is_clickable("button", "", true, false, true));                 // disabled
+    int a = 0, b = 0;
+    lsd::ui::HoverTracker t;
+    CHECK(!t.enter(&a, false));  // a document opened under a still cursor: silent
+    CHECK(!t.enter(&a, true));   // moving inside it: still silent
+    CHECK(!t.enter(nullptr, true));
+    CHECK(t.enter(&a, true));    // back onto it: once
+    CHECK(!t.enter(&a, true));
+    CHECK(t.enter(&b, true));    // straight onto the next button
+    CHECK(!t.enter(&b, false));
+}
+
 int main() {
+    test_ui_sounds();
     test_asset_compiler();
     test_sound_synth();
     test_cloth_mesh();

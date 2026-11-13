@@ -2549,6 +2549,19 @@ button:focus, button:hover { background-color: #EEA70E; }
   to Esc or a Pause button; for your own look, copy its idea into a `.rml` with `lsd.get_settings` /
   `lsd.set_settings`. UI actions that should run once whatever scripts exist go to `lsd.on_ui(action,
   function(element_id) end)` (the menu's buttons use it).
+- **Button sounds** (UMG's Hovered / Pressed sounds): **Project Settings > User Interface > UI Hover
+  Sound** and **UI Click Sound** (empty: silent), **UI Sound Volume** and **UI Sound Class** (empty: the
+  Sound Class named `UI` if the project has one, so the player's **UI Volume** setting applies; under
+  Master either way). Every clickable element plays them in Play: a `<button>`, a `<select>`, an `<input>`
+  of type button / submit / checkbox / radio, anything with `onclick` (not `disabled` ones). The hover
+  sound plays once when the mouse or the arrows / D-pad focus enter one (not again while it stays there,
+  and not when a document opens under a still cursor); the click sound when it is pressed (mouse, Enter,
+  the gamepad's A). Per element: `data-hover-sound="SFX_Beep"`, `data-click-sound="<name or GUID>"`
+  (on an element they also make it clickable; on the body they are the document's default),
+  `data-sound="none"` or a sound `none` for silence. New projects from a template get
+  `Content/Templates/UI/SFX_UI_Hover.wav` / `SFX_UI_Click.wav` (generated: a 25 ms 2400 Hz tick and a 60 ms
+  1300 to 800 Hz blip; `tools/ui_sounds.py` writes the same pair, as in `Content/UI/Sounds`). `ui.LogSounds 1`
+  logs each one with its voice.
 - **Safe zone** (Unreal's Display Safe Zone): **Project Settings > User Interface > UI Safe Zone** (%)
   lays the game UI out that far in from every edge of the view, so a TV that crops the picture keeps
   the HUD whole (5 % is usual for TVs, 0 for monitors). World-anchored elements still sit over their objects.

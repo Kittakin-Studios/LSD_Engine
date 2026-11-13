@@ -654,6 +654,10 @@ system interface (time, log, translation). A `UiContext` is a screen of UI: docu
 (mouse, keys, text, spatial navigation for gamepads), and inline `on<event>="name"` attributes that
 become actions; the Play session sends actions to Lua. Text that equals a string table key is
 translated as documents load; switching language reloads them in place.
+Button sounds: `ui::set_sounds` takes one handler for every context; a click listener on each
+document and, in `UiContext::update`, the hovered and focused elements' clickable ancestors (rules
+and the once-per-element `HoverTracker` in `lsd/ui/ui_sounds.h`, tested in editor_tests) call it.
+The editor's handler (main.cpp) plays the project's sounds through `SoundPlayer::play_ui` in Play.
 
 ## Level modes
 
