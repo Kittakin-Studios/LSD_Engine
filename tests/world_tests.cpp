@@ -1,6 +1,7 @@
 // World tests: entities, component pools, hierarchy, level text round trip, transform math.
 #include "lsd/world/components.h"
 #include "lsd/world/level.h"
+#include "lsd/world/matrix_cache.h"
 #include "lsd/world/prefab.h"
 #include "lsd/world/spline.h"
 #include "lsd/world/curve.h"
@@ -29,6 +30,47 @@ static void test_math() {
     const Vec3 p = transform_point(affine_inverse(m), transform_point(m, {0.3f, -4, 7}));
     CHECK(near(p, {0.3f, -4, 7}, 1e-3f));
     CHECK(near(transform_point(rotation_euler({0, 0, 90}), {1, 0, 0}), {0, 1, 0}));  // +Z yaw turns X toward Y
+}
+
+// MatrixCache: the same matrices as World::world_matrix, worked out again only for what moved (and its children).
+static void test_matrix_cache() {
+    HeapAllocator heap("matrix cache");
+    World w(heap);
+    MatrixCache cache(heap);
+    const Entity house = w.create("House");
+    const Entity wall = w.create("Wall");
+    const Entity lamp = w.create("Lamp");
+    w.set_parent(wall, house, false);
+    w.get<Transform>(house)->position = {10, 0, 0};
+    w.get<Transform>(house)->rotation = {0, 0, 90};
+    w.get<Transform>(wall)->position = {1, 2, 3};
+    auto same = [](const Mat4& a, const Mat4& b) {
+        for (int k = 0; k < 16; ++k) {
+            if (std::fabs(a.m[k] - b.m[k]) > 1e-5f) return false;
+        }
+        return true;
+    };
+    bool moved = false;
+    cache.begin_frame(w);
+    CHECK(same(cache.get(w, wall, &moved), w.world_matrix(wall)) && moved);  // new: worked out
+    cache.get(w, lamp);
+    cache.begin_frame(w);
+    CHECK(same(cache.get(w, wall, &moved), w.world_matrix(wall)) && !moved);  // nothing changed: kept
+    cache.get(w, lamp, &moved);
+    CHECK(!moved);
+    w.get<Transform>(house)->position = {20, 0, 0};  // the parent moves: the child follows
+    cache.begin_frame(w);
+    CHECK(same(cache.get(w, wall, &moved), w.world_matrix(wall)) && moved);
+    cache.get(w, lamp, &moved);
+    CHECK(!moved);
+    w.set_parent(wall, Entity{}, false);  // unparented (Transform unchanged): moves
+    cache.begin_frame(w);
+    CHECK(same(cache.get(w, wall, &moved), w.world_matrix(wall)) && moved);
+    w.destroy(lamp);  // a new entity in the reused slot is not mistaken for the old one
+    const Entity post = w.create("Post");
+    w.get<Transform>(post)->position = {0, 0, 5};
+    cache.begin_frame(w);
+    CHECK(same(cache.get(w, post, &moved), w.world_matrix(post)) && moved);
 }
 
 static void test_entities() {
@@ -661,6 +703,7 @@ int main() {
     test_sublevel();
     test_streaming_volumes();
     test_entities();
+    test_matrix_cache();
     test_level_round_trip();
     test_prefab();
     test_tags();

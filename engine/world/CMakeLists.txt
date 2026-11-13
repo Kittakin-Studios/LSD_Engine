@@ -1,5 +1,6 @@
 add_library(lsd_world STATIC
   src/world.cpp
+  src/matrix_cache.cpp
   src/level.cpp
   src/prefab.cpp
   src/spline.cpp

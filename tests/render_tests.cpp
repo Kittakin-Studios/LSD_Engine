@@ -1,5 +1,6 @@
 // Math and mesh-generation tests (no GPU needed).
 #include "lsd/foundation/math.h"
+#include "lsd/render/cull.h"
 #include "lsd/render/fracture.h"
 #include "lsd/render/lod.h"
 #include "lsd/render/mesh.h"
@@ -139,6 +140,42 @@ static void test_culling() {
         rhi::cull_constants(draw, 3, nullptr, hiz, 0, c);
         CHECK(lod_at(20) == 0);
     }
+}
+
+// Group culling (render/cull.h): a world box wholly in, partly in or out of a view; a shadow view's sides keep a
+// caster behind its near plane; copies' world boxes and spheres.
+static void test_group_culling() {
+    using namespace lsd;
+    const Mat4 view_proj = perspective(1.0f, 16.0f / 9.0f, 0.1f, 100.0f) * look_at({0, 0, 0}, {1, 0, 0}, {0, 0, 1});
+    f32 planes[6][4];
+    rhi::frustum_planes(view_proj.m, planes);
+    auto box = [&](const f32 (&p)[6][4], f32 x0, f32 x1, f32 y0, f32 y1) {
+        const f32 lo[3] = {x0, y0, -0.5f}, hi[3] = {x1, y1, 0.5f};
+        return render::classify_box(p, lo, hi);
+    };
+    CHECK(box(planes, 9, 11, -1, 1) == render::Cull::Inside);
+    CHECK(box(planes, -11, -9, -1, 1) == render::Cull::Outside);    // behind
+    CHECK(box(planes, 9, 11, 5, 30) == render::Cull::Partly);       // across the left edge
+    CHECK(box(planes, 90, 120, -1, 1) == render::Cull::Partly);     // across the far plane
+    CHECK(box(planes, 150, 160, -1, 1) == render::Cull::Outside);
+    const Mat4 sun = orthographic(20.0f, 20.0f, 0.1f, 50.0f) * look_at({0, 0, 30}, {0, 0, 0}, {1, 0, 0});  // looking down
+    f32 sides[6][4];
+    render::side_planes(sun.m, sides);
+    const f32 above_lo[3] = {-1, -1, 120}, above_hi[3] = {1, 1, 122};  // far toward the light, past even GL's near plane: still casts
+    CHECK(render::classify_box(sides, above_lo, above_hi) == render::Cull::Inside);
+    rhi::frustum_planes(sun.m, planes);
+    CHECK(render::classify_box(planes, above_lo, above_hi) == render::Cull::Outside);
+    const f32 beside_lo[3] = {-1, 30, 0}, beside_hi[3] = {1, 32, 1};
+    CHECK(render::classify_box(sides, beside_lo, beside_hi) == render::Cull::Outside);
+    // A copy turned 90 degrees about Z and doubled: its unit box becomes 2 x 2 x 2 around (5, 0, 0).
+    const f32 rows[12] = {0, -2, 0, 5, 2, 0, 0, 0, 0, 0, 2, 0};
+    const f32 lo[3] = {-0.5f, -0.5f, -0.5f}, hi[3] = {0.5f, 0.5f, 0.5f};
+    f32 wlo[3] = {1e30f, 1e30f, 1e30f}, whi[3] = {-1e30f, -1e30f, -1e30f};
+    render::grow_box(rows, lo, hi, wlo, whi);
+    CHECK(near(wlo[0], 4) && near(whi[0], 6) && near(wlo[1], -1) && near(whi[1], 1) && near(wlo[2], -1) && near(whi[2], 1));
+    f32 centre[3], radius = 0.0f;
+    render::copy_sphere(rows, lo, hi, centre, radius);
+    CHECK(near(centre[0], 5) && near(centre[1], 0) && near(radius, std::sqrt(3.0f)));
 }
 
 // Occlusion: a wall 10 m ahead (4 x 4 m) hides a small box behind it; boxes beside it, in front of it,
@@ -661,6 +698,7 @@ int main() {
     test_math();
     test_meshes();
     test_culling();
+    test_group_culling();
     test_occlusion();
     test_texture_streaming();
     test_lods();

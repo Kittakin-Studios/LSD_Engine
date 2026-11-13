@@ -1,6 +1,7 @@
 add_library(lsd_render STATIC
   src/mesh.cpp
   src/lod.cpp
+  src/cull.cpp
   src/grid.cpp
   src/material.cpp
   src/occlusion.cpp
