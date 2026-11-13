@@ -406,6 +406,10 @@ struct Transport {
     LSD_PROPERTY(Edit, Units = "m", Min = 0.5, Tooltip = "How near the player must be to get on") f32 enter_distance = 4.0f;
     LSD_PROPERTY(Edit, Tooltip = "Where the rider stands, in the object's own space (0,0,1 = on top of a unit cube)") Vec3 seat{0.0f, 0.0f, 1.0f};
     LSD_PROPERTY(Edit, Tooltip = "The rider can look around while riding (off: faces the way it travels)") bool free_look = true;
+    LSD_PROPERTY(Edit, Units = "m", Tooltip = "Moves the rider's view while riding, in this object's own directions (x forward, y left, z up; not scaled with it): 0, 0, 2.5 looks from above the roof of a 3 m train, 0, 1.4, 0 from a window. 0 = from the rider's head")
+    Vec3 camera_offset{0.0f, 0.0f, 0.0f};
+    LSD_PROPERTY(Edit, Units = "m", Min = 0, Max = 50, Tooltip = "While riding, the view sits this far behind where the rider looks (a spring arm; this object does not block it): 8 shows the train from outside. 0 = the rider's own camera")
+    f32 camera_distance = 0.0f;
 };
 
 // This object replicates in multiplayer (Unreal's Replicates + Replicate Movement): the server's copy

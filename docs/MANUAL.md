@@ -862,6 +862,12 @@ their Static Mesh):
   travel on its seat without driving; **E** gets off. It comes with a Mover going back and forth
   20 m with a 3 s stop at each end: change its route in the Mover (a Spline for rails), or use a
   Spline Follower instead.
+  When the rider stands inside its mesh (a closed train car), the view is inside too: **Camera Offset**
+  moves the rider's view in the transport's own directions (x forward, y left, z up, in metres, not
+  scaled with it: 0, 1.4, 0 at a window, 0, 0, 2.5 over the roof) and **Camera Distance** puts it on a
+  spring arm that far behind where you look (8 shows the train from outside; the transport itself
+  never pulls the arm in). Both 0: the rider's own camera, as before. Vehicle passengers already get
+  the vehicle's follow camera (Camera Distance / Height on the Vehicle).
 - **Moving Mesh (Mover)** (green): moves by itself. **Path**: *Direction* (any velocity vector,
   forever or for Duration seconds), *Back and Forth* (to Offset and back), or *Spline* (a Spline
   object's route by name, facing along it). **Repeat**: Once, Loop or Ping-Pong; **Pause** at each

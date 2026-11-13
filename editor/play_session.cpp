@@ -2494,12 +2494,23 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     const Vec3 offset = settings_.camera_offset;
     const f32 cy = std::cos(yaw_), sy = std::sin(yaw_);
     head = head + Vec3{cy * offset.x - sy * offset.y, sy * offset.x + cy * offset.y, offset.z};
+    // Riding a Transport: its Camera Offset (its own axes, unscaled) and Camera Distance move the view
+    // out of its mesh (onto the roof, to a window, behind it); its own body does not pull the arm in.
+    u32 ride_body = physics::kWorldBody;
+    if (const auto* ride = world.alive(riding_) ? world.get<world::Transport>(riding_) : nullptr) {
+        const Mat4 rm = world.world_matrix(riding_);
+        const Vec3 o = ride->camera_offset;
+        head = head + normalize(Vec3{rm.at(0, 0), rm.at(1, 0), rm.at(2, 0)}) * o.x + normalize(Vec3{rm.at(0, 1), rm.at(1, 1), rm.at(2, 1)}) * o.y +
+               normalize(Vec3{rm.at(0, 2), rm.at(1, 2), rm.at(2, 2)}) * o.z;
+        if (ride->camera_distance > 0.0f) arm_length = ride->camera_distance;
+        if (const Moving* mv = moving_of(riding_)) ride_body = mv->body;
+    }
     eye_ = head;
     if (arm_length > 0.0f) {
         const Vec3 back = eye_forward_ * -1.0f;
         f32 arm = arm_length;
         physics::RayHit hit;
-        if (physics_->raycast(head, back, arm, hit)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
+        if (physics_->raycast(head, back, arm, hit, ride_body)) arm = hit.distance > 0.2f ? hit.distance - 0.2f : 0.0f;
         eye_ = head + back * arm;
     }
     update_timelines(world, dt);
