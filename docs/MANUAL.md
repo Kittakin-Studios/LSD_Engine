@@ -1656,6 +1656,7 @@ Level Script), `lsd.assets`, `lsd.log`...) plus `lsd.editor`:
 | `lsd.editor.open_asset(name)` | Opens an asset as a double-click would |
 | `lsd.editor.console(line)` | Runs a console command |
 | `lsd.editor.panel(title, widgets)` | A dockable panel (the Editor Utility Widget) |
+| `lsd.raycast`, `sphere_trace` / `box_trace` / `capsule_trace`, `overlap_sphere` / `overlap_box` | As in Play, against the level's collision (Unreal's editor line traces): Static Meshes with collision, instanced copies, sprites, tile maps, Blocking Volumes, built as Play builds them; snap objects to the ground with them. The collision is rebuilt for each run, button press, spawn and edit; objects the running script moves keep their old collision until the next run |
 
 Run one: Content Browser > right-click the script > **Run Editor Utility**, or `utility.Run <name>` in
 the console. Name it `EU_<something>` and it is also listed in **Tools > Editor Utilities**, in the
@@ -2562,6 +2563,19 @@ button:focus, button:hover { background-color: #EEA70E; }
   to Esc or a Pause button; for your own look, copy its idea into a `.rml` with `lsd.get_settings` /
   `lsd.set_settings`. UI actions that should run once whatever scripts exist go to `lsd.on_ui(action,
   function(element_id) end)` (the menu's buttons use it).
+- **Button sounds** (UMG's Hovered / Pressed sounds): **Project Settings > User Interface > UI Hover
+  Sound** and **UI Click Sound** (empty: silent), **UI Sound Volume** and **UI Sound Class** (empty: the
+  Sound Class named `UI` if the project has one, so the player's **UI Volume** setting applies; under
+  Master either way). Every clickable element plays them in Play: a `<button>`, a `<select>`, an `<input>`
+  of type button / submit / checkbox / radio, anything with `onclick` (not `disabled` ones). The hover
+  sound plays once when the mouse or the arrows / D-pad focus enter one (not again while it stays there,
+  and not when a document opens under a still cursor); the click sound when it is pressed (mouse, Enter,
+  the gamepad's A). Per element: `data-hover-sound="SFX_Beep"`, `data-click-sound="<name or GUID>"`
+  (on an element they also make it clickable; on the body they are the document's default),
+  `data-sound="none"` or a sound `none` for silence. New projects from a template get
+  `Content/Templates/UI/SFX_UI_Hover.wav` / `SFX_UI_Click.wav` (generated: a 25 ms 2400 Hz tick and a 60 ms
+  1300 to 800 Hz blip; `tools/ui_sounds.py` writes the same pair, as in `Content/UI/Sounds`). `ui.LogSounds 1`
+  logs each one with its voice.
 - **Safe zone** (Unreal's Display Safe Zone): **Project Settings > User Interface > UI Safe Zone** (%)
   lays the game UI out that far in from every edge of the view, so a TV that crops the picture keeps
   the HUD whole (5 % is usual for TVs, 0 for monitors). World-anchored elements still sit over their objects.
@@ -2870,7 +2884,7 @@ about 3.5 ms; the street view went from 4.6 to 2.4 ms. See BACKLOG, "Capacity (l
 | Category | Components |
 | --- | --- |
 | Common | Transform |
-| Rendering | Static Mesh (**Box UV**: one texture tile per metre on every face however it is scaled, for blockout walls and floors) |
+| Rendering | Static Mesh (**Box UV**: one texture tile per metre on every face however it is scaled, for blockout walls and floors; the material's **Box UV Tiling** (UVs category, tiles per metre, Unreal's World Aligned Texture size) changes that: 0.25 = a tile every 4 m) |
 | Animation | Skeletal Mesh (**Morphs**: morph target weights) |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |
@@ -2910,7 +2924,7 @@ Objects and transforms
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component. `lsd.add(e, "RigidBody", {mass = 2})` in Play makes e simulate (its static collision becomes the moving body), by the next frame or at once for `lsd.add_impulse` / `set_velocity` |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |
 | `lsd.has_any_tag(e, "A, B")` / `has_all_tags` / `has_no_tag` | several tags at once (Has Any Tag / Has All Tags nodes) |
-| `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil |
+| `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil; `e` is the object hit (ragdoll limbs: their character; broken Destructibles: the object or its piece); in Editor Utilities too |
 | `lsd.sphere_trace(x1, y1, z1, x2, y2, z2, r)` (also `box_trace(..., hx, hy, hz)`, `capsule_trace(..., r, half_h)`) | first hit like raycast, or nil |
 | `lsd.overlap_sphere(x, y, z, r)` / `lsd.overlap_box(x, y, z, hx, hy, hz)` | `{e, ...}` the objects touching it |
 | `lsd.spline_point(e, d)`, `lsd.spline_length(e)` | |

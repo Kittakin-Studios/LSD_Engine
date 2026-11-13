@@ -146,6 +146,7 @@ bool gather_hlod_sources(const world::World& w, const asset::AssetRegistry& regi
         const auto* m = static_cast<const world::StaticMesh*>(w.at(type, i));
         const bool moves = w.get<world::RigidBody>(e) || w.get<world::Mover>(e) || w.get<world::Vehicle>(e) || w.get<world::Transport>(e);
         if (moves || w.hidden_in_hierarchy(e) || m->color.a < 0.999f || m->max_draw_distance > 0.0f || (allow && !allow(*m))) continue;
+        f32 tiling = 1.0f;  // Box UV: the material's tiles per metre
         if (m->material[0]) {  // only plain opaque Materials (instances and graphs are left as they are)
             asset::Guid g;
             const asset::AssetRecord* r = asset::parse_guid(m->material, g) ? registry.find(g) : nullptr;
@@ -154,13 +155,15 @@ bool gather_hlod_sources(const world::World& w, const asset::AssetRegistry& regi
             if (!r) continue;
             registry.source_path(*r, path, sizeof path);
             if (!asset::load_data_asset(path, material) || material.blend_mode != 0) continue;
+            tiling = material.box_uv_tiling;
         }
         render::MeshData data;
         if (!load_level_mesh(m->mesh, registry, data_dir, allocator, data) || data.index_count < 3) continue;
         const Mat4 world_matrix = w.world_matrix(e);
         if (m->box_uv) {
-            render::box_project_uv(data, length(Vec3{world_matrix.at(0, 0), world_matrix.at(1, 0), world_matrix.at(2, 0)}),
-                                   length(Vec3{world_matrix.at(0, 1), world_matrix.at(1, 1), world_matrix.at(2, 1)}), length(Vec3{world_matrix.at(0, 2), world_matrix.at(1, 2), world_matrix.at(2, 2)}));
+            render::box_project_uv(data, tiling * length(Vec3{world_matrix.at(0, 0), world_matrix.at(1, 0), world_matrix.at(2, 0)}),
+                                   tiling * length(Vec3{world_matrix.at(0, 1), world_matrix.at(1, 1), world_matrix.at(2, 1)}),
+                                   tiling * length(Vec3{world_matrix.at(0, 2), world_matrix.at(1, 2), world_matrix.at(2, 2)}));
         }
         storage.vertices.emplace_back(data.vertices, data.vertices + data.vertex_count);
         storage.indices.emplace_back(data.indices, data.indices + data.index_count);

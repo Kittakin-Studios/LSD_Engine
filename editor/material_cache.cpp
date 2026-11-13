@@ -506,6 +506,11 @@ void MaterialCache::pack_maps(Entry& e) {
     std::snprintf(m.orm_texture, sizeof m.orm_texture, "%s", key);
 }
 
+f32 MaterialCache::box_uv_tiling(const char* guid) {
+    const Entry* e = guid && guid[0] ? find(guid) : nullptr;
+    return e && !e->failed && e->material.box_uv_tiling > 0.0f ? e->material.box_uv_tiling : 1.0f;
+}
+
 void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
     const Entry* e = guid && guid[0] ? find(guid) : nullptr;
     if (!e || e->failed) return;

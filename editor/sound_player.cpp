@@ -205,6 +205,18 @@ u32 SoundPlayer::play(const char* sound, bool spatial, Vec3 position, bool loop)
     return play_file(*r, nullptr, spatial, position, 1.0f, 1.0f, meta.looping || loop, 0.0f, 0);
 }
 
+u32 SoundPlayer::play_ui(const char* sound, f32 volume, const char* sound_class) {
+    if (!audio_ || !registry_ || !sound || !sound[0]) return 0;
+    const asset::AssetRecord* r = find(sound, false);
+    if (!r) return play(sound, false, {});  // shortcut: a Sound Cue plays with its own volume and class, give cues a volume if UI cues need one
+    asset::AssetMeta settings;
+    registry_->load_meta(*r, settings);
+    settings.volume = settings.pitch = 1.0f;  // play_file multiplies the wave's own in once
+    if (sound_class && sound_class[0]) std::snprintf(settings.sound_class, sizeof settings.sound_class, "%s", sound_class);
+    else if (const asset::AssetRecord* ui = registry_->find_named("UI", asset::AssetType::Data, "SoundClass")) asset::to_string(ui->guid, settings.sound_class);
+    return play_file(*r, &settings, false, {}, volume, 1.0f, false, 0.0f, 0);
+}
+
 // One sound file. Class, attenuation and concurrency come from the cue that plays it (or the wave's
 // own .meta when played directly); volume and pitch multiply: cue x node x wave.
 u32 SoundPlayer::play_file(const asset::AssetRecord& wave, const asset::AssetMeta* cue_settings, bool spatial, Vec3 position, f32 volume, f32 pitch,

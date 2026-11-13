@@ -82,7 +82,8 @@ div { display: block; }
 </rml>
 )";
 
-// A short UI sound as a 16-bit mono WAV: a click (a bright blip) or a slide tick (softer, shorter).
+// A short UI sound as a 16-bit mono WAV: a click (a bright blip) or a slide tick (softer, shorter; also the button hover sound).
+// tools/ui_sounds.py writes the same two files (Content/UI/Sounds).
 std::string ui_sound_wav(bool slide) {
     const u32 rate = 44100, samples = rate * (slide ? 25u : 60u) / 1000u;
     std::string wav(44 + samples * 2, '\0');
@@ -175,6 +176,14 @@ bool template_file(EditorState& s, const char* folder, const char* file, u32 wid
 void build_template(EditorState& s, Template t, const char* level_name) {
     namespace fs = std::filesystem;
     TemplateArt art;
+    if (s.registry) {  // the project's default button sounds (Project Settings > User Interface), when it has none yet
+        const std::string hover = ui_sound_wav(true), click = ui_sound_wav(false);
+        char guid[33];
+        if (template_file(s, "UI", "SFX_UI_Hover.wav", 0, 0, nullptr, nullptr, guid, &hover) && !s.project.ui_hover_sound[0])
+            std::snprintf(s.project.ui_hover_sound, sizeof s.project.ui_hover_sound, "%s", guid);
+        if (template_file(s, "UI", "SFX_UI_Click.wav", 0, 0, nullptr, nullptr, guid, &click) && !s.project.ui_click_sound[0])
+            std::snprintf(s.project.ui_click_sound, sizeof s.project.ui_click_sound, "%s", guid);
+    }
     if (t == Template::TwoD && s.registry) {
         template_file(s, "2D", "T_Tiles.png", kTilesetSize, kTilesetSize, template_tileset, nullptr, art.tiles);
         template_file(s, "2D", "T_Hero.png", kHeroWidth, kHeroHeight, template_hero, nullptr, art.hero);

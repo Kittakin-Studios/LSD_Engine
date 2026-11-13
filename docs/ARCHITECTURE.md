@@ -236,7 +236,9 @@ import settings; `r.ForceLOD n` to inspect one). `pick_static_lod` does this for
 both shadow passes (casters use the camera's LOD), and culls a mesh below `r.MinScreenSize`, past its Max Draw Distance or the
 distance a Cull Distance Volume gives its size (the volumes are gathered once per frame). **Box UV**
 meshes are cached variants (`MeshCache::get_box_uv`, key `<mesh>|box:x,y,z` at the object's scale
-rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis.
+rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis. The material's
+Box UV Tiling multiplies that scale (`MaterialCache::box_uv_tiling`; light baking and HLODs do the same), so the
+tiling lives in the vertices and D3D12, Vulkan and OpenGL need no shader change.
 
 **HLOD** (`editor/hlod.*`): Build > Build HLODs puts every opaque, non-moving Static Mesh into a grid cell
 (World Settings > Hlod Cell Size) by its position, simplifies each mesh (`asset::simplify_mesh`, 25 %), moves it to
@@ -666,6 +668,10 @@ system interface (time, log, translation). A `UiContext` is a screen of UI: docu
 (mouse, keys, text, spatial navigation for gamepads), and inline `on<event>="name"` attributes that
 become actions; the Play session sends actions to Lua. Text that equals a string table key is
 translated as documents load; switching language reloads them in place.
+Button sounds: `ui::set_sounds` takes one handler for every context; a click listener on each
+document and, in `UiContext::update`, the hovered and focused elements' clickable ancestors (rules
+and the once-per-element `HoverTracker` in `lsd/ui/ui_sounds.h`, tested in editor_tests) call it.
+The editor's handler (main.cpp) plays the project's sounds through `SoundPlayer::play_ui` in Play.
 
 ## Level modes
 
@@ -716,6 +722,11 @@ reach its functions and globals; C++ passes code and values as Lua long-bracket 
 A run or button saves the level text before and after: if it differs, `editor/editor_utility.cpp` names
 a pending edit (one undo step). Play's host never sets `editor`, so `lsd.editor` raises there, and
 `main.cpp` registers the `utility.Run` command only outside game mode.
+Traces (`lsd.raycast`, sweeps, overlaps) go through `UtilityHooks::raycast / sweep / overlap` to a query-only
+`physics::PhysicsWorld` in `editor_utility.cpp`, filled by `add_static_bodies` (play_session.cpp, the same code
+Play's static collision uses) and rebuilt lazily after an edit (the history's version), a run, a button or a spawn.
+Play maps every physics body index to its object in a growable `body_entities_` (a fixed 8192-entry table once
+left bodies of big levels unmapped, so `lsd.raycast` returned `true`, e.g. on a broken Destructible's rebuilt body).
 
 ## Editor plugins and the Claude MCP bridge
 

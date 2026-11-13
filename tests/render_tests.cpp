@@ -674,8 +674,27 @@ static void test_uv_tiling() {
     CHECK(m.ao_channel == 0 && m.roughness_channel == 1 && m.metallic_channel == 2);
 }
 
+// Box UV in metres, times the material's Box UV Tiling (main.cpp multiplies the object's scale by it): 1 = a tile a metre.
+static void test_box_uv_tiling() {
+    using namespace lsd;
+    CHECK(render::Material{}.box_uv_tiling == 1.0f);  // old materials keep one tile per metre
+    f32 span[2] = {};
+    for (int pass = 0; pass < 2; ++pass) {
+        const f32 tiling = pass ? 0.25f : 1.0f;
+        render::MeshData cube = render::make_cube(default_allocator());
+        render::box_project_uv(cube, 4.0f * tiling, 4.0f * tiling, 4.0f * tiling);  // a 4 m cube
+        f32 lo = 1e9f, hi = -1e9f;
+        for (u32 i = 0; i < cube.vertex_count; ++i) lo = std::fmin(lo, cube.vertices[i].uv[0]), hi = std::fmax(hi, cube.vertices[i].uv[0]);
+        span[pass] = hi - lo;
+        render::free_mesh(default_allocator(), cube);
+    }
+    CHECK(std::fabs(span[0] - 4.0f) < 1e-4f);  // four tiles across a 4 m face
+    CHECK(std::fabs(span[1] - 1.0f) < 1e-4f);  // 0.25 a metre: one tile across it
+}
+
 int main() {
     test_uv_tiling();
+    test_box_uv_tiling();
     test_fracture();
     test_shader_cache();
     test_color_vision();

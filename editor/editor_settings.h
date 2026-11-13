@@ -147,6 +147,7 @@ struct GameUserSettings {
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "Loudness of everything the game plays (0 = silent)") f32 master_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named Music") f32 music_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named SFX") f32 effects_volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Audio", Min = 0, Max = 1, Tooltip = "The Sound Class named UI (button hover and click sounds)") f32 ui_volume = 1.0f;
     LSD_PROPERTY(Edit, Category = "Controls", Min = 0.1, Max = 5, Tooltip = "Times the Character's look sensitivity") f32 mouse_sensitivity = 1.0f;
     LSD_PROPERTY(Edit, Category = "Controls", Tooltip = "Moving the mouse up looks down (flight controls)") bool invert_look = false;
     LSD_PROPERTY(Edit, Category = "Controls", Tooltip = "Keys the player rebound (lsd.rebind)") List<KeyBinding, 32> key_bindings;
@@ -209,6 +210,16 @@ struct ProjectSettings {
     LSD_PROPERTY(Edit, Category = "User Interface", Units = "%", Min = 0, Max = 20,
                  Tooltip = "Safe zone (Unreal's Display Safe Zone): the game UI is laid out this far in from every edge of the view, so TVs that crop the picture keep it whole (5 is usual for TVs, 0 for monitors)")
     f32 ui_safe_zone = 0.0f;
+    LSD_PROPERTY(Edit, Category = "User Interface", Widget = "Asset:Sound",
+                 Tooltip = "Played when the mouse or the gamepad / keyboard focus enters a button (Unreal's Hovered Sound): every <button>, <select>, checkbox / radio and anything with onclick in the game UI. An element's data-hover-sound=\"name\" overrides it, data-sound=\"none\" silences it. Empty: silent")
+    char ui_hover_sound[33] = "";
+    LSD_PROPERTY(Edit, Category = "User Interface", Widget = "Asset:Sound",
+                 Tooltip = "Played when a button is pressed (Unreal's Pressed Sound): mouse, Enter or the gamepad's A. An element's data-click-sound=\"name\" overrides it. Empty: silent")
+    char ui_click_sound[33] = "";
+    LSD_PROPERTY(Edit, Category = "User Interface", Min = 0, Max = 2, Tooltip = "Loudness of the button sounds (times the sound's own volume)") f32 ui_sound_volume = 1.0f;
+    LSD_PROPERTY(Edit, Category = "User Interface", Widget = "Asset:SoundClass",
+                 Tooltip = "The Sound Class button sounds play through (its volume, the player's settings sliders). Empty: the Sound Class named UI if there is one, else the sound's own")
+    char ui_sound_class[33] = "";
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Validate Assets also checks name prefixes (SM_, T_, M_, MI_, BT_, UI_...)") bool check_naming = false;
     LSD_PROPERTY(Edit, Category = "Validation", Tooltip = "Textures larger than this on a side are reported") u32 max_texture_size = 4096;
     LSD_PROPERTY(Edit, Category = "Multiplayer", Tooltip = "Tick for an online / LAN game. Off: a single-player game and nothing networked runs") bool multiplayer = false;

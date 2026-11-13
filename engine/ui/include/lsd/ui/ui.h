@@ -30,6 +30,12 @@ bool init(rhi::Device& device, const char* fonts_folder = "Content/Fonts");
 // nullptr to keep the text). Text whose whole content is a string table key gets translated.
 using Translator = const char* (*)(void* user, const char* text);
 void set_translator(Translator translator, void* user);
+// Button sounds for every context (UMG's Hovered / Pressed sounds; rules in ui_sounds.h): called when a
+// clickable element is entered by the mouse or the focus (`click` false) or pressed (`click` true).
+// `sound` is the element's own data-hover-sound / data-click-sound (from it or an ancestor, a sound's
+// name or GUID), nullptr for the project's default; data-sound="none" (or a sound "none") is silent.
+using SoundHandler = void (*)(void* user, UiContext& context, bool click, const char* sound);
+void set_sounds(SoundHandler handler, void* user);
 // Accessibility (the player's UI Text Scale): every document's text times `scale` (0.25..4; 1 = as written).
 void set_text_scale(f32 scale);
 void shutdown();
