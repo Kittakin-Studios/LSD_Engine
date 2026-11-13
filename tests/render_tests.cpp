@@ -1,5 +1,6 @@
 // Math and mesh-generation tests (no GPU needed).
 #include "lsd/foundation/math.h"
+#include "lsd/render/fracture.h"
 #include "lsd/render/lod.h"
 #include "lsd/render/mesh.h"
 #include "lsd/render/occlusion.h"
@@ -12,8 +13,11 @@
 
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <utility>
 
 static int g_failures = 0;
 #define CHECK(expr) do { if (!(expr)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #expr); ++g_failures; } } while (0)
@@ -426,7 +430,231 @@ static void test_shader_cache() {
     fs::remove_all(dir, ec);
 }
 
+// ---- Mesh cutting (fracture.h) ----
+using lsd::render::CutMesh;
+
+static CutMesh cut_mesh_of(const lsd::render::MeshData& m) {
+    CutMesh c;
+    c.vertices.assign(m.vertices, m.vertices + m.vertex_count);
+    c.indices.assign(m.indices, m.indices + m.index_count);
+    c.sections.assign(m.index_count / 3, 0);
+    return c;
+}
+static lsd::Vec3 at(const CutMesh& m, lsd::u32 i) { return {m.vertices[i].position[0], m.vertices[i].position[1], m.vertices[i].position[2]}; }
+static void add_quad(CutMesh& m, const lsd::Vec3* p, int a, int b, int c, int d) {
+    const int corners[6] = {a, b, c, a, c, d};
+    for (const int k : corners) {
+        lsd::rhi::MeshVertex v{};
+        v.position[0] = p[k].x, v.position[1] = p[k].y, v.position[2] = p[k].z;
+        v.normal[2] = 1.0f;
+        m.indices.push_back(static_cast<lsd::u32>(m.vertices.size()));
+        m.vertices.push_back(v);
+    }
+    m.sections.push_back(0);
+    m.sections.push_back(0);
+}
+
+// Closed: every edge (by position) is walked once each way by the triangles around it.
+static bool watertight(const CutMesh& m) {
+    std::map<std::pair<std::pair<float, float>, float>, lsd::u32> ids;
+    auto id = [&](lsd::u32 v) { const lsd::Vec3 p = at(m, v); return ids.try_emplace({{p.x, p.y}, p.z}, static_cast<lsd::u32>(ids.size())).first->second; };
+    std::map<std::pair<lsd::u32, lsd::u32>, int> edges;
+    for (lsd::u32 t = 0; t < m.triangle_count(); ++t) {
+        const lsd::u32 a = id(m.indices[t * 3]), b = id(m.indices[t * 3 + 1]), c = id(m.indices[t * 3 + 2]);
+        ++edges[{a, b}], ++edges[{b, c}], ++edges[{c, a}];
+    }
+    for (const auto& [e, n] : edges) {
+        const auto back = edges.find({e.second, e.first});
+        if (back == edges.end() || back->second != n) return false;
+    }
+    return !edges.empty();
+}
+// Closed up to zero-area slivers (many cuts leave collinear corners whose flat triangles are dropped): the
+// triangles' area vectors add up to nothing.
+static bool closed_surface(const CutMesh& m) {
+    lsd::Vec3 sum{};
+    float area = 0.0f;
+    for (lsd::u32 t = 0; t < m.triangle_count(); ++t) {
+        const lsd::Vec3 a = at(m, m.indices[t * 3]), b = at(m, m.indices[t * 3 + 1]), c = at(m, m.indices[t * 3 + 2]);
+        const lsd::Vec3 n = lsd::cross(b - a, c - a);
+        sum = sum + n;
+        area += lsd::length(n);
+    }
+    return area > 0.0f && lsd::length(sum) < 1e-4f * area;
+}
+static float section_area(const CutMesh& m, lsd::u16 section) {
+    float area = 0.0f;
+    for (lsd::u32 t = 0; t < m.triangle_count(); ++t) {
+        if (m.sections[t] != section) continue;
+        const lsd::Vec3 a = at(m, m.indices[t * 3]), b = at(m, m.indices[t * 3 + 1]), c = at(m, m.indices[t * 3 + 2]);
+        area += 0.5f * lsd::length(lsd::cross(b - a, c - a));
+    }
+    return area;
+}
+// Every cap triangle faces along `n`.
+static bool caps_face(const CutMesh& m, lsd::Vec3 n) {
+    for (lsd::u32 t = 0; t < m.triangle_count(); ++t) {
+        if (m.sections[t] != lsd::render::kInsideSection) continue;
+        const lsd::Vec3 a = at(m, m.indices[t * 3]), b = at(m, m.indices[t * 3 + 1]), c = at(m, m.indices[t * 3 + 2]);
+        if (lsd::dot(lsd::cross(b - a, c - a), n) <= 0.0f) return false;
+    }
+    return true;
+}
+// A box from lo to hi as `steps` x `steps` quads per face, welded along its edges (a 10k-triangle wall at steps = 29).
+static CutMesh grid_box(lsd::Vec3 lo, lsd::Vec3 hi, lsd::u32 steps) {
+    CutMesh m;
+    const float s[3] = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z}, o[3] = {lo.x, lo.y, lo.z};
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int side = 0; side < 2; ++side) {
+            const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            const lsd::u32 first = static_cast<lsd::u32>(m.vertices.size());
+            for (lsd::u32 j = 0; j <= steps; ++j) {
+                for (lsd::u32 i = 0; i <= steps; ++i) {
+                    lsd::rhi::MeshVertex vertex{};
+                    vertex.position[axis] = o[axis] + (side ? s[axis] : 0.0f);
+                    vertex.position[u] = o[u] + s[u] * static_cast<float>(i) / static_cast<float>(steps);
+                    vertex.position[v] = o[v] + s[v] * static_cast<float>(j) / static_cast<float>(steps);
+                    vertex.normal[axis] = side ? 1.0f : -1.0f;
+                    vertex.uv[0] = static_cast<float>(i) / static_cast<float>(steps);
+                    vertex.uv[1] = static_cast<float>(j) / static_cast<float>(steps);
+                    m.vertices.push_back(vertex);
+                }
+            }
+            for (lsd::u32 j = 0; j < steps; ++j) {
+                for (lsd::u32 i = 0; i < steps; ++i) {
+                    const lsd::u32 a = first + j * (steps + 1) + i, b = a + 1, c = a + steps + 1, d = c + 1;
+                    // (u, v, axis) is right-handed: counter-clockwise in u-v faces +axis.
+                    if (side) m.indices.insert(m.indices.end(), {a, b, d, a, d, c});
+                    else m.indices.insert(m.indices.end(), {a, d, b, a, c, d});
+                }
+            }
+        }
+    }
+    m.sections.assign(m.indices.size() / 3, 0);
+    return m;
+}
+static void append(CutMesh& to, const CutMesh& from) {
+    const lsd::u32 base = static_cast<lsd::u32>(to.vertices.size());
+    to.vertices.insert(to.vertices.end(), from.vertices.begin(), from.vertices.end());
+    for (const lsd::u32 i : from.indices) to.indices.push_back(base + i);
+    to.sections.insert(to.sections.end(), from.sections.begin(), from.sections.end());
+}
+
+static void test_fracture() {
+    using namespace lsd;
+    HeapAllocator heap("fracture");
+    render::MeshData cube_data = render::make_cube(heap);
+    const CutMesh cube = cut_mesh_of(cube_data);  // 0..1 on z, -0.5..0.5 on x and y
+    render::free_mesh(heap, cube_data);
+    Vec3 com;
+    CHECK(near(render::mesh_volume(cube, com), 1.0f) && near(com.z, 0.5f));
+    CHECK(watertight(cube));
+
+    // Across the middle: two closed halves, each with a 1 x 1 cap of the inside section facing out.
+    CutMesh back, front;
+    CHECK(render::slice_mesh(cube, {0, 0, 1}, 0.3f, &back, &front));
+    CHECK(watertight(back) && watertight(front));
+    CHECK(near(render::mesh_volume(back, com), 0.3f, 1e-3f) && near(com.z, 0.15f, 1e-3f));
+    CHECK(near(render::mesh_volume(front, com), 0.7f, 1e-3f) && near(com.z, 0.65f, 1e-3f));
+    CHECK(near(section_area(back, render::kInsideSection), 1.0f, 1e-3f) && near(section_area(front, render::kInsideSection), 1.0f, 1e-3f));
+    CHECK(caps_face(back, {0, 0, 1}) && caps_face(front, {0, 0, -1}));
+    // Missing the mesh, or lying on its top or bottom face: nothing to cut.
+    CHECK(!render::slice_mesh(cube, {0, 0, 1}, 2.0f, &back, &front));
+    CHECK(!render::slice_mesh(cube, {0, 0, 1}, 1.0f, &back, &front));
+    CHECK(!render::slice_mesh(cube, {0, 0, 1}, 0.0f, &back, &front));
+    // Through two of the cube's vertical edges (the plane x = y): degenerate splits, still closed halves.
+    CHECK(render::slice_mesh(cube, normalize(Vec3{1, -1, 0}), 0.0f, &back, &front));
+    CHECK(watertight(back) && watertight(front) && near(render::mesh_volume(back, com), 0.5f, 1e-3f) && near(render::mesh_volume(front, com), 0.5f, 1e-3f));
+    CHECK(near(section_area(back, render::kInsideSection), std::sqrt(2.0f), 1e-3f));
+    // Planar UVs on the cap: a metre is one tile at uv_scale 1.
+    float umin = 1e9f, umax = -1e9f;
+    for (u32 t = 0; t < back.triangle_count(); ++t) {
+        if (back.sections[t] != render::kInsideSection) continue;
+        for (u32 k = 0; k < 3; ++k) umin = std::fmin(umin, back.vertices[back.indices[t * 3 + k]].uv[0]), umax = std::fmax(umax, back.vertices[back.indices[t * 3 + k]].uv[0]);
+    }
+    CHECK(umax - umin > 0.99f);
+
+    // A square tube (a column with a shaft): its cross-section is a ring, capped around the hole.
+    Vec3 p[16];
+    const float corner[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+    for (int level = 0; level < 2; ++level) {
+        for (int k = 0; k < 4; ++k) {
+            p[level * 8 + k] = {corner[k][0], corner[k][1], 2.0f * static_cast<float>(level)};
+            p[level * 8 + 4 + k] = {0.5f * corner[k][0], 0.5f * corner[k][1], 2.0f * static_cast<float>(level)};
+        }
+    }
+    CutMesh tube;
+    for (int k = 0; k < 4; ++k) {
+        const int n = (k + 1) % 4;
+        add_quad(tube, p, k, n, 8 + n, 8 + k);                  // outside wall
+        add_quad(tube, p, 4 + n, 4 + k, 12 + k, 12 + n);        // shaft wall, facing the shaft
+        add_quad(tube, p, 8 + k, 8 + n, 12 + n, 12 + k);        // top ring
+        add_quad(tube, p, k, 4 + k, 4 + n, n);                  // bottom ring
+    }
+    CHECK(watertight(tube) && near(render::mesh_volume(tube, com), 6.0f, 1e-3f));
+    CHECK(render::slice_mesh(tube, {0, 0, 1}, 0.7f, &back, &front));
+    CHECK(near(section_area(back, render::kInsideSection), 3.0f, 1e-3f) && near(section_area(front, render::kInsideSection), 3.0f, 1e-3f));  // the ring, not the square
+    CHECK(watertight(back) && watertight(front) && near(render::mesh_volume(back, com), 6.0f * 0.35f, 1e-3f) && caps_face(back, {0, 0, 1}));
+
+    // A U (two posts on a beam, separate closed boxes as artists model them) cut through both posts: the top is two islands.
+    CutMesh u_shape = grid_box({-2, -0.5f, 0}, {2, 0.5f, 1}, 1);
+    append(u_shape, grid_box({-2, -0.5f, 1}, {-1, 0.5f, 3}, 1));
+    append(u_shape, grid_box({1, -0.5f, 1}, {2, 0.5f, 3}, 1));
+    CHECK(render::slice_mesh(u_shape, {0, 0, 1}, 2.0f, &back, &front));
+    CHECK(render::split_islands(front).size() == 2 && near(section_area(front, render::kInsideSection), 2.0f, 1e-3f));
+
+    // Voronoi: pieces that together are the cube, each closed, the same for the same seed.
+    render::FractureSettings settings;
+    settings.pieces = 12;
+    settings.seed = 7;
+    render::FractureStats stats;
+    std::vector<render::FracturePiece> pieces = render::fracture_voronoi(cube, settings, &stats);
+    float total = 0.0f;
+    bool closed = true, hulls = true;
+    for (const render::FracturePiece& piece : pieces) {
+        total += piece.volume;
+        closed = closed && closed_surface(piece.mesh);
+        hulls = hulls && piece.hull.size() >= 4;
+    }
+    CHECK(pieces.size() >= 10 && pieces.size() <= 14);
+    CHECK(near(total, 1.0f, 1e-3f) && closed && hulls);
+    CHECK(render::fracture_voronoi(cube, settings).size() == pieces.size());
+    // Clustered: small pieces near the point, big ones away from it.
+    settings.cluster = true;
+    settings.cluster_point = {0.4f, 0.4f, 0.9f};
+    settings.cluster_radius = 0.2f;
+    pieces = render::fracture_voronoi(cube, settings);
+    float near_volume = 0.0f, far_volume = 0.0f;
+    u32 near_count = 0, far_count = 0;
+    for (const render::FracturePiece& piece : pieces) {
+        if (length(piece.centre_of_mass - settings.cluster_point) < 0.35f) near_volume += piece.volume, ++near_count;
+        else far_volume += piece.volume, ++far_count;
+    }
+    CHECK(near_count >= 6 && far_count > 0 && near_volume / static_cast<float>(near_count) < far_volume / static_cast<float>(far_count));
+    // A concave mesh: the U into pieces, a cell spanning both posts gives two pieces.
+    settings = {};
+    settings.pieces = 6;
+    pieces = render::fracture_voronoi(u_shape, settings, &stats);
+    total = 0.0f;
+    for (const render::FracturePiece& piece : pieces) total += piece.volume;
+    CHECK(near(total, 4.0f + 2.0f + 2.0f, 1e-2f));
+
+    // Speed: a 10k-triangle wall into 30 pieces.
+    const CutMesh wall = grid_box({-2, -0.15f, 0}, {2, 0.15f, 3}, 29);
+    settings = {};
+    settings.pieces = 30;
+    const auto started = std::chrono::steady_clock::now();
+    pieces = render::fracture_voronoi(wall, settings, &stats);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    total = 0.0f;
+    closed = true;
+    for (const render::FracturePiece& piece : pieces) total += piece.volume, closed = closed && closed_surface(piece.mesh);
+    std::printf("fracture: %u-triangle wall into %zu pieces in %.0f ms (%u cuts, %u planes skipped)\n", wall.triangle_count(), pieces.size(), ms, stats.cuts, stats.skipped);
+    CHECK(wall.triangle_count() > 10000 && pieces.size() >= 25 && closed && near(total, 4.0f * 0.3f * 3.0f, 1e-2f));
+}
+
 int main() {
+    test_fracture();
     test_shader_cache();
     test_color_vision();
     test_reflection();

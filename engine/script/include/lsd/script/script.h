@@ -30,6 +30,11 @@
 //   lsd.log_error(...)                    print as an error
 //   lsd.spawn(name, x, y, z) -> e         a prefab, mesh asset, particle system or built-in shape ("Cube") by name; nil if none
 //   lsd.raycast(x, y, z, dx, dy, dz, distance) -> e, px, py, pz, nx, ny, nz   nearest hit, or nil
+//   lsd.velocity(e) -> x, y, z            m/s: the player, a vehicle or a body
+//   lsd.add_impulse(e, x, y, z [, at_x, at_y, at_z]) -> ok   a kick in N s on e's simulated RigidBody (Unreal's
+//                                         Add Impulse; through a world point it spins it too); false without one
+//   lsd.set_velocity(e, x, y, z) -> ok, lsd.set_angular_velocity(e, x, y, z) -> ok   m/s and degrees/s (world
+//                                         axes); a RigidBody lsd.add'ed this frame is simulated at once for these
 //   lsd.sphere_trace(x1, y1, z1, x2, y2, z2, radius) -> e, px, py, pz, nx, ny, nz   a sphere swept from 1 to 2
 //   lsd.box_trace(x1, y1, z1, x2, y2, z2, hx, hy, hz)  /  lsd.capsule_trace(..., radius, half_height)   the same
 //   lsd.overlap_sphere(x, y, z, radius) -> {e, ...}  /  lsd.overlap_box(x, y, z, hx, hy, hz) -> {e, ...}
@@ -83,7 +88,12 @@
 //   lsd.release_smart_object(e)           frees every slot e holds
 //   lsd.run_query(e, query) -> x, y, z | nil   an Environment Query asset (by name) run for e: its best point
 //   lsd.rebuild_navmesh() -> ok           builds the navmesh again now (after moving walls or doors); agents keep walking
-//   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it
+//   lsd.apply_damage(target, amount [, instigator])  calls target's on_damage(self, amount, instigator) (nil when none); an AI target senses it;
+//                                         a Destructible breaks once the damage adds up to its Damage Threshold
+//   lsd.fracture(e, x, y, z [, ix, iy, iz [, radius]]) -> ok   a Destructible breaks at world point x, y, z: its pieces
+//                                         within radius (m; default its Break Radius, 0 = all) fly off, pushed by the
+//                                         impulse (N s) and away from the point; on_fracture(self, x, y, z) runs on it.
+//                                         False if e is not a Destructible. Multiplayer: the server breaks it everywhere
 // Ability system (Unreal's Gameplay Ability System; lsd/world/abilities.h): effects and abilities by asset name.
 //   lsd.attribute(e, name) -> current, base | nil, lsd.set_attribute(e, name, base)   an Attribute Set's values
 //   lsd.apply_effect(target, effect) -> ok, lsd.remove_effect(target, effect) -> count   Gameplay Effects
@@ -286,6 +296,9 @@ struct ScriptHost {
     // static collision of e and its children follows it. Called per write; the host batches them.
     void (*touched)(void* user, world::Entity e) = nullptr;
     Vec3 (*velocity)(void* user, world::Entity e) = nullptr;  // m/s: the player, a vehicle or a body; zero otherwise
+    // e's dynamic body: what 0 an impulse (through *at when given), 1 linear velocity, 2 angular velocity (degrees/s). False: no dynamic body.
+    bool (*body_motion)(void* user, world::Entity e, int what, Vec3 value, const Vec3* at) = nullptr;
+    bool (*fracture)(void* user, world::Entity e, Vec3 point, Vec3 impulse, f32 radius) = nullptr;  // radius < 0: the component's
     bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
     // shape: 0 sphere (size.x = radius), 1 box (size = half extents), 2 capsule (size.x = radius, size.y = half height).
     bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;

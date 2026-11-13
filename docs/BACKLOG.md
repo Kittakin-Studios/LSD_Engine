@@ -453,6 +453,9 @@ several people at once. What its scripts had to work around:
 - [x] A shape spawned in Play keeps its collision body where it appeared, at scale 1 (`PlaySession::spawn` > `add_entity_bodies`): later moves, scale and Collision off do not reach the body. Games spawn props 60 m underground and move them. Fixed: script writes (`ScriptHost::touched`) move / rebuild that object's static bodies (`PlaySession::follow_touched`)
 - [x] `lsd.move_to` logs "Nav Agent is not on the navmesh" on every failed call (`PlaySession::agent_of`): once per agent is enough (done: once per agent per Play)
 - [x] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions) (done: `lsd.velocity(e)`)
+- [x] Physics body slots were never reused and rigid bodies' Play slots (1024) never freed: a session spawning debris ran out (the game capped itself at 350). Fixed: `PhysicsWorld` hands removed bodies' indices out again, destroyed rigid bodies free their slots (`PlaySession::remove_bodies_of_dead`)
+- [x] Buildings could only be marked and darkened, with separate debris meshes thrown: the engine could not break a mesh. Done: destruction (fracture + debris): Destructible component, Mesh Editor > Fracture, `lsd.fracture`, see Later
+- [x] `lsd.add(e, "RigidBody")` on a spawned object did not simulate it (only prefabs with a RigidBody did). Fixed (`follow_touched` builds its body); plus `lsd.add_impulse`, `lsd.set_velocity`, `lsd.set_angular_velocity`
 - [ ] `lsd.set_rotation` on a vehicle being driven does nothing
 - [ ] `on_overlap_begin` only reaches a script on the trigger object itself
 - [~] `lsd.play_sound` plays at a fixed point: no sound that follows an object from Lua; Lua cannot loop a sound or read its length (`lsd.play_music` plays a non-looping sound once). Done: `lsd.play_sound_on(e, name, loop)`, `lsd.play_sound(..., true)` loops sound files; open: a sound's length
@@ -476,6 +479,16 @@ several people at once. What its scripts had to work around:
 ## Later
 
 World Partition + Data Layers, Nanite-style virtualised geometry, Lumen-style software ray-traced GI, hardware
-ray tracing, in-engine rigging (Control Rig), destruction (fracture + debris), massive crowds (ECS-style mass
+ray tracing, in-engine rigging (Control Rig), massive crowds (ECS-style mass
 simulation), networking (replication, RPCs, dedicated server, online subsystem: lobbies, achievements),
 USD / Alembic / Datasmith import, virtual production (camera tracking, take recorder), consoles and mobile platforms.
+
+- [x] Destruction (fracture + debris; Unreal's Fracture Mode / Geometry Collections): plane slicing with capped, watertight
+  parts and Voronoi fracture that clips the mesh (concave meshes, islands) in `engine/render/fracture.*`; pieces cached
+  in DerivedData/Fracture; Mesh Editor > Fracture (pieces, seed, cluster, inside material, Explode preview, Make Selected
+  Destructible); Destructible component (threshold, break radius, lifetime, caps, density, debris preset, collapse of
+  unsupported pieces); breaks from hard contacts, `lsd.apply_damage`, `lsd.fracture`; `on_fracture`; server-driven break
+  event in multiplayer. Open: pieces of one object share no buffers (a draw per piece and material), no second-level
+  fracture (pieces of pieces) or clusters, support from boxes instead of a connection graph with strengths, flying
+  pieces not replicated, no level-viewport Fracture mode (the Mesh Editor previews), internal caps between standing
+  pieces are kept in what stands (hidden, but triangles)

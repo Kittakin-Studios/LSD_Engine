@@ -189,6 +189,24 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     return &t;
 }
 
+bool MeshCache::load_cpu(const char* key, std::vector<rhi::MeshVertex>& vertices, std::vector<u32>& indices, i64* stamp) {
+    render::MeshData data;
+    asset::Guid guid;
+    i32 part = -1;
+    if (stamp) *stamp = 0;
+    if (!asset::parse_mesh_key(key, guid, part)) {
+        if (!make_builtin(key, allocator_, data)) return false;
+    } else {
+        char compiled[300];
+        if (!asset::compile_mesh_key(registry_, key, data_dir_, allocator_, compiled, sizeof compiled) || !asset::load_compiled_mesh(compiled, allocator_, data, nullptr)) return false;
+        if (stamp) *stamp = file_time(compiled);
+    }
+    vertices.assign(data.vertices, data.vertices + data.vertex_count);
+    indices.assign(data.indices, data.indices + data.index_count);
+    render::free_mesh(allocator_, data);
+    return true;
+}
+
 const MeshCache::Hulls* MeshCache::hulls(const char* key) {
     if (const auto it = hulls_.find(key); it != hulls_.end()) return it->second.sizes.empty() ? nullptr : &it->second;
     Hulls& h = hulls_[key];
@@ -295,7 +313,7 @@ const CachedMesh* MeshCache::get(const char* key) {
         if (meshes_[static_cast<usize>(slot)].failed && pending_.count(static_cast<u32>(slot))) finish(static_cast<u32>(slot));
         return meshes_[static_cast<usize>(slot)].failed ? nullptr : &meshes_[static_cast<usize>(slot)];
     }
-    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "EditMesh:", 9) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "UiPanel:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0 || std::strncmp(key, "HLOD:", 5) == 0 || std::strncmp(key, "Cloth:", 6) == 0) return nullptr;  // not generated yet
+    if (std::strncmp(key, "Landscape:", 10) == 0 || std::strncmp(key, "EditMesh:", 9) == 0 || std::strncmp(key, "Sprite:", 7) == 0 || std::strncmp(key, "TileMap:", 8) == 0 || std::strncmp(key, "UiPanel:", 8) == 0 || std::strncmp(key, "Lightmap:", 9) == 0 || std::strncmp(key, "HLOD:", 5) == 0 || std::strncmp(key, "Cloth:", 6) == 0 || std::strncmp(key, "Fracture:", 9) == 0) return nullptr;  // not generated yet
     CachedMesh entry{};
     entry.lod_count = 1;
     std::snprintf(entry.key, sizeof entry.key, "%s", key);
