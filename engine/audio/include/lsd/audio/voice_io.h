@@ -20,7 +20,8 @@ public:
 
     // Opens the playback device, and the default microphone when `capture` (it is only opened when
     // voice chat is on). False if no playback device works; capture failing only logs.
-    bool start(bool capture);
+    // `null_devices` (tests): miniaudio's null backend, devices that run on a timer without hardware.
+    bool start(bool capture, bool null_devices = false);
     void stop();
     bool capturing() const { return capture_ != nullptr; }
 

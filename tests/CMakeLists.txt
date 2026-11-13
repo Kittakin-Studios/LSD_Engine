@@ -84,6 +84,6 @@ lsd_configure_target(lsd_ai_tests)
 add_test(NAME ai COMMAND lsd_ai_tests)
 
 add_executable(lsd_net_tests net_tests.cpp)
-target_link_libraries(lsd_net_tests PRIVATE lsd_net lsd_world)
+target_link_libraries(lsd_net_tests PRIVATE lsd_net lsd_world lsd_audio)
 lsd_configure_target(lsd_net_tests)
 add_test(NAME net COMMAND lsd_net_tests)
