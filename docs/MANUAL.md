@@ -1643,6 +1643,7 @@ Level Script), `lsd.assets`, `lsd.log`...) plus `lsd.editor`:
 | `lsd.editor.open_asset(name)` | Opens an asset as a double-click would |
 | `lsd.editor.console(line)` | Runs a console command |
 | `lsd.editor.panel(title, widgets)` | A dockable panel (the Editor Utility Widget) |
+| `lsd.raycast`, `sphere_trace` / `box_trace` / `capsule_trace`, `overlap_sphere` / `overlap_box` | As in Play, against the level's collision (Unreal's editor line traces): Static Meshes with collision, instanced copies, sprites, tile maps, Blocking Volumes, built as Play builds them; snap objects to the ground with them. The collision is rebuilt for each run, button press, spawn and edit; objects the running script moves keep their old collision until the next run |
 
 Run one: Content Browser > right-click the script > **Run Editor Utility**, or `utility.Run <name>` in
 the console. Name it `EU_<something>` and it is also listed in **Tools > Editor Utilities**, in the
@@ -2910,7 +2911,7 @@ Objects and transforms
 | `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component. `lsd.add(e, "RigidBody", {mass = 2})` in Play makes e simulate (its static collision becomes the moving body), by the next frame or at once for `lsd.add_impulse` / `set_velocity` |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |
 | `lsd.has_any_tag(e, "A, B")` / `has_all_tags` / `has_no_tag` | several tags at once (Has Any Tag / Has All Tags nodes) |
-| `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil |
+| `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil; `e` is the object hit (ragdoll limbs: their character; broken Destructibles: the object or its piece); in Editor Utilities too |
 | `lsd.sphere_trace(x1, y1, z1, x2, y2, z2, r)` (also `box_trace(..., hx, hy, hz)`, `capsule_trace(..., r, half_h)`) | first hit like raycast, or nil |
 | `lsd.overlap_sphere(x, y, z, r)` / `lsd.overlap_box(x, y, z, hx, hy, hz)` | `{e, ...}` the objects touching it |
 | `lsd.spline_point(e, d)`, `lsd.spline_length(e)` | |

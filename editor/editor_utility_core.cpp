@@ -141,6 +141,18 @@ void EditorUtilities::start(world::World& world, const UtilityHooks& hooks) {
         const UtilityHooks& h = static_cast<EditorUtilities*>(user)->hooks_;
         return h.assets ? h.assets(h.user, type, folder, out, capacity) : 0u;
     };
+    host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
+        const UtilityHooks& h = static_cast<EditorUtilities*>(user)->hooks_;
+        return h.raycast && h.raycast(h.user, origin, direction, distance, hit, point, normal);
+    };
+    host.sweep = [](void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) {
+        const UtilityHooks& h = static_cast<EditorUtilities*>(user)->hooks_;
+        return h.sweep && h.sweep(h.user, shape, size, from, to, hit, point, normal);
+    };
+    host.overlap = [](void* user, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) {
+        const UtilityHooks& h = static_cast<EditorUtilities*>(user)->hooks_;
+        return h.overlap ? h.overlap(h.user, shape, size, at, out, capacity) : 0u;
+    };
     scripts_.start(world, host, nullptr, nullptr);
     scripts_.run(kEditorApi, "=lsd editor");
 }

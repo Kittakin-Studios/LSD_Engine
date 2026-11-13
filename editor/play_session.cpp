@@ -668,6 +668,7 @@ bool PlaySession::start_ragdoll(world::World& world, world::Entity e) {
         d.friction = 0.7f;
         d.group = group;
         const u32 body = physics_->add_body(d);
+        set_body_entity(body, e);  // a ray or overlap on a limb finds the character
         r.body_of[b.joint] = static_cast<i32>(r.bodies.size());
         r.bodies.push_back(body);
         const Mat4 joint_world = to_world * r.start[b.joint];
@@ -694,7 +695,11 @@ bool PlaySession::start_ragdoll(world::World& world, world::Entity e) {
 void PlaySession::stop_ragdoll(world::Entity e) {
     for (usize i = 0; i < ragdolls_.size(); ++i) {
         if (ragdolls_[i].entity != e) continue;
-        for (u32 body : ragdolls_[i].bodies) physics_->remove_body(body);  // their joints go with them
+        for (u32 body : ragdolls_[i].bodies) {
+            if (body_entity(body) != e) continue;  // already gone with its dead object (the index may be another body's now)
+            physics_->remove_body(body);  // their joints go with them
+            set_body_entity(body, {});
+        }
         if (animations_) animations_->set_ragdoll_pose(e, nullptr, 0);
         ragdolls_.erase(ragdolls_.begin() + static_cast<std::ptrdiff_t>(i));
         return;
@@ -959,6 +964,7 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     meshes_ = &meshes;
     if (const u32 gone = world::destroy_editor_only(world)) LSD_LOG_INFO("play", "%u editor-only object(s) left out of Play", gone);
     physics_ = new physics::PhysicsWorld();
+    body_entities_.clear();
     physics_->set_gravity(world.settings().gravity);
     live_gravity_ = world.settings().gravity;
     start_game_mode(world);  // may spawn the player and a GameMode object first
@@ -1691,14 +1697,21 @@ const asset::AssetRecord* PlaySession::find_asset(asset::AssetType type, const c
 
 u32 PlaySession::add_body(world::Entity e, const physics::BodyDesc& desc) {
     const u32 body = physics_->add_body(desc);
-    if (body < kMaxBodies) body_entities_[body] = e;
+    set_body_entity(body, e);
     added_bodies_.push_back(body);
     return body;
 }
 
 world::Entity PlaySession::body_entity(u32 body) const {
     if (body == physics::kCharacterBody) return character_;
-    return body < kMaxBodies ? body_entities_[body] : world::Entity{};
+    return body < body_entities_.size() ? body_entities_[body] : world::Entity{};
+}
+
+// Every body index: big levels (per-copy foliage collision) pass 8192 bodies, which a fixed table once left unmapped (lsd.raycast returned true).
+void PlaySession::set_body_entity(u32 body, world::Entity e) {
+    if (body == physics::kCharacterBody || body == physics::kWorldBody) return;
+    if (body >= body_entities_.size()) body_entities_.resize(body + 1);
+    body_entities_[body] = e;
 }
 
 namespace {
@@ -1764,7 +1777,7 @@ void PlaySession::follow_touched(world::World& world) {
             if (const auto found = static_bodies_.find(value); found != static_bodies_.end()) {  // its static collision becomes the moving body
                 for (const u32 b : found->second.bodies) {
                     physics_->remove_body(b);
-                    if (b < kMaxBodies) body_entities_[b] = {};
+                    set_body_entity(b, {});
                 }
                 static_bodies_.erase(found);
             }
@@ -1788,7 +1801,7 @@ void PlaySession::follow_touched(world::World& world) {
             }
             for (const u32 b : s.bodies) {
                 physics_->remove_body(b);
-                if (b < kMaxBodies) body_entities_[b] = {};
+                set_body_entity(b, {});
             }
             s.bodies.clear();  // Collision off stays so until a write turns it on
             s.key = collision_key(world, e);
@@ -1835,19 +1848,6 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         d.point_count = static_cast<u32>(points.size());
         d.indices = triangles->indices.data();
         d.index_count = static_cast<u32>(triangles->indices.size());
-    };
-    // The file's UCX_ / UBX_ / USP_ nodes as convex hulls in one body (Collision Shape: Collision Nodes); else it stays the Box.
-    // shortcut: static meshes only; rigid bodies and movers keep their own shapes
-    auto use_hulls = [&](physics::BodyDesc& d) {
-        const MeshCache::Hulls* hulls = mesh ? meshes_->hulls(mesh->mesh) : nullptr;
-        if (!hulls) return;
-        points.clear();
-        for (const Vec3& p : hulls->points) points.push_back(mul(p - centre, scale));
-        d.shape = physics::Shape::Convex;
-        d.points = points.data();
-        d.point_count = static_cast<u32>(points.size());
-        d.hull_sizes = hulls->sizes.data();
-        d.hull_count = static_cast<u32>(hulls->sizes.size());
     };
     // A Physical Material asset overrides friction and bounciness.
     // shortcut: read from disk per body at Play start; cache by GUID if levels get thousands of them.
@@ -1907,30 +1907,73 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         if (!added_bodies_.empty()) remember_static(world, e, added_bodies_);
         return;
     }
+    add_static_bodies(world, e, *meshes_, registry_, [](void* user, world::Entity owner, const physics::BodyDesc& d) { static_cast<PlaySession*>(user)->add_body(owner, d); }, this);
+    if (!added_bodies_.empty()) remember_static(world, e, added_bodies_);
+}
+
+// The static collision of one object, as Play builds it: a Static Mesh with collision (box, triangles or
+// its collision hulls), Instanced Static Mesh copies, a sprite, a tile map (runs and ramps), a Blocking
+// Volume. `add` gets each body (Play: physics bodies; the editor's traces: a query-only world).
+void add_static_bodies(const world::World& world, world::Entity e, MeshCache& meshes, const asset::AssetRegistry* registry,
+                       void (*add)(void* user, world::Entity owner, const physics::BodyDesc& d), void* user) {
+    Vec3 scale, centre;
+    const auto* mesh = world.get<world::StaticMesh>(e);
+    const CachedMesh* cached = mesh ? meshes.get(mesh->mesh) : nullptr;
+    std::vector<Vec3> points;
+    auto use_mesh_shape = [&](physics::BodyDesc& d, physics::Shape shape) {
+        const MeshCache::Triangles* triangles = meshes.triangles(mesh->mesh);
+        if (!triangles) return;
+        points.clear();
+        for (const Vec3& p : triangles->points) points.push_back(mul(p - centre, scale));
+        d.shape = shape;
+        d.points = points.data();
+        d.point_count = static_cast<u32>(points.size());
+        d.indices = triangles->indices.data();
+        d.index_count = static_cast<u32>(triangles->indices.size());
+    };
+    // The file's UCX_ / UBX_ / USP_ nodes as convex hulls in one body (Collision Shape: Collision Nodes); else it stays the Box.
+    // shortcut: static meshes only; rigid bodies and movers keep their own shapes
+    auto use_hulls = [&](physics::BodyDesc& d) {
+        const MeshCache::Hulls* hulls = meshes.hulls(mesh->mesh);
+        if (!hulls) return;
+        points.clear();
+        for (const Vec3& p : hulls->points) points.push_back(mul(p - centre, scale));
+        d.shape = physics::Shape::Convex;
+        d.points = points.data();
+        d.point_count = static_cast<u32>(points.size());
+        d.hull_sizes = hulls->sizes.data();
+        d.hull_count = static_cast<u32>(hulls->sizes.size());
+    };
+    auto apply_material = [&](physics::BodyDesc& d, const char* guid) {
+        world::PhysicalMaterial material;
+        if (!registry || !guid[0] || !load_asset(*registry, guid, material)) return;
+        d.friction = material.friction;
+        d.restitution = material.bounciness;
+    };
     if (cached && mesh->collision) {
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
         else if (mesh->collision_shape == 2) use_hulls(d);
         apply_material(d, mesh->physical_material);
         d.one_way = mesh->one_way;
-        add_body(e, d);
+        add(user, e, d);
     }
     if (const auto* ism = world.get<world::InstancedStaticMesh>(e); ism && ism->collision && ism->instances.count) {
         // Per-copy collision (foliage trees and rocks): a static box per copy, fitted to the mesh's bounds.
         // shortcut: a body per copy (Jolt handles thousands of static boxes); one compound body per object if levels get dense
-        if (const CachedMesh* copy_mesh = meshes_->get(ism->mesh)) {
+        if (const CachedMesh* copy_mesh = meshes.get(ism->mesh)) {
             const Mat4 m = world.world_matrix(e);
             for (u32 k = 0; k < ism->instances.count; ++k) {
                 const world::MeshInstance& in = ism->instances[k];
                 Vec3 copy_scale, copy_centre;
-                add_body(e, fitted_body(m * trs(in.position, in.rotation, in.scale), copy_mesh->bounds_min, copy_mesh->bounds_max, 0, physics::Motion::Static, copy_scale, copy_centre));
+                add(user, e, fitted_body(m * trs(in.position, in.rotation, in.scale), copy_mesh->bounds_min, copy_mesh->bounds_max, 0, physics::Motion::Static, copy_scale, copy_centre));
             }
         }
     }
     if (const auto* sprite = world.get<world::Sprite>(e); sprite && sprite->collision && !cached) {
         physics::BodyDesc d = fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre);  // the sprite's quad, 1 m deep
         d.one_way = sprite->one_way;
-        add_body(e, d);
+        add(user, e, d);
     }
     if (const auto* map = world.get<world::TileMap>(e); map && map->collision) {  // a box per run of solid tiles in a row
         static TileRun runs[4096];
@@ -1944,7 +1987,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
             if (runs[k].kind == 0 || runs[k].kind == 3) {
                 physics::BodyDesc d = fitted_body(map_world, runs[k].lo, runs[k].hi, 0, physics::Motion::Static, run_scale, run_centre);
                 d.one_way = runs[k].kind == 3;
-                add_body(e, d);
+                add(user, e, d);
                 continue;
             }
             // A ramp: the wedge's six corners in world space, around its centre (a convex body).
@@ -1964,18 +2007,17 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
             ramp.transform = translation(middle);
             ramp.points = corners;
             ramp.point_count = 6;
-            add_body(e, ramp);
+            add(user, e, ramp);
         }
     }
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
-        add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
+        add(user, e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
     }
-    if (!added_bodies_.empty()) remember_static(world, e, added_bodies_);
 }
 
 void PlaySession::remove_bodies_of_dead(world::World& world) {
     bool any = false;
-    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
+    for (u32 b = 0; b < physics_->body_count() && b < body_entities_.size(); ++b) {
         if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {
             static_bodies_.erase(body_entities_[b].value);
             physics_->remove_body(b);
@@ -2107,7 +2149,7 @@ bool PlaySession::fracture(world::World& world, world::Entity e, Vec3 point, Vec
     if (const auto found = static_bodies_.find(e.value); found != static_bodies_.end()) {
         for (const u32 body : found->second.bodies) {
             physics_->remove_body(body);
-            if (body < kMaxBodies) body_entities_[body] = {};
+            set_body_entity(body, {});
         }
         static_bodies_.erase(found);
     }
@@ -2269,7 +2311,7 @@ world::Entity PlaySession::spawn(const char* name, Vec3 position) {
 
 // World Settings > Game Mode: spawn the player prefab (when the level has no Character) and the game script.
 u32 PlaySession::body_of(world::Entity e) const {
-    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
+    for (u32 b = 0; b < physics_->body_count() && b < body_entities_.size(); ++b) {
         if (body_entities_[b] == e) return b;
     }
     return physics::kWorldBody;
@@ -3777,7 +3819,7 @@ void PlaySession::start_cloth(world::World& world, world::Entity e) {
     d.gravity_scale = cloth->gravity_scale;
     d.thickness = cloth->thickness;
     run.body = physics_->add_cloth(d);
-    if (run.body < kMaxBodies) body_entities_[run.body] = e;
+    set_body_entity(run.body, e);
     run.points.resize(run.mesh.particles.size());
     std::snprintf(run.key, sizeof run.key, "Cloth:%u", static_cast<unsigned>(cloths_.size()));
     std::snprintf(mesh->mesh, sizeof mesh->mesh, "%s", run.key);  // Play's copy of the level: Stop loads the original back

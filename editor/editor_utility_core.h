@@ -7,6 +7,8 @@
 //   lsd.editor.selection() -> {e, ...}    the selected objects; lsd.editor.select({e, ...}) replaces them
 //   lsd.editor.open_asset(name) -> bool   what a double-click in the Content Browser does
 //   lsd.editor.console(line)              a console command
+//   lsd.raycast / sphere_trace / box_trace / capsule_trace / overlap_sphere / overlap_box   against the
+//                                         level's collision as Play builds it (snap to the ground)
 //   lsd.editor.panel(title, {{"button", "Label", "function"}, {"checkbox" | "number" | "text", "Label",
 //                    "variable", default}, {"label", "Text"}})   a dockable panel; widgets set the script's
 //                                         globals, buttons call its functions
@@ -47,6 +49,10 @@ struct UtilityHooks {
     void (*console)(void* user, const char* line) = nullptr;
     world::Entity (*spawn)(void* user, const char* name, Vec3 position) = nullptr;
     u32 (*assets)(void* user, const char* type, const char* folder, char* out, usize capacity) = nullptr;
+    // lsd.raycast / sphere_trace... / overlap_* on the edited level (Unreal's editor traces): as ScriptHost's.
+    bool (*raycast)(void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
+    bool (*sweep)(void* user, int shape, Vec3 size, Vec3 from, Vec3 to, world::Entity& hit, Vec3& point, Vec3& normal) = nullptr;
+    u32 (*overlap)(void* user, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) = nullptr;
 };
 
 class EditorUtilities {

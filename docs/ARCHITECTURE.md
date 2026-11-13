@@ -708,6 +708,11 @@ reach its functions and globals; C++ passes code and values as Lua long-bracket 
 A run or button saves the level text before and after: if it differs, `editor/editor_utility.cpp` names
 a pending edit (one undo step). Play's host never sets `editor`, so `lsd.editor` raises there, and
 `main.cpp` registers the `utility.Run` command only outside game mode.
+Traces (`lsd.raycast`, sweeps, overlaps) go through `UtilityHooks::raycast / sweep / overlap` to a query-only
+`physics::PhysicsWorld` in `editor_utility.cpp`, filled by `add_static_bodies` (play_session.cpp, the same code
+Play's static collision uses) and rebuilt lazily after an edit (the history's version), a run, a button or a spawn.
+Play maps every physics body index to its object in a growable `body_entities_` (a fixed 8192-entry table once
+left bodies of big levels unmapped, so `lsd.raycast` returned `true`, e.g. on a broken Destructible's rebuilt body).
 
 ## Editor plugins and the Claude MCP bridge
 
