@@ -66,8 +66,9 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
                 jobs_.erase(jobs_.begin());
             }
             auto* data = new asset::TextureData(default_allocator());
-            // Colour maps (BC1 / BC3) and normal maps (BC5) are compressed, once, into DerivedData; masks (ORM) stay RGBA8.
-            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map, true)) {
+            // Colour maps (BC1 / BC3), normal maps (BC5) and masks (ORM: BC1, or BC3 with a Specular map in alpha, linear, as Unreal's
+            // Masks compression) are compressed, once, into DerivedData.
+            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, compress_, "DerivedData/Textures", *data, job.normal_map, true)) {
                 delete data;
                 data = nullptr;
             }
@@ -140,7 +141,7 @@ bool TextureCache::load(Entry& e) {
         return false;
     }
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map, true)) {
+    if (!asset::load_texture_cached(path, e.srgb, max_size, compress_, "DerivedData/Textures", data, e.normal_map, true)) {
         e.failed = !e.texture.valid();
         return false;
     }
