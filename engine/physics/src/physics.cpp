@@ -33,6 +33,7 @@
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
@@ -265,6 +266,24 @@ u32 PhysicsWorld::add_body(const BodyDesc& desc) {
             if (shape) break;
             [[fallthrough]];  // moving bodies cannot use triangles: their convex hull instead
         case Shape::Convex:
+            if (desc.points && desc.hull_sizes && desc.hull_count > 0) {  // several hulls: one compound shape
+                JPH::StaticCompoundShapeSettings compound;
+                for (u32 h = 0, at = 0; h < desc.hull_count && at + desc.hull_sizes[h] <= desc.point_count; at += desc.hull_sizes[h++]) {
+                    if (desc.hull_sizes[h] < 4) continue;
+                    JPH::Array<JPH::Vec3> hull;
+                    hull.reserve(desc.hull_sizes[h]);
+                    for (u32 i = 0; i < desc.hull_sizes[h]; ++i) hull.push_back(to_jolt(desc.points[at + i]));
+                    const JPH::ShapeSettings::ShapeResult result = JPH::ConvexHullShapeSettings(hull).Create();
+                    if (result.IsValid()) compound.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), result.Get());
+                    else LSD_LOG_WARN("physics", "Collision hull %u failed (%s): left out", h, result.GetError().c_str());
+                }
+                if (compound.mSubShapes.size() == 1) shape = compound.mSubShapes[0].mShapePtr;
+                else if (!compound.mSubShapes.empty()) {
+                    const JPH::ShapeSettings::ShapeResult result = compound.Create();
+                    if (result.IsValid()) shape = result.Get();
+                }
+                if (shape) break;
+            }
             if (desc.points && desc.point_count >= 4) {
                 JPH::Array<JPH::Vec3> points;
                 points.reserve(desc.point_count);

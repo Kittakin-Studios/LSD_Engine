@@ -189,6 +189,30 @@ const MeshCache::Triangles* MeshCache::triangles(const char* key) {
     return &t;
 }
 
+const MeshCache::Hulls* MeshCache::hulls(const char* key) {
+    if (const auto it = hulls_.find(key); it != hulls_.end()) return it->second.sizes.empty() ? nullptr : &it->second;
+    Hulls& h = hulls_[key];
+    asset::Guid guid;
+    i32 part = -1;
+    const asset::AssetRecord* record = asset::parse_mesh_key(key, guid, part) && part < 0 ? registry_.find(guid) : nullptr;
+    if (!record || record->type != asset::AssetType::Mesh) return nullptr;
+    asset::AssetMeta meta;
+    registry_.load_meta(*record, meta);
+    char source[300], error[256];
+    registry_.source_path(*record, source, sizeof source);
+    Array<Vec3> points(allocator_);
+    Array<u32> sizes(allocator_);
+    if (!asset::import_collision_hulls(source, meta.import_scale, allocator_, points, sizes, error, sizeof error)) {
+        LSD_LOG_WARN("mesh", "%s: collision nodes not read: %s", record->path, error);
+        return nullptr;
+    }
+    h.points.assign(points.data(), points.data() + points.size());
+    h.sizes.assign(sizes.data(), sizes.data() + sizes.size());
+    if (h.sizes.empty()) LSD_LOG_WARN("mesh", "%s: Collision Shape is Collision Nodes, but the file has no UCX_ / UBX_ / USP_ / UCP_ nodes: its Box is used", record->path);
+    else LSD_LOG_INFO("mesh", "%s: %zu collision hulls from the file", record->path, h.sizes.size());
+    return h.sizes.empty() ? nullptr : &h;
+}
+
 const std::vector<MeshCache::SlotPart>* MeshCache::slot_parts(const char* key, bool all) {
     const std::string cache_key = all ? std::string(key) + "|all" : std::string(key);
     if (const auto it = slot_parts_.find(cache_key); it != slot_parts_.end()) return it->second.empty() ? nullptr : &it->second;
@@ -368,7 +392,10 @@ void MeshCache::hot_reload() {
         if (m.generated || (stamp && stamp == stamps_[i] && !m.failed) || pending_.count(static_cast<u32>(i))) continue;
         const i64 before = m.compiled_time;
         m.failed = !load(m);
-        if (m.compiled_time != before || m.failed) triangles_.erase(m.key);  // reimported: its triangles are re-read on the next ask
+        if (m.compiled_time != before || m.failed) {  // reimported: its triangles and hulls are re-read on the next ask
+            triangles_.erase(m.key);
+            hulls_.erase(m.key);
+        }
         stamps_[i] = m.failed ? 0 : stamp;
     }
 }

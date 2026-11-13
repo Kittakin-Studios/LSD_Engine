@@ -23,6 +23,10 @@ struct BodyDesc {
     u32 point_count = 0;
     const u32* indices = nullptr;
     u32 index_count = 0;
+    // Convex: several hulls in one body (Unreal's UCX_ simple collision): `points` holds them one after another,
+    // `hull_sizes[h]` points each; hull_count 0 = one hull around all the points.
+    const u32* hull_sizes = nullptr;
+    u32 hull_count = 0;
     bool debris = false;  // collides with static things only: not the player, not other moving bodies
     bool one_way = false; // the player passes up (and sideways) through it and lands on its top (2D jump-through platforms)
     bool plane_2d = false;  // moves only in X-Z, turns only around Y (2D games)

@@ -1768,6 +1768,19 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         d.indices = triangles->indices.data();
         d.index_count = static_cast<u32>(triangles->indices.size());
     };
+    // The file's UCX_ / UBX_ / USP_ nodes as convex hulls in one body (Collision Shape: Collision Nodes); else it stays the Box.
+    // shortcut: static meshes only; rigid bodies and movers keep their own shapes
+    auto use_hulls = [&](physics::BodyDesc& d) {
+        const MeshCache::Hulls* hulls = mesh ? meshes_->hulls(mesh->mesh) : nullptr;
+        if (!hulls) return;
+        points.clear();
+        for (const Vec3& p : hulls->points) points.push_back(mul(p - centre, scale));
+        d.shape = physics::Shape::Convex;
+        d.points = points.data();
+        d.point_count = static_cast<u32>(points.size());
+        d.hull_sizes = hulls->sizes.data();
+        d.hull_count = static_cast<u32>(hulls->sizes.size());
+    };
     // A Physical Material asset overrides friction and bounciness.
     // shortcut: read from disk per body at Play start; cache by GUID if levels get thousands of them.
     auto apply_material = [&](physics::BodyDesc& d, const char* guid) {
@@ -1806,6 +1819,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     if (cached && mesh->collision) {
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
+        else if (mesh->collision_shape == 2) use_hulls(d);
         apply_material(d, mesh->physical_material);
         d.one_way = mesh->one_way;
         add_body(e, d);

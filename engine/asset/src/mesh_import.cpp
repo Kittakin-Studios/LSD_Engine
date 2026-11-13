@@ -123,6 +123,8 @@ struct NodeRole {
 // The soups an import fills: [0] LOD 0, [1..] authored LODs (null: not wanted); counts of what was left out.
 struct Soups {
     Array<rhi::MeshVertex>* lod[1 + kMaxAuthoredLods] = {};
+    Array<Vec3>* hull_points = nullptr;  // collision nodes' points, one node after another (import_collision_hulls)
+    Array<u32>* hull_sizes = nullptr;    // how many points each node has
     u32 collision_nodes = 0;
     u32 skipped_lods = 0;
 };
@@ -170,6 +172,14 @@ bool load_fbx(const char* path, f32 scale, i32 part, Allocator& allocator, Soups
         if (role.collision || role.lod > 0) {  // not LOD 0: never a part; its triangles go to its LOD's soup (whole-file imports only)
             if (soups && part < 0) {
                 if (role.collision) ++soups->collision_nodes;
+                if (role.collision && soups->hull_points && soups->hull_sizes) {  // its points in the whole file's space, as LOD 0 is baked
+                    const ufbx_vec3_list& values = mesh->vertex_position.values;
+                    for (usize i = 0; i < values.count; ++i) {
+                        const ufbx_vec3 p = ufbx_transform_position(&node->geometry_to_world, values.data[i]);
+                        soups->hull_points->push_back(Vec3{static_cast<f32>(p.x) * scale, static_cast<f32>(p.y) * scale, static_cast<f32>(p.z) * scale});
+                    }
+                    soups->hull_sizes->push_back(static_cast<u32>(values.count));
+                }
                 else if (role.lod > static_cast<i32>(kMaxAuthoredLods)) ++soups->skipped_lods;
             }
             if (role.collision || role.lod > static_cast<i32>(kMaxAuthoredLods) || !soups || part >= 0 || !soups->lod[role.lod]) continue;
@@ -500,6 +510,15 @@ bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::Mesh
     return true;
 }
 
+bool import_collision_hulls(const char* path, f32 scale, Allocator& allocator, Array<Vec3>& points, Array<u32>& sizes, char* error, usize error_capacity) {
+    points.clear();
+    sizes.clear();
+    Soups soups;  // no triangle soups: only the collision nodes are read
+    soups.hull_points = &points;
+    soups.hull_sizes = &sizes;
+    return load_source(path, scale, -1, allocator, &soups, nullptr, error, error_capacity);
+}
+
 u32 simplify_mesh(const render::MeshData& mesh, f32 ratio, u32* out, bool lock_border) {
     const usize target = static_cast<usize>(static_cast<f32>(mesh.index_count) * ratio) / 3 * 3;
     constexpr f32 kMaxError = 0.05f;  // of the mesh's size: a distant LOD may drift this far
@@ -667,7 +686,7 @@ bool run_mesh_compile(const MeshCompileJob& job, Allocator& allocator) {
                  extras.lod_count ? ", with its own LODs" : "");
     for (u32 l = 0; l < extras.lod_count; ++l) LSD_LOG_INFO("asset", "  LOD %u: %u triangles (from the file)", l + 1, extras.lods[l].index_count / 3);
     if (extras.collision_nodes) {
-        LSD_LOG_INFO("asset", "  %u collision node%s (UCX_ / UBX_ / USP_ / UCP_) not drawn: the Static Mesh's Collision Shape (Box or Mesh) is used in Play",
+        LSD_LOG_INFO("asset", "  %u collision node%s (UCX_ / UBX_ / USP_ / UCP_) not drawn: Collision Shape > Collision Nodes uses them in Play",
                      extras.collision_nodes, extras.collision_nodes == 1 ? "" : "s");
     }
     if (extras.skipped_lods) LSD_LOG_WARN("asset", "  %u node%s deeper than LOD %u left out", extras.skipped_lods, extras.skipped_lods == 1 ? "" : "s", kMaxAuthoredLods);

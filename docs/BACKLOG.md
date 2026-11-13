@@ -470,6 +470,7 @@ several people at once. What its scripts had to work around:
 - [x] The Character reaches full speed and stops at once, turns with the view at once and steers fully in the air: no weight for a GTA-like walk (done: Character > Acceleration, Braking, Turn Rate, Air Control; defaults keep the old feel)
 - [x] `lsd.prompt(text, e)` pops in and out and shows at any distance (done: 0.15 s fades, `{max_distance = m}`, no rebuild when called every frame; `lsd.world_position`)
 - [x] Riding a closed Transport (the metro car) puts the view inside its mesh (done: Transport > Camera Offset and Camera Distance, the transport's own body ignored by the spring arm; Vehicle passengers already had the follow camera)
+- [x] `UCX_` / `UBX_` / `USP_` / `UCP_` nodes were only left out of the drawn mesh (done: Static Mesh > Collision Shape > Collision Nodes makes them a compound of convex hulls, FBX / OBJ; open: glTF, rigid bodies and movers)
 
 ## Later
 

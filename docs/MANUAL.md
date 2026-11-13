@@ -593,8 +593,10 @@ smooth. What happens on its own:
   children of an FBX LOD group after the first) become the mesh's **own LODs**: LOD 0 is drawn near, the file's
   LODs farther away at the mesh's LOD 1 / 2 / 3 Screen Size (Mesh Editor), instead of generated ones. Nodes named
   `UCX_`, `UBX_`, `USP_`, `UCP_` (Unreal's collision hulls, boxes, spheres, capsules) are **not drawn**; the Output
-  Log says how many were left out. Collision in Play comes from the Static Mesh's Collision Shape (Box, or Mesh for
-  the triangles themselves). Neither kind shows up as a part (Create Prefab from Parts). glTF files follow the same
+  Log says how many were left out. Collision in Play comes from the Static Mesh's Collision Shape: Box (the bounds),
+  Mesh (the triangles themselves) or **Collision Nodes**: those nodes, each a convex hull, in one static body (Unreal's
+  simple collision: an arch you walk through, a rock that is not its box). FBX and OBJ; a file without such nodes
+  falls back to the Box (the Output Log says so). Rigid Bodies and Movers keep their own shapes. Neither kind shows up as a part (Create Prefab from Parts). glTF files follow the same
   node names. Deeper than LOD 3 is left out (logged).
 - **Meshes compile in the background.** The first time a mesh is drawn (a project opened for the first time, a
   mesh imported or changed), it is compiled into `DerivedData/` on worker threads (half the CPU cores) together

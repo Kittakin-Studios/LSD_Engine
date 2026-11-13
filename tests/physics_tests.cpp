@@ -405,7 +405,29 @@ static void test_movement_tuning() {
     CHECK(std::fabs(turn_toward(0.0f, 0.1f, 90, 1.0f) - 0.1f) < 1e-6f);                // arrives without overshoot
 }
 
+// Several convex hulls in one static body (UCX_ collision): rays hit each hull, not the gap between them.
+static void test_hulls() {
+    PhysicsWorld world;
+    Vec3 points[16];
+    for (int b = 0; b < 2; ++b) {  // two unit cubes: x -3..-2 and 2..3
+        for (int i = 0; i < 8; ++i) points[b * 8 + i] = {(b ? 2.0f : -3.0f) + static_cast<f32>(i & 1), static_cast<f32>((i >> 1) & 1) - 0.5f, static_cast<f32>((i >> 2) & 1)};
+    }
+    const u32 sizes[2] = {8, 8};
+    BodyDesc d;
+    d.shape = Shape::Convex;
+    d.points = points;
+    d.point_count = 16;
+    d.hull_sizes = sizes;
+    d.hull_count = 2;
+    const u32 body = world.add_body(d);
+    RayHit hit;
+    CHECK(world.raycast({-2.5f, 0, 5}, {0, 0, -1}, 10, hit) && hit.body == body && std::fabs(hit.point.z - 1.0f) < 0.05f);
+    CHECK(world.raycast({2.5f, 0, 5}, {0, 0, -1}, 10, hit) && hit.body == body);
+    CHECK(!world.raycast({0, 0, 5}, {0, 0, -1}, 10, hit));  // one hull around all points would fill this gap
+}
+
 int main() {
+    test_hulls();
     test_movement_tuning();
     test_move_static();
     test_one_way();

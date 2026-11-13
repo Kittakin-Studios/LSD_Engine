@@ -54,6 +54,11 @@ bool is_collision_node_name(const char* name);
 i32 lod_from_node_name(const char* name);
 bool import_mesh(const char* path, f32 scale, Allocator& allocator, render::MeshData& out, char* error, usize error_capacity, i32 part = -1,
                  u32 normals = kNormalsSmooth, f32 smoothing_angle = 30.0f, MeshImportExtras* extras = nullptr);
+// The collision nodes (UCX_ / UBX_ / USP_ / UCP_) of a whole file as convex hulls (Unreal's simple collision):
+// each node's points in the mesh's space (as import_mesh bakes it, times `scale`), one node after another;
+// `sizes` has each node's count. Empty when it has none.
+// shortcut: FBX and OBJ only (glTF collision nodes are still just left out); read from the source at Play start, not cached in the .lsdmesh
+bool import_collision_hulls(const char* path, f32 scale, Allocator& allocator, Array<Vec3>& points, Array<u32>& sizes, char* error, usize error_capacity);
 
 // Recomputes the normals of an unindexed triangle list (3 vertices a triangle) as `normals` asks,
 // for any vertex layout (positions and normals as 3 floats at those byte offsets). Smoothing follows

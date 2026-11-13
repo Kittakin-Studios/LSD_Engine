@@ -782,6 +782,15 @@ static void test_authored_lods(const fs::path& root) {
         Array<asset::MeshPart> parts(heap);
         CHECK(asset::list_mesh_parts(obj.string().c_str(), parts, error, sizeof error) && parts.size() == 1);
     }
+    {  // ...but it is the collision: its points, scaled like the mesh, as one hull
+        Array<Vec3> points(heap);
+        Array<u32> sizes(heap);
+        CHECK(asset::import_collision_hulls(obj.string().c_str(), 2.0f, heap, points, sizes, error, sizeof error));
+        CHECK(sizes.size() == 1 && sizes[0] == 3 && points.size() == 3);
+        f32 lo = 1e9f, hi = -1e9f;
+        for (const Vec3& p : points) lo = p.x < lo ? p.x : lo, hi = p.x > hi ? p.x : hi;
+        CHECK(std::fabs(lo - 200.0f) < 1e-3f && std::fabs(hi - 202.0f) < 1e-3f);
+    }
     // Compiled: LOD 0 as before, the LODs after it.
     const std::string compiled = (root / "SM_Box.lsdmesh").string();
     CHECK(asset::save_compiled_mesh(compiled.c_str(), mesh, {1, 2, 3}, extras.lods, extras.lod_count));

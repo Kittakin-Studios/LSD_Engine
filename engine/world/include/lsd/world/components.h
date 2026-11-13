@@ -33,7 +33,8 @@ struct StaticMesh {
     LSD_PROPERTY(Edit, Tooltip = "Tints the material (white = as the material is)") LinearColor color = LinearColor::hex(0xB4B4B8);
     LSD_PROPERTY(Edit, Tooltip = "Blocks the player in Play") bool collision = true;
     LSD_PROPERTY(Edit, Tooltip = "A jump-through platform: the player passes up and sideways through it and lands on its top (Collision on)") bool one_way = false;
-    LSD_PROPERTY(Edit, Widget = "Choice:Box,Mesh", Tooltip = "Box: the bounds (fast). Mesh: the triangles themselves (arches, ramps, stairs; Unreal's Use Complex As Simple)")
+    LSD_PROPERTY(Edit, Widget = "Choice:Box,Mesh,Collision Nodes",
+                 Tooltip = "Box: the bounds (fast). Mesh: the triangles themselves (arches, ramps, stairs; Unreal's Use Complex As Simple). Collision Nodes: the file's UCX_ / UBX_ / USP_ hulls (Unreal's simple collision; FBX / OBJ), the Box when it has none")
     u32 collision_shape = 0;
     LSD_PROPERTY(Edit, Widget = "Asset:PhysicalMaterial", Tooltip = "The surface's friction and bounciness") char physical_material[33] = "";
     LSD_PROPERTY(Edit, Tooltip = "Box-projected UVs from the object's size: one texture tile per metre on every face, however it is scaled (blockout walls and floors)")

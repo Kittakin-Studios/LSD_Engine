@@ -66,6 +66,13 @@ public:
         std::vector<f32> uvs;  // two per point (cloth draws from them)
     };
     const Triangles* triangles(const char* key);
+    // The mesh file's collision nodes (UCX_ / UBX_ / USP_ / UCP_) as convex hulls in the mesh's space, read
+    // from the source on first ask and kept until it is reimported. Null when it has none (or is a shape / part).
+    struct Hulls {
+        std::vector<Vec3> points;  // one hull after another
+        std::vector<u32> sizes;
+    };
+    const Hulls* hulls(const char* key);
 
     // Material Slots on a Static Mesh (Unreal's per-section materials): a whole-file mesh asset whose Material Slots are
     // set draws as its parts (their own "<guid>#<k>" meshes, placed as Create Prefab from Parts places them), each with
@@ -95,6 +102,7 @@ private:
     bool finish(u32 slot);             // loads a pending entry whose compile is done; false while it still compiles
     i64 finish_window_ = 0, finish_spent_ = 0;  // steady-clock ns: loads of finished compiles spread over frames  // source_stamp of each meshes_ entry when it was last loaded: hot_reload skips the unchanged
     std::unordered_map<std::string, Triangles> triangles_;  // shortcut: std containers, editor-time collision data
+    std::unordered_map<std::string, Hulls> hulls_;           // empty: the file has no collision nodes
     std::unordered_map<std::string, std::vector<SlotPart>> slot_parts_;  // empty: draws whole
 
     rhi::Device& device_;
