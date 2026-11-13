@@ -180,6 +180,14 @@ struct Character {
                  Tooltip = "The clips it picks from (a Motion Database); empty: the locomotion clips next to the character's mesh (Idle, Walk, Run, Jog, Strafe, Turn, Start, Stop... in the name)")
     char motion_database[33] = "";
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Walking speed") f32 walk_speed = 5.0f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0, Tooltip = "How fast it speeds up toward Walk Speed while moving (Unreal's Max Acceleration; 20 reaches 5 m/s in a quarter second). 0 = full speed at once")
+    f32 acceleration = 0.0f;
+    LSD_PROPERTY(Edit, Units = "m/s2", Min = 0, Tooltip = "How fast it slows down when the input is let go (Unreal's Braking Deceleration Walking). 0 = stops at once")
+    f32 braking = 0.0f;
+    LSD_PROPERTY(Edit, Units = "deg/s", Min = 0, Tooltip = "How fast the body turns to face the way the view looks (Unreal's Rotation Rate; 540 is brisk). 0 = at once")
+    f32 turn_rate = 0.0f;
+    LSD_PROPERTY(Edit, Min = 0, Max = 1, Tooltip = "Steering in the air (Unreal's Air Control): 1 = as on the ground, 0.2 = mostly keeps its momentum, 0 = none. With Acceleration 0 the air uses 10 x Walk Speed per second")
+    f32 air_control = 1.0f;
     LSD_PROPERTY(Edit, Units = "m/s", Min = 0, Tooltip = "Upward speed of a jump (higher jumps higher)") f32 jump_speed = 5.0f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Max = 89, Tooltip = "Steepest ground it can walk up") f32 max_slope = 45.0f;
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Tallest step it climbs without jumping (stairs, kerbs)") f32 step_height = 0.4f;

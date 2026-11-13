@@ -1268,6 +1268,17 @@ held) to crouch to **Crouch Height** at **Crouch Speed**; it stands up again onl
 Inside a **Water Volume** or under a **Water Body**'s surface (Place tab) it swims at **Swim Speed** where you look, Jump rising and Crouch diving. Animation
 Graphs get the parameters **Crouching** and **Swimming** (0 / 1) along with Speed, VerticalSpeed and InAir.
 
+How it gets going (Unreal's Character Movement); the defaults keep the old snappy feel, so set them for weight:
+
+| Setting | Unreal | What it does |
+| --- | --- | --- |
+| Acceleration | Max Acceleration | m/s² toward Walk Speed while moving (20 reaches 5 m/s in a quarter second); 0 = full speed at once |
+| Braking | Braking Deceleration Walking | m/s² down to a stop when the input is let go; 0 = stops at once |
+| Turn Rate | Rotation Rate (Yaw) | deg/s the body turns to face where the view looks (540 is brisk); 0 = at once |
+| Air Control | Air Control | steering in the air: 1 = as on the ground, 0.2 = mostly keeps its momentum, 0 = none. With Acceleration 0 the air steers at 10 × Walk Speed per second times this |
+
+All four are live in Play (Details or `lsd.set(lsd.player(), "Character", {acceleration = 20})`).
+
 **The player's camera** (Unreal's Camera + Spring Arm on the Character): add a child object to the
 Character (Outliner: drag it onto the Character), give it a **Camera** component (Auto Activate off)
 and move it in the viewport; Play looks from where you put it, and mouse look turns it (Use Pawn

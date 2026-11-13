@@ -375,7 +375,38 @@ static void test_move_static() {
     CHECK(world.body_velocity(falling).z < -4.0f && world.body_velocity(falling).z > -5.5f);  // about g * 0.5 s
 }
 
+// Character Acceleration / Braking / Air Control / Turn Rate: the speed curve and the turn.
+static void test_movement_tuning() {
+    const Vec3 run{5, 0, 0}, none{};
+    const f32 dt = 1.0f / 60.0f;
+    // Defaults (0, 0, 1): full speed and a stop at once, on the ground or in the air, as before.
+    CHECK(approach_velocity(none, run, 0, 0, 1, true, dt).x == 5.0f && approach_velocity(run, none, 0, 0, 1, false, dt).x == 0.0f);
+    // Acceleration 20: a quarter second to 5 m/s, linearly; braking 10: half a second to a stop.
+    Vec3 v = none;
+    for (int i = 0; i < 6; ++i) v = approach_velocity(v, run, 20, 10, 1, true, dt);
+    CHECK(std::fabs(v.x - 2.0f) < 1e-4f);  // 0.1 s
+    for (int i = 0; i < 10; ++i) v = approach_velocity(v, run, 20, 10, 1, true, dt);
+    CHECK(v.x == 5.0f);  // by 0.25 s, no overshoot
+    for (int i = 0; i < 15; ++i) v = approach_velocity(v, none, 20, 10, 1, true, dt);
+    CHECK(std::fabs(v.x - 2.5f) < 1e-4f);  // 0.25 s of braking
+    for (int i = 0; i < 30; ++i) v = approach_velocity(v, none, 20, 10, 1, true, dt);
+    CHECK(v.x == 0.0f && v.y == 0.0f);
+    // Turning at speed: the velocity swings round at the acceleration, not instantly.
+    v = approach_velocity(run, Vec3{0, 5, 0}, 20, 10, 1, true, dt);
+    CHECK(v.x > 4.7f && v.y > 0.2f && v.y < 0.3f);
+    // Air Control 0.2 with acceleration 20 steers at 4 m/s^2; 0 keeps the momentum; with acceleration 0: 10 x speed per second x 0.2.
+    CHECK(std::fabs(approach_velocity(none, run, 20, 10, 0.2f, false, 1.0f).x - 4.0f) < 1e-4f);
+    CHECK(approach_velocity(run, none, 20, 10, 0.0f, false, dt).x == 5.0f);
+    CHECK(std::fabs(approach_velocity(none, run, 0, 0, 0.2f, false, 0.1f).x - 1.0f) < 1e-4f);
+    // Turn rate: 0 = at once; 90 deg/s takes a second for a quarter turn, the short way past +-180.
+    CHECK(turn_toward(0.0f, 1.5f, 0, dt) == 1.5f);
+    CHECK(std::fabs(turn_toward(0.0f, 1.5707963f, 90, 0.5f) - 0.7853982f) < 1e-5f);
+    CHECK(std::fabs(turn_toward(3.0f, -3.0f, 90, 0.1f) - (3.0f + 0.1570796f)) < 1e-5f);  // across the back, not the long way
+    CHECK(std::fabs(turn_toward(0.0f, 0.1f, 90, 1.0f) - 0.1f) < 1e-6f);                // arrives without overshoot
+}
+
 int main() {
+    test_movement_tuning();
     test_move_static();
     test_one_way();
     test_vehicle_setup();

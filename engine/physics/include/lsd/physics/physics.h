@@ -232,4 +232,13 @@ private:
     Impl* impl_;
 };
 
+// Character Movement tuning (Unreal's Max Acceleration / Braking Deceleration Walking / Air Control):
+// the walking velocity (horizontal, m/s) eased toward `desired`. With input it changes at
+// `acceleration`, without at `braking` (m/s^2; 0 = at once). In the air both rates are scaled by
+// `air_control` (1 = as on the ground; with a rate of 0 the air uses 10 x the desired speed per second).
+Vec3 approach_velocity(Vec3 current, Vec3 desired, f32 acceleration, f32 braking, f32 air_control, bool on_ground, f32 dt);
+// Unreal's Rotation Rate: `from` turned toward `to` (radians) the short way by at most
+// `degrees_per_second` * dt; 0 = at once.
+f32 turn_toward(f32 from, f32 to, f32 degrees_per_second, f32 dt);
+
 } // namespace lsd::physics

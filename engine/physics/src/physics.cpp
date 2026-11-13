@@ -894,4 +894,28 @@ bool PhysicsWorld::character_on_ground() const {
     return impl_->character && impl_->character->GetGroundState() == JPH::CharacterVirtual::EGroundState::OnGround;
 }
 
+Vec3 approach_velocity(Vec3 current, Vec3 desired, f32 acceleration, f32 braking, f32 air_control, bool on_ground, f32 dt) {
+    const f32 want = std::sqrt(desired.x * desired.x + desired.y * desired.y);
+    f32 rate = want > 1e-4f ? acceleration : braking;
+    const bool air = !on_ground && air_control < 1.0f;
+    if (rate <= 0.0f && !air) return desired;  // the defaults: at once, as before these settings existed
+    if (air) {
+        const f32 have = std::sqrt(current.x * current.x + current.y * current.y);
+        rate = (rate > 0.0f ? rate : 10.0f * std::max(want, have)) * std::max(air_control, 0.0f);
+    }
+    const Vec3 change{desired.x - current.x, desired.y - current.y, 0.0f};
+    const f32 distance = std::sqrt(change.x * change.x + change.y * change.y), step = rate * dt;
+    if (distance <= step) return desired;
+    const f32 k = step / distance;
+    return {current.x + change.x * k, current.y + change.y * k, desired.z};
+}
+
+f32 turn_toward(f32 from, f32 to, f32 degrees_per_second, f32 dt) {
+    if (degrees_per_second <= 0.0f) return to;
+    f32 delta = std::remainder(to - from, 2.0f * kPi);  // the short way round, -pi..pi
+    const f32 step = degrees_per_second * (kPi / 180.0f) * dt;
+    delta = delta > step ? step : delta < -step ? -step : delta;
+    return from + delta;
+}
+
 } // namespace lsd::physics

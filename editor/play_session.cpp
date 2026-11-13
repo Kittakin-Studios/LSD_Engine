@@ -1081,7 +1081,8 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const Mat4 m = world.world_matrix(character_);
         placed_feet_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};
     }
-    spawn_yaw_ = yaw_;
+    spawn_yaw_ = facing_yaw_ = yaw_;
+    walk_velocity_ = {};
     physics::CharacterDesc desc;
     desc.feet = feet_;
     desc.radius = settings_.radius;
@@ -2364,7 +2365,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     } else if (Vec3 rooted; animations_ && dt > 0.0f && animations_->take_root_motion(character_, rooted)) {  // a root-motion montage moves it
         physics_->move_character(Vec3{rooted.x / dt, rooted.y / dt, 0.0f}, false, 0.0f, dt);
     } else if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; !car || car->vehicle == ~0u) {
-        physics_->move_character(velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), jump && !crouched_, settings_.jump_speed, dt);
+        // shortcut: the eased velocity is not cut by walls it runs into, so braking after pushing a wall starts from full speed; feed back the moved velocity if that shows
+        walk_velocity_ = physics::approach_velocity(walk_velocity_, velocity * (crouched_ ? settings_.crouch_speed : settings_.walk_speed), settings_.acceleration, settings_.braking,
+                                                    settings_.air_control, physics_->character_on_ground(), dt);
+        physics_->move_character(walk_velocity_, jump && !crouched_, settings_.jump_speed, dt);
     }  // in a Physics vehicle the driver sits inside its body: not moved, so it cannot push the car
     physics_->step(dt);
     update_ragdolls(world);
@@ -2416,7 +2420,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     if (killed) {
         physics_->teleport_character(spawn_);
         feet_ = spawn_;
-        yaw_ = spawn_yaw_;
+        yaw_ = facing_yaw_ = spawn_yaw_;
+        walk_velocity_ = {};
     }
 
     // Write the simulation back so the viewport (and anything attached) shows it.
@@ -2431,7 +2436,8 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     if (world.alive(character_)) {
         Vec3 t, r, scale;
         decompose_trs(world.world_matrix(character_), t, r, scale);
-        world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(yaw_)}, scale));
+        facing_yaw_ = physics::turn_toward(facing_yaw_, yaw_, settings_.turn_rate, dt);  // Turn Rate 0: faces the view at once
+        world.set_world_matrix(character_, trs(feet_, {0, 0, degrees(facing_yaw_)}, scale));
         const Mat4 m = world.world_matrix(character_);
         placed_feet_ = {m.at(0, 3), m.at(1, 3), m.at(2, 3)};  // read back, so float round trips never look like a move
         placed_ = true;
