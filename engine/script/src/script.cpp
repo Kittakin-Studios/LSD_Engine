@@ -784,7 +784,7 @@ struct Api {
             return 1;
         }
         if (hit.valid()) lua_pushnumber(L, hit.value);
-        else lua_pushboolean(L, true);  // something without an object (should not happen)
+        else lua_pushboolean(L, true);  // a body with no object: never in Play or Editor Utilities (every body is mapped); hosts that cannot tell say true
         push_vec3(L, point);
         push_vec3(L, normal);
         return 7;

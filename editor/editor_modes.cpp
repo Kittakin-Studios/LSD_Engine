@@ -363,7 +363,7 @@ void draw_modeling(EditorState& s) {
         for (f32* v : {&t->scale.x, &t->scale.y, &t->scale.z}) *v = std::fmax(0.5f, std::round(*v * 2.0f) * 0.5f);
         mark_edited(s, "Resize");
     }
-    if (with_tip(ImGui::Checkbox("Box UV", &mesh->box_uv), "Projects the texture from the box's sides: one tile per metre at any size, no stretching")) mark_edited(s, "Box UV");
+    if (with_tip(ImGui::Checkbox("Box UV", &mesh->box_uv), "Projects the texture from the box's sides: one tile per metre at any size (Material > Box UV Tiling changes it), no stretching")) mark_edited(s, "Box UV");
     if (with_tip(ImGui::Checkbox("Collision", &mesh->collision), "The player and physics bump into it")) mark_edited(s, "Collision");
     hint("W / E / R: move, turn, scale with the gizmo.");
     if (std::strcmp(mesh->mesh, "Cube") == 0 && with_tip(ImGui::Button("Convert to Editable Mesh"), "Makes the box editable face by face: extrude, inset, bevel (Unreal's PolyEdit)")) {

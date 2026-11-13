@@ -2,6 +2,8 @@
 
 #include "ui_script.h"
 
+#include "lsd/ui/ui_sounds.h"
+
 #include "lsd/asset/texture.h"
 #include "lsd/foundation/log.h"
 #include "lsd/reflect/json.h"
@@ -203,6 +205,56 @@ public:
 };
 ActionInstancer* g_instancer = nullptr;
 
+// ---- Button sounds ----
+
+SoundHandler g_sounds = nullptr;
+void* g_sounds_user = nullptr;
+
+// The clickable element at or above `e` (ui_sounds.h), nullptr if none (or it is disabled).
+Rml::Element* clickable_of(Rml::Element* e) {
+    for (; e && e->GetOwnerDocument() != e; e = e->GetParentNode()) {
+        const bool disabled = e->HasAttribute("disabled");
+        const Rml::String type = e->GetAttribute<Rml::String>("type", "");
+        if (is_clickable(e->GetTagName().c_str(), type.c_str(), e->HasAttribute("onclick"), e->HasAttribute("data-hover-sound") || e->HasAttribute("data-click-sound"), disabled))
+            return e;
+        if (disabled) return nullptr;
+    }
+    return nullptr;
+}
+
+// The element's own sound (or an ancestor's: a document can set one on its body) to the handler.
+void play_sound(UiContext& ui, Rml::Element* e, bool click) {
+    if (!g_sounds || !e) return;
+    Rml::String sound;
+    for (Rml::Element* a = e; a; a = a->GetParentNode()) {
+        if (a->GetAttribute<Rml::String>("data-sound", "") == "none") return;
+        if (const Rml::Variant* v = a->GetAttribute(click ? "data-click-sound" : "data-hover-sound")) {
+            sound = v->Get<Rml::String>();
+            break;
+        }
+    }
+    if (sound == "none") return;
+    g_sounds(g_sounds_user, ui, click, sound.empty() ? nullptr : sound.c_str());
+}
+
+UiContext* context_of(Rml::Element* e) {
+    Rml::Context* context = e ? e->GetContext() : nullptr;
+    if (!context || !g_contexts) return nullptr;
+    const auto found = g_contexts->find(context);
+    return found != g_contexts->end() ? found->second.first : nullptr;
+}
+
+// On every document: a click (mouse, or activate() for Enter / the gamepad) on a clickable element.
+class ClickSounds final : public Rml::EventListener {
+public:
+    void ProcessEvent(Rml::Event& event) override {
+        Rml::Element* target = event.GetTargetElement();
+        UiContext* ui = context_of(target);
+        if (ui) play_sound(*ui, clickable_of(target), true);
+    }
+};
+ClickSounds g_click_sounds;
+
 Rml::Input::KeyIdentifier key_of(SDL_Keycode k) {
     using namespace Rml::Input;
     if (k >= SDLK_A && k <= SDLK_Z) return static_cast<KeyIdentifier>(KI_A + (k - SDLK_A));
@@ -300,6 +352,11 @@ void set_text_scale(f32 scale) {
     if (!g_fonts || g_fonts->scale == scale) return;
     g_fonts->scale = scale;
     Rml::ReleaseFontResources();  // every element asks for its font again, at the new size
+}
+
+void set_sounds(SoundHandler handler, void* user) {
+    g_sounds = handler;
+    g_sounds_user = user;
 }
 
 void shutdown() {
@@ -442,12 +499,15 @@ struct UiContext::Impl {
     void* user = nullptr;
     f32 viewport[4] = {0, 0, 1, 1};
     bool linear = false;
+    HoverTracker mouse_hover, focus_hover;  // button sounds: once per element entered
+    bool pointer_moved = false, focus_moved = false;  // since the last update
 
     Rml::Element* element(DocumentId d, const char* id) const {
         return d >= 0 && static_cast<usize>(d) < documents.size() && documents[d] ? documents[d]->GetElementById(id) : nullptr;
     }
     DocumentId add(Rml::ElementDocument* doc) {
         if (!doc) return -1;
+        doc->AddEventListener(Rml::EventId::Click, &g_click_sounds);
         doc->Show();
         for (usize i = 0; i < documents.size(); ++i) {
             if (!documents[i]) {
@@ -569,7 +629,10 @@ void UiContext::reload_all() {
         impl_->documents[i]->Close();
         const Impl::Source& s = impl_->sources[i];
         Rml::ElementDocument* doc = s.text.empty() ? impl_->context->LoadDocument(s.path) : impl_->context->LoadDocumentFromMemory(s.text, s.path);
-        if (doc) doc->Show();
+        if (doc) {
+            doc->AddEventListener(Rml::EventId::Click, &g_click_sounds);
+            doc->Show();
+        }
         impl_->documents[i] = doc;
         if (doc) impl_->attach_script(*this, static_cast<DocumentId>(i), s.path.c_str());
     }
@@ -583,6 +646,7 @@ void UiContext::close(DocumentId d) {
     if (d < 0 || static_cast<usize>(d) >= impl_->documents.size() || !impl_->documents[d]) return;
     impl_->documents[d]->Close();
     impl_->documents[d] = nullptr;
+    impl_->mouse_hover.last = impl_->focus_hover.last = nullptr;  // its elements go: their addresses may come back
     if (static_cast<usize>(d) < impl_->scripts.size()) {
         delete impl_->scripts[d];
         impl_->scripts[d] = nullptr;
@@ -713,6 +777,7 @@ void mend_focus_chain(Rml::Context& c) {
 void UiContext::navigate(i32 dx, i32 dy) {
     if (!impl_->context) return;
     mend_focus_chain(*impl_->context);
+    impl_->focus_moved = true;
     using namespace Rml::Input;
     const KeyIdentifier key = dy < 0 ? KI_UP : dy > 0 ? KI_DOWN : dx < 0 ? KI_LEFT : KI_RIGHT;
     impl_->context->ProcessKeyDown(key, 0);
@@ -739,6 +804,13 @@ void UiContext::update(const f32 viewport[4]) {
     const Rml::Vector2i size{static_cast<int>(viewport[2]), static_cast<int>(viewport[3])};
     if (impl_->context->GetDimensions() != size && size.x > 0 && size.y > 0) impl_->context->SetDimensions(size);
     impl_->context->Update();
+    if (g_sounds) {  // hover sounds: the pointer or the focus entered a clickable element
+        Rml::Element* hovered = clickable_of(impl_->context->GetHoverElement());
+        if (impl_->mouse_hover.enter(hovered, impl_->pointer_moved)) play_sound(*this, hovered, false);
+        Rml::Element* focused = clickable_of(impl_->context->GetFocusElement());
+        if (impl_->focus_hover.enter(focused, impl_->focus_moved)) play_sound(*this, focused, false);
+    }
+    impl_->pointer_moved = impl_->focus_moved = false;
 }
 
 void UiContext::set_linear_colors(bool linear) { impl_->linear = linear; }
@@ -761,6 +833,7 @@ bool UiContext::process_event(const SDL_Event& event) {
     bool passed = true;  // RmlUi returns true when it did NOT use the event
     switch (event.type) {
         case SDL_EVENT_MOUSE_MOTION:
+            impl_->pointer_moved = true;
             passed = c->ProcessMouseMove(static_cast<int>(event.motion.x - v[0]), static_cast<int>(event.motion.y - v[1]), modifiers());
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -778,7 +851,10 @@ bool UiContext::process_event(const SDL_Event& event) {
                 activate();  // a focused button, as if clicked
                 return true;
             }
-            if (k == SDLK_UP || k == SDLK_DOWN || k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_TAB) mend_focus_chain(*c);
+            if (k == SDLK_UP || k == SDLK_DOWN || k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_TAB) {
+                mend_focus_chain(*c);
+                impl_->focus_moved = true;
+            }
             passed = c->ProcessKeyDown(key_of(k), modifiers());
             break;
         }

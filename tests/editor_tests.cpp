@@ -31,6 +31,7 @@
 #include "multi_user_core.h"
 #include "asset_compiler.h"
 #include "lsd/world/level.h"
+#include "lsd/ui/ui_sounds.h"
 
 #include "lsd/world/components.h"
 
@@ -1336,6 +1337,44 @@ end
     CHECK(editor::lua_quote("a]") == "[=[\na]]=]" && editor::lua_quote("x") == "[[\nx]]");
 }
 
+// Editor Utilities trace the edited level (lsd.raycast / overlap_box were nil / empty outside Play): through the hooks.
+static void test_editor_utility_traces() {
+    using namespace lsd;
+    world::World w(default_allocator());
+    const world::Entity ground = w.create("Ground");
+    const world::Entity crate = w.create("Crate");
+    w.get<world::Transform>(crate)->position = {3, 4, 10};
+    static world::Entity s_ground;
+    s_ground = ground;
+    editor::UtilityHooks hooks;
+    hooks.raycast = [](void*, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
+        if (direction.z >= 0.0f || origin.z - distance > 1.0f) return false;  // a ground plane at z = 1
+        hit = s_ground;
+        point = {origin.x, origin.y, 1.0f};
+        normal = {0, 0, 1};
+        return true;
+    };
+    hooks.overlap = [](void*, int shape, Vec3 size, Vec3 at, world::Entity* out, u32 capacity) {
+        if (shape != 1 || capacity == 0 || at.z - size.z > 1.0f) return 0u;  // a box reaching the ground
+        out[0] = s_ground;
+        return 1u;
+    };
+    editor::EditorUtilities utilities;
+    utilities.start(w, hooks);
+    CHECK(utilities.run_code("Content/EU_Snap.lua", R"(
+function run(self)
+  local crate = lsd.find("Crate")
+  local x, y, z = lsd.position(crate)
+  local e, px, py, pz = lsd.raycast(x, y, z, 0, 0, -1, 50)
+  if e == lsd.find("Ground") then lsd.set_position(crate, px, py, pz) end
+  local touching = lsd.overlap_box(px, py, pz + 0.5, 0.5, 0.5, 0.5)
+  if #touching == 1 and touching[1] == e then lsd.set_position(crate, px + 1, py, pz) end
+end
+)"));
+    const Vec3 p = w.get<world::Transform>(crate)->position;
+    CHECK(p.x == 4.0f && p.y == 4.0f && p.z == 1.0f);  // snapped down, then the overlap found the ground
+}
+
 // Multi-user editing: one editor's edits as ops, applied on another's copy of the level.
 static void test_multi_user_ops() {
     HeapAllocator heap("multi_user");
@@ -1413,11 +1452,38 @@ static void test_asset_compiler() {
     fs::remove_all(root);
 }
 
+// Button sounds: which elements count as clickable, and one hover sound per element entered.
+static void test_ui_sounds() {
+    using lsd::ui::is_clickable;
+    CHECK(is_clickable("button", "", false, false, false));
+    CHECK(is_clickable("select", "", false, false, false));
+    CHECK(is_clickable("div", "", true, false, false));                    // onclick
+    CHECK(is_clickable("div", "", false, true, false));                    // data-click-sound / data-hover-sound
+    CHECK(is_clickable("input", "checkbox", false, false, false));
+    CHECK(is_clickable("input", "submit", false, false, false));
+    CHECK(!is_clickable("input", "text", false, false, false));            // a text field
+    CHECK(!is_clickable("input", "range", false, false, false));
+    CHECK(!is_clickable("div", "", false, false, false));
+    CHECK(!is_clickable("span", "button", false, false, false));           // type means nothing outside <input>
+    CHECK(!is_clickable("button", "", true, false, true));                 // disabled
+    int a = 0, b = 0;
+    lsd::ui::HoverTracker t;
+    CHECK(!t.enter(&a, false));  // a document opened under a still cursor: silent
+    CHECK(!t.enter(&a, true));   // moving inside it: still silent
+    CHECK(!t.enter(nullptr, true));
+    CHECK(t.enter(&a, true));    // back onto it: once
+    CHECK(!t.enter(&a, true));
+    CHECK(t.enter(&b, true));    // straight onto the next button
+    CHECK(!t.enter(&b, false));
+}
+
 int main() {
+    test_ui_sounds();
     test_asset_compiler();
     test_sound_synth();
     test_cloth_mesh();
     test_editor_utility();
+    test_editor_utility_traces();
     test_pcg_graph();
     test_paper2d();
     test_templates();

@@ -27,6 +27,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 #include "lsd/physics/physics.h"
 #include "lsd/script/script.h"
 #include "lsd/world/components.h"
@@ -61,6 +62,11 @@ struct NetPlay {
     char push_to_talk_key[24] = "V";
     char talk_to_all_key[24] = "B";
 };
+
+// The static collision of one object as Play builds it (Static Mesh with collision, Instanced Static Mesh
+// copies, sprite, tile map, Blocking Volume); each body goes to `add`. Play and the editor's traces share it.
+void add_static_bodies(const world::World& world, world::Entity e, MeshCache& meshes, const asset::AssetRegistry* registry,
+                       void (*add)(void* user, world::Entity owner, const physics::BodyDesc& d), void* user);
 
 class PlaySession {
 public:
@@ -180,7 +186,6 @@ private:
         f32 mass = 0.0f, friction = 0.0f, bounciness = 0.0f;  // as last applied (live edits compare with these)
     };
 
-    static constexpr u32 kMaxBodies = 8192;
     static constexpr u32 kMaxJoints = 1024;
     world::Entity joint_owners_[kMaxJoints];  // the object whose Physics Joint made each joint
 
@@ -300,7 +305,8 @@ private:
     const asset::AssetRegistry* registry_ = nullptr;
     world::World* world_ = nullptr;
     MeshCache* meshes_ = nullptr;
-    world::Entity body_entities_[kMaxBodies];  // which object each physics body belongs to
+    std::vector<world::Entity> body_entities_;  // which object each physics body belongs to (by body index; grows with the level)
+    void set_body_entity(u32 body, world::Entity e);
     // Static collision that follows script writes (ScriptHost::touched): an object's static bodies (the range
     // add_entity_bodies made) with the pose, scale and collision they were built for. Nothing runs per frame for
     // objects no script touched.

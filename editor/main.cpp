@@ -111,6 +111,7 @@ bool g_main_view = false;    // draw_world is drawing the first viewport (its Hi
 lsd::editor::DynamicGi g_dynamic_gi;  // World Settings > Dynamic Global Illumination (r.DynamicGI)
 bool g_occlusion_culling = true;  // r.OcclusionCulling
 bool g_texture_streaming = true;  // r.TextureStreaming
+bool g_log_ui_sounds = false;  // ui.LogSounds
 lsd::i32 g_texture_pool_mb = 0;    // r.TexturePoolSize (0: a quarter of the video memory budget)
 bool g_gpu_mark_shadows = false;  // the next sun shadow pass ends GPU timing section 1
 // The selected objects' draws of the view being drawn: outlined after its post pass (Unreal's orange outline).
@@ -1294,7 +1295,8 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
                                     lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
         const lsd::editor::CachedMesh* mesh = lightmapped_mesh(meshes, world.name(e), component->mesh, m);
-        if (!mesh) mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : item ? item->mesh : meshes.get(component->mesh);
+        // Box UV: metres times the material's tiling (shortcut: the object's own material, not per-slot overrides)
+        if (!mesh) mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale * materials.box_uv_tiling(component->material)) : item ? item->mesh : meshes.get(component->mesh);
         if (!mesh) continue;
         const lsd::Mat4 mvp = view_proj * m;
         if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
@@ -1698,6 +1700,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
 void register_console(EditorState& s) {
     namespace console = lsd::console;
     console::add_variable("r.Grid", &s.show_grid, "Draw the floor grid");
+    console::add_variable("ui.LogSounds", &g_log_ui_sounds, "Log each game UI button sound (hover / click) and its voice");
     console::add_variable("show.Navigation", &s.show_navigation, "Draw the navmesh (P)");
     console::add_variable("show.AudioMixer", &s.show_audio_mixer, "Window > Audio Mixer: Sound Classes, their Submix effects and live meters");
     console::add_variable("show.Bounds", &s.show_bounds, "Draw each mesh's bounding box");
@@ -3150,6 +3153,17 @@ int main(int argc, char** argv) {
     auto* ui_panels = new lsd::editor::UiPanels();  // UiPanel components' documents (deleted before the UI library)
     g_ui_panels = ui_panels;
     play.set_ui_panels(ui_panels);
+    // Button sounds (Project Settings > User Interface) for the game UI and world panels, in Play only.
+    lsd::ui::set_sounds(
+        [](void* user, lsd::ui::UiContext&, bool click, const char* sound) {
+            const EditorState& st = *static_cast<const EditorState*>(user);
+            if (!st.playing || !st.sounds) return;
+            const lsd::editor::ProjectSettings& pr = st.project;
+            if (!sound) sound = click ? pr.ui_click_sound : pr.ui_hover_sound;
+            const lsd::u32 voice = st.sounds->play_ui(sound, pr.ui_sound_volume, pr.ui_sound_class);
+            if (g_log_ui_sounds) LSD_LOG_INFO("ui", "UI %s sound '%s': voice %u", click ? "click" : "hover", sound, voice);
+        },
+        &state);
     // The player's settings: loaded (the first time: the quality this graphics card suits) and applied.
     lsd::editor::GameUserSettings user_settings;
     // The quality for this PC: the graphics card's recommendation, then the first of the project's Device Profiles
@@ -3196,6 +3210,7 @@ int main(int argc, char** argv) {
         sounds.set_class_volume("Master", user_settings.master_volume);
         sounds.set_class_volume("Music", user_settings.music_volume, false);  // projects without these classes: nothing to set
         sounds.set_class_volume("SFX", user_settings.effects_volume, false);
+        sounds.set_class_volume("UI", user_settings.ui_volume, false);
         if (game_mode) SDL_SetWindowFullscreen(window, user_settings.fullscreen);
         lsd::ui::set_text_scale(user_settings.ui_text_scale);  // shortcut: the UI window's preview scales too (one font engine for all contexts)
     };
@@ -4484,6 +4499,7 @@ int main(int argc, char** argv) {
     thumbnails.~ThumbnailCache();
     allocator.deallocate(thumbnail_memory);
     delete particle_editor;
+    lsd::ui::set_sounds(nullptr, nullptr);
     play.set_ui(nullptr);  // ~PlaySession stops Play again: it must not reach the deleted context
     play.set_ui_panels(nullptr);
     g_ui_panels = nullptr;
