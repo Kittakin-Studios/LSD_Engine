@@ -1733,6 +1733,9 @@ void register_console(EditorState& s) {
         volatile int* nowhere = nullptr;
         *nowhere = 1;
     }, &s, "Crash on purpose (writes a crash report to Saved/Crashes): debug.Crash [abort | terminate]");
+    console::add_command("debug.DeviceLost", [](void* user, const char*) {  // tests the lost-GPU message, autosave and exit
+        if (auto& st = *static_cast<EditorState*>(user); st.device) st.device->remove_device();
+    }, &s, "Lose the graphics device on purpose (D3D12): the editor shows its message, keeps the level and closes");
     console::add_command("debug.Break", [](void*, const char* args) {  // a Lua breakpoint from the console: debug.Break Content/x.lua 12
         char file[260];
         int line = 0;
@@ -2592,6 +2595,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "-rhi=vulkan") == 0) desc.backend = lsd::rhi::Backend::Vulkan;
         else if (std::strcmp(argv[i], "-rhi=opengl") == 0) desc.backend = lsd::rhi::Backend::OpenGL;
         else if (std::strcmp(argv[i], "-validation") == 0) desc.enable_validation = true;
+        else if (std::strcmp(argv[i], "-gpu-debug") == 0) desc.gpu_debug = true;
         else if (std::strncmp(argv[i], "-frames=", 8) == 0) max_frames = std::atol(argv[i] + 8);
         else if (std::strncmp(argv[i], "-screenshot=", 12) == 0) screenshot_frame = std::atol(argv[i] + 12);
         else if (std::strncmp(argv[i], "-import=", 8) == 0) import_arg = argv[i] + 8;
@@ -3042,6 +3046,7 @@ int main(int argc, char** argv) {
     char title[400] = "";
 
     bool running = true;
+    bool keep_lock = game_mode;  // the lock file stays when the GPU was lost: the next start offers the autosave (a game has none)
     bool minimized = false;
     lsd::rhi::TextureHandle shot_target, shot_scene;  // HighResShot, read back after the frame
     lsd::rhi::TextureHandle reflection_faces[lsd::render::kMaxReflections * 6], reflection_atlas;  // reflection captures
@@ -4133,6 +4138,29 @@ int main(int argc, char** argv) {
         }
         device->end_frame();
         ++frame;
+        if (const char* why = device->device_lost()) {  // the GPU failed: nothing draws again, so keep the edits and close
+            char kept[400] = "";
+            if (!game_mode && history.dirty()) {  // in Play the world is the game's copy: the level as it was before Play is the edit
+                fs::create_directories(kAutosaveDir, ignored);
+                const std::string path = autosave_path(state.level_path);
+                bool ok = false;
+                if (!state.playing) ok = lsd::world::save_level_file(world, path.c_str());
+                else if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                    ok = std::fwrite(play_snapshot.data(), 1, play_snapshot.size(), f) == play_snapshot.size();
+                    std::fclose(f);
+                }
+                if (ok) std::snprintf(kept, sizeof kept, "\n\nYour unsaved level was kept in %s: the editor offers it when it opens again.", path.c_str());
+            }
+            keep_lock = true;  // the next start sees an unclean exit and offers the autosave
+            char text[1200];
+            std::snprintf(text, sizeof text,
+                          "The graphics driver stopped responding (%s), so %s has to close.%s\n\n"
+                          "Saved/Logs has the details. If it happens again, start with -gpu-debug and send the log's [d3d12] lines.",
+                          why, game_mode ? "the game" : "LSD_Engine", kept);
+            LSD_LOG_ERROR("editor", "Closing: the graphics device was lost (%s)", why);
+            if (!hidden_arg) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Graphics driver stopped", text, window);
+            break;
+        }
         const bool capture_pass = reflection_capture_count || env_pending;
         if (capture_pass || env_refresh) {  // the captures' faces: read back, unwrapped into the atlas; the environment's tile; uploaded
             static std::vector<lsd::u8> face_pixels[6];
@@ -4212,7 +4240,7 @@ int main(int argc, char** argv) {
     }
 
     if (unit_tests.joinable()) unit_tests.join();
-    if (!game_mode) fs::remove(kLockPath, ignored);
+    if (!keep_lock) fs::remove(kLockPath, ignored);
     lsd::console::remove_all();  // the registrations point into state
     lsd::world::set_prefab_resolver(nullptr, nullptr);  // it points at the registry
     lsd::editor::set_timeline_registry(nullptr);

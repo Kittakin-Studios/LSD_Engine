@@ -453,6 +453,7 @@ struct DeviceDesc {
     Backend backend = Backend::Auto;
     i32 adapter_override = -1;  // -1 = pick automatically (-gpu=<index> on the command line)
     bool enable_validation = false;
+    bool gpu_debug = false;  // -gpu-debug (also on with -validation): D3D12 DRED breadcrumbs and page faults, logged if the GPU fails
 };
 
 class Device {
@@ -554,6 +555,10 @@ public:
                                 const f32* soft = nullptr) = 0;
     virtual void draw_test_triangle(f32 scale, f32 rotation_radians) = 0;
     virtual void end_frame() = 0;  // presents
+    // Non-null once the GPU device is lost (driver crash or reset, a GPU page fault, a GPU hang): why, in a few
+    // words. Nothing draws after that; the caller tells the user and quits. Backends that never detect it: null.
+    virtual const char* device_lost() const { return nullptr; }
+    virtual void remove_device() {}  // tests (debug.DeviceLost): makes the device lost on purpose, where the backend can
     // GPU timings (stat dump): a timestamp at `slot` in this frame's GPU work; gpu_timings gives the
     // last finished frame's milliseconds from slot 0 to each slot (negative: not set that frame).
     // Read a frame or two later, so the CPU never waits for them. Backends without it return false.
