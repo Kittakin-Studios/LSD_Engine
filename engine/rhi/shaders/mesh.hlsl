@@ -695,6 +695,10 @@ float3 scene_out(float3 c, float3 wpos, float3 cam, float2 pixel, float3 fog_lit
     return to_srgb(finish(c, wpos, cam, pixel, fog_lit));
 }
 
+// The built-in material's Tiling (rhi::pack_uv_scale in n2.w, the slot Material Graphs use for Time): 0 = untiled.
+float2 uv_tiling(float2 uv) {
+    return n2.w < 0.5 ? uv : uv * float2(floor(n2.w / 4096.0), fmod(n2.w, 4096.0)) / 64.0;
+}
 // Normal map without stored tangents: a tangent frame from screen derivatives.
 float3 perturb_normal(float3 n, float3 wpos, float2 uv, float3 tn) {
     const float3 dp1 = ddx(wpos), dp2 = ddy(wpos);
@@ -748,22 +752,23 @@ float4 ps_main(VsOut i, bool front : SV_IsFrontFace) : SV_Target {
     const float spec_map = 1.0;
     const float3 emissive = surf.emissive;
 #else
+    const float2 uv = uv_tiling(i.uv);
     float2 texel_size;
     base_tex.GetDimensions(texel_size.x, texel_size.y);
-    float4 base = color * (pixel_art ? base_tex.SampleLevel(samp, (floor(i.uv * texel_size) + 0.5) / texel_size, 0) : base_tex.Sample(samp, i.uv));
+    float4 base = color * (pixel_art ? base_tex.SampleLevel(samp, (floor(uv * texel_size) + 0.5) / texel_size, 0) : base_tex.Sample(samp, uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (n0.w > 0.5 && n0.w < 1.5) return float4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a);
     if (has_normal_map) {  // Z from X and Y: BC5 maps have none, RGBA8 ones give the same
-        const float2 nxy = normal_tex.Sample(samp, i.uv).xy * 2.0 - 1.0;
-        n = perturb_normal(n, i.wpos, i.uv, float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy)))));
+        const float2 nxy = normal_tex.Sample(samp, uv).xy * 2.0 - 1.0;
+        n = perturb_normal(n, i.wpos, uv, float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy)))));
     }
-    const float4 orm4 = orm_tex.Sample(samp, i.uv);  // A: the Specular map (white = none)
+    const float4 orm4 = orm_tex.Sample(samp, uv);  // A: the Specular map (white = none)
     const float3 orm = orm4.rgb;
     const float metallic = saturate(mat0.x * orm.b);
     const float roughness = clamp(mat0.y * orm.g, 0.04, 1.0);
     const float ao = orm.r;
     const float spec_map = orm4.a;
-    const float3 emissive = float3(mat0.zw, mat1.x) * emissive_tex.Sample(samp, i.uv).rgb;
+    const float3 emissive = float3(mat0.zw, mat1.x) * emissive_tex.Sample(samp, uv).rgb;
 #endif
     if (n0.w > 1.5 && n0.w < 2.5) { const float3 nc = n * 0.5 + 0.5; return float4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); }  // Normals view mode
     base.rgb = apply_decals(base.rgb, i.wpos, n);

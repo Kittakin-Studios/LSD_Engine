@@ -56,13 +56,13 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 **Automated runs must be silent and hidden**: always pass `-nosound -hidden` (test audio once reached her speakers; `-hidden`
 creates the window hidden: no window, splash, dialog or focus change, child game windows inherit it, rendering and `screenshot` still work).
 Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
-(quit after n frames), `-screenshot=<n>` (OpenGL or Vulkan: Saved/screenshot.bmp; does not quit by itself),
+(quit after n frames), `-screenshot=<n>` (Saved/screenshot.bmp, every backend; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
 `-remote[=port]` (Tools > Remote Console connects to it; localhost only), `-server` / `-dedicated` /
 `-connect=<host[:port]>`, `-port=<n>` (multiplayer, when Project Settings > Multiplayer is on).
 `input.Hold <key> <seconds>` takes names with spaces ("Left Shift", "Right Mouse Button") and drives the game even when the window has no focus.
-Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `template.New <name>` (a template level), `assistant.Ask <message>` / `assistant.Lesson <n>` (LSD Assistant), `screenshot` (OpenGL, next frame), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
+Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `template.New <name>` (a template level), `assistant.Ask <message>` / `assistant.Lesson <n>` (LSD Assistant), `screenshot` (next frame, every backend), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
 `debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle

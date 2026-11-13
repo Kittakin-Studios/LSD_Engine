@@ -158,8 +158,10 @@ private:
         bool graph_instance;  // a MaterialInstance whose parent (`parent`) is a Material Graph
     };
     void load_graph(Entry& entry, const char* path);
-    // Separate Roughness / Metallic / Ambient Occlusion / Specular maps packed into one ORM texture (R, G, B, A) when the material loads.
+    // Separate Roughness / Metallic / Ambient Occlusion / Specular maps, or another channel packing of the ORM Texture (Texture Setup),
+    // packed into one ORM texture (R, G, B, A) when the material loads; also flip_normal.
     void pack_maps(Entry& entry);
+    void flip_normal(Entry& entry);  // Normal DirectX: a green-flipped copy of the normal map
     void resolve_textures(Entry& entry);
     Entry* find(const char* guid);
     void load(Entry& entry);

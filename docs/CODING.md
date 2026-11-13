@@ -318,7 +318,7 @@ Type these in the console line at the bottom of the Output Log tab, or pass them
 | `game.Compile` / `game.NewScript <Name> [c]` / `game.Scripts` | C / C++ game code: build, new script, list |
 | `scene.List` / `asset.List [text]` / `log.Tail [n]` | The level's objects, the assets, the latest log lines |
 | `asset.Open <name>` | Open an asset in its editor, like a double-click in the Content Browser |
-| `screenshot` | Save the next frame to `Saved/screenshot.bmp` (OpenGL, `-rhi=opengl`) |
+| `screenshot` | Save the next frame to `Saved/screenshot.bmp` (any backend) |
 | `stat fps` (or `stat unit`) / `stat audio` | Overlays: frame time and draw calls / active sounds |
 | `view perspective\|top\|front\|right` | Viewport angle |
 | `layout 1\|2\|4` | One, two or four viewports |

@@ -3,7 +3,7 @@
 // cut-out (base colour alpha times cut.y below cut.x casts none), used only for Masked casters.
 struct Push {
     float4x4 mvp;  // the light's view-projection times the world (INSTANCED: the light's view-projection)
-    float4 cut;    // x = cutoff, y = the tint's alpha
+    float4 cut;    // x = cutoff, y = the tint's alpha, zw = the Tiling
 };
 [[vk::push_constant]] Push pc;
 [[vk::combinedImageSampler]] [[vk::binding(0, 0)]] Texture2D base_tex;
@@ -46,5 +46,5 @@ VsOut vs_main(VsIn i) {
 }
 
 void ps_main(VsOut i) {
-    if (base_tex.Sample(base_samp, i.uv).a * pc.cut.y < pc.cut.x) discard;
+    if (base_tex.Sample(base_samp, i.uv * pc.cut.zw).a * pc.cut.y < pc.cut.x) discard;
 }

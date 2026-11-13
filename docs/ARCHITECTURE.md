@@ -261,6 +261,18 @@ ones. The finished grid is written into `LightSetup::probes` (replacing the bake
 turns the lightmaps off) for every view, so the lit shaders' existing `ambient_light` reads it on D3D12, Vulkan and
 OpenGL alike. `stat dump` prints the sweep time and the main thread's share; `r.DynamicGI 0` turns it off.
 
+**Material Texture Setup** (maps authored for Unreal, used as they are): `MaterialCache::pack_maps` repacks the ORM
+Texture when its channels are not R AO / G roughness / B metallic (`ao_channel`, `roughness_channel`,
+`metallic_channel`, 4 = none, `roughness_is_gloss` inverting) or separate maps are set, and `flip_normal` writes a
+green-inverted copy of a DirectX normal map (`normal_directx`); both through `asset::pack_channels` once into
+`DerivedData/Materials/<P|N><hash>.png` (keyed by the source paths, times and the channel recipe) and handed to the
+texture cache by key (`TextureCache::set_file`), so the shaders only ever see glTF ORM and OpenGL normals. Tiling
+(`tiling_u`, `tiling_v`) needs no constant of its own: `MeshDraw::uv_scale` is packed by `rhi::pack_uv_scale` into the
+draw constant Material Graphs use for Time (n2.w; `u_time` on OpenGL), which the built-in material never reads, and
+mesh.hlsl's `uv_tiling` (and the GLSL mirror) scale every texture lookup; Masked cut-out shadows get it in
+`ShadowCutout::uv_scale` (cut.zw). The D3D12 root signature is full (63 of 64 DWORDs), hence the packing. Draws with
+different tiling never batch together (`batch_key`). Shortcut: no UV offset or rotation, scales in 1/64 steps up to 64.
+
 **Texture streaming and the texture pool** (Unreal's texture streaming / Streaming Virtual Texturing in spirit):
 `TextureCache` (`editor/material_cache.*`) decodes textures on a worker thread. Each draw passes `want`, about the
 texels across the object covers on screen (bounds over distance times the viewport height, scaled by the Quality

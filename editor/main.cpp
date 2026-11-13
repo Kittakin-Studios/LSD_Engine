@@ -222,6 +222,8 @@ bool shadow_cutout(const char* material, const lsd::LinearColor& tint, lsd::rhi:
     out.texture = look.base_color_texture;
     out.cutoff = look.alpha_cutoff;
     out.alpha = look.color[3];
+    out.uv_scale[0] = look.uv_scale[0];
+    out.uv_scale[1] = look.uv_scale[1];
     return true;
 }
 lsd::editor::DecalAtlas* g_decals = nullptr;  // decal textures for draw_world
@@ -910,7 +912,7 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
     };
     mix(&d.vertices.value, 4), mix(&d.indices.value, 4), mix(&d.index_count, 4), mix(d.color, sizeof d.color);
     mix(&d.metallic, 4), mix(&d.roughness, 4), mix(&d.specular, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
-    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4);
+    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4), mix(d.uv_scale, sizeof d.uv_scale);
     const lsd::u32 flags = (d.unlit ? 1u : 0u) | (d.pixel_art ? 2u : 0u) | (d.debug_view << 2);
     mix(&flags, 4);
     return h;
@@ -2043,7 +2045,7 @@ void register_console(EditorState& s) {
     console::add_command("BuildReflections", [](void* user, const char*) { static_cast<EditorState*>(user)->capture_reflections = true; }, &s,
                          "BuildReflections: capture every Reflection Capture again (Build > Build Reflection Captures)");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
-                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL or Vulkan)");
+                         "screenshot: save the next frame to Saved/screenshot.bmp");
     console::add_command("assistant.Ask", [](void* user, const char* args) {
         lsd::editor::assistant::ask(*static_cast<EditorState*>(user), args);
     }, &s, "assistant.Ask <message>: send a message to LSD Assistant, as if typed in its chat");
@@ -2567,7 +2569,7 @@ int main(int argc, char** argv) {
     // shortcut: startup mirrors runtime/main.cpp; fold both into a shared app layer when a third exe needs it.
     lsd::rhi::DeviceDesc desc{};
     long max_frames = -1;
-    long screenshot_frame = -1;        // -screenshot=<n>: save frame n to Saved/screenshot.bmp (OpenGL)
+    long screenshot_frame = -1;        // -screenshot=<n>: save frame n to Saved/screenshot.bmp
     const char* import_arg = nullptr;  // -import=<file>: same as dropping the file on the editor
     const char* place_arg = nullptr;   // -place=<asset name>: place that mesh asset at (-2, 0, 0) on startup
     const char* level_arg = nullptr;   // -level=<path>: open this level instead of the last one
@@ -4129,7 +4131,7 @@ int main(int argc, char** argv) {
         state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
         LSD_PROFILE_FRAME();
         if ((frame == screenshot_frame || std::exchange(g_screenshot, false)) && !device->capture_frame("Saved/screenshot.bmp")) {
-            LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl or -rhi=vulkan for now.");
+            LSD_LOG_WARN("editor", "Could not take the screenshot (this backend cannot read the frame back).");
         }
         device->end_frame();
         ++frame;

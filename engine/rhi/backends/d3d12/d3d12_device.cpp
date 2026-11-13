@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <utility>
@@ -77,7 +78,7 @@ float4 ps_main(VsOut i) : SV_Target { return float4(i.color, 1); }
 
 // Shadow casters: depth only (SKINNED: skinned first).
 constexpr char kShadowHlsl[] = R"(
-cbuffer Draw : register(b0) { float4x4 mvp; float4 cut; };  // cut (Masked casters): x the alpha cutoff, y the tint's alpha
+cbuffer Draw : register(b0) { float4x4 mvp; float4 cut; };  // cut (Masked casters): x the alpha cutoff, y the tint's alpha, zw the Tiling
 #ifdef CUTOUT
 Texture2D base_tex : register(t0);
 SamplerState samp : register(s0);
@@ -105,7 +106,7 @@ ShadowOut vs_main(float3 pos : POSITION, float2 uv : TEXCOORD0) {
     return o;
 }
 #endif
-void ps_cutout(ShadowOut i) { if (base_tex.Sample(samp, i.uv).a * cut.y < cut.x) discard; }
+void ps_cutout(ShadowOut i) { if (base_tex.Sample(samp, i.uv * cut.zw).a * cut.y < cut.x) discard; }
 #elif defined(SKINNED)
 cbuffer Joints : register(b2) { float4 joint_rows[768]; };
 float4 vs_main(float3 pos : POSITION, uint4 joints : BLENDINDICES, float4 weights : BLENDWEIGHT) : SV_Position {
@@ -711,8 +712,8 @@ public:
         constants[47] = draw.emissive[1];
         constants[48] = draw.emissive[2];
         std::memcpy(constants + 49, draw.camera_position, sizeof draw.camera_position);
-        constants[27] = draw.time;  // the normal matrix's spare w
         const MaterialShader* material = draw.wireframe ? nullptr : lookup_material(draw.material_shader);
+        constants[27] = material ? draw.time : pack_uv_scale(draw.uv_scale);  // the normal matrix's spare w: a graph's Time, else the Tiling
         const Texture* base = lookup_texture(draw.base_color_texture);
         const Texture* orm = lookup_texture(draw.orm_texture);
         const Texture* emissive = lookup_texture(draw.emissive_texture);
@@ -967,7 +968,7 @@ public:
         list_->SetGraphicsRootSignature(root_signature_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 16, light_mvp, 0);
         if (cut_tex) {  // Masked: the texture's alpha decides which pixels cast
-            const f32 cut[4] = {cutout->cutoff, cutout->alpha, 0.0f, 0.0f};
+            const f32 cut[4] = {cutout->cutoff, cutout->alpha, cutout->uv_scale[0], cutout->uv_scale[1]};
             list_->SetGraphicsRoot32BitConstants(0, 4, cut, 16);
             ID3D12DescriptorHeap* heaps[] = {srv_heap_.Get()};
             list_->SetDescriptorHeaps(1, heaps);
@@ -1701,9 +1702,44 @@ public:
         return true;
     }
 
+    // The screenshot command: the back buffer is copied out at end_frame and written as a BMP once the frame is done.
+    bool capture_frame(const char* bmp_path) override {
+        std::snprintf(capture_path_, sizeof capture_path_, "%s", bmp_path);
+        return true;
+    }
+
     void end_frame() override {
         if (current_target_ >= 0) set_render_target({}, nullptr);
-        transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        ComPtr<ID3D12Resource> capture;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+        if (capture_path_[0]) {  // back buffer -> a readback buffer
+            const D3D12_RESOURCE_DESC desc = back_buffers_[frame_]->GetDesc();
+            UINT64 total = 0;
+            device_->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &total);
+            D3D12_HEAP_PROPERTIES heap{};
+            heap.Type = D3D12_HEAP_TYPE_READBACK;
+            D3D12_RESOURCE_DESC buffer{};
+            buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            buffer.Width = total;
+            buffer.Height = 1;
+            buffer.DepthOrArraySize = 1;
+            buffer.MipLevels = 1;
+            buffer.SampleDesc.Count = 1;
+            buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            if (check(device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&capture)),
+                      "CreateCommittedResource (capture)")) {
+                transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                D3D12_TEXTURE_COPY_LOCATION from{}, to{};
+                from.pResource = back_buffers_[frame_].Get();
+                from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                to.pResource = capture.Get();
+                to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                to.PlacedFootprint = footprint;
+                list_->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+                transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
+            }
+        }
+        if (!capture) transition(back_buffers_[frame_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         if (timestamps_set_[frame_]) {  // this frame's timestamps into the readback buffer, read when the frame is done
             u32 last = 0;
             for (u32 i = 0; i < kGpuTimestamps; ++i) last = (timestamps_set_[frame_] >> i) & 1u ? i : last;
@@ -1716,9 +1752,48 @@ public:
         list_->Close();
         ID3D12CommandList* lists[] = {list_.Get()};
         queue_->ExecuteCommandLists(1, lists);
+        if (capture) write_capture(capture.Get(), footprint);
         swapchain_->Present(1, 0);  // vsync
         queue_->Signal(fence_.Get(), ++fence_value_);
         frame_fence_values_[frame_] = fence_value_;
+    }
+
+    // Waits for the frame, then writes the copied back buffer (RGBA rows, top-down) as a 24-bit BMP (BGR, bottom-up).
+    void write_capture(ID3D12Resource* capture, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint) {
+        wait_for_gpu();
+        const u32 w = footprint.Footprint.Width, h = footprint.Footprint.Height, row_bytes = (w * 3 + 3) & ~3u;
+        u8* mapped = nullptr;
+        bool ok = false;
+        if (SUCCEEDED(capture->Map(0, nullptr, reinterpret_cast<void**>(&mapped)))) {
+            u8 header[54] = {'B', 'M'};
+            auto put32 = [&](int at, u32 v) { for (int i = 0; i < 4; ++i) header[at + i] = static_cast<u8>(v >> (8 * i)); };
+            put32(2, 54 + row_bytes * h);
+            put32(10, 54);
+            put32(14, 40);
+            put32(18, w);
+            put32(22, h);
+            header[26] = 1;   // planes
+            header[28] = 24;  // bits per pixel
+            put32(34, row_bytes * h);
+            if (FILE* file = std::fopen(capture_path_, "wb")) {
+                ok = std::fwrite(header, 1, sizeof header, file) == sizeof header;
+                std::vector<u8> row(static_cast<usize>(row_bytes), 0);
+                for (u32 y = 0; ok && y < h; ++y) {
+                    const u8* src = mapped + footprint.Offset + static_cast<usize>(h - 1 - y) * footprint.Footprint.RowPitch;
+                    for (u32 x = 0; x < w; ++x) {
+                        row[x * 3] = src[x * 4 + 2];
+                        row[x * 3 + 1] = src[x * 4 + 1];
+                        row[x * 3 + 2] = src[x * 4];
+                    }
+                    ok = std::fwrite(row.data(), 1, row_bytes, file) == row_bytes;
+                }
+                ok = std::fclose(file) == 0 && ok;
+            }
+            const D3D12_RANGE nothing{0, 0};
+            capture->Unmap(0, &nothing);
+        }
+        LSD_LOG_INFO("d3d12", ok ? "Saved %s" : "Could not write %s", capture_path_);
+        capture_path_[0] = '\0';
     }
 
 private:
@@ -2667,6 +2742,7 @@ private:
     u32 frame_ = 0;
     u32 width_ = 0;
     u32 height_ = 0;
+    char capture_path_[260] = "";  // capture_frame: written at the next end_frame
     ComPtr<ID3D12DescriptorHeap> dsv_heap_;
     ComPtr<ID3D12Resource> depth_;
     ComPtr<ID3D12RootSignature> root_signature_;

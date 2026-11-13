@@ -35,6 +35,24 @@ struct Material {
     u32 blend_mode = 0;
     LSD_PROPERTY(Edit, Category = "Blending", Min = 0, Max = 1, Tooltip = "Times the base colour texture's alpha (Translucent, Additive, Masked)") f32 opacity = 1.0f;
     LSD_PROPERTY(Edit, Category = "Blending", Min = 0, Max = 1, Tooltip = "Masked: alpha below this is not drawn") f32 opacity_mask_clip = 0.333f;
+    // Unreal-authored maps as they are, no copies: tiling, DirectX normals, other channel packings (applied when the material loads).
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Min = 0.02, Max = 63, Tooltip = "Tiling across U (Unreal's TexCoord UTiling): every texture repeats this many times over the mesh's UVs. 1 = as authored")
+    f32 tiling_u = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Min = 0.02, Max = 63, Tooltip = "Tiling across V (Unreal's TexCoord VTiling). 1 = as authored")
+    f32 tiling_v = 1.0f;
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Tooltip = "The Normal Texture is DirectX style (green points down: Unreal, Substance 'DirectX', most _N maps from Unreal packs). Its green is flipped when it loads; the file is not changed")
+    bool normal_directx = false;
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Widget = "Choice:R,G,B,A,None",
+                 Tooltip = "Which channel of the ORM Texture holds ambient occlusion (ORM / ARM: R; Unreal 'MRA' masks: B). None = no occlusion")
+    u32 ao_channel = 0;
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Widget = "Choice:R,G,B,A,None",
+                 Tooltip = "Which channel of the ORM Texture holds roughness (ORM / ARM / HRM: G; 'MRA': G; 'SMRA': B). None = Roughness alone")
+    u32 roughness_channel = 1;
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Widget = "Choice:R,G,B,A,None",
+                 Tooltip = "Which channel of the ORM Texture holds metallic (ORM / ARM / HRM: B; 'MRA': R; 'SMRA': G). None = Metallic alone")
+    u32 metallic_channel = 2;
+    LSD_PROPERTY(Edit, Category = "Texture Setup", Tooltip = "The roughness channel is glossiness or smoothness (white = shiny): it is inverted when the material loads")
+    bool roughness_is_gloss = false;
     LSD_PROPERTY(Edit, Widget = "Choice:Default Lit,Hair",
                  Tooltip = "Hair (Unreal's Hair shading model, for hair cards): two highlights running along the strand (lay the strands along the texture's V), soft light through the hair; Roughness sets how sharp they are. Use with Masked and an alpha texture")
     u32 shading_model = 0;

@@ -840,7 +840,7 @@ public:
         const bool skinned = joint_rows && joint_count;
         const Texture* masked = !skinned && cutout ? lookup_texture(cutout->texture) : nullptr;  // shortcut: skinned casters cast solid
         draw_shadow(vertices, indices, index_count, light_mvp, skinned ? 1 : masked ? 3 : 0, joint_rows, skinned ? std::min(joint_count, kMaxJoints) : 0, masked ? masked->set : VK_NULL_HANDLE,
-                    masked ? cutout->cutoff : 0.0f, masked ? cutout->alpha : 1.0f);
+                    masked ? cutout->cutoff : 0.0f, masked ? cutout->alpha : 1.0f, masked ? cutout->uv_scale : nullptr);
     }
 
     // shortcut: no GPU culling in shadow passes here (culls_shadow_instances false: the caller culls on the CPU); run_culling
@@ -913,7 +913,7 @@ public:
         if (normal && normal->shadow_size) normal = nullptr;
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;
         c[23] = (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f) + 4096.0f * std::round((draw.specular < 0.0f ? 0.0f : draw.specular > 1.0f ? 1.0f : draw.specular) * 255.0f);  // see n1.w in the shader
-        c[27] = draw.time;  // the normal matrix's spare w
+        c[27] = material ? draw.time : pack_uv_scale(draw.uv_scale);  // the normal matrix's spare w: a graph's Time, else the Tiling
         c[44] = draw.metallic;
         c[45] = draw.roughness;
         c[46] = draw.emissive[0];
@@ -1503,7 +1503,7 @@ public:
 
     // One caster: kind 0 static, 1 skinned (rows = joints), 2 instanced (rows = copies, mvp = the light's view-projection), 3 Masked.
     void draw_shadow(BufferHandle vertices, BufferHandle indices, u32 index_count, const f32* mvp, int kind, const f32* rows, u32 row_count,
-                     VkDescriptorSet masked, f32 cutoff, f32 alpha) {
+                     VkDescriptorSet masked, f32 cutoff, f32 alpha, const f32* uv_scale = nullptr) {
         if (skip_frame_ || !shadow_pass_ || !shadow_pipelines_[kind] || index_count == 0) return;
         const Buffer* vb = lookup(vertices);
         const Buffer* ib = lookup(indices);
@@ -1514,6 +1514,8 @@ public:
         std::memcpy(push, mvp, sizeof(f32) * 16);
         push[16] = cutoff;
         push[17] = alpha;
+        push[18] = uv_scale ? uv_scale[0] : 1.0f;  // the Tiling (cut.zw)
+        push[19] = uv_scale ? uv_scale[1] : 1.0f;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipelines_[kind]);
         vkCmdPushConstants(cmd, shadow_layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kShadowPushBytes, push);
         if (masked) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_layout_, 0, 1, &masked, 0, nullptr);
