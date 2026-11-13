@@ -368,6 +368,10 @@ static void test_lods() {
     CHECK(near(sizes[4], 0.015f) && near(sizes[5], 0.0075f));
     CHECK(pick_lod(sizes, 6, 0.5f, -1) == 0 && pick_lod(sizes, 6, 0.1f, -1) == 1 && pick_lod(sizes, 6, 0.001f, -1) == 5);
     CHECK(pick_lod(sizes, 3, 0.001f, -1) == 2 && pick_lod(sizes, 3, 0.5f, 7) == 2 && pick_lod(sizes, 6, 0.001f, 0) == 0);
+    // Shadow LODs: a 5 m house over 2 cm texels needs full detail (250 texels across: 0.27); over 50 cm texels LOD 4
+    // (10 texels: 0.011, below 0.015 but not 0.0075); never finer than the camera's, the camera's with no texel size.
+    CHECK(shadow_lod(sizes, 6, 0, 5.0f, 0.02f) == 0 && shadow_lod(sizes, 6, 0, 5.0f, 0.5f) == 4 && shadow_lod(sizes, 6, 5, 5.0f, 0.02f) == 5);
+    CHECK(shadow_lod(sizes, 6, 1, 5.0f, 0.0f) == 1 && shadow_lod(sizes, 1, 0, 5.0f, 0.5f) == 0);
     // A unit box (radius sqrt(3) / 2) scaled by 2, 10 m away: 0.173.
     const float rows[12] = {2, 0, 0, 10, 0, 2, 0, 0, 0, 0, 2, 0};
     const float lo[3] = {-0.5f, -0.5f, -0.5f}, hi[3] = {0.5f, 0.5f, 0.5f}, eye[3] = {0, 0, 0};

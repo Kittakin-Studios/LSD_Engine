@@ -9,8 +9,6 @@ namespace lsd::render {
 
 namespace {
 
-// A 1080-pixel-high view with a 60 degree field of view: pixels per radian at the centre.
-constexpr f32 kPixelsPerRadian = 935.0f;
 constexpr f32 kPixelsPerTriangle = 4.0f;
 
 constexpr u32 kNoLod = 0xFFFFFFFFu;
@@ -55,6 +53,12 @@ u32 pick_lod(const f32 sizes[kMaxLods], u32 lod_count, f32 size, i32 force) {
     u32 lod = 0;
     while (lod + 1 < lod_count && size < sizes[lod + 1]) ++lod;
     return lod;
+}
+
+u32 shadow_lod(const f32 sizes[kMaxLods], u32 lod_count, u32 camera_lod, f32 radius, f32 texel) {
+    if (!(texel > 0.0f) || lod_count <= 1) return camera_lod;
+    const u32 lod = pick_lod(sizes, lod_count, radius / texel / kPixelsPerRadian, -1);
+    return lod > camera_lod ? lod : camera_lod;
 }
 
 u32 lod_triangle_budget(f32 screen_size) {
@@ -104,8 +108,11 @@ void sort_by_lod(const f32* rows, u32 count, const f32 lo[3], const f32 hi[3], c
                  f32 min_size, f32* out_rows, LodBuckets& out) {
     out = LodBuckets{};
     u32 per_lod[kMaxLods] = {};
+    constexpr u32 kKept = 1024;  // an Instanced Static Mesh's most copies: their LODs are kept for the second pass
+    u8 picked[kKept];
     for (u32 i = 0; i < count; ++i) {  // first how many each LOD gets, then each copy into its place
         const u32 lod = copy_lod(rows + i * 12, lo, hi, eye, distance_scale, sizes, lod_count, force, min_size);
+        if (i < kKept) picked[i] = static_cast<u8>(lod == kNoLod ? 0xFF : lod);
         if (lod == kNoLod) ++out.culled;
         else ++per_lod[lod];
     }
@@ -113,7 +120,7 @@ void sort_by_lod(const f32* rows, u32 count, const f32 lo[3], const f32 hi[3], c
     u32 next[kMaxLods];
     std::memcpy(next, out.first, sizeof next);
     for (u32 i = 0; i < count; ++i) {
-        const u32 lod = copy_lod(rows + i * 12, lo, hi, eye, distance_scale, sizes, lod_count, force, min_size);
+        const u32 lod = i < kKept ? (picked[i] == 0xFF ? kNoLod : picked[i]) : copy_lod(rows + i * 12, lo, hi, eye, distance_scale, sizes, lod_count, force, min_size);
         if (lod != kNoLod) std::memcpy(out_rows + static_cast<usize>(next[lod]++) * 12, rows + static_cast<usize>(i) * 12, 12 * sizeof(f32));
     }
 }

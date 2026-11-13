@@ -8,6 +8,13 @@ namespace lsd::render {
 // LOD 0 (the mesh) and five simpler ones. The asset's LOD 1..3 Screen Sizes pick the first three; LOD 4 and 5 take
 // over at half and a quarter of LOD 3's size (far away, where kit pieces of a few hundred triangles still add up).
 constexpr u32 kMaxLods = 6;
+// A 1080-pixel-high view with a 60 degree field of view: pixels per radian at the centre (screen sizes are radians).
+constexpr f32 kPixelsPerRadian = 935.0f;
+
+// The LOD a shadow map needs for a caster `radius` metres across drawn at `texel` metres per shadow texel: the one a
+// 1080p view would pick if the caster covered that many pixels, never finer than `camera_lod` (what the camera sees).
+// Detail finer than a texel cannot show in the shadow; far cascades' texels are tens of centimetres.
+u32 shadow_lod(const f32 sizes[kMaxLods], u32 lod_count, u32 camera_lod, f32 radius, f32 texel);
 
 // The screen sizes each LOD takes over below, from the asset's three (sizes[0] is never used).
 void lod_screen_sizes(f32 lod1, f32 lod2, f32 lod3, f32 sizes[kMaxLods]);

@@ -462,6 +462,7 @@ struct FrameInstances {
         lsd::usize first_row;  // into rows, in floats
         lsd::render::LodBuckets lods;
         lsd::f32 lo[3], hi[3];  // the world box around every copy: kept or dropped whole by a view when it can be
+        lsd::f32 radius;        // the biggest copy's bounding radius (shadow LODs)
         // LOD k's index buffer and count.
         lsd::rhi::BufferHandle indices(lsd::u32 k) const { return k ? mesh->lod_indices[k] : mesh->gpu.indices; }
         lsd::u32 index_count(lsd::u32 k) const { return k ? mesh->lod_index_count[k] : mesh->gpu.index_count; }
@@ -474,19 +475,18 @@ struct FrameInstances {
         lsd::Vec3 bounds_min, bounds_max;
         std::vector<lsd::world::MeshInstance> instances;
         std::vector<lsd::f32> rows;
-        lsd::f32 lo[3], hi[3];
+        lsd::f32 lo[3], hi[3], radius = 0.0f;
         lsd::u64 frame = 0;  // last used (dropped when its object is gone)
     };
     std::vector<Entry> entries;
     std::vector<lsd::f32> rows;
     std::unordered_map<lsd::u32, Kept> kept;  // by entity slot
     lsd::u64 frame = 0;
-    lsd::u64 hash = 0;  // the casting copies, their places and LODs (shadow caching)
+    lsd::u64 hash = 0;  // casting_hash's
     void fill(lsd::world::World& world, lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
         entries.clear();
         rows.clear();
         ++frame;
-        hash = 1469598103934665603ull;
         const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::InstancedStaticMesh>();
         for (lsd::u32 i = 0; i < world.count(type); ++i) {
             const lsd::world::Entity e = world.owner(type, i);
@@ -509,6 +509,7 @@ struct FrameInstances {
                 k.instances.assign(&ism->instances[0], &ism->instances[0] + n);
                 k.rows.resize(static_cast<lsd::usize>(n) * 12);
                 for (int c = 0; c < 3; ++c) k.lo[c] = 1e30f, k.hi[c] = -1e30f;
+                k.radius = 0.0f;
                 for (lsd::u32 j = 0; j < n; ++j) {
                     const lsd::world::MeshInstance& in = ism->instances[j];
                     const lsd::Mat4 m = base * lsd::trs(in.position, in.rotation, in.scale);  // degrees, like Transform
@@ -517,28 +518,42 @@ struct FrameInstances {
                         for (int c = 0; c < 4; ++c) row[r * 4 + c] = m.at(r, c);
                     }
                     lsd::render::grow_box(row, &mesh->bounds_min.x, &mesh->bounds_max.x, k.lo, k.hi);
+                    lsd::f32 centre[3], radius;
+                    lsd::render::copy_sphere(row, &mesh->bounds_min.x, &mesh->bounds_max.x, centre, radius);
+                    k.radius = std::fmax(k.radius, radius);
                 }
             }
-            Entry entry{ism, e, mesh, rows.size(), {}, {k.lo[0], k.lo[1], k.lo[2]}, {k.hi[0], k.hi[1], k.hi[2]}};
+            Entry entry{ism, e, mesh, rows.size(), {}, {k.lo[0], k.lo[1], k.lo[2]}, {k.hi[0], k.hi[1], k.hi[2]}, k.radius};
             rows.resize(rows.size() + k.rows.size());
             const lsd::f32 at[3] = {eye.x, eye.y, eye.z};
             lsd::render::sort_by_lod(k.rows.data(), n, &mesh->bounds_min.x, &mesh->bounds_max.x, at, g_view_distance_scale, mesh->lod_screen_size,
                                      mesh->lod_count, force_lod, g_min_screen_size, rows.data() + entry.first_row, entry.lods);
-            if (ism->cast_shadows) {
-                hash = hash_bytes(hash, &mesh->gpu.vertices.value, 4);
-                hash = hash_bytes(hash, entry.lods.first, sizeof entry.lods.first);
-                hash = hash_bytes(hash, rows.data() + entry.first_row, static_cast<lsd::usize>(entry.lods.first[lsd::render::kMaxLods]) * 12 * sizeof(lsd::f32));
-            }
             entries.push_back(entry);
         }
         for (auto it = kept.begin(); it != kept.end();) it = it->second.frame == frame ? std::next(it) : kept.erase(it);  // objects gone or hidden
     }
+    // The casting copies, their places and LODs (shadow caching): worked out when first asked this frame (a shadow view
+    // with a skeletal mesh in it is redrawn anyway and never asks).
+    lsd::u64 casting_hash() {
+        if (hashed == frame) return hash;
+        hashed = frame;
+        hash = 1469598103934665603ull;
+        for (const Entry& entry : entries) {
+            if (!entry.ism->cast_shadows) continue;
+            hash = hash_bytes(hash, &entry.mesh->gpu.vertices.value, 4);
+            hash = hash_bytes(hash, entry.lods.first, sizeof entry.lods.first);
+            hash = hash_bytes(hash, rows.data() + entry.first_row, static_cast<lsd::usize>(entry.lods.first[lsd::render::kMaxLods]) * 12 * sizeof(lsd::f32));
+        }
+        return hash;
+    }
+    lsd::u64 hashed = 0;
 };
 FrameInstances g_frame_instances;
 
 // Instanced Static Meshes into a shadow map: each LOD's copies that reach this view, drawn instanced. An object wholly
 // inside the view's sides keeps every copy, one wholly outside none; the rest test each copy's box (as the GPU does).
-void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp) {
+// `texel`: the view's metres per shadow texel; copies cast with the LOD that shows (render::shadow_lod; 0: the camera's).
+void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp, lsd::f32 texel) {
     static std::vector<lsd::f32> kept_rows;
     const FrameInstances& frame = g_frame_instances;
     lsd::f32 planes[6][4];
@@ -555,17 +570,18 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp) {
             const lsd::u32 copies = entry.copies(lod);
             if (!copies) continue;
             const lsd::f32* rows = entry.rows_of(frame.rows, lod);
+            const lsd::u32 cast = lsd::render::shadow_lod(mesh.lod_screen_size, mesh.lod_count, lod, entry.radius, texel);  // what the texels can show
             if (whole == lsd::render::Cull::Inside) {
-                device.draw_shadow_instances(mesh.gpu.vertices, entry.indices(lod), entry.index_count(lod), vp.m, rows, copies);
+                device.draw_shadow_instances(mesh.gpu.vertices, entry.indices(cast), entry.index_count(cast), vp.m, rows, copies);
                 ++g_draw_counters.shadow_draws;
-                g_draw_counters.shadow_triangles += static_cast<lsd::u64>(entry.index_count(lod) / 3) * copies;
+                g_draw_counters.shadow_triangles += static_cast<lsd::u64>(entry.index_count(cast) / 3) * copies;
                 continue;
             }
             if (g_gpu_culling && copies >= kGpuCullMinCopies && device.culls_shadow_instances()) {  // the GPU drops the copies outside the light's view
-                device.draw_shadow_instances(mesh.gpu.vertices, entry.indices(lod), entry.index_count(lod), vp.m, rows, copies, &mesh.bounds_min.x, &mesh.bounds_max.x);
+                device.draw_shadow_instances(mesh.gpu.vertices, entry.indices(cast), entry.index_count(cast), vp.m, rows, copies, &mesh.bounds_min.x, &mesh.bounds_max.x);
                 lsd::rhi::MeshDraw d{};
                 std::memcpy(d.mvp, vp.m, sizeof d.mvp);
-                d.index_count = entry.index_count(lod);
+                d.index_count = entry.index_count(cast);
                 std::memcpy(d.local_bounds_min, &mesh.bounds_min, sizeof d.local_bounds_min);
                 std::memcpy(d.local_bounds_max, &mesh.bounds_max, sizeof d.local_bounds_max);
                 ++g_draw_counters.shadow_draws;
@@ -582,15 +598,15 @@ void draw_instanced_casters(lsd::rhi::Device& device, const lsd::Mat4& vp) {
             }
             const lsd::u32 kept = static_cast<lsd::u32>(kept_rows.size() / 12);
             if (!kept) continue;
-            device.draw_shadow_instances(mesh.gpu.vertices, entry.indices(lod), entry.index_count(lod), vp.m, kept_rows.data(), kept);
+            device.draw_shadow_instances(mesh.gpu.vertices, entry.indices(cast), entry.index_count(cast), vp.m, kept_rows.data(), kept);
             ++g_draw_counters.shadow_draws;
-            g_draw_counters.shadow_triangles += static_cast<lsd::u64>(entry.index_count(lod) / 3) * kept;
+            g_draw_counters.shadow_triangles += static_cast<lsd::u64>(entry.index_count(cast) / 3) * kept;
         }
     }
 }
 
 bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::StaticMesh& component, const lsd::Mat4& m, lsd::Vec3 eye, lsd::i32 force_lod,
-                     lsd::rhi::BufferHandle& indices, lsd::u32& count);  // below
+                     lsd::rhi::BufferHandle& indices, lsd::u32& count, lsd::u32* picked = nullptr);  // below
 
 // Every Static Mesh's world matrix and plain mesh (null: hidden or missing), worked out once a frame and shared by
 // the shadow passes, the occluders and the main pass (each used to recompute them: 5+ times a frame); with its world
@@ -604,8 +620,15 @@ struct FrameMeshes {
         lsd::f32 lo[3], hi[3], centre[3], radius;
         lsd::rhi::BufferHandle indices;  // the LOD the camera sees; count 0: not drawn (too far, too small)
         lsd::u32 count;
+        lsd::u32 lod;
         lsd::u8 cut;  // its shadow: 0 not looked up yet, 1 solid, 2 cut out (Masked)
         lsd::rhi::ShadowCutout cutout;
+        // The index buffer it casts with into a shadow view of `texel` metres per texel (0: the camera's LOD).
+        void shadow_lod(lsd::f32 texel, lsd::rhi::BufferHandle& out, lsd::u32& out_count) const {
+            const lsd::u32 k = lsd::render::shadow_lod(mesh->lod_screen_size, mesh->lod_count, lod, radius, texel);
+            out = k == lod ? indices : k ? mesh->lod_indices[k] : mesh->gpu.indices;
+            out_count = k == lod ? count : k ? mesh->lod_index_count[k] : mesh->gpu.index_count;
+        }
     };
     std::vector<Item> items;
     lsd::world::MatrixCache matrices{lsd::default_allocator()};
@@ -630,7 +653,7 @@ struct FrameMeshes {
             for (int c = 0; c < 3; ++c) it.lo[c] = 1e30f, it.hi[c] = -1e30f;
             lsd::render::grow_box(rows, &it.mesh->bounds_min.x, &it.mesh->bounds_max.x, it.lo, it.hi);
             lsd::render::copy_sphere(rows, &it.mesh->bounds_min.x, &it.mesh->bounds_max.x, it.centre, it.radius);
-            if (!pick_static_lod(*it.mesh, *component, it.world, eye, force_lod, it.indices, it.count)) it.count = 0;
+            if (!pick_static_lod(*it.mesh, *component, it.world, eye, force_lod, it.indices, it.count, &it.lod)) it.count = 0;
         }
     }
     // Its shadow caster (looked up once a frame: the material's cut-out).
@@ -757,7 +780,8 @@ lsd::f32 volume_cull_distance(lsd::Vec3 centre, lsd::f32 size) {
 // its Cull Distance Volume's distance or below r.MinScreenSize (not drawn at all), else the index buffer of the LOD its
 // on-screen size picks (r.ForceLOD forces one).
 bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::StaticMesh& component, const lsd::Mat4& m, lsd::Vec3 eye, lsd::i32 force_lod,
-                     lsd::rhi::BufferHandle& indices, lsd::u32& count) {
+                     lsd::rhi::BufferHandle& indices, lsd::u32& count, lsd::u32* picked) {
+    if (picked) *picked = 0;
     const lsd::Vec3 centre = lsd::transform_point(m, (mesh.bounds_min + mesh.bounds_max) * 0.5f);
     // Shorter (or longer) view distance: everything is treated as further away (or nearer).
     const lsd::f32 distance = std::fmax(lsd::length(centre - eye), 0.001f) / g_view_distance_scale;
@@ -775,6 +799,7 @@ bool pick_static_lod(const lsd::editor::CachedMesh& mesh, const lsd::world::Stat
     count = mesh.gpu.index_count;
     if (mesh.lod_count <= 1) return true;
     const lsd::u32 lod = mesh.pick_lod(size, force_lod);
+    if (picked) *picked = lod;
     if (lod > 0) {
         indices = mesh.lod_indices[lod];
         count = mesh.lod_index_count[lod];
@@ -859,19 +884,24 @@ bool skinned_in_view(lsd::world::World& world, bool skip_hidden, const lsd::Mat4
     return false;
 }
 
-// Shadow casters use the LOD the camera sees (a far tree casts its simple shape), not the light's view.
+bool g_shadow_lod = true;  // r.ShadowLOD
+
+// Shadow casters use the LOD the camera sees (a far tree casts its simple shape), or a simpler one when a cascade's
+// texels are too coarse to show more (r.ShadowLOD; not while r.ForceLOD forces one).
 void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
-                  lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye) {
+                  lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, bool forced_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     static lsd::u64 cascade_keys[4] = {};  // what each cascade's tile holds (shadow caching; 0: unknown)
     device.begin_shadow_pass(atlas, !g_shadow_caching);
-    const lsd::u64 instanced = g_shadow_caching ? g_frame_instances.hash : 0;
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     static std::vector<Caster> casters;
     for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]) && c < 4; ++c) {
         device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
         lsd::Mat4 vp;
         std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
+        // Metres per texel: the orthographic view is 2 / |row 0| wide over its tile's texels.
+        const lsd::f32 width = 2.0f / std::fmax(lsd::length(lsd::Vec3{vp.at(0, 0), vp.at(0, 1), vp.at(0, 2)}), 1e-6f);
+        const lsd::f32 texel = g_shadow_lod && !forced_lod ? width / std::fmax(lights.shadow_tiles[c][2] * size, 1.0f) : 0.0f;
         {
             DetailTimer timer{0};
             lsd::f32 planes[6][4];
@@ -881,6 +911,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
                 if (!it.mesh || !it.count) continue;  // hidden, missing, or too far / small to draw
                 if (lsd::render::classify_box(planes, it.lo, it.hi) == lsd::render::Cull::Outside) continue;  // beside this cascade: its shadow falls elsewhere
                 Caster caster{it.mesh->gpu.vertices, it.indices, it.count, it.world, false, {}};
+                it.shadow_lod(texel, caster.indices, caster.count);
                 g_frame_meshes.caster_cutout(i, *static_cast<const lsd::world::StaticMesh*>(world.at(type, i)), caster.masked, caster.cutout);
                 casters.push_back(caster);
             }
@@ -888,9 +919,11 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
         }
         if (g_shadow_caching) {  // kept while the camera has not moved it and nothing in it moved (a still view, a far cascade)
             DetailTimer timer{1};
-            lsd::u64 key = hash_casters(hash_bytes(hash_bytes(instanced, &atlas.value, 4), vp.m, sizeof vp.m), casters);
-            key = hash_bytes(key, lights.shadow_tiles[c], 3 * sizeof(lsd::f32));
-            if (skinned_in_view(world, skip_hidden, vp)) key = 0;
+            lsd::u64 key = 0;  // a skeletal mesh in it: redrawn, no key needed
+            if (!skinned_in_view(world, skip_hidden, vp)) {
+                key = hash_casters(hash_bytes(hash_bytes(g_frame_instances.casting_hash(), &atlas.value, 4), vp.m, sizeof vp.m), casters);
+                key = hash_bytes(key, lights.shadow_tiles[c], 3 * sizeof(lsd::f32));
+            }
             if (key && key == cascade_keys[c]) {
                 casters.clear();
                 ++g_shadow_tiles_cached;
@@ -908,7 +941,7 @@ void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, 
             draw_skinned_casters(device, vp, world, skip_hidden, nullptr, 0.0f, eye);
         }
         DetailTimer timer{4};
-        draw_instanced_casters(device, vp);
+        draw_instanced_casters(device, vp, texel);
     }
     device.end_shadow_pass();
 }
@@ -919,7 +952,6 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     static lsd::u64 tile_keys[lsd::rhi::kMaxShadowTiles] = {};  // what each tile of the atlas holds (0: unknown)
     device.begin_shadow_pass(atlas, !g_shadow_caching);
-    const lsd::u64 instanced = g_shadow_caching ? g_frame_instances.hash : 0;
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     static std::vector<Caster> casters;
     for (lsd::u32 li = 0; li < lights.count; ++li) {
@@ -948,10 +980,12 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
             }
             add_flat_casters(world, meshes, skip_hidden, casters);
             if (g_shadow_caching) {
-                lsd::u64 key = hash_bytes(instanced, &atlas.value, 4);
-                key = hash_casters(hash_bytes(key, lights.local_matrices[t], sizeof lights.local_matrices[t]), casters);
-                key = hash_bytes(key, lights.local_tiles[t], 3 * sizeof(lsd::f32));
-                if (moving) key = 0;
+                lsd::u64 key = 0;  // a skeletal mesh in range: redrawn, no key needed
+                if (!moving) {
+                    key = hash_bytes(g_frame_instances.casting_hash(), &atlas.value, 4);
+                    key = hash_casters(hash_bytes(key, lights.local_matrices[t], sizeof lights.local_matrices[t]), casters);
+                    key = hash_bytes(key, lights.local_tiles[t], 3 * sizeof(lsd::f32));
+                }
                 if (key && key == tile_keys[t]) {  // the same as last drawn: kept
                     casters.clear();
                     ++g_shadow_tiles_cached;
@@ -962,7 +996,7 @@ void draw_local_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& li
             }
             draw_casters(device, vp, casters);
             draw_skinned_casters(device, vp, world, skip_hidden, &at, light.range, eye);
-            draw_instanced_casters(device, vp);
+            draw_instanced_casters(device, vp, 0.0f);  // shortcut: a perspective tile's texels grow with distance; local lights cast with the camera's LODs
         }
     }
     device.end_shadow_pass();
@@ -1120,7 +1154,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         g_frame_instances.fill(world, meshes, skip_hidden, eye, stats.force_lod);
     }
     lap(4);
-    if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden, eye);
+    if (sun_shadows) draw_shadows(device, lights, shadow_atlas, world, meshes, skip_hidden, eye, stats.force_lod >= 0);
     if (std::exchange(g_gpu_mark_shadows, false)) device.gpu_timestamp(1);  // the first view's shadows: the frame's main cost
     if (local_shadows) {
         DetailTimer timer{5};
@@ -1637,6 +1671,9 @@ void register_console(EditorState& s) {
                           "their sharpest mips. 0: a quarter of the video memory budget (-vram sets it)");
     console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
     console::add_variable("r.ShadowCaching", &g_shadow_caching, "Spot / point light shadow tiles are kept while nothing they show moves (a skeletal mesh in range redraws them each frame)");
+    console::add_variable("r.ShadowLOD", &g_shadow_lod,
+                          "Sun shadow cascades draw each caster at the simplest LOD their texels can still show (far cascades' texels are tens of "
+                          "centimetres); never finer than what the camera sees. 0: casters use the camera's LOD");
     console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.DynamicGI", &lsd::editor::DynamicGi::enabled, "Dynamic global illumination where World Settings > Dynamic Global Illumination asks for it (0: off everywhere, the baked or sky ambient)");
     console::add_variable("r.DynamicGI.Spacing", &g_dynamic_gi.spacing, "Dynamic GI: metres between its probes (10 x 10 x 5 of them around the camera; larger reaches further, coarser)");
