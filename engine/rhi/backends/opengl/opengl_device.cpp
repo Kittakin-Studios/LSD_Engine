@@ -1590,7 +1590,7 @@ void main() {
 }
 )";
 
-constexpr u32 kMaxBuffers = 4096;
+constexpr u32 kMaxBuffers = 16384;  // meshes, their LODs and fracture pieces (a destructible uploads ~4 buffers a piece)
 constexpr u32 kMaxTargets = 256;
 constexpr u32 kMaxTextures = 2048;  // handles kMaxTargets.. (render targets use 0..kMaxTargets-1)
 constexpr GLenum kMaxAnisotropy = 0x84FE;  // GL_TEXTURE_MAX_ANISOTROPY (core in 4.6)

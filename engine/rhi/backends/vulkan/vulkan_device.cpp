@@ -92,7 +92,7 @@ namespace {
 constexpr u32 kFramesInFlight = 2;
 constexpr u32 kMaxAdapters = 16;
 constexpr u32 kMaxSwapchainImages = 8;
-constexpr u32 kMaxBuffers = 4096;
+constexpr u32 kMaxBuffers = 16384;  // meshes, their LODs and fracture pieces (a destructible uploads ~4 buffers a piece)
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 // Render targets (scene, post chain, previews) are half float (as D3D12's): only what draws to the window uses the
 // swapchain's format.
