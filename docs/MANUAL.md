@@ -369,6 +369,14 @@ Every change is undoable (**Ctrl+Z / Ctrl+Y**, Window > Undo History). Unsaved l
 autosaved to `Saved/Autosaves` every few minutes. If the editor crashes, the next start offers to
 restore the autosave, and the Message Log names the crash report folder (`Saved/Crashes/...`).
 
+**When the graphics driver stops** (Unreal's "GPU crashed or D3D device removed"): a message box says
+*The graphics driver stopped responding (reason)* and the editor (or the game) closes instead of freezing.
+An unsaved level, in Play the level as it was before Play, is kept in `Saved/Autosaves` and offered at the
+next start. The log has one `[d3d12] The GPU device was removed (reason ...)` line; start the editor with
+`-gpu-debug` (D3D12 DRED, cheap enough to leave on while you hunt it) and it also logs `DRED:` lines: the
+GPU operations around the one that never finished and, for a GPU page fault, its address and whether
+the memory was freed. Send `Saved/Logs/Editor.log` (all its `[d3d12]` lines). `debug.DeviceLost` tries it.
+
 ### Console
 
 ![The Output Log tab (beside Content and Place)](images/output_log.jpg)
@@ -3017,6 +3025,7 @@ on a graph node and a debugger line.
 
 | Flag | Meaning |
 | --- | --- |
+| `-gpu-debug` | D3D12 GPU crash data (DRED breadcrumbs and page faults, also on with `-validation`): logged if the device is removed |
 | `-rhi=d3d12 / opengl / vulkan`, `-gpu=<n>`, `-validation` | graphics backend, card, debug layer (D3D12; Vulkan with the Vulkan SDK). Vulkan draws everything D3D12 does: lit, textured, animated and instanced meshes, the same lit look as D3D12 (one shared shader: specular, normal / ORM maps, fog, probes, decals, reflections, lightmaps), shadows, particles, game UI and post-processing, and Material Graph materials when the Vulkan SDK is installed (its DXC compiles them; without it they draw with the built-in material) (install the [Vulkan SDK](https://vulkan.lunarg.com) to build it: `winget install KhronosGroup.VulkanSDK`) |
 | `-level=<path>`, `-play`, `-game` | open a level, start Play, run as the game |
 | `-nosound` | no audio device |
