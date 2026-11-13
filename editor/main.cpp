@@ -3720,7 +3720,7 @@ int main(int argc, char** argv) {
                 read_motion(devices, gamepad, accel_sensor, dt);
             }
             LSD_PROFILE_SCOPE("game");
-            lsd::editor::debug_draw::tick(state.paused ? 0.0f : dt);  // the UI has drawn them; one-frame shapes go before scripts add new ones
+            lsd::editor::debug_draw::tick(state.paused ? 0.0f : dt * play.time_scale());  // the UI has drawn them; one-frame shapes go before scripts add new ones
             if (!state.paused || state.step_requested) play.update(world, devices, state.paused ? 1.0f / 60.0f : dt);
             state.step_requested = false;
             state.player_feet = play.feet();
@@ -3737,11 +3737,12 @@ int main(int argc, char** argv) {
         }
         animations->update_outfits(world, *skinned_cache);  // clothes follow their Outfit slots
         // Skeletal meshes animate in the editor too; notifies (sounds) only in Play.
-        animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : dt,
+        const lsd::f32 world_dt = state.playing ? dt * play.time_scale() : dt;  // lsd.time_scale (1 outside Play)
+        animations->update(world, *skinned_cache, state.playing && state.paused && !state.step_requested ? 0.0f : world_dt,
                            state.playing && !state.paused ? &sounds : nullptr);
         animations->attach_to_sockets(world, *skinned_cache);  // weapons in hands follow this frame's pose
         effects->set_collider(state.playing ? &lsd::editor::PlaySession::segment_hit : nullptr, &play);  // particles' World collision
-        effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : dt, state.playing);
+        effects->update(world, state.playing && state.paused && !state.step_requested ? 0.0f : world_dt, state.playing);
         lsd::world::Entity finished[64];  // Auto Destroy effects that are over (Play only)
         for (lsd::u32 n = effects->take_finished(finished, 64), k = 0; k < n; ++k) {
             if (world.alive(finished[k])) world.destroy(finished[k]);

@@ -2265,14 +2265,19 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         input_.update(frame, dt);
         if (recording_on_) input_.record(recording_, dt);
     }
+    // lsd.time_scale, once at the source: everything below steps on game time; input above, the
+    // network and the scripts' real clock keep the wall clock.
+    const f32 real_dt = dt;
+    dt *= time_scale();
     key_pressed_[0] = 0;  // only a key that went down since the last frame: letting one go is not a press of another
     input::held_key(devices_, key_pressed_, sizeof key_pressed_, &devices_before_);
     const input::Value move = input_.value(settings_.move_action);
     const input::Value look = input_.value(settings_.look_action);
     const bool aboard = world.alive(driving_) || world.alive(riding_);  // in a vehicle or on a ride: no walking
-    const bool jump = !aboard && input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...
+    const bool jump = !aboard && dt > 0.0f && input_.fired(settings_.jump_action);  // its trigger: Pressed by default, or Hold, Tap...
 
-    const f32 sensitivity = settings_.look_sensitivity * (user_settings_ ? user_settings_->mouse_sensitivity : 1.0f);
+    // Paused (time scale 0): the mouse does not turn the player behind a pause menu.
+    const f32 sensitivity = dt > 0.0f ? settings_.look_sensitivity * (user_settings_ ? user_settings_->mouse_sensitivity : 1.0f) : 0.0f;
     const bool invert = settings_.invert_look_y != (user_settings_ && user_settings_->invert_look);
     yaw_ -= radians(look.x * sensitivity);
     pitch_ += radians(look.y * sensitivity) * (invert ? -1.0f : 1.0f);
@@ -2520,11 +2525,11 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
             animations_->take_finished_montages(ended);
             for (const world::Entity e : ended) scripts_.send(e, "on_montage_ended", {});
         }
-        scripts_.update(dt);
+        scripts_.update(dt, real_dt);
     }
     update_brains(world, dt);
     update_agents(world, dt);
-    net_send(world, dt);
+    net_send(world, real_dt);
 }
 
 // Flipbook events: when a sprite's Flipbook reaches a frame with an Event, its scripts run that function.

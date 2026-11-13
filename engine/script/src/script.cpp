@@ -2384,6 +2384,24 @@ struct Api {
         lua_pushnumber(L, system(L).time_);
         return 1;
     }
+    static int real_time(lua_State* L) {
+        lua_pushnumber(L, system(L).real_time_);
+        return 1;
+    }
+    static int time_scale(lua_State* L) {
+        ScriptSystem& s = system(L);
+        if (!lua_isnoneornil(L, 1)) {
+            const ScriptHost& host = s.host_;
+            if (host.net_mode && host.net_mode(host.user) == 2) {
+                LSD_LOG_WARN("script", "lsd.time_scale is ignored on a multiplayer client: the server's world runs at the server's speed");
+            } else {
+                const f64 v = luaL_checknumber(L, 1);
+                s.time_scale_ = static_cast<f32>(v < 0.0 ? 0.0 : v > 100.0 ? 100.0 : v);
+            }
+        }
+        lua_pushnumber(L, s.time_scale_);
+        return 1;
+    }
     static int input(lua_State* L) {
         const ScriptHost& host = system(L).host_;
         const Vec3 v = host.input ? host.input(host.user, luaL_checkstring(L, 1)) : Vec3{};
@@ -2438,6 +2456,8 @@ void ScriptSystem::stop() {
     curves_ = nullptr;
     curve_count_ = 0;
     time_ = 0;
+    real_time_ = 0;
+    time_scale_ = 1.0f;
 }
 
 u32 ScriptSystem::error_count() const {
@@ -2468,7 +2488,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"position", Api::position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
         {"velocity", Api::velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
-        {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"input", Api::input},
+        {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"real_time", Api::real_time}, {"time_scale", Api::time_scale}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
         {"add", Api::add}, {"remove", Api::remove}, {"has", Api::has}, {"spawn", Api::spawn}, {"raycast", Api::raycast},
         {"sphere_trace", Api::sphere_trace}, {"box_trace", Api::box_trace}, {"capsule_trace", Api::capsule_trace},
@@ -2846,9 +2866,11 @@ bool ScriptSystem::call(Instance& instance, const char* function, const f64* arg
     return !instance.failed;
 }
 
-void ScriptSystem::update(f32 dt) {
+void ScriptSystem::update(f32 dt, f32 real_dt) {
     if (!lua_) return;
-    const bool check_files = static_cast<i64>(time_ * 2.0) != static_cast<i64>((time_ + dt) * 2.0);  // twice a second
+    real_dt = real_dt < 0.0f ? dt : real_dt;
+    const bool check_files = static_cast<i64>(real_time_ * 2.0) != static_cast<i64>((real_time_ + real_dt) * 2.0);  // twice a second, paused or not
+    real_time_ += real_dt;
     time_ += dt;
     lua_getglobal(lua_, "lsd");
     lua_getfield(lua_, -1, "_tick");

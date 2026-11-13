@@ -821,6 +821,28 @@ static void test_events() {
     CHECK(heap.allocated_bytes() == 0);
 }
 
+// lsd.time_scale: game time (lsd.time, timers, on_update's dt from the host) slows or stops while
+// lsd.real_time keeps the wall clock; clamped at 0; back to 1 when Play stops.
+static void test_time_scale() {
+    HeapAllocator heap("time_scale");
+    {
+        World w(heap);
+        script::ScriptSystem scripts;
+        scripts.start(w, {}, path_of, nullptr);
+        CHECK(scripts.time_scale() == 1.0f);
+        CHECK(scripts.run("fired = false; lsd.after(0.5, function() fired = true end); assert(lsd.time_scale(0) == 0)"));
+        CHECK(scripts.time_scale() == 0.0f);
+        for (int i = 0; i < 10; ++i) scripts.update(0.1f * scripts.time_scale(), 0.1f);  // a paused second
+        CHECK(scripts.run("assert(not fired and lsd.time() == 0 and math.abs(lsd.real_time() - 1) < 1e-4)"));
+        CHECK(scripts.run("assert(lsd.time_scale(-3) == 0 and lsd.time_scale(0.5) == 0.5 and lsd.time_scale() == 0.5)"));
+        for (int i = 0; i < 10; ++i) scripts.update(0.1f * scripts.time_scale(), 0.1f);  // slow motion: 0.5 s of game time
+        CHECK(scripts.run("assert(fired and math.abs(lsd.time() - 0.5) < 1e-4)"));
+        scripts.stop();
+        CHECK(scripts.time_scale() == 1.0f);
+    }
+    CHECK(heap.allocated_bytes() == 0);
+}
+
 // Exposed properties: the script's defaults, then each object's own values, on self before on_start.
 static void test_properties() {
     write(kPropsLua, R"(
@@ -1498,6 +1520,7 @@ int main() {
     test_collapse_to_function();
     test_graph_variables();
     test_events();
+    test_time_scale();
     test_traces();
     test_forward_vector();
     test_native_behaviours();

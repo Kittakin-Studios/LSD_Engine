@@ -2829,8 +2829,10 @@ Time, input, logging, data
 
 | Function | Returns / does |
 | --- | --- |
-| `lsd.time()` | seconds since Play started |
-| `lsd.after(s, fn)`, `lsd.every(s, fn)`, `lsd.cancel(id)` | timers |
+| `lsd.time()` | seconds of game time since Play started (slowed or stopped by `lsd.time_scale`) |
+| `lsd.real_time()` | seconds since Play started on the wall clock, paused or not (pause menu animations) |
+| `lsd.time_scale([s])` | Unreal's Set Global Time Dilation; returns the scale. `0` pauses the game world (physics, the player, AI and Nav Agents, Movers / traffic, animation, particles, timers, `dt` of `on_update`) and the mouse no longer turns the player; `0.2` is slow motion, `0.05` for a tenth of a second a hit-stop. UI, input (`lsd.pressed` still fires: unpause with it), the remote console, sounds and the network keep running. Back to 1 when Play stops or the level changes. Multiplayer: ignored on a client; on a server it slows what the server simulates, each client still moves its own player at full speed |
+| `lsd.after(s, fn)`, `lsd.every(s, fn)`, `lsd.cancel(id)` | timers (game time: they wait while paused) |
 | `lsd.input("IA_Move")` | `x, y` of an Input Action |
 | `lsd.pressed("IA_Jump")` | true on the frame it fires |
 | `lsd.log(...)`, `lsd.log_error(...)` | Output Log |

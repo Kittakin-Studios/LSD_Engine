@@ -84,6 +84,9 @@ public:
     void input_stop();  // saves a recording; ends a playback
 
     Vec3 feet() const { return feet_; }
+    // lsd.time_scale: what the game world's dt is multiplied by (1 outside Play). The editor scales
+    // animation, particles and debug shapes by it; update() does physics, AI, Movers and scripts.
+    f32 time_scale() const { return scripts_.time_scale(); }
     Vec3 eye() const { return view_eye_; }  // where the game is seen from: the head, the spring arm or a Camera
     Vec3 view_forward() const { return view_forward_; }
     u32 touch_count() const { return devices_.touch_count; }

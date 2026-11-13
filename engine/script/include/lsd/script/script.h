@@ -15,7 +15,15 @@
 //   lsd.rotation(e) / lsd.set_rotation(e, x, y, z)     local Transform, degrees
 //   lsd.has_tag(e, tag)                   gameplay tags ("Damage" matches "Damage.Fire")
 //   lsd.has_any_tag(e, "A, B") / lsd.has_all_tags(e, "A, B") / lsd.has_no_tag(e, "A, B")   several at once
-//   lsd.time()                            seconds since Play started
+//   lsd.time()                            seconds of game time since Play started (slowed / stopped by lsd.time_scale)
+//   lsd.real_time()                       seconds since Play started on the wall clock (pause menus, UI fades)
+//   lsd.time_scale([s]) -> s              Unreal's Global Time Dilation: 0 pauses the game world (physics, AI,
+//                                         Movers, animation, particles, timers, on_update's dt), 0.2 is slow
+//                                         motion, 1 normal; UI, input and the network keep running. Back to 1
+//                                         when Play stops or the level changes. Ignored on a multiplayer client
+//                                         (the server's world is the server's); on a server it slows what the
+//                                         server simulates (clients see those objects slow), while each client
+//                                         still moves its own player at full speed
 //   lsd.input(action) -> x, y             value of an Input Action, by asset name
 //   lsd.pressed(action)                   true on the frame the action fires (its Trigger: pressed, hold, tap...)
 //   lsd.log_error(...)                    print as an error
@@ -394,7 +402,12 @@ public:
     // `path_of(user, guid, out, capacity)` turns a Script component's asset GUID into a file path.
     using PathFn = bool (*)(void* user, const char* guid, char* out, usize capacity);
     void start(world::World& world, const ScriptHost& host, PathFn path_of, void* path_user);
-    void update(f32 dt);  // reloads changed files, then calls on_update
+    // Reloads changed files, then calls on_update. `dt` is game time (already scaled by time_scale());
+    // `real_dt` the wall-clock frame (lsd.real_time, file checks); negative = the same as dt.
+    void update(f32 dt, f32 real_dt = -1.0f);
+    // lsd.time_scale(s): 1 normal, 0 paused, between for slow motion. The host scales its world's dt by
+    // it (physics, AI, animation, particles); back to 1 on stop().
+    f32 time_scale() const { return time_scale_; }
     void stop();
     // Starts the scripts on `root` and its children (objects spawned during Play).
     void attach(world::Entity root);
@@ -509,6 +522,8 @@ private:
     PathFn path_of_ = nullptr;
     void* path_user_ = nullptr;
     f64 time_ = 0;
+    f64 real_time_ = 0;
+    f32 time_scale_ = 1.0f;
     Instance instances_[256];
     struct CachedTable {
         char path[260];
