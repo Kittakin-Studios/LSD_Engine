@@ -1419,6 +1419,51 @@ Trace** and **Sphere Overlap** (its Loop Body runs once per object found), like 
 
 ---
 
+### Destruction: fracture and debris
+
+Unreal's Fracture Mode + Geometry Collections, the pre-fractured way: a mesh is cut into pieces once, in the editor;
+in Play it breaks where it is hit, the pieces near the hit fly off as rigid bodies and the cut faces show an
+**inside material**. Nothing is cut while playing.
+
+1. **Try the cut**: double-click the mesh (Mesh Editor) > **Fracture**: **Pieces** (Voronoi sites), **Seed** (another
+   number cuts another way; the same number always the same way), **Cluster** (most pieces small around **Cluster
+   Point**, Unreal's Cluster fracture), **Inside Material** (brick, concrete core; none: the mesh's own). **Fracture**
+   cuts it and shows the pieces apart; **Explode** pushes them further (Unreal's Explode Amount).
+2. **Make it destructible**: select the objects using that mesh in the level and click **Make Selected Destructible**
+   (or add a **Destructible** component in Details: Add Component > Physics). The object keeps its Static Mesh.
+3. **Breaking** settings on the component: **Damage Threshold** (a contact this hard, in N s = mass x speed of what
+   hits it, or this much `lsd.apply_damage` in total, breaks it; 0 = only `lsd.fracture`), **Break Radius** (pieces this
+   close to the hit break off; 0 = all at once), **Piece Lifetime** (broken pieces shrink away after it; 0 = they stay),
+   **Max Pieces Alive** (this object's flying pieces; the oldest go first), **Density** (piece mass from its volume:
+   concrete 2400, brick 1900, wood 600), **Collision Preset** (Debris: pieces hit only the static level, the cheapest),
+   **Collapse Unsupported** (on: standing pieces no longer joined to the mesh's bottom fall too, no floating chunks).
+
+In Play the intact mesh draws as before (one draw). At the first break it is replaced by what still stands (one mesh
+per material, rebuilt at each break) and the broken pieces (one object each, `<name>_piece<n>`, a convex rigid body);
+what stands is one static body made of the standing pieces' hulls, so later hits break more. The object's scripts get
+`on_fracture(self, x, y, z)`. The pieces are cut at the object's scale (a cube stretched into a wall gets even pieces)
+and kept in `DerivedData/Fracture/` (keyed by the mesh, its materials, the scale and the settings): the first Play after
+a change cuts them (about 0.1 s for a 10k-triangle wall into 30 pieces in Release), later ones read them.
+
+| Lua | |
+| --- | --- |
+| `lsd.fracture(e, x, y, z [, ix, iy, iz [, radius]])` | breaks Destructible e at world point x, y, z: pieces within `radius` m (default its Break Radius, 0 = all) fly off, pushed by the impulse (N s, shared by mass) and away from the point. False if e is not a Destructible |
+| `lsd.apply_damage(e, amount)` | as before (on_damage), and a Destructible breaks once its damage adds up to Damage Threshold (at its middle) |
+| `lsd.add_impulse(piece, ...)`, `lsd.set_velocity(piece, ...)` | pieces are ordinary rigid bodies (`lsd.find("Wall_piece3")`) |
+| console `fracture.MaxPieces` (300) | broken pieces flying at once, every Destructible together; the oldest shrink away first |
+
+**Multiplayer**: the server decides. `lsd.fracture` and hard contacts break on the server (or standalone); the server
+sends the break (object name, point, impulse, radius) to every machine, and each breaks the same pieces from the same
+pre-cut data (same mesh, settings and seed: same pieces). A client's `lsd.fracture` asks the server. The flying pieces
+simulate on each machine on their own (not replicated): where rubble lands can differ between players, the hole in the
+wall does not.
+
+**Performance**: 100 flying pieces did not change the frame time measurably (5.6 ms in a Release build, frame-paced).
+Keep Max Pieces Alive and Piece Lifetime low on things that break often; use the Debris preset for small rubble; fewer
+pieces (10-30) on objects seen from afar; one Destructible per wall segment rather than a whole building in one.
+Limits (for now): pieces of one object are separate draws (one per material each); no breaking into pieces of pieces;
+support is judged from the pieces' boxes (touching boxes count as joined), not real contact areas.
+
 ## 9. Lua scripting
 
 **Exposed properties** (Unreal's Instance Editable variables): put a `properties` table at the top

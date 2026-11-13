@@ -207,5 +207,9 @@ Capacity (BACKLOG "Capacity (large projects)"): Unreal `_LOD<n>` / LOD group nod
 (compiled mesh v3); meshes, their generated LODs (`editor/lod_cache.*`) and textures compile on worker threads (`editor/asset_compiler.*`,
 Build > Compile All Assets, `asset.CompileAll`); `AssetRegistry` has hashed `find` / `find_named` / `best_match`, folders from the scan,
 parallel `.meta` reads; the Content Browser and Outliner are clipped and cached (50,000 assets / objects tested in a generated project).
+Destruction (Unreal's Fracture Mode / Geometry Collections): `engine/render/fracture.*` (plane slicing with caps, Voronoi
+fracture), `editor/fracture_cache.*` (DerivedData/Fracture), Mesh Editor > Fracture, Destructible component,
+`PlaySession::fracture` (contacts, `lsd.apply_damage`, `lsd.fracture`, `on_fracture`, `__fracture` net event).
+Physics body indices are reused; `lsd.add(e, "RigidBody")` simulates at run time; `lsd.add_impulse` / `set_velocity` / `set_angular_velocity`.
 Later (see BACKLOG, partial items): remote console to other machines, Perforce /
 LFS locking, per-mesh LOD screen sizes.
