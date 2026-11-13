@@ -501,6 +501,7 @@ private:
     bool placed_ = false;
     f32 yaw_ = 0, pitch_ = 0, spawn_yaw_ = 0;
     Vec3 walk_velocity_;  // Character Acceleration / Braking: the walking velocity eased toward the input's
+    f32 look_yaw_ = 0, look_pitch_ = 0;  // free look (Character > Free Look Key held): the camera's turn from the view, eased back on release
     f32 facing_yaw_ = 0;  // Character Turn Rate: the body's yaw turning toward the view's (yaw_)
 };
 
