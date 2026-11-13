@@ -102,7 +102,7 @@ public:
     static Rml::TextureHandle to_rml(rhi::TextureHandle t) { return t.valid() ? static_cast<Rml::TextureHandle>(t.value) + 1 : 0; }
     Rml::TextureHandle LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) override {
         asset::TextureData data(default_allocator());
-        if (!asset::load_texture(source.c_str(), false, 0, data)) return 0;
+        if (!asset::load_texture(source.c_str(), false, 16384, data)) return 0;  // full size (0 would halve it down to 1x1)
         std::vector<u8> pixels(data.mip(0), data.mip(0) + static_cast<usize>(data.width) * data.height * 4);
         for (usize i = 0; i < pixels.size(); i += 4) {
             for (int c = 0; c < 3; ++c) pixels[i + c] = static_cast<u8>((pixels[i + c] * pixels[i + 3] + 127) / 255);

@@ -426,7 +426,53 @@ static void test_hulls() {
     CHECK(!world.raycast({0, 0, 5}, {0, 0, -1}, 10, hit));  // one hull around all points would fill this gap
 }
 
+// Removed bodies' indices come back (a long Play spawning debris must not run out), with ray hits and
+// contacts naming the new body; impulses and velocities move dynamic bodies only.
+static void test_reuse_and_impulses() {
+    PhysicsWorld world;
+    world.set_gravity(0.0f);
+    const u32 a = world.add_body(box({0, 0, 0}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    const u32 b = world.add_body(box({10, 0, 0}, {0.5f, 0.5f, 0.5f}, Motion::Static));
+    world.remove_body(a);
+    CHECK(world.live_body_count() == 1);
+    const u32 c = world.add_body(box({0, 5, 0}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    CHECK(c == a && world.body_count() == 2 && world.live_body_count() == 2);
+    RayHit hit;
+    CHECK(world.raycast({0, 5, 5}, {0, 0, -1}, 10, hit) && hit.body == c);
+    for (int i = 0; i < 2000; ++i) world.remove_body(world.add_body(box({0, 0, 20}, {0.1f, 0.1f, 0.1f}, Motion::Dynamic)));
+    CHECK(world.body_count() == 3);  // one extra slot, used over and over
+
+    CHECK(!world.add_impulse(b, {100, 0, 0}) && !world.set_velocity(b, {1, 0, 0}));  // static: refused
+    CHECK(world.add_impulse(c, {10, 0, 0}));  // mass 10: 1 m/s
+    CHECK(std::fabs(world.body_velocity(c).x - 1.0f) < 1e-3f);
+    CHECK(world.set_velocity(c, {0, 0, 2}) && std::fabs(world.body_velocity(c).z - 2.0f) < 1e-3f && std::fabs(world.body_velocity(c).x) < 1e-4f);
+    CHECK(world.set_angular_velocity(c, {0, 0, 3}) && std::fabs(world.body_angular_velocity(c).z - 3.0f) < 1e-3f);
+    // Off centre: it spins as well as moves.
+    const u32 d = world.add_body(box({0, -5, 0}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    CHECK(world.add_impulse(d, {0, 10, 0}, {0.5f, -5, 0}));
+    CHECK(world.body_velocity(d).y > 0.9f && std::fabs(world.body_angular_velocity(d).z) > 0.5f);
+    world.step(1.0f / 60.0f);
+    CHECK(centre(world, c).z > 0.02f);
+
+    // Contacts say how hard (Destructible breaking): a 10 kg box meeting the floor at about 5 m/s is about 50 N s.
+    PhysicsWorld fall;
+    const u32 floor = fall.add_body(box({0, 0, -0.5f}, {10, 10, 0.5f}, Motion::Static));
+    const u32 crate = fall.add_body(box({0, 0, 0.6f}, {0.5f, 0.5f, 0.5f}, Motion::Dynamic));
+    fall.set_velocity(crate, {0, 0, -5});
+    f32 hardest = 0.0f;
+    Vec3 where;
+    for (int i = 0; i < 10; ++i) {
+        fall.step(1.0f / 60.0f);
+        Contact contacts[8];
+        for (u32 n = fall.take_contacts(contacts, 8), k = 0; k < n; ++k) {
+            if ((contacts[k].a == floor || contacts[k].b == floor) && contacts[k].impulse > hardest) hardest = contacts[k].impulse, where = contacts[k].point;
+        }
+    }
+    CHECK(hardest > 40.0f && hardest < 60.0f && std::fabs(where.z) < 0.1f);
+}
+
 int main() {
+    test_reuse_and_impulses();
     test_hulls();
     test_movement_tuning();
     test_move_static();

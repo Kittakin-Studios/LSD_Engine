@@ -66,6 +66,9 @@ public:
         std::vector<f32> uvs;  // two per point (cloth draws from them)
     };
     const Triangles* triangles(const char* key);
+    // The whole vertices (normals, UVs) and triangles on the CPU, read now (not kept): fracture cuts them.
+    // `stamp`: the compiled file's time (0 for shapes), so cut pieces know when the mesh changed.
+    bool load_cpu(const char* key, std::vector<rhi::MeshVertex>& vertices, std::vector<u32>& indices, i64* stamp = nullptr);
     // The mesh file's collision nodes (UCX_ / UBX_ / USP_ / UCP_) as convex hulls in the mesh's space, read
     // from the source on first ask and kept until it is reimported. Null when it has none (or is a shape / part).
     struct Hulls {
@@ -91,6 +94,7 @@ public:
     // Keys starting "Landscape:" are only ever generated: get() is quiet about them until then.
     void set_generated(const char* key, const render::MeshData& data);
     rhi::Device& device() { return device_; }
+    const char* data_dir() const { return data_dir_; }
     const asset::AssetRegistry& registry() const { return registry_; }
 
 private:

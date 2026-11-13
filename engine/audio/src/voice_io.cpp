@@ -23,10 +23,11 @@ struct VoiceIO::Impl {
         bool playing = false;  // device thread only
         std::atomic<f32> level{0.0f};
     };
+    ma_context null_context;  // tests only
     ma_device playback;
     ma_device capture;
     ma_pcm_rb mic;
-    bool playback_ok = false, capture_ok = false, mic_ok = false;
+    bool null_ok = false, playback_ok = false, capture_ok = false, mic_ok = false;
     Speaker speakers[kMaxSpeakers];
     bool rings_ok[kMaxSpeakers] = {};
 
@@ -76,9 +77,19 @@ struct VoiceIO::Impl {
 
 VoiceIO::~VoiceIO() { stop(); }
 
-bool VoiceIO::start(bool capture) {
+bool VoiceIO::start(bool capture, bool null_devices) {
     stop();
     impl_ = new Impl();
+    ma_context* context = nullptr;
+    if (null_devices) {
+        const ma_backend null_backend = ma_backend_null;
+        impl_->null_ok = ma_context_init(&null_backend, 1, nullptr, &impl_->null_context) == MA_SUCCESS;
+        if (!impl_->null_ok) {
+            stop();
+            return false;
+        }
+        context = &impl_->null_context;
+    }
     for (u32 i = 0; i < kMaxSpeakers; ++i) impl_->rings_ok[i] = ma_pcm_rb_init(ma_format_f32, 1, kRingFrames, nullptr, nullptr, &impl_->speakers[i].ring) == MA_SUCCESS;
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format = ma_format_f32;
@@ -86,7 +97,7 @@ bool VoiceIO::start(bool capture) {
     config.sampleRate = kRate;
     config.dataCallback = Impl::play_callback;
     config.pUserData = impl_;
-    impl_->playback_ok = ma_device_init(nullptr, &config, &impl_->playback) == MA_SUCCESS && ma_device_start(&impl_->playback) == MA_SUCCESS;
+    impl_->playback_ok = ma_device_init(context, &config, &impl_->playback) == MA_SUCCESS && ma_device_start(&impl_->playback) == MA_SUCCESS;
     if (!impl_->playback_ok) {
         LSD_LOG_WARN("voice", "No playback device for voice chat");
         stop();
@@ -100,7 +111,7 @@ bool VoiceIO::start(bool capture) {
         c.sampleRate = kRate;
         c.dataCallback = Impl::capture_callback;
         c.pUserData = impl_;
-        impl_->capture_ok = impl_->mic_ok && ma_device_init(nullptr, &c, &impl_->capture) == MA_SUCCESS && ma_device_start(&impl_->capture) == MA_SUCCESS;
+        impl_->capture_ok = impl_->mic_ok && ma_device_init(context, &c, &impl_->capture) == MA_SUCCESS && ma_device_start(&impl_->capture) == MA_SUCCESS;
         if (impl_->capture_ok) capture_ = &impl_->capture;
         else LSD_LOG_WARN("voice", "No microphone: you can hear voice chat but not talk");
     }
@@ -115,6 +126,7 @@ void VoiceIO::stop() {
     for (u32 i = 0; i < kMaxSpeakers; ++i) {
         if (impl_->rings_ok[i]) ma_pcm_rb_uninit(&impl_->speakers[i].ring);
     }
+    if (impl_->null_ok) ma_context_uninit(&impl_->null_context);
     delete impl_;
     impl_ = nullptr;
     capture_ = nullptr;

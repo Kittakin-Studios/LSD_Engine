@@ -55,7 +55,7 @@ licensee-only docs, or code shown on screen in talks/videos. Ideas only; our own
 
 **Automated runs must be silent and hidden**: always pass `-nosound -hidden` (test audio once reached her speakers; `-hidden`
 creates the window hidden: no window, splash, dialog or focus change, child game windows inherit it, rendering and `screenshot` still work).
-Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-frames=<n>`
+Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug layer), `-gpu-debug` (D3D12 DRED: breadcrumbs / page faults logged if the device is removed), `-frames=<n>`
 (quit after n frames), `-screenshot=<n>` (Saved/screenshot.bmp, every backend; does not quit by itself),
 `-level=<path>`, `-play`, `-select=<name>`, `-import=<file>`, `-place=<asset>`, `-exec="<console line>"`
 (repeatable; runs once the editor is up), `-smoketest=<seconds>` (CI: exit 1 if errors were logged), `-vram=<MB>` (pretend video memory),
@@ -63,7 +63,7 @@ Useful flags: `-rhi=d3d12|vulkan|opengl`, `-gpu=<n>`, `-validation` (D3D12 debug
 `-connect=<host[:port]>`, `-port=<n>` (multiplayer, when Project Settings > Multiplayer is on).
 `input.Hold <key> <seconds>` takes names with spaces ("Left Shift", "Right Mouse Button") and drives the game even when the window has no focus.
 Console: `stat dump` (frame CPU times, GPU wait, GPU time per stage, draws, the UI by panel), `play window` / `play close` (Play in a new window), `asset.Open <name>` (double-click), `template.New <name>` (a template level), `assistant.Ask <message>` / `assistant.Lesson <n>` (LSD Assistant), `screenshot` (next frame, every backend), `mode <name>` (Level modes), `camera x y z [yaw pitch]`. Test-only console commands: `ui.Click x y`, `ui.Drag x0 y0 x1 y1 [shift|alt|ctrl]`, `ui.Keys down enter` (real SDL events, 0.8 s later), `input.Hold W 2` (a key held for the game),
-`debug.Crash`. After an automated run, delete the test files you made in Content/ and Saved/.
+`debug.Crash`, `debug.DeviceLost` (D3D12: the lost-GPU message, autosave and exit). After an automated run, delete the test files you made in Content/ and Saved/.
 
 Tooling notes for AI sessions: write Python helper scripts with the file tool (bash heredocs mangle
 `\n` / `\0` escapes); the scratchpad has `build.bat` (configure + build + ctest), `build_editor.bat`,
@@ -207,5 +207,9 @@ Capacity (BACKLOG "Capacity (large projects)"): Unreal `_LOD<n>` / LOD group nod
 (compiled mesh v3); meshes, their generated LODs (`editor/lod_cache.*`) and textures compile on worker threads (`editor/asset_compiler.*`,
 Build > Compile All Assets, `asset.CompileAll`); `AssetRegistry` has hashed `find` / `find_named` / `best_match`, folders from the scan,
 parallel `.meta` reads; the Content Browser and Outliner are clipped and cached (50,000 assets / objects tested in a generated project).
+Destruction (Unreal's Fracture Mode / Geometry Collections): `engine/render/fracture.*` (plane slicing with caps, Voronoi
+fracture), `editor/fracture_cache.*` (DerivedData/Fracture), Mesh Editor > Fracture, Destructible component,
+`PlaySession::fracture` (contacts, `lsd.apply_damage`, `lsd.fracture`, `on_fracture`, `__fracture` net event).
+Physics body indices are reused; `lsd.add(e, "RigidBody")` simulates at run time; `lsd.add_impulse` / `set_velocity` / `set_angular_velocity`.
 Later (see BACKLOG, partial items): remote console to other machines, Perforce /
 LFS locking, per-mesh LOD screen sizes.

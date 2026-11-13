@@ -199,8 +199,31 @@ std::atomic<u64> g_shader_compile_ns{0};
 // The compiler and its flags, part of each cached shader's key (a change here compiles every shader again).
 constexpr char kShaderCompilerId[] = "d3dcompiler_47 flags 0 0";
 
+bool device_removed(HRESULT hr) {
+    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_HUNG || hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
+}
+
+const char* removed_reason_name(HRESULT hr) {
+    switch (hr) {
+        case DXGI_ERROR_DEVICE_HUNG: return "DXGI_ERROR_DEVICE_HUNG: the GPU stopped responding (a timeout or a GPU page fault)";
+        case DXGI_ERROR_DEVICE_RESET: return "DXGI_ERROR_DEVICE_RESET: the GPU was reset";
+        case DXGI_ERROR_DEVICE_REMOVED: return "DXGI_ERROR_DEVICE_REMOVED: the driver crashed or was updated, or the GPU was removed";
+        case DXGI_ERROR_DRIVER_INTERNAL_ERROR: return "DXGI_ERROR_DRIVER_INTERNAL_ERROR: the driver failed";
+        case DXGI_ERROR_INVALID_CALL: return "DXGI_ERROR_INVALID_CALL: the GPU was sent invalid work";
+        default: return "unknown reason";
+    }
+}
+
+// Calls that failed because the device was removed: the first is logged, the rest only counted (the log
+// used to fill with one line per resource until the editor was closed).
+u32 g_removed_failures = 0;
+
 bool check(HRESULT hr, const char* what) {
     if (SUCCEEDED(hr)) return true;
+    if (device_removed(hr)) {
+        if (g_removed_failures++ == 0) LSD_LOG_ERROR("d3d12", "%s failed: the GPU device was removed (HRESULT 0x%08X)", what, static_cast<unsigned>(hr));
+        return false;
+    }
     LSD_LOG_ERROR("d3d12", "%s failed (HRESULT 0x%08X)", what, static_cast<unsigned>(hr));
     return false;
 }
@@ -233,6 +256,7 @@ class D3D12Device final : public Device {
 
 public:
     ~D3D12Device() override {
+        if (g_removed_failures > 1) LSD_LOG_WARN("d3d12", "%u more calls failed after the GPU device was removed", g_removed_failures - 1);
         if (queue_ && fence_ && fence_event_) wait_for_gpu();
         if (debug_ui_) ImGui_ImplDX12_Shutdown();
         if (fence_event_) CloseHandle(fence_event_);
@@ -248,6 +272,17 @@ public:
                 LSD_LOG_INFO("d3d12", "Debug layer enabled.");
             } else {
                 LSD_LOG_WARN("d3d12", "Debug layer unavailable (install 'Graphics Tools' in Windows optional features).");
+            }
+        }
+        if (desc.enable_validation || desc.gpu_debug) {  // DRED: what the GPU was doing, and the address it faulted on, if it fails
+            ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dred;
+            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dred)))) {
+                dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+                dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+                dred_ = true;
+                LSD_LOG_INFO("d3d12", "GPU crash data (DRED) on: breadcrumbs and page faults are logged if the device is removed.");
+            } else {
+                LSD_LOG_WARN("d3d12", "GPU crash data (DRED) unavailable.");
             }
         }
         if (!check(CreateDXGIFactory2(factory_flags, IID_PPV_ARGS(&factory_)), "CreateDXGIFactory2")) return false;
@@ -438,12 +473,7 @@ public:
     void destroy_buffer(BufferHandle handle) override {
         Buffer* b = lookup(handle);
         if (!b) return;
-        if (retired_count_[frame_] < kMaxRetired) {  // the frame being recorded may use it: released after its fence (buffers made per frame, water)
-            retired_[frame_][retired_count_[frame_]++] = std::move(b->resource);
-        } else {
-            wait_for_gpu();
-            b->resource.Reset();
-        }
+        retire(std::move(b->resource));  // the frame being recorded may use it (buffers made per frame, water)
         ++b->generation;
     }
 
@@ -607,27 +637,27 @@ public:
     }
 
     void destroy_texture(TextureHandle handle) override {
+        // Released, and the view's descriptor freed, once the frame being recorded is done: RmlUi frees a font
+        // atlas in the middle of drawing a document whose earlier text this frame's commands still read (the
+        // GPU then faulted on the freed texture and the device was removed: voice chat's "talking" text).
         if (ShadowMap* shadow = lookup_shadow(handle)) {
-            wait_for_gpu();
-            free_srv(shadow->srv_cpu);
-            shadow->resource.Reset();
+            retire_srv(shadow->srv_cpu);
+            retire(std::move(shadow->resource));
             ++shadow->generation;
             return;
         }
         if (Texture* texture = lookup_texture(handle)) {
-            wait_for_gpu();  // shortcut: stalls; fine for rare destroys (asset reloads, shutdown)
-            free_srv(texture->srv_cpu);
-            texture->resource.Reset();
+            retire_srv(texture->srv_cpu);
+            retire(std::move(texture->resource));
             ++texture->generation;
             return;
         }
         Target* t = lookup(handle);
         if (!t) return;
-        wait_for_gpu();  // shortcut: stalls; fine for rare destroys (thumbnails, shutdown)
-        free_srv(t->srv_cpu);
-        free_srv(t->depth_srv_cpu);
-        t->color.Reset();
-        t->depth.Reset();
+        retire_srv(t->srv_cpu);
+        retire_srv(t->depth_srv_cpu);
+        retire(std::move(t->color));
+        retire(std::move(t->depth));
         ++t->generation;
     }
 
@@ -1564,8 +1594,9 @@ public:
     void begin_frame(const f32 clear_color[4]) override {
         frame_ = swapchain_->GetCurrentBackBufferIndex();
         wait_for_fence(frame_fence_values_[frame_]);
-        for (u32 i = 0; i < retired_count_[frame_]; ++i) retired_[frame_][i].Reset();
-        retired_count_[frame_] = 0;
+        retired_[frame_].clear();  // that frame is done on the GPU: what it was the last to use goes
+        for (const D3D12_CPU_DESCRIPTOR_HANDLE cpu : retired_srvs_[frame_]) free_srv(cpu);
+        retired_srvs_[frame_].clear();
         if (timestamps_set_[frame_] && timestamp_readback_ && timestamp_frequency_) {  // this slot's last frame has finished: its timings
             const D3D12_RANGE range{sizeof(u64) * frame_ * kGpuTimestamps, sizeof(u64) * (frame_ + 1) * kGpuTimestamps};
             u64* ticks = nullptr;
@@ -1753,9 +1784,17 @@ public:
         ID3D12CommandList* lists[] = {list_.Get()};
         queue_->ExecuteCommandLists(1, lists);
         if (capture) write_capture(capture.Get(), footprint);
-        swapchain_->Present(1, 0);  // vsync
+        const HRESULT presented = swapchain_->Present(1, 0);  // vsync
         queue_->Signal(fence_.Get(), ++fence_value_);
         frame_fence_values_[frame_] = fence_value_;
+        if (!lost_[0] && (device_removed(presented) || g_removed_failures || FAILED(device_->GetDeviceRemovedReason()))) report_device_removed();
+    }
+
+    const char* device_lost() const override { return lost_[0] ? lost_ : nullptr; }
+
+    void remove_device() override {
+        ComPtr<ID3D12Device5> device5;
+        if (SUCCEEDED(device_.As(&device5))) device5->RemoveDevice();
     }
 
     // Waits for the frame, then writes the copied back buffer (RGBA rows, top-down) as a 24-bit BMP (BGR, bottom-up).
@@ -1820,6 +1859,66 @@ private:
         D3D12_FEATURE_DATA_D3D12_OPTIONS7 o7{};
         if (SUCCEEDED(probe->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &o7, sizeof o7))) {
             out.supports_mesh_shaders = o7.MeshShaderTier >= D3D12_MESH_SHADER_TIER_1;
+        }
+    }
+
+    // The device is gone (once): why, and with DRED what the GPU last did and the address it faulted on.
+    void report_device_removed() {
+        const HRESULT reason = device_->GetDeviceRemovedReason();
+        std::snprintf(lost_, sizeof lost_, "%s", removed_reason_name(reason));
+        LSD_LOG_ERROR("d3d12", "The GPU device was removed (reason 0x%08X, %s)", static_cast<unsigned>(reason), lost_);
+        ComPtr<ID3D12DeviceRemovedExtendedData> dred;
+        if (!dred_ || FAILED(device_.As(&dred))) {
+            LSD_LOG_ERROR("d3d12", "Run with -gpu-debug to log what the GPU was doing when it failed (DRED).");
+            return;
+        }
+        D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT crumbs{};
+        if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&crumbs))) {
+            for (const D3D12_AUTO_BREADCRUMB_NODE* n = crumbs.pHeadAutoBreadcrumbNode; n; n = n->pNext) {
+                const u32 done = n->pLastBreadcrumbValue ? *n->pLastBreadcrumbValue : 0;
+                if (done >= n->BreadcrumbCount) continue;  // that list finished: not the culprit
+                LSD_LOG_ERROR("d3d12", "DRED: command list '%s' stopped after %u of %u GPU operations; the ones around it:",
+                              n->pCommandListDebugNameA ? n->pCommandListDebugNameA : "?", done, n->BreadcrumbCount);
+                const u32 from = done > 8 ? done - 8 : 0, to = done + 4 < n->BreadcrumbCount ? done + 4 : n->BreadcrumbCount;
+                for (u32 i = from; i < to; ++i) {
+                    LSD_LOG_ERROR("d3d12", "DRED:   %s%u %s", i == done ? "-> " : "   ", i, breadcrumb_name(n->pCommandHistory[i]));
+                }
+            }
+        }
+        D3D12_DRED_PAGE_FAULT_OUTPUT fault{};
+        if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault)) && fault.PageFaultVA) {
+            LSD_LOG_ERROR("d3d12", "DRED: GPU page fault at 0x%llX", static_cast<unsigned long long>(fault.PageFaultVA));
+            for (const D3D12_DRED_ALLOCATION_NODE* a = fault.pHeadExistingAllocationNode; a; a = a->pNext) {
+                LSD_LOG_ERROR("d3d12", "DRED:   in a live allocation '%s' (type %d)", a->ObjectNameA ? a->ObjectNameA : "?", static_cast<int>(a->AllocationType));
+            }
+            for (const D3D12_DRED_ALLOCATION_NODE* a = fault.pHeadRecentFreedAllocationNode; a; a = a->pNext) {
+                LSD_LOG_ERROR("d3d12", "DRED:   in a recently freed allocation '%s' (type %d): used after it was released",
+                              a->ObjectNameA ? a->ObjectNameA : "?", static_cast<int>(a->AllocationType));
+            }
+        }
+    }
+
+    static const char* breadcrumb_name(D3D12_AUTO_BREADCRUMB_OP op) {
+        switch (op) {
+            case D3D12_AUTO_BREADCRUMB_OP_SETMARKER: return "SetMarker";
+            case D3D12_AUTO_BREADCRUMB_OP_BEGINEVENT: return "BeginEvent";
+            case D3D12_AUTO_BREADCRUMB_OP_ENDEVENT: return "EndEvent";
+            case D3D12_AUTO_BREADCRUMB_OP_DRAWINSTANCED: return "DrawInstanced";
+            case D3D12_AUTO_BREADCRUMB_OP_DRAWINDEXEDINSTANCED: return "DrawIndexedInstanced";
+            case D3D12_AUTO_BREADCRUMB_OP_EXECUTEINDIRECT: return "ExecuteIndirect";
+            case D3D12_AUTO_BREADCRUMB_OP_DISPATCH: return "Dispatch";
+            case D3D12_AUTO_BREADCRUMB_OP_COPYBUFFERREGION: return "CopyBufferRegion";
+            case D3D12_AUTO_BREADCRUMB_OP_COPYTEXTUREREGION: return "CopyTextureRegion";
+            case D3D12_AUTO_BREADCRUMB_OP_COPYRESOURCE: return "CopyResource";
+            case D3D12_AUTO_BREADCRUMB_OP_RESOLVESUBRESOURCE: return "ResolveSubresource";
+            case D3D12_AUTO_BREADCRUMB_OP_CLEARRENDERTARGETVIEW: return "ClearRenderTargetView";
+            case D3D12_AUTO_BREADCRUMB_OP_CLEARUNORDEREDACCESSVIEW: return "ClearUnorderedAccessView";
+            case D3D12_AUTO_BREADCRUMB_OP_CLEARDEPTHSTENCILVIEW: return "ClearDepthStencilView";
+            case D3D12_AUTO_BREADCRUMB_OP_RESOURCEBARRIER: return "ResourceBarrier";
+            case D3D12_AUTO_BREADCRUMB_OP_EXECUTEBUNDLE: return "ExecuteBundle";
+            case D3D12_AUTO_BREADCRUMB_OP_PRESENT: return "Present";
+            case D3D12_AUTO_BREADCRUMB_OP_RESOLVEQUERYDATA: return "ResolveQueryData";
+            default: return "other";
         }
     }
 
@@ -2702,6 +2801,13 @@ private:
         list_->ResourceBarrier(1, &b);
     }
 
+    void retire(ComPtr<ID3D12Resource>&& resource) {
+        if (resource) retired_[frame_].push_back(std::move(resource));
+    }
+    void retire_srv(D3D12_CPU_DESCRIPTOR_HANDLE cpu) {
+        if (cpu.ptr) retired_srvs_[frame_].push_back(cpu);
+    }
+
     void wait_for_fence(u64 value) {
         if (fence_->GetCompletedValue() >= value) return;
         fence_->SetEventOnCompletion(value, fence_event_);
@@ -2724,9 +2830,8 @@ private:
     HANDLE fence_event_ = nullptr;
     u64 fence_value_ = 0;
     u64 frame_fence_values_[kBackBufferCount] = {};
-    static constexpr u32 kMaxRetired = 64;  // buffers a frame can release late (more: the old stall)
-    ComPtr<ID3D12Resource> retired_[kBackBufferCount][kMaxRetired];  // destroyed while that frame was recorded
-    u32 retired_count_[kBackBufferCount] = {};
+    std::vector<ComPtr<ID3D12Resource>> retired_[kBackBufferCount];       // destroyed while that frame was recorded
+    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> retired_srvs_[kBackBufferCount];  // their views' slots in the UI heap
     TextureHandle outline_mask_;  // the selection outline's mask, sized to the last viewport
     u32 outline_size_[2] = {};
     ComPtr<ID3D12QueryHeap> timestamp_heap_;  // GPU timings: kGpuTimestamps per frame in flight
@@ -2825,6 +2930,8 @@ private:
     u32 srv_size_ = 0;
     bool srv_used_[kDebugUiDescriptors] = {};
     bool debug_ui_ = false;
+    bool dred_ = false;    // DRED on (-gpu-debug / -validation)
+    char lost_[128] = "";  // why the device was removed; empty while it works
 };
 
 } // namespace

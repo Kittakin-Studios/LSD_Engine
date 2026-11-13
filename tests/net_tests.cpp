@@ -1,4 +1,5 @@
 // Multiplayer tests: a server and a client in one process over loopback, each with its own world.
+#include "lsd/audio/voice_io.h"
 #include "lsd/net/join_code.h"
 #include "lsd/net/net.h"
 #include "lsd/net/voice.h"
@@ -57,8 +58,67 @@ static void test_join_codes() {
     for (u32 i = 0; i < n; ++i) CHECK(std::strncmp(locals[i], "127.", 4) != 0);
 }
 
+// Push-to-talk's path without hardware (miniaudio's null devices, their callbacks on their own threads):
+// the microphone's frames read while the game thread plays other speakers, silence / noise / out-of-range
+// samples through Opus, broken packets, more speakers than slots, start and stop again. The owner's
+// "V crashed the game" report: none of it may crash, overrun a buffer or touch anything but audio.
+static void test_voice_io() {
+    audio::VoiceIO idle;  // never started: everything is a no-op
+    f32 frame[net::kVoiceFrame] = {};
+    CHECK(!idle.capturing() && !idle.read_frame(frame) && idle.level(1) == 0.0f);
+    idle.play(1, frame, 1.0f);
+    static_assert(audio::VoiceIO::kFrame == net::kVoiceFrame && audio::VoiceIO::kRate == net::kVoiceRate);
+
+    net::VoiceEncoder encoder;
+    net::VoiceDecoder decoder;
+    u8 packet[net::kMaxVoicePacket];
+    u32 seed = 1;
+    auto noise = [&] { seed = seed * 1664525u + 1013904223u; return static_cast<f32>(seed >> 8) / 8388608.0f - 1.0f; };
+    for (int kind = 0; kind < 3; ++kind) {  // silence, noise, clipping far past -1..1
+        for (int n = 0; n < 10; ++n) {
+            for (f32& s : frame) s = kind == 0 ? 0.0f : kind == 1 ? noise() : noise() * 40.0f;
+            const u32 bytes = encoder.encode(frame, packet, sizeof packet);
+            CHECK(bytes > 0 && bytes <= sizeof packet);
+            CHECK(decoder.decode(packet, bytes, frame));
+        }
+    }
+    CHECK(encoder.encode(frame, packet, 1) <= 1);  // a tiny buffer: at most a 1-byte packet, never an overrun
+    for (u8& b : packet) {
+        noise();
+        b = static_cast<u8>(seed >> 24);
+    }
+    for (u32 bytes : {1u, 2u, 7u, 100u, net::kMaxVoicePacket}) decoder.decode(packet, bytes, frame);  // garbage: may fail, must not crash
+
+    for (int pass = 0; pass < 3; ++pass) {  // started and stopped again, as Play does
+        audio::VoiceIO io;
+        if (!io.start(true, true)) {
+            std::printf("voice: miniaudio null devices unavailable, skipped\n");
+            return;
+        }
+        CHECK(io.capturing());
+        u32 frames = 0, sent = 0;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+        while (std::chrono::steady_clock::now() < until) {
+            while (io.read_frame(frame)) {  // talk(): every frame read, encoded while the key is down
+                ++frames;
+                if (frames % 2 && encoder.encode(frame, packet, sizeof packet)) ++sent;
+            }
+            for (f32& s : frame) s = noise();
+            for (u32 speaker = 0; speaker < 20; ++speaker) io.play(speaker, frame, 0.5f);  // more than the 16 slots: the rest dropped
+            CHECK(io.level(3) >= 0.0f && io.level(3) <= 1.0f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(frames >= 5 && sent > 0);  // ~20 frames in 400 ms
+        io.stop();
+        CHECK(!io.capturing() && !io.read_frame(frame));
+    }
+    audio::VoiceIO listen_only;
+    CHECK(listen_only.start(false, true) && !listen_only.capturing() && !listen_only.read_frame(frame));
+}
+
 int main() {
     test_join_codes();
+    test_voice_io();
     HeapAllocator heap("net");
     {
         World server_world(heap), client_world(heap);
@@ -247,6 +307,10 @@ int main() {
         client.send_voice(net::ChatChannel::Team, packet, bytes);
         pump(0.3f, [] {});
         CHECK(server_voice == bytes);
+        server_voice = 0;
+        CHECK(server.send_voice(net::ChatChannel::Team, packet, bytes));  // the host talks: its client hears, the host never hears itself
+        pump(0.3f, [] {});
+        CHECK(server_voice == 0);
 
         client.shutdown();
         pump(0.3f, [] {});

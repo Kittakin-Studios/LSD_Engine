@@ -181,6 +181,10 @@ private:
 public:
     ~VulkanDevice() override {
         if (device_) vkDeviceWaitIdle(device_);
+        for (Frame& f : frames_) {  // while their descriptor pool is still there
+            for (Texture& t : f.retired_textures) release_texture(t);
+            f.retired_textures.clear();
+        }
         if (debug_ui_) {
             for (Texture& t : textures_) {
                 if (t.ui_set) ImGui_ImplVulkan_RemoveTexture(t.ui_set);
@@ -717,13 +721,16 @@ public:
     void destroy_texture(TextureHandle handle) override {
         Texture* t = lookup_texture(handle);
         if (!t) return;
-        vkDeviceWaitIdle(device_);  // shortcut: stalls; deferred release when textures churn
         if (t->ui_set && debug_ui_) ImGui_ImplVulkan_RemoveTexture(t->ui_set);
         t->ui_set = VK_NULL_HANDLE;
         frames_[frame_].memo_count = 0;  // this frame's material / view sets may name its view
         view_set_ = VK_NULL_HANDLE;
-        release_texture(*t);
-        ++t->generation;
+        // Released once the frame being recorded is done on the GPU: RmlUi frees a font atlas in the middle of
+        // drawing a document whose earlier text this frame's commands still read.
+        frames_[frame_].retired_textures.push_back(*t);
+        const u32 generation = t->generation;
+        *t = Texture{};
+        t->generation = generation + 1;
     }
     void set_render_target(TextureHandle handle, const f32 clear_color[4]) override {
         if (skip_frame_ || shadow_pass_) return;
@@ -2663,8 +2670,11 @@ private:
         VkBuffer retired[kMaxRetired] = {};
         VkDeviceMemory retired_memory[kMaxRetired] = {};
         u32 retired_count = 0;
+        std::vector<Texture> retired_textures;  // the same for textures and targets
     };
     void free_retired(Frame& f) {
+        for (Texture& t : f.retired_textures) release_texture(t);
+        f.retired_textures.clear();
         for (u32 i = 0; i < f.retired_count; ++i) {
             vkDestroyBuffer(device_, f.retired[i], nullptr);
             vkFreeMemory(device_, f.retired_memory[i], nullptr);

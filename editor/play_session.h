@@ -42,6 +42,7 @@ namespace lsd::editor {
 u32 list_assets(const asset::AssetRegistry& registry, const char* type, const char* folder, char* out, usize capacity);
 
 class SkinnedCache;
+struct FracturedMesh;
 
 class AnimationPlayer;
 class UiPanels;
@@ -304,14 +305,45 @@ private:
     // add_entity_bodies made) with the pose, scale and collision they were built for. Nothing runs per frame for
     // objects no script touched.
     struct StaticBodies {
-        u32 first = 0, count = 0;
+        std::vector<u32> bodies;  // physics indices (not a range: freed indices are reused)
         Vec3 position, rotation, scale;
         u64 key = 0;  // collision_key() when built: a change rebuilds the bodies
     };
     std::unordered_map<u32, StaticBodies> static_bodies_;  // by entity value
     std::unordered_multimap<u32, u32> static_below_;       // an ancestor -> an object under it with static bodies
     std::vector<u32> touched_;                             // entities scripts wrote since the last update
-    void remember_static(const world::World& world, world::Entity e, u32 first, u32 count);
+    void remember_static(const world::World& world, world::Entity e, const std::vector<u32>& bodies);
+    std::vector<u32> added_bodies_;  // every add_body since it was last cleared (add_entity_bodies' static ones)
+    void remove_bodies_of_dead(world::World& world);  // objects scripts destroyed leave the simulation
+    // Destructible objects (Unreal's Geometry Collections): their pre-cut pieces, which broke off, and the children that
+    // draw what still stands (one per material section) once the first piece went. What stands is one static body of
+    // the standing pieces' hulls (add_entity_bodies builds it); broken pieces are rigid bodies of their own.
+    struct Breakable {
+        world::Entity entity;
+        const FracturedMesh* pieces = nullptr;
+        world::StaticMesh mesh;           // its Static Mesh before it broke (the component goes with the first break)
+        std::vector<u8> loose;            // per piece: broken off
+        std::vector<world::Entity> rest;  // per section: the child drawing what stands
+        f32 damage = 0.0f;                // lsd.apply_damage so far
+        bool broken = false;
+    };
+    std::vector<Breakable> breakables_;
+    struct LoosePiece {
+        world::Entity entity, owner;
+        f64 born;
+        f32 lifetime;
+        Vec3 centre;  // its centre of mass in its own (mesh) space: it shrinks about it
+    };
+    std::vector<LoosePiece> loose_;
+    Breakable* breakable_of(world::Entity e);
+public:
+    // lsd.fracture / a hard contact / lsd.apply_damage: the pieces of e within `radius` (m, world; < 0: its Break Radius,
+    // 0: all of them) of `point` fly off, pushed by `impulse` (N s, shared by mass) and away from the point.
+    // False if e is not a Destructible (or nothing is left). In multiplayer the server breaks and tells every machine.
+    bool fracture(world::World& world, world::Entity e, Vec3 point, Vec3 impulse, f32 radius, bool from_network = false);
+    u32 loose_pieces() const { return static_cast<u32>(loose_.size()); }
+private:
+    void update_fracture(world::World& world);  // after the step: pieces past their lifetime shrink away
     void follow_touched(world::World& world);
     input::InputSystem input_;
     input::InputRecording recording_;

@@ -2,6 +2,7 @@
 
 #include "animation_player.h"
 #include "debug_draw.h"
+#include "fracture_cache.h"
 #include "skinned_cache.h"
 #include "timeline_player.h"
 #include "ui_panels.h"
@@ -20,6 +21,7 @@
 #include <SDL3/SDL_scancode.h>
 
 #include "lsd/asset/data_asset.h"
+#include "lsd/core/console.h"
 #include "lsd/foundation/log.h"
 #include "lsd/world/level.h"
 #include "lsd/world/prefab.h"
@@ -38,6 +40,11 @@
 #include <iterator>
 
 namespace lsd::editor {
+
+namespace {
+i32 g_max_pieces = 300;  // fracture.MaxPieces: broken pieces flying at once, every Destructible together
+bool g_fracture_cvars = false;
+} // namespace
 
 namespace {
 
@@ -779,6 +786,8 @@ void PlaySession::stop() {
     follower_count_ = 0;
     static_bodies_.clear();
     static_below_.clear();
+    breakables_.clear();
+    loose_.clear();
     off_navmesh_.clear();
     touched_.clear();
     input_.clear();
@@ -998,6 +1007,30 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         if (const world::Entity e = world.entity_at_slot(slot); e.valid()) add_entity_bodies(world, e);
     }
+    // Destructibles: their pieces, cut now if this mesh and these settings are new (then kept in DerivedData).
+    if (!g_fracture_cvars) {
+        g_fracture_cvars = true;
+        console::add_variable("fracture.MaxPieces", &g_max_pieces, "Broken pieces flying at once, every Destructible together (older ones shrink away first)");
+    }
+    {
+        const reflect::TypeInfo& type = reflect::type_of<world::Destructible>();
+        for (u32 i = 0; i < world.count(type); ++i) {
+            const world::Entity e = world.owner(type, i);
+            const auto* sm = world.get<world::StaticMesh>(e);
+            if (!sm) {
+                LSD_LOG_WARN("play", "%s: a Destructible needs a Static Mesh", world.name(e));
+                continue;
+            }
+            Breakable b;
+            b.entity = e;
+            b.mesh = *sm;
+            Vec3 at, turn, size;
+            decompose_trs(world.world_matrix(e), at, turn, size);
+            b.pieces = fracture_cache(meshes).get(*sm, *static_cast<const world::Destructible*>(world.at(type, i)), size);
+            if (b.pieces) b.loose.assign(b.pieces->pieces.size(), 0);
+            breakables_.push_back(std::move(b));
+        }
+    }
     for (u32 slot = 0; slot < world.slot_count(); ++slot) {
         if (const world::Entity e = world.entity_at_slot(slot); e.valid() && world.get<world::Cloth>(e)) start_cloth(world, e);
     }
@@ -1208,6 +1241,20 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         const auto& self = *static_cast<const PlaySession*>(user);
         if (e == self.character_) return self.player_velocity_;
         return self.physics_ ? self.physics_->body_velocity(self.body_of(e)) : Vec3{};
+    };
+    host.body_motion = [](void* user, world::Entity e, int what, Vec3 value, const Vec3* at) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (!self.physics_ || !self.world_) return false;
+        self.follow_touched(*self.world_);  // a RigidBody lsd.add'ed just now gets its body first
+        const u32 body = self.body_of(e);
+        if (body == physics::kWorldBody) return false;
+        if (what == 0) return at ? self.physics_->add_impulse(body, value, *at) : self.physics_->add_impulse(body, value);
+        if (what == 1) return self.physics_->set_velocity(body, value);
+        return self.physics_->set_angular_velocity(body, value * (kPi / 180.0f));
+    };
+    host.fracture = [](void* user, world::Entity e, Vec3 point, Vec3 impulse, f32 radius) {
+        auto& self = *static_cast<PlaySession*>(user);
+        return self.world_ && self.fracture(*self.world_, e, point, impulse, radius);
     };
     host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
         const auto& self = *static_cast<const PlaySession*>(user);
@@ -1572,6 +1619,15 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
     host.rebuild_navmesh = [](void* user) { return static_cast<PlaySession*>(user)->rebuild_navmesh(); };
     host.damaged = [](void* user, world::Entity target, f32 amount, world::Entity instigator) {  // the damage sense
         auto& self = *static_cast<PlaySession*>(user);
+        if (Breakable* bk = self.breakable_of(target)) {  // a Destructible breaks once enough damage added up
+            const auto* d = self.world_->get<world::Destructible>(target);
+            bk->damage += amount;
+            if (d && d->damage_threshold > 0.0f && bk->damage >= d->damage_threshold) {
+                bk->damage = 0.0f;
+                const Vec3 at = transform_point(self.world_->world_matrix(target), (bk->pieces->bounds_min + bk->pieces->bounds_max) * 0.5f);
+                self.fracture(*self.world_, target, at, {}, -1.0f);
+            }
+        }
         Brain* b = self.brain_of(target);
         if (!b) return;
         b->board.set("Damaged", 1.0f);
@@ -1636,6 +1692,7 @@ const asset::AssetRecord* PlaySession::find_asset(asset::AssetType type, const c
 u32 PlaySession::add_body(world::Entity e, const physics::BodyDesc& desc) {
     const u32 body = physics_->add_body(desc);
     if (body < kMaxBodies) body_entities_[body] = e;
+    added_bodies_.push_back(body);
     return body;
 }
 
@@ -1675,11 +1732,10 @@ bool static_bodies_only(const world::World& world, world::Entity e) {
 }
 } // namespace
 
-void PlaySession::remember_static(const world::World& world, world::Entity e, u32 first, u32 count) {
+void PlaySession::remember_static(const world::World& world, world::Entity e, const std::vector<u32>& bodies) {
     const auto [at, added] = static_bodies_.try_emplace(e.value);
     StaticBodies& s = at->second;
-    s.first = first;
-    s.count = count;
+    s.bodies = bodies;
     s.key = collision_key(world, e);
     decompose_trs(world.world_matrix(e), s.position, s.rotation, s.scale);
     // shortcut: the hierarchy as it was when the bodies were built; lsd.set_parent later is not followed for children
@@ -1701,6 +1757,20 @@ void PlaySession::follow_touched(world::World& world) {
     touched_.erase(std::unique(touched_.begin(), touched_.end()), touched_.end());
     for (const u32 value : touched_) {
         const world::Entity e{value};
+        if (world.alive(e) && world.get<world::RigidBody>(e) && !world.get<world::Character>(e)) {  // lsd.add(e, "RigidBody"): it starts simulating
+            bool simulated = false;
+            for (u32 i = 0; i < simulated_count_ && !simulated; ++i) simulated = simulated_[i].entity == e;
+            if (simulated) continue;
+            if (const auto found = static_bodies_.find(value); found != static_bodies_.end()) {  // its static collision becomes the moving body
+                for (const u32 b : found->second.bodies) {
+                    physics_->remove_body(b);
+                    if (b < kMaxBodies) body_entities_[b] = {};
+                }
+                static_bodies_.erase(found);
+            }
+            add_entity_bodies(world, e);
+            continue;
+        }
         if (!world.alive(e) || !static_bodies_only(world, e)) continue;
         Vec3 position, rotation, scale;
         decompose_trs(world.world_matrix(e), position, rotation, scale);
@@ -1711,18 +1781,16 @@ void PlaySession::follow_touched(world::World& world) {
             if (s.key == collision_key(world, e) && std::fabs(grown.x) + std::fabs(grown.y) + std::fabs(grown.z) < 1e-4f) {
                 // A move: each body keeps its place relative to the object.
                 const Mat4 delta = translation(position) * rotation_euler(rotation) * affine_inverse(translation(s.position) * rotation_euler(s.rotation));
-                for (u32 b = s.first; b < s.first + s.count; ++b) physics_->set_body_transform(b, delta * physics_->body_transform(b));
+                for (const u32 b : s.bodies) physics_->set_body_transform(b, delta * physics_->body_transform(b));
                 s.position = position;
                 s.rotation = rotation;
                 continue;
             }
-            // shortcut: removed bodies' indices are not reused, so rescaling an object every frame grows the body
-            // list; reuse indices in PhysicsWorld if a game does that
-            for (u32 b = s.first; b < s.first + s.count; ++b) {
+            for (const u32 b : s.bodies) {
                 physics_->remove_body(b);
                 if (b < kMaxBodies) body_entities_[b] = {};
             }
-            s.count = 0;  // Collision off stays so until a write turns it on
+            s.bodies.clear();  // Collision off stays so until a write turns it on
             s.key = collision_key(world, e);
             s.position = position;
             s.rotation = rotation;
@@ -1815,7 +1883,30 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         add_moving(world, e, cached, !mesh || mesh->collision);
         return;
     }
-    const u32 first_static = physics_->body_count();  // the static bodies below, for follow_touched
+    added_bodies_.clear();  // the static bodies below, for follow_touched
+    if (Breakable* b = breakable_of(e); b && b->broken) {  // a broken Destructible: one static body of the standing pieces' hulls
+        Vec3 t, r, s;
+        decompose_trs(world.world_matrix(e), t, r, s);
+        std::vector<Vec3> hull_points;
+        std::vector<u32> sizes;
+        for (u32 p = 0; p < b->pieces->pieces.size(); ++p) {
+            if (b->loose[p] || b->pieces->pieces[p].hull.size() < 4) continue;
+            for (const Vec3& h : b->pieces->pieces[p].hull) hull_points.push_back(mul(h, s));
+            sizes.push_back(static_cast<u32>(b->pieces->pieces[p].hull.size()));
+        }
+        if (!sizes.empty()) {
+            physics::BodyDesc d;
+            d.shape = physics::Shape::Convex;
+            d.points = hull_points.data();
+            d.point_count = static_cast<u32>(hull_points.size());
+            d.hull_sizes = sizes.data();
+            d.hull_count = static_cast<u32>(sizes.size());
+            d.transform = translation(t) * rotation_euler(r);
+            add_body(e, d);
+        }
+        if (!added_bodies_.empty()) remember_static(world, e, added_bodies_);
+        return;
+    }
     if (cached && mesh->collision) {
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
@@ -1879,7 +1970,217 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
         add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
     }
-    if (physics_->body_count() > first_static) remember_static(world, e, first_static, physics_->body_count() - first_static);
+    if (!added_bodies_.empty()) remember_static(world, e, added_bodies_);
+}
+
+void PlaySession::remove_bodies_of_dead(world::World& world) {
+    bool any = false;
+    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
+        if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {
+            static_bodies_.erase(body_entities_[b].value);
+            physics_->remove_body(b);
+            body_entities_[b] = {};
+            any = true;
+        }
+    }
+    if (!any) return;
+    for (u32 i = 0; i < simulated_count_;) {  // their slots go to the next rigid bodies (spawned debris)
+        if (world.alive(simulated_[i].entity)) ++i;
+        else simulated_[i] = simulated_[--simulated_count_];
+    }
+}
+
+// ---- Destruction ----
+
+PlaySession::Breakable* PlaySession::breakable_of(world::Entity e) {
+    for (Breakable& b : breakables_) {
+        if (b.entity == e) return b.pieces ? &b : nullptr;
+    }
+    return nullptr;
+}
+
+bool PlaySession::fracture(world::World& world, world::Entity e, Vec3 point, Vec3 impulse, f32 radius, bool from_network) {
+    Breakable* b = world.alive(e) ? breakable_of(e) : nullptr;
+    const auto* d = b ? world.get<world::Destructible>(e) : nullptr;
+    if (!b || !d || !physics_) return false;
+    if (net_.active() && !from_network) {  // the server decides; every machine cuts the same pieces from the same point
+        char args[400];
+        std::snprintf(args, sizeof args, "[%s,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]", json_string(world.name(e)).c_str(), static_cast<f64>(point.x), static_cast<f64>(point.y),
+                      static_cast<f64>(point.z), static_cast<f64>(impulse.x), static_cast<f64>(impulse.y), static_cast<f64>(impulse.z), static_cast<f64>(radius));
+        if (net_.mode() == net::Mode::Client) {
+            net_.send_event(net::kToServer, "__fracture", args);
+            return true;
+        }
+        net_.send_event(net::kToEveryone, "__fracture", args);
+    }
+    const FracturedMesh& f = *b->pieces;
+    if (radius < 0.0f) radius = d->break_radius;
+    const Mat4 m = world.world_matrix(e);
+    Vec3 t, r, s;
+    decompose_trs(m, t, r, s);
+    // The standing pieces near the point (their bounds, in the world); none near: the nearest one.
+    std::vector<u32> hit;
+    u32 nearest = ~0u;
+    f32 nearest_d = 1e30f;
+    const Vec3 local = transform_point(inverse(m), point);
+    for (u32 p = 0; p < f.pieces.size(); ++p) {
+        if (b->loose[p]) continue;
+        const Vec3 closest = vmax(f.pieces[p].bounds_min, vmin(f.pieces[p].bounds_max, local));
+        const f32 dist = length(transform_point(m, closest) - point);
+        if (radius <= 0.0f || dist <= radius) hit.push_back(p);
+        if (dist < nearest_d) nearest_d = dist, nearest = p;
+    }
+    if (hit.empty() && nearest != ~0u) hit.push_back(nearest);
+    if (d->collapse_unsupported) {  // what no longer rests on the bottom, through pieces that touch, falls too
+        for (const u32 p : hit) b->loose[p] = 2;  // for the walk below only
+        const f32 gap = 0.01f * length(f.bounds_max - f.bounds_min) + 1e-4f;
+        std::vector<u8> held(f.pieces.size(), 0);
+        std::vector<u32> todo;
+        for (u32 p = 0; p < f.pieces.size(); ++p) {
+            if (!b->loose[p] && f.pieces[p].bounds_min.z <= f.bounds_min.z + gap) held[p] = 1, todo.push_back(p);
+        }
+        while (!todo.empty()) {
+            const u32 p = todo.back();
+            todo.pop_back();
+            for (u32 q = 0; q < f.pieces.size(); ++q) {
+                if (held[q] || b->loose[q]) continue;
+                const Vec3 lo = vmax(f.pieces[p].bounds_min, f.pieces[q].bounds_min), hi = vmin(f.pieces[p].bounds_max, f.pieces[q].bounds_max);
+                if (lo.x <= hi.x + gap && lo.y <= hi.y + gap && lo.z <= hi.z + gap) held[q] = 1, todo.push_back(q);  // touching boxes count as joined
+            }
+        }
+        for (const u32 p : hit) b->loose[p] = 0;
+        for (u32 p = 0; p < f.pieces.size(); ++p) {
+            if (!b->loose[p] && !held[p] && std::find(hit.begin(), hit.end(), p) == hit.end()) hit.push_back(p);
+        }
+    }
+    const u32 room = static_cast<u32>(sizeof simulated_ / sizeof simulated_[0]) - simulated_count_;
+    if (hit.size() > room) hit.resize(room);  // out of rigid body slots: the rest stays standing
+    if (hit.empty()) return false;
+    // Room under the caps: the oldest flying pieces (this object's, then anyone's) start shrinking now.
+    auto retire = [&](world::Entity owner, u32 keep) {
+        u32 count = 0;
+        for (const LoosePiece& l : loose_) count += !owner.valid() || l.owner == owner ? 1u : 0u;
+        for (LoosePiece& l : loose_) {
+            if (count <= keep) break;
+            if (owner.valid() && l.owner != owner) continue;
+            if (l.lifetime <= 0.0f || play_clock_ - l.born < l.lifetime) {
+                l.lifetime = 0.001f;
+                l.born = play_clock_ - 0.001;
+                --count;
+            }
+        }
+    };
+    const u32 adding = static_cast<u32>(hit.size());
+    if (d->max_pieces_alive) retire(e, d->max_pieces_alive > adding ? d->max_pieces_alive - adding : 0u);
+    retire({}, static_cast<u32>(g_max_pieces) > adding ? static_cast<u32>(g_max_pieces) - adding : 0u);
+
+    if (!b->broken) {  // the first break: the intact mesh gives way to what stands, drawn per section by children
+        b->broken = true;
+        for (u16 k = 0; k < f.materials.size(); ++k) {
+            char name[96];
+            std::snprintf(name, sizeof name, "%s_rest%u", world.name(e), static_cast<u32>(k));
+            const world::Entity child = world.create(name);
+            world.set_parent(child, e, false);
+            auto* sm = world.add<world::StaticMesh>(child);
+            *sm = b->mesh;
+            std::snprintf(sm->material, sizeof sm->material, "%s", f.materials[k].c_str());
+            sm->collision = false;
+            sm->static_lighting = false;
+            sm->material_overrides.count = 0;
+            b->rest.push_back(child);
+        }
+        world.remove(e, reflect::type_of<world::StaticMesh>());
+    }
+    for (const u32 p : hit) b->loose[p] = 1;
+    std::vector<u32> standing;
+    for (u32 p = 0; p < f.pieces.size(); ++p) {
+        if (!b->loose[p]) standing.push_back(p);
+    }
+    for (u16 k = 0; k < b->rest.size(); ++k) {
+        auto* sm = world.alive(b->rest[k]) ? world.get<world::StaticMesh>(b->rest[k]) : nullptr;
+        if (!sm) continue;
+        char key[40];
+        std::snprintf(key, sizeof key, "Fracture:%s:r%08x:%u", f.id, e.value, static_cast<u32>(k));
+        std::snprintf(sm->mesh, sizeof sm->mesh, "%s", fracture_cache(*meshes_).build_rest(f, standing, k, key) ? key : "Fracture:none");
+    }
+    // What stands: its static body again from the standing pieces' hulls.
+    if (const auto found = static_bodies_.find(e.value); found != static_bodies_.end()) {
+        for (const u32 body : found->second.bodies) {
+            physics_->remove_body(body);
+            if (body < kMaxBodies) body_entities_[body] = {};
+        }
+        static_bodies_.erase(found);
+    }
+    add_entity_bodies(world, e);
+    // The broken pieces: an object each (its sections as children), a convex rigid body around its centre of mass.
+    f32 total_mass = 0.0f;
+    const f32 volume_scale = std::fabs(s.x * s.y * s.z);
+    for (const u32 p : hit) total_mass += std::fmax(f.pieces[p].volume * volume_scale * d->density, 0.5f);
+    const Mat4 placed = translation(t) * rotation_euler(r);
+    const f32 strength = length(impulse);
+    for (const u32 p : hit) {
+        const FracturedMesh::Piece& piece = f.pieces[p];
+        char name[96];
+        std::snprintf(name, sizeof name, "%s_piece%u", world.name(e), p);
+        const world::Entity root = world.create(name);
+        world.set_world_matrix(root, m);
+        for (const u16 k : piece.sections) {
+            std::snprintf(name, sizeof name, "%s_piece%u_%u", world.name(e), p, static_cast<u32>(k));
+            const world::Entity child = world.create(name);
+            world.set_parent(child, root, false);
+            auto* sm = world.add<world::StaticMesh>(child);
+            *sm = b->mesh;
+            f.key(p, k, sm->mesh);
+            std::snprintf(sm->material, sizeof sm->material, "%s", f.materials[k].c_str());
+            sm->collision = false;
+            sm->static_lighting = false;
+            sm->material_overrides.count = 0;
+        }
+        std::vector<Vec3> points;
+        for (const Vec3& h : piece.hull) points.push_back(mul(h - piece.centre_of_mass, s));
+        physics::BodyDesc desc;
+        desc.shape = physics::Shape::Convex;
+        desc.points = points.data();
+        desc.point_count = static_cast<u32>(points.size());
+        desc.transform = placed * translation(mul(piece.centre_of_mass, s));
+        desc.motion = physics::Motion::Dynamic;
+        desc.mass = std::fmax(piece.volume * volume_scale * d->density, 0.5f);
+        desc.friction = 0.7f;
+        desc.debris = d->collision_preset == 1;
+        const u32 body = add_body(root, desc);
+        simulated_[simulated_count_++] = {root, body, s, piece.centre_of_mass, false, desc.mass, desc.friction, 0.0f};
+        // Its share of the push, and half as much again outward from the point (a blast throws pieces apart).
+        const Vec3 centre = transform_point(m, piece.centre_of_mass);
+        const Vec3 away = length(centre - point) > 1e-4f ? normalize(centre - point) : (strength > 0.0f ? impulse * (1.0f / strength) : Vec3{0, 0, 1});
+        const f32 share = desc.mass / total_mass;
+        physics_->add_impulse(body, impulse * share + away * (0.5f * strength * share), point);
+        loose_.push_back({root, e, play_clock_, d->piece_lifetime, piece.centre_of_mass});
+    }
+    LSD_LOG_INFO("play", "%s broke: %zu pieces off, %zu standing, %zu flying", world.name(e), hit.size(), standing.size(), loose_.size());
+    const f64 args[3] = {point.x, point.y, point.z};
+    scripts_.send(e, "on_fracture", args, 3, {});
+    return true;
+}
+
+void PlaySession::update_fracture(world::World& world) {
+    for (usize i = 0; i < loose_.size();) {
+        LoosePiece& l = loose_[i];
+        const f64 age = play_clock_ - l.born;
+        if (!world.alive(l.entity)) {
+            loose_.erase(loose_.begin() + static_cast<std::ptrdiff_t>(i));  // in order: the oldest stay first (retire)
+            continue;
+        }
+        if (l.lifetime > 0.0f && age > l.lifetime) {
+            const f32 k = 1.0f - static_cast<f32>(age - static_cast<f64>(l.lifetime)) / 0.5f;  // half a second to shrink away
+            if (k <= 0.0f) {
+                world.destroy(l.entity);  // its body goes with the next remove_bodies_of_dead
+                loose_.erase(loose_.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            world.set_world_matrix(l.entity, world.world_matrix(l.entity) * translation(l.centre) * scaling({k, k, k}) * translation(-l.centre));
+        }
+        ++i;
+    }
 }
 
 // A prefab, mesh asset, particle system or built-in shape by name, placed at `position` (world objects only).
@@ -2192,6 +2493,20 @@ void PlaySession::send_hits() {
         if (!a.valid() || !b.valid()) continue;
         scripts_.send(a, "on_hit", b);
         scripts_.send(b, "on_hit", a);
+        // Hard enough on a Destructible (not by its own pieces): it breaks there, pushed the way the other one moved.
+        if (contacts[i].impulse <= 0.0f || net_.mode() == net::Mode::Client || !world_) continue;
+        for (int side = 0; side < 2; ++side) {
+            const world::Entity target = side ? b : a, other = side ? a : b;
+            const u32 other_body = side ? contacts[i].a : contacts[i].b;
+            const auto* d = breakable_of(target) ? world_->get<world::Destructible>(target) : nullptr;
+            if (!d || d->damage_threshold <= 0.0f || contacts[i].impulse < d->damage_threshold) continue;
+            bool own = false;
+            for (const LoosePiece& l : loose_) own = own || (l.entity == other && l.owner == target);
+            if (own) continue;
+            const Vec3 v = physics_->body_velocity(other_body);
+            const Vec3 push = length(v) > 1e-3f ? normalize(v) * contacts[i].impulse : Vec3{};
+            fracture(*world_, target, contacts[i].point, push, -1.0f);
+        }
     }
 }
 
@@ -2430,13 +2745,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 direction = moving ? -std::atan2(fx * moved.y - fy * moved.x, fx * moved.x + fy * moved.y) * 57.29578f : 0.0f;
         animations_->set_param(world, character_, "Direction", direction);
     }
-    // Objects scripts destroyed leave the simulation.
-    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
-        if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {
-            physics_->remove_body(b);
-            body_entities_[b] = {};
-        }
-    }
+    remove_bodies_of_dead(world);
 
     // Kill Z and Kill Volumes.
     bool killed = feet_.z < world.settings().kill_z;
@@ -2460,6 +2769,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     }
     update_vehicle_wheels(world);
     update_cloth(world);
+    update_fracture(world);
     if (const Moving* car = world.alive(driving_) ? moving_of(driving_) : nullptr; car && car->vehicle != ~0u) place_rider(world);  // on the car where it is now
     if (world.alive(character_)) {
         Vec3 t, r, scale;
@@ -2748,6 +3058,20 @@ void PlaySession::net_receive(world::World& world, f32 dt) {
                     feet_ = {x, y, z};
                 }
                 // shortcut: a corrected car (its driver's own) is not put back here; its physics carries on from where the driver had it
+            } else if (std::strcmp(ev.name, "__fracture") == 0) {  // a Destructible broke on the server (or a client asks it to)
+                const char* open = std::strchr(ev.json, '"');
+                const char* close = open ? std::strchr(open + 1, '"') : nullptr;
+                f32 v[7] = {};
+                if (close && std::sscanf(close + 1, ",%f,%f,%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]) == 7) {
+                    const std::string name(open + 1, static_cast<usize>(close - open - 1));
+                    const bool server = net_.mode() == net::Mode::Server;
+                    for (const Breakable& bk : breakables_) {
+                        if (world.alive(bk.entity) && name == world.name(bk.entity)) {
+                            fracture(world, bk.entity, {v[0], v[1], v[2]}, {v[3], v[4], v[5]}, v[6], !server);  // the server passes a client's ask on
+                            break;
+                        }
+                    }
+                }
             } else if (std::strcmp(ev.name, "__seated") == 0 && std::sscanf(ev.json, "[%u,%d]", &id, &seat) == 2) {
                 if (seat >= 0) take_seat(world, vehicle_of(id), seat);
                 else LSD_LOG_INFO("play", "That vehicle is full");
