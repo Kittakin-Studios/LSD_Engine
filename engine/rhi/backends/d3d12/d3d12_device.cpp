@@ -472,12 +472,7 @@ public:
     void destroy_buffer(BufferHandle handle) override {
         Buffer* b = lookup(handle);
         if (!b) return;
-        if (retired_count_[frame_] < kMaxRetired) {  // the frame being recorded may use it: released after its fence (buffers made per frame, water)
-            retired_[frame_][retired_count_[frame_]++] = std::move(b->resource);
-        } else {
-            wait_for_gpu();
-            b->resource.Reset();
-        }
+        retire(std::move(b->resource));  // the frame being recorded may use it (buffers made per frame, water)
         ++b->generation;
     }
 
@@ -641,27 +636,27 @@ public:
     }
 
     void destroy_texture(TextureHandle handle) override {
+        // Released, and the view's descriptor freed, once the frame being recorded is done: RmlUi frees a font
+        // atlas in the middle of drawing a document whose earlier text this frame's commands still read (the
+        // GPU then faulted on the freed texture and the device was removed: voice chat's "talking" text).
         if (ShadowMap* shadow = lookup_shadow(handle)) {
-            wait_for_gpu();
-            free_srv(shadow->srv_cpu);
-            shadow->resource.Reset();
+            retire_srv(shadow->srv_cpu);
+            retire(std::move(shadow->resource));
             ++shadow->generation;
             return;
         }
         if (Texture* texture = lookup_texture(handle)) {
-            wait_for_gpu();  // shortcut: stalls; fine for rare destroys (asset reloads, shutdown)
-            free_srv(texture->srv_cpu);
-            texture->resource.Reset();
+            retire_srv(texture->srv_cpu);
+            retire(std::move(texture->resource));
             ++texture->generation;
             return;
         }
         Target* t = lookup(handle);
         if (!t) return;
-        wait_for_gpu();  // shortcut: stalls; fine for rare destroys (thumbnails, shutdown)
-        free_srv(t->srv_cpu);
-        free_srv(t->depth_srv_cpu);
-        t->color.Reset();
-        t->depth.Reset();
+        retire_srv(t->srv_cpu);
+        retire_srv(t->depth_srv_cpu);
+        retire(std::move(t->color));
+        retire(std::move(t->depth));
         ++t->generation;
     }
 
@@ -1598,8 +1593,9 @@ public:
     void begin_frame(const f32 clear_color[4]) override {
         frame_ = swapchain_->GetCurrentBackBufferIndex();
         wait_for_fence(frame_fence_values_[frame_]);
-        for (u32 i = 0; i < retired_count_[frame_]; ++i) retired_[frame_][i].Reset();
-        retired_count_[frame_] = 0;
+        retired_[frame_].clear();  // that frame is done on the GPU: what it was the last to use goes
+        for (const D3D12_CPU_DESCRIPTOR_HANDLE cpu : retired_srvs_[frame_]) free_srv(cpu);
+        retired_srvs_[frame_].clear();
         if (timestamps_set_[frame_] && timestamp_readback_ && timestamp_frequency_) {  // this slot's last frame has finished: its timings
             const D3D12_RANGE range{sizeof(u64) * frame_ * kGpuTimestamps, sizeof(u64) * (frame_ + 1) * kGpuTimestamps};
             u64* ticks = nullptr;
@@ -2730,6 +2726,13 @@ private:
         list_->ResourceBarrier(1, &b);
     }
 
+    void retire(ComPtr<ID3D12Resource>&& resource) {
+        if (resource) retired_[frame_].push_back(std::move(resource));
+    }
+    void retire_srv(D3D12_CPU_DESCRIPTOR_HANDLE cpu) {
+        if (cpu.ptr) retired_srvs_[frame_].push_back(cpu);
+    }
+
     void wait_for_fence(u64 value) {
         if (fence_->GetCompletedValue() >= value) return;
         fence_->SetEventOnCompletion(value, fence_event_);
@@ -2752,9 +2755,8 @@ private:
     HANDLE fence_event_ = nullptr;
     u64 fence_value_ = 0;
     u64 frame_fence_values_[kBackBufferCount] = {};
-    static constexpr u32 kMaxRetired = 64;  // buffers a frame can release late (more: the old stall)
-    ComPtr<ID3D12Resource> retired_[kBackBufferCount][kMaxRetired];  // destroyed while that frame was recorded
-    u32 retired_count_[kBackBufferCount] = {};
+    std::vector<ComPtr<ID3D12Resource>> retired_[kBackBufferCount];       // destroyed while that frame was recorded
+    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> retired_srvs_[kBackBufferCount];  // their views' slots in the UI heap
     TextureHandle outline_mask_;  // the selection outline's mask, sized to the last viewport
     u32 outline_size_[2] = {};
     ComPtr<ID3D12QueryHeap> timestamp_heap_;  // GPU timings: kGpuTimestamps per frame in flight
