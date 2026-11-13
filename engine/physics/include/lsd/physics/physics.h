@@ -158,19 +158,27 @@ public:
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
-    // Returns the body's index (0, 1, 2... in the order added).
+    // Returns the body's index: a removed body's index is handed out again first, else the next new one (0, 1, 2...).
     u32 add_body(const BodyDesc& desc);
     // Moves a Kinematic body to `transform` over the next step (it pushes and carries what it meets).
     void move_kinematic(u32 body, const Mat4& transform, f32 dt);
     // Places a body at `transform` at once (a teleport: no sweep, nothing pushed). For static bodies a script moved.
     void set_body_transform(u32 body, const Mat4& transform);
-    // Takes a body out of the simulation; its index is not reused.
+    // Takes a body out of the simulation; a later add_body / add_cloth may reuse its index.
     void remove_body(u32 body);
+    // Dynamic bodies (false, and nothing done, for others; each wakes a sleeping body): an impulse in N s through the centre
+    // of mass, or through world point `at` (it spins the body too); set the linear (m/s) or angular velocity (rad/s, world axes).
+    bool add_impulse(u32 body, Vec3 impulse);
+    bool add_impulse(u32 body, Vec3 impulse, Vec3 at);
+    bool set_velocity(u32 body, Vec3 velocity);
+    bool set_angular_velocity(u32 body, Vec3 velocity);
+    Vec3 body_angular_velocity(u32 body) const;  // rad/s; zero for static or removed bodies
     // Position + rotation of a body's centre after the last step (identity once removed).
     Mat4 body_transform(u32 body) const;
     // Linear velocity of a body's centre, metres per second (zero for static or removed bodies).
     Vec3 body_velocity(u32 body) const;
-    u32 body_count() const;
+    u32 body_count() const;  // indices in use are below this (removed ones included)
+    u32 live_body_count() const;  // bodies in the simulation now
 
     // Nearest body along the ray (direction need not be unit length; the player is not hit).
     // `ignore_body`: one body the ray passes through (a vehicle looking for the ground under itself).

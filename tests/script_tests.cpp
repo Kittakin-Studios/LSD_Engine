@@ -756,6 +756,22 @@ static void test_game_instance() {
     const world::Entity hand = w.create("Hand");
     w.get<world::Transform>(hand)->position = {10, 0, 0};
     CHECK(scripts.run("local x, y, z = lsd.velocity(lsd.find('Block')) assert(x == 1 and y == 2 and z == 3)"));
+    // lsd.add_impulse / set_velocity / set_angular_velocity pass what and where to the host; false without a body.
+    CHECK(scripts.run("assert(lsd.add_impulse(lsd.find('Block'), 1, 2, 3) == false)"));
+    static int motion_what = -1;
+    static Vec3 motion_value, motion_at;
+    static bool motion_has_at = false;
+    host.body_motion = [](void*, world::Entity, int what, Vec3 value, const Vec3* at) {
+        motion_what = what, motion_value = value, motion_has_at = at != nullptr;
+        if (at) motion_at = *at;
+        return true;
+    };
+    scripts.stop();
+    scripts.start(w, host, path_of, nullptr);
+    CHECK(scripts.run("assert(lsd.add_impulse(lsd.find('Block'), 1, 2, 3))") && motion_what == 0 && motion_value.z == 3.0f && !motion_has_at);
+    CHECK(scripts.run("assert(lsd.add_impulse(lsd.find('Block'), 1, 2, 3, 4, 5, 6))") && motion_has_at && motion_at.x == 4.0f && motion_at.z == 6.0f);
+    CHECK(scripts.run("assert(lsd.set_velocity(lsd.find('Block'), 0, 0, 9))") && motion_what == 1 && motion_value.z == 9.0f);
+    CHECK(scripts.run("assert(lsd.set_angular_velocity(lsd.find('Block'), 0, 0, 90))") && motion_what == 2 && motion_value.z == 90.0f);
     CHECK(scripts.run(R"(
 local b, h = lsd.find('Block'), lsd.find('Hand')
 assert(lsd.parent(b) == nil and lsd.set_parent(b, h) and lsd.parent(b) == h)

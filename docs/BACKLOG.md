@@ -453,6 +453,8 @@ several people at once. What its scripts had to work around:
 - [x] A shape spawned in Play keeps its collision body where it appeared, at scale 1 (`PlaySession::spawn` > `add_entity_bodies`): later moves, scale and Collision off do not reach the body. Games spawn props 60 m underground and move them. Fixed: script writes (`ScriptHost::touched`) move / rebuild that object's static bodies (`PlaySession::follow_touched`)
 - [x] `lsd.move_to` logs "Nav Agent is not on the navmesh" on every failed call (`PlaySession::agent_of`): once per agent is enough (done: once per agent per Play)
 - [x] Lua cannot read the velocity of the player, a vehicle or a body (scripts derive it from positions) (done: `lsd.velocity(e)`)
+- [x] Physics body slots were never reused and rigid bodies' Play slots (1024) never freed: a session spawning debris ran out (the game capped itself at 350). Fixed: `PhysicsWorld` hands removed bodies' indices out again, destroyed rigid bodies free their slots (`PlaySession::remove_bodies_of_dead`)
+- [x] `lsd.add(e, "RigidBody")` on a spawned object did not simulate it (only prefabs with a RigidBody did). Fixed (`follow_touched` builds its body); plus `lsd.add_impulse`, `lsd.set_velocity`, `lsd.set_angular_velocity`
 - [ ] `lsd.set_rotation` on a vehicle being driven does nothing
 - [ ] `on_overlap_begin` only reaches a script on the trigger object itself
 - [~] `lsd.play_sound` plays at a fixed point: no sound that follows an object from Lua; Lua cannot loop a sound or read its length (`lsd.play_music` plays a non-looping sound once). Done: `lsd.play_sound_on(e, name, loop)`, `lsd.play_sound(..., true)` loops sound files; open: a sound's length

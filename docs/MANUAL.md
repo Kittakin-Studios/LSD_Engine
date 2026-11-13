@@ -2837,9 +2837,11 @@ Objects and transforms
 | `lsd.world_position(e)` | x, y, z in the world (with its parents' moves; Unreal's Get Actor Location) |
 | `lsd.rotation(e)` / `lsd.set_rotation(e, x, y, z)` | local rotation, degrees |
 | `lsd.velocity(e)` | vx, vy, vz in m/s: the player's Character, a vehicle, a mover or a rigid body; 0, 0, 0 for anything else (Unreal's Get Velocity) |
+| `lsd.add_impulse(e, x, y, z [, at_x, at_y, at_z])` | a kick in N s on e's simulated RigidBody (Unreal's Add Impulse; mass 10 and impulse 10 = 1 m/s); through a world point it spins it too. False when e has no dynamic body |
+| `lsd.set_velocity(e, x, y, z)` / `lsd.set_angular_velocity(e, x, y, z)` | sets a RigidBody's speed (m/s) or spin (degrees/s, world axes; Unreal's Set Physics Linear / Angular Velocity). False when e has no dynamic body |
 | `lsd.set_parent(e, parent [, keep_world])` / `lsd.parent(e)` | attaches e under parent (nil detaches); by default it stays where it is in the world, `false` keeps its Transform as it was (now relative to the parent). False if it would make a loop. Helmets, held items (Unreal's Attach To Actor) |
 | `lsd.spawn(name, x, y, z)` | a prefab, mesh asset, particle system (an explosion at a point) or shape ("Cube"); the new entity |
-| `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component |
+| `lsd.get(e, "Type")`, `lsd.set(e, "Type", t)`, `lsd.add`, `lsd.remove`, `lsd.has` | any component. `lsd.add(e, "RigidBody", {mass = 2})` in Play makes e simulate (its static collision becomes the moving body), by the next frame or at once for `lsd.add_impulse` / `set_velocity` |
 | `lsd.has_tag(e, "Enemy")` | gameplay tags (dotted: "Damage" matches "Damage.Fire") |
 | `lsd.has_any_tag(e, "A, B")` / `has_all_tags` / `has_no_tag` | several tags at once (Has Any Tag / Has All Tags nodes) |
 | `lsd.raycast(x, y, z, dx, dy, dz, dist)` | `e, px, py, pz, nx, ny, nz` or nil |

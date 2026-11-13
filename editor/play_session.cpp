@@ -1209,6 +1209,16 @@ void PlaySession::start(world::World& world, MeshCache& meshes, const asset::Ass
         if (e == self.character_) return self.player_velocity_;
         return self.physics_ ? self.physics_->body_velocity(self.body_of(e)) : Vec3{};
     };
+    host.body_motion = [](void* user, world::Entity e, int what, Vec3 value, const Vec3* at) {
+        auto& self = *static_cast<PlaySession*>(user);
+        if (!self.physics_ || !self.world_) return false;
+        self.follow_touched(*self.world_);  // a RigidBody lsd.add'ed just now gets its body first
+        const u32 body = self.body_of(e);
+        if (body == physics::kWorldBody) return false;
+        if (what == 0) return at ? self.physics_->add_impulse(body, value, *at) : self.physics_->add_impulse(body, value);
+        if (what == 1) return self.physics_->set_velocity(body, value);
+        return self.physics_->set_angular_velocity(body, value * (kPi / 180.0f));
+    };
     host.raycast = [](void* user, Vec3 origin, Vec3 direction, f32 distance, world::Entity& hit, Vec3& point, Vec3& normal) {
         const auto& self = *static_cast<const PlaySession*>(user);
         physics::RayHit ray;
@@ -1636,6 +1646,7 @@ const asset::AssetRecord* PlaySession::find_asset(asset::AssetType type, const c
 u32 PlaySession::add_body(world::Entity e, const physics::BodyDesc& desc) {
     const u32 body = physics_->add_body(desc);
     if (body < kMaxBodies) body_entities_[body] = e;
+    added_bodies_.push_back(body);
     return body;
 }
 
@@ -1675,11 +1686,10 @@ bool static_bodies_only(const world::World& world, world::Entity e) {
 }
 } // namespace
 
-void PlaySession::remember_static(const world::World& world, world::Entity e, u32 first, u32 count) {
+void PlaySession::remember_static(const world::World& world, world::Entity e, const std::vector<u32>& bodies) {
     const auto [at, added] = static_bodies_.try_emplace(e.value);
     StaticBodies& s = at->second;
-    s.first = first;
-    s.count = count;
+    s.bodies = bodies;
     s.key = collision_key(world, e);
     decompose_trs(world.world_matrix(e), s.position, s.rotation, s.scale);
     // shortcut: the hierarchy as it was when the bodies were built; lsd.set_parent later is not followed for children
@@ -1701,6 +1711,20 @@ void PlaySession::follow_touched(world::World& world) {
     touched_.erase(std::unique(touched_.begin(), touched_.end()), touched_.end());
     for (const u32 value : touched_) {
         const world::Entity e{value};
+        if (world.alive(e) && world.get<world::RigidBody>(e) && !world.get<world::Character>(e)) {  // lsd.add(e, "RigidBody"): it starts simulating
+            bool simulated = false;
+            for (u32 i = 0; i < simulated_count_ && !simulated; ++i) simulated = simulated_[i].entity == e;
+            if (simulated) continue;
+            if (const auto found = static_bodies_.find(value); found != static_bodies_.end()) {  // its static collision becomes the moving body
+                for (const u32 b : found->second.bodies) {
+                    physics_->remove_body(b);
+                    if (b < kMaxBodies) body_entities_[b] = {};
+                }
+                static_bodies_.erase(found);
+            }
+            add_entity_bodies(world, e);
+            continue;
+        }
         if (!world.alive(e) || !static_bodies_only(world, e)) continue;
         Vec3 position, rotation, scale;
         decompose_trs(world.world_matrix(e), position, rotation, scale);
@@ -1711,18 +1735,16 @@ void PlaySession::follow_touched(world::World& world) {
             if (s.key == collision_key(world, e) && std::fabs(grown.x) + std::fabs(grown.y) + std::fabs(grown.z) < 1e-4f) {
                 // A move: each body keeps its place relative to the object.
                 const Mat4 delta = translation(position) * rotation_euler(rotation) * affine_inverse(translation(s.position) * rotation_euler(s.rotation));
-                for (u32 b = s.first; b < s.first + s.count; ++b) physics_->set_body_transform(b, delta * physics_->body_transform(b));
+                for (const u32 b : s.bodies) physics_->set_body_transform(b, delta * physics_->body_transform(b));
                 s.position = position;
                 s.rotation = rotation;
                 continue;
             }
-            // shortcut: removed bodies' indices are not reused, so rescaling an object every frame grows the body
-            // list; reuse indices in PhysicsWorld if a game does that
-            for (u32 b = s.first; b < s.first + s.count; ++b) {
+            for (const u32 b : s.bodies) {
                 physics_->remove_body(b);
                 if (b < kMaxBodies) body_entities_[b] = {};
             }
-            s.count = 0;  // Collision off stays so until a write turns it on
+            s.bodies.clear();  // Collision off stays so until a write turns it on
             s.key = collision_key(world, e);
             s.position = position;
             s.rotation = rotation;
@@ -1815,7 +1837,7 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
         add_moving(world, e, cached, !mesh || mesh->collision);
         return;
     }
-    const u32 first_static = physics_->body_count();  // the static bodies below, for follow_touched
+    added_bodies_.clear();  // the static bodies below, for follow_touched
     if (cached && mesh->collision) {
         physics::BodyDesc d = fitted_body(world.world_matrix(e), cached->bounds_min, cached->bounds_max, 0, physics::Motion::Static, scale, centre);
         if (mesh->collision_shape == 1) use_mesh_shape(d, physics::Shape::Mesh);
@@ -1879,7 +1901,24 @@ void PlaySession::add_entity_bodies(const world::World& world, world::Entity e) 
     if (const auto* blocking = world.get<world::BlockingVolume>(e); blocking && blocking->enabled) {
         add_body(e, fitted_body(world.world_matrix(e), kUnitLo, kUnitHi, 0, physics::Motion::Static, scale, centre));
     }
-    if (physics_->body_count() > first_static) remember_static(world, e, first_static, physics_->body_count() - first_static);
+    if (!added_bodies_.empty()) remember_static(world, e, added_bodies_);
+}
+
+void PlaySession::remove_bodies_of_dead(world::World& world) {
+    bool any = false;
+    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
+        if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {
+            static_bodies_.erase(body_entities_[b].value);
+            physics_->remove_body(b);
+            body_entities_[b] = {};
+            any = true;
+        }
+    }
+    if (!any) return;
+    for (u32 i = 0; i < simulated_count_;) {  // their slots go to the next rigid bodies (spawned debris)
+        if (world.alive(simulated_[i].entity)) ++i;
+        else simulated_[i] = simulated_[--simulated_count_];
+    }
 }
 
 // A prefab, mesh asset, particle system or built-in shape by name, placed at `position` (world objects only).
@@ -2416,13 +2455,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         const f32 direction = moving ? -std::atan2(fx * moved.y - fy * moved.x, fx * moved.x + fy * moved.y) * 57.29578f : 0.0f;
         animations_->set_param(world, character_, "Direction", direction);
     }
-    // Objects scripts destroyed leave the simulation.
-    for (u32 b = 0; b < physics_->body_count() && b < kMaxBodies; ++b) {
-        if (body_entities_[b].valid() && !world.alive(body_entities_[b])) {
-            physics_->remove_body(b);
-            body_entities_[b] = {};
-        }
-    }
+    remove_bodies_of_dead(world);
 
     // Kill Z and Kill Volumes.
     bool killed = feet_.z < world.settings().kill_z;

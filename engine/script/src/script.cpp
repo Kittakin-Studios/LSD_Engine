@@ -2377,6 +2377,16 @@ struct Api {
         push_vec3(L, host.velocity ? host.velocity(host.user, e) : Vec3{});
         return 3;
     }
+    static int body_motion(lua_State* L, int what) {
+        const world::Entity e = live_entity(L, 1);
+        const ScriptHost& host = system(L).host_;
+        const Vec3 at = what == 0 && !lua_isnoneornil(L, 5) ? check_vec3(L, 5) : Vec3{};
+        lua_pushboolean(L, host.body_motion && host.body_motion(host.user, e, what, check_vec3(L, 2), what == 0 && !lua_isnoneornil(L, 5) ? &at : nullptr));
+        return 1;
+    }
+    static int add_impulse(lua_State* L) { return body_motion(L, 0); }
+    static int set_velocity(lua_State* L) { return body_motion(L, 1); }
+    static int set_angular_velocity(lua_State* L) { return body_motion(L, 2); }
     // lsd.set_parent(e, parent [, keep_world = true]): parent nil detaches. False if it would make a loop.
     static int set_parent(lua_State* L) {
         const world::Entity e = live_entity(L, 1);
@@ -2525,7 +2535,7 @@ void ScriptSystem::start(world::World& world, const ScriptHost& host, PathFn pat
         {"set_name", Api::set_name}, {"get_world_settings", Api::get_world_settings}, {"set_world_settings", Api::set_world_settings},
         {"alive", Api::alive}, {"destroy", Api::destroy},
         {"position", Api::position}, {"world_position", Api::world_position}, {"set_position", Api::set_position}, {"rotation", Api::rotation},
-        {"velocity", Api::velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
+        {"velocity", Api::velocity}, {"add_impulse", Api::add_impulse}, {"set_velocity", Api::set_velocity}, {"set_angular_velocity", Api::set_angular_velocity}, {"set_parent", Api::set_parent}, {"parent", Api::parent},
         {"set_rotation", Api::set_rotation}, {"has_tag", Api::has_tag},
         {"has_any_tag", Api::has_any_tag}, {"has_all_tags", Api::has_all_tags}, {"has_no_tag", Api::has_no_tag}, {"time", Api::time}, {"real_time", Api::real_time}, {"time_scale", Api::time_scale}, {"input", Api::input},
         {"pressed", Api::pressed}, {"log_error", Api::log_error}, {"get", Api::get}, {"set", Api::set},
