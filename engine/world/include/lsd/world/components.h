@@ -197,6 +197,8 @@ struct Character {
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Height of the view above the feet (first person, no Camera on the Character)") f32 eye_height = 1.65f;
     LSD_PROPERTY(Edit, Units = "deg", Min = 0, Tooltip = "Turn per unit of Look (per pixel for the mouse)") f32 look_sensitivity = 0.15f;
     LSD_PROPERTY(Edit, Tooltip = "Moving the mouse up looks down") bool invert_look_y = false;
+    LSD_PROPERTY(Edit, Tooltip = "Held: the mouse turns only the camera, on foot and in vehicles, so the player looks around without turning or steering; let go and the view swings back (Unreal's free look). A key or button name; empty: off")
+    char free_look_key[32] = "Left Alt";
     LSD_PROPERTY(Edit, Units = "m", Min = 0, Tooltip = "Spring arm length behind the head: 0 = first person") f32 camera_distance = 0.0f;
     LSD_PROPERTY(Edit, Units = "m", Tooltip = "Moves the view from the head (or from a Camera on this object): x forward, y left, z up. 0, -0.5, 0.2 looks over the right shoulder (Unreal's Socket Offset). Or give this object a child with a Camera and move that in the viewport")
     Vec3 camera_offset{0.0f, 0.0f, 0.0f};

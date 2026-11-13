@@ -2333,8 +2333,22 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     // Paused (time scale 0): the mouse does not turn the player behind a pause menu.
     const f32 sensitivity = dt > 0.0f ? settings_.look_sensitivity * (user_settings_ ? user_settings_->mouse_sensitivity : 1.0f) : 0.0f;
     const bool invert = settings_.invert_look_y != (user_settings_ && user_settings_->invert_look);
-    yaw_ -= radians(look.x * sensitivity);
-    pitch_ += radians(look.y * sensitivity) * (invert ? -1.0f : 1.0f);
+    const bool free_look = settings_.free_look_key[0] && input::key_down(devices_, settings_.free_look_key);
+    if (free_look) {  // only the camera turns: the player keeps facing, walking and steering where it was
+        look_yaw_ -= radians(look.x * sensitivity);
+        look_pitch_ += radians(look.y * sensitivity) * (invert ? -1.0f : 1.0f);
+        constexpr f32 kHalfTurn = 3.14159265f;
+        look_yaw_ = look_yaw_ < -kHalfTurn ? -kHalfTurn : look_yaw_ > kHalfTurn ? kHalfTurn : look_yaw_;
+        look_pitch_ = look_pitch_ < -1.2f ? -1.2f : look_pitch_ > 1.2f ? 1.2f : look_pitch_;
+    } else {  // let go: the view swings back behind the player (on real time, so it also settles while paused)
+        const f32 k = 1.0f - std::exp(-real_dt * 8.0f);
+        look_yaw_ -= look_yaw_ * k;
+        look_pitch_ -= look_pitch_ * k;
+        if (std::fabs(look_yaw_) < 1e-4f) look_yaw_ = 0.0f;
+        if (std::fabs(look_pitch_) < 1e-4f) look_pitch_ = 0.0f;
+        yaw_ -= radians(look.x * sensitivity);
+        pitch_ += radians(look.y * sensitivity) * (invert ? -1.0f : 1.0f);
+    }
     pitch_ = pitch_ < -1.5f ? -1.5f : pitch_ > 1.5f ? 1.5f : pitch_;
     const Vec3 ahead{std::cos(yaw_), std::sin(yaw_), 0};
     const Vec3 right{std::sin(yaw_), -std::cos(yaw_), 0};
@@ -2497,6 +2511,10 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
     Vec3 head = feet_ + Vec3{0, 0, settings_.eye_height * crouch};
     f32 arm_length = settings_.camera_distance;
     eye_forward_ = forward();
+    if (look_yaw_ != 0.0f || look_pitch_ != 0.0f) {  // free look: the camera's own turn on top of the view
+        const f32 vy = yaw_ + look_yaw_, vp = std::clamp(pitch_ + look_pitch_, -1.5f, 1.5f);
+        eye_forward_ = {std::cos(vp) * std::cos(vy), std::cos(vp) * std::sin(vy), std::sin(vp)};
+    }
     const world::Entity cam = player_camera(world);
     if (const auto* pc = cam.valid() ? world.get<world::Camera>(cam) : nullptr) {
         const bool child = cam != character_;  // placed in the viewport (on the Character itself: only its settings)
@@ -2539,7 +2557,7 @@ void PlaySession::update(world::World& world, const input::InputFrame& frame, f3
         arm_length = camera_view_override_ == 1 ? (settings_.camera_distance > 0.0f ? settings_.camera_distance : 3.0f) : 0.0f;
     }
     const Vec3 offset = settings_.camera_offset;
-    const f32 cy = std::cos(yaw_), sy = std::sin(yaw_);
+    const f32 cy = std::cos(yaw_ + look_yaw_), sy = std::sin(yaw_ + look_yaw_);
     head = head + Vec3{cy * offset.x - sy * offset.y, sy * offset.x + cy * offset.y, offset.z};
     // Riding a Transport: its Camera Offset (its own axes, unscaled) and Camera Distance move the view
     // out of its mesh (onto the roof, to a window, behind it); its own body does not pull the arm in.
@@ -3816,9 +3834,14 @@ void PlaySession::vehicle_view(const world::World& world) {
     if (!v || view_camera_.valid()) return;
     const Mat4 m = world.world_matrix(car);
     const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
-    const Vec3 forward = axis_x(m);
+    Vec3 forward = axis_x(m);
+    if (look_yaw_ != 0.0f) {  // free look: the arm swings around the vehicle
+        const f32 c = std::cos(look_yaw_), s = std::sin(look_yaw_);
+        forward = {forward.x * c - forward.y * s, forward.x * s + forward.y * c, forward.z};
+    }
     const Vec3 pivot = at + Vec3{0, 0, 1.0f};
-    view_eye_ = at - forward * v->camera_distance + Vec3{0, 0, v->camera_height};
+    const f32 lift = v->camera_distance * std::sin(std::clamp(-look_pitch_, -0.9f, 0.9f));  // looking down raises the camera, up lowers it
+    view_eye_ = at - forward * v->camera_distance + Vec3{0, 0, std::max(v->camera_height + lift, 0.3f)};
     u32 own = physics::kWorldBody;  // the vehicle's own body is not in the way
     for (const Moving& mv : moving_) own = mv.entity == car ? mv.body : own;
     const Vec3 arm = view_eye_ - pivot;

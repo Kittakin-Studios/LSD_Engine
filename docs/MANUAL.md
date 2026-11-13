@@ -1306,7 +1306,7 @@ Move, rotate and scale the Camera object with the gizmo like any object (it is t
 component: a child of the Character); scale does not change what a camera sees.
 
 The Character's **Camera Offset** (x forward, y left, z up) shifts the view without a Camera object:
-`0, -0.5, 0.2` looks over the right shoulder. Switch views while playing with the **Set Camera View**
+`0, -0.5, 0.2` looks over the right shoulder. **Free Look Key** (Left Alt by default): held, the mouse turns only the camera, on foot and in a vehicle, so the player looks around without turning or steering; let go and the view swings back behind them (empty: off). Switch views while playing with the **Set Camera View**
 node (or `lsd.set_camera_view("first" | "third" | "camera")`); **Get Camera Location** and **Is Third
 Person** read it back.
 
