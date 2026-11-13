@@ -617,6 +617,10 @@ struct FrameMeshes {
     struct Item {
         lsd::Mat4 world;
         const lsd::editor::CachedMesh* mesh;  // null: hidden or missing
+        const lsd::editor::CachedMesh* found = nullptr;  // `key`'s, kept between frames
+        char key[sizeof lsd::world::StaticMesh::mesh] = "";
+        lsd::u32 entity = 0;   // whose box below is (the pool's order changes when objects go)
+        lsd::f32 bounds[6] = {};  // the mesh bounds it was worked out from
         lsd::f32 lo[3], hi[3], centre[3], radius;
         lsd::rhi::BufferHandle indices;  // the LOD the camera sees; count 0: not drawn (too far, too small)
         lsd::u32 count;
@@ -641,18 +645,29 @@ struct FrameMeshes {
             const lsd::world::Entity e = w.owner(type, i);
             const auto* component = static_cast<const lsd::world::StaticMesh*>(w.at(type, i));
             Item& it = items[i];
-            it.mesh = skip_hidden && w.hidden_in_hierarchy(e) ? nullptr : meshes.get(component->mesh);
+            // The mesh by name, looked up again only when the name changes (MeshCache's entries stay put) or it failed.
+            if (!it.found || it.found->failed || std::memcmp(it.key, component->mesh, sizeof it.key) != 0) {
+                std::memcpy(it.key, component->mesh, sizeof it.key);
+                it.found = meshes.get(component->mesh);
+            }
+            it.mesh = skip_hidden && w.hidden_in_hierarchy(e) ? nullptr : it.found;
             it.cut = 0;
             it.count = 0;
             if (!it.mesh) continue;
-            it.world = matrices.get(w, e);
-            lsd::f32 rows[12];
-            for (int r = 0; r < 3; ++r) {
-                for (int c = 0; c < 4; ++c) rows[r * 4 + c] = it.world.at(r, c);
+            bool moved = true;
+            it.world = matrices.get(w, e, &moved);
+            // Its world box and sphere: kept while the same object stands still with the same mesh bounds.
+            if (moved || it.entity != e.value || std::memcmp(it.bounds, &it.mesh->bounds_min, sizeof it.bounds) != 0) {
+                it.entity = e.value;
+                std::memcpy(it.bounds, &it.mesh->bounds_min, sizeof it.bounds);
+                lsd::f32 rows[12];
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 4; ++c) rows[r * 4 + c] = it.world.at(r, c);
+                }
+                for (int c = 0; c < 3; ++c) it.lo[c] = 1e30f, it.hi[c] = -1e30f;
+                lsd::render::grow_box(rows, &it.mesh->bounds_min.x, &it.mesh->bounds_max.x, it.lo, it.hi);
+                lsd::render::copy_sphere(rows, &it.mesh->bounds_min.x, &it.mesh->bounds_max.x, it.centre, it.radius);
             }
-            for (int c = 0; c < 3; ++c) it.lo[c] = 1e30f, it.hi[c] = -1e30f;
-            lsd::render::grow_box(rows, &it.mesh->bounds_min.x, &it.mesh->bounds_max.x, it.lo, it.hi);
-            lsd::render::copy_sphere(rows, &it.mesh->bounds_min.x, &it.mesh->bounds_max.x, it.centre, it.radius);
             if (!pick_static_lod(*it.mesh, *component, it.world, eye, force_lod, it.indices, it.count, &it.lod)) it.count = 0;
         }
     }
@@ -884,18 +899,43 @@ bool skinned_in_view(lsd::world::World& world, bool skip_hidden, const lsd::Mat4
     return false;
 }
 
-bool g_shadow_lod = true;  // r.ShadowLOD
+bool g_shadow_lod = true;      // r.ShadowLOD
+bool g_shadow_stagger = true;  // r.ShadowStagger
 
 // Shadow casters use the LOD the camera sees (a far tree casts its simple shape), or a simpler one when a cascade's
-// texels are too coarse to show more (r.ShadowLOD; not while r.ForceLOD forces one).
-void draw_shadows(lsd::rhi::Device& device, const lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
+// texels are too coarse to show more (r.ShadowLOD; not while r.ForceLOD forces one). The two far cascades are drawn
+// on alternate frames (r.ShadowStagger): the one not drawn keeps last frame's map and the matrix it was drawn with
+// (written back into `lights`), so it stays right; only what moves in it lags a frame, tens of metres away.
+void draw_shadows(lsd::rhi::Device& device, lsd::rhi::LightSetup& lights, lsd::rhi::TextureHandle atlas, lsd::world::World& world,
                   lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, bool forced_lod) {
     const lsd::reflect::TypeInfo& type = lsd::reflect::type_of<lsd::world::StaticMesh>();
     static lsd::u64 cascade_keys[4] = {};  // what each cascade's tile holds (shadow caching; 0: unknown)
+    // Staggering: each cascade's matrix as last drawn, by which call (only the first viewport's calls, back to back).
+    static lsd::f32 drawn_matrices[4][16] = {};
+    static lsd::u64 drawn_call[4] = {}, calls = 0, last_main_call = 0;
+    static lsd::u32 drawn_atlas = 0;
+    ++calls;
+    const bool stagger = g_shadow_stagger && g_shadow_caching && g_main_view && last_main_call == calls - 1 && drawn_atlas == atlas.value;
+    last_main_call = g_main_view ? calls : 0;
+    drawn_atlas = atlas.value;
     device.begin_shadow_pass(atlas, !g_shadow_caching);
     const lsd::f32 size = static_cast<lsd::f32>(lsd::editor::shadow_atlas_size());
     static std::vector<Caster> casters;
     for (lsd::u32 c = 0; c < static_cast<lsd::u32>(lights.shadow_info[0]) && c < 4; ++c) {
+        // How far the cascade moved since it was drawn, in its own widths (the sun stands still: only the translation changes;
+        // turning the camera swings the far cascades' centres, and then they are drawn).
+        bool still = drawn_call[c] == calls - 1;
+        for (int k = 0; still && k < 16; ++k) {
+            const lsd::f32 d = std::fabs(lights.shadow_matrices[c][k] - drawn_matrices[c][k]);
+            still = k >= 12 && k <= 14 ? d < 0.05f : d < 1e-5f;  // column 3: moved under 2.5 % of the width (and depth)
+        }
+        if (stagger && c >= 2 && (c & 1u) != (calls & 1u) && still) {  // its turn is next frame: last frame's map stands
+            std::memcpy(lights.shadow_matrices[c], drawn_matrices[c], sizeof drawn_matrices[c]);
+            ++g_shadow_tiles_cached;
+            continue;
+        }
+        drawn_call[c] = calls;
+        std::memcpy(drawn_matrices[c], lights.shadow_matrices[c], sizeof drawn_matrices[c]);
         device.set_viewport(lights.shadow_tiles[c][0] * size, lights.shadow_tiles[c][1] * size, lights.shadow_tiles[c][2] * size, lights.shadow_tiles[c][2] * size);
         lsd::Mat4 vp;
         std::memcpy(vp.m, lights.shadow_matrices[c], sizeof vp.m);
@@ -1254,7 +1294,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
         const lsd::Vec3 world_scale{lsd::length(lsd::Vec3{m.at(0, 0), m.at(1, 0), m.at(2, 0)}), lsd::length(lsd::Vec3{m.at(0, 1), m.at(1, 1), m.at(2, 1)}),
                                     lsd::length(lsd::Vec3{m.at(0, 2), m.at(1, 2), m.at(2, 2)})};
         const lsd::editor::CachedMesh* mesh = lightmapped_mesh(meshes, world.name(e), component->mesh, m);
-        if (!mesh) mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : meshes.get(component->mesh);
+        if (!mesh) mesh = component->box_uv ? meshes.get_box_uv(component->mesh, world_scale) : item ? item->mesh : meshes.get(component->mesh);
         if (!mesh) continue;
         const lsd::Mat4 mvp = view_proj * m;
         if (!in_view(mvp, mesh->bounds_min, mesh->bounds_max)) {
@@ -1670,10 +1710,13 @@ void register_console(EditorState& s) {
                           "MB of video memory streamed textures may use (Unreal's r.Streaming.PoolSize); over it the least recently drawn drop "
                           "their sharpest mips. 0: a quarter of the video memory budget (-vram sets it)");
     console::add_variable("r.TextureStreaming", &g_texture_streaming, "Textures load on a worker thread and appear when ready, so levels open without waiting for images (0: each loads when first drawn)");
-    console::add_variable("r.ShadowCaching", &g_shadow_caching, "Spot / point light shadow tiles are kept while nothing they show moves (a skeletal mesh in range redraws them each frame)");
+    console::add_variable("r.ShadowCaching", &g_shadow_caching, "Shadow tiles (spot / point lights, the sun's cascades) are kept while nothing they show moves (a skeletal mesh in one redraws it each frame)");
     console::add_variable("r.ShadowLOD", &g_shadow_lod,
                           "Sun shadow cascades draw each caster at the simplest LOD their texels can still show (far cascades' texels are tens of "
                           "centimetres); never finer than what the camera sees. 0: casters use the camera's LOD");
+    console::add_variable("r.ShadowStagger", &g_shadow_stagger,
+                          "The sun's two far shadow cascades are drawn on alternate frames while the view moves little (the other keeps last frame's "
+                          "map and matrix): about a third less shadow drawing; what moves far away updates its shadow a frame later. Needs r.ShadowCaching");
     console::add_variable("r.OcclusionCulling", &g_occlusion_culling, "Meshes (static, skeletal, each instanced copy) hidden behind the nearest big opaque meshes are not drawn (a small CPU depth buffer)");
     console::add_variable("r.DynamicGI", &lsd::editor::DynamicGi::enabled, "Dynamic global illumination where World Settings > Dynamic Global Illumination asks for it (0: off everywhere, the baked or sky ambient)");
     console::add_variable("r.DynamicGI.Spacing", &g_dynamic_gi.spacing, "Dynamic GI: metres between its probes (10 x 10 x 5 of them around the camera; larger reaches further, coarser)");
