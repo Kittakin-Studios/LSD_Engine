@@ -236,7 +236,9 @@ import settings; `r.ForceLOD n` to inspect one). `pick_static_lod` does this for
 both shadow passes (casters use the camera's LOD), and culls a mesh below `r.MinScreenSize`, past its Max Draw Distance or the
 distance a Cull Distance Volume gives its size (the volumes are gathered once per frame). **Box UV**
 meshes are cached variants (`MeshCache::get_box_uv`, key `<mesh>|box:x,y,z` at the object's scale
-rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis.
+rounded to 1 cm) whose UVs are projected from the scaled position on the face's main axis. The material's
+Box UV Tiling multiplies that scale (`MaterialCache::box_uv_tiling`; light baking and HLODs do the same), so the
+tiling lives in the vertices and D3D12, Vulkan and OpenGL need no shader change.
 
 **HLOD** (`editor/hlod.*`): Build > Build HLODs puts every opaque, non-moving Static Mesh into a grid cell
 (World Settings > Hlod Cell Size) by its position, simplifies each mesh (`asset::simplify_mesh`, 25 %), moves it to

@@ -134,6 +134,8 @@ public:
     // `want`: texels across its textures should have (TextureCache::get); kFull for all of them.
     void apply(const char* material_guid, rhi::MeshDraw& draw, u32 want = TextureCache::kFull);
     TextureCache& textures() { return textures_; }
+    // Its Box UV Tiling (tiles per metre on Box UV objects; an instance's parent's): 1 with no material.
+    f32 box_uv_tiling(const char* material_guid);
     void check_files();
     void reload_all();  // every material compiled again (the global material parameters were renamed or reordered)
 

@@ -38,6 +38,9 @@ struct Material {
     LSD_PROPERTY(Edit, Widget = "Choice:Default Lit,Hair",
                  Tooltip = "Hair (Unreal's Hair shading model, for hair cards): two highlights running along the strand (lay the strands along the texture's V), soft light through the hair; Roughness sets how sharp they are. Use with Masked and an alpha texture")
     u32 shading_model = 0;
+    LSD_PROPERTY(Edit, Category = "UVs", Min = 0.01, Max = 100,
+                 Tooltip = "Box UV objects (Static Mesh > Box UV): texture tiles per metre (Unreal's World Aligned Texture size, inverted): 0.25 = one tile every 4 m (big bricks), 2 = two tiles a metre. Other UVs are not changed")
+    f32 box_uv_tiling = 1.0f;
 };
 
 // One Scalar / Vector Parameter of a Material Graph set by an instance (scalars use X).

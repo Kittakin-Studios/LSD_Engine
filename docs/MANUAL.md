@@ -2871,7 +2871,7 @@ about 3.5 ms; the street view went from 4.6 to 2.4 ms. See BACKLOG, "Capacity (l
 | Category | Components |
 | --- | --- |
 | Common | Transform |
-| Rendering | Static Mesh (**Box UV**: one texture tile per metre on every face however it is scaled, for blockout walls and floors) |
+| Rendering | Static Mesh (**Box UV**: one texture tile per metre on every face however it is scaled, for blockout walls and floors; the material's **Box UV Tiling** (UVs category, tiles per metre, Unreal's World Aligned Texture size) changes that: 0.25 = a tile every 4 m) |
 | Animation | Skeletal Mesh (**Morphs**: morph target weights) |
 | Lights | Directional, Point, Spot, Sky Light |
 | Environment | Sky, Height Fog, Post Process Volume, Lightmass Importance Volume |

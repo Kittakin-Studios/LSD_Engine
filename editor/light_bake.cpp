@@ -645,6 +645,7 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
         if (!load_mesh(m->mesh, registry, data_dir, allocator, data)) continue;
         Vec3 albedo{m->color.r, m->color.g, m->color.b};
         const asset::Image* texture = nullptr;
+        f32 tiling = 1.0f;  // Box UV: the material's tiles per metre
         asset::Guid material_guid;
         if (m->material[0] && asset::parse_guid(m->material, material_guid)) {
             if (const asset::AssetRecord* r = registry.find(material_guid)) {
@@ -654,6 +655,7 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
                 if (asset::load_data_asset(path, material)) {
                     albedo = Vec3{albedo.x * material.base_color.r, albedo.y * material.base_color.g, albedo.z * material.base_color.b};
                     if (material.base_color_texture[0]) texture = image_of(material.base_color_texture);
+                    tiling = material.box_uv_tiling;
                 }
             }
         }
@@ -669,9 +671,9 @@ bool gather_bake_scene(const world::World& w, const asset::AssetRegistry& regist
             src.object.position[2] = world_matrix.at(2, 3);
             src.world = world_matrix;
             if (m->box_uv) {  // the same UVs the cache gives it (main.cpp: get_box_uv)
-                render::box_project_uv(data, length(Vec3{world_matrix.at(0, 0), world_matrix.at(1, 0), world_matrix.at(2, 0)}),
-                                       length(Vec3{world_matrix.at(0, 1), world_matrix.at(1, 1), world_matrix.at(2, 1)}),
-                                       length(Vec3{world_matrix.at(0, 2), world_matrix.at(1, 2), world_matrix.at(2, 2)}));
+                render::box_project_uv(data, tiling * length(Vec3{world_matrix.at(0, 0), world_matrix.at(1, 0), world_matrix.at(2, 0)}),
+                                       tiling * length(Vec3{world_matrix.at(0, 1), world_matrix.at(1, 1), world_matrix.at(2, 1)}),
+                                       tiling * length(Vec3{world_matrix.at(0, 2), world_matrix.at(1, 2), world_matrix.at(2, 2)}));
             }
             src.object.vertices.assign(data.vertices, data.vertices + data.vertex_count);
             src.object.indices.assign(data.indices, data.indices + data.index_count);
