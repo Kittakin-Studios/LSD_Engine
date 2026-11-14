@@ -1,0 +1,20 @@
+<rml>
+<head>
+<title>Health</title>
+<style>
+body { font-family: sans; width: 100%; height: 100%; color: #FFFFFF; font-size: 26px; }
+div { display: block; }
+#hud { position: absolute; left: 60px; top: 104px; width: 400px; }
+#bar { width: 400px; height: 30px; background-color: #333333; }
+#fill { height: 30px; background-color: #9BE11F; }
+#low { color: #FF4040; }
+</style>
+</head>
+<body data-model="game">
+<div id="hud">
+<div id="bar"><div id="fill" data-style-width="game.health + '%'"></div></div>
+<div>{{game.name}}: {{game.health}} HP</div>
+<div id="low" data-if="game.health < 25">Low health!</div>
+</div>
+</body>
+</rml>

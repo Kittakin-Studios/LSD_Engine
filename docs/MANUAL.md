@@ -2478,7 +2478,7 @@ button:focus, button:hover { background-color: #EEA70E; }
   ```
 
   ```lua
-  lsd.ui_data("name", "Soldier")
+  lsd.ui_data("name", "Hero")
   lsd.ui_data("health", self.health)   -- the bar, the label and the warning follow
   ```
 

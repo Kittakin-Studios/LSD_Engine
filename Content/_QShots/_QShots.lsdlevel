@@ -5,7 +5,7 @@
     "gravity": 9.81000042,
     "exposure_ev100": 1.5,
     "game_mode": "",
-    "level_script": "",
+    "level_script": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c5",
     "navigation": {
       "agent_radius": 0.400000006,
       "agent_height": 1.79999995,
