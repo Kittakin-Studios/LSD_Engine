@@ -2789,7 +2789,8 @@ in the project folder, the splash too).
   static lights costs nothing per frame. Moving a mesh, the light or an Instanced Static Mesh redraws
   it the next frame; a Skeletal Mesh within the light's reach redraws it every frame. The sun's cascades
   are kept the same way while the camera stands still (or moves less than a shadow texel) and nothing
-  in them moves. Local light
+  in them moves; with a Skeletal Mesh in them (the player) the two far cascades are drawn on alternate frames
+  instead (`r.ShadowStagger`). Local light
   shadows need Shadows quality High or Epic. `stat dump` shows how many tiles were kept.
 - **Shadow Resolution** (Point / Spot Light; Unreal's Shadow Resolution Scale): **Medium** is the usual
   tile, **High** four times the texels (a hero light's crisp shadow), **Low** a quarter (fill lights; more
@@ -2824,7 +2825,12 @@ A city of kit buildings from a Marketplace pack (thousands of objects, meshes of
 - **Each copy of an Instanced Static Mesh** (Foliage, PCG output, kit pieces placed by the thousand) picks its
   own LOD by its own distance, in the view and in every shadow, and copies outside the view or behind the big
   nearby walls are left out.
-- **Shadows** draw the LOD the camera sees, so a far house casts its simple shape.
+- **Shadows** draw the LOD the camera sees, so a far house casts its simple shape; the sun's far cascades go
+  simpler still where their texels (tens of centimetres) cannot show more (`r.ShadowLOD`), and the two far
+  cascades are drawn on alternate frames while the view moves little (`r.ShadowStagger`).
+- **Still objects cost little**: each object's world matrix, bounds and mesh are kept between frames while it
+  does not move (an Instanced Static Mesh's copies too), and a whole object (all its copies) outside a view or a
+  shadow cascade is dropped with one test.
 - **Specks are not drawn**: anything under about three pixels across on screen, and its shadow.
 - **Automatic instancing**: separate objects with the same mesh, LOD and material are drawn in one call.
 - **Texture streaming** and the **texture pool** (above) keep video memory in budget; `-vram=<MB>` pretends the
@@ -2842,6 +2848,8 @@ A city of kit buildings from a Marketplace pack (thousands of objects, meshes of
 | `r.MinScreenSize` | console | Smallest drawn size, bounding radius over distance (0.0015; 0 = draw everything) |
 | `r.ForceLOD n` | console | Draw everything at LOD n, to look at an LOD (-1: by distance) |
 | `r.GPUCulling` | console | Draws of 1024+ copies culled on the GPU (on); smaller ones are culled on the CPU, which is faster for them |
+| `r.ShadowLOD` | console | Sun cascades draw casters at the simplest LOD their texels still show (on; never finer than the camera's) |
+| `r.ShadowStagger` | console | The two far sun cascades drawn on alternate frames while the view moves little (on; far moving things' shadows lag a frame) |
 | Mip Streaming / Max Size | Texture in Details | Never Stream a hero texture; cap a texture's size |
 
 **Reading `stat dump`** on a big scene (look from where it is slowest, then type `stat dump`):
@@ -2849,6 +2857,11 @@ A city of kit buildings from a Marketplace pack (thousands of objects, meshes of
 - `draws, triangles`: the first view's. `instanced triangles`: how many of those come from Instanced Static
   Meshes. `shadows: draws, triangles`: every shadow pass of the frame together.
 - `render cpu: shadows, occluders, static meshes, instanced, rest`: where the CPU's drawing time goes.
+  `render cpu detail`: the sun's casters found, its cache keys, its static / skeletal / instanced caster draws, the
+  local lights' shadows, and the frame's mesh and instance tables (matrices, bounds, LODs worked out once a frame).
+- `game cpu detail` (in Play): the game thread by part: live edits, movers / rides / streaming, physics, bodies
+  written back, camera / movement / sounds, triggers, scripts (your Lua / JavaScript / C++ `on_update`s and the `lsd.*`
+  calls they make), AI / network, animation, effects / audio.
 - `gpu: shadows, scene (meshes, effects, normals / velocity), post`: where the GPU's goes. The normals /
   velocity part redraws the scene's opaque meshes for SSR / AO and TAA / motion blur (about half the scene).
 - `meshes n: vertices, indices, LOD indices MB, loading took .. ms (LODs ..)`: mesh memory and load time.

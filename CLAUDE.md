@@ -195,6 +195,9 @@ Build Reflection Captures). Masked materials cast cut-out shadows (`rhi::ShadowC
 `r.OcclusionCulling`). Also skeletal meshes and each ISM copy. Texture compression: colour maps BC1 / BC3, normal maps BC5 (Z rebuilt
 in the shader), once into DerivedData/Textures (`asset::load_texture_cached`). Material > Emissive Texture (t8; D3D12's t3..t7 are one
 table written into a 64-entry descriptor ring). Local-light shadow caching (`r.ShadowCaching`, tiles kept while their casters hash the same).
+Big still levels (favela hills): world matrices kept between frames (`world::MatrixCache`), per-frame mesh / instance tables in
+main.cpp (`FrameMeshes`, `FrameInstances`: bounds, LODs, kept rows), whole-object culling per view / cascade (`render/cull.h`),
+sun cascades at the LOD their texels show (`r.ShadowLOD`, `render::shadow_lod`), far cascades on alternate frames (`r.ShadowStagger`).
 Motion Matching pose-search debugger (Details > Pose search candidates, `anim::motion_candidates`). Packaging: Cook Used Assets Only (`cook_set`, cook_report.txt) and Development / Shipping.
 The root `CMakeLists.txt` pins MSVC's link.exe / lib.exe next to cl.exe (a configure without the VS environment picked MinGW's ld / ar).
 Import Materials and Textures (`editor/mesh_materials.*`, `engine/asset/material_import.*`): a mesh's file materials become

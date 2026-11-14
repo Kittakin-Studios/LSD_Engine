@@ -347,10 +347,24 @@ differs only at edges of distant houses.
 - [x] `stat dump`: shadow draws / triangles, instanced triangles, the first view's CPU time by part, the scene's GPU time split (meshes, effects, normals / velocity), mesh memory and load time, video memory in use
 - [ ] Normals and velocity in one pass, or from the main pass as extra render targets: today SSR / AO and TAA / motion blur each redraw the opaque meshes (1.0-1.5 ms, about half the scene at the far view). Needs multiple render targets in the RHI (three backends) and the lit shader writing them: a few days
 - [ ] One GPU cull dispatch per view for every instanced draw (a shared output buffer per draw, indirect draws from slices), so GPU culling pays off below 1 024 copies too
-- [ ] Persistent render proxies (Unreal's scene proxies): static meshes' bounds, LOD sizes, material lookups and batch keys kept between frames instead of rebuilt per view (static meshes CPU 2-4 ms for ~3 800 objects at the far view)
+- [~] Persistent render proxies (Unreal's scene proxies): static meshes' bounds, LOD sizes, material lookups and batch keys kept between frames instead of rebuilt per view (static meshes CPU 2-4 ms for ~3 800 objects at the far view). Matrices, bounds and mesh lookups are kept now (favela hills, below); material looks and batch keys are still per draw
 - [ ] 16-bit indices for meshes under 65 536 vertices and quantised vertices (half positions / octahedral normals): would save about 6 MB + 10 MB here; small next to textures, not done
 - [ ] Mesh streaming (drop far meshes' LOD 0 from the GPU) and virtualised geometry (meshlets, Nanite-like clusters with a GPU hierarchy cut): what a scene of many unique 200k-triangle meshes up close needs. With the LODs above, this level does not; a multi-week renderer project
 - [ ] HLOD for Instanced Static Meshes (Build HLODs merges static meshes only)
+
+Favela hills (Carioca Express, Nov 2026: ~9 000 objects, 8 156 static meshes, 448 Instanced Static Meshes with
+~17 700 kit pieces, 377 Destructibles; hidden Play on D3D12, RX 7900 XTX): render CPU 25-28 ms -> RESULTS.
+
+- [x] World matrices kept between frames (`world::MatrixCache`, tested in world_tests): a still level costs a compare per object
+- [x] Instanced Static Meshes' world rows, box and biggest radius kept while unchanged (were rebuilt every frame: 5 ms)
+- [x] Whole-object box culling per view and shadow cascade (`render::cull.h` on `rhi::frustum_planes`, tested in render_tests); per-copy shadow culling with `rhi::instance_visible` (was eight projected corners per copy per cascade: 4-5 ms even with no shadow drawn)
+- [x] One mesh table per frame (mesh lookup, world box / sphere, camera LOD, shadow cut-out) shared by the shadow passes, the occluder pick and the main pass (the occluder pick recomputed every matrix: 2-3 ms)
+- [x] Cache keys hashed by 8-byte words and only when a shadow view could be kept
+- [x] `r.ShadowLOD`: sun cascades cast with the LOD their texels show (`render::shadow_lod`): 7.5M -> 4.3M shadow triangles on the hill, screenshots identical
+- [x] `r.ShadowStagger`: the two far cascades on alternate frames while the view moves little: 4.3M -> 2.4-3.2M
+- [x] `stat dump` `render cpu detail` line
+- [ ] Sun cascades cached with a moving character in them: a static-only depth copy per cascade with the movers drawn over it each frame (a depth copy in the RHI, three backends)
+- [ ] Local lights' shadow LOD by their tile's texel size at the caster's distance (perspective tiles; they use the camera's LOD)
 
 ## Capacity (large projects)
 

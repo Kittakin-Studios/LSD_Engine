@@ -182,9 +182,22 @@ triangle at its farthest corner's distance and only on pixels whose centre it co
 skipped when every pixel its box touches holds something nearer. That keeps it conservative: it can
 miss a hidden mesh but never drop a visible one. Instanced Static Mesh copies are prepared once per
 `draw_world` call (`FrameInstances` in main.cpp): their world rows, grouped by the LOD each copy needs from the
-camera (`render::sort_by_lod`, engine/render/lod.*), copies under `r.MinScreenSize` left out, and a hash of it all
-for shadow caching. The main view tests each copy against the frustum and the occluders on the CPU and draws one
-instanced call per LOD; every shadow tile draws the same LOD groups (frustum-tested against the light's view).
+camera (`render::sort_by_lod`, engine/render/lod.*), copies under `r.MinScreenSize` left out, and (asked for only
+when a shadow view could be kept) a hash of it all for shadow caching. The world rows themselves, the object's world
+box and its biggest copy's radius are kept between frames while its matrix, copies and mesh bounds are byte-for-byte
+the same. Static meshes get the same treatment in `FrameMeshes`: world matrices from a `world::MatrixCache`
+(engine/world/matrix_cache.*: an entity's matrix is worked out again only when its Transform, parent or parent's
+matrix changed), each mesh's world box and sphere (kept while it stands still), its camera LOD and its shadow cut-out,
+shared by the shadow passes, the occluder pick and the main pass. Every view first tests whole objects' world boxes
+against its planes (`render::classify_box` on `rhi::frustum_planes`, engine/render/cull.*; a shadow view's sides only,
+`render::side_planes`): an Instanced Static Mesh wholly outside is dropped, wholly inside is drawn without per-copy
+tests, otherwise each copy is tested as the GPU does (`rhi::instance_visible`). The main view also drops a whole
+Instanced Static Mesh behind the occluders, then tests copies against the frustum and the occluders and draws one
+instanced call per LOD; every shadow tile draws the same LOD groups. Sun cascades use a coarser LOD where their
+texels cannot show more (`render::shadow_lod`: the caster's radius in texels as if they were 1080p pixels, never finer
+than the camera's; `r.ShadowLOD`), and the two far cascades are drawn on alternate frames while each one's matrix
+moved under 2.5 % of its width since it was drawn (`r.ShadowStagger`): the skipped one keeps its tile (shadow caching
+leaves tiles uncleared) and its old matrix is written back into the frame's LightSetup, so lookups stay right.
 Draws of 1024+ copies (`kGpuCullMinCopies`) are culled on the GPU instead (`r.GPUCulling`,
 engine/rhi/shaders/cull.hlsl: frustum and a Hi-Z pyramid built from the main viewport's depth the frame before,
 survivors drawn indirectly): each such draw's compute passes share one output buffer, so it waits for the draw
