@@ -101,9 +101,15 @@ const char* SkinnedModel::joint_name(u32 joint) const { return impl->skeleton->j
 i32 SkinnedModel::joint_parent(u32 joint) const { return impl->skeleton->joint_parents()[joint]; }
 
 Rig detect_rig(const char* const* names, u32 count) {
+    auto same = [](const char* a, const char* b) {  // any case: UE-style rigs from other tools write Head, Pelvis...
+        for (; *a && *b; ++a, ++b) {
+            if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b))) return false;
+        }
+        return *a == *b;
+    };
     auto has = [&](const char* bone) {
         for (u32 i = 0; i < count; ++i) {
-            if (names[i] && std::strcmp(names[i], bone) == 0) return true;
+            if (names[i] && same(names[i], bone)) return true;
         }
         return false;
     };

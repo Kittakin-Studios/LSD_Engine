@@ -393,6 +393,8 @@ static void rig_tests() {
     CHECK(anim::detect_rig(manny, 13) == Rig::UE5Manny);
     CHECK(anim::detect_rig(simple, 13) == Rig::UE5MannySimple);  // a Character Creator export with UE5 names, no twist bones
     CHECK(anim::detect_rig(other, 4) == Rig::Other);
+    const char* quaternius[] = {"root", "pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "Head", "thigh_l", "upperarm_l"};
+    CHECK(anim::detect_rig(quaternius, 9) == Rig::UE4Mannequin);  // UE-style names, any case (the sample character's rig)
     CHECK(std::strcmp(anim::rig_source_bone(Rig::UE5Manny, Rig::UE4Mannequin, "spine_05"), "spine_03") == 0);
     CHECK(std::strcmp(anim::rig_source_bone(Rig::UE5MannySimple, Rig::UE4Mannequin, "neck_02"), "neck_01") == 0);
     CHECK(std::strcmp(anim::rig_source_bone(Rig::UE4Mannequin, Rig::UE5Manny, "spine_03"), "spine_05") == 0);

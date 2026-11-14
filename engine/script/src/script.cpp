@@ -475,7 +475,7 @@ input.range sliderbar { width: 16px; height: 18px; background-color: #F3C312; bo
 <div class="row"><span class="label">Fullscreen</span><button class="button" id="fullscreen" onclick="__lsd_toggle">Off</button></div>
 <div class="row"><span class="label">Master volume</span><input type="range" class="range" id="master_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Music</span><input type="range" class="range" id="music_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
-<div class="row"><span class="label">Effects</span><input type="range" class="range" id="effects_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
+)" R"(<div class="row"><span class="label">Effects</span><input type="range" class="range" id="effects_volume" min="0" max="1" step="0.05" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Mouse sensitivity</span><input type="range" class="range" id="mouse_sensitivity" min="1" max="50" step="1" onchange="__lsd_slider"/></div>
 <div class="row"><span class="label">Invert look</span><button class="button" id="invert_look" onclick="__lsd_toggle">Off</button></div>
 <div class="row"><span class="label">Text size</span><input type="range" class="range" id="ui_text_scale" min="0.5" max="2" step="0.1" onchange="__lsd_slider"/></div>

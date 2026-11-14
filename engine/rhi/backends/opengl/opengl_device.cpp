@@ -331,7 +331,7 @@ float capture_weight(uint k, vec3 wpos) {  // as the HLSL's
         vec3 inside = reflection_boxes[k].xyz - abs(wpos - reflections[k].xyz);
         return clamp(min(min(inside.x, inside.y), inside.z) / reflection_boxes[k].w, 0.0, 1.0);
     }
-    return clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
+)" R"(    return clamp((reflections[k].w - length(wpos - reflections[k].xyz)) / max(reflections[k].w * 0.25, 1e-3), 0.0, 1.0);
 }
 vec3 capture_sample(uint k, vec3 r, float roughness, vec3 wpos) {
     if (reflection_boxes[k].w > 0.0) {
@@ -570,7 +570,7 @@ const vec4 ltc_table[256] = vec4[](
     vec4(1.03299, 0.08905, 1.04303, -0.02706),
     vec4(1.02542, 0.13217, 1.04782, -0.04013),
     vec4(1.01479, 0.17355, 1.05467, -0.05235),
-    vec4(0.99981, 0.21125, 1.06226, -0.06139),
+)" R"(    vec4(0.99981, 0.21125, 1.06226, -0.06139),
     vec4(0.98398, 0.24846, 1.07309, -0.07407),
     vec4(0.96366, 0.27906, 1.08324, -0.07976),
     vec4(0.94162, 0.30607, 1.09356, -0.08471),
@@ -791,7 +791,7 @@ void main() {
     bool lightmapped = lightmap_info.y > 0.5 && v_lightmap_uv.x > 0.0;
     vec4 baked = vec4(0.0, 0.0, 0.0, 1.0), shadow_mask = vec4(1.0);
     if (lightmapped) {
-        float segments = max(lightmap_info.w, 1.0);  // mesh.hlsl's
+)" R"(        float segments = max(lightmap_info.w, 1.0);  // mesh.hlsl's
         vec2 at = v_lightmap_uv * vec2(1.0, 1.0 / segments);
         baked = textureLod(lightmap_tex, at, 0.0);
         vec3 c = min(baked.rgb, vec3(0.999));
@@ -1490,7 +1490,7 @@ void main() {
     for (int y = -2; y <= 1; ++y) {
         for (int x = -2; x <= 1; ++x) {
             vec2 uv = v_uv + vec2(x, y) * texel.xy;
-            float w = abs(view_distance(depth_at(uv)) - z) < 0.05 * z ? 1.0 : 0.0;
+)" R"(            float w = abs(view_distance(depth_at(uv)) - z) < 0.05 * z ? 1.0 : 0.0;
             total += textureLod(t1, uv, 0.0).r * w;
             weight += w;
         }

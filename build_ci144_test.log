@@ -1,0 +1,35 @@
+Test project E:/LSD_Engine/LSD_Engine_batch/build/ci144
+      Start  1: foundation
+ 1/15 Test  #1: foundation .......................   Passed    0.03 sec
+      Start  2: reflect
+ 2/15 Test  #2: reflect ..........................   Passed    0.03 sec
+      Start  3: reflect_gen_rejects_bad_header
+ 3/15 Test  #3: reflect_gen_rejects_bad_header ...   Passed    0.01 sec
+      Start  4: render
+ 4/15 Test  #4: render ...........................   Passed    1.67 sec
+      Start  5: asset
+ 5/15 Test  #5: asset ............................   Passed    5.63 sec
+      Start  6: world
+ 6/15 Test  #6: world ............................   Passed    0.05 sec
+      Start  7: editor
+ 7/15 Test  #7: editor ...........................   Passed    1.29 sec
+      Start  8: input
+ 8/15 Test  #8: input ............................   Passed    0.05 sec
+      Start  9: physics
+ 9/15 Test  #9: physics ..........................   Passed    0.82 sec
+      Start 10: script
+10/15 Test #10: script ...........................   Passed    0.92 sec
+      Start 11: audio
+11/15 Test #11: audio ............................   Passed    0.27 sec
+      Start 12: animation
+12/15 Test #12: animation ........................   Passed    0.18 sec
+      Start 13: particles
+13/15 Test #13: particles ........................   Passed    0.03 sec
+      Start 14: ai
+14/15 Test #14: ai ...............................   Passed    0.14 sec
+      Start 15: net
+15/15 Test #15: net ..............................   Passed   15.40 sec
+
+100% tests passed, 0 tests failed out of 15
+
+Total Test time (real) =  27.80 sec
