@@ -1,600 +1,685 @@
 {
   "lsd_level": 1,
   "world_settings": {
-    "kill_z": -50,
-    "gravity": 9.81000042,
-    "exposure_ev100": 1.5,
-    "game_mode": "",
-    "level_script": "",
-    "navigation": {
-      "agent_radius": 0.400000006,
-      "agent_height": 1.79999995,
-      "max_step_height": 0.449999988,
-      "max_slope": 45,
-      "cell_size": 0.150000006
-    }
-  },
+      "kill_z": -50,
+      "gravity": 9.81000042,
+      "exposure_ev100": 1.5,
+      "game_mode": "",
+      "level_script": "",
+      "navigation": {
+        "agent_radius": 0.400000006,
+        "agent_height": 1.79999995,
+        "max_step_height": 0.449999988,
+        "max_slope": 45,
+        "cell_size": 0.150000006,
+        "runtime_rebuild": false
+      },
+      "lightmap_resolution": 3,
+      "dynamic_gi": false,
+      "hlod_enabled": true,
+      "hlod_cell_size": 50,
+      "hlod_distance": 100
+    },
   "entities": [
-    {
-      "id": 0,
-      "name": "Floor",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": 0,
-          "y": 0,
-          "z": -0.200000003
-        },
-        "rotation": {
-          "x": 0,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 99.8000031,
-          "y": 95.5999985,
-          "z": 0.200000003
-        }
+    {"id": 0, "name": "Floor", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": -0.200000003
       },
-      "StaticMesh": {
-        "mesh": "Cube",
-        "material": "77e5eb97a4ac6d8af4488e59230d8404",
-        "color": {
-          "r": 0.279945165,
-          "g": 0.279945314,
-          "b": 0.814671814,
-          "a": 1
-        },
-        "collision": true,
-        "collision_shape": 0,
-        "physical_material": "",
-        "box_uv": false,
-        "max_draw_distance": 0
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 99.8000031,
+        "y": 95.5999985,
+        "z": 0.200000003
       }
     },
-    {
-      "id": 2,
-      "name": "Sphere",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": -7.24300003,
-          "y": -4.03900003,
-          "z": 0
-        },
-        "rotation": {
-          "x": 0,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 1,
-          "y": 1,
-          "z": 1
-        }
+     "StaticMesh": {
+      "mesh": "Cube",
+      "material": "77e5eb97a4ac6d8af4488e59230d8404",
+      "color": {
+        "r": 0.279945165,
+        "g": 0.279945314,
+        "b": 0.814671814,
+        "a": 1
       },
-      "StaticMesh": {
-        "mesh": "Sphere",
-        "material": "",
-        "color": {
-          "r": 0.127816468,
-          "g": 0.945945919,
-          "b": 0.0365230106,
-          "a": 1
-        },
-        "collision": true,
-        "collision_shape": 0,
-        "physical_material": "",
-        "box_uv": false,
-        "max_draw_distance": 0
+      "collision": true,
+      "one_way": false,
+      "collision_shape": 0,
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0,
+      "static_lighting": true,
+      "material_overrides": []
+    }},
+    {"id": 2, "name": "Sphere", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -7.24300003,
+        "y": -4.03900003,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
       }
     },
-    {
-      "id": 4194307,
-      "name": "Sky Light",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": 3.91741753,
-          "y": -6.89985085,
-          "z": 6.05000019
-        },
-        "rotation": {
-          "x": -2.03965425,
-          "y": 20.3316517,
-          "z": 131.203751
-        },
-        "scale": {
-          "x": 0.999998808,
-          "y": 0.999998569,
-          "z": 0.999999046
-        }
+     "StaticMesh": {
+      "mesh": "Sphere",
+      "material": "",
+      "color": {
+        "r": 0.127816468,
+        "g": 0.945945919,
+        "b": 0.0365230106,
+        "a": 1
       },
-      "DirectionalLight": {
-        "color": {
-          "r": 1,
-          "g": 1,
-          "b": 1,
-          "a": 1
-        },
-        "intensity": 11.5,
-        "use_temperature": false,
-        "temperature": 6500,
-        "cast_shadows": true,
-        "shadow_distance": 375.401001,
-        "contact_shadow_length": 0
+      "collision": true,
+      "one_way": false,
+      "collision_shape": 0,
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0,
+      "static_lighting": true,
+      "material_overrides": []
+    }},
+    {"id": 4194307, "name": "Sky Light", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 3.91741753,
+        "y": -6.89985085,
+        "z": 6.05000019
       },
-      "SkyLight": {
-        "sky_color": {
-          "r": 1,
-          "g": 1,
-          "b": 1,
-          "a": 0.956862748
-        },
-        "ground_color": {
-          "r": 0.160784319,
-          "g": 0.149019614,
-          "b": 0.141176477,
-          "a": 0.925490201
-        },
-        "intensity": 3.00900006,
-        "capture_sky": true
+      "rotation": {
+        "x": -2.03965425,
+        "y": 20.3316517,
+        "z": 131.203751
       },
-      "Sky": {
-        "atmosphere": true,
-        "zenith": {
-          "r": 0.795098424,
-          "g": 0.828382075,
-          "b": 0.872586846,
-          "a": 1
-        },
-        "horizon": {
-          "r": 0.076176554,
-          "g": 0.329692274,
-          "b": 0.563706577,
-          "a": 1
-        },
-        "ground": {
-          "r": 0.290196091,
-          "g": 0.274509817,
-          "b": 0.250980407,
-          "a": 1
-        },
-        "brightness": 3.35700011,
-        "sun_disc": true,
-        "sun_size": 1.81700003,
-        "sun_color": {
-          "r": 0.358015448,
-          "g": 0.416988432,
-          "b": 0.128799528,
-          "a": 1
-        }
-      },
-      "HeightFog": {
-        "density": 0,
-        "height_falloff": 0,
-        "color": {
-          "r": 0.168676659,
-          "g": 0.392161816,
-          "b": 0.598455608,
-          "a": 1
-        },
-        "start_distance": 0,
-        "max_opacity": 0
-      },
-      "PostProcessVolume": {
-        "unbound": false,
-        "priority": 13,
-        "exposure_compensation": -0.324999988,
-        "filmic_tonemapper": true,
-        "saturation": 2,
-        "contrast": 0.851000011,
-        "tint": {
-          "r": 0.644787669,
-          "g": 0.644787669,
-          "b": 0.644787669,
-          "a": 1
-        },
-        "vignette": 0.412,
-        "color_grading_lut": "",
-        "motion_blur_amount": 0,
-        "motion_blur_max": 5,
-        "lut_intensity": 1,
-        "bloom_intensity": 0,
-        "bloom_threshold": 3.25600004,
-        "anti_aliasing": true,
-        "temporal_aa": true,
-        "ao_intensity": 2,
-        "ao_radius": 0.74000001,
-        "ssr_intensity": 0.437000006,
-        "ssr_max_distance": 89.8560028,
-        "dof_focal_distance": 0,
-        "dof_focal_region": 0,
-        "dof_transition": 0.00999999978,
-        "dof_max_blur": 0,
-        "auto_exposure": true,
-        "exposure_min_ev": -4,
-        "exposure_max_ev": 4,
-        "exposure_speed_up": 3,
-        "exposure_speed_down": 1
-      },
-      "LightmassImportanceVolume": {
-        "probe_spacing": 10.1400003
-      },
-      "PrefabInstance": {
-        "prefab": "f27fa176711ee35d436dc866f655c705",
-        "overrides": [
-          {
-            "object": "",
-            "component": "HeightFog",
-            "property": "start_distance",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "LightmassImportanceVolume",
-            "property": "probe_spacing",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "ao_intensity",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "ao_radius",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "ssr_intensity",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "ssr_max_distance",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "priority",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "exposure_compensation",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "vignette",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "tint",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "dof_max_blur",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "dof_transition",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "dof_focal_region",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "dof_focal_distance",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "HeightFog",
-            "property": "max_opacity",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "saturation",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "bloom_intensity",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "bloom_threshold",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "HeightFog",
-            "property": "density",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "HeightFog",
-            "property": "color",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "HeightFog",
-            "property": "height_falloff",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "SkyLight",
-            "property": "sky_color",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "Sky",
-            "property": "zenith",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "contrast",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "PostProcessVolume",
-            "property": "unbound",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "Sky",
-            "property": "brightness",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "Sky",
-            "property": "sun_size",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "Sky",
-            "property": "sun_color",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "DirectionalLight",
-            "property": "shadow_distance",
-            "kind": 0
-          },
-          {
-            "object": "",
-            "component": "DirectionalLight",
-            "property": "intensity",
-            "kind": 0
-          }
-        ]
+      "scale": {
+        "x": 0.999998808,
+        "y": 0.999998569,
+        "z": 0.999999046
       }
     },
-    {
-      "id": 5,
-      "name": "Kill Volume",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": -7.3419857,
-          "y": -4.61999989,
-          "z": 0
-        },
-        "rotation": {
-          "x": 0,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 2.1500001,
-          "y": 4.7249999,
-          "z": 3
-        }
+     "DirectionalLight": {
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
       },
-      "KillVolume": {
-        "enabled": true
+      "intensity": 11.5,
+      "use_temperature": false,
+      "temperature": 6500,
+      "cast_shadows": true,
+      "shadow_distance": 375.401001,
+      "contact_shadow_length": 0
+    },
+     "SkyLight": {
+      "sky_color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 0.956862748
+      },
+      "ground_color": {
+        "r": 0.160784319,
+        "g": 0.149019614,
+        "b": 0.141176477,
+        "a": 0.925490201
+      },
+      "intensity": 3.00900006,
+      "capture_sky": true
+    },
+     "Sky": {
+      "atmosphere": true,
+      "zenith": {
+        "r": 0.795098424,
+        "g": 0.828382075,
+        "b": 0.872586846,
+        "a": 1
+      },
+      "horizon": {
+        "r": 0.076176554,
+        "g": 0.329692274,
+        "b": 0.563706577,
+        "a": 1
+      },
+      "ground": {
+        "r": 0.290196091,
+        "g": 0.274509817,
+        "b": 0.250980407,
+        "a": 1
+      },
+      "brightness": 3.35700011,
+      "sun_disc": true,
+      "sun_size": 1.81700003,
+      "sun_color": {
+        "r": 0.358015448,
+        "g": 0.416988432,
+        "b": 0.128799528,
+        "a": 1
+      },
+      "hdri": ""
+    },
+     "HeightFog": {
+      "density": 0,
+      "height_falloff": 0,
+      "color": {
+        "r": 0.168676659,
+        "g": 0.392161816,
+        "b": 0.598455608,
+        "a": 1
+      },
+      "start_distance": 0,
+      "max_opacity": 0,
+      "volumetric": false,
+      "scattering": 0.800000012,
+      "anisotropy": 0.5,
+      "view_distance": 60,
+      "steps": 16
+    },
+     "PostProcessVolume": {
+      "unbound": false,
+      "priority": 13,
+      "blend_radius": 1,
+      "blend_weight": 1,
+      "exposure_compensation": -0.324999988,
+      "filmic_tonemapper": true,
+      "saturation": 2,
+      "contrast": 0.851000011,
+      "tint": {
+        "r": 0.644787669,
+        "g": 0.644787669,
+        "b": 0.644787669,
+        "a": 1
+      },
+      "vignette": 0.412,
+      "color_grading_lut": "",
+      "motion_blur_amount": 0,
+      "motion_blur_max": 5,
+      "lut_intensity": 1,
+      "post_material": "",
+      "post_parameters": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "bloom_intensity": 0,
+      "bloom_threshold": 3.25600004,
+      "anti_aliasing": true,
+      "temporal_aa": true,
+      "ao_intensity": 2,
+      "ao_radius": 0.74000001,
+      "ssr_intensity": 0.437000006,
+      "ssr_max_distance": 89.8560028,
+      "dof_focal_distance": 0,
+      "dof_focal_region": 0,
+      "dof_transition": 0.00999999978,
+      "dof_max_blur": 0,
+      "auto_exposure": true,
+      "exposure_min_ev": -4,
+      "exposure_max_ev": 4,
+      "exposure_speed_up": 3,
+      "exposure_speed_down": 1
+    },
+     "LightmassImportanceVolume": {
+      "probe_spacing": 10.1400003
+    },
+     "PrefabInstance": {
+      "prefab": "f27fa176711ee35d436dc866f655c705",
+      "overrides": [
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "start_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "LightmassImportanceVolume",
+          "property": "probe_spacing",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ao_intensity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ao_radius",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ssr_intensity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "ssr_max_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "priority",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "exposure_compensation",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "vignette",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "tint",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_max_blur",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_transition",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_focal_region",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "dof_focal_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "max_opacity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "saturation",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "bloom_intensity",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "bloom_threshold",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "density",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "HeightFog",
+          "property": "height_falloff",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "SkyLight",
+          "property": "sky_color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "zenith",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "contrast",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "PostProcessVolume",
+          "property": "unbound",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "brightness",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "sun_size",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "Sky",
+          "property": "sun_color",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "DirectionalLight",
+          "property": "shadow_distance",
+          "kind": 0
+        },
+        {
+          "object": "",
+          "component": "DirectionalLight",
+          "property": "intensity",
+          "kind": 0
+        }
+      ]
+    }},
+    {"id": 5, "name": "Kill Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -7.3419857,
+        "y": -4.61999989,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 2.1500001,
+        "y": 4.7249999,
+        "z": 3
       }
     },
-    {
-      "id": 6,
-      "name": "Blocking Volume",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": -4.07470798,
-          "y": -8.35063934,
-          "z": 0
-        },
-        "rotation": {
-          "x": 0,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 4,
-          "y": -1.50600004,
-          "z": 3
-        }
+     "KillVolume": {
+      "enabled": true
+    }},
+    {"id": 6, "name": "Blocking Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -4.07470798,
+        "y": -8.35063934,
+        "z": 0
       },
-      "BlockingVolume": {
-        "enabled": true
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 4,
+        "y": -1.50600004,
+        "z": 3
       }
     },
-    {
-      "id": 11,
-      "name": "Cube2",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": -7.23437214,
-          "y": 5.23643112,
-          "z": 3.5999999
-        },
-        "rotation": {
-          "x": 0,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 1,
-          "y": 1,
-          "z": 1
-        }
+     "BlockingVolume": {
+      "enabled": true
+    }},
+    {"id": 11, "name": "Cube2", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -7.23437214,
+        "y": 5.23643112,
+        "z": 3.5999999
       },
-      "StaticMesh": {
-        "mesh": "Cube",
-        "material": "",
-        "color": {
-          "r": 0.70588237,
-          "g": 0.70588237,
-          "b": 0.721568644,
-          "a": 1
-        },
-        "collision": true,
-        "collision_shape": 0,
-        "physical_material": "",
-        "box_uv": false,
-        "max_draw_distance": 0
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
       },
-      "NativeScript": {
-        "script": "Spinner",
-        "properties": [
-          {
-            "name": "speed",
-            "value": "202.9"
-          }
-        ]
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
       }
     },
-    {
-      "id": 13,
-      "name": "Water Volume",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": 57.3229446,
-          "y": -0.677999973,
-          "z": 1.49999988
-        },
-        "rotation": {
-          "x": 0,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 20.5499992,
-          "y": 11.8999996,
-          "z": 6.9000001
+     "StaticMesh": {
+      "mesh": "Cube",
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "collision": true,
+      "one_way": false,
+      "collision_shape": 0,
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0,
+      "static_lighting": true,
+      "material_overrides": []
+    },
+     "NativeScript": {
+      "script": "Spinner",
+      "properties": [
+        {
+          "name": "speed",
+          "value": "202.9"
         }
+      ]
+    }},
+    {"id": 12, "name": "Quaternius", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -2.5,
+        "y": 2,
+        "z": 0
       },
-      "StaticMesh": {
-        "mesh": "Plane",
-        "material": "",
-        "color": {
-          "r": 0,
-          "g": 0.552941203,
-          "b": 1,
-          "a": 1
-        },
-        "collision": false,
-        "collision_shape": 0,
-        "physical_material": "",
-        "box_uv": false,
-        "max_draw_distance": 0
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
       },
-      "WaterVolume": {
-        "enabled": true
-      },
-      "Spline": {
-        "points": [
-          {
-            "x": -0.559647083,
-            "y": -0.0179999992,
-            "z": -0.0649999976
-          },
-          {
-            "x": 0.386999995,
-            "y": -0.0410000011,
-            "z": 0.137999997
-          }
-        ],
-        "closed": false,
-        "tangents": []
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
       }
     },
-    {
-      "id": 14,
-      "name": "Cube3",
-      "parent": -1,
-      "Transform": {
-        "position": {
-          "x": -4.72191906,
-          "y": 1.10368919,
-          "z": 1.10000002
-        },
-        "rotation": {
-          "x": 0,
-          "y": 90,
-          "z": 1.20000005
-        },
-        "scale": {
-          "x": 2.1500001,
-          "y": 1.35000002,
-          "z": 1
-        }
+     "SkeletalMesh": {
+      "mesh": "128e9658207798c21acb2337088549f8",
+      "facing": 0,
+      "material": "",
+      "simulate_physics": false,
+      "full_body_ik": false,
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
       },
-      "StaticMesh": {
-        "mesh": "Plane",
-        "material": "",
-        "color": {
-          "r": 0.70588237,
-          "g": 0.70588237,
-          "b": 0.721568644,
-          "a": 1
-        },
-        "collision": true,
-        "collision_shape": 0,
-        "physical_material": "",
-        "box_uv": false,
-        "max_draw_distance": 0
+      "material_overrides": [],
+      "animation": "",
+      "clip": 0,
+      "play_rate": 1,
+      "looping": true,
+      "playing": true,
+      "root_motion": false,
+      "anim_graph": "d3d9aac2edc7d86338548831a2532bad",
+      "morphs": [],
+      "leader_pose": ""
+    },
+     "Character": {
+      "mapping_context": "c8b6ed85dab604aaec3dfd6fb5995fbd",
+      "move_action": "ed2a289fa8fc85e30a7decb691beb51c",
+      "look_action": "d41c977222dd0c34d6f074b93b0b4915",
+      "jump_action": "885c85e1badeb1c4ec360b3c798dd587",
+      "side_scroller": false,
+      "motion_matching": false,
+      "motion_database": "",
+      "walk_speed": 5,
+      "acceleration": 0,
+      "braking": 0,
+      "turn_rate": 0,
+      "air_control": 1,
+      "jump_speed": 5,
+      "max_slope": 45,
+      "step_height": 0.400000006,
+      "height": 1.79999995,
+      "radius": 0.349999994,
+      "eye_height": 1.64999998,
+      "look_sensitivity": 0.150000006,
+      "invert_look_y": false,
+      "free_look_key": "Left Alt",
+      "camera_distance": 4,
+      "camera_offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "crouch_action": "abda2407c96cfa0cbd69558134430d17",
+      "crouch_height": 1.10000002,
+      "crouch_speed": 2.5,
+      "swim_speed": 3
+    },
+     "FootIK": {
+      "left_foot": "foot_l",
+      "right_foot": "foot_r",
+      "max_step": 0.5,
+      "foot_height": 0.0799999982,
+      "max_foot_angle": 30,
+      "speed": 12
+    }},
+    {"id": 13, "name": "Water Volume", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": 57.3229446,
+        "y": -0.677999973,
+        "z": 1.49999988
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 20.5499992,
+        "y": 11.8999996,
+        "z": 6.9000001
       }
-    }
+    },
+     "StaticMesh": {
+      "mesh": "Plane",
+      "material": "",
+      "color": {
+        "r": 0,
+        "g": 0.552941203,
+        "b": 1,
+        "a": 1
+      },
+      "collision": false,
+      "one_way": false,
+      "collision_shape": 0,
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0,
+      "static_lighting": true,
+      "material_overrides": []
+    },
+     "WaterVolume": {
+      "enabled": true
+    },
+     "Spline": {
+      "points": [
+        {
+          "x": -0.559647083,
+          "y": -0.0179999992,
+          "z": -0.0649999976
+        },
+        {
+          "x": 0.386999995,
+          "y": -0.0410000011,
+          "z": 0.137999997
+        }
+      ],
+      "closed": false,
+      "tangents": []
+    }},
+    {"id": 14, "name": "Cube3", "parent": -1,
+     "Transform": {
+      "position": {
+        "x": -4.72191906,
+        "y": 1.10368919,
+        "z": 1.10000002
+      },
+      "rotation": {
+        "x": 0,
+        "y": 90,
+        "z": 1.20000005
+      },
+      "scale": {
+        "x": 2.1500001,
+        "y": 1.35000002,
+        "z": 1
+      }
+    },
+     "StaticMesh": {
+      "mesh": "Plane",
+      "material": "",
+      "color": {
+        "r": 0.70588237,
+        "g": 0.70588237,
+        "b": 0.721568644,
+        "a": 1
+      },
+      "collision": true,
+      "one_way": false,
+      "collision_shape": 0,
+      "physical_material": "",
+      "box_uv": false,
+      "max_draw_distance": 0,
+      "static_lighting": true,
+      "material_overrides": []
+    }}
   ]
 }
