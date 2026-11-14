@@ -308,7 +308,8 @@ A Cube gun in a character's right hand: 10/10 ammo, RMB aims, LMB shoots, R relo
 dot set in Details. One Script component, Weapon, that works on any rigged character. The lesson
 text in the editor walks through every line of its code, with these pictures.
 
-1. Select your rigged character (any Skeletal Mesh on a UE4 / UE5-style skeleton with a `hand_r` bone) in the Outliner.
+1. Select a rigged character in the Outliner: in `Content/Levels/NewLevel`, the sample character `Quaternius`
+   (CC0, `Content/Character/Quaternius`); any Skeletal Mesh with a right-hand bone (`hand_r`, `RightHand`...) works.
 2. **Tools > LSD Assistant**, the **Lessons** tab, **Gun on a hand socket**, then **Apply to
    Selected Character**. It writes `Content/Weapon/Weapon.lua` and `WBP_Crosshair.rml`, makes
    `IA_Aim` (Right Mouse Button), `IA_Fire` (Left Mouse Button) and `IA_Reload` (R) and adds them to
@@ -318,9 +319,11 @@ text in the editor walks through every line of its code, with these pictures.
    *The Lessons tab: the lesson, its Apply button and the steps it explains.*
 
 3. **The socket** (Unreal: Skeleton > Add Socket): `weapon_r` on the bone `hand_r`, the point the gun
-   holds on to. Double-click the mesh > **Sockets** > `weapon_r` to move or turn the gun in the hand.
+   holds on to, turned so the gun runs along the fingers (Unreal rigs and Blender-made rigs such as the
+   Quaternius one point their hand bones differently; Apply reads it from the finger bones).
+   Double-click the mesh > **Sockets** > `weapon_r` to move or turn the gun in the hand.
 
-   ![The weapon_r socket on the soldier's right hand in the Mesh Editor](images/lesson_gun_socket.jpg)
+   ![The weapon_r socket on the sample character's right hand in the Mesh Editor](images/lesson_gun_socket.jpg)
    *The Mesh Editor: the skeleton, and the `weapon_r` socket in the right palm.*
 
 4. **The component** (Unreal: an Actor Component): the character's Details now has a Script running
@@ -348,7 +351,7 @@ text in the editor walks through every line of its code, with these pictures.
    ![After a shot: 9/10](images/lesson_gun_play_fire.jpg)
    *After one shot: 9/10.*
 
-8. **Press R** to reload: the reload montage plays on the upper body, the HUD says Reloading... until
+8. **Press R** to reload: the reload montage (`Anim_Quaternius_Pistol_Reload`, one take per file) plays on the upper body, the HUD says Reloading... until
    Reload Time has passed, and the magazine is full again.
 
    ![Reloading](images/lesson_gun_play_reload.jpg)
@@ -396,7 +399,7 @@ end message, the best time and Play again / Quit come back in the same menu. Eve
 
 | File | What it is |
 | --- | --- |
-| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the template's cube body |
+| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the Quaternius character |
 | `CoinRun_Game.lua` | the Level Script (World Settings): menu, HUD, timer, win / lose; counts the coins with `lsd.find_all("Coin")` |
 | `CoinRun_Coin.lua` | spins; `on_overlap_begin` plays `S_Coin`, spawns `PS_CoinBurst`, counts it and destroys it |
 | `CoinRun_Guard.lua` | a Nav Agent: waits while a menu is up, walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
@@ -405,11 +408,24 @@ end message, the best time and Play again / Quit come back in the same menu. Eve
 | `PS_CoinBurst` | a Particle System: one burst of 40 additive sparks, not looping, so the spawned effect deletes itself |
 | `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, `lsd.set_world_settings({level_script = ...})` |
 
-**The player** (Unreal: the Third Person template's Character): the template's capsule with its cube `Body`
-and `Facing` nose. To give it a character, put a rigged Skeletal Mesh on `Body` (position 0, scale 1, Facing Auto
-turns a UE5 rig to face +X) and an Animation Graph with Idle / Walk / Jump states driven by the Character's
-Speed and InAir (Unreal's Anim Blueprint state machine); set the Walk state's Sync Speed to the speed its clip
-was made for so the feet do not slide.
+| `ABP_CoinRun.lsdasset` | the player's Animation Graph (Unreal's Anim Blueprint state machine): Idle, Walk, Jump |
+
+**The player** (Unreal: a Skeletal Mesh on the Character with an Anim Blueprint): the template's cube
+body is now a Skeletal Mesh, `Content/Character/Quaternius/SK_Quaternius_Male` (Quaternius' Universal Base
+Character, CC0; its materials come from its Material Slots), on the `Body` child of `Player` at the feet
+(position 0, scale 1, Facing Auto: its UE-style bone names mark a rig that faces -Y in the file, so it is
+turned to face +X). Its **Anim Graph** is `ABP_CoinRun`; double-click it for the State Machine window:
+
+| State | Plays (`Anim_Quaternius_UAL`, Quaternius' Universal Animation Library) | Gets there when |
+| --- | --- | --- |
+| Idle (entry) | `Idle_Loop` (clip 0) | Speed < 0.3, or from Jump when InAir is False |
+| Walk | a blend space on Speed: `Walk_Loop` (clip 1) at 0.975 m/s, `Jog_Fwd_Loop` (clip 2) at 5.357 m/s; Sync Speed 5.357 | Speed > 0.3 |
+| Jump | `Jump_Loop` (clip 5) | InAir is True, from any state |
+
+The Character fills Speed and InAir every frame. The blend space's positions are the speeds the takes were
+made for (their root travel per loop), so at the 5 m/s Walk Speed the jog plays as made and the feet do not
+slide; Sync Speed (set) speeds the clip up or slows it down past the blend space's ends. Select `Body` while
+playing: Details > Skeletal Mesh shows the state ("State: Walk (blending from Idle)").
 
 How the parts work:
 
