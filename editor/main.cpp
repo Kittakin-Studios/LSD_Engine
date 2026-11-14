@@ -439,6 +439,7 @@ struct FrameInstances {
         const lsd::world::InstancedStaticMesh* ism;
         lsd::world::Entity entity;
         const lsd::editor::CachedMesh* mesh;
+        const char* material;  // the object's Material, or (none set) this part's Material Slot
         lsd::usize first_row;  // into rows, in floats
         lsd::render::LodBuckets lods;
         // LOD k's index buffer and count.
@@ -462,28 +463,34 @@ struct FrameInstances {
             const lsd::world::Entity e = world.owner(type, i);
             const auto* ism = static_cast<const lsd::world::InstancedStaticMesh*>(world.at(type, i));
             if ((skip_hidden && world.hidden_in_hierarchy(e)) || !ism->instances.count) continue;
-            const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
-            if (!mesh) continue;
             const lsd::Mat4 base = world.world_matrix(e);
-            scratch.resize(static_cast<lsd::usize>(ism->instances.count) * 12);
-            for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
-                const lsd::world::MeshInstance& in = ism->instances[k];
-                const lsd::Mat4 m = base * lsd::trs(in.position, in.rotation, in.scale);  // degrees, like Transform
-                for (int row = 0; row < 3; ++row) {
-                    for (int c = 0; c < 4; ++c) scratch[k * 12 + static_cast<lsd::usize>(row * 4 + c)] = m.at(row, c);
+            // No Material on the object: each part with its Material Slot, as a Static Mesh draws (one entry per part).
+            const auto* parts = ism->material[0] ? nullptr : meshes.slot_parts(ism->mesh);
+            const lsd::usize part_count = parts ? parts->size() : 1;
+            for (lsd::usize p = 0; p < part_count; ++p) {
+                const lsd::editor::CachedMesh* mesh = meshes.get(parts ? (*parts)[p].key : ism->mesh);
+                if (!mesh) continue;
+                const lsd::Mat4 local = parts ? (*parts)[p].local : lsd::translation({0.0f, 0.0f, 0.0f});
+                scratch.resize(static_cast<lsd::usize>(ism->instances.count) * 12);
+                for (lsd::u32 k = 0; k < ism->instances.count; ++k) {
+                    const lsd::world::MeshInstance& in = ism->instances[k];
+                    const lsd::Mat4 m = base * lsd::trs(in.position, in.rotation, in.scale) * local;  // degrees, like Transform
+                    for (int row = 0; row < 3; ++row) {
+                        for (int c = 0; c < 4; ++c) scratch[k * 12 + static_cast<lsd::usize>(row * 4 + c)] = m.at(row, c);
+                    }
                 }
+                Entry entry{ism, e, mesh, parts ? (*parts)[p].material : ism->material, rows.size(), {}};
+                rows.resize(rows.size() + scratch.size());
+                const lsd::f32 at[3] = {eye.x, eye.y, eye.z};
+                lsd::render::sort_by_lod(scratch.data(), ism->instances.count, &mesh->bounds_min.x, &mesh->bounds_max.x, at, g_view_distance_scale, mesh->lod_screen_size,
+                                         mesh->lod_count, force_lod, g_min_screen_size, rows.data() + entry.first_row, entry.lods);
+                if (ism->cast_shadows) {
+                    mix(&mesh->gpu.vertices.value, 4);
+                    mix(entry.lods.first, sizeof entry.lods.first);
+                    mix(rows.data() + entry.first_row, static_cast<lsd::usize>(entry.lods.first[lsd::render::kMaxLods]) * 12 * sizeof(lsd::f32));
+                }
+                entries.push_back(entry);
             }
-            Entry entry{ism, e, mesh, rows.size(), {}};
-            rows.resize(rows.size() + scratch.size());
-            const lsd::f32 at[3] = {eye.x, eye.y, eye.z};
-            lsd::render::sort_by_lod(scratch.data(), ism->instances.count, &mesh->bounds_min.x, &mesh->bounds_max.x, at, g_view_distance_scale, mesh->lod_screen_size,
-                                     mesh->lod_count, force_lod, g_min_screen_size, rows.data() + entry.first_row, entry.lods);
-            if (ism->cast_shadows) {
-                mix(&mesh->gpu.vertices.value, 4);
-                mix(entry.lods.first, sizeof entry.lods.first);
-                mix(rows.data() + entry.first_row, static_cast<lsd::usize>(entry.lods.first[lsd::render::kMaxLods]) * 12 * sizeof(lsd::f32));
-            }
-            entries.push_back(entry);
         }
     }
 };
@@ -1327,7 +1334,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             look.camera_position[2] = eye.z;
             to_rgba(ism->color, look.color);
             look.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
-            materials.apply(ism->material, look);
+            materials.apply(entry.material, look);
             const bool editor_view = !stats.playing || stats.ejected;
             look.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
             look.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
