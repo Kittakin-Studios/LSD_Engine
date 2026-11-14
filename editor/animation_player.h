@@ -104,6 +104,10 @@ private:
         const anim::Clip* root_clip = nullptr;  // the strongest clip last frame and where it was (a loop wrapping)
         f32 root_ratio = 0.0f;
         Vec3 root_last, root_step, root_moved;
+        // Speed Sync: where it was last frame and how fast it moves over the ground (smoothed).
+        Vec3 ground_last;
+        bool ground_known = false;
+        f32 ground_speed = 0.0f;
     };
     void step_root_motion(const world::World& world, State& state, const world::SkeletalMesh& mesh, const SkinnedEntry& entry, const anim::BlendInput* inputs, u32 count);
     // Motion Databases built for a skeleton, rebuilt when a clip file or the database changes.

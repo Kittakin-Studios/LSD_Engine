@@ -32,6 +32,9 @@ struct AnimState {
     char blend_parameter_y[32] = "";
     LSD_PROPERTY(Edit, Tooltip = "1D blend space: clips placed along the Blend parameter (e.g. walk at 1.5, run at 5); blended by where the parameter is") List<BlendSample, 8> samples;
     LSD_PROPERTY(Edit, Min = 0, Max = 10, Tooltip = "Playback speed of the state's clip (1 = as made, 2 = twice as fast)") f32 play_rate = 1.0f;
+    LSD_PROPERTY(Edit, Units = "m/s", Min = 0,
+                 Tooltip = "Speed Sync (Unreal's play rate from velocity): the ground speed the clip was made for. In Play it plays faster or slower with how fast the object really moves over the ground (a Mover, a script, a Character), so the feet do not slide; standing still holds it. 1D blend spaces: any value above 0 turns it on past their first and last sample (the samples' positions are their speeds). 0 = off")
+    f32 sync_speed = 0.0f;
     LSD_PROPERTY(Edit, Tooltip = "The clip starts over when it ends (off: holds the last frame)") bool looping = true;
     // Where its box sits on the State Machine canvas (the editor saves it; both 0: laid out by itself).
     LSD_PROPERTY(Save) f32 node_x = 0.0f;
@@ -87,6 +90,7 @@ struct GraphState {
     f32 fade = 1.0f;       // 0..1 of the crossfade
     f32 fade_time = 0.0f;
     bool finished = false; // the current state's (non-looping) clip ended
+    f32 ground_speed = -1.0f;  // m/s over the ground, for Speed Sync; < 0 = not measured (the editor outside Play): clips play as made
     struct Param {
         char name[32];
         f32 value;

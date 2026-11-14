@@ -1988,6 +1988,12 @@ imported curves); keys in the Mesh Editor with that name win.
   2D one: also fill **Blend Parameter Y** (e.g. Direction) and each sample's **Position Y**
   (walk forward at Speed 1.5 / Direction 0, strafe right at 1.5 / 90, left at 1.5 / -90...). Between
   samples it mixes the three around the value; outside them, the nearest edge.
+- **Speed Sync** (a state's **Sync Speed**, m/s; Unreal's play rate from velocity): the ground speed the
+  clip was made for (a walk made for 1.4 m/s: 1.4). In Play the clip then plays faster or slower with
+  how fast the object really moves over the ground, whatever moves it (a Mover, `lsd.set_position`, a
+  NavAgent, the Character), so the feet do not slide; standing still holds it. On a 1D blend space any
+  value above 0 turns it on past its first and last sample (place the samples at their own speeds).
+  The editor viewport plays clips as made. The object's own Play Rate still multiplies it.
 - **Transitions**: from a state (or any) to another when a parameter is greater / less / true /
   false, or the clip finished, with a crossfade time.
 - **Where clips come from**: the graph's **Animation** (empty = the mesh's) is the default file, and a

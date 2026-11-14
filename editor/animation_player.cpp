@@ -694,6 +694,8 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
                 s.time = 0.0f;
                 s.graph = anim::GraphState{};
                 s.notify_clip = ~0u;
+                s.ground_known = false;
+                s.ground_speed = 0.0f;
             }
         }
         if (!state) continue;  // more than 256 animated objects: the rest stay still
@@ -703,6 +705,14 @@ void AnimationPlayer::update(world::World& world, SkinnedCache& cache, f32 dt, S
         }
         const Mat4 m = world.world_matrix(e);
         const Vec3 at{m.at(0, 3), m.at(1, 3), m.at(2, 3)};
+        if (dt > 0.0f) {  // Speed Sync: its speed over the ground (a jump of over 30 m/s is a teleport, not a run)
+            const f32 dx = at.x - state->ground_last.x, dy = at.y - state->ground_last.y;
+            const f32 v = state->ground_known ? std::sqrt(dx * dx + dy * dy) / dt : 0.0f;
+            if (v < 30.0f) state->ground_speed += (v - state->ground_speed) * std::fmin(1.0f, dt / 0.12f);
+            state->ground_last = at;
+            state->ground_known = true;
+        }
+        state->graph.ground_speed = in_play_ ? state->ground_speed : -1.0f;  // the editor shows clips as made
         state->owner = e;  // root motion moves its Character (this object or a parent), else the object itself
         for (world::Entity p = e; p.valid(); p = world.parent(p)) {
             if (world.get<world::Character>(p)) {

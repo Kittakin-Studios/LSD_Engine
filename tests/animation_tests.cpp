@@ -166,6 +166,38 @@ static void graph_tests() {
         CHECK(anim::step_graph(cut, clips, 3, cs, 0.0f, in) == 1 && cs.previous == -1 && in[0].clip == &clips[0]);
     }
 
+    {  // Speed Sync: a walk made for 1.5 m/s plays twice as fast at 3 m/s, holds standing still, plays as made unmeasured
+        anim::AnimGraph sync;
+        sync.states.push_back(anim::AnimState{});
+        sync.states[0].clip = 1;  // 1 s
+        sync.states[0].sync_speed = 1.5f;
+        anim::GraphState ss;
+        ss.ground_speed = 3.0f;
+        anim::step_graph(sync, clips, 3, ss, 0.1f, in);
+        CHECK(std::fabs(ss.phase - 0.2f) < 1e-4f);
+        ss.ground_speed = 0.0f;
+        anim::step_graph(sync, clips, 3, ss, 0.1f, in);
+        CHECK(std::fabs(ss.phase - 0.2f) < 1e-4f);
+        ss.ground_speed = -1.0f;
+        anim::step_graph(sync, clips, 3, ss, 0.1f, in);
+        CHECK(std::fabs(ss.phase - 0.3f) < 1e-4f);
+        // A 1D blend space idle (0) .. walk (1.5): as made inside it, faster past the walk
+        std::snprintf(sync.states[0].blend_parameter, 32, "Speed");
+        sync.states[0].samples.count = 2;
+        sync.states[0].samples[0] = {0, 0.0f};
+        sync.states[0].samples[1] = {1, 1.5f};
+        anim::GraphState bs;
+        bs.set("Speed", 3.0f);
+        bs.ground_speed = 3.0f;
+        anim::step_graph(sync, clips, 3, bs, 0.1f, in);  // the walk alone (1 s) at twice its rate
+        CHECK(std::fabs(bs.phase - 0.2f) < 1e-4f);
+        bs.set("Speed", 0.0f);
+        bs.ground_speed = 0.0f;
+        bs.phase = 0.0f;
+        anim::step_graph(sync, clips, 3, bs, 0.1f, in);  // the idle alone (2 s) as made
+        CHECK(std::fabs(bs.phase - 0.05f) < 1e-4f);
+    }
+
     // Finished: a one-shot state hands back when its clip ends.
     anim::AnimGraph once;
     once.states.count = 2;

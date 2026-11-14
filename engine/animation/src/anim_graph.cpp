@@ -162,6 +162,19 @@ bool passes(const AnimTransition& t, const GraphState& gs) {
     }
 }
 
+// Speed Sync: how much faster than made the state plays at the measured ground speed (1 = as made).
+f32 sync_rate(const AnimState& s, const GraphState& gs) {
+    if (s.sync_speed <= 0.0f || gs.ground_speed < 0.0f) return 1.0f;
+    f32 made = s.sync_speed;
+    if (s.blend_parameter[0] && !s.blend_parameter_y[0] && s.samples.count) {  // 1D blend space: only past its ends
+        f32 lo = s.samples[0].position, hi = lo;
+        for (const BlendSample& b : s.samples) lo = std::fmin(lo, b.position), hi = std::fmax(hi, b.position);
+        made = std::fmin(std::fmax(gs.ground_speed, lo), hi);
+        if (made <= 1e-3f) return 1.0f;  // at a sample standing still (an idle): as made
+    }
+    return std::fmin(gs.ground_speed / made, 4.0f);
+}
+
 f32 advance(f32 phase, f32 dt, f32 rate, f32 length, bool looping, bool* finished) {
     if (length <= 0.0f) return phase;
     phase += dt * rate / length;
@@ -209,12 +222,12 @@ u32 step_graph(const AnimGraph& g, const Clip* const* clips, u32 clip_count, Gra
     BlendInput scratch[kMaxBlendInputs];
     f32 length = 0.0f;
     state_inputs(current, clips, clip_count, gs, gs.phase, 1.0f, scratch, &length);
-    gs.phase = advance(gs.phase, dt, current.play_rate, length, current.looping, &gs.finished);
+    gs.phase = advance(gs.phase, dt, current.play_rate * sync_rate(current, gs), length, current.looping, &gs.finished);
     if (gs.previous >= 0) {
         const AnimState& previous = g.states[static_cast<u32>(gs.previous)];
         f32 previous_length = 0.0f;
         state_inputs(previous, clips, clip_count, gs, gs.previous_phase, 1.0f, scratch, &previous_length);
-        gs.previous_phase = advance(gs.previous_phase, dt, previous.play_rate, previous_length, previous.looping, nullptr);
+        gs.previous_phase = advance(gs.previous_phase, dt, previous.play_rate * sync_rate(previous, gs), previous_length, previous.looping, nullptr);
         gs.fade = gs.fade_time > 0.0f ? gs.fade + dt / gs.fade_time : 1.0f;
         if (gs.fade >= 1.0f) {
             gs.fade = 1.0f;
