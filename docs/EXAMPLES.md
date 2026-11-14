@@ -400,15 +400,14 @@ end message, the best time and Play again / Quit come back in the same menu. Eve
 | File | What it is |
 | --- | --- |
 | `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the Quaternius character |
+| `ABP_CoinRun.lsdasset` | the player's Animation Graph (Unreal's Anim Blueprint state machine): Idle, Walk, Jump |
 | `CoinRun_Game.lua` | the Level Script (World Settings): menu, HUD, timer, win / lose; counts the coins with `lsd.find_all("Coin")` |
 | `CoinRun_Coin.lua` | spins; `on_overlap_begin` plays `S_Coin`, spawns `PS_CoinBurst`, counts it and destroys it |
 | `CoinRun_Guard.lua` | a Nav Agent: waits while a menu is up, walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
 | `UI_CoinRun.rml` | the HUD and the menu (`#menu`, its buttons call `coinrun_play` / `coinrun_quit`) |
 | `S_Coin.wav` | the pickup blip (two short sine notes, made by a script) |
 | `PS_CoinBurst` | a Particle System: one burst of 40 additive sparks, not looping, so the spawned effect deletes itself |
-| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, `lsd.set_world_settings({level_script = ...})` |
-
-| `ABP_CoinRun.lsdasset` | the player's Animation Graph (Unreal's Anim Blueprint state machine): Idle, Walk, Jump |
+| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, the player's Skeletal Mesh (`lsd.assets("AnimGraph")` finds the graph), `lsd.set_world_settings({level_script = ...})` |
 
 **The player** (Unreal: a Skeletal Mesh on the Character with an Anim Blueprint): the template's cube
 body is now a Skeletal Mesh, `Content/Character/Quaternius/SK_Quaternius_Male` (Quaternius' Universal Base

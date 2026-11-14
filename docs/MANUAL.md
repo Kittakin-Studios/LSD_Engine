@@ -126,9 +126,10 @@ template too: `template.New 2D`.
 
 Two ready-made levels for character creators (Unreal's MetaHuman-style creator screens and the
 character select of a menu). Both put a **Character** on a lit stage with a camera on it. The
-Character is a Skeletal Mesh using the project's **UE5-skeleton** body: the template looks for a
-rigged mesh with UE5 Manny bones (a UE4 Mannequin, then any rig, if there is none; names such as
-Manny, Quinn, SKM or Char are tried first). With no rigged mesh in Content, a grey stand-in shows
+Character is a Skeletal Mesh using the project's rigged body: the template looks for a rigged mesh,
+UE5 Manny bone names first, then UE4-style names (such as the sample Quaternius character in
+`Content/Character/Quaternius`), then any rig; names such as Manny, Quinn, Quaternius, SKM or Char
+are tried first. With no rigged mesh in Content, a grey stand-in shows
 until you set **Skeletal Mesh > Mesh**. Their scripts, UI documents and sounds go into
 `Content/Templates/Character/` (kept if you change them), and the folders for your own art are
 made in `Content/Characters/`.
@@ -174,7 +175,7 @@ Select. `presets_folder` changes where the presets come from.
 ## 2. The editor
 
 ![The editor](images/editor_overview.jpg)
-*The editor: 1 menu bar, 2 Play / Simulate / New Window, 3 the Level tab and one tab per open asset editor, 4 workspaces, 5 viewport toolbar, 6 viewport, 7 Outliner, 8 Details, 9 Content Browser (with Place and Output Log), 10 the dock where asset editors open.*
+*The editor: 1 menu bar, 2 Play / Simulate / New Window, 3 the Level tab and one tab per open asset editor, 4 workspaces, 5 viewport toolbar, 6 viewport, 7 Outliner, 8 Details, 9 Content Browser (with Place and Output Log). Asset editors open as tabs beside the Level tab (3).*
 
 **The menus** (Unreal's main menu): click a name in the menu bar.
 
@@ -1625,7 +1626,7 @@ and set it up in one click: select a rigged character, pick a lesson, **Apply to
 Existing files are kept, so your edits survive a second Apply. The console does the same:
 `assistant.Lesson <n>`.
 
-- **Gun on a hand socket (soldier)**: a Cube gun in the right hand through a `weapon_r` socket on
+- **Gun on a hand socket**: a Cube gun in the right hand through a `weapon_r` socket on
   `hand_r` (RightHand / mixamorig:RightHand on other rigs), 10/10 ammo, **RMB** aims (the spring arm
   eases in over the right shoulder, the dot turns red, and IK raises the hand along the view so the gun points at
   the crosshair: Hand Bone, Shoulder Bone, Aim Reach), **LMB** shoots (a ray from the camera through
@@ -1634,7 +1635,8 @@ Existing files are kept, so your edits survive a second Apply. The console does 
   `Content/Weapon/Weapon.lua`; its Details show socket, ammo, max ammo, range, damage, reload time,
   aim distance and shoulder, and the crosshair's size, colours and visibility. Apply also makes
   `WBP_Crosshair.rml`, `IA_Aim`, `IA_Fire`, `IA_Reload` and maps RMB / LMB / R in the character's
-  Mapping Context. To hold the gun differently, edit the `weapon_r` socket in the Mesh Editor.
+  Mapping Context. The socket is turned to run along the hand's finger bones (Unreal and Blender-made rigs
+  point their hand bones differently); to hold the gun differently, edit the `weapon_r` socket in the Mesh Editor.
   Step by step with pictures: [EXAMPLES.md](EXAMPLES.md#7b-a-gun-in-the-hand-lsd-assistant-lesson).
 
   ![The Lessons tab](images/lesson_gun_apply.jpg)
