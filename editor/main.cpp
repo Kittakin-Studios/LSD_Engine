@@ -677,7 +677,7 @@ struct FrameMeshes {
     // Its shadow caster (looked up once a frame: the material's cut-out).
     void caster_cutout(lsd::u32 i, const lsd::world::StaticMesh& component, bool& masked, lsd::rhi::ShadowCutout& cutout) {
         Item& it = items[i];
-        if (!it.cut) it.cut = shadow_cutout(component.material, component.color, it.cutout) ? 2 : 1;
+        if (!it.cut) it.cut = static_cast<lsd::u8>(shadow_cutout(component.material, component.color, it.cutout) ? 2 : 1);
         masked = it.cut == 2;
         cutout = masked ? it.cutout : lsd::rhi::ShadowCutout{};
     }
