@@ -112,7 +112,7 @@ uniform vec4 u_color;
 uniform vec4 u_normal[3];  // the vertex stage's (the velocity pass reads the last frame's matrix from it)
 uniform vec4 u_mat[2];   // metallic, roughness, emissive.rg | emissive.b, camera.xyz
 uniform vec2 u_flags;    // unlit, has normal map
-uniform float u_time;    // Material Graph Time
+uniform float u_time;    // Material Graph Time; the built-in material's Tiling otherwise (rhi::pack_uv_scale)
 struct Light { vec4 pos_type; vec4 dir_range; vec4 color_inner; vec4 spot; };
 layout(std140, binding = 1) uniform Lights {
     float exposure; uint light_count; vec2 depth_proj; vec4 sky_color; vec4 ground; Light lights[16];
@@ -755,21 +755,22 @@ void main() {
     float spec_map = 1.0;
     vec3 emissive = surf.emissive;
 #else
+    vec2 uv = u_time < 0.5 ? v_uv : v_uv * vec2(floor(u_time / 4096.0), mod(u_time, 4096.0)) / 64.0;  // mesh.hlsl's uv_tiling
     vec2 texel_size = vec2(textureSize(base_tex, 0));
-    vec4 base = u_color * (pixel_art ? textureLod(base_tex, (floor(v_uv * texel_size) + 0.5) / texel_size, 0.0) : texture(base_tex, v_uv));
+    vec4 base = u_color * (pixel_art ? textureLod(base_tex, (floor(uv * texel_size) + 0.5) / texel_size, 0.0) : texture(base_tex, uv));
     if (cutoff > 0.0 && base.a < cutoff) discard;  // Masked
     if (u_flags.x > 0.5 && u_flags.x < 1.5) { o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(base.rgb) : to_srgb(base.rgb), base.a); return; }
     if (has_normal_map) {  // Z from X and Y: BC5 maps have none, RGBA8 ones give the same
-        vec2 nxy = texture(normal_tex, v_uv).xy * 2.0 - 1.0;
-        n = perturb_normal(n, v_wpos, v_uv, vec3(nxy, sqrt(clamp(1.0 - dot(nxy, nxy), 0.0, 1.0))));
+        vec2 nxy = texture(normal_tex, uv).xy * 2.0 - 1.0;
+        n = perturb_normal(n, v_wpos, uv, vec3(nxy, sqrt(clamp(1.0 - dot(nxy, nxy), 0.0, 1.0))));
     }
-    vec4 orm4 = texture(orm_tex, v_uv);  // A: the Specular map (white = none)
+    vec4 orm4 = texture(orm_tex, uv);  // A: the Specular map (white = none)
     vec3 orm = orm4.rgb;
     float metallic = clamp(u_mat[0].x * orm.b, 0.0, 1.0);
     float roughness = clamp(u_mat[0].y * orm.g, 0.04, 1.0);
     float ao = orm.r;
     float spec_map = orm4.a;
-    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, v_uv).rgb;
+    vec3 emissive = vec3(u_mat[0].zw, u_mat[1].x) * texture(emissive_tex, uv).rgb;
 #endif
     if (u_flags.x > 1.5 && u_flags.x < 2.5) { vec3 nc = n * 0.5 + 0.5; o_color = vec4(hdr_out.x > 0.5 ? hdr_encode(nc) : to_srgb(nc), 1.0); return; }  // Normals view mode
     base.rgb = apply_decals(base.rgb, v_wpos, n);
@@ -961,9 +962,9 @@ void main() {}
 // Masked casters: the base colour texture's alpha (times the tint's) under the cutoff casts no shadow.
 constexpr char kCutoutShadowFragmentShader[] = R"(#version 460 core
 layout(binding = 0) uniform sampler2D base_tex;
-uniform vec2 u_cut;
+uniform vec4 u_cut;  // cutoff, the tint's alpha, the Tiling
 in vec2 v_uv;
-void main() { if (texture(base_tex, v_uv).a * u_cut.y < u_cut.x) discard; }
+void main() { if (texture(base_tex, v_uv * u_cut.zw).a * u_cut.y < u_cut.x) discard; }
 )";
 
 // GPU-driven culling (MeshDraw::gpu_cull): pass 0 clears the visible count, pass 1 tests every
@@ -2155,7 +2156,7 @@ public:
         const f32 cutoff = draw.alpha_cutoff < 0.0f ? 0.0f : draw.alpha_cutoff > 1.0f ? 1.0f : draw.alpha_cutoff;  // packed as in the shader
         gl_.glUniform2f(program.flags, draw.unlit || draw.wireframe ? 1.0f : static_cast<f32>(draw.debug_view),
                         (normal ? 1.0f : 0.0f) + (draw.blend ? 2.0f : 0.0f) + 4.0f * std::round(cutoff * 255.0f) + (draw.pixel_art ? 1024.0f : 0.0f) + (draw.hair ? 2048.0f : 0.0f) + 4096.0f * std::round((draw.specular < 0.0f ? 0.0f : draw.specular > 1.0f ? 1.0f : draw.specular) * 255.0f));
-        if (program.time >= 0) gl_.glUniform1f(program.time, draw.time);
+        if (program.time >= 0) gl_.glUniform1f(program.time, graph ? draw.time : pack_uv_scale(draw.uv_scale));
         if (graph) {
             f32 values[kMaxMaterialParams * 4] = {};
             const u32 count = draw.material_param_count < kMaxMaterialParams ? draw.material_param_count : kMaxMaterialParams;
@@ -2275,7 +2276,8 @@ public:
         gl_.glUseProgram(programs[variant]);
         gl_.glUniformMatrix4fv(mvps[variant], 1, GL_FALSE, light_mvp);
         if (cut_tex) {
-            gl_.glUniform2f(cutout_shadow_cut_[skinned ? 1 : 0], cutout->cutoff, cutout->alpha);
+            const f32 cut[4] = {cutout->cutoff, cutout->alpha, cutout->uv_scale[0], cutout->uv_scale[1]};
+            gl_.glUniform4fv(cutout_shadow_cut_[skinned ? 1 : 0], 1, cut);
             gl_.glBindTextureUnit(0, cut_tex->id);
         }
         const GLuint vao = skinned ? skinned_vao_ : mesh_vao_;

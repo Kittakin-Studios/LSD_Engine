@@ -137,6 +137,9 @@ struct MeshDraw {
     bool pixel_art = false;   // the base colour texture sampled at whole texels, no blur (2D sprites, tiles)
     f32 specular = 0.5f;      // Specular (Unreal): scales the 4% dielectric reflectance F0 (0.5 = 0.04, 1 = 0.08); packed into the flags (n1.w)
     bool hair = false;        // the Hair shading model: highlights along the strand (the texture's V), soft diffuse
+    // Material Tiling: every texture of the built-in material is sampled at uv * uv_scale (Material Graphs use their own
+    // coordinates). Sent packed in the time slot (pack_uv_scale), which only Material Graphs read.
+    f32 uv_scale[2] = {1.0f, 1.0f};
     // Skinning: when set, the vertices are SkinnedVertex and each joint's skinning matrix is given
     // as its first three rows (12 floats, joint_count <= kMaxJoints); mvp / world apply after it.
     const f32* joint_rows = nullptr;
@@ -354,7 +357,16 @@ struct ShadowCutout {
     TextureHandle texture;  // the base colour texture (its alpha)
     f32 cutoff = 0.5f;
     f32 alpha = 1.0f;       // the tint's alpha
+    f32 uv_scale[2] = {1.0f, 1.0f};  // the material's Tiling
 };
+
+// MeshDraw::uv_scale as one float the shaders unpack (mesh.hlsl's uv_tiling): 0 = untiled; else
+// round(u * 64) * 4096 + round(v * 64), each clamped to 1/64..63.98 (whole numbers below 2^24, exact in a float).
+inline f32 pack_uv_scale(const f32 scale[2]) {
+    if (scale[0] == 1.0f && scale[1] == 1.0f) return 0.0f;
+    auto q = [](f32 s) { const f32 v = s * 64.0f + 0.5f; return v < 1.0f ? 1.0f : v > 4095.0f ? 4095.0f : static_cast<f32>(static_cast<u32>(v)); };
+    return q(scale[0]) * 4096.0f + q(scale[1]);
+}
 
 struct PostDraw {
     TextureHandle scene;

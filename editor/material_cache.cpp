@@ -66,8 +66,9 @@ TextureCache::TextureCache(rhi::Device& device, const asset::AssetRegistry& regi
                 jobs_.erase(jobs_.begin());
             }
             auto* data = new asset::TextureData(default_allocator());
-            // Colour maps (BC1 / BC3) and normal maps (BC5) are compressed, once, into DerivedData; masks (ORM) stay RGBA8.
-            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, (job.srgb || job.normal_map) && compress_, "DerivedData/Textures", *data, job.normal_map, true)) {
+            // Colour maps (BC1 / BC3), normal maps (BC5) and masks (ORM: BC1, or BC3 with a Specular map in alpha, linear, as Unreal's
+            // Masks compression) are compressed, once, into DerivedData.
+            if (!asset::load_texture_cached(job.path, job.srgb, job.max_size, compress_, "DerivedData/Textures", *data, job.normal_map, true)) {
                 delete data;
                 data = nullptr;
             }
@@ -140,7 +141,7 @@ bool TextureCache::load(Entry& e) {
         return false;
     }
     asset::TextureData data(default_allocator());
-    if (!asset::load_texture_cached(path, e.srgb, max_size, (e.srgb || e.normal_map) && compress_, "DerivedData/Textures", data, e.normal_map, true)) {
+    if (!asset::load_texture_cached(path, e.srgb, max_size, compress_, "DerivedData/Textures", data, e.normal_map, true)) {
         e.failed = !e.texture.valid();
         return false;
     }
@@ -435,16 +436,46 @@ void MaterialCache::load(Entry& e) {
         return;
     }
     e.failed = !asset::load_data_asset(path, e.material);
-    if (!e.failed) pack_maps(e);
+    if (!e.failed) pack_maps(e);  // also the DirectX normal flip
+}
+
+// Material > Normal DirectX: a copy of the normal map with its green flipped, once, in DerivedData (keyed by the file and its time).
+void MaterialCache::flip_normal(Entry& e) {
+    render::Material& m = e.material;
+    char path[300];
+    if (!m.normal_directx || !m.normal_texture[0] || !path_of(registry_, m.normal_texture, path, sizeof path)) return;
+    char key[33];
+    std::snprintf(key, sizeof key, "N%016llx", static_cast<unsigned long long>(hash64(std::string(path) + std::to_string(file_time(path)))));
+    const std::filesystem::path out = std::filesystem::path("DerivedData") / "Materials" / (std::string(key) + ".png");
+    std::error_code error;
+    if (!std::filesystem::exists(out, error)) {
+        std::filesystem::create_directories(out.parent_path(), error);
+        asset::Image image;
+        if (!asset::load_image(path, image)) {
+            LSD_LOG_WARN("material", "Could not read %s to flip its green", path);
+            return;
+        }
+        asset::PackSource r{&image, 0}, g{&image, 1}, b{&image, 2}, a{};
+        g.invert = true;
+        if (!asset::pack_channels(out.string().c_str(), r, g, b, a)) {
+            LSD_LOG_WARN("material", "Could not flip the normal map %s", path);
+            return;
+        }
+    }
+    textures_.set_file(key, out.generic_string().c_str());
+    std::snprintf(m.normal_texture, sizeof m.normal_texture, "%s", key);
 }
 
 void MaterialCache::pack_maps(Entry& e) {
     render::Material& m = e.material;
+    flip_normal(e);
     const char* separate[4] = {m.ambient_occlusion_texture, m.roughness_texture, m.metallic_texture, m.specular_texture};  // R, G, B, A
-    if (!separate[0][0] && !separate[1][0] && !separate[2][0] && !separate[3][0]) return;
+    // Texture Setup's channels: another packing of the ORM Texture (MRA, SMRA, gloss...) is repacked to R AO, G roughness, B metallic.
+    const bool remapped = m.orm_texture[0] && (m.ao_channel != 0 || m.roughness_channel != 1 || m.metallic_channel != 2 || m.roughness_is_gloss);
+    if (!separate[0][0] && !separate[1][0] && !separate[2][0] && !separate[3][0] && !remapped) return;
     char paths[5][300] = {};
     const char* guids[5] = {separate[0], separate[1], separate[2], separate[3], m.orm_texture};
-    std::string signature;
+    std::string signature = remapped ? std::to_string(m.ao_channel * 100 + m.roughness_channel * 10 + m.metallic_channel) + (m.roughness_is_gloss ? "g;" : ";") : "";
     for (u32 i = 0; i < 5; ++i) {
         if (guids[i][0] && path_of(registry_, guids[i], paths[i], sizeof paths[i])) signature += std::string(paths[i]) + std::to_string(file_time(paths[i])) + ";";
         else signature += ";";
@@ -459,13 +490,14 @@ void MaterialCache::pack_maps(Entry& e) {
         for (u32 i = 0; i < 5; ++i) {
             if (paths[i][0] && !asset::load_image(paths[i], images[i])) LSD_LOG_WARN("material", "Could not read %s for packing", paths[i]);
         }
-        auto source = [&](u32 own, u32 channel) {  // the separate map, else the ORM texture's own channel, else white
+        auto source = [&](u32 own, u32 channel) {  // the separate map, else the ORM texture's chosen channel (4: none), else white
             asset::PackSource s{};
             if (images[own].pixels) s.image = &images[own], s.channel = 0;
-            else if (images[4].pixels && own < 3) s.image = &images[4], s.channel = channel;
+            else if (images[4].pixels && own < 3 && channel < 4) s.image = &images[4], s.channel = channel;
+            s.invert = own == 1 && m.roughness_is_gloss && s.image;
             return s;
         };
-        if (!asset::pack_channels(out.string().c_str(), source(0, 0), source(1, 1), source(2, 2), source(3, 3))) {
+        if (!asset::pack_channels(out.string().c_str(), source(0, m.ao_channel), source(1, m.roughness_channel), source(2, m.metallic_channel), source(3, 3))) {
             LSD_LOG_WARN("material", "Could not pack the maps of material %s", e.guid);
             return;
         }
@@ -505,6 +537,8 @@ void MaterialCache::apply(const char* guid, rhi::MeshDraw& draw, u32 want) {
     draw.roughness = m.roughness;
     draw.specular = m.specular;
     draw.hair = m.shading_model == 1;
+    draw.uv_scale[0] = m.tiling_u > 0.0f ? m.tiling_u : 1.0f;
+    draw.uv_scale[1] = m.tiling_v > 0.0f ? m.tiling_v : 1.0f;
     draw.emissive[0] = m.emissive.r * m.emissive_strength;
     draw.emissive[1] = m.emissive.g * m.emissive_strength;
     draw.emissive[2] = m.emissive.b * m.emissive_strength;

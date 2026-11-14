@@ -413,7 +413,7 @@ like Unreal's asset metadata): the Content Browser search box matches tags as we
 | You drop / create | It becomes | Opens in | Unreal |
 | --- | --- | --- | --- |
 | `.fbx`, `.gltf`, `.glb` | Mesh (a skinned mesh if it has bones) | Details (import scale) | Static / Skeletal Mesh |
-| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept as half floats on the GPU with values above 1, so an HDR emissive map glows as bright as it is; thumbnails and UI show them clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal maps become BC5 (their X and Y; the shader rebuilds Z, as Unreal's TC_Normalmap), masks (ORM) stay uncompressed | Details (max size) | Texture |
+| `.png .jpg .tga .bmp .psd .hdr .exr` | Texture (HDR / EXR: float images, kept as half floats on the GPU with values above 1, so an HDR emissive map glows as bright as it is; thumbnails and UI show them clipped). Colour textures are block-compressed as they load (BC1 when opaque, BC3 with alpha: 4 to 8 times less video memory, Unreal's default texture compression) when their size is a multiple of 4, once (kept in `DerivedData/Textures` until the image changes); normal maps become BC5 (their X and Y; the shader rebuilds Z, as Unreal's TC_Normalmap), masks (ORM) BC1 (BC3 with a Specular map in alpha), linear, as Unreal's TC_Masks | Details (max size) | Texture |
 | `.wav .ogg .flac .mp3` | Sound | Details (volume, class...); double-click plays | Sound Wave |
 | `.csv` | Data Table | Data Table window | Data Table |
 | `.lua` | Lua Script | your text editor | — |
@@ -1176,6 +1176,19 @@ shadows have the same holes, on static and skeletal meshes, for every light);
 ![A Masked material's shadow](images/shadow_masked.jpg)
 *The same panel with an Opaque material (left: a solid shadow) and a Masked one (right: the checker's holes in the shadow too).*
 
+**Texture Setup** (Details, for maps made in Unreal or Substance, used as they are, no copies to make):
+- **Tiling U / V**: every texture of the material repeats this many times across the mesh's UVs (Unreal's TexCoord
+  UTiling / VTiling or a "Tiling" parameter multiplying the UVs). 1 = as authored. Masked cut-out shadows tile too.
+- **Normal DirectX**: the Normal Texture is DirectX style (green points down), as Unreal's and most `_N` maps from
+  Unreal packs are; its green is flipped when the material loads (a copy in `DerivedData/Materials`, the file is
+  not changed). Leave it off for OpenGL / glTF style maps (the engine's own convention). If bumps look pressed in
+  where they should stand out (or lit from below), tick it.
+- **AO / Roughness / Metallic Channel**: which channel of the ORM Texture holds each (R, G, B, A, or None: the value
+  alone). The defaults read glTF / Unreal ORM (R occlusion, G roughness, B metallic). Other packings: HRM (height,
+  roughness, metallic): AO None, Roughness G, Metallic B; MRA: Metallic R, Roughness G, AO B; SMRA: Metallic G,
+  Roughness B, AO A. **Roughness Is Gloss** inverts the roughness channel (glossiness / smoothness maps). The texture
+  is repacked once when the material loads (`DerivedData/Materials`).
+
 **Material Instance**: a parent material plus ticked overrides (Unreal's Material Instance Constant).
 
 **Shading Model: Hair** (Unreal's Hair shading model, for hair cards): two highlights run along the strands (a
@@ -1576,7 +1589,7 @@ the open level, the selected object (its components and values) and the asset li
 your project (untick **Project context** to leave it out). It knows the engine's Lua API from the
 engine's own documentation and maps Unreal features you name onto LSD_Engine's.
 
-**Pictures**: **Screenshot** attaches the editor as it looks now (OpenGL or Vulkan) to your next
+**Pictures**: **Screenshot** attaches the editor as it looks now to your next
 message, or type an image's path in the box under it (PNG, JPG, BMP...): "why is this wall black?",
 "make the HUD look like this". It is halved until its longer side is at most 1568 px and sent once,
 with that message. Needs a model that sees images (Claude; GPT-4o and others on OpenAI-compatible servers).

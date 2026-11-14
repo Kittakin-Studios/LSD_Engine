@@ -225,6 +225,8 @@ bool shadow_cutout(const char* material, const lsd::LinearColor& tint, lsd::rhi:
     out.texture = look.base_color_texture;
     out.cutoff = look.alpha_cutoff;
     out.alpha = look.color[3];
+    out.uv_scale[0] = look.uv_scale[0];
+    out.uv_scale[1] = look.uv_scale[1];
     return true;
 }
 lsd::editor::DecalAtlas* g_decals = nullptr;  // decal textures for draw_world
@@ -462,6 +464,7 @@ struct FrameInstances {
         const lsd::world::InstancedStaticMesh* ism;
         lsd::world::Entity entity;
         const lsd::editor::CachedMesh* mesh;
+        const char* material;  // the object's Material, or (none set) this part's Material Slot
         lsd::usize first_row;  // into rows, in floats
         lsd::render::LodBuckets lods;
         lsd::f32 lo[3], hi[3];  // the world box around every copy: kept or dropped whole by a view when it can be
@@ -474,7 +477,7 @@ struct FrameInstances {
     };
     struct Kept {  // one object's copies in world space, as last worked out
         lsd::u32 generation = 0;  // its entity's (a reused slot is another object)
-        lsd::Mat4 base;
+        lsd::Mat4 base, local;  // the object's matrix, the part's in the mesh
         lsd::Vec3 bounds_min, bounds_max;
         std::vector<lsd::world::MeshInstance> instances;
         std::vector<lsd::f32> rows;
@@ -483,7 +486,7 @@ struct FrameInstances {
     };
     std::vector<Entry> entries;
     std::vector<lsd::f32> rows;
-    std::unordered_map<lsd::u32, Kept> kept;  // by entity slot
+    std::unordered_map<lsd::u64, Kept> kept;  // by entity slot and part
     lsd::u64 frame = 0;
     lsd::u64 hash = 0;  // casting_hash's
     void fill(lsd::world::World& world, lsd::editor::MeshCache& meshes, bool skip_hidden, lsd::Vec3 eye, lsd::i32 force_lod) {
@@ -495,43 +498,50 @@ struct FrameInstances {
             const lsd::world::Entity e = world.owner(type, i);
             const auto* ism = static_cast<const lsd::world::InstancedStaticMesh*>(world.at(type, i));
             if ((skip_hidden && world.hidden_in_hierarchy(e)) || !ism->instances.count) continue;
-            const lsd::editor::CachedMesh* mesh = meshes.get(ism->mesh);
-            if (!mesh) continue;
             const lsd::Mat4 base = world.world_matrix(e);
-            Kept& k = kept[e.index()];
-            k.frame = frame;
-            const lsd::u32 n = ism->instances.count;
-            const bool same = k.generation == e.generation() && std::memcmp(k.base.m, base.m, sizeof base.m) == 0 && k.instances.size() == n &&
-                              std::memcmp(k.instances.data(), &ism->instances[0], sizeof(lsd::world::MeshInstance) * n) == 0 &&
-                              std::memcmp(&k.bounds_min, &mesh->bounds_min, sizeof k.bounds_min) == 0 && std::memcmp(&k.bounds_max, &mesh->bounds_max, sizeof k.bounds_max) == 0;
-            if (!same) {
-                k.generation = e.generation();
-                k.base = base;
-                k.bounds_min = mesh->bounds_min;
-                k.bounds_max = mesh->bounds_max;
-                k.instances.assign(&ism->instances[0], &ism->instances[0] + n);
-                k.rows.resize(static_cast<lsd::usize>(n) * 12);
-                for (int c = 0; c < 3; ++c) k.lo[c] = 1e30f, k.hi[c] = -1e30f;
-                k.radius = 0.0f;
-                for (lsd::u32 j = 0; j < n; ++j) {
-                    const lsd::world::MeshInstance& in = ism->instances[j];
-                    const lsd::Mat4 m = base * lsd::trs(in.position, in.rotation, in.scale);  // degrees, like Transform
-                    lsd::f32* row = k.rows.data() + static_cast<lsd::usize>(j) * 12;
-                    for (int r = 0; r < 3; ++r) {
-                        for (int c = 0; c < 4; ++c) row[r * 4 + c] = m.at(r, c);
+            // No Material on the object: each part with its Material Slot, as a Static Mesh draws (one entry per part).
+            const auto* parts = ism->material[0] ? nullptr : meshes.slot_parts(ism->mesh);
+            const lsd::usize part_count = parts ? parts->size() : 1;
+            for (lsd::usize p = 0; p < part_count; ++p) {
+                const lsd::editor::CachedMesh* mesh = meshes.get(parts ? (*parts)[p].key : ism->mesh);
+                if (!mesh) continue;
+                const lsd::Mat4 local = parts ? (*parts)[p].local : lsd::translation({0.0f, 0.0f, 0.0f});
+                Kept& k = kept[(static_cast<lsd::u64>(e.index()) << 16) | p];
+                k.frame = frame;
+                const lsd::u32 n = ism->instances.count;
+                const bool same = k.generation == e.generation() && std::memcmp(k.base.m, base.m, sizeof base.m) == 0 && std::memcmp(k.local.m, local.m, sizeof local.m) == 0 &&
+                                  k.instances.size() == n && std::memcmp(k.instances.data(), &ism->instances[0], sizeof(lsd::world::MeshInstance) * n) == 0 &&
+                                  std::memcmp(&k.bounds_min, &mesh->bounds_min, sizeof k.bounds_min) == 0 && std::memcmp(&k.bounds_max, &mesh->bounds_max, sizeof k.bounds_max) == 0;
+                if (!same) {
+                    k.generation = e.generation();
+                    k.base = base;
+                    k.local = local;
+                    k.bounds_min = mesh->bounds_min;
+                    k.bounds_max = mesh->bounds_max;
+                    k.instances.assign(&ism->instances[0], &ism->instances[0] + n);
+                    k.rows.resize(static_cast<lsd::usize>(n) * 12);
+                    for (int c = 0; c < 3; ++c) k.lo[c] = 1e30f, k.hi[c] = -1e30f;
+                    k.radius = 0.0f;
+                    for (lsd::u32 j = 0; j < n; ++j) {
+                        const lsd::world::MeshInstance& in = ism->instances[j];
+                        const lsd::Mat4 m = base * lsd::trs(in.position, in.rotation, in.scale) * local;  // degrees, like Transform
+                        lsd::f32* row = k.rows.data() + static_cast<lsd::usize>(j) * 12;
+                        for (int r = 0; r < 3; ++r) {
+                            for (int c = 0; c < 4; ++c) row[r * 4 + c] = m.at(r, c);
+                        }
+                        lsd::render::grow_box(row, &mesh->bounds_min.x, &mesh->bounds_max.x, k.lo, k.hi);
+                        lsd::f32 centre[3], radius;
+                        lsd::render::copy_sphere(row, &mesh->bounds_min.x, &mesh->bounds_max.x, centre, radius);
+                        k.radius = std::fmax(k.radius, radius);
                     }
-                    lsd::render::grow_box(row, &mesh->bounds_min.x, &mesh->bounds_max.x, k.lo, k.hi);
-                    lsd::f32 centre[3], radius;
-                    lsd::render::copy_sphere(row, &mesh->bounds_min.x, &mesh->bounds_max.x, centre, radius);
-                    k.radius = std::fmax(k.radius, radius);
                 }
+                Entry entry{ism, e, mesh, parts ? (*parts)[p].material : ism->material, rows.size(), {}, {k.lo[0], k.lo[1], k.lo[2]}, {k.hi[0], k.hi[1], k.hi[2]}, k.radius};
+                rows.resize(rows.size() + k.rows.size());
+                const lsd::f32 at[3] = {eye.x, eye.y, eye.z};
+                lsd::render::sort_by_lod(k.rows.data(), n, &mesh->bounds_min.x, &mesh->bounds_max.x, at, g_view_distance_scale, mesh->lod_screen_size,
+                                         mesh->lod_count, force_lod, g_min_screen_size, rows.data() + entry.first_row, entry.lods);
+                entries.push_back(entry);
             }
-            Entry entry{ism, e, mesh, rows.size(), {}, {k.lo[0], k.lo[1], k.lo[2]}, {k.hi[0], k.hi[1], k.hi[2]}, k.radius};
-            rows.resize(rows.size() + k.rows.size());
-            const lsd::f32 at[3] = {eye.x, eye.y, eye.z};
-            lsd::render::sort_by_lod(k.rows.data(), n, &mesh->bounds_min.x, &mesh->bounds_max.x, at, g_view_distance_scale, mesh->lod_screen_size,
-                                     mesh->lod_count, force_lod, g_min_screen_size, rows.data() + entry.first_row, entry.lods);
-            entries.push_back(entry);
         }
         for (auto it = kept.begin(); it != kept.end();) it = it->second.frame == frame ? std::next(it) : kept.erase(it);  // objects gone or hidden
     }
@@ -1082,7 +1092,7 @@ lsd::u64 batch_key(const lsd::rhi::MeshDraw& d) {  // everything but the transfo
     };
     mix(&d.vertices.value, 4), mix(&d.indices.value, 4), mix(&d.index_count, 4), mix(d.color, sizeof d.color);
     mix(&d.metallic, 4), mix(&d.roughness, 4), mix(&d.specular, 4), mix(d.emissive, sizeof d.emissive), mix(&d.base_color_texture.value, 4);
-    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4);
+    mix(&d.normal_texture.value, 4), mix(&d.orm_texture.value, 4), mix(&d.emissive_texture.value, 4), mix(&d.alpha_cutoff, 4), mix(d.uv_scale, sizeof d.uv_scale);
     const lsd::u32 flags = (d.unlit ? 1u : 0u) | (d.pixel_art ? 2u : 0u) | (d.debug_view << 2);
     mix(&flags, 4);
     return h;
@@ -1522,7 +1532,7 @@ void draw_world(lsd::rhi::Device& device, const lsd::Mat4& view_proj, const lsd:
             look.camera_position[2] = eye.z;
             to_rgba(ism->color, look.color);
             look.time = static_cast<lsd::f32>(SDL_GetTicks()) * 0.001f;
-            materials.apply(ism->material, look);
+            materials.apply(entry.material, look);
             const bool editor_view = !stats.playing || stats.ejected;
             look.unlit = editor_view && (stats.view_mode == lsd::editor::ViewMode::Unlit || stats.view_mode == lsd::editor::ViewMode::Collision);
             look.debug_view = !editor_view ? 0u : stats.view_mode == lsd::editor::ViewMode::Normals ? 2u : stats.view_mode == lsd::editor::ViewMode::LightingOnly ? 3u
@@ -2268,7 +2278,7 @@ void register_console(EditorState& s) {
     console::add_command("BuildReflections", [](void* user, const char*) { static_cast<EditorState*>(user)->capture_reflections = true; }, &s,
                          "BuildReflections: capture every Reflection Capture again (Build > Build Reflection Captures)");
     console::add_command("screenshot", [](void*, const char*) { g_screenshot = true; }, &s,
-                         "screenshot: save the next frame to Saved/screenshot.bmp (OpenGL or Vulkan)");
+                         "screenshot: save the next frame to Saved/screenshot.bmp");
     console::add_command("assistant.Ask", [](void* user, const char* args) {
         lsd::editor::assistant::ask(*static_cast<EditorState*>(user), args);
     }, &s, "assistant.Ask <message>: send a message to LSD Assistant, as if typed in its chat");
@@ -2792,7 +2802,7 @@ int main(int argc, char** argv) {
     // shortcut: startup mirrors runtime/main.cpp; fold both into a shared app layer when a third exe needs it.
     lsd::rhi::DeviceDesc desc{};
     long max_frames = -1;
-    long screenshot_frame = -1;        // -screenshot=<n>: save frame n to Saved/screenshot.bmp (OpenGL)
+    long screenshot_frame = -1;        // -screenshot=<n>: save frame n to Saved/screenshot.bmp
     const char* import_arg = nullptr;  // -import=<file>: same as dropping the file on the editor
     const char* place_arg = nullptr;   // -place=<asset name>: place that mesh asset at (-2, 0, 0) on startup
     const char* level_arg = nullptr;   // -level=<path>: open this level instead of the last one
@@ -4372,7 +4382,7 @@ int main(int argc, char** argv) {
         state.stat_render_ms = timer.lap();  // CPU side of drawing (the GPU runs alongside)
         LSD_PROFILE_FRAME();
         if ((frame == screenshot_frame || std::exchange(g_screenshot, false)) && !device->capture_frame("Saved/screenshot.bmp")) {
-            LSD_LOG_WARN("editor", "-screenshot needs -rhi=opengl or -rhi=vulkan for now.");
+            LSD_LOG_WARN("editor", "Could not take the screenshot (this backend cannot read the frame back).");
         }
         device->end_frame();
         ++frame;

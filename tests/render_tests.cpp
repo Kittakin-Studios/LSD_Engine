@@ -695,6 +695,26 @@ static void test_fracture() {
     CHECK(wall.triangle_count() > 10000 && pieces.size() >= 25 && closed && near(total, 4.0f * 0.3f * 3.0f, 1e-2f));
 }
 
+// Material Tiling: pack_uv_scale's float decodes (as mesh.hlsl's uv_tiling does) to the scales in 1/64 steps; 1 x 1 is 0 (untiled).
+static void test_uv_tiling() {
+    auto decode = [](float q, float& u, float& v) { u = std::floor(q / 4096.0f) / 64.0f; v = std::fmod(q, 4096.0f) / 64.0f; };
+    const float one[2] = {1.0f, 1.0f}, tiled[2] = {3.0f, 0.5f}, odd[2] = {2.3f, 63.98f}, tiny[2] = {0.0f, 100.0f};
+    CHECK(lsd::rhi::pack_uv_scale(one) == 0.0f);
+    float u = 0.0f, v = 0.0f;
+    decode(lsd::rhi::pack_uv_scale(tiled), u, v);
+    CHECK(u == 3.0f && v == 0.5f);
+    decode(lsd::rhi::pack_uv_scale(odd), u, v);
+    CHECK(near(u, 2.3f, 1.0f / 128.0f) && near(v, 63.98f, 1.0f / 128.0f));
+    decode(lsd::rhi::pack_uv_scale(tiny), u, v);  // clamped to 1/64 .. 4095/64
+    CHECK(u == 1.0f / 64.0f && v == 4095.0f / 64.0f);
+    lsd::rhi::MeshDraw draw{};
+    CHECK(draw.uv_scale[0] == 1.0f && draw.uv_scale[1] == 1.0f && lsd::rhi::ShadowCutout{}.uv_scale[1] == 1.0f);
+    // A Material saved before Texture Setup existed loads with these: untiled, OpenGL normals, ORM as R AO / G rough / B metal.
+    const lsd::render::Material m{};
+    CHECK(m.tiling_u == 1.0f && m.tiling_v == 1.0f && !m.normal_directx && !m.roughness_is_gloss);
+    CHECK(m.ao_channel == 0 && m.roughness_channel == 1 && m.metallic_channel == 2);
+}
+
 // Box UV in metres, times the material's Box UV Tiling (main.cpp multiplies the object's scale by it): 1 = a tile a metre.
 static void test_box_uv_tiling() {
     using namespace lsd;
@@ -714,6 +734,7 @@ static void test_box_uv_tiling() {
 }
 
 int main() {
+    test_uv_tiling();
     test_box_uv_tiling();
     test_fracture();
     test_shader_cache();

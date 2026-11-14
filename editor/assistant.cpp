@@ -678,7 +678,7 @@ void draw_window(EditorState& s, bool* open) {
     with_tip(ImGui::Checkbox("Project context", &g_chat.include_context), "Includes the level, the selected object's components and the asset list with the message");
     // A picture with the message (models that see images: Claude, GPT-4o...): the editor's screenshot or any image file.
     ImGui::SameLine();
-    if (with_tip(ImGui::Button("Screenshot"), "Takes a screenshot of the editor (next frame; OpenGL or Vulkan) and attaches it to the next message")) {
+    if (with_tip(ImGui::Button("Screenshot"), "Takes a screenshot of the editor (next frame) and attaches it to the next message")) {
         console::execute("screenshot");
         std::snprintf(g_chat.image, sizeof g_chat.image, "Saved/screenshot.bmp");
     }

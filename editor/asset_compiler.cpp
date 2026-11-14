@@ -160,12 +160,12 @@ u32 compile_all(const asset::AssetRegistry& registry, const char* data_dir, bool
     auto add_texture = [&](const char* guid_text, bool srgb, bool normal_map) {
         asset::Guid guid;
         const asset::AssetRecord* r = guid_text[0] && asset::parse_guid(guid_text, guid) ? registry.find(guid) : nullptr;
-        if (!r || r->type != asset::AssetType::Texture || !compress || !(srgb || normal_map)) return;  // only compressed maps are cached
+        if (!r || r->type != asset::AssetType::Texture || !compress) return;  // only compressed maps are cached
         char path[300];
         registry.source_path(*r, path, sizeof path);
         asset::AssetMeta meta;
         registry.load_meta(*r, meta);
-        const std::string key = std::string(path) + (srgb ? "|s" : "|n");
+        const std::string key = std::string(path) + (srgb ? "|s" : normal_map ? "|n" : "|m");
         if (!textures.insert(key).second) return;
         queue_texture(path, srgb, normal_map, meta.max_size);
         ++queued;
@@ -185,6 +185,7 @@ u32 compile_all(const asset::AssetRegistry& registry, const char* data_dir, bool
                 add_texture(m.base_color_texture, true, false);  // as MaterialCache::apply asks for them
                 add_texture(m.normal_texture, false, true);
                 add_texture(m.emissive_texture, true, false);
+                add_texture(m.orm_texture, false, false);  // masks: BC1 / BC3 like the rest (packed ones compile when drawn)
             } else {
                 render::MaterialInstance m;
                 if (!asset::load_data_asset(path, m)) continue;
