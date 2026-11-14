@@ -106,12 +106,12 @@ std::string ui_sound_wav(bool slide) {
     return wav;
 }
 
-// The project's UE5-skeleton character for the Character templates: a rigged mesh with UE5 Manny
-// bones (UE4 Mannequin next, any rig last), likely names tried first; "" when there is none.
+// The project's character for the Character templates: a rigged mesh, UE5 Manny bones first (UE4
+// Mannequin next, any rig last, such as the sample Quaternius one), likely names tried first; "" when there is none.
 void find_body(EditorState& s, char out[33]) {
     out[0] = 0;
     if (!s.registry || !s.skinned) return;
-    static const char* const kLikely[] = {"manny", "quinn", "mannequin", "skm", "char", "body", ""};
+    static const char* const kLikely[] = {"manny", "quinn", "mannequin", "quaternius", "skm", "char", "body", ""};
     int best = -1;
     for (const char* hint : kLikely) {
         for (usize i = 0; i < s.registry->count() && best < 2; ++i) {
@@ -210,7 +210,7 @@ void build_template(EditorState& s, Template t, const char* level_name) {
         for (const char* slot : {"Hair", "Hat", "Glasses", "Shirt", "Jacket", "Gloves", "Pants", "Belt", "Shoes", "Backpack"}) fs::create_directories(characters / "Clothes" / slot, made);
         fs::create_directories(characters / "Presets", made);
         find_body(s, art.body);
-        if (!art.body[0]) LSD_LOG_WARN("editor", "%s: no rigged character in Content yet; set the Character's Skeletal Mesh to your UE5-skeleton body", template_name(t));
+        if (!art.body[0]) LSD_LOG_WARN("editor", "%s: no rigged character in Content yet; set the Character's Skeletal Mesh to your rigged body", template_name(t));
     }
     build_template_world(*s.world, t, art);
     // A free name in Content/Levels: Name, Name 2, Name 3...

@@ -523,12 +523,14 @@ static void test_material_import(const fs::path& root) {
         fs::create_directories(root);
         const fs::path gltf = root / "alpha.gltf";
         std::ofstream(gltf) << R"({"asset": {"version": "2.0"}, "materials": [{"name": "Glass", "alphaMode": "BLEND"},
-            {"name": "Leaves", "alphaMode": "MASK", "alphaCutoff": 0.25, "doubleSided": true}, {"name": "Stone"}]})";
+            {"name": "Leaves", "alphaMode": "MASK", "alphaCutoff": 0.25, "doubleSided": true},
+            {"name": "Stone", "pbrMetallicRoughness": {"metallicFactor": 0}}]})";
         asset::ImportedMaterials file(heap);
         CHECK(asset::list_mesh_materials(gltf.string().c_str(), file, error, sizeof error) && file.materials.size() == 3);
         CHECK(file.materials[0].alpha_mode == 2 && !file.materials[0].double_sided);
         CHECK(file.materials[1].alpha_mode == 1 && std::fabs(file.materials[1].alpha_cutoff - 0.25f) < 1e-6f && file.materials[1].double_sided);
         CHECK(file.materials[2].alpha_mode == 0);
+        CHECK(file.materials[2].metallic == 0.0f && file.materials[2].factors_scale_maps);  // the factor multiplies a metallic map
         fs::remove(gltf);
     }
     CHECK(heap.allocated_bytes() == 0);

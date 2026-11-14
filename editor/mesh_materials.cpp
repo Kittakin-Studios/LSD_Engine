@@ -328,9 +328,9 @@ void finish(MaterialImport& job, MaterialImportReport& report, char* status, usi
             material.base_color.g = m.base_color[1];
             material.base_color.b = m.base_color[2];
         }
-        material.metallic = plan.metal_map ? 1.0f : m.metallic;
+        material.metallic = plan.metal_map && !m.factors_scale_maps ? 1.0f : m.metallic;
         const f32 roughness = m.roughness_is_glossiness ? 1.0f - m.roughness : m.roughness;
-        material.roughness = plan.rough_map ? 1.0f : roughness;
+        material.roughness = plan.rough_map && !m.factors_scale_maps ? 1.0f : roughness;
         std::snprintf(material.base_color_texture, sizeof material.base_color_texture, "%s", job.in.guid_at(plan.base_color).c_str());
         std::snprintf(material.normal_texture, sizeof material.normal_texture, "%s", job.in.guid_at(plan.normal).c_str());
         std::snprintf(material.orm_texture, sizeof material.orm_texture, "%s", job.in.guid_at(plan.orm).c_str());

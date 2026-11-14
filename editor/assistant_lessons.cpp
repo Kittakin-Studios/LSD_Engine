@@ -19,7 +19,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr char kGunLesson[] = R"LESSON(This lesson builds a gun for a rigged character, in code only: a Cube stands in for the gun model (swap it for your own mesh later). It becomes one Script component, Weapon, that you can put on the soldier or on any other rigged character.
+constexpr char kGunLesson[] = R"LESSON(This lesson builds a gun for a rigged character, in code only: a Cube stands in for the gun model (swap it for your own mesh later). It becomes one Script component, Weapon, that you can put on the sample character (Content/Character/Quaternius) or on any other rigged character.
 
 Apply to Selected Character (above) does all the steps below on the selected character. Read on to see how each part works.
 
@@ -207,7 +207,7 @@ Make a target: give any object with collision a Script with
 )LESSON";
 
 constexpr Lesson kLessons[] = {
-    {"Gun on a hand socket (soldier)", "A Cube gun in the right hand, 10/10 ammo, RMB aims, LMB shoots, R reloads, a crosshair dot set in Details", kGunLesson},
+    {"Gun on a hand socket", "A Cube gun in the right hand, 10/10 ammo, RMB aims, LMB shoots, R reloads, a crosshair dot set in Details", kGunLesson},
 };
 
 // The record of a file under Content/ (relative path as the registry keeps it), or nullptr.

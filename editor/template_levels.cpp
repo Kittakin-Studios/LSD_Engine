@@ -26,7 +26,7 @@ const Info kTemplates[] = {
     {"Orthographic", "Top-down / isometric: the arena seen from above at an angle through an orthographic camera that follows the player."},
     {"2D", "Paper2D: a tile map level, an animated player sprite (idle, walk, jump), coins, a backdrop and an orthographic camera."},
     {"2.5D", "3D models in layers (foreground, play plane, background) played on a 2D plane through a side-on perspective camera."},
-    {"Character Customization", "A character creator: a UE5-skeleton body on a stage, tabs (Body, Head, Face, Eyes, Nose, Mouth, Ears, Clothes) with morph sliders and clothes per body area, click / slide sounds, saved to the character."},
+    {"Character Customization", "A character creator: the project's rigged body on a stage, tabs (Body, Head, Face, Eyes, Nose, Mouth, Ears, Clothes) with morph sliders and clothes per body area, click / slide sounds, saved to the character."},
     {"Character Selection", "Pick a ready-made character: browse the presets you bring (Content/Characters/Presets) on a stage and choose one."},
     {"Empty", "Nothing but a sun and a sky: start from scratch."},
 };
@@ -218,7 +218,7 @@ Entity stage(world::World& w, const char* body_name, const char* body_mesh, cons
     const Entity body = w.create(body_name);
     auto* mesh = w.add<world::SkeletalMesh>(body);
     std::snprintf(mesh->mesh, sizeof mesh->mesh, "%s", body_mesh);
-    if (!body_mesh[0]) {  // no UE5 character in the project yet: a stand-in until one is set
+    if (!body_mesh[0]) {  // no rigged character in the project yet: a stand-in until one is set
         const Entity stand_in = box(w, "Placeholder (set the Skeletal Mesh)", {0, 0, 0.9f}, {0.45f, 0.35f, 1.8f}, 0xB4B4B8);
         w.get<world::StaticMesh>(stand_in)->collision = false;
         w.set_parent(stand_in, body);

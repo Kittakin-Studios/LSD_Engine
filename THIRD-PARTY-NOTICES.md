@@ -333,6 +333,17 @@ MIT licence (full text in the xatlas source tree, LICENSE).
 
 ---
 
+## Assets
+
+Sample content in `Content/` that is not the engine authors' own work:
+
+- `Content/Character/Quaternius/` (the sample character, its textures and animation takes): by
+  **Quaternius** (https://quaternius.com), from the free Universal Base Characters and Universal
+  Animation Library packs, **CC0 1.0 Universal** (public domain dedication,
+  https://creativecommons.org/publicdomain/zero/1.0/). Sources and changes: that folder's `LICENSE.txt`.
+
+---
+
 ## Notes
 
 - Licences for the libraries above ship in their source trees under

@@ -38,6 +38,7 @@ struct ImportedMaterial {
     u32 alpha_mode = 0;          // glTF alphaMode: 0 OPAQUE, 1 MASK, 2 BLEND (FBX: 0, its opacity decides)
     f32 alpha_cutoff = 0.5f;     // MASK: alpha below this is cut out
     bool double_sided = false;   // glTF doubleSided
+    bool factors_scale_maps = false;  // glTF: metallic / roughness multiply their maps (FBX: a constant beside a map is a leftover)
 };
 
 // Every material of an FBX / glTF / GLB file, in the file's order (the names are the mesh's

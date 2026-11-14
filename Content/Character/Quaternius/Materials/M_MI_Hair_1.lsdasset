@@ -1,0 +1,41 @@
+{
+  "type": "Material",
+  "data": {
+    "base_color": {
+      "r": 1,
+      "g": 1,
+      "b": 1,
+      "a": 1
+    },
+    "base_color_texture": "d94bb4c754ab0ebe46695c642e829be2",
+    "metallic": 0,
+    "roughness": 0.822727263,
+    "normal_texture": "2c9db44066bc1365b47d1b3053366fe6",
+    "orm_texture": "",
+    "roughness_texture": "",
+    "metallic_texture": "",
+    "ambient_occlusion_texture": "",
+    "specular": 0.5,
+    "specular_texture": "",
+    "emissive": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 1
+    },
+    "emissive_strength": 1,
+    "emissive_texture": "",
+    "blend_mode": 0,
+    "opacity": 1,
+    "opacity_mask_clip": 0.333000004,
+    "tiling_u": 1,
+    "tiling_v": 1,
+    "normal_directx": false,
+    "ao_channel": 0,
+    "roughness_channel": 1,
+    "metallic_channel": 2,
+    "roughness_is_gloss": false,
+    "shading_model": 0,
+    "box_uv_tiling": 1
+  }
+}

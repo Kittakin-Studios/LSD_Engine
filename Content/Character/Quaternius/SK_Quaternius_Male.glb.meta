@@ -1,0 +1,41 @@
+{
+  "guid": "128e9658207798c21acb2337088549f8",
+  "type": "Mesh",
+  "tags": "",
+  "import_scale": 1,
+  "normals": 1,
+  "smoothing_angle": 30,
+  "lod1_screen_size": 0.119999997,
+  "lod2_screen_size": 0.0599999987,
+  "lod3_screen_size": 0.0299999993,
+  "notifies": [],
+  "clip_ranges": [],
+  "curve_keys": [],
+  "sockets": [],
+  "retarget_pose": [],
+  "control_rig": [],
+  "material_slots": [
+    {
+      "name": "MI_Hair_1",
+      "material": "1679487191dbb308d40d3d8bd0668b47"
+    },
+    {
+      "name": "MI_Eyes",
+      "material": "fb1f6ba2dafa6d0b85f1d216fba0b9eb"
+    },
+    {
+      "name": "MI_Superhero_Male",
+      "material": "8ffa4821ea13b519f87934f696e78e1e"
+    }
+  ],
+  "max_size": 4096,
+  "mip_streaming": true,
+  "volume": 1,
+  "pitch": 1,
+  "looping": false,
+  "stream": false,
+  "sound_class": "",
+  "attenuation": "",
+  "concurrency": "",
+  "subtitle": ""
+}

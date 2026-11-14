@@ -136,6 +136,7 @@ bool list_gltf(const char* path, ImportedMaterials& out, char* error, usize erro
         std::memcpy(m.base_color, pbr.base_color_factor, sizeof m.base_color);
         m.metallic = pbr.metallic_factor;
         m.roughness = pbr.roughness_factor;
+        m.factors_scale_maps = true;
         read_map(out, m.base_color_map, pbr.base_color_texture.texture, 0);
         read_map(out, m.normal_map, mat.normal_texture.texture, 0);
         read_map(out, m.roughness_map, pbr.metallic_roughness_texture.texture, 1);

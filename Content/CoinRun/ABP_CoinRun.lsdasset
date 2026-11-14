@@ -1,0 +1,57 @@
+{
+  "type": "AnimGraph",
+  "data": {
+    "animation": "e15e167286259c5225a91eb2fb37f883",
+    "entry_state": "Idle",
+    "states": [
+      {
+        "name": "Idle",
+        "animation": "e15e167286259c5225a91eb2fb37f883",
+        "clip": 0,
+        "blend_parameter": "",
+        "blend_parameter_y": "",
+        "samples": [],
+        "play_rate": 1,
+        "sync_speed": 0,
+        "looping": true,
+        "node_x": 40,
+        "node_y": 120
+      },
+      {
+        "name": "Walk",
+        "animation": "e15e167286259c5225a91eb2fb37f883",
+        "clip": 1,
+        "blend_parameter": "Speed",
+        "blend_parameter_y": "",
+        "samples": [
+          {"clip": 1, "position": 0.975, "position_y": 0, "animation": "e15e167286259c5225a91eb2fb37f883"},
+          {"clip": 2, "position": 5.357, "position_y": 0, "animation": "e15e167286259c5225a91eb2fb37f883"}
+        ],
+        "play_rate": 1,
+        "sync_speed": 5.357,
+        "looping": true,
+        "node_x": 320,
+        "node_y": 120
+      },
+      {
+        "name": "Jump",
+        "animation": "e15e167286259c5225a91eb2fb37f883",
+        "clip": 5,
+        "blend_parameter": "",
+        "blend_parameter_y": "",
+        "samples": [],
+        "play_rate": 1,
+        "sync_speed": 0,
+        "looping": true,
+        "node_x": 180,
+        "node_y": 0
+      }
+    ],
+    "transitions": [
+      {"from": "", "to": "Jump", "parameter": "InAir", "condition": 2, "value": 0, "blend_time": 0.15},
+      {"from": "Jump", "to": "Idle", "parameter": "InAir", "condition": 3, "value": 0, "blend_time": 0.15},
+      {"from": "Idle", "to": "Walk", "parameter": "Speed", "condition": 0, "value": 0.3, "blend_time": 0.2},
+      {"from": "Walk", "to": "Idle", "parameter": "Speed", "condition": 1, "value": 0.3, "blend_time": 0.2}
+    ]
+  }
+}
